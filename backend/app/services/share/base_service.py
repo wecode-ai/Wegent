@@ -46,6 +46,7 @@ from app.schemas.share import (
     ShareLinkConfig,
     ShareLinkResponse,
 )
+from app.services.share.external_entity_resolver import get_entity_resolver
 from shared.telemetry.decorators import trace_sync
 
 # SchemaMemberRole is an alias to BaseRole for backward compatibility
@@ -799,6 +800,24 @@ class UnifiedShareService(ABC):
                 f"resource_id={member.resource_id}, user_id={member.user_id}"
             )
 
+        # Batch-preload namespace display names for entity-type members
+        namespace_ids = set()
+        for m in members:
+            if m.entity_type == "namespace" and m.entity_id:
+                try:
+                    namespace_ids.add(int(m.entity_id))
+                except (ValueError, TypeError):
+                    pass
+
+        namespace_map = {}
+        if namespace_ids:
+            namespaces = (
+                db.query(Namespace.id, Namespace.display_name, Namespace.name)
+                .filter(Namespace.id.in_(namespace_ids))
+                .all()
+            )
+            namespace_map = {ns.id: (ns.display_name or ns.name) for ns in namespaces}
+
         # Populate user names
         user_ids = set()
         for m in members:
@@ -812,7 +831,8 @@ class UnifiedShareService(ABC):
         user_map = {u.id: u for u in users}
 
         member_responses = [
-            self._member_to_response(m, user_map, db=db) for m in members
+            self._member_to_response(m, user_map, db=db, namespace_map=namespace_map)
+            for m in members
         ]
 
         return MemberListResponse(members=member_responses, total=len(member_responses))
@@ -826,6 +846,7 @@ class UnifiedShareService(ABC):
         role: SchemaMemberRole,
         entity_type: Optional[str] = None,
         entity_id: Optional[str] = None,
+        entity_display_name: Optional[str] = None,
     ) -> ResourceMemberResponse:
         """Directly add a member to a resource."""
         # Validate resource and ownership/manage permission
@@ -848,6 +869,25 @@ class UnifiedShareService(ABC):
         # Determine effective entity type
         eff_entity_type = entity_type if entity_type else "user"
         eff_entity_id = entity_id if entity_id else str(target_user_id)
+
+        # Suppress display-name snapshots for reliably resolvable entity types.
+        # User and namespace names can always be resolved from local DB tables;
+        # only external/unreliable types (registered via register_entity_resolver)
+        # need snapshots.
+        needs_snapshot = True
+        if eff_entity_type == "user":
+            needs_snapshot = False
+        else:
+            resolver = get_entity_resolver(eff_entity_type)
+            if resolver and not resolver.requires_display_name_snapshot:
+                needs_snapshot = False
+        if not needs_snapshot:
+            entity_display_name = None
+        elif not entity_display_name:
+            # Auto-fill snapshot for external types that require it
+            resolver = get_entity_resolver(eff_entity_type)
+            if resolver:
+                entity_display_name = resolver.get_display_name(db, eff_entity_id)
 
         # Check target user exists (only for user-type members)
         if eff_entity_type == "user":
@@ -931,6 +971,8 @@ class UnifiedShareService(ABC):
             existing.reviewed_by_user_id = current_user_id
             existing.reviewed_at = datetime.utcnow()
             existing.updated_at = datetime.utcnow()
+            if entity_display_name is not None:
+                existing.entity_display_name = entity_display_name
             member = existing
         else:
             # Get or create a share link for direct member addition
@@ -972,6 +1014,7 @@ class UnifiedShareService(ABC):
                 resource_id=resource_id,
                 entity_type=eff_entity_type,
                 entity_id=eff_entity_id,
+                entity_display_name=entity_display_name,
                 status=MemberStatus.APPROVED.value,
                 invited_by_user_id=current_user_id,
                 share_link_id=share_link.id,
@@ -1015,7 +1058,9 @@ class UnifiedShareService(ABC):
         db: Session,
         resource_id: int,
         current_user_id: int,
-        members_data: List[Tuple[int, SchemaMemberRole, Optional[str], Optional[str]]],
+        members_data: List[
+            Tuple[int, SchemaMemberRole, Optional[str], Optional[str], Optional[str]]
+        ],
     ) -> BatchResourceMemberResponse:
         """Batch add multiple members to a resource in a single transaction.
 
@@ -1023,9 +1068,9 @@ class UnifiedShareService(ABC):
             db: Database session
             resource_id: Resource ID
             current_user_id: Current user performing the action
-            members_data: List of (target_user_id, role, entity_type, entity_id) tuples.
-                For user-type members: (target_user_id, role, None, None)
-                For entity-type members: (0, role, entity_type, entity_id)
+            members_data: List of (target_user_id, role, entity_type, entity_id, entity_display_name) tuples.
+                For user-type members: (target_user_id, role, None, None, None)
+                For entity-type members: (0, role, entity_type, entity_id, entity_display_name)
         """
         # Validate resource and ownership/manage permission once
         resource = self._get_resource(db, resource_id, current_user_id)
@@ -1070,13 +1115,30 @@ class UnifiedShareService(ABC):
 
         # Separate user-type and entity-type members
         user_member_entries: List[Tuple[int, SchemaMemberRole]] = []
-        entity_member_entries: List[Tuple[str, str, SchemaMemberRole]] = []
+        entity_member_entries: List[
+            Tuple[str, str, SchemaMemberRole, Optional[str]]
+        ] = []
         for entry in members_data:
-            target_user_id, role, entity_type, entity_id = entry
+            target_user_id, role, entity_type, entity_id, entity_display_name = entry
             if entity_type and entity_type != "user":
                 eff_entity_type = entity_type
                 eff_entity_id = entity_id if entity_id else str(target_user_id)
-                entity_member_entries.append((eff_entity_type, eff_entity_id, role))
+                # Suppress snapshots for reliably resolvable entity types
+                needs_snapshot = True
+                resolver = get_entity_resolver(eff_entity_type)
+                if resolver and not resolver.requires_display_name_snapshot:
+                    needs_snapshot = False
+                if not needs_snapshot:
+                    entity_display_name = None
+                elif not entity_display_name:
+                    # Auto-fill snapshot for external types that require it
+                    if resolver:
+                        entity_display_name = resolver.get_display_name(
+                            db, eff_entity_id
+                        )
+                entity_member_entries.append(
+                    (eff_entity_type, eff_entity_id, role, entity_display_name)
+                )
             else:
                 user_member_entries.append((target_user_id, role))
 
@@ -1111,7 +1173,7 @@ class UnifiedShareService(ABC):
         user_existing_map = {m.user_id: m for m in user_existing_members}
 
         # Query existing entity-type members
-        entity_keys = [(et, eid) for et, eid, _ in entity_member_entries]
+        entity_keys = [(et, eid) for et, eid, _, _ in entity_member_entries]
         entity_existing_members = []
         if entity_keys:
             from sqlalchemy import and_, or_
@@ -1215,7 +1277,12 @@ class UnifiedShareService(ABC):
                 processed_user_ids.add(target_user_id)
 
         # Process entity-type members
-        for entity_type_str, entity_id_str, role in entity_member_entries:
+        for (
+            entity_type_str,
+            entity_id_str,
+            role,
+            entity_display_name,
+        ) in entity_member_entries:
             entity_key = (entity_type_str, entity_id_str)
 
             # Skip duplicate entries within the same batch request
@@ -1252,6 +1319,8 @@ class UnifiedShareService(ABC):
                 existing.reviewed_by_user_id = current_user_id
                 existing.reviewed_at = datetime.utcnow()
                 existing.updated_at = datetime.utcnow()
+                if entity_display_name is not None:
+                    existing.entity_display_name = entity_display_name
                 succeeded.append(existing)
                 processed_entity_keys.add(entity_key)
             else:
@@ -1261,6 +1330,7 @@ class UnifiedShareService(ABC):
                     resource_id=resource_id,
                     entity_type=entity_type_str,
                     entity_id=entity_id_str,
+                    entity_display_name=entity_display_name,
                     status=MemberStatus.APPROVED.value,
                     invited_by_user_id=current_user_id,
                     share_link_id=share_link.id,
@@ -1431,35 +1501,55 @@ class UnifiedShareService(ABC):
         return "direct"
 
     def _get_entity_display_name(
-        self, db: Session, entity_type: str, entity_id: str
+        self,
+        db: Session,
+        entity_type: str,
+        entity_id: str,
+        namespace_map: Optional[dict[int, str]] = None,
     ) -> Optional[str]:
         """
         Resolve display name for entity-type members.
 
-        Built-in support for 'namespace' (group) entities.
+        Built-in support for 'namespace' (group) entities with optional
+        batch-preloaded namespace_map for performance.
         Subclasses can override to support additional entity types.
 
         Args:
             db: Database session
             entity_type: Entity type (e.g., 'namespace')
             entity_id: Entity identifier
+            namespace_map: Optional preloaded dict of namespace_id -> display_name
 
         Returns:
             Display name string or None if not resolvable
         """
         if entity_type == "namespace":
             try:
-                namespace = (
-                    db.query(Namespace).filter(Namespace.id == int(entity_id)).first()
-                )
-                if namespace:
-                    return namespace.display_name or namespace.name
+                ns_id = int(entity_id)
             except (ValueError, TypeError):
-                pass
+                return None
+            if namespace_map is not None:
+                return namespace_map.get(ns_id)
+            namespace = db.query(Namespace).filter(Namespace.id == ns_id).first()
+            if namespace:
+                return namespace.display_name or namespace.name
+            return None
+
+        # Try external resolvers for display name
+        resolver = get_entity_resolver(entity_type)
+        if resolver:
+            display_name = resolver.get_display_name(db, entity_id)
+            if display_name:
+                return display_name
+
         return None
 
     def _member_to_response(
-        self, member: ResourceMember, user_map: Dict[int, User], db: Session = None
+        self,
+        member: ResourceMember,
+        user_map: Dict[int, User],
+        db: Session = None,
+        namespace_map: Optional[dict[int, str]] = None,
     ) -> ResourceMemberResponse:
         """Convert ResourceMember model to response schema."""
         # Get user name and email from map
@@ -1469,10 +1559,13 @@ class UnifiedShareService(ABC):
         # Determine unified display_name based on member type
         display_name = None
         if member.entity_type and member.entity_type != "user":
-            # Entity-type member (namespace, etc.) — resolve via extensible method
-            if member.entity_id and db:
+            # Entity-type member — prefer persisted snapshot for unreliable
+            # types, then live lookup via _get_entity_display_name.
+            if member.entity_display_name:
+                display_name = member.entity_display_name
+            elif member.entity_id and db:
                 display_name = self._get_entity_display_name(
-                    db, member.entity_type, member.entity_id
+                    db, member.entity_type, member.entity_id, namespace_map
                 )
         elif user:
             # User-type member — use user name
@@ -1505,6 +1598,7 @@ class UnifiedShareService(ABC):
             status=member.status,
             entity_type=member.entity_type,
             entity_id=member.entity_id,
+            entity_display_name=member.entity_display_name,
             source_type=source_type,
             invited_by_user_id=member.invited_by_user_id,
             invited_by_user_name=invited_by_user_name,
@@ -1802,8 +1896,13 @@ class UnifiedShareService(ABC):
             MemberStatus.APPROVED.value.upper(),
         ]
 
-        entity_members = (
-            db.query(ResourceMember)
+        # Query entity bindings with their stored roles for precise checks
+        entity_rows = (
+            db.query(
+                ResourceMember.entity_type,
+                ResourceMember.entity_id,
+                ResourceMember.role,
+            )
             .filter(
                 ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
@@ -1815,28 +1914,32 @@ class UnifiedShareService(ABC):
             .all()
         )
 
-        if not entity_members:
+        if not entity_rows:
             return False
 
-        from app.services.share.external_entity_resolver import (
-            get_entity_resolver,
-        )
+        from collections import defaultdict
 
-        entity_groups: dict[str, list[str]] = {}
-        for em in entity_members:
-            et = em.entity_type
-            eid = em.entity_id
+        entity_groups: defaultdict[str, list[tuple[str, str]]] = defaultdict(list)
+        for et, eid, role in entity_rows:
             if et and eid:
-                entity_groups.setdefault(et, []).append(eid)
+                entity_groups[et].append((eid, role))
 
-        for entity_type_str, entity_ids in entity_groups.items():
+        for entity_type_str, entries in entity_groups.items():
             resolver = get_entity_resolver(entity_type_str)
-            if resolver:
-                matched_role = resolver.match_entity_bindings(
-                    db, user_id, entity_type_str, entity_ids
-                )
-                if matched_role and has_permission(matched_role, required_role):
-                    return True
+            if not resolver:
+                continue
+
+            eids = [eid for eid, _ in entries]
+            # Fast path: batch check if any entity matches
+            if not resolver.match_entity_bindings(db, user_id, entity_type_str, eids):
+                continue
+
+            # Precise check: verify each individual entity to avoid
+            # over-granting permissions from non-matched bindings.
+            for eid, role in entries:
+                if resolver.match_entity_bindings(db, user_id, entity_type_str, [eid]):
+                    if has_permission(role, required_role):
+                        return True
 
         return False
 

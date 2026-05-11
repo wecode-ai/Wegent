@@ -27,7 +27,7 @@ _ACCESSIBLE_COUNT_SQL = text(
     WHERE k.kind = 'Task'
     AND k.is_active = :is_active
     AND k.namespace != 'system'
-    AND (k.user_id = :user_id OR tm.id IS NOT NULL)
+    AND (k.user_id = :entity_id OR tm.id IS NOT NULL)
 """
 )
 
@@ -43,7 +43,7 @@ _ACCESSIBLE_IDS_SQL = text(
     WHERE k.kind = 'Task'
     AND k.is_active = :is_active
     AND k.namespace != 'system'
-    AND (k.user_id = :user_id OR tm.id IS NOT NULL)
+    AND (k.user_id = :entity_id OR tm.id IS NOT NULL)
     ORDER BY k.created_at DESC
     LIMIT :limit OFFSET :skip
 """
@@ -56,7 +56,7 @@ _OWNED_COUNT_SQL = text(
     WHERE k.kind = 'Task'
     AND k.is_active = :is_active
     AND k.namespace != 'system'
-    AND k.user_id = :user_id
+    AND k.user_id = :entity_id
 """
 )
 
@@ -67,7 +67,7 @@ _OWNED_IDS_SQL = text(
     WHERE k.kind = 'Task'
     AND k.is_active = :is_active
     AND k.namespace != 'system'
-    AND k.user_id = :user_id
+    AND k.user_id = :entity_id
     ORDER BY k.created_at DESC
     LIMIT :limit OFFSET :skip
 """
@@ -84,7 +84,7 @@ _OWNED_GROUP_CHAT_SQL = text(
     WHERE kind = 'Task'
     AND is_active = :is_active
     AND namespace != 'system'
-    AND user_id = :user_id
+    AND user_id = :entity_id
     AND is_group_chat = 1
 """
 )
@@ -136,7 +136,6 @@ def get_accessible_task_ids_and_total(
         db,
         _ACCESSIBLE_COUNT_SQL,
         {
-            "user_id": user_id,
             "entity_id": str(user_id),
             "is_active": TaskResource.STATE_ACTIVE,
         },
@@ -146,7 +145,6 @@ def get_accessible_task_ids_and_total(
         db,
         _ACCESSIBLE_IDS_SQL,
         {
-            "user_id": user_id,
             "entity_id": str(user_id),
             "is_active": TaskResource.STATE_ACTIVE,
             "limit": limit + extra_limit,
@@ -165,14 +163,14 @@ def get_owned_task_ids_and_total(
     total = _timed_scalar(
         db,
         _OWNED_COUNT_SQL,
-        {"user_id": user_id, "is_active": TaskResource.STATE_ACTIVE},
+        {"entity_id": str(user_id), "is_active": TaskResource.STATE_ACTIVE},
         "owned_total",
     )
     rows = _timed_rows(
         db,
         _OWNED_IDS_SQL,
         {
-            "user_id": user_id,
+            "entity_id": str(user_id),
             "is_active": TaskResource.STATE_ACTIVE,
             "limit": limit + extra_limit,
             "skip": skip,
@@ -196,7 +194,7 @@ def get_group_task_ids_for_accessible_user(db: Session, *, user_id: int) -> Set[
     owned_rows = _timed_rows(
         db,
         _OWNED_GROUP_CHAT_SQL,
-        {"user_id": user_id, "is_active": TaskResource.STATE_ACTIVE},
+        {"entity_id": str(user_id), "is_active": TaskResource.STATE_ACTIVE},
         "owned_group_chat",
     )
     owned_ids = {row[0] for row in owned_rows}
@@ -222,7 +220,7 @@ def get_group_task_ids_for_owned_tasks(db: Session, *, user_id: int) -> Set[int]
     rows = _timed_rows(
         db,
         _OWNED_GROUP_CHAT_SQL,
-        {"user_id": user_id, "is_active": TaskResource.STATE_ACTIVE},
+        {"entity_id": str(user_id), "is_active": TaskResource.STATE_ACTIVE},
         "owned_group_chat_only",
     )
     return {row[0] for row in rows}

@@ -86,7 +86,7 @@ class IExternalEntityResolver(ABC):
         entity_type: str,
         entity_ids: list[str],
         user_context: Optional[dict] = None,
-    ) -> Optional[str]:
+    ) -> bool:
         """Determine if a user matches any of the given entity bindings.
 
         Args:
@@ -97,9 +97,35 @@ class IExternalEntityResolver(ABC):
             user_context: Optional user profile data to avoid re-fetching
 
         Returns:
-            Role string (e.g., 'Reporter') if user matches, None otherwise
+            True if user matches any of the given entity bindings, False otherwise.
+            The actual permission role is stored on the ResourceMember record.
         """
         ...
+
+    @property
+    def requires_display_name_snapshot(self) -> bool:
+        """Return True if display names should be persisted as snapshots.
+
+        When False, the share service will prefer live resolver lookups over
+        persisted entity_display_name snapshots. Override to False for entity
+        types that are reliably resolvable from local data (e.g., namespace).
+        """
+        return True
+
+    def get_display_name(self, db: Session, entity_id: str) -> Optional[str]:
+        """Optional: resolve display name for entity-type members.
+
+        Called by share services when rendering member lists to resolve
+        human-readable names for entity-type members (e.g., department names).
+
+        Args:
+            db: Database session
+            entity_id: Entity identifier
+
+        Returns:
+            Display name string or None if not resolvable
+        """
+        return None
 
     @abstractmethod
     def get_resource_ids_by_entity(

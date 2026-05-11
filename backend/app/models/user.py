@@ -6,6 +6,7 @@
 User database model.
 
 Re-exported from shared package for backward compatibility.
+The User model is extended here with Backend-specific relationships.
 """
 
 from shared.models.db import User

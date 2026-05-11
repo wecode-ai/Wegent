@@ -18,6 +18,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.services.share.external_entity_resolver import IExternalEntityResolver
 
@@ -32,6 +33,24 @@ class NamespaceEntityResolver(IExternalEntityResolver):
     records with resource_type='Namespace' and entity_type='user'.
     """
 
+    @property
+    def requires_display_name_snapshot(self) -> bool:
+        """Namespace names are always resolvable from the local DB."""
+        return False
+
+    def get_display_name(self, db: Session, entity_id: str) -> Optional[str]:
+        """Resolve namespace display name from the Namespace table."""
+        if not entity_id:
+            return None
+        try:
+            ns_id = int(entity_id)
+        except (ValueError, TypeError):
+            return None
+        namespace = db.query(Namespace).filter(Namespace.id == ns_id).first()
+        if namespace:
+            return namespace.display_name or namespace.name
+        return None
+
     def match_entity_bindings(
         self,
         db: Session,
@@ -39,12 +58,12 @@ class NamespaceEntityResolver(IExternalEntityResolver):
         entity_type: str,
         entity_ids: list[str],
         user_context: Optional[dict] = None,
-    ) -> Optional[str]:
+    ) -> bool:
         if entity_type != "namespace":
-            return None
+            return False
 
         if not entity_ids:
-            return None
+            return False
 
         # Convert entity_ids to int for namespace ID comparison
         namespace_ids = []
@@ -55,29 +74,28 @@ class NamespaceEntityResolver(IExternalEntityResolver):
                 continue
 
         if not namespace_ids:
-            return None
+            return False
 
-        # Check if user is a member of any of the specified namespaces
-        membership = (
-            db.query(ResourceMember)
-            .filter(
+        # Use sqlalchemy.exists() for efficient existence check
+        from sqlalchemy import exists
+
+        is_member = db.query(
+            exists().where(
                 ResourceMember.resource_type == "Namespace",
                 ResourceMember.resource_id.in_(namespace_ids),
                 ResourceMember.entity_type == "user",
                 ResourceMember.entity_id == str(user_id),
                 ResourceMember.status == MemberStatus.APPROVED.value,
             )
-            .first()
-        )
+        ).scalar()
 
-        if membership:
+        if is_member:
             logger.info(
-                f"User user_id={user_id} matched namespace "
-                f"namespace_id={membership.resource_id} via NamespaceEntityResolver"
+                f"User user_id={user_id} matched one of namespaces "
+                f"{namespace_ids} via NamespaceEntityResolver"
             )
-            return membership.get_effective_role() or "Reporter"
 
-        return None
+        return bool(is_member)
 
     def get_resource_ids_by_entity(
         self,
