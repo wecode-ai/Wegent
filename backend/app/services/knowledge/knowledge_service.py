@@ -1924,9 +1924,10 @@ class KnowledgeService:
         shared_group_names = list(
             dict.fromkeys(kb.namespace for kb in shared_group_kbs)
         )
-        grouped_namespace_names = list(
-            dict.fromkeys(accessible_groups + shared_group_names)
-        )
+        # grouped_namespace_names only includes accessible groups for the groups
+        # section. shared_group_names is excluded to prevent non-accessible groups
+        # from appearing in the sidebar — those KBs go to shared_with_me instead.
+        grouped_namespace_names = list(dict.fromkeys(accessible_groups))
 
         # 4. Get ALL group knowledge bases in ONE query (key optimization)
         group_kbs: list[Kind] = []
@@ -2106,13 +2107,18 @@ class KnowledgeService:
         )
         document_counts = KnowledgeService.get_active_document_counts(db, all_kb_ids)
 
-        # 7. Batch fetch namespace display names for groups
+        # 7. Batch fetch namespace display names for groups.
+        # Include shared_group_names so shared_with_me can show proper display
+        # names for source_group, even for groups the user does not belong to.
         namespace_display_names = {}
-        if grouped_namespace_names:
+        display_name_namespace_names = list(
+            dict.fromkeys(accessible_groups + shared_group_names)
+        )
+        if display_name_namespace_names:
             namespaces = (
                 db.query(Namespace)
                 .filter(
-                    Namespace.name.in_(grouped_namespace_names),
+                    Namespace.name.in_(display_name_namespace_names),
                     Namespace.is_active == True,
                 )
                 .all()
