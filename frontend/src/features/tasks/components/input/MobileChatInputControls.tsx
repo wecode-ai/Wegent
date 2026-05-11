@@ -284,7 +284,7 @@ export function MobileChatInputControls({
 
   return (
     <div
-      className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-2 pt-1'}`}
+      className={`flex items-center px-3 gap-2 min-w-0 overflow-hidden ${shouldHideChatInput ? 'py-3' : 'pb-2 pt-1'}`}
     >
       {/* Left: secondary actions menu - hidden when hideSelectors is true */}
       {!isVoiceMode && (
@@ -386,13 +386,13 @@ export function MobileChatInputControls({
         </div>
       )}
 
-      {/* Right: Model selector, Voice button, Send button */}
+      {/* Right: Agent selector, Model selector, Voice button, Send button */}
       <div
-        className={`flex items-center gap-2 min-w-0 overflow-hidden ${isVoiceMode ? 'w-full flex-1' : 'ml-auto flex-shrink-0'}`}
+        className={`ml-auto flex flex-1 items-center justify-end gap-2 min-w-0 overflow-hidden ${isVoiceMode ? 'w-full flex-1' : 'ml-auto flex-shrink-0'}`}
       >
         {!isVoiceMode && canSwitchTeam && selectedTeamForDisplay && onTeamChange && (
           <div
-            className={`min-w-0 overflow-hidden ${hideSelectors ? 'opacity-50 pointer-events-none' : ''}`}
+            className={`flex-1 min-w-0 overflow-hidden ${hideSelectors ? 'opacity-50 pointer-events-none' : ''}`}
           >
             <MobileTeamSelector
               selectedTeam={selectedTeamForDisplay}
@@ -406,7 +406,7 @@ export function MobileChatInputControls({
         )}
         {!isVoiceMode && selectedTeam && (
           <div
-            className={`min-w-0 max-w-[112px] overflow-hidden ${shouldHideSideControls ? 'opacity-50 pointer-events-none' : ''}`}
+            className={`flex-1 min-w-0 max-w-[112px] overflow-hidden ${shouldHideSideControls ? 'opacity-50 pointer-events-none' : ''}`}
           >
             <MobileModelSelector
               selectedModel={selectedModel}
