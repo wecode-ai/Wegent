@@ -508,6 +508,21 @@ class KnowledgeBaseWithGroupInfo(BaseModel):
         None,
         description="Source group name for entity-authorized shared KBs, e.g., '来自 XX 群组'",
     )
+    # Share source user name for shared KBs
+    shared_from: Optional[str] = Field(
+        None,
+        description="Share source user name for shared KBs",
+    )
+    # Multiple share source user names for multi-source shared KBs in All mode
+    shared_from_users: Optional[list[str]] = Field(
+        None,
+        description="Multiple share source user names for multi-source shared KBs in All mode",
+    )
+    # Share via: 'user' | 'namespace' | 'org_department' etc.
+    shared_via: Optional[str] = Field(
+        None,
+        description="Share via: 'user' | 'namespace' | 'org_department' etc.",
+    )
 
 
 class AllGroupedPersonal(BaseModel):

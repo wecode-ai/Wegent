@@ -329,7 +329,11 @@ export function KnowledgeGroupListPage({
   }
 
   // Render table header
-  const renderTableHeader = (showGroupColumn: boolean) => (
+  const renderTableHeader = (
+    showGroupColumn: boolean,
+    showFromColumn: boolean,
+    groupColumnTitle?: string
+  ) => (
     <thead className="sticky top-0 bg-surface border-b border-border">
       <tr className="text-left text-sm text-text-secondary">
         <th className="px-6 py-3 font-medium w-[35%]">
@@ -347,10 +351,13 @@ export function KnowledgeGroupListPage({
               className="flex items-center hover:text-text-primary transition-colors"
               onClick={() => handleSort('group')}
             >
-              {t('document.table.group', '归属小组')}
+              {groupColumnTitle || t('document.table.group', '归属小组')}
               <SortIcon column="group" />
             </button>
           </th>
+        )}
+        {showFromColumn && (
+          <th className="px-6 py-3 font-medium w-[15%]">{t('document.table.from', '来自')}</th>
         )}
         <th className="px-6 py-3 font-medium w-[15%]">{t('document.table.permission', '权限')}</th>
         <th className="px-6 py-3 font-medium w-[15%]">
@@ -370,7 +377,11 @@ export function KnowledgeGroupListPage({
   )
 
   // Render table rows
-  const renderTableRows = (kbs: KbDataItem[], showGroupColumn: boolean) => (
+  const renderTableRows = (
+    kbs: KbDataItem[],
+    showGroupColumn: boolean,
+    showFromColumn: boolean
+  ) => (
     <tbody>
       {kbs.map(kb => (
         <KnowledgeBaseRow
@@ -383,6 +394,7 @@ export function KnowledgeGroupListPage({
           onToggleFavorite={onToggleFavorite ? e => handleToggleFavorite(e, kb) : undefined}
           isFavorite={isFavorite?.(kb.id)}
           showGroupInfo={showGroupColumn}
+          showFromInfo={showFromColumn}
           groupInfo={getKbGroupInfo?.(kb)}
           canMigrate={canMigrate?.(kb)}
           tFunc={t}
@@ -420,8 +432,8 @@ export function KnowledgeGroupListPage({
           </h3>
           {hasCreated ? (
             <table className="w-full table-fixed min-w-0">
-              {renderTableHeader(false)}
-              {renderTableRows(sortedCreatedByMe, false)}
+              {renderTableHeader(false, false)}
+              {renderTableRows(sortedCreatedByMe, false, false)}
             </table>
           ) : (
             <div className="px-6 py-8 text-center text-text-muted">
@@ -441,8 +453,8 @@ export function KnowledgeGroupListPage({
           </h3>
           {hasShared ? (
             <table className="w-full table-fixed min-w-0">
-              {renderTableHeader(true)}
-              {renderTableRows(sortedSharedWithMe, true)}
+              {renderTableHeader(true, true, t('document.table.belongsTo', '归属'))}
+              {renderTableRows(sortedSharedWithMe, true, true)}
             </table>
           ) : (
             <div className="px-6 py-8 text-center text-text-muted">
@@ -516,8 +528,8 @@ export function KnowledgeGroupListPage({
           </div>
         ) : (
           <table className="w-full table-fixed min-w-0">
-            {renderTableHeader(isAllMode)}
-            {renderTableRows(filteredKbs, isAllMode)}
+            {renderTableHeader(isAllMode, !isPersonalMode)}
+            {renderTableRows(filteredKbs, isAllMode, !isPersonalMode)}
           </table>
         )}
       </div>
@@ -535,6 +547,7 @@ interface KnowledgeBaseRowProps {
   onToggleFavorite?: (e: React.MouseEvent) => void
   isFavorite?: boolean
   showGroupInfo?: boolean
+  showFromInfo?: boolean
   groupInfo?: KbGroupInfo
   canMigrate?: boolean
   tFunc: ReturnType<typeof useTranslation>['t']
@@ -549,6 +562,7 @@ function KnowledgeBaseRow({
   onToggleFavorite: _onToggleFavorite,
   isFavorite,
   showGroupInfo,
+  showFromInfo,
   groupInfo,
   canMigrate,
   tFunc,
@@ -572,6 +586,17 @@ function KnowledgeBaseRow({
       {showGroupInfo && (
         <td className="px-6 py-3 text-text-secondary overflow-hidden">
           <span className="truncate block">{groupInfo ? groupInfo.groupName : '--'}</span>
+        </td>
+      )}
+
+      {/* From column - shows who shared the KB */}
+      {showFromInfo && (
+        <td className="px-6 py-3 text-text-secondary overflow-hidden">
+          <span className="truncate block">
+            {'shared_from_users' in kb && kb.shared_from_users && kb.shared_from_users.length > 0
+              ? kb.shared_from_users.join(', ')
+              : ('shared_from' in kb && kb.shared_from) || '--'}
+          </span>
         </td>
       )}
 

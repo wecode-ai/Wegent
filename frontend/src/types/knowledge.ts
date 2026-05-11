@@ -761,6 +761,12 @@ export interface KnowledgeBaseWithGroupInfo {
   my_role?: MemberRole | null
   /** Source group name for entity-authorized shared KBs */
   source_group?: string | null
+  /** Share source user name for shared KBs */
+  shared_from?: string | null
+  /** Multiple share source user names for multi-source shared KBs in All mode */
+  shared_from_users?: string[]
+  /** Share via: 'user' | 'namespace' | 'org_department' etc. */
+  shared_via?: string
 }
 
 /** Personal knowledge bases in all-grouped response */

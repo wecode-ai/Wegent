@@ -111,6 +111,8 @@
     "table": {
       "name": "名称",
       "group": "归属小组",
+      "belongsTo": "归属",
+      "from": "来自",
       "permission": "权限",
       "lastAccess": "最近访问",
       "actions": "操作",

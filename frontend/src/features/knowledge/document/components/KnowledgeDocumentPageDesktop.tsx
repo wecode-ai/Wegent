@@ -43,6 +43,7 @@ import type {
   KnowledgeBaseCreate,
   KnowledgeBaseType,
   KnowledgeBaseUpdate,
+  KnowledgeBaseWithGroupInfo,
   SummaryModelRef,
 } from '@/types/knowledge'
 import type { DefaultTeamsResponse, Team } from '@/types/api'
@@ -798,6 +799,33 @@ export function KnowledgeDocumentPageDesktop({
     return availableGroupsForCreate.some(group => group.type === 'group' && group.canCreate)
   }, [availableGroupsForCreate])
 
+  // Merge shared_from for All mode (dedupe by id and merge shared_from into shared_from_users)
+  const allModeKbsWithInfo = useMemo((): KnowledgeBaseWithGroupInfo[] => {
+    const map = new Map<number, KnowledgeBaseWithGroupInfo>()
+    const sharedFromUsers = new Map<number, Set<string>>()
+
+    for (const kb of sidebar.allKnowledgeBasesWithGroupInfo) {
+      if (!map.has(kb.id)) {
+        map.set(kb.id, { ...kb })
+      }
+      if (kb.shared_from) {
+        if (!sharedFromUsers.has(kb.id)) {
+          sharedFromUsers.set(kb.id, new Set())
+        }
+        sharedFromUsers.get(kb.id)!.add(kb.shared_from)
+      }
+    }
+
+    for (const [kbId, users] of sharedFromUsers) {
+      const kb = map.get(kbId)
+      if (kb && users.size > 0) {
+        kb.shared_from_users = Array.from(users)
+      }
+    }
+
+    return Array.from(map.values())
+  }, [sidebar.allKnowledgeBasesWithGroupInfo])
+
   // Get group info for the selected KB
   const selectedKbGroupInfo = sidebar.selectedKb
     ? sidebar.getKbGroupInfo(sidebar.selectedKb)
@@ -897,7 +925,7 @@ export function KnowledgeDocumentPageDesktop({
           groupId={null}
           groupName={t('document.allKnowledgeBases', '全部知识库')}
           knowledgeBases={sidebar.allKnowledgeBases}
-          knowledgeBasesWithGroupInfo={sidebar.allKnowledgeBasesWithGroupInfo}
+          knowledgeBasesWithGroupInfo={allModeKbsWithInfo}
           isLoading={sidebar.isGroupsLoading}
           onSelectKb={handleSelectKb}
           onCreateKb={handleCreateKbFromAll}
@@ -929,14 +957,13 @@ export function KnowledgeDocumentPageDesktop({
       // Filter KBs with group info for this specific group to get my_role
       const groupKbsWithInfo = sidebar.allKnowledgeBasesWithGroupInfo.filter(kb => {
         if (selectedGroup.type === 'personal') {
-          return kb.group_type === 'personal'
+          return kb.group_type === 'personal' || kb.group_type === 'personal-shared'
         } else if (selectedGroup.type === 'organization') {
           return kb.group_type === 'organization'
         } else {
-          // For team groups, match by namespace (group_id contains the namespace)
+          // For team groups, match by group_id (target group for shared KBs)
           // selectedGroup.name is the namespace (e.g., "test/group2/ttt")
-          // kb.namespace is also the namespace
-          return kb.group_type === 'group' && kb.namespace === selectedGroup.name
+          return kb.group_type === 'group' && kb.group_id === selectedGroup.name
         }
       })
 

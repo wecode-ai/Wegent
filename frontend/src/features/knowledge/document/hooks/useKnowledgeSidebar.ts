@@ -239,18 +239,27 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
       ...allGroupedData.organization.knowledge_bases,
     ]
 
-    // Remove duplicates by ID
-    const seen = new Set<number>()
+    // Remove duplicates by (id, group_id) so the same KB can appear in different groups
+    const seen = new Set<string>()
     return all.filter(kb => {
-      if (seen.has(kb.id)) return false
-      seen.add(kb.id)
+      const key = `${kb.id}-${kb.group_id}`
+      if (seen.has(key)) return false
+      seen.add(key)
       return true
     })
   }, [allGroupedData])
 
   // Build all knowledge bases list for search (without group info)
   const allKnowledgeBases = useMemo((): KnowledgeBase[] => {
-    return allKnowledgeBasesWithGroupInfo.map(toKnowledgeBase)
+    // Dedupe by id for search/recent items
+    const seen = new Set<number>()
+    return allKnowledgeBasesWithGroupInfo
+      .filter(kb => {
+        if (seen.has(kb.id)) return false
+        seen.add(kb.id)
+        return true
+      })
+      .map(toKnowledgeBase)
   }, [allKnowledgeBasesWithGroupInfo])
 
   // Build a map from KB ID to group info for quick lookup
