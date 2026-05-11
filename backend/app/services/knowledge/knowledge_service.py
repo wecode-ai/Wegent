@@ -2132,7 +2132,13 @@ class KnowledgeService:
         # Build groups section - group KBs by namespace in memory
         groups_map: dict[str, list[Kind]] = {}
         for kb in group_kbs:
-            groups_map.setdefault(kb.namespace, []).append(kb)
+            # Entity-authorized personal KBs (namespace='default') should appear
+            # under their target group, not under 'default'
+            if kb.namespace == "default" and kb.id in entity_member_group_map:
+                target_group = entity_member_group_map[kb.id]
+                groups_map.setdefault(target_group, []).append(kb)
+            else:
+                groups_map.setdefault(kb.namespace, []).append(kb)
 
         # Build groups list - include ALL accessible groups, even those without KBs
         # For group KBs, use the user's role in that group
