@@ -23,6 +23,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
 from app.models.share_link import ResourceType, ShareLink
 from app.models.user import User
@@ -808,7 +809,7 @@ class UnifiedShareService(ABC):
         users = db.query(User).filter(User.id.in_(user_ids)).all()
         user_map = {u.id: u for u in users}
 
-        member_responses = [self._member_to_response(m, user_map) for m in members]
+        member_responses = [self._member_to_response(m, user_map, db=db) for m in members]
 
         return MemberListResponse(members=member_responses, total=len(member_responses))
 
@@ -994,7 +995,7 @@ class UnifiedShareService(ABC):
         user_map = {u.id: u for u in users}
         logger.info(f"[add_member] User map created with {len(user_map)} users")
 
-        return self._member_to_response(member, user_map)
+        return self._member_to_response(member, user_map, db=db)
 
     @trace_sync(
         span_name="share.batch_add_members",
@@ -1188,7 +1189,7 @@ class UnifiedShareService(ABC):
         user_map = {u.id: u for u in all_users}
 
         return BatchResourceMemberResponse(
-            succeeded=[self._member_to_response(m, user_map) for m in succeeded],
+            succeeded=[self._member_to_response(m, user_map, db=db) for m in succeeded],
             failed=failed,
         )
 
@@ -1251,7 +1252,7 @@ class UnifiedShareService(ABC):
         users = db.query(User).filter(User.id.in_(user_ids)).all()
         user_map = {u.id: u for u in users}
 
-        return self._member_to_response(member, user_map)
+        return self._member_to_response(member, user_map, db=db)
 
     def remove_member(
         self,
@@ -1302,13 +1303,24 @@ class UnifiedShareService(ABC):
         return True
 
     def _member_to_response(
-        self, member: ResourceMember, user_map: Dict[int, User]
+        self, member: ResourceMember, user_map: Dict[int, User], db: Session = None
     ) -> ResourceMemberResponse:
         """Convert ResourceMember model to response schema."""
         # Get user name and email from map
         user = user_map.get(member.user_id)
         user_name = user.user_name if user else None
         user_email = user.email if user else None
+
+        # For namespace-type members, populate display_name from Namespace table
+        if member.entity_type == 'namespace' and member.entity_id and db and not user_name:
+            try:
+                namespace = db.query(Namespace).filter(
+                    Namespace.id == int(member.entity_id)
+                ).first()
+                if namespace:
+                    user_name = namespace.display_name or namespace.name
+            except (ValueError, TypeError):
+                pass
 
         # Get invited by user name
         invited_by_user = user_map.get(member.invited_by_user_id)

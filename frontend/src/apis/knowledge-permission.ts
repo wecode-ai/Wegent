@@ -126,12 +126,12 @@ export const knowledgePermissionApi = {
       (acc, m) => {
         const role = (m.role as MemberRole) || 'Reporter'
         if (!acc[role]) acc[role] = []
-        // For entity-type members (e.g., departments), use entity_id as display name
+        // For entity-type members, backend now populates user_name with display name
         const isEntity = m.entity_type && m.entity_type !== 'user'
         const member = {
           id: m.id,
           user_id: m.user_id,
-          username: isEntity ? (m.entity_id || '') : (m.user_name || ''),
+          username: m.user_name || (isEntity ? (m.entity_id || '') : ''),
           email: isEntity ? '' : (m.user_email || ''),
           role: role,
           requested_at: m.requested_at,
