@@ -9,6 +9,8 @@ import { QuickAccessCards } from '@/features/tasks/components/chat/QuickAccessCa
 import { userApis } from '@/apis/user'
 import type { Team } from '@/types/api'
 
+const mockRefresh = jest.fn()
+
 jest.mock('next/navigation', () => ({
   useRouter: () => ({
     push: jest.fn(),
@@ -23,8 +25,32 @@ jest.mock('@/hooks/useTranslation', () => ({
 
 jest.mock('@/apis/user', () => ({
   userApis: {
+    getCurrentUser: jest.fn(),
+    updateUser: jest.fn(),
     getQuickAccess: jest.fn(),
   },
+}))
+
+jest.mock('@/features/common/UserContext', () => ({
+  useUser: () => ({
+    user: {
+      id: 1,
+      user_name: 'test-user',
+      email: 'test@example.com',
+      is_active: true,
+      created_at: '2026-05-11T00:00:00Z',
+      updated_at: '2026-05-11T00:00:00Z',
+      git_info: [],
+      preferences: {
+        send_key: 'enter',
+        quick_access: {
+          version: 1,
+          teams: [],
+        },
+      },
+    },
+    refresh: mockRefresh,
+  }),
 }))
 
 jest.mock('@/components/ui/popover', () => ({
@@ -67,9 +93,16 @@ function createTeam(id: number, name = `Agent ${id}`): Team {
 describe('team selector popover width', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    ;(userApis.getQuickAccess as jest.Mock).mockResolvedValue({
+      system_version: 1,
+      user_version: 1,
+      show_system_recommended: false,
+      system_team_ids: [],
+      teams: [],
+    })
   })
 
-  it('uses a wider popover for the input toolbar agent list', () => {
+  it('uses a wider popover for the input toolbar agent list', async () => {
     const teams = [createTeam(1)]
 
     render(
@@ -82,6 +115,9 @@ describe('team selector popover width', () => {
       />
     )
 
+    await waitFor(() => {
+      expect(userApis.getQuickAccess).toHaveBeenCalled()
+    })
     expect(screen.getByTestId('team-selector-popover-content')).toHaveClass('w-[360px]')
     expect(screen.getByTestId('team-selector-popover-content')).toHaveClass(
       'max-w-[calc(100vw-2rem)]'
@@ -89,13 +125,20 @@ describe('team selector popover width', () => {
   })
 
   it('uses a wider popover for the quick access more agent list', async () => {
+    const teams = Array.from({ length: 5 }, (_, index) => createTeam(index + 1))
     ;(userApis.getQuickAccess as jest.Mock).mockResolvedValue({
       system_version: 1,
       user_version: null,
       show_system_recommended: false,
-      teams: [],
+      system_team_ids: [],
+      teams: teams.map(team => ({
+        id: team.id,
+        name: team.name,
+        display_name: team.name,
+        is_system: false,
+        recommended_mode: 'chat',
+      })),
     })
-    const teams = Array.from({ length: 5 }, (_, index) => createTeam(index + 1))
 
     render(
       <QuickAccessCards

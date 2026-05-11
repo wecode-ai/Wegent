@@ -318,6 +318,12 @@
     "tip_en_placeholder": "请输入英文提示内容",
     "delete_tip_title": "删除提示",
     "delete_tip_message": "确定要删除此提示吗？此操作无法撤销。",
+    "quick_access_title": "首页推荐智能体",
+    "quick_access_description": "选择首页 QuickCard 展示的系统内置智能体，右侧顺序即展示顺序。",
+    "quick_access_available": "可选智能体",
+    "quick_access_selected": "首页智能体",
+    "quick_access_name": "名称",
+    "quick_access_version": "首页智能体版本",
     "version": "版本",
     "success": {
       "updated": "配置更新成功"

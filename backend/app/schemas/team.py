@@ -43,6 +43,7 @@ class TeamBase(BaseModel):
     """Team base model"""
 
     name: str
+    displayName: Optional[str] = None  # Human-readable display name
     description: Optional[str] = None  # Team description
     bots: List[BotInfo]
     workflow: Optional[dict[str, Any]] = None
@@ -66,6 +67,7 @@ class TeamUpdate(BaseModel):
     """Team update model"""
 
     name: Optional[str] = None
+    displayName: Optional[str] = None  # Human-readable display name
     description: Optional[str] = None  # Team description
     bots: Optional[List[BotInfo]] = None
     workflow: Optional[dict[str, Any]] = None
@@ -103,6 +105,7 @@ class TeamDetail(BaseModel):
 
     id: int
     name: str
+    displayName: Optional[str] = None  # Human-readable display name
     description: Optional[str] = None  # Team description
     bots: List[BotDetailInfo]
     workflow: Optional[dict[str, Any]] = None
