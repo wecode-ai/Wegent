@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import type { MobileChatInputControlsProps } from '@/features/tasks/components/input/MobileChatInputControls'
 import { MobileChatInputControls } from '@/features/tasks/components/input/MobileChatInputControls'
 import type { Team } from '@/types/api'
@@ -72,12 +72,14 @@ jest.mock('@/components/ui/button', () => ({
     children,
     className,
     disabled,
+    ...props
   }: {
     children: React.ReactNode
     className?: string
     disabled?: boolean
+    [key: string]: unknown
   }) => (
-    <button type="button" className={className} disabled={disabled}>
+    <button type="button" className={className} disabled={disabled} {...props}>
       {children}
     </button>
   ),
@@ -146,8 +148,10 @@ const buildProps = (): MobileChatInputControlsProps => ({
 })
 
 describe('MobileChatInputControls layout', () => {
-  it('keeps the send button inside the input controls when the model label is long', () => {
+  it('keeps long selector labels clipped without clipping the overflow menu', () => {
     render(<MobileChatInputControls {...buildProps()} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
 
     const sendSlot = screen.getByTestId('send-button').parentElement
     const rightControls = sendSlot?.parentElement
@@ -155,13 +159,15 @@ describe('MobileChatInputControls layout', () => {
     const root = rightControls?.parentElement
 
     expect(root).toHaveClass('min-w-0')
-    expect(root).toHaveClass('overflow-hidden')
+    expect(root).not.toHaveClass('overflow-hidden')
     expect(rightControls).toHaveClass('flex-1')
     expect(rightControls).toHaveClass('min-w-0')
+    expect(rightControls).toHaveClass('overflow-hidden')
     expect(rightControls).toHaveClass('justify-end')
     expect(modelSlot).toHaveClass('flex-1')
     expect(modelSlot).toHaveClass('min-w-0')
     expect(modelSlot).toHaveClass('overflow-hidden')
     expect(sendSlot).toHaveClass('flex-shrink-0')
+    expect(screen.getByText('Attach')).toBeInTheDocument()
   })
 })
