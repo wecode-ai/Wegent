@@ -37,9 +37,9 @@ from app.schemas.share import (
 from app.schemas.share import MemberStatus as SchemaMemberStatus
 from app.schemas.share import (
     MyPermissionSourcesResponse,
-    PermissionSourceInfo,
     PendingRequestListResponse,
     PendingRequestResponse,
+    PermissionSourceInfo,
     ResourceMemberResponse,
     ReviewRequestResponse,
     ShareInfoResponse,
@@ -811,7 +811,9 @@ class UnifiedShareService(ABC):
         users = db.query(User).filter(User.id.in_(user_ids)).all()
         user_map = {u.id: u for u in users}
 
-        member_responses = [self._member_to_response(m, user_map, db=db) for m in members]
+        member_responses = [
+            self._member_to_response(m, user_map, db=db) for m in members
+        ]
 
         return MemberListResponse(members=member_responses, total=len(member_responses))
 
@@ -1081,23 +1083,31 @@ class UnifiedShareService(ABC):
         # Batch-query all target users for user-type members
         target_user_ids = [uid for uid, _ in user_member_entries]
         target_users = (
-            db.query(User)
-            .filter(User.id.in_(target_user_ids), User.is_active.is_(True))
-            .all()
-        ) if target_user_ids else []
+            (
+                db.query(User)
+                .filter(User.id.in_(target_user_ids), User.is_active.is_(True))
+                .all()
+            )
+            if target_user_ids
+            else []
+        )
         valid_user_map = {u.id: u for u in target_users}
 
         # Query existing user-type members
         user_existing_members = (
-            db.query(ResourceMember)
-            .filter(
-                ResourceMember.resource_type.in_(resource_type_variants),
-                ResourceMember.resource_id == resource_id,
-                ResourceMember.entity_type == "user",
-                ResourceMember.entity_id.in_([str(uid) for uid in target_user_ids]),
+            (
+                db.query(ResourceMember)
+                .filter(
+                    ResourceMember.resource_type.in_(resource_type_variants),
+                    ResourceMember.resource_id == resource_id,
+                    ResourceMember.entity_type == "user",
+                    ResourceMember.entity_id.in_([str(uid) for uid in target_user_ids]),
+                )
+                .all()
             )
-            .all()
-        ) if target_user_ids else []
+            if target_user_ids
+            else []
+        )
         user_existing_map = {m.user_id: m for m in user_existing_members}
 
         # Query existing entity-type members
@@ -1414,11 +1424,11 @@ class UnifiedShareService(ABC):
             'entity_permission' — group/entity was authorized
             'share_link' — user joined via share link
         """
-        if member.entity_type and member.entity_type != 'user':
-            return 'entity_permission'
+        if member.entity_type and member.entity_type != "user":
+            return "entity_permission"
         if member.share_link_id and member.share_link_id > 0:
-            return 'share_link'
-        return 'direct'
+            return "share_link"
+        return "direct"
 
     def _get_entity_display_name(
         self, db: Session, entity_type: str, entity_id: str
@@ -1437,11 +1447,11 @@ class UnifiedShareService(ABC):
         Returns:
             Display name string or None if not resolvable
         """
-        if entity_type == 'namespace':
+        if entity_type == "namespace":
             try:
-                namespace = db.query(Namespace).filter(
-                    Namespace.id == int(entity_id)
-                ).first()
+                namespace = (
+                    db.query(Namespace).filter(Namespace.id == int(entity_id)).first()
+                )
                 if namespace:
                     return namespace.display_name or namespace.name
             except (ValueError, TypeError):
@@ -1458,7 +1468,7 @@ class UnifiedShareService(ABC):
 
         # Determine unified display_name based on member type
         display_name = None
-        if member.entity_type and member.entity_type != 'user':
+        if member.entity_type and member.entity_type != "user":
             # Entity-type member (namespace, etc.) — resolve via extensible method
             if member.entity_id and db:
                 display_name = self._get_entity_display_name(
@@ -1797,7 +1807,7 @@ class UnifiedShareService(ABC):
             .filter(
                 ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
-                ResourceMember.entity_type.notin_(["user", None]),
+                ResourceMember.entity_type != "user",
                 ResourceMember.entity_type != "",
                 ResourceMember.entity_id.isnot(None),
                 ResourceMember.status.in_(approved_status_variants),

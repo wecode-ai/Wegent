@@ -208,7 +208,7 @@ class KnowledgeShareService(UnifiedShareService):
             .filter(
                 ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
                 ResourceMember.resource_id == resource_id,
-                ResourceMember.entity_type.notin_(["user", None]),
+                ResourceMember.entity_type != "user",
                 ResourceMember.entity_type != "",
                 ResourceMember.entity_id.isnot(None),
                 ResourceMember.status == MemberStatus.APPROVED.value,
@@ -415,7 +415,7 @@ class KnowledgeShareService(UnifiedShareService):
             .filter(
                 ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
                 ResourceMember.resource_id == knowledge_base_id,
-                ResourceMember.entity_type.notin_(["user", None]),
+                ResourceMember.entity_type != "user",
                 ResourceMember.entity_type != "",
                 ResourceMember.entity_id.isnot(None),
                 ResourceMember.status == MemberStatus.APPROVED.value,
@@ -966,7 +966,7 @@ class KnowledgeShareService(UnifiedShareService):
             .filter(
                 ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
-                ResourceMember.entity_type.notin_(["user", None]),
+                ResourceMember.entity_type != "user",
                 ResourceMember.entity_type != "",
                 ResourceMember.entity_id.isnot(None),
                 ResourceMember.status.in_(approved_status_variants),
@@ -1028,9 +1028,7 @@ class KnowledgeShareService(UnifiedShareService):
                 }
                 mapped_role = role_mapping.get(group_role, BaseRole.Reporter.value)
                 group = (
-                    db.query(Namespace)
-                    .filter(Namespace.name == kb.namespace)
-                    .first()
+                    db.query(Namespace).filter(Namespace.name == kb.namespace).first()
                 )
                 sources.append(
                     PermissionSourceInfo(
@@ -1045,9 +1043,7 @@ class KnowledgeShareService(UnifiedShareService):
 
         # 5. Group chat binding (for personal KBs)
         if kb.namespace == "default":
-            bound_count = self._is_kb_bound_to_user_group_chat(
-                db, resource_id, user_id
-            )
+            bound_count = self._is_kb_bound_to_user_group_chat(db, resource_id, user_id)
             # (This is implicit access via group chat membership;
             #  we only add it if no other source is found)
 
