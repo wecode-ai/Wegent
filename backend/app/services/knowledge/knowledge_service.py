@@ -459,6 +459,23 @@ class KnowledgeService:
                         .all()
                     )
                     entity_kb_ids = {em[0] for em in entity_members}
+
+            # Extend with registered external entity types (e.g., org_department)
+            from app.services.share.external_entity_resolver import (
+                get_all_entity_types,
+                get_entity_resolver,
+            )
+
+            for entity_type_str in get_all_entity_types():
+                if entity_type_str in ("namespace", "user"):
+                    continue
+                resolver = get_entity_resolver(entity_type_str)
+                if not resolver:
+                    continue
+                resolved_ids = resolver.get_resource_ids_by_entity(
+                    db, user_id, entity_type_str
+                )
+                entity_kb_ids.update(resolved_ids)
             shared_kb_ids = list(set(shared_kb_ids) | entity_kb_ids)
 
             # Get organization-level namespace names
@@ -1925,8 +1942,16 @@ class KnowledgeService:
                 .all()
             )
         group_kb_map = {kb.id: kb for kb in group_kbs}
+        # Only add shared group KBs to the groups section if the user has access
+        # to the namespace. KBs from namespaces the user does not belong to should
+        # appear in shared_with_me instead (they're accessed via direct share,
+        # not group membership).
+        remaining_shared_group_kbs: list[Kind] = []
         for kb in shared_group_kbs:
-            group_kb_map[kb.id] = kb
+            if kb.namespace in accessible_groups:
+                group_kb_map[kb.id] = kb
+            else:
+                remaining_shared_group_kbs.append(kb)
 
         # 4b. Get entity-authorized KBs — KBs with ResourceMember entity_type='namespace'
         # where the namespace matches a group the user belongs to
@@ -1945,29 +1970,63 @@ class KnowledgeService:
             )
             namespace_name_to_id = {ns.name: ns.id for ns in group_namespaces}
 
-            entity_members = (
+            # Process "namespace" entity type — efficient pre-filtered query
+            if namespace_name_to_id:
+                entity_members = (
+                    db.query(ResourceMember)
+                    .filter(
+                        ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                        ResourceMember.entity_type == "namespace",
+                        ResourceMember.entity_id.in_(
+                            [str(ns_id) for ns_id in namespace_name_to_id.values()]
+                        ),
+                        ResourceMember.status == MemberStatus.APPROVED.value,
+                    )
+                    .all()
+                )
+
+                for em in entity_members:
+                    kb_id = em.resource_id
+                    entity_members_kb_ids.add(kb_id)
+                    ns_id = int(em.entity_id) if em.entity_id else 0
+                    # Find which group this namespace ID belongs to
+                    for ns_name, nid in namespace_name_to_id.items():
+                        if nid == ns_id:
+                            entity_member_group_map[kb_id] = ns_name
+                            break
+                    entity_member_role_map[kb_id] = em.get_effective_role()
+
+        # Process registered external entity types (e.g., org_department)
+        from app.services.share.external_entity_resolver import (
+            get_all_entity_types,
+            get_entity_resolver,
+        )
+
+        for entity_type_str in get_all_entity_types():
+            if entity_type_str in ("namespace", "user"):
+                continue  # namespace already handled above
+            resolver = get_entity_resolver(entity_type_str)
+            if not resolver:
+                continue
+            resolved_kb_ids = resolver.get_resource_ids_by_entity(
+                db, user_id, entity_type_str
+            )
+            if not resolved_kb_ids:
+                continue
+            entity_type_members = (
                 db.query(ResourceMember)
                 .filter(
                     ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
-                    ResourceMember.entity_type == "namespace",
-                    ResourceMember.entity_id.in_(
-                        [str(ns_id) for ns_id in namespace_name_to_id.values()]
-                    ),
+                    ResourceMember.entity_type == entity_type_str,
+                    ResourceMember.resource_id.in_(resolved_kb_ids),
                     ResourceMember.status == MemberStatus.APPROVED.value,
                 )
                 .all()
             )
-
-            for em in entity_members:
+            for em in entity_type_members:
                 kb_id = em.resource_id
-                ns_id = int(em.entity_id) if em.entity_id else 0
-                # Find which group this namespace ID belongs to
-                for ns_name, nid in namespace_name_to_id.items():
-                    if nid == ns_id:
-                        entity_members_kb_ids.add(kb_id)
-                        entity_member_group_map[kb_id] = ns_name
-                        entity_member_role_map[kb_id] = em.get_effective_role()
-                        break
+                entity_members_kb_ids.add(kb_id)
+                entity_member_role_map[kb_id] = em.get_effective_role()
 
         # Separate entity-authorized KBs:
         # - Personal KBs (namespace='default'): non-author users see them in shared_with_me
@@ -2124,9 +2183,27 @@ class KnowledgeService:
             )
             for kb in personal_shared
         ]
-        # Add entity-authorized shared KBs with source group info
-        # Dedup against user-level shared KBs (a KB could be shared both ways)
+        # Add shared group KBs from namespaces the user does not have access to.
+        # These KBs were directly shared to the user but belong to a group the
+        # user is not a member of — they appear in shared_with_me with source_group.
         seen_shared_ids = {kb.id for kb in shared_with_me}
+        for kb in remaining_shared_group_kbs:
+            if kb.id in seen_shared_ids:
+                continue
+            namespace_display = namespace_display_names.get(kb.namespace, kb.namespace)
+            shared_with_me.append(
+                kb_to_response(
+                    kb,
+                    "default",
+                    "personal-shared",
+                    "personal-shared",
+                    shared_kb_roles.get(kb.id),
+                    source_group=namespace_display,
+                )
+            )
+            seen_shared_ids.add(kb.id)
+        # Add entity-authorized shared KBs with source group info
+        # Dedup against already-added shared KBs (a KB could be shared both ways)
         for ekb in entity_shared_to_me_kbs:
             if ekb.id in seen_shared_ids:
                 continue
@@ -2136,13 +2213,17 @@ class KnowledgeService:
                 if source_group_name
                 else None
             )
+            # Merge roles: entity role + possible direct share role
+            entity_role = entity_member_role_map.get(ekb.id)
+            direct_role = shared_kb_roles.get(ekb.id)
+            merged_role = merge_roles(entity_role, direct_role)
             shared_with_me.append(
                 kb_to_response(
                     ekb,
                     "default",
                     "personal-shared",
                     "personal-shared",
-                    entity_member_role_map.get(ekb.id),
+                    merged_role,
                     source_group=source_group_display,
                 )
             )
