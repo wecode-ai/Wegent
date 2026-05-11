@@ -130,6 +130,7 @@ _CLASSIFICATION_RULES: list[tuple[ChatErrorCode, list[str]]] = [
     (
         ChatErrorCode.QUOTA_EXCEEDED,
         [
+            "商业付费模型额度已用完",
             "quota exceeded",
             "insufficient_quota",
             "billing",
@@ -154,6 +155,8 @@ _CLASSIFICATION_RULES: list[tuple[ChatErrorCode, list[str]]] = [
     (
         ChatErrorCode.PERMISSION_DENIED,
         [
+            "无权限调用此模型",
+            "禁止使用外部模型",
             "permission_denied",
             "permission denied",
             "permission_error",
