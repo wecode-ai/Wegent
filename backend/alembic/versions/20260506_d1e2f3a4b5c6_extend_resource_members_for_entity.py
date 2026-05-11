@@ -11,7 +11,7 @@ Create Date: 2026-05-06
 Add entity_type, entity_id columns to resource_members table.
 Change unique constraint from (resource_type, resource_id, user_id)
 to (resource_type, resource_id, entity_type, entity_id).
-Make user_id nullable to support non-user entity types.
+Drop user_id column, all entity identification now uses entity_type + entity_id.
 """
 
 import sqlalchemy as sa
@@ -120,10 +120,30 @@ def upgrade() -> None:
                 ["resource_type", "resource_id", "entity_type", "entity_id"],
             )
 
+    # Step 6: Drop user_id column (FK already dropped in step 5)
+    if "user_id" in columns:
+        if dialect == "mysql":
+            op.drop_column("resource_members", "user_id")
+        else:
+            with op.batch_alter_table("resource_members") as batch_op:
+                batch_op.drop_column("user_id")
+
 
 def downgrade() -> None:
     conn = op.get_bind()
     dialect = conn.dialect.name
+
+    # Restore user_id column
+    if dialect == "mysql":
+        op.add_column(
+            "resource_members",
+            sa.Column(
+                "user_id",
+                sa.Integer,
+                nullable=True,
+                comment="Member user ID",
+            ),
+        )
 
     # Drop new unique constraint, restore old one
     if dialect == "mysql":

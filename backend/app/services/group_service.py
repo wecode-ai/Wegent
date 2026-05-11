@@ -772,7 +772,8 @@ def update_member_roles_batch(
         .filter(
             ResourceMember.resource_type == NAMESPACE_RESOURCE_TYPE,
             ResourceMember.resource_id == namespace_id,
-            ResourceMember.user_id.in_(user_ids),
+            ResourceMember.entity_type == "user",
+            ResourceMember.entity_id.in_([str(uid) for uid in user_ids]),
             ResourceMember.status == MemberStatus.APPROVED.value,
         )
         .all()

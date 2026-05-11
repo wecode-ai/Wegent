@@ -312,7 +312,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                         & (ResourceMember.resource_type == ResourceType.TEAM),
                     )
                     .filter(
-                        ResourceMember.user_id == user_id,
+                        ResourceMember.entity_type == 'user',
+                        ResourceMember.entity_id == str(user_id),
                         ResourceMember.status == MemberStatus.APPROVED,
                         Kind.is_active == True,
                         Kind.kind == "Team",
@@ -741,7 +742,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 .filter(
                     ResourceMember.resource_type == ResourceType.TEAM,
                     ResourceMember.resource_id == team_id,
-                    ResourceMember.user_id == user_id,
+                    ResourceMember.entity_type == 'user',
+                    ResourceMember.entity_id == str(user_id),
                     ResourceMember.status == MemberStatus.APPROVED,
                 )
                 .first()
@@ -1020,7 +1022,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 .filter(
                     ResourceMember.resource_type == ResourceType.TEAM,
                     ResourceMember.resource_id == team_id,
-                    ResourceMember.user_id == user_id,
+                    ResourceMember.entity_type == 'user',
+                    ResourceMember.entity_id == str(user_id),
                     ResourceMember.status == MemberStatus.APPROVED,
                 )
                 .first()
@@ -1127,7 +1130,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                             & (ResourceMember.resource_type == ResourceType.TEAM),
                         )
                         .filter(
-                            ResourceMember.user_id == user_id,
+                            ResourceMember.entity_type == 'user',
+                            ResourceMember.entity_id == str(user_id),
                             ResourceMember.status == MemberStatus.APPROVED,
                             Kind.is_active == True,
                             Kind.kind == "Team",
@@ -1906,7 +1910,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 .filter(
                     ResourceMember.resource_type == ResourceType.TEAM,
                     ResourceMember.resource_id == team_id,
-                    ResourceMember.user_id == user_id,
+                    ResourceMember.entity_type == 'user',
+                    ResourceMember.entity_id == str(user_id),
                     ResourceMember.status == MemberStatus.APPROVED,
                 )
                 .first()
@@ -2107,7 +2112,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 .filter(
                     ResourceMember.resource_type == ResourceType.TEAM,
                     ResourceMember.resource_id == team_id,
-                    ResourceMember.user_id == user_id,
+                    ResourceMember.entity_type == 'user',
+                    ResourceMember.entity_id == str(user_id),
                     ResourceMember.status == MemberStatus.APPROVED,
                 )
                 .first()

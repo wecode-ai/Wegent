@@ -327,12 +327,12 @@ class GroupChatSummaryService:
 
         # Query resource_members to find all approved members
         members = (
-            db.query(ResourceMember.resource_id, ResourceMember.user_id)
+            db.query(ResourceMember.resource_id, ResourceMember.entity_id)
             .filter(
                 ResourceMember.resource_type == ResourceType.TASK.value,
                 ResourceMember.resource_id.in_(task_ids),
                 ResourceMember.status == MemberStatus.APPROVED.value,
-                ResourceMember.user_id > 0,
+                ResourceMember.entity_type == 'user',
             )
             .all()
         )
@@ -340,6 +340,7 @@ class GroupChatSummaryService:
         # Build user_task_map from resource_members
         user_task_map: Dict[int, List[int]] = {}
         for resource_id, user_id in members:
+            user_id = int(user_id)
             if user_id not in user_task_map:
                 user_task_map[user_id] = []
             if resource_id not in user_task_map[user_id]:

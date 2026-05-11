@@ -672,7 +672,8 @@ class SharedTaskService:
             .filter(
                 ResourceMember.resource_type == ResourceType.TASK,
                 ResourceMember.resource_id == share_info.task_id,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == 'user',
+                ResourceMember.entity_id == str(user_id),
             )
             .first()
         )
@@ -752,7 +753,8 @@ class SharedTaskService:
             db.query(ResourceMember)
             .filter(
                 ResourceMember.resource_type == ResourceType.TASK,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == 'user',
+                ResourceMember.entity_id == str(user_id),
                 ResourceMember.status == MemberStatus.APPROVED,
                 ResourceMember.copied_resource_id > 0,  # Only entries with copied tasks
             )
@@ -784,7 +786,8 @@ class SharedTaskService:
             .filter(
                 ResourceMember.resource_type == ResourceType.TASK,
                 ResourceMember.resource_id == original_task_id,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == 'user',
+                ResourceMember.entity_id == str(user_id),
                 ResourceMember.status == MemberStatus.APPROVED,
             )
             .first()

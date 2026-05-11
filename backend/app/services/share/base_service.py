@@ -618,7 +618,8 @@ class UnifiedShareService(ABC):
             .filter(
                 ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
             )
             .first()
         )
@@ -692,7 +693,8 @@ class UnifiedShareService(ABC):
             member = ResourceMember(
                 resource_type=self.resource_type.value,
                 resource_id=resource_id,
-                user_id=user_id,
+                entity_type="user",
+                entity_id=str(user_id),
                 status=initial_status,
                 invited_by_user_id=0,  # Via link
                 share_link_id=share_link.id,
@@ -963,7 +965,6 @@ class UnifiedShareService(ABC):
             member = ResourceMember(
                 resource_type=self.resource_type.value,
                 resource_id=resource_id,
-                user_id=target_user_id,
                 entity_type=eff_entity_type,
                 entity_id=eff_entity_id,
                 status=MemberStatus.APPROVED.value,
@@ -1074,7 +1075,8 @@ class UnifiedShareService(ABC):
             .filter(
                 ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
-                ResourceMember.user_id.in_(target_user_ids),
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id.in_([str(uid) for uid in target_user_ids]),
             )
             .all()
         )
@@ -1142,7 +1144,8 @@ class UnifiedShareService(ABC):
                 member = ResourceMember(
                     resource_type=self.resource_type.value,
                     resource_id=resource_id,
-                    user_id=target_user_id,
+                    entity_type="user",
+                    entity_id=str(target_user_id),
                     status=MemberStatus.APPROVED.value,
                     invited_by_user_id=current_user_id,
                     share_link_id=share_link.id,
@@ -1534,7 +1537,8 @@ class UnifiedShareService(ABC):
             .filter(
                 ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
                 ResourceMember.status.in_(approved_status_variants),
             )
             .order_by(
@@ -1577,7 +1581,8 @@ class UnifiedShareService(ABC):
             .filter(
                 ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
                 ResourceMember.status.in_(approved_status_variants),
             )
             .order_by(

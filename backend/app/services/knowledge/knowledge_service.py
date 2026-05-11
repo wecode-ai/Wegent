@@ -336,7 +336,8 @@ class KnowledgeService:
                 db.query(ResourceMember.resource_id)
                 .filter(
                     ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
-                    ResourceMember.user_id == user_id,
+                    ResourceMember.entity_type == 'user',
+                    ResourceMember.entity_id == str(user_id),
                     ResourceMember.status == MemberStatus.APPROVED.value,
                 )
                 .all()
@@ -423,7 +424,8 @@ class KnowledgeService:
                 db.query(ResourceMember.resource_id)
                 .filter(
                     ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
-                    ResourceMember.user_id == user_id,
+                    ResourceMember.entity_type == 'user',
+                    ResourceMember.entity_id == str(user_id),
                     ResourceMember.status == MemberStatus.APPROVED.value,
                 )
                 .all()
@@ -1704,7 +1706,8 @@ class KnowledgeService:
             db.query(ResourceMember.resource_id)
             .filter(
                 ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == 'user',
+                ResourceMember.entity_id == str(user_id),
                 ResourceMember.status == MemberStatus.APPROVED.value,
             )
             .all()
@@ -1794,7 +1797,8 @@ class KnowledgeService:
             db.query(ResourceMember.resource_id, ResourceMember.role)
             .filter(
                 ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == 'user',
+                ResourceMember.entity_id == str(user_id),
                 ResourceMember.status == MemberStatus.APPROVED.value,
             )
             .all()

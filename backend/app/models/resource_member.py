@@ -19,21 +19,16 @@ from typing import TYPE_CHECKING
 from sqlalchemy import (
     Column,
     DateTime,
-    ForeignKey,
     Index,
     Integer,
     String,
     UniqueConstraint,
 )
-from sqlalchemy.orm import Mapped, relationship
 from sqlalchemy.sql import func
 
 from app.db.base import Base
 from app.models.share_link import ResourceType
 from app.schemas.base_role import BaseRole
-
-if TYPE_CHECKING:
-    from app.models.user import User
 
 
 # Define epoch time for default datetime values
@@ -101,19 +96,19 @@ class ResourceMember(Base):
         comment="Entity identifier: user_id for 'user', external ID for others",
     )
 
-    # Member user ID (nullable for non-user entity types)
-    user_id = Column(
-        Integer,
-        ForeignKey("users.id"),
-        nullable=True,
-        index=True,
-        comment="Member user ID (nullable for non-user entity types)",
-    )
+    @property
+    def user_id(self) -> int:
+        """Get user ID for entity-type members.
 
-    # Relationship to User
-    user: Mapped["User"] = relationship(
-        "User", foreign_keys=[user_id], back_populates="resource_members"
-    )
+        For entity_type='user', returns the entity_id as int.
+        For other entity types, returns 0.
+        """
+        if self.entity_type and self.entity_type == "user" and self.entity_id:
+            try:
+                return int(self.entity_id)
+            except (ValueError, TypeError):
+                return 0
+        return 0
 
     # Role-based permission
     role = Column(

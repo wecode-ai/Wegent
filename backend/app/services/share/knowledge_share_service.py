@@ -69,7 +69,8 @@ def get_knowledge_base_tool_access_mode_by_ids(
         .filter(
             ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
             ResourceMember.resource_id.in_([kb.id for kb in kbs]),
-            ResourceMember.user_id == user_id,
+            ResourceMember.entity_type == "user",
+            ResourceMember.entity_id == str(user_id),
             ResourceMember.status == MemberStatus.APPROVED.value,
             ResourceMember.role == ResourceRole.RestrictedAnalyst.value,
         )
@@ -177,7 +178,8 @@ class KnowledgeShareService(UnifiedShareService):
             .filter(
                 ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
                 ResourceMember.resource_id == resource_id,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
                 ResourceMember.status == MemberStatus.APPROVED.value,
             )
             .first()
@@ -364,7 +366,8 @@ class KnowledgeShareService(UnifiedShareService):
             .filter(
                 ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
                 ResourceMember.resource_id == knowledge_base_id,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
                 ResourceMember.status == MemberStatus.APPROVED.value,
             )
             .first()
@@ -517,7 +520,8 @@ class KnowledgeShareService(UnifiedShareService):
                 TaskResource.kind == "Task",
                 TaskResource.is_active == TaskResource.STATE_ACTIVE,
                 ResourceMember.resource_type == ResourceType.TASK,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
                 ResourceMember.status == MemberStatus.APPROVED,
             )
             .all()
@@ -622,7 +626,8 @@ class KnowledgeShareService(UnifiedShareService):
             .filter(
                 ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
                 ResourceMember.resource_id == knowledge_base_id,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
             )
             .first()
         )
@@ -902,7 +907,8 @@ class KnowledgeShareService(UnifiedShareService):
             db.query(ResourceMember)
             .filter(
                 ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
             )
             .delete()
         )
