@@ -36,7 +36,6 @@ def _topic_to_markdown(topic: dict[str, Any], depth: int = 0) -> list[str]:
         lines.extend(_topic_to_markdown(child, depth + 1))
 
     return lines
-    return lines
 
 
 def _sheet_to_markdown(sheet: dict[str, Any]) -> list[str]:
