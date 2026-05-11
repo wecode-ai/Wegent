@@ -728,7 +728,8 @@ class SharedTaskService:
             resource_member = ResourceMember(
                 resource_type=ResourceType.TASK,
                 resource_id=share_info.task_id,
-                user_id=user_id,
+                entity_type='user',
+                entity_id=str(user_id),
                 role=ResourceRole.Maintainer.value,
                 status=MemberStatus.APPROVED,
                 invited_by_user_id=share_info.user_id,
