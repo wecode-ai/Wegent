@@ -114,6 +114,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
         user_name: str,
         auth_token: str,
         backend_url: str,
+        user_jwt_token: str = "",
         mail_email: str = "",
         mail_password: str = "",
     ) -> Dict[str, Any]:
@@ -125,6 +126,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
             user_name: User name for device naming
             auth_token: Auth token for executor to connect
             backend_url: Backend URL for executor connection
+            user_jwt_token: Current user's JWT token for user-scoped integrations.
             mail_email: Optional mail account username for himalaya mail skill.
             mail_password: Optional mail account password (pass-through only).
 
@@ -176,6 +178,7 @@ class CloudDeviceProvider(BaseDeviceProvider):
             user_name=user_name,
             backend_url=backend_url,
             auth_token=auth_token,
+            user_jwt_token=user_jwt_token,
             install_script_url=nevis_settings.NEVIS_INSTALL_SCRIPT_URL,
             install_script_token=nevis_settings.NEVIS_EXECUTOR_DOWNLOAD_TOKEN,
             mail_email=mail_email,
