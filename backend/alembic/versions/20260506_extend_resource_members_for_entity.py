@@ -8,7 +8,7 @@ Revision ID: d1e2f3a4b5c6
 Revises: a1b2c3d4e5f6
 Create Date: 2026-05-06
 
-Add entity_type, entity_id, entity_name columns to resource_members table.
+Add entity_type, entity_id columns to resource_members table.
 Change unique constraint from (resource_type, resource_id, user_id)
 to (resource_type, resource_id, entity_type, entity_id).
 Make user_id nullable to support non-user entity types.
@@ -54,19 +54,7 @@ def upgrade() -> None:
             ),
         )
 
-    # Step 3: Add entity_name column
-    if "entity_name" not in columns:
-        op.add_column(
-            "resource_members",
-            sa.Column(
-                "entity_name",
-                sa.String(255),
-                nullable=True,
-                comment="Entity display name (for non-user entities)",
-            ),
-        )
-
-    # Step 4: Backfill existing rows - set entity_id = CAST(user_id AS CHAR), entity_type = 'user'
+    # Step 3: Backfill existing rows - set entity_id = CAST(user_id AS CHAR), entity_type = 'user'
     dialect = conn.dialect.name
     if dialect == "mysql":
         op.execute(
@@ -85,13 +73,13 @@ def upgrade() -> None:
         """
         )
 
-    # Step 5: Make user_id nullable
+    # Step 4: Make user_id nullable
     if dialect == "mysql":
         op.execute(
             "ALTER TABLE resource_members MODIFY user_id INT NULL COMMENT 'Member user ID (nullable for non-user entity types)'"
         )
 
-    # Step 6: Drop old unique constraint and create new one
+    # Step 5: Drop old unique constraint and create new one
     if dialect == "mysql":
         # MySQL specific: drop old FK constraint first if exists
         # Dynamically find FK constraint name from MySQL
@@ -168,6 +156,5 @@ def downgrade() -> None:
             )
 
     # Drop added columns
-    op.drop_column("resource_members", "entity_name")
     op.drop_column("resource_members", "entity_id")
     op.drop_column("resource_members", "entity_type")

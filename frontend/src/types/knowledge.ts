@@ -603,8 +603,6 @@ export interface PermissionUserInfo {
   entity_type?: string
   /** Entity identifier */
   entity_id?: string
-  /** Entity display name (for non-user entities like departments) */
-  entity_name?: string
 }
 
 export interface PendingPermissionInfo {

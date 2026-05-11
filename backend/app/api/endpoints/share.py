@@ -353,7 +353,6 @@ def add_member(
         role=body.role,
         entity_type=body.entity_type,
         entity_id=body.entity_id,
-        entity_name=body.entity_name,
     )
 
 

@@ -819,7 +819,6 @@ class UnifiedShareService(ABC):
         role: SchemaMemberRole,
         entity_type: Optional[str] = None,
         entity_id: Optional[str] = None,
-        entity_name: Optional[str] = None,
     ) -> ResourceMemberResponse:
         """Directly add a member to a resource."""
         # Validate resource and ownership/manage permission
@@ -967,7 +966,6 @@ class UnifiedShareService(ABC):
                 user_id=target_user_id,
                 entity_type=eff_entity_type,
                 entity_id=eff_entity_id,
-                entity_name=entity_name,
                 status=MemberStatus.APPROVED.value,
                 invited_by_user_id=current_user_id,
                 share_link_id=share_link.id,
@@ -1335,7 +1333,6 @@ class UnifiedShareService(ABC):
             status=member.status,
             entity_type=member.entity_type,
             entity_id=member.entity_id,
-            entity_name=member.entity_name,
             invited_by_user_id=member.invited_by_user_id,
             invited_by_user_name=invited_by_user_name,
             reviewed_by_user_id=member.reviewed_by_user_id,

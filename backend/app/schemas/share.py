@@ -141,7 +141,7 @@ class ResourceMemberCreate(BaseModel):
 
     Supports both user and entity-type members:
     - For user members: provide user_id, entity_type defaults to 'user'
-    - For entity members: provide entity_type, entity_id, entity_name (user_id=0)
+    - For entity members: provide entity_type, entity_id (user_id=0)
     """
 
     user_id: int = Field(default=0, description="User ID to add as member (0 for entity members)")
@@ -157,10 +157,6 @@ class ResourceMemberCreate(BaseModel):
     entity_id: Optional[str] = Field(
         default=None,
         description="Entity identifier (required when entity_type is set and not 'user')",
-    )
-    entity_name: Optional[str] = Field(
-        default=None,
-        description="Entity display name (for non-user entities)",
     )
 
     @field_validator("role")
@@ -219,7 +215,6 @@ class ResourceMemberResponse(BaseModel):
     status: str
     entity_type: Optional[str] = None
     entity_id: Optional[str] = None
-    entity_name: Optional[str] = None
     invited_by_user_id: int
     invited_by_user_name: Optional[str] = None  # Populated from user lookup
     reviewed_by_user_id: Optional[int] = None
@@ -265,7 +260,6 @@ class ResourceMemberInDB(BaseModel):
     status: str
     entity_type: Optional[str] = None
     entity_id: Optional[str] = None
-    entity_name: Optional[str] = None
     invited_by_user_id: int
     share_link_id: Optional[int] = None
     reviewed_by_user_id: Optional[int] = None

@@ -35,7 +35,6 @@ interface ResourceMemberResponse {
   status: string
   entity_type?: string | null
   entity_id?: string | null
-  entity_name?: string | null
   invited_by_user_id: number
   invited_by_user_name: string | null
   reviewed_by_user_id: number | null
@@ -127,12 +126,12 @@ export const knowledgePermissionApi = {
       (acc, m) => {
         const role = (m.role as MemberRole) || 'Reporter'
         if (!acc[role]) acc[role] = []
-        // For entity-type members (e.g., departments), use entity_name as display name
+        // For entity-type members (e.g., departments), use entity_id as display name
         const isEntity = m.entity_type && m.entity_type !== 'user'
         const member = {
           id: m.id,
           user_id: m.user_id,
-          username: isEntity ? (m.entity_name || m.entity_id || '') : (m.user_name || ''),
+          username: isEntity ? (m.entity_id || '') : (m.user_name || ''),
           email: isEntity ? '' : (m.user_email || ''),
           role: role,
           requested_at: m.requested_at,
@@ -140,7 +139,6 @@ export const knowledgePermissionApi = {
           reviewed_by: m.reviewed_by_user_id || undefined,
           entity_type: m.entity_type || undefined,
           entity_id: m.entity_id || undefined,
-          entity_name: m.entity_name || undefined,
         }
         acc[role].push(member)
         return acc

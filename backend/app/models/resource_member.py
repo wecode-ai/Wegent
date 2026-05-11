@@ -88,7 +88,6 @@ class ResourceMember(Base):
     # Entity info (polymorphic member identification)
     # entity_type: "user" (default), "org_department"
     # entity_id: user_id (for "user") or external identifier (e.g., department UUID)
-    # entity_name: display name for non-user entities
     entity_type = Column(
         String(20),
         nullable=False,
@@ -100,11 +99,6 @@ class ResourceMember(Base):
         String(100),
         nullable=True,
         comment="Entity identifier: user_id for 'user', external ID for others",
-    )
-    entity_name = Column(
-        String(255),
-        nullable=True,
-        comment="Entity display name (for non-user entities)",
     )
 
     # Member user ID (nullable for non-user entity types)
