@@ -448,7 +448,15 @@
       "batchAddFailed": "failed to add",
       "invalidShareLink": "Share link is invalid or expired",
       "noLinkToCopy": "No link to copy",
-      "copyFailedManual": "Link selected. Press Ctrl+C to copy."
+      "copyFailedManual": "Link selected. Press Ctrl+C to copy.",
+      "authorization": "Authorization",
+      "individual": "Individual",
+      "selectGroup": "Select group",
+      "selectGroupPlaceholder": "Please select a group",
+      "namespaceMembers": "Group Permissions",
+      "addNamespace": "Add group",
+      "noNamespacePermissions": "No group permissions yet",
+      "namespace": "Group"
     },
     "advancedSettings": {
       "title": "Advanced Settings",

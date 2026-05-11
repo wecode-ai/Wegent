@@ -26,7 +26,7 @@ import { ASSIGNABLE_ROLES } from '@/types/base-role'
 interface PermissionManagementTabProps {
   kbId: number
   /**
-   * Extension tabs rendered below the standard permission UI.
+   * Extension tabs rendered alongside standard tabs (个人/群组).
    * Used by internal deployments to add entity-type permission panels
    * (e.g., department-level permissions).
    */
@@ -43,6 +43,7 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
   const [showAddNamespace, setShowAddNamespace] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editingRole, setEditingRole] = useState<MemberRole>('Reporter')
+  const [activeTab, setActiveTab] = useState<string>('user')
   // Track selected approval roles for pending requests
   const [approvalRoles, setApprovalRoles] = useState<Record<number, MemberRole>>({})
 
@@ -175,16 +176,30 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
 
   return (
     <div className="space-y-6 p-4">
-      {/* Header with Add User button */}
+      {/* Header with Add button */}
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold flex items-center gap-2">
           <Shield className="w-5 h-5" />
           {t('document.permission.management')}
         </h2>
-        <Button variant="outline" size="sm" onClick={() => setShowAddUser(true)}>
-          <UserPlus className="w-4 h-4 mr-2" />
-          {t('document.permission.addUser')}
-        </Button>
+        {(activeTab === 'user' || activeTab === 'namespace') && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              if (activeTab === 'user') {
+                setShowAddUser(true)
+              } else {
+                setShowAddNamespace(true)
+              }
+            }}
+          >
+            <UserPlus className="w-4 h-4 mr-2" />
+            {activeTab === 'user'
+              ? t('document.permission.addUser')
+              : (t('document.permission.addNamespace') || '添加群组')}
+          </Button>
+        )}
       </div>
 
       {/* Error Message */}
@@ -275,163 +290,211 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
         )}
       </Card>
 
-      {/* Approved Users Section */}
+      {/* Tabs + Members Section */}
       <Card padding="default" className="space-y-4">
-        <div className="flex items-center gap-2 text-sm font-medium">
-          <Users className="w-4 h-4 text-primary" />
-          {t('document.permission.approvedUsers')}
-          {approvedCount > 0 && (
-            <span className="bg-primary/10 text-primary px-2 py-0.5 rounded-full text-xs">
-              {approvedCount}
-            </span>
-          )}
-        </div>
-
-        {approvedCount === 0 ? (
-          <p className="text-sm text-text-muted py-4 text-center">
-            {t('document.permission.noApprovedUsers')}
-          </p>
-        ) : (
-          <div className="space-y-4">
-            {/* Owner permissions (users only) */}
-            {(userRoleGroups?.Owner?.length || 0) > 0 && (
-              <PermissionGroup
-                title={t('document.permission.role.Owner')}
-                users={userRoleGroups!.Owner}
-                editingId={editingId}
-                editingRole={editingRole}
-                setEditingRole={setEditingRole}
-                onStartEditing={startEditing}
-                onCancelEditing={cancelEditing}
-                onUpdateRole={handleUpdateRole}
-                onDelete={handleDelete}
-                loading={loading}
-                t={t}
-              />
+        {/* Tabs */}
+        <div className="flex border-b border-border">
+          <button
+            type="button"
+            onClick={() => setActiveTab('user')}
+            className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'user'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-text-muted hover:text-text-primary'
+            }`}
+            data-testid="perm-tab-user"
+          >
+            {t('document.permission.individual') || '个人'}
+            {approvedCount > 0 && (
+              <span className="bg-primary/10 text-primary px-1.5 py-0.5 rounded-full text-xs">
+                {approvedCount}
+              </span>
             )}
-            {/* Maintainer permissions (users only) */}
-            {(userRoleGroups?.Maintainer?.length || 0) > 0 && (
-              <PermissionGroup
-                title={t('document.permission.role.Maintainer')}
-                users={userRoleGroups!.Maintainer}
-                editingId={editingId}
-                editingRole={editingRole}
-                setEditingRole={setEditingRole}
-                onStartEditing={startEditing}
-                onCancelEditing={cancelEditing}
-                onUpdateRole={handleUpdateRole}
-                onDelete={handleDelete}
-                loading={loading}
-                t={t}
-              />
-            )}
-            {/* Developer permissions (users only) */}
-            {(userRoleGroups?.Developer?.length || 0) > 0 && (
-              <PermissionGroup
-                title={t('document.permission.role.Developer')}
-                users={userRoleGroups!.Developer}
-                editingId={editingId}
-                editingRole={editingRole}
-                setEditingRole={setEditingRole}
-                onStartEditing={startEditing}
-                onCancelEditing={cancelEditing}
-                onUpdateRole={handleUpdateRole}
-                onDelete={handleDelete}
-                loading={loading}
-                t={t}
-              />
-            )}
-            {/* Reporter permissions (users only) */}
-            {(userRoleGroups?.Reporter?.length || 0) > 0 && (
-              <PermissionGroup
-                title={t('document.permission.role.Reporter')}
-                users={userRoleGroups!.Reporter}
-                editingId={editingId}
-                editingRole={editingRole}
-                setEditingRole={setEditingRole}
-                onStartEditing={startEditing}
-                onCancelEditing={cancelEditing}
-                onUpdateRole={handleUpdateRole}
-                onDelete={handleDelete}
-                loading={loading}
-                t={t}
-              />
-            )}
-            {/* RestrictedAnalyst permissions (users only) */}
-            {(userRoleGroups?.RestrictedAnalyst?.length || 0) > 0 && (
-              <PermissionGroup
-                title={t('document.permission.role.RestrictedAnalyst')}
-                users={userRoleGroups!.RestrictedAnalyst}
-                editingId={editingId}
-                editingRole={editingRole}
-                setEditingRole={setEditingRole}
-                onStartEditing={startEditing}
-                onCancelEditing={cancelEditing}
-                onUpdateRole={handleUpdateRole}
-                onDelete={handleDelete}
-                loading={loading}
-                t={t}
-              />
-            )}
-          </div>
-        )}
-      </Card>
-
-      {/* Namespace Permissions Section */}
-      <Card padding="default" className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-sm font-medium">
-            <Users className="w-4 h-4 text-primary" />
-            {t('document.permission.namespacePermissions') || '群组权限'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('namespace')}
+            className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'namespace'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-text-muted hover:text-text-primary'
+            }`}
+            data-testid="perm-tab-namespace"
+          >
+            {t('document.permission.namespace') || '群组'}
             {namespaceMembers.length > 0 && (
-              <span className="bg-primary/10 text-primary px-2 py-0.5 rounded-full text-xs">
+              <span className="bg-primary/10 text-primary px-1.5 py-0.5 rounded-full text-xs">
                 {namespaceMembers.length}
               </span>
             )}
-          </div>
-          <Button variant="outline" size="sm" onClick={() => setShowAddNamespace(true)}>
-            <UserPlus className="w-4 h-4 mr-2" />
-            {t('document.permission.addNamespace') || '添加群组'}
-          </Button>
+          </button>
+          {/* Extension tabs */}
+          {extensionTabs?.map((tab, index) => {
+            const tabValue = `ext-${index}`
+            return (
+              <button
+                key={tabValue}
+                type="button"
+                onClick={() => setActiveTab(tabValue)}
+                className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
+                  activeTab === tabValue
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-text-muted hover:text-text-primary'
+                }`}
+              >
+                {tab.icon && <span className="w-4 h-4">{tab.icon}</span>}
+                {tab.label}
+              </button>
+            )
+          })}
         </div>
 
-        {namespaceMembers.length === 0 ? (
-          <p className="text-sm text-text-muted py-4 text-center">
-            {t('document.permission.noNamespacePermissions') || '暂无群组权限'}
-          </p>
-        ) : (
-          <div className="space-y-1">
-            {namespaceMembers.map(nm => (
-              <div
-                key={nm.id}
-                className="group flex items-center justify-between p-2 rounded-lg hover:bg-muted transition-colors"
-              >
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium text-sm truncate flex items-center gap-2">
-                    {nm.username || nm.entity_id || ''}
-                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-surface text-text-muted border-border border">
-                      群组
-                    </span>
-                  </div>
-                  <div className="text-xs text-text-muted truncate">
-                    {t(`document.permission.role.${nm.role}`)}
-                  </div>
-                </div>
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 text-error hover:text-error"
-                    onClick={() => handleDeleteNamespace(nm.id)}
-                    title={t('document.permission.remove')}
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </Button>
-                </div>
+        {/* User Tab Content */}
+        {activeTab === 'user' && (
+          <div>
+            {approvedCount === 0 ? (
+              <p className="text-sm text-text-muted py-4 text-center">
+                {t('document.permission.noApprovedUsers')}
+              </p>
+            ) : (
+              <div className="space-y-4">
+                {/* Owner permissions (users only) */}
+                {(userRoleGroups?.Owner?.length || 0) > 0 && (
+                  <PermissionGroup
+                    title={t('document.permission.role.Owner')}
+                    users={userRoleGroups!.Owner}
+                    editingId={editingId}
+                    editingRole={editingRole}
+                    setEditingRole={setEditingRole}
+                    onStartEditing={startEditing}
+                    onCancelEditing={cancelEditing}
+                    onUpdateRole={handleUpdateRole}
+                    onDelete={handleDelete}
+                    loading={loading}
+                    t={t}
+                  />
+                )}
+                {/* Maintainer permissions (users only) */}
+                {(userRoleGroups?.Maintainer?.length || 0) > 0 && (
+                  <PermissionGroup
+                    title={t('document.permission.role.Maintainer')}
+                    users={userRoleGroups!.Maintainer}
+                    editingId={editingId}
+                    editingRole={editingRole}
+                    setEditingRole={setEditingRole}
+                    onStartEditing={startEditing}
+                    onCancelEditing={cancelEditing}
+                    onUpdateRole={handleUpdateRole}
+                    onDelete={handleDelete}
+                    loading={loading}
+                    t={t}
+                  />
+                )}
+                {/* Developer permissions (users only) */}
+                {(userRoleGroups?.Developer?.length || 0) > 0 && (
+                  <PermissionGroup
+                    title={t('document.permission.role.Developer')}
+                    users={userRoleGroups!.Developer}
+                    editingId={editingId}
+                    editingRole={editingRole}
+                    setEditingRole={setEditingRole}
+                    onStartEditing={startEditing}
+                    onCancelEditing={cancelEditing}
+                    onUpdateRole={handleUpdateRole}
+                    onDelete={handleDelete}
+                    loading={loading}
+                    t={t}
+                  />
+                )}
+                {/* Reporter permissions (users only) */}
+                {(userRoleGroups?.Reporter?.length || 0) > 0 && (
+                  <PermissionGroup
+                    title={t('document.permission.role.Reporter')}
+                    users={userRoleGroups!.Reporter}
+                    editingId={editingId}
+                    editingRole={editingRole}
+                    setEditingRole={setEditingRole}
+                    onStartEditing={startEditing}
+                    onCancelEditing={cancelEditing}
+                    onUpdateRole={handleUpdateRole}
+                    onDelete={handleDelete}
+                    loading={loading}
+                    t={t}
+                  />
+                )}
+                {/* RestrictedAnalyst permissions (users only) */}
+                {(userRoleGroups?.RestrictedAnalyst?.length || 0) > 0 && (
+                  <PermissionGroup
+                    title={t('document.permission.role.RestrictedAnalyst')}
+                    users={userRoleGroups!.RestrictedAnalyst}
+                    editingId={editingId}
+                    editingRole={editingRole}
+                    setEditingRole={setEditingRole}
+                    onStartEditing={startEditing}
+                    onCancelEditing={cancelEditing}
+                    onUpdateRole={handleUpdateRole}
+                    onDelete={handleDelete}
+                    loading={loading}
+                    t={t}
+                  />
+                )}
               </div>
-            ))}
+            )}
           </div>
         )}
+
+        {/* Namespace Tab Content */}
+        {activeTab === 'namespace' && (
+          <div>
+            {namespaceMembers.length === 0 ? (
+              <p className="text-sm text-text-muted py-4 text-center">
+                {t('document.permission.noNamespacePermissions') || '暂无群组权限'}
+              </p>
+            ) : (
+              <div className="space-y-1">
+                {namespaceMembers.map(nm => (
+                  <div
+                    key={nm.id}
+                    className="group flex items-center justify-between p-2 rounded-lg hover:bg-muted transition-colors"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-sm truncate flex items-center gap-2">
+                        {nm.username || nm.entity_id || ''}
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-surface text-text-muted border-border border">
+                          {t('document.permission.namespace') || '群组'}
+                        </span>
+                      </div>
+                      <div className="text-xs text-text-muted truncate">
+                        {t(`document.permission.role.${nm.role}`)}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-error hover:text-error"
+                        onClick={() => handleDeleteNamespace(nm.id)}
+                        title={t('document.permission.remove')}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Extension Tab Content */}
+        {extensionTabs?.map((tab, index) => {
+          const tabValue = `ext-${index}`
+          return activeTab === tabValue ? (
+            <div key={tabValue}>
+              {tab.render({ kbId })}
+            </div>
+          ) : null
+        })}
       </Card>
 
       {/* Add User Dialog */}
@@ -450,20 +513,6 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
         onSuccess={fetchPermissions}
       />
 
-      {/* Extension Tabs (for internal deployment add-ons like department permissions) */}
-      {extensionTabs && extensionTabs.length > 0 && (
-        <div className="space-y-4">
-          {extensionTabs.map((tab, index) => (
-            <Card key={index} padding="default" className="space-y-4">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                {tab.icon && <span className="w-4 h-4">{tab.icon}</span>}
-                {tab.label}
-              </div>
-              {tab.render({ kbId })}
-            </Card>
-          ))}
-        </div>
-      )}
     </div>
   )
 }

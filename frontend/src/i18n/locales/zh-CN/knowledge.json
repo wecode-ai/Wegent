@@ -448,7 +448,15 @@
       "batchAddFailed": "添加失败",
       "invalidShareLink": "分享链接无效或已过期",
       "noLinkToCopy": "没有可复制的链接",
-      "copyFailedManual": "链接已选中，请按 Ctrl+C 复制"
+      "copyFailedManual": "链接已选中，请按 Ctrl+C 复制",
+      "authorization": "授权",
+      "individual": "个人",
+      "selectGroup": "选择群组",
+      "selectGroupPlaceholder": "请选择群组",
+      "namespaceMembers": "群组权限",
+      "addNamespace": "添加群组",
+      "noNamespacePermissions": "暂无群组权限",
+      "namespace": "群组"
     },
     "advancedSettings": {
       "title": "高级设置",

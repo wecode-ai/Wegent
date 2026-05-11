@@ -305,6 +305,13 @@ export interface KnowledgeBase {
   updated_at: string
 }
 
+/** Initial member to add when creating a knowledge base */
+export interface InitialMember {
+  entity_type: 'user' | 'namespace'
+  entity_id: string
+  role: MemberRole
+}
+
 export interface KnowledgeBaseCreate {
   name: string
   description?: string
@@ -320,6 +327,8 @@ export interface KnowledgeBaseCreate {
   max_calls_per_conversation?: number
   /** Number of calls exempt from token checking (must be < max_calls_per_conversation) */
   exempt_calls_before_check?: number
+  /** Initial members (users and groups) to add after creation */
+  members?: InitialMember[]
 }
 
 export interface RetrievalConfigUpdate {

@@ -23,6 +23,7 @@ from app.schemas.kind import (
 
 # Import SplitterConfig from rag.py to use unified splitter configuration
 from app.schemas.rag import SplitterConfig
+from app.schemas.base_role import BaseRole
 from app.services.knowledge.splitter_config import normalize_splitter_config
 
 
@@ -67,6 +68,23 @@ class ResourceScope(str, Enum):
 # are imported from app.schemas.kind to maintain single source of truth
 
 
+class InitialMemberCreate(BaseModel):
+    """Schema for an initial member when creating a knowledge base."""
+
+    entity_type: str = Field(
+        default="user",
+        description="Entity type: 'user' or 'namespace'",
+    )
+    entity_id: str = Field(
+        ...,
+        description="Entity identifier (user ID or namespace ID)",
+    )
+    role: BaseRole = Field(
+        default=BaseRole.Reporter,
+        description="Member role: Maintainer, Developer, Reporter, RestrictedAnalyst",
+    )
+
+
 class KnowledgeBaseCreate(BaseModel):
     """Schema for creating a knowledge base."""
 
@@ -92,6 +110,10 @@ class KnowledgeBaseCreate(BaseModel):
         None,
         max_length=3,
         description="Guided questions list (max 3) to show in notebook mode for quick user interaction",
+    )
+    members: Optional[List[InitialMemberCreate]] = Field(
+        None,
+        description="Initial members to add to the knowledge base after creation",
     )
 
     @field_validator("guided_questions")

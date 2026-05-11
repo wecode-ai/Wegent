@@ -31,6 +31,7 @@ from app.schemas.knowledge import (
     BatchOperationResult,
     DocumentContentUpdate,
     DocumentDetailResponse,
+    InitialMemberCreate,
     KnowledgeBaseCreate,
     KnowledgeBaseListResponse,
     KnowledgeBaseMigrateRequest,
@@ -286,6 +287,35 @@ def get_organization_namespace(
     }
 
 
+def _add_initial_kb_members(
+    db: Session,
+    kb_id: int,
+    current_user: User,
+    members: list[InitialMemberCreate],
+) -> None:
+    """Add initial members to a knowledge base after creation."""
+    from app.services.share import knowledge_share_service
+
+    for member in members:
+        target_user_id = 0
+        if member.entity_type == "user" or not member.entity_type:
+            try:
+                target_user_id = int(member.entity_id)
+            except (ValueError, TypeError):
+                continue
+
+        knowledge_share_service.add_member(
+            db=db,
+            resource_id=kb_id,
+            current_user_id=current_user.id,
+            target_user_id=target_user_id,
+            role=member.role,
+            entity_type=member.entity_type if member.entity_type != "user" else None,
+            entity_id=member.entity_id if member.entity_type != "user" else None,
+        )
+    db.commit()
+
+
 @router.post(
     "",
     response_model=KnowledgeBaseResponse,
@@ -302,6 +332,7 @@ def create_knowledge_base(
 
     - **namespace=default**: Personal knowledge base
     - **namespace=<group_name>**: Team knowledge base (requires Maintainer+ permission)
+    - **members**: Optional initial members to add after creation
     """
     try:
         # Use Orchestrator for unified business logic (REST API and MCP tools share the same logic)
@@ -318,6 +349,11 @@ def create_knowledge_base(
             ),
             summary_model_ref=data.summary_model_ref,
         )
+
+        # Add initial members if provided
+        if data.members:
+            _add_initial_kb_members(db, result.id, current_user, data.members)
+
         add_span_event(
             "knowledge.base.created",
             {
