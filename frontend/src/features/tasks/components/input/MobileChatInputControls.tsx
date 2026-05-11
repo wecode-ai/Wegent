@@ -262,7 +262,7 @@ export function MobileChatInputControls({
 
   return (
     <div
-      className={`flex items-center px-3 gap-2 min-w-0 overflow-hidden ${shouldHideChatInput ? 'py-3' : 'pb-2 pt-1'}`}
+      className={`flex items-center px-3 gap-2 min-w-0 overflow-visible ${shouldHideChatInput ? 'py-3' : 'pb-2 pt-1'}`}
     >
       {/* Left: secondary actions menu - hidden when hideSelectors is true */}
       <div
@@ -276,6 +276,7 @@ export function MobileChatInputControls({
           size="sm"
           aria-expanded={moreMenuOpen}
           aria-label="More actions"
+          data-testid="mobile-input-more-actions-button"
           title="More actions"
           onClick={() => setMoreMenuOpen(open => !open)}
           className="h-8 w-8 p-0 rounded-full border border-border bg-base text-text-muted hover:text-text-primary hover:bg-hover"
@@ -284,7 +285,10 @@ export function MobileChatInputControls({
         </Button>
 
         {moreMenuOpen && (
-          <div className="absolute bottom-full left-0 z-50 mb-2 w-56 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md">
+          <div
+            data-testid="mobile-input-more-actions-menu"
+            className="absolute bottom-full left-0 z-50 mb-2 w-56 rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md"
+          >
             {hasSecondaryActions && (
               <div className="flex flex-col">
                 {showAttachmentAction && (
