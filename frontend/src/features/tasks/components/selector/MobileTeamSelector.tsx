@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { Check, Search, Settings, ChevronDown } from 'lucide-react'
+import { Check, Search, Settings, ChevronDown, Star } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -15,6 +15,7 @@ import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDi
 import { Tag } from '@/components/ui/tag'
 import type { Team } from '@/types/api'
 import SystemTeamTag from './SystemTeamTag'
+import { useTeamFavorites } from './useTeamFavorites'
 
 interface MobileTeamSelectorProps {
   selectedTeam: Team | null
@@ -49,6 +50,13 @@ export default function MobileTeamSelector({
   const [isOpen, setIsOpen] = useState(false)
   const [searchValue, setSearchValue] = useState('')
   const [isSearchFocused, setIsSearchFocused] = useState(false)
+  const {
+    favoriteTeamIdSet,
+    favoriteUpdatingTeamId,
+    handleToggleFavorite,
+    quickAccessMetaLoaded,
+    systemRecommendedTeamIdSet,
+  } = useTeamFavorites()
 
   useEffect(() => {
     if (!isOpen) {
@@ -161,15 +169,22 @@ export default function MobileTeamSelector({
                 const isLast = index === searchFilteredTeams.length - 1
 
                 return (
-                  <button
+                  <div
                     key={team.id}
-                    type="button"
                     onClick={() => handleTeamSelect(team)}
                     className={cn(
                       'w-full flex items-center justify-between px-4 py-3',
                       'text-left active:bg-[#d1d1d6] dark:active:bg-[#3a3a3c]',
                       !isLast && 'border-b border-[#c6c6c8] dark:border-[#38383a]'
                     )}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={event => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        handleTeamSelect(team)
+                      }
+                    }}
                   >
                     <div className="flex items-center gap-2.5 flex-1 min-w-0">
                       <TeamIconDisplay
@@ -199,8 +214,42 @@ export default function MobileTeamSelector({
                         )}
                       </div>
                     </div>
-                    {isSelected && <Check className="h-5 w-5 text-[#007aff] flex-shrink-0 ml-3" />}
-                  </button>
+                    <div className="ml-3 flex items-center gap-2">
+                      {quickAccessMetaLoaded && !systemRecommendedTeamIdSet.has(team.id) && (
+                        <button
+                          type="button"
+                          data-testid={`mobile-favorite-team-button-${team.id}`}
+                          aria-label={
+                            favoriteTeamIdSet.has(team.id)
+                              ? t('common:teams.remove_from_quick_access')
+                              : t('common:teams.add_to_quick_access')
+                          }
+                          title={
+                            favoriteTeamIdSet.has(team.id)
+                              ? t('common:teams.remove_from_quick_access')
+                              : t('common:teams.add_to_quick_access')
+                          }
+                          disabled={favoriteUpdatingTeamId === team.id}
+                          onClick={event => handleToggleFavorite(event, team)}
+                          className={cn(
+                            'h-8 w-8 rounded-full inline-flex items-center justify-center',
+                            'text-[#8e8e93] active:bg-[#d1d1d6] dark:active:bg-[#3a3a3c]',
+                            'disabled:pointer-events-none disabled:opacity-50',
+                            favoriteTeamIdSet.has(team.id) && 'text-[#007aff]'
+                          )}
+                        >
+                          <Star
+                            className={cn(
+                              'h-4 w-4',
+                              favoriteTeamIdSet.has(team.id) && 'fill-current'
+                            )}
+                            aria-hidden="true"
+                          />
+                        </button>
+                      )}
+                      {isSelected && <Check className="h-5 w-5 text-[#007aff] flex-shrink-0" />}
+                    </div>
+                  </div>
                 )
               })}
             </div>

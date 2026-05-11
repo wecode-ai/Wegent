@@ -15,41 +15,45 @@ import { shellApis } from '@/apis/shells'
 import { fetchPublicSkillsList, fetchUnifiedSkillsList } from '@/apis/skills'
 import type { Bot } from '@/types/api'
 
+const mockTranslate = (key: string, options?: { count?: number }) => {
+  const translations: Record<string, string> = {
+    'bot.default_knowledge_bases_search_placeholder': 'Search knowledge bases',
+    'bot.default_knowledge_bases_used_for_new_chats':
+      'Used to initialize knowledge bases for new chats.',
+    'bot.default_knowledge_bases_append_hint':
+      'Manual chat-time selection appends additional knowledge bases later.',
+    'bot.default_knowledge_bases_selected_section': 'Selected default knowledge bases',
+    'bot.default_knowledge_bases_available_section': 'Available knowledge bases',
+    'bot.default_knowledge_bases_empty_selection': 'No default knowledge bases selected',
+    'bot.default_knowledge_bases_no_options': 'No available knowledge bases',
+    'bot.default_knowledge_bases_no_match': 'No matching knowledge bases',
+    'bot.default_knowledge_bases_loading': 'Loading knowledge bases...',
+    'bot.default_knowledge_bases_load_failed': 'Failed to load knowledge bases',
+    'bot.default_knowledge_bases_updated_at': 'Updated',
+    'bot.default_knowledge_bases_selected_badge': 'Selected',
+    'bot.default_knowledge_bases_selected_count': `${options?.count ?? 0} selected`,
+    'bot.default_knowledge_bases_group_personal': 'Personal knowledge bases',
+    'bot.default_knowledge_bases_group_group': 'Group knowledge bases',
+    'bot.default_knowledge_bases_group_organization': 'Organization knowledge bases',
+    'bot.default_knowledge_bases_source_personal': 'Personal',
+    'bot.default_knowledge_bases_source_group': 'Group',
+    'bot.default_knowledge_bases_source_organization': 'Organization',
+    'bot.default_knowledge_bases_source_shared': 'Shared',
+    'knowledge:document_count': `${options?.count ?? 0} document`,
+    'knowledge:documents_count': `${options?.count ?? 0} documents`,
+  }
+
+  const normalizedKey = key.startsWith('common:') ? key.replace(/^common:/, '') : key
+
+  return translations[key] ?? translations[normalizedKey] ?? key
+}
+
+const mockI18n = { language: 'en' }
+
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (key: string, options?: { count?: number }) => {
-      const translations: Record<string, string> = {
-        'bot.default_knowledge_bases_search_placeholder': 'Search knowledge bases',
-        'bot.default_knowledge_bases_used_for_new_chats':
-          'Used to initialize knowledge bases for new chats.',
-        'bot.default_knowledge_bases_append_hint':
-          'Manual chat-time selection appends additional knowledge bases later.',
-        'bot.default_knowledge_bases_selected_section': 'Selected default knowledge bases',
-        'bot.default_knowledge_bases_available_section': 'Available knowledge bases',
-        'bot.default_knowledge_bases_empty_selection': 'No default knowledge bases selected',
-        'bot.default_knowledge_bases_no_options': 'No available knowledge bases',
-        'bot.default_knowledge_bases_no_match': 'No matching knowledge bases',
-        'bot.default_knowledge_bases_loading': 'Loading knowledge bases...',
-        'bot.default_knowledge_bases_load_failed': 'Failed to load knowledge bases',
-        'bot.default_knowledge_bases_updated_at': 'Updated',
-        'bot.default_knowledge_bases_selected_badge': 'Selected',
-        'bot.default_knowledge_bases_selected_count': `${options?.count ?? 0} selected`,
-        'bot.default_knowledge_bases_group_personal': 'Personal knowledge bases',
-        'bot.default_knowledge_bases_group_group': 'Group knowledge bases',
-        'bot.default_knowledge_bases_group_organization': 'Organization knowledge bases',
-        'bot.default_knowledge_bases_source_personal': 'Personal',
-        'bot.default_knowledge_bases_source_group': 'Group',
-        'bot.default_knowledge_bases_source_organization': 'Organization',
-        'bot.default_knowledge_bases_source_shared': 'Shared',
-        'knowledge:document_count': `${options?.count ?? 0} document`,
-        'knowledge:documents_count': `${options?.count ?? 0} documents`,
-      }
-
-      const normalizedKey = key.startsWith('common:') ? key.replace(/^common:/, '') : key
-
-      return translations[key] ?? translations[normalizedKey] ?? key
-    },
-    i18n: { language: 'en' },
+    t: mockTranslate,
+    i18n: mockI18n,
   }),
 }))
 
@@ -195,7 +199,7 @@ const mockedGetPublicModels = publicResourceApis.getPublicModels as jest.Mock
 
 function renderBotEdit(
   botOverrides: Partial<Bot> = {},
-  props: { scope?: 'personal' | 'group' | 'all' | 'public' } = {}
+  props: { scope?: 'personal' | 'group' | 'all' | 'public'; groupName?: string } = {}
 ) {
   const bot = {
     id: 7,
@@ -230,6 +234,7 @@ function renderBotEdit(
       onClose={onClose}
       toast={toast}
       scope={props.scope || 'personal'}
+      groupName={props.groupName}
     />
   )
 
@@ -252,6 +257,7 @@ describe('BotEdit default knowledge bases', () => {
     })
     mockedGetPublicShells.mockResolvedValue([
       { name: 'ClaudeCode', type: 'public', shellType: 'ClaudeCode' },
+      { name: 'Dify', type: 'public', shellType: 'Dify' },
     ])
     mockedGetUnifiedModels.mockResolvedValue({
       data: [{ name: 'gpt-4.1', type: 'public', namespace: 'default' }],
@@ -312,6 +318,27 @@ describe('BotEdit default knowledge bases', () => {
               user_id: 8,
               group_id: 'platform',
               group_name: 'Platform',
+              group_type: 'group',
+            },
+          ],
+        },
+        {
+          group_name: 'growth',
+          group_display_name: 'Growth',
+          kb_count: 1,
+          knowledge_bases: [
+            {
+              id: 505,
+              name: 'Growth Playbooks',
+              description: 'Growth experiments',
+              kb_type: 'notebook',
+              namespace: 'growth',
+              document_count: 5,
+              updated_at: '2026-04-02T13:30:00Z',
+              created_at: '2026-04-01T00:00:00Z',
+              user_id: 10,
+              group_id: 'growth',
+              group_name: 'Growth',
               group_type: 'group',
             },
           ],
@@ -423,6 +450,52 @@ describe('BotEdit default knowledge bases', () => {
     expect(screen.getByText('隐藏公共技能')).toBeInTheDocument()
   })
 
+  test('hides knowledge base selector for public Dify bots', async () => {
+    renderBotEdit(
+      {
+        shell_name: 'Dify',
+        shell_type: 'Dify',
+        agent_config: {},
+      },
+      { scope: 'public' }
+    )
+
+    await waitFor(() => {
+      expect(mockedGetPublicShells).toHaveBeenCalled()
+    })
+    expect(screen.queryByTestId('default-knowledge-base-trigger')).not.toBeInTheDocument()
+  })
+
+  test('shows only organization knowledge bases for public non-Dify bots', async () => {
+    renderBotEdit({}, { scope: 'public' })
+
+    fireEvent.click(await screen.findByTestId('default-knowledge-base-trigger'))
+
+    expect(screen.getByTestId('default-knowledge-base-group-organization')).toBeInTheDocument()
+    expect(screen.queryByTestId('default-knowledge-base-group-personal')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('default-knowledge-base-group-group')).not.toBeInTheDocument()
+    expect(screen.getByText('Company-wide security guidance')).toBeInTheDocument()
+  })
+
+  test('shows only current group and organization knowledge bases for group bots', async () => {
+    renderBotEdit(
+      {
+        namespace: 'platform',
+        default_knowledge_base_refs: [],
+      },
+      { scope: 'group', groupName: 'platform' }
+    )
+
+    fireEvent.click(await screen.findByTestId('default-knowledge-base-trigger'))
+
+    expect(screen.queryByTestId('default-knowledge-base-group-personal')).not.toBeInTheDocument()
+    expect(screen.getByTestId('default-knowledge-base-group-group')).toBeInTheDocument()
+    expect(screen.getByTestId('default-knowledge-base-group-organization')).toBeInTheDocument()
+    expect(screen.getByText('Ops guides')).toBeInTheDocument()
+    expect(screen.getByText('Company-wide security guidance')).toBeInTheDocument()
+    expect(screen.queryByText('Growth experiments')).not.toBeInTheDocument()
+  })
+
   test('renders popover-based selector with grouped metadata', async () => {
     renderBotEdit()
 
@@ -434,13 +507,13 @@ describe('BotEdit default knowledge bases', () => {
     expect(screen.getByTestId('default-knowledge-base-search-input')).toBeInTheDocument()
 
     expect(screen.getByTestId('default-knowledge-base-group-personal')).toBeInTheDocument()
-    expect(screen.getByTestId('default-knowledge-base-group-group')).toBeInTheDocument()
+    expect(screen.getAllByTestId('default-knowledge-base-group-group')).toHaveLength(2)
     expect(screen.getByTestId('default-knowledge-base-group-organization')).toBeInTheDocument()
 
     expect(screen.getByText('Ops guides')).toBeInTheDocument()
     expect(screen.getByText('Company-wide security guidance')).toBeInTheDocument()
     expect(screen.getByText('Shared support answers')).toBeInTheDocument()
-    expect(screen.getByText('Group')).toBeInTheDocument()
+    expect(screen.getAllByText('Group').length).toBeGreaterThan(0)
     expect(screen.getByText('Organization')).toBeInTheDocument()
     expect(screen.getByText('Shared')).toBeInTheDocument()
     expect(screen.getByText('Platform')).toBeInTheDocument()

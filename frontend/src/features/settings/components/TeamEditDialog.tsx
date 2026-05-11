@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -553,6 +554,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
             <DialogTitle>
               {isEditing ? t('common:teams.edit_title') : t('common:teams.create_title')}
             </DialogTitle>
+            <DialogDescription>{t('common:teams.description')}</DialogDescription>
           </DialogHeader>
 
           <div className="flex-1 overflow-y-auto space-y-6 py-4">

@@ -12,26 +12,24 @@
 
 'use client'
 
-import React, { useEffect, useMemo, useState } from 'react'
-import { Check, Search, Star } from 'lucide-react'
+import React, { useMemo, useState } from 'react'
+import { Search } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { SparklesIcon, Cog6ToothIcon } from '@heroicons/react/24/outline'
 import { ActionButton } from '@/components/ui/action-button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Input } from '@/components/ui/input'
-import { Tag } from '@/components/ui/tag'
 import { AgentIcon } from '@/components/icons/AgentIcon'
 import { cn } from '@/lib/utils'
 import { paths } from '@/config/paths'
 import { useTranslation } from '@/hooks/useTranslation'
-import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles'
-import type { QuickAccessConfig, Team, TaskDetail, TaskType, UserPreferences } from '@/types/api'
+import type { Team, TaskDetail, TaskType } from '@/types/api'
 import TeamCreationWizard from '@/features/settings/components/wizard/TeamCreationWizard'
-import { userApis } from '@/apis/user'
-import { useUser } from '@/features/common/UserContext'
-import SystemTeamTag from './SystemTeamTag'
+import TeamSelectorList from './TeamSelectorList'
 import { TEAM_SELECTOR_POPOVER_CLASS_NAME } from './team-selector-popover'
+import { filterTeamsByMode, getTeamDisplayName } from './team-selector-utils'
+import { useTeamFavorites } from './useTeamFavorites'
 
 interface TeamSelectorButtonProps {
   selectedTeam: Team | null
@@ -46,18 +44,6 @@ interface TeamSelectorButtonProps {
   onTeamsRefresh?: () => Promise<void>
 }
 
-const getTeamDisplayName = (team: Team) => team.displayName?.trim() || team.name
-
-const addFavoriteBeforeSystemRecommendations = (
-  teamIds: number[],
-  teamId: number,
-  systemRecommendedTeamIds: Set<number>
-) => {
-  const userFavoriteIds = teamIds.filter(id => !systemRecommendedTeamIds.has(id))
-  const systemIds = teamIds.filter(id => systemRecommendedTeamIds.has(id))
-  return [...userFavoriteIds, teamId, ...systemIds]
-}
-
 export default function TeamSelectorButton({
   selectedTeam,
   setSelectedTeam,
@@ -69,69 +55,22 @@ export default function TeamSelectorButton({
 }: TeamSelectorButtonProps) {
   const { t } = useTranslation(['common', 'wizard'])
   const router = useRouter()
-  const { user, refresh } = useUser()
   const [open, setOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [wizardOpen, setWizardOpen] = useState(false)
-  const [favoriteUpdatingTeamId, setFavoriteUpdatingTeamId] = useState<number | null>(null)
-  const [localFavoriteTeamIds, setLocalFavoriteTeamIds] = useState<number[] | null>(null)
-  const [systemRecommendedTeamIds, setSystemRecommendedTeamIds] = useState<number[]>([])
-  const [quickAccessMetaLoaded, setQuickAccessMetaLoaded] = useState(false)
-  const sharedBadgeStyle = getSharedBadgeStyle()
-  const quickAccessConfig = user?.preferences?.quick_access
-  const favoriteTeamIds = useMemo(
-    () => localFavoriteTeamIds ?? quickAccessConfig?.teams ?? [],
-    [localFavoriteTeamIds, quickAccessConfig?.teams]
-  )
-  const favoriteTeamIdSet = useMemo(() => new Set(favoriteTeamIds), [favoriteTeamIds])
-  const systemRecommendedTeamIdSet = useMemo(
-    () => new Set(systemRecommendedTeamIds),
-    [systemRecommendedTeamIds]
-  )
-
-  useEffect(() => {
-    let isMounted = true
-
-    const loadQuickAccessMeta = async () => {
-      try {
-        const quickAccess = await userApis.getQuickAccess()
-        if (isMounted) {
-          setSystemRecommendedTeamIds(quickAccess.system_team_ids ?? [])
-        }
-      } catch (error) {
-        console.error('Failed to load quick access metadata:', error)
-        if (isMounted) {
-          setSystemRecommendedTeamIds([])
-        }
-      } finally {
-        if (isMounted) {
-          setQuickAccessMetaLoaded(true)
-        }
-      }
-    }
-
-    loadQuickAccessMeta()
-
-    return () => {
-      isMounted = false
-    }
-  }, [])
+  const {
+    favoriteTeamIdSet,
+    favoriteUpdatingTeamId,
+    handleToggleFavorite,
+    quickAccessMetaLoaded,
+    systemRecommendedTeamIdSet,
+  } = useTeamFavorites()
 
   // Filter teams by bind_mode based on current mode
-  const filteredTeamsByMode = React.useMemo(() => {
-    // First filter out teams with empty bind_mode array
-    const teamsWithValidBindMode = teams.filter(team => {
-      if (Array.isArray(team.bind_mode) && team.bind_mode.length === 0) return false
-      return true
-    })
-
-    return teamsWithValidBindMode.filter(team => {
-      // If bind_mode is not set (undefined/null), show in all modes
-      if (!team.bind_mode) return true
-      // Otherwise, only show if current mode is in bind_mode
-      return team.bind_mode.includes(currentMode)
-    })
-  }, [teams, currentMode])
+  const filteredTeamsByMode = useMemo(
+    () => filterTeamsByMode(teams, currentMode),
+    [teams, currentMode]
+  )
 
   // Filter teams by search query
   const filteredTeams = filteredTeamsByMode.filter(team => {
@@ -159,52 +98,6 @@ export default function TeamSelectorButton({
   const handleCreateClick = () => {
     setOpen(false)
     setWizardOpen(true)
-  }
-
-  const handleToggleFavorite = async (event: React.MouseEvent, team: Team) => {
-    event.preventDefault()
-    event.stopPropagation()
-
-    try {
-      setFavoriteUpdatingTeamId(team.id)
-      const currentUser = user ?? (await userApis.getCurrentUser())
-      const currentPreferences: UserPreferences = {
-        send_key: currentUser.preferences?.send_key || 'enter',
-        ...currentUser.preferences,
-      }
-      const currentQuickAccess: QuickAccessConfig = currentPreferences.quick_access ?? { teams: [] }
-      const currentTeamIds = localFavoriteTeamIds ?? currentQuickAccess.teams
-      if (systemRecommendedTeamIdSet.has(team.id)) {
-        return
-      }
-      const isFavorite = currentTeamIds.includes(team.id)
-      const nextTeamIds = isFavorite
-        ? currentTeamIds.filter(teamId => teamId !== team.id)
-        : addFavoriteBeforeSystemRecommendations(
-            currentTeamIds,
-            team.id,
-            systemRecommendedTeamIdSet
-          )
-
-      const nextQuickAccess = {
-        ...(currentQuickAccess.version !== undefined
-          ? { version: currentQuickAccess.version }
-          : {}),
-        teams: nextTeamIds,
-      }
-
-      await userApis.updateUser({
-        preferences: {
-          ...currentPreferences,
-          quick_access: nextQuickAccess,
-        },
-      })
-      setLocalFavoriteTeamIds(nextTeamIds)
-      await refresh()
-      window.dispatchEvent(new Event('quick-access-updated'))
-    } finally {
-      setFavoriteUpdatingTeamId(null)
-    }
   }
 
   const handleWizardSuccess = async (teamId: number, _teamName: string) => {
@@ -263,111 +156,17 @@ export default function TeamSelectorButton({
 
           {/* Teams list */}
           <div className="flex-1 overflow-y-auto custom-scrollbar">
-            {filteredTeams.length === 0 ? (
-              <div className="py-4 text-center text-sm text-text-muted">
-                {searchQuery ? t('common:teams.no_match') : t('common:teams.no_match')}
-              </div>
-            ) : (
-              filteredTeams.map(team => {
-                const displayName = getTeamDisplayName(team)
-                const isSelected = selectedTeam?.id === team.id
-                const isSystemTeam = team.user_id === 0
-                const isFavorite = favoriteTeamIdSet.has(team.id)
-                const isSystemRecommended = systemRecommendedTeamIdSet.has(team.id)
-                const isSharedTeam = team.share_status === 2 && team.user?.user_name
-                const isGroupTeam =
-                  team.namespace && team.namespace !== 'default' && team.namespace !== 'community'
-
-                return (
-                  <div
-                    key={team.id}
-                    data-testid={`team-option-${team.name}`}
-                    className={`flex items-center gap-2 px-2 py-2 rounded-md cursor-pointer transition-colors ${
-                      isSelected ? 'bg-primary/10' : 'hover:bg-hover'
-                    }`}
-                    onClick={() => handleSelectTeam(team)}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault()
-                        handleSelectTeam(team)
-                      }
-                    }}
-                  >
-                    <div
-                      className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${
-                        isSelected
-                          ? 'bg-primary border-primary text-white'
-                          : 'border-border bg-background'
-                      }`}
-                    >
-                      {isSelected && <Check className="h-3 w-3" />}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span
-                          className="text-sm text-text-primary truncate flex-1 min-w-0"
-                          title={displayName}
-                        >
-                          {displayName}
-                        </span>
-                        {isSystemTeam && <SystemTeamTag className="max-w-[120px] truncate" />}
-                        {isGroupTeam && (
-                          <Tag
-                            className="text-xs !m-0 flex-shrink-0 max-w-[120px] truncate"
-                            variant="info"
-                            title={team.namespace}
-                          >
-                            {team.namespace}
-                          </Tag>
-                        )}
-                        {isSharedTeam && (
-                          <Tag
-                            className="text-xs !m-0 flex-shrink-0 max-w-[120px] truncate"
-                            variant="default"
-                            style={sharedBadgeStyle}
-                            title={t('common:teams.shared_by', { author: team.user?.user_name })}
-                          >
-                            {t('common:teams.shared_by', { author: team.user?.user_name })}
-                          </Tag>
-                        )}
-                      </div>
-                    </div>
-                    {quickAccessMetaLoaded && !isSystemRecommended && (
-                      <button
-                        type="button"
-                        data-testid={`favorite-team-button-${team.id}`}
-                        aria-label={
-                          isFavorite
-                            ? t('common:teams.remove_from_quick_access', '取消收藏')
-                            : t('common:teams.add_to_quick_access', '收藏')
-                        }
-                        title={
-                          isFavorite
-                            ? t('common:teams.remove_from_quick_access', '取消收藏')
-                            : t('common:teams.add_to_quick_access', '收藏')
-                        }
-                        disabled={favoriteUpdatingTeamId === team.id}
-                        onClick={event => handleToggleFavorite(event, team)}
-                        className={cn(
-                          'h-7 w-7 flex-shrink-0 rounded-md inline-flex items-center justify-center',
-                          'text-text-muted hover:bg-hover hover:text-primary transition-colors',
-                          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
-                          'disabled:pointer-events-none disabled:opacity-50',
-                          isFavorite && 'text-primary'
-                        )}
-                      >
-                        <Star
-                          className={cn('h-4 w-4', isFavorite && 'fill-current')}
-                          aria-hidden="true"
-                        />
-                      </button>
-                    )}
-                  </div>
-                )
-              })
-            )}
+            <TeamSelectorList
+              teams={filteredTeams}
+              selectedTeam={selectedTeam}
+              onTeamSelect={handleSelectTeam}
+              emptyText={t('common:teams.no_match')}
+              favoriteTeamIdSet={favoriteTeamIdSet}
+              systemRecommendedTeamIdSet={systemRecommendedTeamIdSet}
+              quickAccessMetaLoaded={quickAccessMetaLoaded}
+              favoriteUpdatingTeamId={favoriteUpdatingTeamId}
+              onToggleFavorite={handleToggleFavorite}
+            />
           </div>
 
           {/* Footer with create and settings buttons */}

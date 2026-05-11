@@ -169,6 +169,7 @@ def _bot_to_response(bot: Kind, db: Session) -> PublicBotResponse:
     mcp_servers = None
     skills = None
     agent_config = None
+    default_knowledge_base_refs = None
 
     # Get Ghost info if available
     if ghost_name:
@@ -196,6 +197,9 @@ def _bot_to_response(bot: Kind, db: Session) -> PublicBotResponse:
                 system_prompt = ghost_spec.get("systemPrompt", "")
                 mcp_servers = ghost_spec.get("mcpServers", {})
                 skills = ghost_spec.get("skills", [])
+                default_knowledge_base_refs = ghost_spec.get(
+                    "defaultKnowledgeBaseRefs", []
+                )
 
     # Get Model info if available
     if model_name:
@@ -254,6 +258,7 @@ def _bot_to_response(bot: Kind, db: Session) -> PublicBotResponse:
         mcp_servers=mcp_servers,
         skills=skills,
         agent_config=agent_config,
+        default_knowledge_base_refs=default_knowledge_base_refs,
     )
 
 
@@ -307,6 +312,7 @@ def _create_public_ghost(
     system_prompt: str,
     mcp_servers: dict,
     skills: list,
+    default_knowledge_base_refs: Optional[list[dict]] = None,
 ) -> Kind:
     """Create a public Ghost for the bot."""
     ghost_name = f"{bot_name}-ghost"
@@ -328,6 +334,7 @@ def _create_public_ghost(
         ghost_crd.spec.systemPrompt = system_prompt or ""
         ghost_crd.spec.mcpServers = mcp_servers or {}
         ghost_crd.spec.skills = skills or []
+        ghost_crd.spec.defaultKnowledgeBaseRefs = default_knowledge_base_refs or []
         existing_ghost.json = ghost_crd.model_dump()
         flag_modified(existing_ghost, "json")
         return existing_ghost
@@ -339,6 +346,8 @@ def _create_public_ghost(
     }
     if skills:
         ghost_spec["skills"] = skills
+    if default_knowledge_base_refs:
+        ghost_spec["defaultKnowledgeBaseRefs"] = default_knowledge_base_refs
 
     ghost_json = {
         "kind": "Ghost",
@@ -526,6 +535,7 @@ async def create_public_bot(
             bot_data.system_prompt or "",
             bot_data.mcp_servers or {},
             bot_data.skills or [],
+            bot_data.default_knowledge_base_refs or [],
         )
         ghost_name = ghost.name
 
@@ -663,6 +673,7 @@ async def update_public_bot(
         or bot_data.mcp_servers is not None
         or bot_data.skills is not None
         or bot_data.agent_config is not None
+        or bot_data.default_knowledge_base_refs is not None
     ):
         # Form data mode - auto-update Ghost and optionally Model
         logger.info(f"Updating public bot '{new_name}' in form data mode")
@@ -706,6 +717,7 @@ async def update_public_bot(
             bot_data.system_prompt is not None
             or bot_data.mcp_servers is not None
             or bot_data.skills is not None
+            or bot_data.default_knowledge_base_refs is not None
         ):
             # Get existing ghost to preserve unchanged fields
             existing_ghost = (
@@ -727,6 +739,10 @@ async def update_public_bot(
                     ghost_crd.spec.mcpServers = bot_data.mcp_servers
                 if bot_data.skills is not None:
                     ghost_crd.spec.skills = bot_data.skills
+                if bot_data.default_knowledge_base_refs is not None:
+                    ghost_crd.spec.defaultKnowledgeBaseRefs = (
+                        bot_data.default_knowledge_base_refs
+                    )
                 existing_ghost.json = ghost_crd.model_dump()
                 flag_modified(existing_ghost, "json")
             else:
@@ -738,6 +754,7 @@ async def update_public_bot(
                     bot_data.system_prompt or "",
                     bot_data.mcp_servers or {},
                     bot_data.skills or [],
+                    bot_data.default_knowledge_base_refs or [],
                 )
                 ghost_name = ghost.name
 

@@ -71,13 +71,24 @@ export function useKnowledgeBaseOptions(): UseKnowledgeBaseOptionsResult {
           ...response.organization.knowledge_bases.map(item =>
             toKnowledgeBaseOption(item, 'organization')
           ),
-        ].sort(
+        ]
+
+        const dedupedOptions = Array.from(
+          nextOptions.reduce((map, option) => {
+            if (!map.has(option.id) || option.source === 'organization') {
+              map.set(option.id, option)
+            }
+            return map
+          }, new Map<number, KnowledgeBaseOption>())
+        ).map(([, option]) => option)
+
+        dedupedOptions.sort(
           (left, right) =>
             new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime() ||
             left.name.localeCompare(right.name)
         )
 
-        setOptions(nextOptions)
+        setOptions(dedupedOptions)
       } catch (fetchError) {
         if (!cancelled) {
           setError(fetchError instanceof Error ? fetchError : new Error('Failed to fetch KBs'))

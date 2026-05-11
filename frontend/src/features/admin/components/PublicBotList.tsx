@@ -51,6 +51,8 @@ import {
   AdminPublicModel,
 } from '@/apis/admin'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
+import { KnowledgeBaseMultiSelector } from '@/features/settings/components/knowledge/KnowledgeBaseMultiSelector'
+import type { KnowledgeBaseDefaultRef } from '@/types/api'
 
 // Special value for "None" selection
 const NONE_VALUE = '__none__'
@@ -87,6 +89,9 @@ const PublicBotList: React.FC = () => {
     config: '{}',
     is_active: true,
   })
+  const [defaultKnowledgeBaseRefs, setDefaultKnowledgeBaseRefs] = useState<
+    KnowledgeBaseDefaultRef[]
+  >([])
   const [configError, setConfigError] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -220,6 +225,14 @@ const PublicBotList: React.FC = () => {
     )
     setFormData({ ...formData, config: newConfig })
     validateConfig(newConfig)
+
+    if (refKey === 'shellRef') {
+      const shellName = value === NONE_VALUE ? '' : value
+      const selectedShell = shells.find(shell => shell.name === shellName)
+      if (selectedShell?.shell_type === 'Dify') {
+        setDefaultKnowledgeBaseRefs([])
+      }
+    }
   }
 
   const handleCreateBot = async () => {
@@ -242,10 +255,12 @@ const PublicBotList: React.FC = () => {
 
     setSaving(true)
     try {
+      const createKnowledgeBaseRefs = selectedShellType === 'Dify' ? [] : defaultKnowledgeBaseRefs
       const createData: AdminPublicBotCreate = {
         name: formData.name.trim(),
         namespace: formData.namespace.trim() || 'default',
         json: config,
+        default_knowledge_base_refs: createKnowledgeBaseRefs,
       }
       await adminApis.createPublicBot(createData)
       toast({ title: t('public_bots.success.created') })
@@ -289,6 +304,7 @@ const PublicBotList: React.FC = () => {
 
     setSaving(true)
     try {
+      const updateKnowledgeBaseRefs = selectedShellType === 'Dify' ? [] : defaultKnowledgeBaseRefs
       const updateData: AdminPublicBotUpdate = {}
       if (trimmedName !== selectedBot.name) {
         updateData.name = trimmedName
@@ -297,6 +313,7 @@ const PublicBotList: React.FC = () => {
         updateData.namespace = trimmedNamespace || 'default'
       }
       updateData.json = config
+      updateData.default_knowledge_base_refs = updateKnowledgeBaseRefs
       if (formData.is_active !== selectedBot.is_active) {
         updateData.is_active = formData.is_active
       }
@@ -345,6 +362,7 @@ const PublicBotList: React.FC = () => {
       config: '{}',
       is_active: true,
     })
+    setDefaultKnowledgeBaseRefs([])
     setConfigError('')
     setSelectedBot(null)
   }
@@ -357,6 +375,7 @@ const PublicBotList: React.FC = () => {
       config: JSON.stringify(bot.json, null, 2),
       is_active: bot.is_active,
     })
+    setDefaultKnowledgeBaseRefs(bot.default_knowledge_base_refs || [])
     setIsEditDialogOpen(true)
   }
 
@@ -366,6 +385,12 @@ const PublicBotList: React.FC = () => {
 
   // Get current refs from config for selector display
   const currentRefs = extractRefsFromConfig(formData.config)
+  const selectedShellType =
+    shells.find(shell => shell.name === currentRefs.shellRef)?.shell_type ??
+    (currentRefs.shellRef === 'Dify'
+      ? 'Dify'
+      : (shells.find(shell => shell.name === selectedBot?.shell_name)?.shell_type ?? null))
+  const showKnowledgeBaseSelector = selectedShellType !== 'Dify'
 
   // Render the resource selector
   const renderResourceSelector = (
@@ -545,35 +570,47 @@ const PublicBotList: React.FC = () => {
                 <span className="text-sm text-text-muted">{t('common.loading')}</span>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {renderResourceSelector(
-                  'ghost',
-                  t('public_bots.form.ghost'),
-                  currentRefs.ghostRef,
-                  value => handleRefChange('ghostRef', value),
-                  ghosts,
-                  t('public_bots.form.ghost_placeholder'),
-                  t('public_bots.form.ghost_none')
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {renderResourceSelector(
+                    'ghost',
+                    t('public_bots.form.ghost'),
+                    currentRefs.ghostRef,
+                    value => handleRefChange('ghostRef', value),
+                    ghosts,
+                    t('public_bots.form.ghost_placeholder'),
+                    t('public_bots.form.ghost_none')
+                  )}
+                  {renderResourceSelector(
+                    'shell',
+                    t('public_bots.form.shell'),
+                    currentRefs.shellRef,
+                    value => handleRefChange('shellRef', value),
+                    shells,
+                    t('public_bots.form.shell_placeholder'),
+                    t('public_bots.form.shell_none')
+                  )}
+                  {renderResourceSelector(
+                    'model',
+                    t('public_bots.form.model'),
+                    currentRefs.modelRef,
+                    value => handleRefChange('modelRef', value),
+                    models,
+                    t('public_bots.form.model_placeholder'),
+                    t('public_bots.form.model_none')
+                  )}
+                </div>
+                {showKnowledgeBaseSelector && (
+                  <div className="space-y-2">
+                    <Label>{t('common:bot.default_knowledge_bases')}</Label>
+                    <KnowledgeBaseMultiSelector
+                      value={defaultKnowledgeBaseRefs}
+                      onChange={setDefaultKnowledgeBaseRefs}
+                      allowedSources={['organization']}
+                    />
+                  </div>
                 )}
-                {renderResourceSelector(
-                  'shell',
-                  t('public_bots.form.shell'),
-                  currentRefs.shellRef,
-                  value => handleRefChange('shellRef', value),
-                  shells,
-                  t('public_bots.form.shell_placeholder'),
-                  t('public_bots.form.shell_none')
-                )}
-                {renderResourceSelector(
-                  'model',
-                  t('public_bots.form.model'),
-                  currentRefs.modelRef,
-                  value => handleRefChange('modelRef', value),
-                  models,
-                  t('public_bots.form.model_placeholder'),
-                  t('public_bots.form.model_none')
-                )}
-              </div>
+              </>
             )}
 
             <div className="space-y-2">
@@ -609,6 +646,7 @@ const PublicBotList: React.FC = () => {
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{t('public_bots.edit_bot')}</DialogTitle>
+            <DialogDescription>{t('public_bots.edit_description')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
@@ -637,35 +675,47 @@ const PublicBotList: React.FC = () => {
                 <span className="text-sm text-text-muted">{t('common.loading')}</span>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {renderResourceSelector(
-                  'edit-ghost',
-                  t('public_bots.form.ghost'),
-                  currentRefs.ghostRef,
-                  value => handleRefChange('ghostRef', value),
-                  ghosts,
-                  t('public_bots.form.ghost_placeholder'),
-                  t('public_bots.form.ghost_none')
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {renderResourceSelector(
+                    'edit-ghost',
+                    t('public_bots.form.ghost'),
+                    currentRefs.ghostRef,
+                    value => handleRefChange('ghostRef', value),
+                    ghosts,
+                    t('public_bots.form.ghost_placeholder'),
+                    t('public_bots.form.ghost_none')
+                  )}
+                  {renderResourceSelector(
+                    'edit-shell',
+                    t('public_bots.form.shell'),
+                    currentRefs.shellRef,
+                    value => handleRefChange('shellRef', value),
+                    shells,
+                    t('public_bots.form.shell_placeholder'),
+                    t('public_bots.form.shell_none')
+                  )}
+                  {renderResourceSelector(
+                    'edit-model',
+                    t('public_bots.form.model'),
+                    currentRefs.modelRef,
+                    value => handleRefChange('modelRef', value),
+                    models,
+                    t('public_bots.form.model_placeholder'),
+                    t('public_bots.form.model_none')
+                  )}
+                </div>
+                {showKnowledgeBaseSelector && (
+                  <div className="space-y-2">
+                    <Label>{t('common:bot.default_knowledge_bases')}</Label>
+                    <KnowledgeBaseMultiSelector
+                      value={defaultKnowledgeBaseRefs}
+                      onChange={setDefaultKnowledgeBaseRefs}
+                      allowedSources={['organization']}
+                    />
+                  </div>
                 )}
-                {renderResourceSelector(
-                  'edit-shell',
-                  t('public_bots.form.shell'),
-                  currentRefs.shellRef,
-                  value => handleRefChange('shellRef', value),
-                  shells,
-                  t('public_bots.form.shell_placeholder'),
-                  t('public_bots.form.shell_none')
-                )}
-                {renderResourceSelector(
-                  'edit-model',
-                  t('public_bots.form.model'),
-                  currentRefs.modelRef,
-                  value => handleRefChange('modelRef', value),
-                  models,
-                  t('public_bots.form.model_placeholder'),
-                  t('public_bots.form.model_none')
-                )}
-              </div>
+              </>
             )}
 
             <div className="space-y-2">

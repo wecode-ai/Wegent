@@ -696,6 +696,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           mcp_servers: botData.mcp_servers,
           skills: botData.skills,
           namespace: 'default',
+          default_knowledge_base_refs: botData.default_knowledge_base_refs,
         }
 
         if (editingBotId && editingBotId > 0) {
@@ -848,6 +849,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           mcp_servers: parsedMcpConfig ?? {},
           skills: selectedSkills.length > 0 ? selectedSkills : [],
           namespace: 'default',
+          default_knowledge_base_refs: defaultKnowledgeBaseRefs,
         }
 
         if (editingBotId && editingBotId > 0) {
@@ -1443,7 +1445,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                 </div>
               )}
 
-              {scope !== 'public' && (
+              {!isDifyAgent && (
                 <div className="flex flex-col">
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center">
@@ -1460,6 +1462,18 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                       value={defaultKnowledgeBaseRefs}
                       onChange={setDefaultKnowledgeBaseRefs}
                       disabled={readOnly}
+                      allowedSources={
+                        scope === 'public'
+                          ? ['organization']
+                          : scope === 'group'
+                            ? groupName
+                              ? ['group', 'organization']
+                              : ['organization']
+                            : ['personal', 'group', 'organization']
+                      }
+                      allowedGroupNamespaces={
+                        scope === 'group' && groupName ? [groupName] : undefined
+                      }
                     />
                   </div>
                 </div>

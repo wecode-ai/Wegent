@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -817,9 +818,16 @@ export default function PublicTeamEditDialog({
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
           <DialogHeader>
             <div className="flex items-center justify-between">
-              <DialogTitle>
-                {isEditing ? t('public_teams.edit_team') : t('public_teams.create_team')}
-              </DialogTitle>
+              <div>
+                <DialogTitle>
+                  {isEditing ? t('public_teams.edit_team') : t('public_teams.create_team')}
+                </DialogTitle>
+                <DialogDescription>
+                  {isEditing
+                    ? t('public_teams.edit_description')
+                    : t('public_teams.create_description')}
+                </DialogDescription>
+              </div>
               {isEditing && (
                 <div className="flex items-center gap-2 mr-8">
                   <Label htmlFor="status-toggle" className="text-sm text-text-muted">

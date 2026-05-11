@@ -3,7 +3,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
+
+from fastapi import HTTPException
 
 from app.models.kind import Kind
 from app.schemas.bot import BotCreate, BotUpdate
@@ -189,3 +192,164 @@ def test_convert_to_bot_dict_exposes_default_knowledge_base_refs():
     assert result["default_knowledge_base_refs"] == [
         {"id": 101, "name": "Product Docs"}
     ]
+
+
+def test_create_with_user_rejects_non_group_knowledge_bases_for_group_bots():
+    service = BotKindsService(Kind)
+    db = Mock()
+    duplicate_check_query = Mock()
+    duplicate_check_query.filter.return_value = duplicate_check_query
+    duplicate_check_query.first.return_value = None
+    db.query.return_value = duplicate_check_query
+
+    grouped_kbs = SimpleNamespace(
+        groups=[
+            SimpleNamespace(
+                group_name="platform",
+                knowledge_bases=[SimpleNamespace(id=202)],
+            )
+        ],
+        organization=SimpleNamespace(
+            knowledge_bases=[SimpleNamespace(id=303)],
+        ),
+    )
+
+    with patch.object(service, "_encrypt_agent_config", return_value={}):
+        with patch(
+            "app.services.adapters.bot_kinds.KnowledgeService.get_all_knowledge_bases_grouped",
+            return_value=grouped_kbs,
+        ):
+            with patch(
+                "app.services.adapters.bot_kinds.get_shell_info_by_name",
+                return_value={
+                    "shell_type": "ClaudeCode",
+                    "execution_type": "local_engine",
+                    "base_image": "python:3.11",
+                    "is_custom": False,
+                    "namespace": "default",
+                },
+            ):
+                with patch(
+                    "app.services.adapters.bot_kinds.get_shell_by_name",
+                    return_value=None,
+                ):
+                    with patch.object(service, "_get_model_by_name", return_value=None):
+                        with patch.object(
+                            service,
+                            "_convert_to_bot_dict",
+                            return_value={"id": 1},
+                        ):
+                            try:
+                                service.create_with_user(
+                                    db,
+                                    obj_in=BotCreate(
+                                        name="platform-bot",
+                                        shell_name="ClaudeCode",
+                                        agent_config={},
+                                        namespace="platform",
+                                        default_knowledge_base_refs=[
+                                            {"id": 101, "name": "Personal Docs"}
+                                        ],
+                                    ),
+                                    user_id=7,
+                                )
+                            except HTTPException as exc:
+                                assert exc.status_code == 400
+                                assert (
+                                    exc.detail
+                                    == "Group bots can only bind knowledge bases from the current group or the organization"
+                                )
+                            else:
+                                raise AssertionError("Expected HTTPException")
+
+
+def test_update_with_user_rejects_non_group_knowledge_bases_for_group_bots():
+    service = BotKindsService(Kind)
+    db = Mock()
+
+    bot = Mock(spec=Kind)
+    bot.id = 17
+    bot.user_id = 7
+    bot.name = "platform-bot"
+    bot.namespace = "platform"
+    bot.kind = "Bot"
+    bot.is_active = True
+    bot.created_at = datetime.now()
+    bot.updated_at = datetime.now()
+    bot.json = {
+        "kind": "Bot",
+        "apiVersion": "agent.wecode.io/v1",
+        "metadata": {"name": "platform-bot", "namespace": "platform"},
+        "spec": {
+            "ghostRef": {"name": "platform-bot-ghost", "namespace": "platform"},
+            "shellRef": {"name": "ClaudeCode", "namespace": "default"},
+            "modelRef": {"name": "platform-bot-model", "namespace": "platform"},
+        },
+        "status": {"state": "Available"},
+    }
+
+    ghost = Mock(spec=Kind)
+    ghost.kind = "Ghost"
+    ghost.name = "platform-bot-ghost"
+    ghost.namespace = "platform"
+    ghost.updated_at = datetime.now()
+    ghost.json = {
+        "kind": "Ghost",
+        "apiVersion": "agent.wecode.io/v1",
+        "metadata": {"name": "platform-bot-ghost", "namespace": "platform"},
+        "spec": {
+            "systemPrompt": "hello",
+            "mcpServers": {},
+        },
+        "status": {"state": "Available"},
+    }
+
+    query = Mock()
+    query.filter.return_value = query
+    query.first.return_value = bot
+    db.query.return_value = query
+
+    grouped_kbs = SimpleNamespace(
+        groups=[
+            SimpleNamespace(
+                group_name="platform",
+                knowledge_bases=[SimpleNamespace(id=202)],
+            )
+        ],
+        organization=SimpleNamespace(
+            knowledge_bases=[SimpleNamespace(id=303)],
+        ),
+    )
+
+    with patch(
+        "app.services.adapters.bot_kinds.KnowledgeService.get_all_knowledge_bases_grouped",
+        return_value=grouped_kbs,
+    ):
+        with patch("app.services.adapters.bot_kinds.flag_modified"):
+            with patch.object(
+                service, "_get_bot_components", return_value=(ghost, None, None)
+            ):
+                with patch.object(
+                    service,
+                    "_convert_to_bot_dict",
+                    return_value={"id": 17},
+                ):
+                    try:
+                        service.update_with_user(
+                            db,
+                            bot_id=17,
+                            obj_in=BotUpdate(
+                                default_knowledge_base_refs=[
+                                    {"id": 101, "name": "Personal Docs"}
+                                ]
+                            ),
+                            user_id=7,
+                        )
+                    except HTTPException as exc:
+                        assert exc.status_code == 400
+                        assert (
+                            exc.detail
+                            == "Group bots can only bind knowledge bases from the current group or the organization"
+                        )
+                    else:
+                        raise AssertionError("Expected HTTPException")

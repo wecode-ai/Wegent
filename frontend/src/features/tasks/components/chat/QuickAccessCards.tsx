@@ -6,16 +6,21 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { SparklesIcon, ChevronDownIcon } from '@heroicons/react/24/outline'
-import { Check, GripVertical, Search } from 'lucide-react'
+import { ArrowLeft, List, Search } from 'lucide-react'
 import { userApis } from '@/apis/user'
 import type { QuickAccessResponse, QuickAccessTeam, Team, UserPreferences } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Input } from '@/components/ui/input'
-import { Tag } from '@/components/ui/tag'
-import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles'
 import TeamCreationWizard from '@/features/settings/components/wizard/TeamCreationWizard'
 import { TEAM_SELECTOR_POPOVER_CLASS_NAME } from '../selector/team-selector-popover'
+import TeamSelectorList from '../selector/TeamSelectorList'
+import {
+  filterTeamsByMode,
+  getTeamDisplayName,
+  type SelectableTeam,
+} from '../selector/team-selector-utils'
+import { useTeamFavorites } from '../selector/useTeamFavorites'
 
 // Container dimensions
 const CONTAINER_WIDTH = 880
@@ -62,17 +67,14 @@ export function QuickAccessCards({
   const [dragOverTeamId, setDragOverTeamId] = useState<number | null>(null)
   const [showWizard, setShowWizard] = useState(false)
   const [morePopoverOpen, setMorePopoverOpen] = useState(false)
+  const [showAllTeamsInMore, setShowAllTeamsInMore] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const isDragReorderingRef = useRef(false)
-  const sharedBadgeStyle = getSharedBadgeStyle()
 
-  type DisplayTeam = Team & {
-    display_name?: string | null
+  type DisplayTeam = SelectableTeam & {
     is_system: boolean
     recommended_mode?: 'chat' | 'code' | 'both'
   }
-
-  const getTeamDisplayName = (team: DisplayTeam) => team.display_name?.trim() || team.name
 
   const fetchQuickAccess = useCallback(async () => {
     try {
@@ -98,15 +100,7 @@ export function QuickAccessCards({
     }
   }, [fetchQuickAccess])
 
-  // Filter teams by bind_mode based on current mode
-  const filteredTeams = teams.filter(team => {
-    // Filter out teams with empty bind_mode array
-    if (Array.isArray(team.bind_mode) && team.bind_mode.length === 0) return false
-    // If bind_mode is not set (undefined/null), show in all modes
-    if (!team.bind_mode) return true
-    // Otherwise, only show if current mode is in bind_mode
-    return team.bind_mode.includes(currentMode)
-  })
+  const filteredTeams = filterTeamsByMode(teams, currentMode)
 
   // Get all quick access teams matched with full team data
   const allDisplayTeams: DisplayTeam[] = quickAccessTeams
@@ -130,12 +124,42 @@ export function QuickAccessCards({
     return true
   })
 
+  const allSelectableTeams: DisplayTeam[] = filteredTeams.map(team => {
+    const quickAccessTeam = quickAccessTeams.find(qa => qa.id === team.id)
+    return {
+      ...team,
+      display_name: quickAccessTeam?.display_name ?? team.displayName,
+      is_system: quickAccessTeam?.is_system ?? team.user_id === 0,
+      recommended_mode: quickAccessTeam?.recommended_mode || team.recommended_mode,
+    } as DisplayTeam
+  })
+
   // Limit display teams to MAX_TEAM_CARDS (4 teams)
   const teamCardsToShow = displayTeams.slice(0, MAX_TEAM_CARDS)
-  const hasMoreTeams = displayTeams.length > MAX_TEAM_CARDS
+  const quickAccessTeamIds = new Set(displayTeams.map(team => team.id))
+  const hasTeamsOutsideQuickAccess = allSelectableTeams.some(
+    team => !quickAccessTeamIds.has(team.id)
+  )
+  const morePopoverTeams = showAllTeamsInMore ? allSelectableTeams : displayTeams
+  const systemRecommendedQuickAccessIds = quickAccessResponse?.system_team_ids ?? []
+  const systemRecommendedQuickAccessIdSet = new Set(systemRecommendedQuickAccessIds)
+  const favoriteQuickAccessTeamIds = quickAccessTeams
+    .filter(team => !systemRecommendedQuickAccessIdSet.has(team.id))
+    .map(team => team.id)
+  const {
+    favoriteTeamIdSet,
+    favoriteUpdatingTeamId,
+    handleToggleFavorite,
+    quickAccessMetaLoaded,
+    systemRecommendedTeamIdSet,
+  } = useTeamFavorites({
+    initialFavoriteTeamIds: favoriteQuickAccessTeamIds,
+    initialSystemRecommendedTeamIds: systemRecommendedQuickAccessIds,
+    loadMetadata: false,
+  })
 
   // Filter teams by search query for the more popover
-  const filteredTeamsBySearch = displayTeams.filter(team => {
+  const filteredTeamsBySearch = morePopoverTeams.filter(team => {
     const normalizedSearch = searchQuery.toLowerCase()
     return (
       getTeamDisplayName(team).toLowerCase().includes(normalizedSearch) ||
@@ -147,12 +171,24 @@ export function QuickAccessCards({
     setMorePopoverOpen(newOpen)
     if (!newOpen) {
       setSearchQuery('')
+      setShowAllTeamsInMore(false)
     }
   }
 
   const handleSelectTeamFromMore = (team: Team) => {
     onTeamSelect(team)
     setMorePopoverOpen(false)
+    setSearchQuery('')
+    setShowAllTeamsInMore(false)
+  }
+
+  const handleShowAllTeams = () => {
+    setShowAllTeamsInMore(true)
+    setSearchQuery('')
+  }
+
+  const handleShowQuickAccessTeams = () => {
+    setShowAllTeamsInMore(false)
     setSearchQuery('')
   }
 
@@ -239,17 +275,14 @@ export function QuickAccessCards({
 
   const handleQuickAccessDragStart = (
     event: React.DragEvent<HTMLElement>,
-    team: DisplayTeam
+    team: SelectableTeam
   ) => {
     setDraggedTeamId(team.id)
     event.dataTransfer.effectAllowed = 'move'
     event.dataTransfer.setData('text/plain', String(team.id))
   }
 
-  const handleQuickAccessDragOver = (
-    event: React.DragEvent<HTMLElement>,
-    team: DisplayTeam
-  ) => {
+  const handleQuickAccessDragOver = (event: React.DragEvent<HTMLElement>, team: SelectableTeam) => {
     if (!draggedTeamId || draggedTeamId === team.id) return
 
     event.preventDefault()
@@ -257,7 +290,7 @@ export function QuickAccessCards({
     setDragOverTeamId(team.id)
   }
 
-  const handleQuickAccessDrop = (event: React.DragEvent<HTMLElement>, team: DisplayTeam) => {
+  const handleQuickAccessDrop = (event: React.DragEvent<HTMLElement>, team: SelectableTeam) => {
     event.preventDefault()
 
     if (!draggedTeamId) return
@@ -331,7 +364,7 @@ export function QuickAccessCards({
   }
 
   // Don't show quick access cards if no teams are available after filtering
-  if (displayTeams.length === 0) {
+  if (displayTeams.length === 0 && allSelectableTeams.length === 0) {
     return null
   }
 
@@ -432,7 +465,15 @@ export function QuickAccessCards({
   }
 
   const renderMoreButton = () => {
-    if (!hasMoreTeams) return null
+    const popoverTitle = showAllTeamsInMore
+      ? t('common:teams.all_agents_title')
+      : t('common:teams.quick_access_title')
+    const popoverDescription = showAllTeamsInMore
+      ? t('common:teams.all_agents_description')
+      : t('common:teams.quick_access_description')
+    const searchPlaceholder = showAllTeamsInMore
+      ? t('common:teams.search_all_agents')
+      : t('common:teams.search_quick_access')
 
     return (
       <Popover open={morePopoverOpen} onOpenChange={handleMorePopoverOpenChange}>
@@ -456,8 +497,9 @@ export function QuickAccessCards({
         </PopoverTrigger>
 
         <PopoverContent align="start" side="top" className={TEAM_SELECTOR_POPOVER_CLASS_NAME}>
-          <div className="px-2 pb-2 text-sm font-medium text-text-primary">
-            {t('common:teams.select_team')}
+          <div className="px-2 pb-2">
+            <div className="text-sm font-medium text-text-primary">{popoverTitle}</div>
+            <p className="mt-1 text-xs leading-5 text-text-muted">{popoverDescription}</p>
           </div>
 
           {/* Search input */}
@@ -467,7 +509,7 @@ export function QuickAccessCards({
               <Input
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                placeholder={t('common:teams.search_team')}
+                placeholder={searchPlaceholder}
                 className="h-8 pl-7 text-sm"
               />
             </div>
@@ -475,97 +517,59 @@ export function QuickAccessCards({
 
           {/* Teams list */}
           <div className="flex-1 overflow-y-auto custom-scrollbar">
-            {filteredTeamsBySearch.length === 0 ? (
-              <div className="py-4 text-center text-sm text-text-muted">
-                {searchQuery ? t('common:teams.no_match') : t('common:teams.no_match')}
-              </div>
-            ) : (
-              filteredTeamsBySearch.map(team => {
-                const isSelected = selectedTeam?.id === team.id
-                const displayName = getTeamDisplayName(team)
-                const isSharedTeam = team.share_status === 2 && team.user?.user_name
-                const isGroupTeam =
-                  team.namespace && team.namespace !== 'default' && team.namespace !== 'community'
-
-                return (
-                  <div
-                    key={team.id}
-                    data-testid={`quick-access-more-team-${team.name}`}
-                    className={`flex items-center gap-2 px-2 py-2 rounded-md cursor-pointer transition-colors ${
-                      isSelected ? 'bg-primary/10' : 'hover:bg-hover'
-                    } ${dragOverTeamId === team.id ? 'ring-2 ring-primary/40' : ''}`}
-                    onClick={() => handleSelectTeamFromMore(team)}
-                    onDragOver={event => handleQuickAccessDragOver(event, team)}
-                    onDragLeave={() => setDragOverTeamId(null)}
-                    onDrop={event => handleQuickAccessDrop(event, team)}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault()
-                        handleSelectTeamFromMore(team)
-                      }
-                    }}
-                  >
-                    <button
-                      type="button"
-                      draggable={quickAccessTeams.length > 1}
-                      data-testid={`quick-access-sort-handle-${team.id}`}
-                      aria-label={t('common:teams.reorder_quick_access')}
-                      title={t('common:teams.reorder_quick_access')}
-                      onClick={event => event.stopPropagation()}
-                      onDragStart={event => {
-                        event.stopPropagation()
-                        handleQuickAccessDragStart(event, team)
-                      }}
-                      onDragEnd={handleQuickAccessDragEnd}
-                      className="h-7 w-7 flex-shrink-0 rounded-md inline-flex items-center justify-center cursor-grab active:cursor-grabbing text-text-muted hover:bg-hover hover:text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                    >
-                      <GripVertical className="h-4 w-4" aria-hidden="true" />
-                    </button>
-                    <div
-                      className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${
-                        isSelected
-                          ? 'bg-primary border-primary text-white'
-                          : 'border-border bg-background'
-                      }`}
-                    >
-                      {isSelected && <Check className="h-3 w-3" />}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span
-                          className="text-sm text-text-primary truncate flex-1 min-w-0"
-                          title={displayName}
-                        >
-                          {displayName}
-                        </span>
-                        {isGroupTeam && (
-                          <Tag
-                            className="text-xs !m-0 flex-shrink-0 max-w-[120px] truncate"
-                            variant="info"
-                            title={team.namespace}
-                          >
-                            {team.namespace}
-                          </Tag>
-                        )}
-                        {isSharedTeam && (
-                          <Tag
-                            className="text-xs !m-0 flex-shrink-0 max-w-[120px] truncate"
-                            variant="default"
-                            style={sharedBadgeStyle}
-                            title={t('common:teams.shared_by', { author: team.user?.user_name })}
-                          >
-                            {t('common:teams.shared_by', { author: team.user?.user_name })}
-                          </Tag>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )
-              })
-            )}
+            <TeamSelectorList
+              teams={filteredTeamsBySearch}
+              selectedTeam={selectedTeam}
+              onTeamSelect={handleSelectTeamFromMore}
+              emptyText={
+                searchQuery
+                  ? t('common:teams.no_match')
+                  : showAllTeamsInMore
+                    ? t('common:teams.no_teams')
+                    : t('common:teams.quick_access_empty')
+              }
+              favoriteTeamIdSet={favoriteTeamIdSet}
+              systemRecommendedTeamIdSet={systemRecommendedTeamIdSet}
+              quickAccessMetaLoaded={quickAccessMetaLoaded}
+              favoriteUpdatingTeamId={favoriteUpdatingTeamId}
+              onToggleFavorite={handleToggleFavorite}
+              optionTestIdPrefix="quick-access-more-team"
+              showReorderHandle={!showAllTeamsInMore}
+              canReorder={quickAccessTeams.length > 1}
+              dragOverTeamId={dragOverTeamId}
+              onTeamDragStart={handleQuickAccessDragStart}
+              onTeamDragOver={handleQuickAccessDragOver}
+              onTeamDragLeave={() => setDragOverTeamId(null)}
+              onTeamDrop={handleQuickAccessDrop}
+              onTeamDragEnd={handleQuickAccessDragEnd}
+            />
           </div>
+
+          {hasTeamsOutsideQuickAccess && (
+            <div className="border-t border-primary/10 bg-base mt-2 p-1">
+              {showAllTeamsInMore ? (
+                <button
+                  type="button"
+                  data-testid="quick-access-show-favorites"
+                  onClick={handleShowQuickAccessTeams}
+                  className="w-full flex items-center justify-center gap-1.5 rounded-md px-2 py-2 text-xs font-medium text-text-secondary hover:bg-hover hover:text-text-primary transition-colors"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" />
+                  {t('common:teams.quick_access_back')}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  data-testid="quick-access-view-all-agents"
+                  onClick={handleShowAllTeams}
+                  className="w-full flex items-center justify-center gap-1.5 rounded-md px-2 py-2 text-xs font-medium text-primary hover:bg-primary/10 transition-colors"
+                >
+                  <List className="h-3.5 w-3.5" />
+                  {t('common:teams.quick_access_view_all')}
+                </button>
+              )}
+            </div>
+          )}
         </PopoverContent>
       </Popover>
     )

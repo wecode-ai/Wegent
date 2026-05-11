@@ -183,7 +183,7 @@ export function ChatInputControls({
   taskType,
   selectedTeam,
   teams = [],
-  onTeamChange: _onTeamChange,
+  onTeamChange,
   onTeamsRefresh,
   selectedModel,
   setSelectedModel,
@@ -341,6 +341,8 @@ export function ChatInputControls({
     return (
       <MobileChatInputControls
         selectedTeam={selectedTeam}
+        teams={teams}
+        onTeamChange={onTeamChange}
         taskType={taskType}
         selectedModel={selectedModel}
         setSelectedModel={setSelectedModel}
@@ -506,12 +508,12 @@ export function ChatInputControls({
             )}
 
             {/* Team Selector - show when teams are available, onTeamChange is provided, and no messages yet */}
-            {teams.length > 0 && _onTeamChange && !hasMessages && (
+            {teams.length > 0 && onTeamChange && !hasMessages && (
               <TeamSelectorButton
                 selectedTeam={selectedTeam}
                 setSelectedTeam={(team: Team | null) => {
                   if (team) {
-                    _onTeamChange(team)
+                    onTeamChange(team)
                   }
                 }}
                 teams={teams}

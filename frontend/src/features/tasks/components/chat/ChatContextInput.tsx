@@ -15,6 +15,8 @@ interface ChatContextInputProps {
   onContextsChange: (contexts: ContextItem[]) => void
   /** Knowledge base ID to exclude from the list (used in notebook mode to hide current KB) */
   excludeKnowledgeBaseId?: number
+  /** Render style for the selector trigger */
+  triggerVariant?: 'button' | 'menu-item'
 }
 
 /**
@@ -29,6 +31,7 @@ export default function ChatContextInput({
   selectedContexts,
   onContextsChange,
   excludeKnowledgeBaseId,
+  triggerVariant = 'button',
 }: ChatContextInputProps) {
   const [selectorOpen, setSelectorOpen] = useState(false)
 
@@ -81,7 +84,11 @@ export default function ChatContextInput({
       excludeKnowledgeBaseId={excludeKnowledgeBaseId}
     >
       <div>
-        <AddContextButton onClick={() => setSelectorOpen(true)} />
+        <AddContextButton
+          onClick={() => setSelectorOpen(true)}
+          selectedCount={selectedContexts.length}
+          triggerVariant={triggerVariant}
+        />
       </div>
     </ContextSelector>
   )

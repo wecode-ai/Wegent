@@ -19,6 +19,8 @@ interface AttachmentButtonProps {
   disabled?: boolean
   /** Override the accepted file types (e.g. image-only for generation modes) */
   accept?: string
+  /** Render style for the upload trigger */
+  triggerVariant?: 'icon' | 'menu-item'
 }
 
 /**
@@ -30,6 +32,7 @@ export default function AttachmentButton({
   onFileSelect,
   disabled = false,
   accept,
+  triggerVariant = 'icon',
 }: AttachmentButtonProps) {
   const { t } = useTranslation()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -132,23 +135,37 @@ export default function AttachmentButton({
         disabled={disabled}
       />
 
-      {/* Upload button */}
-      <TooltipProvider delayDuration={300}>
-        <Tooltip open={tooltipOpen} onOpenChange={setTooltipOpen}>
-          <TooltipTrigger asChild>
-            <div>
-              <ActionButton
-                onClick={handleClick}
-                disabled={disabled}
-                icon={<Paperclip className="h-4 w-4" />}
-              />
-            </div>
-          </TooltipTrigger>
-          <TooltipContent side="top" className="max-w-xs whitespace-pre-line">
-            <p>{tooltipContent}</p>
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
+      {triggerVariant === 'menu-item' ? (
+        <button
+          type="button"
+          onClick={handleClick}
+          disabled={disabled}
+          title={tooltipContent}
+          className="w-full flex items-center justify-between px-3 py-2.5 text-left transition-colors hover:bg-hover active:bg-hover disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <span className="flex items-center gap-3">
+            <Paperclip className="h-4 w-4 text-text-muted" />
+            <span className="text-sm">{t('chat:upload.attachment')}</span>
+          </span>
+        </button>
+      ) : (
+        <TooltipProvider delayDuration={300}>
+          <Tooltip open={tooltipOpen} onOpenChange={setTooltipOpen}>
+            <TooltipTrigger asChild>
+              <div>
+                <ActionButton
+                  onClick={handleClick}
+                  disabled={disabled}
+                  icon={<Paperclip className="h-4 w-4" />}
+                />
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="max-w-xs whitespace-pre-line">
+              <p>{tooltipContent}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )}
     </div>
   )
 }
