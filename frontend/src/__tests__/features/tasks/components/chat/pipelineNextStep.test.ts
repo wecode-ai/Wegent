@@ -62,23 +62,41 @@ const payloadInput = (
 ): BuildPipelineNextStepPayloadInput => input
 
 describe('pipeline next-step helpers', () => {
-  it('uses final_prompt as the default message when available', () => {
+  it('uses final_prompt as the default AI context when available', () => {
     const draft = buildPipelineNextStepDraft([
       userMessage(),
       aiMessage(['## Final Requirement Prompt', 'Ship the next-step dialog.'].join('\n')),
     ])
 
-    expect(draft.defaultMessage).toBe('Ship the next-step dialog.')
+    expect(draft.defaultMessage).toBe('')
     expect(draft.defaultSource).toBe('final_prompt')
     expect(draft.canSubmit).toBe(true)
+    expect(draft.textItems).toEqual([
+      expect.objectContaining({
+        kind: 'user_message',
+        role: 'user',
+        content: 'Original request',
+        selectedByDefault: false,
+      }),
+      expect.objectContaining({
+        kind: 'ai_response',
+        role: 'ai',
+        content: 'Ship the next-step dialog.',
+        selectedByDefault: true,
+      }),
+    ])
   })
 
-  it('falls back to the last completed AI response when final_prompt is missing', () => {
+  it('falls back to the last completed AI response as selected context', () => {
     const draft = buildPipelineNextStepDraft([userMessage(), aiMessage('Plain AI summary')])
 
-    expect(draft.defaultMessage).toBe('Plain AI summary')
+    expect(draft.defaultMessage).toBe('')
     expect(draft.defaultSource).toBe('last_ai_response')
-    expect(draft.textItems.some(item => item.kind === 'ai_response')).toBe(false)
+    expect(draft.textItems.find(item => item.kind === 'ai_response')).toMatchObject({
+      role: 'ai',
+      content: 'Plain AI summary',
+      selectedByDefault: true,
+    })
   })
 
   it('returns selectable text context items without duplicating the main message', () => {
@@ -93,11 +111,16 @@ describe('pipeline next-step helpers', () => {
       aiMessage('Plain AI summary'),
     ])
 
-    expect(draft.textItems.map(item => item.kind)).toEqual(['user_message', 'history_message'])
+    expect(draft.textItems.map(item => item.kind)).toEqual([
+      'history_message',
+      'user_message',
+      'ai_response',
+    ])
     expect(Object.keys(draft.textItems[0]).sort()).toEqual([
       'content',
       'id',
       'kind',
+      'role',
       'selectedByDefault',
     ])
   })
@@ -143,6 +166,12 @@ describe('pipeline next-step helpers', () => {
 
     expect(draft.textItems.find(item => item.kind === 'user_message')).toMatchObject({
       content: 'Original request',
+      role: 'user',
+      selectedByDefault: false,
+    })
+    expect(draft.textItems.find(item => item.kind === 'ai_response')).toMatchObject({
+      content: 'Plain AI summary',
+      role: 'ai',
       selectedByDefault: true,
     })
     expect(draft.structuredItems.map(item => `${item.context.context_type}:${item.id}`)).toEqual([
@@ -192,11 +221,16 @@ describe('pipeline next-step helpers', () => {
       }),
     ])
 
-    expect(draft.defaultMessage).toBe('Completed answer')
+    expect(draft.defaultMessage).toBe('')
     expect(draft.defaultSource).toBe('last_ai_response')
+    expect(draft.textItems.find(item => item.kind === 'ai_response')).toMatchObject({
+      content: 'Completed answer',
+      role: 'ai',
+      selectedByDefault: true,
+    })
   })
 
-  it('builds backend payload from selected text and structured contexts', () => {
+  it('builds backend payload from selected text and structured contexts with role labels', () => {
     const draft = buildPipelineNextStepDraft([userMessage(), aiMessage('Plain AI summary')])
     const payload = buildPipelineNextStepPayload(
       payloadInput({
@@ -208,7 +242,9 @@ describe('pipeline next-step helpers', () => {
     )
 
     expect(payload.message).toContain('Edited handoff')
-    expect(payload.message).toContain('Original request')
+    expect(payload.message).toContain('Previous pipeline context:')
+    expect(payload.message).toContain('[User]\nOriginal request')
+    expect(payload.message).toContain('[AI]\nPlain AI summary')
     expect(payload.attachmentIds).toEqual([10])
     expect(payload.contexts).toEqual([
       {

@@ -9,9 +9,39 @@ import userEvent from '@testing-library/user-event'
 import PipelineNextStepDialog from '@/features/tasks/components/chat/PipelineNextStepDialog'
 import type { PipelineNextStepMessage } from '@/features/tasks/components/chat/pipelineNextStep'
 
+const mockTranslations: Record<string, Record<string, string>> = {
+  chat: {
+    'pipeline.next_step_dialog.title': 'Continue to next step',
+    'pipeline.next_step_dialog.description':
+      'Choose the message and context to carry into the next pipeline stage.',
+    'pipeline.next_step_dialog.message_placeholder':
+      'Add an optional instruction for the next stage...',
+    'pipeline.next_step_dialog.text_contexts': 'Message context',
+    'pipeline.next_step_dialog.structured_contexts': 'Attached context',
+    'pipeline.next_step_dialog.no_text_contexts': 'No message context is available.',
+    'pipeline.next_step_dialog.no_structured_contexts':
+      'No attachment, knowledge base, or table context is available.',
+    'pipeline.next_step_dialog.confirm': 'Continue',
+    'pipeline.next_step_dialog.confirming': 'Continuing...',
+    'pipeline.next_step_dialog.text_items.user_message': 'User message',
+    'pipeline.next_step_dialog.text_items.ai_response': 'AI response',
+    'pipeline.next_step_dialog.text_items.history_message': 'History message',
+  },
+  common: {
+    'actions.cancel': 'Cancel',
+  },
+}
+
 jest.mock('@/hooks/useTranslation', () => ({
-  useTranslation: () => ({
-    t: (key: string) => key,
+  useTranslation: (namespace?: string) => ({
+    t: (key: string) => {
+      if (key.includes(':')) {
+        const [keyNamespace, namespacedKey] = key.split(':')
+        return mockTranslations[keyNamespace]?.[namespacedKey] ?? key
+      }
+
+      return mockTranslations[namespace ?? 'common']?.[key] ?? key
+    },
   }),
 }))
 
@@ -53,28 +83,29 @@ const renderDialog = (props: Partial<React.ComponentProps<typeof PipelineNextSte
 }
 
 describe('PipelineNextStepDialog', () => {
-  it('prefills the editable message from final_prompt', () => {
+  it('leaves the editable message empty and shows translated copy', () => {
     renderDialog()
 
-    expect(screen.getByTestId('pipeline-next-step-message')).toHaveValue('Build this feature')
-    expect(screen.getByText('pipeline.next_step_dialog.title')).toBeInTheDocument()
-    expect(screen.getByText('pipeline.next_step_dialog.description')).toBeInTheDocument()
+    expect(screen.getByTestId('pipeline-next-step-message')).toHaveValue('')
+    expect(screen.getByText('Continue to next step')).toBeInTheDocument()
+    expect(
+      screen.getByText('Choose the message and context to carry into the next pipeline stage.')
+    ).toBeInTheDocument()
     expect(screen.getByTestId('pipeline-next-step-message')).toHaveAttribute(
       'placeholder',
-      'pipeline.next_step_dialog.message_placeholder'
+      'Add an optional instruction for the next stage...'
     )
   })
 
-  it('uses unique text checkbox test ids for each text item', () => {
+  it('selects the AI response by default without selecting the previous user message', () => {
     renderDialog()
 
-    expect(screen.getByTestId('pipeline-next-step-text-checkbox-user_message:user-1')).toBeChecked()
     expect(
-      screen.queryByTestId('pipeline-next-step-text-checkbox-ai_response:ai-1')
-    ).not.toBeInTheDocument()
-    expect(
-      screen.getByText('pipeline.next_step_dialog.text_items.user_message')
-    ).toBeInTheDocument()
+      screen.getByTestId('pipeline-next-step-text-checkbox-user_message:user-1')
+    ).not.toBeChecked()
+    expect(screen.getByTestId('pipeline-next-step-text-checkbox-ai_response:ai-1')).toBeChecked()
+    expect(screen.getByText('User message')).toBeInTheDocument()
+    expect(screen.getByText('AI response')).toBeInTheDocument()
     expect(
       screen.queryByTestId('pipeline-next-step-text-checkbox-user_message')
     ).not.toBeInTheDocument()
@@ -90,7 +121,7 @@ describe('PipelineNextStepDialog', () => {
     expect(onConfirm).toHaveBeenCalledTimes(1)
     expect(onConfirm).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: expect.stringContaining('Build this feature'),
+        message: expect.stringContaining('[AI]\nBuild this feature'),
         attachmentIds: [10],
         pendingContexts: [
           expect.objectContaining({
@@ -101,6 +132,7 @@ describe('PipelineNextStepDialog', () => {
         ],
       })
     )
+    expect(onConfirm.mock.calls[0][0].message).not.toContain('[User]\nOriginal request')
   })
 
   it('disables confirm when there is no message or context', async () => {
@@ -108,6 +140,7 @@ describe('PipelineNextStepDialog', () => {
     renderDialog()
 
     await user.clear(screen.getByTestId('pipeline-next-step-message'))
+    await user.click(screen.getByTestId('pipeline-next-step-text-checkbox-ai_response:ai-1'))
     await user.click(screen.getByTestId('pipeline-next-step-structured-checkbox-attachment-10'))
 
     expect(screen.getByTestId('pipeline-next-step-confirm-button')).toBeDisabled()
@@ -134,7 +167,9 @@ describe('PipelineNextStepDialog', () => {
       messages: [],
     })
 
-    expect(screen.getByText('pipeline.next_step_dialog.no_text_contexts')).toBeInTheDocument()
-    expect(screen.getByText('pipeline.next_step_dialog.no_structured_contexts')).toBeInTheDocument()
+    expect(screen.getByText('No message context is available.')).toBeInTheDocument()
+    expect(
+      screen.getByText('No attachment, knowledge base, or table context is available.')
+    ).toBeInTheDocument()
   })
 })

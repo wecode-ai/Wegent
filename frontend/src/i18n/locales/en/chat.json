@@ -575,8 +575,8 @@
     "next_step": "Next step",
     "next_step_dialog": {
       "title": "Continue to next step",
-      "description": "Choose the message and context to carry into the next pipeline stage.",
-      "message_placeholder": "Edit the message for the next stage...",
+      "description": "The previous AI reply is carried by default. Add instructions or choose extra context if needed.",
+      "message_placeholder": "Add an optional instruction for the next stage...",
       "text_contexts": "Message context",
       "structured_contexts": "Attached context",
       "no_text_contexts": "No message context is available.",

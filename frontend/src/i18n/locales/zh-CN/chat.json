@@ -553,8 +553,8 @@
     "next_step": "下一步",
     "next_step_dialog": {
       "title": "继续到下一步",
-      "description": "选择要带入下一个流水线阶段的消息和上下文。",
-      "message_placeholder": "编辑发送给下一阶段的消息...",
+      "description": "默认携带上一步 AI 的最后一次回复，也可以补充说明或选择额外上下文。",
+      "message_placeholder": "给下一阶段的补充说明（可选）...",
       "text_contexts": "消息上下文",
       "structured_contexts": "附加上下文",
       "no_text_contexts": "暂无可用的消息上下文。",

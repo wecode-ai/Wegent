@@ -20,6 +20,7 @@ export interface PipelineNextStepMessage {
 export interface PipelineNextStepTextItem {
   id: string
   kind: 'user_message' | 'ai_response' | 'history_message'
+  role: 'user' | 'ai'
   content: string
   selectedByDefault: boolean
 }
@@ -167,27 +168,31 @@ function collectStructuredItems(
 function buildTextItems(
   messages: PipelineNextStepMessage[],
   selectedAiMessage: PipelineNextStepMessage,
-  precedingUserMessage: PipelineNextStepMessage | undefined
+  precedingUserMessage: PipelineNextStepMessage | undefined,
+  selectedAiContent: string
 ): PipelineNextStepTextItem[] {
   const items: PipelineNextStepTextItem[] = []
-  const currentPairIds = new Set([selectedAiMessage.id])
-
-  if (precedingUserMessage) {
-    currentPairIds.add(precedingUserMessage.id)
-    items.push({
-      id: buildTextItemId(precedingUserMessage, 'user_message'),
-      kind: 'user_message',
-      content: precedingUserMessage.content.trim(),
-      selectedByDefault: true,
-    })
-  }
 
   for (const message of messages) {
-    if (currentPairIds.has(message.id) || !hasCompletedContent(message)) continue
+    if (!hasCompletedContent(message)) continue
+
+    if (message.id === selectedAiMessage.id) {
+      items.push({
+        id: buildTextItemId(message, 'ai_response'),
+        kind: 'ai_response',
+        role: 'ai',
+        content: selectedAiContent,
+        selectedByDefault: true,
+      })
+      continue
+    }
+
+    const kind = message.id === precedingUserMessage?.id ? 'user_message' : 'history_message'
 
     items.push({
-      id: buildTextItemId(message, 'history_message'),
-      kind: 'history_message',
+      id: buildTextItemId(message, kind),
+      kind,
+      role: message.type,
       content: message.content.trim(),
       selectedByDefault: false,
     })
@@ -214,24 +219,42 @@ export function buildPipelineNextStepDraft(
 
   const defaultResult = getDefaultMessage(selectedAiMessage)
   const precedingUserMessage = findPrecedingUserMessage(sortedMessages, selectedAiMessage)
+  const textItems = buildTextItems(
+    sortedMessages,
+    selectedAiMessage,
+    precedingUserMessage,
+    defaultResult.message
+  )
+  const structuredItems = collectStructuredItems([precedingUserMessage, selectedAiMessage])
 
   return {
-    defaultMessage: defaultResult.message,
+    defaultMessage: '',
     defaultSource: defaultResult.source,
-    canSubmit: defaultResult.message.length > 0,
-    textItems: buildTextItems(sortedMessages, selectedAiMessage, precedingUserMessage),
-    structuredItems: collectStructuredItems([precedingUserMessage, selectedAiMessage]),
+    canSubmit:
+      textItems.some(item => item.selectedByDefault) ||
+      structuredItems.some(item => item.selectedByDefault),
+    textItems,
+    structuredItems,
   }
 }
 
 function appendSelectedText(message: string, selectedItems: PipelineNextStepTextItem[]): string {
-  const extraText = selectedItems.map(item => item.content.trim()).filter(Boolean)
+  const contextText = selectedItems
+    .map(item => {
+      const content = item.content.trim()
+      if (!content) return ''
 
-  if (extraText.length === 0) {
+      return `[${item.role === 'user' ? 'User' : 'AI'}]\n${content}`
+    })
+    .filter(Boolean)
+
+  if (contextText.length === 0) {
     return message.trim()
   }
 
-  return [message.trim(), ...extraText].filter(Boolean).join('\n\n')
+  return [message.trim(), ['Previous pipeline context:', ...contextText].join('\n\n')]
+    .filter(Boolean)
+    .join('\n\n')
 }
 
 function toBackendContext(

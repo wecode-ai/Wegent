@@ -864,7 +864,7 @@ function ChatAreaContent({
       if (!taskId || !teamId) {
         toast({
           variant: 'destructive',
-          title: t('pipeline.next_step_dialog.missing_task'),
+          title: t('chat:pipeline.next_step_dialog.missing_task'),
         })
         return
       }
@@ -872,7 +872,7 @@ function ChatAreaContent({
       if (!chatStreamContext) {
         toast({
           variant: 'destructive',
-          title: t('pipeline.confirm_failed'),
+          title: t('chat:pipeline.confirm_failed'),
         })
         return
       }
@@ -900,13 +900,13 @@ function ChatAreaContent({
 
         setIsPipelineNextStepOpen(false)
         toast({
-          title: t('pipeline.stage_confirmed'),
+          title: t('chat:pipeline.stage_confirmed'),
         })
       } catch (error) {
         console.error('Failed to confirm pipeline next step:', error)
         toast({
           variant: 'destructive',
-          title: t('pipeline.confirm_failed'),
+          title: t('chat:pipeline.confirm_failed'),
         })
       } finally {
         setIsPipelineNextStepConfirming(false)

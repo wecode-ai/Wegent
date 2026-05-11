@@ -57,8 +57,25 @@ jest.mock('next/navigation', () => ({
   usePathname: () => '/chat',
 }))
 
+const mockTranslations: Record<string, Record<string, string>> = {
+  chat: {
+    'pipeline.stage_confirmed': 'Stage Confirmed',
+    'pipeline.confirm_failed': 'Failed to confirm stage',
+    'pipeline.next_step_dialog.missing_task': 'Task or team information is unavailable',
+  },
+}
+
 jest.mock('@/hooks/useTranslation', () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: (namespace?: string) => ({
+    t: (key: string) => {
+      if (key.includes(':')) {
+        const [keyNamespace, namespacedKey] = key.split(':')
+        return mockTranslations[keyNamespace]?.[namespacedKey] ?? key
+      }
+
+      return mockTranslations[namespace ?? 'common']?.[key] ?? key
+    },
+  }),
 }))
 
 jest.mock('@/hooks/use-toast', () => ({
@@ -342,7 +359,7 @@ describe('ChatArea pipeline next-step dialog', () => {
 
     await user.click(await screen.findByTestId('pipeline-next-step-button'))
 
-    expect(screen.getByTestId('pipeline-next-step-message')).toHaveValue('Build this feature')
+    expect(screen.getByTestId('pipeline-next-step-message')).toHaveValue('')
 
     await user.click(screen.getByTestId('pipeline-next-step-confirm-button'))
 
@@ -365,10 +382,11 @@ describe('ChatArea pipeline next-step dialog', () => {
         },
       ],
     })
-    expect(request.message).toContain('Build this feature')
-    expect(request.message).toContain('Original request')
+    expect(request.message).toContain('Previous pipeline context:')
+    expect(request.message).toContain('[AI]\nBuild this feature')
+    expect(request.message).not.toContain('[User]\nOriginal request')
     expect(options).toMatchObject({
-      pendingUserMessage: expect.stringContaining('Build this feature'),
+      pendingUserMessage: expect.stringContaining('[AI]\nBuild this feature'),
       immediateTaskId: 42,
       pendingContexts: [
         expect.objectContaining({ id: 10, context_type: 'attachment' }),
@@ -379,7 +397,7 @@ describe('ChatArea pipeline next-step dialog', () => {
         }),
       ],
     })
-    expect(mockToast).toHaveBeenCalledWith({ title: 'pipeline.stage_confirmed' })
+    expect(mockToast).toHaveBeenCalledWith({ title: 'Stage Confirmed' })
   })
 
   it('disables the indicator action when there is no completed AI handoff', async () => {

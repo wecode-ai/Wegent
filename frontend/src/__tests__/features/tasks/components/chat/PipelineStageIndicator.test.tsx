@@ -10,9 +10,32 @@ import { taskApis } from '@/apis/tasks'
 import type { PipelineStageInfo } from '@/apis/tasks'
 import PipelineStageIndicator from '@/features/tasks/components/chat/PipelineStageIndicator'
 
+const mockTranslations: Record<string, Record<string, string>> = {
+  chat: {
+    'pipeline.next_step': 'Next step',
+    'pipeline.progress_label': 'Pipeline Progress',
+    'pipeline.start_node': 'Start',
+    'pipeline.stage_started': 'Started',
+    'pipeline.stage_completed': 'Completed',
+    'pipeline.stage_running': 'Running',
+    'pipeline.stage_awaiting_confirmation': 'Awaiting Confirmation',
+    'pipeline.stage_failed': 'Failed',
+    'pipeline.stage_pending': 'Pending',
+    'pipeline.awaiting_confirmation': 'Awaiting Confirmation',
+    'pipeline.requires_confirmation': 'Requires confirmation',
+  },
+}
+
 jest.mock('@/hooks/useTranslation', () => ({
-  useTranslation: () => ({
-    t: (key: string) => key,
+  useTranslation: (namespace?: string) => ({
+    t: (key: string) => {
+      if (key.includes(':')) {
+        const [keyNamespace, namespacedKey] = key.split(':')
+        return mockTranslations[keyNamespace]?.[namespacedKey] ?? key
+      }
+
+      return mockTranslations[namespace ?? 'common']?.[key] ?? key
+    },
   }),
 }))
 
@@ -81,7 +104,7 @@ describe('PipelineStageIndicator', () => {
 
     const button = await screen.findByTestId('pipeline-next-step-button')
 
-    expect(button).toHaveTextContent('pipeline.next_step')
+    expect(button).toHaveTextContent('Next step')
 
     await user.click(button)
 
@@ -126,7 +149,7 @@ describe('PipelineStageIndicator', () => {
 
     renderIndicator()
 
-    await screen.findByText(/pipeline\.progress_label/)
+    await screen.findByText(/Pipeline Progress/)
 
     expect(screen.queryByTestId('pipeline-next-step-button')).not.toBeInTheDocument()
   })
@@ -161,7 +184,7 @@ describe('PipelineStageIndicator', () => {
 
     renderIndicator()
 
-    await screen.findByText(/pipeline\.progress_label/)
+    await screen.findByText(/Pipeline Progress/)
 
     expect(screen.queryByTestId('pipeline-next-step-button')).not.toBeInTheDocument()
   })

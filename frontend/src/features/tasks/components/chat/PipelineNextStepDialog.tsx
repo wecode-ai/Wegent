@@ -129,7 +129,7 @@ function PipelineNextStepDialog({
   onOpenChange,
   onConfirm,
 }: PipelineNextStepDialogProps) {
-  const { t } = useTranslation('chat')
+  const { t } = useTranslation()
   const draft = useMemo(() => buildPipelineNextStepDraft(messages), [messages])
   const [editedMessage, setEditedMessage] = useState('')
   const [selectedTextItemIds, setSelectedTextItemIds] = useState<string[]>([])
@@ -147,8 +147,8 @@ function PipelineNextStepDialog({
     )
   }, [draft, open])
 
-  const confirmDisabled =
-    isConfirming || (editedMessage.trim().length === 0 && selectedStructuredItemIds.length === 0)
+  const hasSelectedContext = selectedTextItemIds.length > 0 || selectedStructuredItemIds.length > 0
+  const confirmDisabled = isConfirming || (editedMessage.trim().length === 0 && !hasSelectedContext)
 
   const handleConfirm = () => {
     if (confirmDisabled) return
@@ -175,19 +175,19 @@ function PipelineNextStepDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[82vh] flex-col gap-4 overflow-hidden sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{t('pipeline.next_step_dialog.title')}</DialogTitle>
-          <DialogDescription>{t('pipeline.next_step_dialog.description')}</DialogDescription>
+          <DialogTitle>{t('chat:pipeline.next_step_dialog.title')}</DialogTitle>
+          <DialogDescription>{t('chat:pipeline.next_step_dialog.description')}</DialogDescription>
         </DialogHeader>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
           <div className="space-y-2">
             <div className="text-sm font-medium text-text-primary">
-              {t('pipeline.next_step_dialog.message_placeholder')}
+              {t('chat:pipeline.next_step_dialog.message_placeholder')}
             </div>
             <Textarea
               value={editedMessage}
               onChange={event => setEditedMessage(event.target.value)}
-              placeholder={t('pipeline.next_step_dialog.message_placeholder')}
+              placeholder={t('chat:pipeline.next_step_dialog.message_placeholder')}
               data-testid="pipeline-next-step-message"
               className="min-h-28 resize-none"
             />
@@ -195,11 +195,11 @@ function PipelineNextStepDialog({
 
           <div className="space-y-2">
             <div className="text-sm font-medium text-text-primary">
-              {t('pipeline.next_step_dialog.text_contexts')}
+              {t('chat:pipeline.next_step_dialog.text_contexts')}
             </div>
             {draft.textItems.length === 0 ? (
               <div className="rounded-md border border-dashed border-border px-3 py-2 text-sm text-text-muted">
-                {t('pipeline.next_step_dialog.no_text_contexts')}
+                {t('chat:pipeline.next_step_dialog.no_text_contexts')}
               </div>
             ) : (
               <div className="space-y-2">
@@ -207,7 +207,7 @@ function PipelineNextStepDialog({
                   <TextContextRow
                     key={item.id}
                     item={item}
-                    label={t(`pipeline.next_step_dialog.text_items.${item.kind}`)}
+                    label={t(`chat:pipeline.next_step_dialog.text_items.${item.kind}`)}
                     checked={selectedTextItemIds.includes(item.id)}
                     onCheckedChange={checked => setTextItemChecked(item.id, checked)}
                   />
@@ -218,11 +218,11 @@ function PipelineNextStepDialog({
 
           <div className="space-y-2">
             <div className="text-sm font-medium text-text-primary">
-              {t('pipeline.next_step_dialog.structured_contexts')}
+              {t('chat:pipeline.next_step_dialog.structured_contexts')}
             </div>
             {draft.structuredItems.length === 0 ? (
               <div className="rounded-md border border-dashed border-border px-3 py-2 text-sm text-text-muted">
-                {t('pipeline.next_step_dialog.no_structured_contexts')}
+                {t('chat:pipeline.next_step_dialog.no_structured_contexts')}
               </div>
             ) : (
               <div className="space-y-2">
@@ -257,8 +257,8 @@ function PipelineNextStepDialog({
           >
             {isConfirming && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             {isConfirming
-              ? t('pipeline.next_step_dialog.confirming')
-              : t('pipeline.next_step_dialog.confirm')}
+              ? t('chat:pipeline.next_step_dialog.confirming')
+              : t('chat:pipeline.next_step_dialog.confirm')}
           </Button>
         </DialogFooter>
       </DialogContent>
