@@ -33,6 +33,7 @@ export function transformPublicBotToBot(publicBot: AdminPublicBot): Bot {
     agent_config: publicBot.agent_config || {},
     system_prompt: publicBot.system_prompt || '',
     mcp_servers: publicBot.mcp_servers || {},
+    default_knowledge_base_refs: publicBot.default_knowledge_base_refs || [],
     skills: publicBot.skills || [],
     preload_skills: [], // preload_skills not supported for public bots yet
     is_active: publicBot.is_active,
@@ -100,6 +101,7 @@ export interface PublicBotFormData {
   mcp_servers?: Record<string, unknown> // MCP servers config for Ghost
   skills?: string[] // Skills list for Ghost
   agent_config?: Record<string, unknown> // Agent config for Model
+  default_knowledge_base_refs?: { id: number; name: string }[] // Default knowledge base refs for Ghost
 }
 /**
  * Public Resources API - provides unified interface for public resource management
@@ -128,6 +130,7 @@ export const publicResourceApis = {
       mcp_servers: formData.mcp_servers,
       skills: formData.skills,
       agent_config: formData.agent_config,
+      default_knowledge_base_refs: formData.default_knowledge_base_refs,
     })
     return transformPublicBotToBot(created)
   },
@@ -145,6 +148,7 @@ export const publicResourceApis = {
       mcp_servers: formData.mcp_servers,
       skills: formData.skills,
       agent_config: formData.agent_config,
+      default_knowledge_base_refs: formData.default_knowledge_base_refs,
     })
     return transformPublicBotToBot(updated)
   },
