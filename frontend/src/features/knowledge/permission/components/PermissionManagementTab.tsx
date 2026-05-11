@@ -186,18 +186,12 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
 
   return (
     <div className="space-y-6 p-4">
-      {/* Header with Add User button (only when personal tab is active) */}
+      {/* Header */}
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold flex items-center gap-2">
           <Shield className="w-5 h-5" />
           {t('document.permission.management')}
         </h2>
-        {activeTab === 'user' && (
-          <Button variant="outline" size="sm" onClick={() => setShowAddUser(true)}>
-            <UserPlus className="w-4 h-4 mr-2" />
-            {loc('document.permission.addUser', '添加用户')}
-          </Button>
-        )}
       </div>
 
       {/* Error Message */}
@@ -270,6 +264,14 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
       {/* ===== 个人 Tab ===== */}
       {activeTab === 'user' && (
         <div className="space-y-4">
+          {/* Add user button */}
+          <div className="flex items-center justify-end">
+            <Button variant="outline" size="sm" onClick={() => setShowAddUser(true)}>
+              <UserPlus className="w-4 h-4 mr-2" />
+              {loc('document.permission.addUser', '添加用户')}
+            </Button>
+          </div>
+
           {/* Pending Requests Section */}
           <Card padding="default" className="space-y-4">
             <div className="flex items-center gap-2 text-sm font-medium">
