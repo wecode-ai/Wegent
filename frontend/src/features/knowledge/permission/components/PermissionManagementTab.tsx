@@ -264,14 +264,6 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
       {/* ===== 个人 Tab ===== */}
       {activeTab === 'user' && (
         <div className="space-y-4">
-          {/* Add user button */}
-          <div className="flex items-center justify-end">
-            <Button variant="outline" size="sm" onClick={() => setShowAddUser(true)}>
-              <UserPlus className="w-4 h-4 mr-2" />
-              {loc('document.permission.addUser', '添加用户')}
-            </Button>
-          </div>
-
           {/* Pending Requests Section */}
           <Card padding="default" className="space-y-4">
             <div className="flex items-center gap-2 text-sm font-medium">
@@ -352,14 +344,24 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
 
           {/* Approved Users Section */}
           <Card padding="default" className="space-y-4">
-            <div className="flex items-center gap-2 text-sm font-medium">
-              <Users className="w-4 h-4 text-primary" />
-              {t('document.permission.approvedUsers')}
-              {approvedCount > 0 && (
-                <span className="bg-primary/10 text-primary px-1.5 py-0.5 rounded-full text-xs">
-                  {approvedCount}
-                </span>
-              )}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Users className="w-4 h-4 text-primary" />
+                {t('document.permission.approvedUsers')}
+                {approvedCount > 0 && (
+                  <span className="bg-primary/10 text-primary px-1.5 py-0.5 rounded-full text-xs">
+                    {approvedCount}
+                  </span>
+                )}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowAddUser(true)}
+              >
+                <UserPlus className="w-4 h-4 mr-2" />
+                {loc('document.permission.addUser', '添加用户')}
+              </Button>
             </div>
 
             {approvedCount === 0 ? (
@@ -452,59 +454,61 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
       {/* ===== 群组 Tab ===== */}
       {activeTab === 'namespace' && (
         <div className="space-y-4">
-          {/* Tab header with add button */}
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-medium">
-              {loc('document.permission.namespaceMembers', '已授权群组')}
-            </h3>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setShowAddNamespace(true)}
-            >
-              <UserPlus className="w-4 h-4 mr-2" />
-              {loc('document.permission.addNamespace', '添加群组')}
-            </Button>
-          </div>
-
-          {/* Authorized Groups List */}
-          {namespaceMembers.length === 0 ? (
-            <p className="text-sm text-text-muted py-4 text-center">
-              {loc('document.permission.noNamespacePermissions', '暂无群组权限')}
-            </p>
-          ) : (
-            <div className="space-y-1">
-              {namespaceMembers.map(nm => (
-                <div
-                  key={nm.id}
-                  className="group flex items-center justify-between p-2 rounded-lg hover:bg-muted transition-colors"
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="font-medium text-sm truncate flex items-center gap-2">
-                      {nm.username || nm.entity_id || ''}
-                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-surface text-text-muted border-border border">
-                        {loc('document.permission.namespace', '群组')}
-                      </span>
-                    </div>
-                    <div className="text-xs text-text-muted truncate">
-                      {t(`document.permission.role.${nm.role}`)}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-error hover:text-error"
-                      onClick={() => handleDeleteNamespace(nm.id)}
-                      title={t('document.permission.remove')}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
+          {/* Authorized Groups Section */}
+          <Card padding="default" className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                {loc('document.permission.namespaceMembers', '已授权群组')}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowAddNamespace(true)}
+              >
+                <UserPlus className="w-4 h-4 mr-2" />
+                {loc('document.permission.addNamespace', '添加群组')}
+              </Button>
             </div>
-          )}
+
+            {/* Authorized Groups List */}
+            {namespaceMembers.length === 0 ? (
+              <p className="text-sm text-text-muted py-4 text-center">
+                {loc('document.permission.noNamespacePermissions', '暂无群组权限')}
+              </p>
+            ) : (
+              <div className="space-y-1">
+                {namespaceMembers.map(nm => (
+                  <div
+                    key={nm.id}
+                    className="group flex items-center justify-between p-2 rounded-lg hover:bg-muted transition-colors"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-sm truncate flex items-center gap-2">
+                        {nm.username || nm.entity_id || ''}
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-surface text-text-muted border-border border">
+                          {loc('document.permission.namespace', '群组')}
+                        </span>
+                      </div>
+                      <div className="text-xs text-text-muted truncate">
+                        {t(`document.permission.role.${nm.role}`)}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-error hover:text-error"
+                        onClick={() => handleDeleteNamespace(nm.id)}
+                        title={t('document.permission.remove')}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
         </div>
       )}
 
