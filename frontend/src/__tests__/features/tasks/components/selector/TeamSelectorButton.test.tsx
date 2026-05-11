@@ -195,7 +195,7 @@ describe('TeamSelectorButton', () => {
     expect(setSelectedTeam).not.toHaveBeenCalled()
   })
 
-  it('preserves system recommended team ids when adding a user favorite', async () => {
+  it('keeps user favorites before system recommended teams when adding a favorite', async () => {
     mockQuickAccessTeams = [2, 3]
     mockedUserApis.getQuickAccess.mockResolvedValueOnce({
       system_version: 7,
@@ -231,7 +231,7 @@ describe('TeamSelectorButton', () => {
           send_key: 'enter',
           quick_access: {
             version: 7,
-            teams: [2, 3, 4],
+            teams: [3, 4, 2],
           },
         },
       })

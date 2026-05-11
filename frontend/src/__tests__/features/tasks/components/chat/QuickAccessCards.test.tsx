@@ -26,6 +26,7 @@ jest.mock('@/hooks/useTranslation', () => ({
         'common:teams.select_team': 'Select team',
         'common:teams.search_team': 'Search team',
         'common:teams.no_match': 'No match',
+        'common:teams.reorder_quick_access': 'Drag to reorder',
         'teams.no_teams_title': 'No teams',
         'teams.no_teams_description': 'Create a team first',
         'wizard:wizard_button': 'Create',
@@ -215,5 +216,66 @@ describe('QuickAccessCards', () => {
     const reorderedCards = within(container).getAllByTestId(/^quick-access-team-/)
     expect(reorderedCards[0]).toHaveTextContent('Favorite Team Display')
     expect(reorderedCards[1]).toHaveTextContent('System Team Display')
+  })
+
+  test('reorders quick access teams by dragging a hidden team in the more popover', async () => {
+    renderQuickAccessCards(
+      [
+        makeTeam({ id: 1, name: 'team-one', description: 'Description one' }),
+        makeTeam({ id: 2, name: 'team-two', description: 'Description two' }),
+        makeTeam({ id: 3, name: 'team-three', description: 'Description three' }),
+        makeTeam({ id: 4, name: 'team-four', description: 'Description four' }),
+        makeTeam({ id: 5, name: 'team-five', description: 'Description five' }),
+      ],
+      {
+        system_version: 2,
+        system_team_ids: [],
+        user_version: 2,
+        show_system_recommended: false,
+        teams: [
+          { id: 1, name: 'team-one', display_name: 'Team One', is_system: false },
+          { id: 2, name: 'team-two', display_name: 'Team Two', is_system: false },
+          { id: 3, name: 'team-three', display_name: 'Team Three', is_system: false },
+          { id: 4, name: 'team-four', display_name: 'Team Four', is_system: false },
+          { id: 5, name: 'team-five', display_name: 'Team Five', is_system: false },
+        ],
+      }
+    )
+
+    const container = await screen.findByTestId('quick-access-cards')
+    expect(within(container).queryByTestId('quick-access-team-team-five')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('More'))
+    const hiddenTeamHandle = await screen.findByTestId('quick-access-sort-handle-5')
+    const targetTeamRow = await screen.findByTestId('quick-access-more-team-team-two')
+
+    fireEvent.dragStart(hiddenTeamHandle, {
+      dataTransfer: {
+        effectAllowed: '',
+        setData: jest.fn(),
+      },
+    })
+    fireEvent.dragOver(targetTeamRow, {
+      dataTransfer: {
+        dropEffect: '',
+      },
+    })
+    fireEvent.drop(targetTeamRow)
+
+    await waitFor(() => {
+      expect(mockedUserApis.updateUser).toHaveBeenCalledWith({
+        preferences: expect.objectContaining({
+          send_key: 'enter',
+          quick_access: {
+            version: 2,
+            teams: [1, 5, 2, 3, 4],
+          },
+        }),
+      })
+    })
+
+    const reorderedCards = within(container).getAllByTestId(/^quick-access-team-/)
+    expect(reorderedCards[0]).toHaveTextContent('Team One')
+    expect(reorderedCards[1]).toHaveTextContent('Team Five')
   })
 })

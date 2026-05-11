@@ -48,6 +48,16 @@ interface TeamSelectorButtonProps {
 
 const getTeamDisplayName = (team: Team) => team.displayName?.trim() || team.name
 
+const addFavoriteBeforeSystemRecommendations = (
+  teamIds: number[],
+  teamId: number,
+  systemRecommendedTeamIds: Set<number>
+) => {
+  const userFavoriteIds = teamIds.filter(id => !systemRecommendedTeamIds.has(id))
+  const systemIds = teamIds.filter(id => systemRecommendedTeamIds.has(id))
+  return [...userFavoriteIds, teamId, ...systemIds]
+}
+
 export default function TeamSelectorButton({
   selectedTeam,
   setSelectedTeam,
@@ -170,7 +180,11 @@ export default function TeamSelectorButton({
       const isFavorite = currentTeamIds.includes(team.id)
       const nextTeamIds = isFavorite
         ? currentTeamIds.filter(teamId => teamId !== team.id)
-        : [...currentTeamIds, team.id]
+        : addFavoriteBeforeSystemRecommendations(
+            currentTeamIds,
+            team.id,
+            systemRecommendedTeamIdSet
+          )
 
       const nextQuickAccess = {
         ...(currentQuickAccess.version !== undefined
