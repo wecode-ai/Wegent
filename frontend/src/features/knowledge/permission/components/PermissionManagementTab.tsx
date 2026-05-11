@@ -623,19 +623,7 @@ function PermissionGroup({
             className="group flex items-center justify-between p-2 rounded-lg hover:bg-muted transition-colors"
           >
             <div className="flex-1 min-w-0">
-              <div className="font-medium text-sm truncate flex items-center gap-1.5">
-                {user.display_name}
-                {user.source_type === 'share_link' && (
-                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] leading-tight font-medium bg-warning/10 text-warning border border-warning/20 flex-shrink-0">
-                    {t('document.permission.source.shareLink') || '链接'}
-                  </span>
-                )}
-                {user.source_type === 'entity_permission' && (
-                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] leading-tight font-medium bg-info/10 text-info border border-info/20 flex-shrink-0">
-                    {t('document.permission.source.entityPermission') || '群组'}
-                  </span>
-                )}
-              </div>
+              <div className="font-medium text-sm truncate">{user.display_name}</div>
               {user.email && (
                 <div className="text-xs text-text-muted truncate">
                   {user.email}
