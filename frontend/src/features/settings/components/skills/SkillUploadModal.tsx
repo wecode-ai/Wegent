@@ -128,7 +128,7 @@ export default function SkillUploadModal({
 
   const validateFile = useCallback(
     (file: File): string | null => {
-      if (!file.name.endsWith('.zip')) {
+      if (!/\.zip$/i.test(file.name)) {
         return t('skills.error_file_format')
       }
       if (file.size > MAX_FILE_SIZE) {

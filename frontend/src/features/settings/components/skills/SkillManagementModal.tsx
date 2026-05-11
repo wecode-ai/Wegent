@@ -20,13 +20,16 @@ import {
   fetchPublicSkillsList,
   UnifiedSkill,
   deleteSkill,
+  deletePublicSkill,
   downloadSkill,
+  downloadPublicSkill,
   fetchSkillReferences,
   parseSkillReferenceError,
   ReferencedGhost,
   removeSingleSkillReference,
   removeSkillReferences,
   updateSkillFromGit,
+  updatePublicSkillFromGit,
 } from '@/apis/skills'
 import SkillUploadModal from './SkillUploadModal'
 import { SkillReferenceConflictDialog } from './SkillReferenceConflictDialog'
@@ -128,7 +131,11 @@ export default function SkillManagementModal({
 
     setIsDeleting(true)
     try {
-      await deleteSkill(skillToDelete.id)
+      if (scope === 'public') {
+        await deletePublicSkill(skillToDelete.id)
+      } else {
+        await deleteSkill(skillToDelete.id)
+      }
       toast({
         title: t('common:common.success'),
         description: t('common:skills.success_delete', { skillName: skillToDelete.name }),
@@ -185,7 +192,11 @@ export default function SkillManagementModal({
     if (!skillToDelete) return
 
     await removeSkillReferences(skillToDelete.id)
-    await deleteSkill(skillToDelete.id)
+    if (scope === 'public') {
+      await deletePublicSkill(skillToDelete.id)
+    } else {
+      await deleteSkill(skillToDelete.id)
+    }
     await loadSkills()
     onSkillsChange?.()
   }
@@ -213,10 +224,14 @@ export default function SkillManagementModal({
 
   const handleDownloadSkill = async (skill: UnifiedSkill) => {
     try {
-      // For group scope, use the groupName as namespace
-      // For personal scope, use the skill's namespace (usually 'default')
-      const namespace = scope === 'group' && groupName ? groupName : skill.namespace
-      await downloadSkill(skill.id, skill.name, namespace)
+      if (scope === 'public') {
+        await downloadPublicSkill(skill.id, skill.name)
+      } else {
+        // For group scope, use the groupName as namespace
+        // For personal scope, use the skill's namespace (usually 'default')
+        const namespace = scope === 'group' && groupName ? groupName : skill.namespace
+        await downloadSkill(skill.id, skill.name, namespace)
+      }
       toast({
         title: t('common:common.success'),
         description: t('common:skills.success_download', { skillName: skill.name }),
@@ -235,7 +250,11 @@ export default function SkillManagementModal({
 
     setUpdatingFromGitId(skill.id)
     try {
-      await updateSkillFromGit(skill.id)
+      if (scope === 'public') {
+        await updatePublicSkillFromGit(skill.id)
+      } else {
+        await updateSkillFromGit(skill.id)
+      }
       toast({
         title: t('common:common.success'),
         description: t('common:skills.success_update_from_git', { skillName: skill.name }),

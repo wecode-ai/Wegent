@@ -386,8 +386,10 @@ const PublicBotList: React.FC = () => {
   // Get current refs from config for selector display
   const currentRefs = extractRefsFromConfig(formData.config)
   const selectedShellType =
-    shells.find(shell => shell.name === currentRefs.shellRef)?.shell_type ||
-    (currentRefs.shellRef === 'Dify' ? 'Dify' : null)
+    shells.find(shell => shell.name === currentRefs.shellRef)?.shell_type ??
+    (currentRefs.shellRef === 'Dify'
+      ? 'Dify'
+      : (shells.find(shell => shell.name === selectedBot?.shell_name)?.shell_type ?? null))
   const showKnowledgeBaseSelector = selectedShellType !== 'Dify'
 
   // Render the resource selector

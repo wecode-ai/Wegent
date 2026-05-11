@@ -439,8 +439,9 @@ describe('BotEdit default knowledge bases', () => {
     )
 
     await waitFor(() => {
-      expect(screen.queryByTestId('default-knowledge-base-trigger')).not.toBeInTheDocument()
+      expect(mockedGetPublicShells).toHaveBeenCalled()
     })
+    expect(screen.queryByTestId('default-knowledge-base-trigger')).not.toBeInTheDocument()
   })
 
   test('shows only organization knowledge bases for public non-Dify bots', async () => {
