@@ -385,7 +385,8 @@ class KnowledgeService:
             if role is None:
                 return []
 
-            return (
+            # KBs belonging to this group
+            namespace_kbs = (
                 db.query(Kind)
                 .filter(
                     Kind.kind == "KnowledgeBase",
@@ -395,6 +396,43 @@ class KnowledgeService:
                 .order_by(Kind.updated_at.desc())
                 .all()
             )
+
+            # KBs authorized to this group via entity permissions
+            group_ns = db.query(Namespace).filter(
+                Namespace.name == group_name, Namespace.is_active == True
+            ).first()
+            entity_kbs = []
+            if group_ns:
+                entity_members = (
+                    db.query(ResourceMember.resource_id)
+                    .filter(
+                        ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                        ResourceMember.entity_type == 'namespace',
+                        ResourceMember.entity_id == str(group_ns.id),
+                        ResourceMember.status == MemberStatus.APPROVED.value,
+                    )
+                    .all()
+                )
+                entity_kb_ids = [em[0] for em in entity_members]
+                if entity_kb_ids:
+                    entity_kbs = (
+                        db.query(Kind)
+                        .filter(
+                            Kind.kind == "KnowledgeBase",
+                            Kind.is_active == True,
+                            Kind.id.in_(entity_kb_ids),
+                        )
+                        .all()
+                    )
+
+            # Merge and deduplicate
+            seen_ids = {kb.id for kb in namespace_kbs}
+            for ekb in entity_kbs:
+                if ekb.id not in seen_ids:
+                    namespace_kbs.append(ekb)
+                    seen_ids.add(ekb.id)
+
+            return namespace_kbs
 
         elif scope == ResourceScope.ORGANIZATION:
             # Organization knowledge bases are visible to all users
@@ -431,6 +469,29 @@ class KnowledgeService:
                 .all()
             )
             shared_kb_ids = [p.resource_id for p in shared_permissions]
+
+            # Get KBs authorized to user's groups via entity-type permissions
+            entity_kb_ids = set()
+            if accessible_groups:
+                group_ns_ids = (
+                    db.query(Namespace.id)
+                    .filter(Namespace.name.in_(accessible_groups), Namespace.is_active == True)
+                    .all()
+                )
+                ns_id_strs = [str(nid[0]) for nid in group_ns_ids if nid[0]]
+                if ns_id_strs:
+                    entity_members = (
+                        db.query(ResourceMember.resource_id)
+                        .filter(
+                            ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                            ResourceMember.entity_type == 'namespace',
+                            ResourceMember.entity_id.in_(ns_id_strs),
+                            ResourceMember.status == MemberStatus.APPROVED.value,
+                        )
+                        .all()
+                    )
+                    entity_kb_ids = {em[0] for em in entity_members}
+            shared_kb_ids = list(set(shared_kb_ids) | entity_kb_ids)
 
             # Get organization-level namespace names
             org_namespaces = (
@@ -1898,6 +1959,59 @@ class KnowledgeService:
         group_kb_map = {kb.id: kb for kb in group_kbs}
         for kb in shared_group_kbs:
             group_kb_map[kb.id] = kb
+
+        # 4b. Get entity-authorized KBs — KBs with ResourceMember entity_type='namespace'
+        # where the namespace matches a group the user belongs to
+        entity_members_kb_ids: set[int] = set()
+        entity_member_group_map: dict[int, str] = {}  # kb_id -> group_name
+        entity_member_role_map: dict[int, str] = {}  # kb_id -> role
+
+        if accessible_groups:
+            # Build namespace name -> id mapping
+            group_namespaces = (
+                db.query(Namespace)
+                .filter(Namespace.name.in_(accessible_groups), Namespace.is_active == True)
+                .all()
+            )
+            namespace_name_to_id = {ns.name: ns.id for ns in group_namespaces}
+
+            entity_members = (
+                db.query(ResourceMember)
+                .filter(
+                    ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                    ResourceMember.entity_type == 'namespace',
+                    ResourceMember.entity_id.in_(
+                        [str(ns_id) for ns_id in namespace_name_to_id.values()]
+                    ),
+                    ResourceMember.status == MemberStatus.APPROVED.value,
+                )
+                .all()
+            )
+
+            for em in entity_members:
+                kb_id = em.resource_id
+                ns_id = int(em.entity_id) if em.entity_id else 0
+                # Find which group this namespace ID belongs to
+                for ns_name, nid in namespace_name_to_id.items():
+                    if nid == ns_id:
+                        entity_members_kb_ids.add(kb_id)
+                        entity_member_group_map[kb_id] = ns_name
+                        entity_member_role_map[kb_id] = em.get_effective_role()
+                        break
+
+        if entity_members_kb_ids:
+            entity_kbs = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "KnowledgeBase",
+                    Kind.is_active == True,
+                    Kind.id.in_(entity_members_kb_ids),
+                )
+                .all()
+            )
+            for ekb in entity_kbs:
+                group_kb_map[ekb.id] = ekb
+
         group_kbs = list(group_kb_map.values())
 
         # 5. Get organization knowledge bases (single query)
@@ -2036,7 +2150,7 @@ class KnowledgeService:
                             ns_name,
                             display_name or ns_name,
                             "group",
-                            merge_roles(shared_kb_roles.get(kb.id), user_group_role),
+                            merge_roles(shared_kb_roles.get(kb.id), user_group_role, entity_member_role_map.get(kb.id)),
                         )
                         for kb in kbs
                     ],
