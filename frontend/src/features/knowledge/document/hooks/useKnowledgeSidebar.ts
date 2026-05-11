@@ -269,6 +269,15 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
   // Get group info for a KB (accepts both KnowledgeBase and KnowledgeBaseWithGroupInfo)
   const getKbGroupInfo = useCallback(
     (kb: KbDataItem): KbGroupInfo => {
+      // If kb has source_group (entity-authorized shared KB), show the source group
+      if ('source_group' in kb && kb.source_group) {
+        return {
+          groupId: 'shared',
+          groupName: kb.source_group,
+          groupType: 'personal-shared',
+        }
+      }
+
       // If kb already has group info (KnowledgeBaseWithGroupInfo), use it directly
       if ('group_id' in kb && 'group_name' in kb && 'group_type' in kb) {
         return {

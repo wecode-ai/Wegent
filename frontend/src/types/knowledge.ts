@@ -759,6 +759,8 @@ export interface KnowledgeBaseWithGroupInfo {
   group_type: KnowledgeGroupType
   /** Current user's role for this KB: 'Owner' | 'Maintainer' | 'Developer' | 'Reporter' | 'RestrictedAnalyst' | null */
   my_role?: MemberRole | null
+  /** Source group name for entity-authorized shared KBs */
+  source_group?: string | null
 }
 
 /** Personal knowledge bases in all-grouped response */

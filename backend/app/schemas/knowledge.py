@@ -12,6 +12,8 @@ from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.schemas.base_role import BaseRole
+
 # Import shared types from kind.py to avoid duplication
 from app.schemas.kind import (
     EmbeddingModelRef,
@@ -23,7 +25,6 @@ from app.schemas.kind import (
 
 # Import SplitterConfig from rag.py to use unified splitter configuration
 from app.schemas.rag import SplitterConfig
-from app.schemas.base_role import BaseRole
 from app.services.knowledge.splitter_config import normalize_splitter_config
 
 
@@ -501,6 +502,11 @@ class KnowledgeBaseWithGroupInfo(BaseModel):
     my_role: Optional[str] = Field(
         None,
         description="Current user's role for this KB: 'Owner' | 'Maintainer' | 'Developer' | 'Reporter' | 'RestrictedAnalyst' | None",
+    )
+    # Source group for entity-authorized shared KBs
+    source_group: Optional[str] = Field(
+        None,
+        description="Source group name for entity-authorized shared KBs, e.g., '来自 XX 群组'",
     )
 
 

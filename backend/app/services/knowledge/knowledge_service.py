@@ -336,7 +336,7 @@ class KnowledgeService:
                 db.query(ResourceMember.resource_id)
                 .filter(
                     ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
-                    ResourceMember.entity_type == 'user',
+                    ResourceMember.entity_type == "user",
                     ResourceMember.entity_id == str(user_id),
                     ResourceMember.status == MemberStatus.APPROVED.value,
                 )
@@ -385,8 +385,9 @@ class KnowledgeService:
             if role is None:
                 return []
 
-            # KBs belonging to this group
-            namespace_kbs = (
+            # KBs belonging to this group (native group KBs only)
+            # Entity-authorized KBs are shown in personal shared_with_me instead
+            return (
                 db.query(Kind)
                 .filter(
                     Kind.kind == "KnowledgeBase",
@@ -396,45 +397,6 @@ class KnowledgeService:
                 .order_by(Kind.updated_at.desc())
                 .all()
             )
-
-            # KBs authorized to this group via entity permissions
-            from app.models.resource_member import MemberStatus, ResourceMember
-            from app.models.share_link import ResourceType
-            group_ns = db.query(Namespace).filter(
-                Namespace.name == group_name, Namespace.is_active == True
-            ).first()
-            entity_kbs = []
-            if group_ns:
-                entity_members = (
-                    db.query(ResourceMember.resource_id)
-                    .filter(
-                        ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
-                        ResourceMember.entity_type == 'namespace',
-                        ResourceMember.entity_id == str(group_ns.id),
-                        ResourceMember.status == MemberStatus.APPROVED.value,
-                    )
-                    .all()
-                )
-                entity_kb_ids = [em[0] for em in entity_members]
-                if entity_kb_ids:
-                    entity_kbs = (
-                        db.query(Kind)
-                        .filter(
-                            Kind.kind == "KnowledgeBase",
-                            Kind.is_active == True,
-                            Kind.id.in_(entity_kb_ids),
-                        )
-                        .all()
-                    )
-
-            # Merge and deduplicate
-            seen_ids = {kb.id for kb in namespace_kbs}
-            for ekb in entity_kbs:
-                if ekb.id not in seen_ids:
-                    namespace_kbs.append(ekb)
-                    seen_ids.add(ekb.id)
-
-            return namespace_kbs
 
         elif scope == ResourceScope.ORGANIZATION:
             # Organization knowledge bases are visible to all users
@@ -464,7 +426,7 @@ class KnowledgeService:
                 db.query(ResourceMember.resource_id)
                 .filter(
                     ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
-                    ResourceMember.entity_type == 'user',
+                    ResourceMember.entity_type == "user",
                     ResourceMember.entity_id == str(user_id),
                     ResourceMember.status == MemberStatus.APPROVED.value,
                 )
@@ -477,7 +439,10 @@ class KnowledgeService:
             if accessible_groups:
                 group_ns_ids = (
                     db.query(Namespace.id)
-                    .filter(Namespace.name.in_(accessible_groups), Namespace.is_active == True)
+                    .filter(
+                        Namespace.name.in_(accessible_groups),
+                        Namespace.is_active == True,
+                    )
                     .all()
                 )
                 ns_id_strs = [str(nid[0]) for nid in group_ns_ids if nid[0]]
@@ -485,8 +450,9 @@ class KnowledgeService:
                     entity_members = (
                         db.query(ResourceMember.resource_id)
                         .filter(
-                            ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
-                            ResourceMember.entity_type == 'namespace',
+                            ResourceMember.resource_type
+                            == ResourceType.KNOWLEDGE_BASE.value,
+                            ResourceMember.entity_type == "namespace",
                             ResourceMember.entity_id.in_(ns_id_strs),
                             ResourceMember.status == MemberStatus.APPROVED.value,
                         )
@@ -1769,7 +1735,7 @@ class KnowledgeService:
             db.query(ResourceMember.resource_id)
             .filter(
                 ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
-                ResourceMember.entity_type == 'user',
+                ResourceMember.entity_type == "user",
                 ResourceMember.entity_id == str(user_id),
                 ResourceMember.status == MemberStatus.APPROVED.value,
             )
@@ -1860,7 +1826,7 @@ class KnowledgeService:
             db.query(ResourceMember.resource_id, ResourceMember.role)
             .filter(
                 ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
-                ResourceMember.entity_type == 'user',
+                ResourceMember.entity_type == "user",
                 ResourceMember.entity_id == str(user_id),
                 ResourceMember.status == MemberStatus.APPROVED.value,
             )
@@ -1972,7 +1938,9 @@ class KnowledgeService:
             # Build namespace name -> id mapping
             group_namespaces = (
                 db.query(Namespace)
-                .filter(Namespace.name.in_(accessible_groups), Namespace.is_active == True)
+                .filter(
+                    Namespace.name.in_(accessible_groups), Namespace.is_active == True
+                )
                 .all()
             )
             namespace_name_to_id = {ns.name: ns.id for ns in group_namespaces}
@@ -1981,7 +1949,7 @@ class KnowledgeService:
                 db.query(ResourceMember)
                 .filter(
                     ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
-                    ResourceMember.entity_type == 'namespace',
+                    ResourceMember.entity_type == "namespace",
                     ResourceMember.entity_id.in_(
                         [str(ns_id) for ns_id in namespace_name_to_id.values()]
                     ),
@@ -2001,6 +1969,10 @@ class KnowledgeService:
                         entity_member_role_map[kb_id] = em.get_effective_role()
                         break
 
+        # Separate entity-authorized KBs:
+        # - Author's own KBs: stay in personal_created (already there)
+        # - Other users' KBs: go to shared_with_me with source_group
+        entity_shared_to_me_kbs: list[Kind] = []
         if entity_members_kb_ids:
             entity_kbs = (
                 db.query(Kind)
@@ -2012,9 +1984,17 @@ class KnowledgeService:
                 .all()
             )
             for ekb in entity_kbs:
-                group_kb_map[ekb.id] = ekb
+                if ekb.user_id == user_id:
+                    # Author's own KB, keep in personal_created (already there)
+                    pass
+                else:
+                    # Shared to a group the user belongs to → shared_with_me
+                    entity_shared_to_me_kbs.append(ekb)
 
+        # Merge group_kb_map (native group KBs + user-level shared group KBs)
         group_kbs = list(group_kb_map.values())
+        # Remove entity-authorized KBs from group_kbs (they should not appear in group section)
+        group_kbs = [kb for kb in group_kbs if kb.id not in entity_members_kb_ids]
 
         # 5. Get organization knowledge bases (single query)
         org_kbs = (
@@ -2048,6 +2028,7 @@ class KnowledgeService:
             dict.fromkeys(
                 [kb.id for kb in personal_created]
                 + [kb.id for kb in personal_shared]
+                + [kb.id for kb in entity_shared_to_me_kbs]
                 + [kb.id for kb in group_kbs]
                 + [kb.id for kb in org_kbs]
             )
@@ -2074,6 +2055,7 @@ class KnowledgeService:
             group_name: str,
             group_type: str,
             my_role: str | None = None,
+            source_group: str | None = None,
         ) -> KnowledgeBaseWithGroupInfo:
             spec = kb.json.get("spec", {})
             return KnowledgeBaseWithGroupInfo(
@@ -2090,6 +2072,7 @@ class KnowledgeService:
                 group_name=group_name,
                 group_type=group_type,
                 my_role=my_role,
+                source_group=source_group,
             )
 
         def merge_roles(*roles: str | None) -> str | None:
@@ -2129,16 +2112,28 @@ class KnowledgeService:
             )
             for kb in personal_shared
         ]
+        # Add entity-authorized shared KBs with source group info
+        for ekb in entity_shared_to_me_kbs:
+            source_group_name = entity_member_group_map.get(ekb.id)
+            source_group_display = (
+                namespace_display_names.get(source_group_name, source_group_name)
+                if source_group_name
+                else None
+            )
+            shared_with_me.append(
+                kb_to_response(
+                    ekb,
+                    "default",
+                    "personal-shared",
+                    "personal-shared",
+                    entity_member_role_map.get(ekb.id),
+                    source_group=source_group_display,
+                )
+            )
         # Build groups section - group KBs by namespace in memory
         groups_map: dict[str, list[Kind]] = {}
         for kb in group_kbs:
-            # Entity-authorized personal KBs (namespace='default') should appear
-            # under their target group, not under 'default'
-            if kb.namespace == "default" and kb.id in entity_member_group_map:
-                target_group = entity_member_group_map[kb.id]
-                groups_map.setdefault(target_group, []).append(kb)
-            else:
-                groups_map.setdefault(kb.namespace, []).append(kb)
+            groups_map.setdefault(kb.namespace, []).append(kb)
 
         # Build groups list - include ALL accessible groups, even those without KBs
         # For group KBs, use the user's role in that group
@@ -2158,7 +2153,7 @@ class KnowledgeService:
                             ns_name,
                             display_name or ns_name,
                             "group",
-                            merge_roles(shared_kb_roles.get(kb.id), user_group_role, entity_member_role_map.get(kb.id)),
+                            merge_roles(shared_kb_roles.get(kb.id), user_group_role),
                         )
                         for kb in kbs
                     ],
@@ -2198,9 +2193,12 @@ class KnowledgeService:
         summary = AllGroupedSummary(
             total_count=len(personal_created)
             + len(personal_shared)
+            + len(entity_shared_to_me_kbs)
             + len(group_kbs)
             + len(org_kbs),
-            personal_count=len(personal_created) + len(personal_shared),
+            personal_count=len(personal_created)
+            + len(personal_shared)
+            + len(entity_shared_to_me_kbs),
             group_count=len(group_kbs),
             organization_count=len(org_kbs),
         )
