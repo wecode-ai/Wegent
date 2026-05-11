@@ -14,7 +14,7 @@ to provide a unified access control system for all shareable resources.
 
 from datetime import datetime
 from enum import Enum as PyEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import (
     Column,
@@ -91,8 +91,14 @@ class ResourceMember(Base):
     )
     entity_id = Column(
         String(100),
-        nullable=True,
+        nullable=False,
         comment="Entity identifier: user_id for 'user', external ID for others",
+    )
+
+    entity_display_name = Column(
+        String(100),
+        nullable=True,
+        comment="Display name snapshot for entity-type members (group name, department name, etc.)",
     )
 
     # Backward compatibility: kept as nullable column for old SQL queries
@@ -244,6 +250,52 @@ class ResourceMember(Base):
             role: The role to set (Owner, Maintainer, Developer, Reporter)
         """
         self.role = role
+
+    @classmethod
+    def create(
+        cls,
+        resource_type: str,
+        resource_id: int,
+        entity_type: str = "user",
+        entity_id: Optional[str] = None,
+        role: str = ResourceRole.Reporter.value,
+        status: str = MemberStatus.PENDING.value,
+        invited_by_user_id: int = 0,
+        share_link_id: int = 0,
+        reviewed_by_user_id: int = 0,
+        reviewed_at: Optional[datetime] = None,
+        copied_resource_id: int = 0,
+        entity_display_name: Optional[str] = None,
+        requested_at: Optional[datetime] = None,
+    ) -> "ResourceMember":
+        """Create a ResourceMember with consistent entity initialization.
+
+        Automatically syncs user_id from entity_id for user-type members.
+        Prefer this factory over direct constructor to ensure invariant
+        consistency regardless of SQLAlchemy event listener availability
+        (e.g., bulk_insert_mappings bypasses before_insert).
+        """
+        if entity_id is None and entity_type == "user":
+            raise ValueError("entity_id is required for user-type members")
+
+        member = cls(
+            resource_type=resource_type,
+            resource_id=resource_id,
+            entity_type=entity_type,
+            entity_id=entity_id or "",
+            role=role,
+            status=status,
+            invited_by_user_id=invited_by_user_id,
+            share_link_id=share_link_id,
+            reviewed_by_user_id=reviewed_by_user_id,
+            reviewed_at=reviewed_at or EPOCH_TIME,
+            copied_resource_id=copied_resource_id,
+            entity_display_name=entity_display_name,
+            requested_at=requested_at or datetime.utcnow(),
+        )
+        # Explicitly sync user_id so callers don't rely solely on event listeners
+        _sync_user_id_from_entity(member)
+        return member
 
 
 # SQLAlchemy event listeners to keep user_id in sync with entity_id for user-type members

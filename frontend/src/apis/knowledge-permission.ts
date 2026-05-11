@@ -18,6 +18,7 @@ import type {
   PermissionReviewRequest,
   PermissionReviewResponse,
   PermissionUpdateRequest,
+  PermissionUserInfo,
   PublicKnowledgeBaseResponse,
   ShareLinkConfig,
   ShareLinkResponse,
@@ -35,6 +36,7 @@ interface ResourceMemberResponse {
   status: string
   entity_type?: string | null
   entity_id?: string | null
+  entity_display_name?: string | null
   source_type?: string | null
   invited_by_user_id: number
   invited_by_user_name: string | null
@@ -123,17 +125,20 @@ export const knowledgePermissionApi = {
     }
 
     // Transform approved members - group by role
-    const approved = membersResponse.members.reduce(
+    const approved = membersResponse.members.reduce<{
+      [K in MemberRole]: PermissionUserInfo[]
+    }>(
       (acc, m) => {
         const role = (m.role as MemberRole) || 'Reporter'
         if (!acc[role]) acc[role] = []
         // For entity-type members, backend populates display_name via _get_entity_display_name
         const isEntity = m.entity_type && m.entity_type !== 'user'
-        const member = {
+        const member: PermissionUserInfo = {
           id: m.id,
           user_id: m.user_id,
-          display_name: m.display_name || (isEntity ? (m.entity_id || '') : ''),
-          email: isEntity ? '' : (m.user_email || ''),
+          display_name:
+            m.display_name || m.entity_display_name || (isEntity ? m.entity_id || '' : ''),
+          email: isEntity ? '' : m.user_email || '',
           role: role,
           requested_at: m.requested_at,
           reviewed_at: m.reviewed_at || undefined,
@@ -145,13 +150,7 @@ export const knowledgePermissionApi = {
         acc[role].push(member)
         return acc
       },
-      { Owner: [], Maintainer: [], Developer: [], Reporter: [], RestrictedAnalyst: [] } as {
-        Owner: typeof pending
-        Maintainer: typeof pending
-        Developer: typeof pending
-        Reporter: typeof pending
-        RestrictedAnalyst: typeof pending
-      }
+      { Owner: [], Maintainer: [], Developer: [], Reporter: [], RestrictedAnalyst: [] }
     )
     return { pending, approved }
   },
@@ -191,15 +190,12 @@ export const knowledgePermissionApi = {
     namespaceId: number,
     role: string
   ): Promise<PermissionResponse> => {
-    const response = await client.post<PermissionResponse>(
-      `/share/KnowledgeBase/${kbId}/members`,
-      {
-        user_id: 0,
-        role,
-        entity_type: 'namespace',
-        entity_id: String(namespaceId),
-      }
-    )
+    const response = await client.post<PermissionResponse>(`/share/KnowledgeBase/${kbId}/members`, {
+      user_id: 0,
+      role,
+      entity_type: 'namespace',
+      entity_id: String(namespaceId),
+    })
     return response
   },
 

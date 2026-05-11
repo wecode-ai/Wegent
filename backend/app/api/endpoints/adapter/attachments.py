@@ -211,7 +211,7 @@ def _check_task_access(db: Session, task_id: int, user_id: int) -> bool:
         .filter(
             ResourceMember.resource_type == ResourceType.TASK,
             ResourceMember.resource_id == task_id,
-            ResourceMember.entity_type == 'user',
+            ResourceMember.entity_type == "user",
             ResourceMember.entity_id == str(user_id),
             ResourceMember.status == MemberStatus.APPROVED,
         )
@@ -822,7 +822,7 @@ async def get_all_task_attachments(
         .filter(
             ResourceMember.resource_type == ResourceType.TASK,
             ResourceMember.resource_id == task_id,
-            ResourceMember.entity_type == 'user',
+            ResourceMember.entity_type == "user",
             ResourceMember.entity_id == str(current_user.id),
             ResourceMember.status == MemberStatus.APPROVED,
         )

@@ -29,7 +29,7 @@ class TestGetMembershipWithCache:
                 MagicMock(), 1, "org_department", ["d1", "d2"]
             )
 
-            assert result is True
+            assert result == ["d1"]
             mock_api.assert_called_once_with("ssn123", ["d1", "d2"])
             mock_cache.set_sync.assert_called_once()
             cache_key = mock_cache.set_sync.call_args[0][0]
@@ -49,7 +49,7 @@ class TestGetMembershipWithCache:
                 MagicMock(), 1, "org_department", ["d1", "d2"]
             )
 
-            assert result is True
+            assert result == ["d1"]
             mock_api.assert_not_called()
 
     def test_partial_hit_queries_only_missing(self):
@@ -67,7 +67,7 @@ class TestGetMembershipWithCache:
                 MagicMock(), 1, "org_department", ["d1", "d2"]
             )
 
-            assert result is True
+            assert result == ["d1"]
             mock_api.assert_called_once_with("ssn123", ["d2"])
             # Updated cache should include both d1 and d2
             stored = mock_cache.set_sync.call_args[0][1]
@@ -88,4 +88,4 @@ class TestGetMembershipWithCache:
             resolver.match_entity_bindings(MagicMock(), 1, "org_department", ["d1"])
 
             expire = mock_cache.set_sync.call_args[1].get("expire")
-            assert expire == 3600
+            assert expire == 900

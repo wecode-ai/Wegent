@@ -58,12 +58,12 @@ class NamespaceEntityResolver(IExternalEntityResolver):
         entity_type: str,
         entity_ids: list[str],
         user_context: Optional[dict] = None,
-    ) -> bool:
+    ) -> list[str]:
         if entity_type != "namespace":
-            return False
+            return []
 
         if not entity_ids:
-            return False
+            return []
 
         # Convert entity_ids to int for namespace ID comparison
         namespace_ids = []
@@ -74,28 +74,28 @@ class NamespaceEntityResolver(IExternalEntityResolver):
                 continue
 
         if not namespace_ids:
-            return False
+            return []
 
-        # Use sqlalchemy.exists() for efficient existence check
-        from sqlalchemy import exists
-
-        is_member = db.query(
-            exists().where(
+        matched_rows = (
+            db.query(ResourceMember.resource_id)
+            .filter(
                 ResourceMember.resource_type == "Namespace",
                 ResourceMember.resource_id.in_(namespace_ids),
                 ResourceMember.entity_type == "user",
                 ResourceMember.entity_id == str(user_id),
                 ResourceMember.status == MemberStatus.APPROVED.value,
             )
-        ).scalar()
+            .all()
+        )
+        matched = [str(r.resource_id) for r in matched_rows]
 
-        if is_member:
+        if matched:
             logger.info(
-                f"User user_id={user_id} matched one of namespaces "
-                f"{namespace_ids} via NamespaceEntityResolver"
+                f"User user_id={user_id} matched namespaces {matched} "
+                f"via NamespaceEntityResolver"
             )
 
-        return bool(is_member)
+        return matched
 
     def get_resource_ids_by_entity(
         self,
@@ -122,10 +122,11 @@ class NamespaceEntityResolver(IExternalEntityResolver):
         if not ns_ids:
             return []
 
-        # Find all resource_members referencing those namespaces
+        # Find all KnowledgeBase resource_members referencing those namespaces
         results = (
             db.query(ResourceMember.resource_id)
             .filter(
+                ResourceMember.resource_type.in_(["KnowledgeBase", "KNOWLEDGE_BASE"]),
                 ResourceMember.entity_type == "namespace",
                 ResourceMember.entity_id.in_([str(nid) for nid in ns_ids]),
                 ResourceMember.status == MemberStatus.APPROVED.value,

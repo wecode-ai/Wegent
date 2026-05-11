@@ -40,7 +40,6 @@ from app.schemas.share import (
     ShareLinkCreate,
     ShareLinkResponse,
     ShareLinkUpdate,
-
 )
 from app.services.share import (
     knowledge_share_service,
@@ -355,6 +354,7 @@ def add_member(
         role=body.role,
         entity_type=body.entity_type,
         entity_id=body.entity_id,
+        entity_display_name=body.entity_display_name,
     )
 
 
@@ -383,7 +383,8 @@ def batch_add_members(
     """
     service = _get_share_service(resource_type)
     members_data = [
-        (m.user_id, m.role, m.entity_type, m.entity_id) for m in body.members
+        (m.user_id, m.role, m.entity_type, m.entity_id, m.entity_display_name)
+        for m in body.members
     ]
     return service.batch_add_members(
         db=db,

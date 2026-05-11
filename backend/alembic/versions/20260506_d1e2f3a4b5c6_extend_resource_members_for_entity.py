@@ -5,7 +5,7 @@
 """extend_resource_members_for_entity
 
 Revision ID: d1e2f3a4b5c6
-Revises: a1b2c3d4e5f6
+Revises: b2c3d4e5f707
 Create Date: 2026-05-06
 
 Add entity_type, entity_id columns to resource_members table.
@@ -21,7 +21,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "d1e2f3a4b5c6"
-down_revision = "a1b2c3d4e5f6"
+down_revision = "b2c3d4e5f707"
 branch_labels = None
 depends_on = None
 
@@ -98,20 +98,20 @@ def upgrade() -> None:
             "ALTER TABLE resource_members MODIFY user_id INT NULL COMMENT 'Member user ID (kept for backward compatibility, use entity_type+entity_id for new code)'"
         )
 
+    # Step 6: Add entity_display_name for entity-type member snapshots
+    if "entity_display_name" not in columns:
+        op.add_column(
+            "resource_members",
+            sa.Column(
+                "entity_display_name",
+                sa.String(100),
+                nullable=True,
+                comment="Display name snapshot for entity-type members",
+            ),
+        )
+
     # Step 5: Drop old unique constraint and create new one
     if dialect == "mysql":
-        # MySQL specific: drop old FK constraint first if exists
-        # Dynamically find FK constraint name from MySQL
-        fk_result = conn.execute(
-            sa.text(
-                "SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS "
-                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'resource_members' "
-                "AND CONSTRAINT_TYPE = 'FOREIGN KEY'"
-            )
-        ).fetchone()
-        if fk_result:
-            op.execute(f"ALTER TABLE resource_members DROP FOREIGN KEY {fk_result[0]}")
-
         # Dynamically find the actual unique constraint/index name from MySQL
         old_uc_name_result = conn.execute(
             sa.text(
@@ -139,26 +139,38 @@ def upgrade() -> None:
                 ["resource_type", "resource_id", "entity_type", "entity_id"],
             )
 
+    # Step 7: Add index for entity-type queries
+    op.create_index(
+        "idx_resource_members_entity",
+        "resource_members",
+        ["entity_type", "entity_id", "resource_type", "status"],
+    )
+
 
 def downgrade() -> None:
     conn = op.get_bind()
     dialect = conn.dialect.name
 
+    # Drop entity index
+    op.drop_index("idx_resource_members_entity", table_name="resource_members")
+
     # Drop new unique constraint, restore old one
     if dialect == "mysql":
-        # Dynamically find FK constraint name from MySQL before recreating
-        fk_result = conn.execute(
+        # Dynamically find the current unique constraint name
+        new_uc_name_result = conn.execute(
             sa.text(
                 "SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS "
                 "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'resource_members' "
-                "AND CONSTRAINT_TYPE = 'FOREIGN KEY'"
+                "AND CONSTRAINT_TYPE = 'UNIQUE'"
             )
         ).fetchone()
-        if fk_result:
-            op.execute(f"ALTER TABLE resource_members DROP FOREIGN KEY {fk_result[0]}")
-        op.drop_constraint(
-            "uq_resource_members_entity", "resource_members", type_="unique"
+        new_uc_name = (
+            new_uc_name_result[0]
+            if new_uc_name_result
+            else "uq_resource_members_entity"
         )
+
+        op.drop_constraint(new_uc_name, "resource_members", type_="unique")
         op.create_unique_constraint(
             "uq_resource_members",
             "resource_members",
@@ -172,6 +184,12 @@ def downgrade() -> None:
                 ["resource_type", "resource_id", "user_id"],
             )
 
-    # Drop added columns
-    op.drop_column("resource_members", "entity_id")
-    op.drop_column("resource_members", "entity_type")
+    # Drop added columns (check existence to tolerate partial rollback states)
+    inspector = sa.inspect(conn)
+    columns = [col["name"] for col in inspector.get_columns("resource_members")]
+    if "entity_display_name" in columns:
+        op.drop_column("resource_members", "entity_display_name")
+    if "entity_id" in columns:
+        op.drop_column("resource_members", "entity_id")
+    if "entity_type" in columns:
+        op.drop_column("resource_members", "entity_type")

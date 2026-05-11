@@ -144,7 +144,9 @@ class ResourceMemberCreate(BaseModel):
     - For entity members: provide entity_type, entity_id (user_id=0)
     """
 
-    user_id: int = Field(default=0, description="User ID to add as member (0 for entity members)")
+    user_id: int = Field(
+        default=0, description="User ID to add as member (0 for entity members)"
+    )
     role: MemberRole = Field(
         default=MemberRole.Reporter,
         description="Member role (Owner not allowed)",
@@ -157,6 +159,11 @@ class ResourceMemberCreate(BaseModel):
     entity_id: Optional[str] = Field(
         default=None,
         description="Entity identifier (required when entity_type is set and not 'user')",
+    )
+    entity_display_name: Optional[str] = Field(
+        default=None,
+        description="Display name for entity-type members (e.g., group name, department name). "
+        "Optional; used as a snapshot when creating the member record.",
     )
 
     @field_validator("role")
@@ -208,7 +215,9 @@ class ResourceMemberResponse(BaseModel):
     id: int
     resource_type: str
     resource_id: int
-    user_id: int
+    user_id: Optional[int] = (
+        None  # Null for entity-type members (namespace, department, etc.)
+    )
     display_name: Optional[str] = None  # Unified display name for all member types
     user_email: Optional[str] = None  # Populated from user lookup
     role: str = Field(description="Member role: Owner, Maintainer, Developer, Reporter")
@@ -259,11 +268,14 @@ class ResourceMemberInDB(BaseModel):
     id: int
     resource_type: str
     resource_id: int
-    user_id: int
+    user_id: Optional[int] = (
+        None  # Null for entity-type members (namespace, department, etc.)
+    )
     role: str = Field(description="Member role: Owner, Maintainer, Developer, Reporter")
     status: str
     entity_type: Optional[str] = None
     entity_id: Optional[str] = None
+    entity_display_name: Optional[str] = None
     invited_by_user_id: int
     share_link_id: Optional[int] = None
     reviewed_by_user_id: Optional[int] = None

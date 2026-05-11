@@ -86,8 +86,8 @@ class IExternalEntityResolver(ABC):
         entity_type: str,
         entity_ids: list[str],
         user_context: Optional[dict] = None,
-    ) -> bool:
-        """Determine if a user matches any of the given entity bindings.
+    ) -> list[str]:
+        """Determine which entity bindings match the user.
 
         Args:
             db: Database session
@@ -97,7 +97,8 @@ class IExternalEntityResolver(ABC):
             user_context: Optional user profile data to avoid re-fetching
 
         Returns:
-            True if user matches any of the given entity bindings, False otherwise.
+            List of entity IDs from entity_ids that the user matches.
+            Empty list if no bindings match.
             The actual permission role is stored on the ResourceMember record.
         """
         ...
@@ -126,6 +127,29 @@ class IExternalEntityResolver(ABC):
             Display name string or None if not resolvable
         """
         return None
+
+    def batch_get_display_names(
+        self, db: Session, entity_ids: list[str]
+    ) -> dict[str, str]:
+        """Batch resolve display names for multiple entity IDs.
+
+        Default implementation falls back to individual get_display_name calls.
+        Subclasses should override this when the underlying API supports true
+        batch resolution to avoid N+1 queries.
+
+        Args:
+            db: Database session
+            entity_ids: List of entity identifiers
+
+        Returns:
+            Mapping of entity_id -> display name for resolvable IDs
+        """
+        result: dict[str, str] = {}
+        for eid in entity_ids:
+            name = self.get_display_name(db, eid)
+            if name:
+                result[eid] = name
+        return result
 
     @abstractmethod
     def get_resource_ids_by_entity(

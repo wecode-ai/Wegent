@@ -21,6 +21,13 @@ import type {
   AddMemberResult,
 } from '@/types/group'
 
+function buildQueryString(params: Record<string, string | number | undefined>): string {
+  const entries = Object.entries(params)
+    .filter(([, v]) => v !== undefined)
+    .map(([k, v]) => [k, String(v)] as [string, string])
+  return `?${new URLSearchParams(entries).toString()}`
+}
+
 /**
  * List user's groups (created + joined)
  */
@@ -28,9 +35,7 @@ export const listGroups = async (params?: {
   page?: number
   limit?: number
 }): Promise<GroupListResponse> => {
-  const queryString = params
-    ? `?${new URLSearchParams(params as Record<string, string>).toString()}`
-    : ''
+  const queryString = params ? buildQueryString(params) : ''
   return await apiClient.get<GroupListResponse>(`/groups${queryString}`)
 }
 
@@ -42,7 +47,7 @@ export const searchGroups = async (params: {
   page?: number
   limit?: number
 }): Promise<GroupListResponse> => {
-  const queryString = `?${new URLSearchParams(params as Record<string, string>).toString()}`
+  const queryString = buildQueryString(params)
   return await apiClient.get<GroupListResponse>(`/groups/search${queryString}`)
 }
 

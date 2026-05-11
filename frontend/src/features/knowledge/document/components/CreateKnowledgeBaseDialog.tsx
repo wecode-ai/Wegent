@@ -23,7 +23,13 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { SummaryModelRef, KnowledgeBaseType, RetrievalConfig, InitialMember, MemberRole } from '@/types/knowledge'
+import type {
+  SummaryModelRef,
+  KnowledgeBaseType,
+  RetrievalConfig,
+  InitialMember,
+  MemberRole,
+} from '@/types/knowledge'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
 import { KnowledgeBaseAuthSection } from './KnowledgeBaseAuthSection'
 
@@ -127,13 +133,15 @@ export function CreateKnowledgeBaseDialog({
   // Selected group for creating KB (used when showGroupSelector is true)
   const [selectedGroupId, setSelectedGroupId] = useState<string>(defaultGroupId || 'personal')
   // Auth section: initial members to add
-  const [authEntries, setAuthEntries] = useState<Array<{
-    id: string
-    label: string
-    entityType: 'user' | 'namespace'
-    entityId: string
-    role: MemberRole
-  }>>([])
+  const [authEntries, setAuthEntries] = useState<
+    Array<{
+      id: string
+      label: string
+      entityType: string
+      entityId: string
+      role: MemberRole
+    }>
+  >([])
 
   // Reset selectedKbType and selectedGroupId when dialog opens
   useEffect(() => {
@@ -187,6 +195,7 @@ export function CreateKnowledgeBaseDialog({
         entity_type: e.entityType,
         entity_id: e.entityId,
         role: e.role,
+        entity_display_name: e.label,
       })) as InitialMember[]
 
       await onSubmit({
@@ -337,7 +346,7 @@ export function CreateKnowledgeBaseDialog({
                 {/* Group selector - only show when showGroupSelector is true */}
                 {showGroupSelector && availableGroups && availableGroups.length > 0 && (
                   <div className="space-y-2 mt-4">
-                    <Label>{t('knowledge:document.knowledgeBase.targetGroup', '归属分组')} *</Label>
+                    <Label>{t('knowledge:document.knowledgeBase.targetGroup', '归属')} *</Label>
                     <Select value={selectedGroupId} onValueChange={setSelectedGroupId}>
                       <SelectTrigger data-testid="group-selector">
                         <SelectValue
@@ -405,6 +414,13 @@ export function CreateKnowledgeBaseDialog({
               <KnowledgeBaseAuthSection
                 value={authEntries}
                 onChange={setAuthEntries}
+                excludedNamespaceId={
+                  showGroupSelector && selectedGroup && selectedGroup.type !== 'personal'
+                    ? selectedGroup.name
+                    : scope === 'group' && groupName
+                      ? groupName
+                      : undefined
+                }
               />
             }
           />

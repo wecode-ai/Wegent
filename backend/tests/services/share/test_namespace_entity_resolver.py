@@ -98,7 +98,7 @@ def _add_kb_entity_member(
 
 
 class TestMatchEntityBindings:
-    def test_match_single_namespace_returns_true(self, test_db: Session):
+    def test_match_single_namespace_returns_matched_id(self, test_db: Session):
         owner = _create_user(test_db, "owner1")
         user = _create_user(test_db, "user1")
         ns = _create_namespace(test_db, owner, "ns1")
@@ -107,9 +107,9 @@ class TestMatchEntityBindings:
         result = resolver.match_entity_bindings(
             test_db, user.id, "namespace", [str(ns.id)]
         )
-        assert result is True
+        assert result == [str(ns.id)]
 
-    def test_match_multiple_namespaces_returns_true(self, test_db: Session):
+    def test_match_multiple_namespaces_returns_matched_ids(self, test_db: Session):
         owner = _create_user(test_db, "owner2")
         user = _create_user(test_db, "user2")
         ns1 = _create_namespace(test_db, owner, "ns1")
@@ -120,9 +120,9 @@ class TestMatchEntityBindings:
         result = resolver.match_entity_bindings(
             test_db, user.id, "namespace", [str(ns1.id), str(ns2.id)]
         )
-        assert result is True
+        assert result == [str(ns1.id), str(ns2.id)]
 
-    def test_no_match_returns_false(self, test_db: Session):
+    def test_no_match_returns_empty_list(self, test_db: Session):
         owner = _create_user(test_db, "owner3")
         user = _create_user(test_db, "user3")
         ns = _create_namespace(test_db, owner, "ns3")
@@ -131,15 +131,15 @@ class TestMatchEntityBindings:
         result = resolver.match_entity_bindings(
             test_db, user.id, "namespace", [str(ns.id)]
         )
-        assert result is False
+        assert result == []
 
-    def test_non_namespace_entity_returns_false(self, test_db: Session):
+    def test_non_namespace_entity_returns_empty_list(self, test_db: Session):
         result = resolver.match_entity_bindings(test_db, 1, "org_department", ["dept1"])
-        assert result is False
+        assert result == []
 
-    def test_empty_entity_ids_returns_false(self, test_db: Session):
+    def test_empty_entity_ids_returns_empty_list(self, test_db: Session):
         result = resolver.match_entity_bindings(test_db, 1, "namespace", [])
-        assert result is False
+        assert result == []
 
 
 class TestGetResourceIdsByEntity:

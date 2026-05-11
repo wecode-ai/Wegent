@@ -14,6 +14,7 @@
 'use client'
 
 import { useState, useMemo, useCallback } from 'react'
+import { getKbShareSourceText } from '@/features/knowledge/utils/share-source'
 import {
   ArrowLeft,
   Plus,
@@ -360,7 +361,7 @@ export function KnowledgeGroupListPage({
               className="flex items-center hover:text-text-primary transition-colors"
               onClick={() => handleSort('group')}
             >
-              {groupColumnTitle || t('document.table.group', '归属小组')}
+              {groupColumnTitle || t('document.table.group', '归属')}
               <SortIcon column="group" />
             </button>
           </th>
@@ -665,9 +666,7 @@ function KnowledgeBaseRow({
       {showFromInfo && (
         <td className="px-6 py-3 text-text-secondary overflow-hidden">
           <span className="truncate block">
-            {'shared_from_users' in kb && kb.shared_from_users && kb.shared_from_users.length > 0
-              ? kb.shared_from_users.join(', ')
-              : ('shared_from' in kb && kb.shared_from) || '--'}
+            {getKbShareSourceText(kb as KnowledgeBaseWithGroupInfo)}
           </span>
         </td>
       )}

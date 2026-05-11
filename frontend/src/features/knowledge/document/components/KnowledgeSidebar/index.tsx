@@ -64,6 +64,8 @@ export interface KnowledgeSidebarProps {
   onSelectGroups: () => void
   /** Select "DingTalk" docs */
   onSelectDingtalk: () => void
+  /** All knowledge bases for search */
+  allKnowledgeBases?: KnowledgeBase[]
   /** Callback to collapse the sidebar */
   onCollapse?: () => void
   /** DingTalk synced doc count */
@@ -90,6 +92,7 @@ export function KnowledgeSidebar({
   onSelectAll,
   onSelectGroups,
   onSelectDingtalk,
+  allKnowledgeBases,
   onCollapse,
   dingtalkDocCount,
   isDingtalkConfigured,
@@ -217,6 +220,8 @@ export function KnowledgeSidebar({
         onOpenChange={setIsSearchOpen}
         onSelectKb={handleSearchSelectKb}
         onSelectGroup={handleSearchSelectGroup}
+        allKnowledgeBases={allKnowledgeBases}
+        allGroups={groups}
       />
     </div>
   )

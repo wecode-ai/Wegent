@@ -6,66 +6,82 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { Search, X, ChevronDown, ChevronRight } from 'lucide-react'
-import {
-  Collapsible,
-  CollapsibleTrigger,
-  CollapsibleContent,
-} from '@/components/ui/collapsible'
+
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-} from '@/components/ui/select'
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { UserSearchSelect } from '@/components/common/UserSearchSelect'
 import { searchGroups } from '@/apis/groups'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
-import { ASSIGNABLE_ROLES } from '@/types/base-role'
+import {
+  registerAuthSection,
+  getAuthSections,
+  subscribeAuthSections,
+  type AuthEntry,
+} from '../auth-section-registry'
 import type { MemberRole } from '@/types/knowledge'
 import type { SearchUser } from '@/types/api'
 import type { Group } from '@/types/group'
 
-export interface AuthEntry {
-  id: string
-  label: string
-  entityType: 'user' | 'namespace'
-  entityId: string
-  role: MemberRole
-}
+export type { AuthEntry }
 
 interface KnowledgeBaseAuthSectionProps {
   value: AuthEntry[]
   onChange: (entries: AuthEntry[]) => void
+  /** Namespace ID to exclude from group search (the KB's owning namespace) */
+  excludedNamespaceId?: string
 }
 
 export function KnowledgeBaseAuthSection({
   value,
   onChange,
+  excludedNamespaceId,
 }: KnowledgeBaseAuthSectionProps) {
   const { t } = useTranslation('knowledge')
   const [open, setOpen] = useState(false)
-  const [userRole, setUserRole] = useState<MemberRole>('Reporter' as MemberRole)
-  const [groupRole, setGroupRole] = useState<MemberRole>('Reporter' as MemberRole)
+  // Per-section role state, keyed by entity type
+  const [roles, setRoles] = useState<Record<string, MemberRole>>({
+    user: 'Reporter' as MemberRole,
+    namespace: 'Reporter' as MemberRole,
+  })
 
-  // Safe translation helper that falls back when key is not found
   const loc = (key: string, fallback: string) => {
     const v = t(key)
     return v && v !== key ? v : fallback
   }
 
-  const userEntries = value.filter(e => e.entityType === 'user')
-  const namespaceEntries = value.filter(e => e.entityType === 'namespace')
+  const [sections, setSections] = useState(getAuthSections)
+  useEffect(() => {
+    return subscribeAuthSections(() => setSections(getAuthSections()))
+  }, [])
+
+  // Load optional KB extensions (e.g., org_department in internal builds)
+  useEffect(() => {
+    import('../extension-loader').then(({ loadKBExtensions }) => {
+      loadKBExtensions().catch(() => {})
+    })
+  }, [])
+
+  const totalCount = value.length
 
   const removeEntry = (id: string) => {
     onChange(value.filter(e => e.id !== id))
   }
 
-  const totalCount = userEntries.length + namespaceEntries.length
+  const getRoleForType = (type: string): MemberRole => {
+    return roles[type] || ('Reporter' as MemberRole)
+  }
+
+  const setRoleForType = (type: string, role: MemberRole) => {
+    setRoles(prev => ({ ...prev, [type]: role }))
+    // Sync role for all existing entries of this type so the section selector
+    // acts as the unified role for every selected item in the section.
+    onChange(value.map(e => (e.entityType === type ? { ...e, role } : e)))
+  }
 
   return (
     <Collapsible open={open} onOpenChange={setOpen} className="border-t border-border pt-4">
@@ -85,199 +101,156 @@ export function KnowledgeBaseAuthSection({
         </button>
       </CollapsibleTrigger>
       <CollapsibleContent className="mt-3 space-y-4">
-        {/* User Section */}
-        <div className="space-y-2">
-          <Label className="text-xs font-medium">
-            {loc('document.permission.individual', '个人')}
-          </Label>
-          {/* Selected user entries - shown ABOVE the search box as inline chips */}
-          {userEntries.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {userEntries.map(entry => (
-                <div
-                  key={entry.id}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted/70 border border-border text-sm"
-                >
-                  <span className="truncate max-w-[120px]">{entry.label}</span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-4 w-4 text-text-muted hover:text-error flex-shrink-0 p-0"
-                    onClick={() => removeEntry(entry.id)}
-                  >
-                    <X className="w-3 h-3" />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          )}
-          {/* Search box + Role selector inline */}
-          <div className="flex items-center gap-2">
-            <div className="flex-1">
-              <UserSearchSelect
-                selectedUsers={[]}
-                onSelectedUsersChange={(users) => {
-                  if (users.length > 0) {
-                    const user = users[users.length - 1]
-                    const exists = userEntries.some(e => e.entityId === String(user.id))
-                    if (!exists) {
-                      onChange([
-                        ...value,
-                        {
-                          id: `user-${user.id}`,
-                          label: user.user_name,
-                          entityType: 'user',
-                          entityId: String(user.id),
-                          role: userRole,
-                        },
-                      ])
-                    }
-                  }
-                }}
-                placeholder={loc('document.permission.searchUserPlaceholder', '搜索用户...')}
-                multiple={false}
-                hideSelectedUsers
-              />
-            </div>
-            <Select value={userRole} onValueChange={v => setUserRole(v as MemberRole)}>
-              <SelectTrigger className="w-28 h-10 min-w-[44px] flex-shrink-0">
-                <span className="truncate">{t(`document.permission.role.${userRole}`)}</span>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="Maintainer">
-                  <div>
-                    <div className="font-medium">{t('document.permission.role.Maintainer')}</div>
-                    <div className="text-xs text-text-muted">
-                      {t('document.permission.role.MaintainerDescription')}
-                    </div>
-                  </div>
-                </SelectItem>
-                <SelectItem value="Developer">
-                  <div>
-                    <div className="font-medium">{t('document.permission.role.Developer')}</div>
-                    <div className="text-xs text-text-muted">
-                      {t('document.permission.role.DeveloperDescription')}
-                    </div>
-                  </div>
-                </SelectItem>
-                <SelectItem value="Reporter">
-                  <div>
-                    <div className="font-medium">{t('document.permission.role.Reporter')}</div>
-                    <div className="text-xs text-text-muted">
-                      {t('document.permission.role.ReporterDescription')}
-                    </div>
-                  </div>
-                </SelectItem>
-                <SelectItem value="RestrictedAnalyst">
-                  <div>
-                    <div className="font-medium">
-                      {t('document.permission.role.RestrictedAnalyst')}
-                    </div>
-                    <div className="text-xs text-text-muted">
-                      {t('document.permission.role.RestrictedAnalystDescription')}
-                    </div>
-                  </div>
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
+        {sections.map(section => {
+          const entries = value.filter(e => e.entityType === section.type)
+          const role = getRoleForType(section.type)
 
-        {/* Group Section */}
-        <div className="space-y-2">
-          <Label className="text-xs font-medium">
-            {loc('document.permission.namespace', '群组')}
-          </Label>
-          {/* Selected group entries - shown ABOVE the search box as inline chips */}
-          {namespaceEntries.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {namespaceEntries.map(entry => (
-                <div
-                  key={entry.id}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted/70 border border-border text-sm"
-                >
-                  <span className="truncate max-w-[120px]">{entry.label}</span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-4 w-4 text-text-muted hover:text-error flex-shrink-0 p-0"
-                    onClick={() => removeEntry(entry.id)}
-                  >
-                    <X className="w-3 h-3" />
-                  </Button>
+          return (
+            <div key={section.type} className="space-y-2">
+              <Label className="text-xs font-medium">
+                {t(section.labelKey) || section.labelKey}
+              </Label>
+              {/* Selected entries - shown ABOVE the search box as inline chips */}
+              {entries.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {entries.map(entry => (
+                    <div
+                      key={entry.id}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted/70 border border-border text-sm"
+                    >
+                      <span className="truncate max-w-[120px]">{entry.label}</span>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-4 w-4 text-text-muted hover:text-error flex-shrink-0 p-0"
+                        onClick={() => removeEntry(entry.id)}
+                      >
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
+              {/* Search box + Role selector inline */}
+              <div className="flex items-center gap-2">
+                <div className="flex-1">
+                  {section.renderSearch({
+                    role,
+                    onSelect: (entry: AuthEntry) => {
+                      const exists = value.some(
+                        e => e.entityType === entry.entityType && e.entityId === entry.entityId
+                      )
+                      if (!exists) {
+                        onChange([...value, entry])
+                      }
+                    },
+                    excludedEntityId:
+                      section.type === 'namespace' ? excludedNamespaceId : undefined,
+                  })}
+                </div>
+                <Select
+                  value={role}
+                  onValueChange={v => setRoleForType(section.type, v as MemberRole)}
+                >
+                  <SelectTrigger className="w-28 h-10 min-w-[44px] flex-shrink-0">
+                    <span className="truncate">{t(`document.permission.role.${role}`)}</span>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Maintainer">
+                      <div>
+                        <div className="font-medium">
+                          {t('document.permission.role.Maintainer')}
+                        </div>
+                        <div className="text-xs text-text-muted">
+                          {t('document.permission.role.MaintainerDescription')}
+                        </div>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="Developer">
+                      <div>
+                        <div className="font-medium">{t('document.permission.role.Developer')}</div>
+                        <div className="text-xs text-text-muted">
+                          {t('document.permission.role.DeveloperDescription')}
+                        </div>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="Reporter">
+                      <div>
+                        <div className="font-medium">{t('document.permission.role.Reporter')}</div>
+                        <div className="text-xs text-text-muted">
+                          {t('document.permission.role.ReporterDescription')}
+                        </div>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="RestrictedAnalyst">
+                      <div>
+                        <div className="font-medium">
+                          {t('document.permission.role.RestrictedAnalyst')}
+                        </div>
+                        <div className="text-xs text-text-muted">
+                          {t('document.permission.role.RestrictedAnalystDescription')}
+                        </div>
+                      </div>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
-          )}
-          {/* Search box + Role selector inline */}
-          <div className="flex items-center gap-2">
-            <div className="flex-1">
-              <GroupSearchInput
-                role={groupRole}
-                onSelect={(entry) => {
-                  const exists = namespaceEntries.some(e => e.entityId === entry.entityId)
-                  if (exists) return
-                  onChange([...value, entry])
-                }}
-              />
-            </div>
-            <Select value={groupRole} onValueChange={v => setGroupRole(v as MemberRole)}>
-              <SelectTrigger className="w-28 h-10 min-w-[44px] flex-shrink-0">
-                <span className="truncate">{t(`document.permission.role.${groupRole}`)}</span>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="Maintainer">
-                  <div>
-                    <div className="font-medium">{t('document.permission.role.Maintainer')}</div>
-                    <div className="text-xs text-text-muted">
-                      {t('document.permission.role.MaintainerDescription')}
-                    </div>
-                  </div>
-                </SelectItem>
-                <SelectItem value="Developer">
-                  <div>
-                    <div className="font-medium">{t('document.permission.role.Developer')}</div>
-                    <div className="text-xs text-text-muted">
-                      {t('document.permission.role.DeveloperDescription')}
-                    </div>
-                  </div>
-                </SelectItem>
-                <SelectItem value="Reporter">
-                  <div>
-                    <div className="font-medium">{t('document.permission.role.Reporter')}</div>
-                    <div className="text-xs text-text-muted">
-                      {t('document.permission.role.ReporterDescription')}
-                    </div>
-                  </div>
-                </SelectItem>
-                <SelectItem value="RestrictedAnalyst">
-                  <div>
-                    <div className="font-medium">
-                      {t('document.permission.role.RestrictedAnalyst')}
-                    </div>
-                    <div className="text-xs text-text-muted">
-                      {t('document.permission.role.RestrictedAnalystDescription')}
-                    </div>
-                  </div>
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
+          )
+        })}
       </CollapsibleContent>
     </Collapsible>
   )
 }
 
-// Group search input component
-interface GroupSearchInputProps {
-  onSelect: (entry: AuthEntry) => void
+// ==================== Built-in auth section renderers ====================
+
+function UserAuthSearch({
+  role,
+  onSelect,
+}: {
   role: MemberRole
+  onSelect: (entry: AuthEntry) => void
+}) {
+  const { t } = useTranslation('knowledge')
+
+  const loc = (key: string, fallback: string) => {
+    const v = t(key)
+    return v && v !== key ? v : fallback
+  }
+
+  return (
+    <UserSearchSelect
+      selectedUsers={[]}
+      onSelectedUsersChange={(users: SearchUser[]) => {
+        if (users.length > 0) {
+          const user = users[users.length - 1]
+          onSelect({
+            id: `user-${user.id}`,
+            label: user.user_name,
+            entityType: 'user',
+            entityId: String(user.id),
+            role,
+          })
+        }
+      }}
+      placeholder={loc('document.permission.searchUserPlaceholder', '搜索用户...')}
+      multiple={false}
+      hideSelectedUsers
+    />
+  )
 }
 
-function GroupSearchInput({ onSelect, role }: GroupSearchInputProps) {
+function NamespaceAuthSearch({
+  role,
+  onSelect,
+  excludedEntityId,
+}: {
+  role: MemberRole
+  onSelect: (entry: AuthEntry) => void
+  excludedEntityId?: string
+}) {
   const { t } = useTranslation('knowledge')
   const { user: currentUser } = useUser()
 
@@ -384,30 +357,60 @@ function GroupSearchInput({ onSelect, role }: GroupSearchInputProps) {
           ) : filteredGroups.length === 0 ? (
             <div className="p-3 text-sm text-text-muted text-center">
               {searchQuery.trim()
-                ? t('common:userSearch.noResults') || '未找到结果'
+                ? loc('document.permission.noGroupResults', '没有匹配的组')
                 : loc('document.permission.noGroups', '暂无可用群组')}
             </div>
           ) : (
-            filteredGroups.map(group => (
-              <button
-                key={group.id}
-                type="button"
-                onClick={() => handleSelect(group)}
-                className="w-full flex items-center justify-between gap-3 p-3 hover:bg-surface cursor-pointer text-left"
-              >
-                <span className="font-medium text-sm text-text-primary truncate">
-                  {group.display_name || group.name}
-                </span>
-                {group.my_role && (
-                  <span className="flex-shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] leading-tight font-medium bg-primary/10 text-primary border border-primary/20">
-                    {t(`document.permission.role.${group.my_role}`)}
+            filteredGroups.map(group => {
+              const isBound = excludedEntityId ? group.name === excludedEntityId : false
+              return (
+                <button
+                  key={group.id}
+                  type="button"
+                  onClick={() => !isBound && handleSelect(group)}
+                  disabled={isBound}
+                  className={`w-full flex items-center justify-between gap-3 p-3 text-left ${
+                    isBound ? 'opacity-50 cursor-not-allowed' : 'hover:bg-surface cursor-pointer'
+                  }`}
+                >
+                  <span
+                    className={`font-medium text-sm truncate ${
+                      isBound ? 'text-text-muted' : 'text-text-primary'
+                    }`}
+                  >
+                    {group.display_name || group.name}
                   </span>
-                )}
-              </button>
-            ))
+                  {isBound ? (
+                    <span className="flex-shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] leading-tight font-medium bg-muted text-text-muted border border-border">
+                      {loc('document.permission.alreadyBound', '已绑定')}
+                    </span>
+                  ) : group.my_role ? (
+                    <span className="flex-shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] leading-tight font-medium bg-primary/10 text-primary border border-primary/20">
+                      {t(`document.permission.role.${group.my_role}`)}
+                    </span>
+                  ) : null}
+                </button>
+              )
+            })
           )}
         </div>
       )}
     </div>
   )
 }
+
+// ==================== Register built-in auth sections ====================
+
+registerAuthSection({
+  type: 'user',
+  labelKey: 'document.permission.individual',
+  renderSearch: ({ role, onSelect }) => <UserAuthSearch role={role} onSelect={onSelect} />,
+})
+
+registerAuthSection({
+  type: 'namespace',
+  labelKey: 'document.permission.namespace',
+  renderSearch: ({ role, onSelect, excludedEntityId }) => (
+    <NamespaceAuthSearch role={role} onSelect={onSelect} excludedEntityId={excludedEntityId} />
+  ),
+})

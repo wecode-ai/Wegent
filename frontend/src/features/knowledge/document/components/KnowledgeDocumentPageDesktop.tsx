@@ -21,12 +21,13 @@ import { saveGlobalModelPreference, type ModelPreference } from '@/utils/modelPr
 import { getModelFromConfig } from '@/features/settings/services/bots'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
-import { listKnowledgeBases } from '@/apis/knowledge'
 import { useKnowledgeSidebar, type KnowledgeGroup } from '../hooks/useKnowledgeSidebar'
 import { useNamespaceRoleMap } from '../hooks/useNamespaceRoleMap'
+import { useGroupKbs } from '../hooks/useGroupKbs'
 import { KnowledgeSidebar } from './KnowledgeSidebar'
 import { KnowledgeDetailPanel } from './KnowledgeDetailPanel'
 import { KnowledgeGroupListPage, type KbDataItem } from './KnowledgeGroupListPage'
+import { DingtalkDocsPage } from './DingtalkDocs'
 import { CreateKnowledgeBaseDialog, type AvailableGroup } from './CreateKnowledgeBaseDialog'
 import { EditKnowledgeBaseDialog } from './EditKnowledgeBaseDialog'
 import { DeleteKnowledgeBaseDialog } from './DeleteKnowledgeBaseDialog'
@@ -73,6 +74,18 @@ export function KnowledgeDocumentPageDesktop({
   // Knowledge sidebar hook
   const sidebar = useKnowledgeSidebar()
   const namespaceRoleMap = useNamespaceRoleMap()
+
+  // Group KBs hook (extracted from inline logic)
+  const {
+    groupKbs,
+    isGroupKbsLoading,
+    reload: reloadGroupKbs,
+  } = useGroupKbs({
+    selectedGroupId: sidebar.selectedGroupId,
+    groups: sidebar.groups,
+    personalCreatedByMe: sidebar.personalCreatedByMe,
+    personalSharedWithMe: sidebar.personalSharedWithMe,
+  })
 
   // Sidebar collapse state - auto-collapse when notebook KB is selected
   // Use localStorage to sync state with parent components (for TopNavigation expand button)
@@ -127,10 +140,6 @@ export function KnowledgeDocumentPageDesktop({
       window.removeEventListener('knowledge-clear-selection', handleClearSelection)
     }
   }, [sidebar.clearSelection])
-
-  // Group KBs for the selected group
-  const [groupKbs, setGroupKbs] = useState<KnowledgeBase[]>([])
-  const [isGroupKbsLoading, setIsGroupKbsLoading] = useState(false)
 
   // Dialog states
   const [showCreateDialog, setShowCreateDialog] = useState(false)
@@ -274,6 +283,9 @@ export function KnowledgeDocumentPageDesktop({
           sidebar.selectKb(found)
         }
       }
+    } else if (groupParam === 'dingtalk') {
+      // Restore DingTalk mode from URL
+      sidebar.selectDingtalk()
     } else if (groupParam) {
       // Restore group selection from URL
       sidebar.selectGroup(groupParam)
@@ -286,6 +298,7 @@ export function KnowledgeDocumentPageDesktop({
     sidebar.isGroupsLoading,
     sidebar.selectKb,
     sidebar.selectGroup,
+    sidebar.selectDingtalk,
     initialKbNamespace,
     initialKbName,
     initialUrlSyncDone,
@@ -343,95 +356,6 @@ export function KnowledgeDocumentPageDesktop({
     [router, sidebar.allKnowledgeBasesWithGroupInfo]
   )
 
-  // Helper function to convert KnowledgeBaseWithGroupInfo to KnowledgeBase
-  const toKnowledgeBase = useCallback(
-    (kb: {
-      id: number
-      name: string
-      description: string | null
-      user_id: number
-      namespace: string
-      document_count: number
-      kb_type?: string
-      created_at: string
-      updated_at: string
-    }): KnowledgeBase => ({
-      id: kb.id,
-      name: kb.name,
-      description: kb.description,
-      user_id: kb.user_id,
-      namespace: kb.namespace,
-      document_count: kb.document_count,
-      is_active: true,
-      summary_enabled: false,
-      kb_type: (kb.kb_type as KnowledgeBaseType) || 'notebook',
-      max_calls_per_conversation: 10,
-      exempt_calls_before_check: 5,
-      created_at: kb.created_at,
-      updated_at: kb.updated_at,
-    }),
-    []
-  )
-
-  // Load group KBs when a group is selected
-  useEffect(() => {
-    if (!sidebar.selectedGroupId) {
-      setGroupKbs([])
-      return
-    }
-
-    // Track current request to handle race conditions
-    let isCancelled = false
-
-    const loadGroupKbs = async () => {
-      setIsGroupKbsLoading(true)
-      try {
-        const selectedGroup = sidebar.groups.find(g => g.id === sidebar.selectedGroupId)
-        if (!selectedGroup) return
-
-        let kbs: KnowledgeBase[] = []
-        if (selectedGroup.type === 'personal') {
-          // Use the pre-grouped personal KBs from the sidebar hook
-          // This includes both created_by_me and shared_with_me KBs
-          const personalKbs = [...sidebar.personalCreatedByMe, ...sidebar.personalSharedWithMe]
-          kbs = personalKbs.map(toKnowledgeBase)
-        } else if (selectedGroup.type === 'organization') {
-          const res = await listKnowledgeBases('organization')
-          kbs = res.items || []
-        } else if (selectedGroup.type === 'group' && selectedGroup.name) {
-          const res = await listKnowledgeBases('group', selectedGroup.name)
-          kbs = res.items || []
-        }
-
-        // Only update state if this request wasn't cancelled
-        if (!isCancelled) {
-          setGroupKbs(kbs)
-        }
-      } catch (error) {
-        if (!isCancelled) {
-          console.error('Failed to load group KBs:', error)
-          setGroupKbs([])
-        }
-      } finally {
-        if (!isCancelled) {
-          setIsGroupKbsLoading(false)
-        }
-      }
-    }
-
-    loadGroupKbs()
-
-    // Cleanup function to cancel stale requests
-    return () => {
-      isCancelled = true
-    }
-  }, [
-    sidebar.selectedGroupId,
-    sidebar.groups,
-    sidebar.personalCreatedByMe,
-    sidebar.personalSharedWithMe,
-    toKnowledgeBase,
-  ])
   // Auto-collapse sidebar when a notebook KB is selected
   useEffect(() => {
     if (sidebar.selectedKb) {
@@ -598,18 +522,7 @@ export function KnowledgeDocumentPageDesktop({
 
         // Reload group KBs if a group is selected
         if (sidebar.selectedGroupId) {
-          const selectedGroup = sidebar.groups.find(g => g.id === sidebar.selectedGroupId)
-          if (selectedGroup) {
-            let kbs: KnowledgeBase[] = []
-            if (selectedGroup.type === 'organization') {
-              const res = await listKnowledgeBases('organization')
-              kbs = res.items || []
-            } else if (selectedGroup.type === 'group' && selectedGroup.name) {
-              const res = await listKnowledgeBases('group', selectedGroup.name)
-              kbs = res.items || []
-            }
-            setGroupKbs(kbs)
-          }
+          reloadGroupKbs()
         }
 
         setCreateGroupName(undefined)
@@ -619,7 +532,14 @@ export function KnowledgeDocumentPageDesktop({
         setIsCreating(false)
       }
     },
-    [createScope, createGroupName, createKbType, sidebar, saveSummaryModelToPreference]
+    [
+      createScope,
+      createGroupName,
+      createKbType,
+      sidebar,
+      saveSummaryModelToPreference,
+      reloadGroupKbs,
+    ]
   )
   // Handle KB updated
   const handleUpdate = useCallback(
@@ -749,6 +669,12 @@ export function KnowledgeDocumentPageDesktop({
     updateUrlParams({ kb: null, group: 'all-groups' })
   }, [sidebar, updateUrlParams])
 
+  // Handle "DingTalk" selection
+  const handleSelectDingtalk = useCallback(() => {
+    sidebar.selectDingtalk()
+    updateUrlParams({ kb: null, group: 'dingtalk' })
+  }, [sidebar, updateUrlParams])
+
   // Handle create KB from "All" page
   const handleCreateKbFromAll = useCallback((kbType: KnowledgeBaseType) => {
     // Show group selector when creating from "All" page
@@ -799,30 +725,15 @@ export function KnowledgeDocumentPageDesktop({
     return availableGroupsForCreate.some(group => group.type === 'group' && group.canCreate)
   }, [availableGroupsForCreate])
 
-  // Merge shared_from for All mode (dedupe by id and merge shared_from into shared_from_users)
+  // Deduplicate KBs for All mode. Backend already returns merged
+  // shared_from_users for shared_with_me KBs.
   const allModeKbsWithInfo = useMemo((): KnowledgeBaseWithGroupInfo[] => {
     const map = new Map<number, KnowledgeBaseWithGroupInfo>()
-    const sharedFromUsers = new Map<number, Set<string>>()
-
     for (const kb of sidebar.allKnowledgeBasesWithGroupInfo) {
       if (!map.has(kb.id)) {
         map.set(kb.id, { ...kb })
       }
-      if (kb.shared_from) {
-        if (!sharedFromUsers.has(kb.id)) {
-          sharedFromUsers.set(kb.id, new Set())
-        }
-        sharedFromUsers.get(kb.id)!.add(kb.shared_from)
-      }
     }
-
-    for (const [kbId, users] of sharedFromUsers) {
-      const kb = map.get(kbId)
-      if (kb && users.size > 0) {
-        kb.shared_from_users = Array.from(users)
-      }
-    }
-
     return Array.from(map.values())
   }, [sidebar.allKnowledgeBasesWithGroupInfo])
 
@@ -914,6 +825,24 @@ export function KnowledgeDocumentPageDesktop({
           filterGroupId={sidebar.filterGroupId}
           onFilterGroupChange={sidebar.setFilterGroupId}
           availableGroups={availableGroups.filter(g => g.id.startsWith('group-'))}
+        />
+      )
+    }
+
+    // If "DingTalk" mode is selected, show DingTalk docs page
+    if (sidebar.viewMode === 'dingtalk') {
+      // Wait for DingTalk status to finish loading before rendering
+      if (sidebar.isDingtalkLoading) {
+        return (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+          </div>
+        )
+      }
+      return (
+        <DingtalkDocsPage
+          isConfigured={sidebar.isDingtalkConfigured}
+          onSyncComplete={() => sidebar.refreshAll()}
         />
       )
     }
@@ -1051,6 +980,10 @@ export function KnowledgeDocumentPageDesktop({
             onSelectGroup={handleSelectGroup}
             onSelectAll={handleSelectAll}
             onSelectGroups={handleSelectGroups}
+            onSelectDingtalk={handleSelectDingtalk}
+            dingtalkDocCount={sidebar.dingtalkDocCount}
+            isDingtalkConfigured={sidebar.isDingtalkConfigured}
+            allKnowledgeBases={sidebar.allKnowledgeBases}
             onCollapse={() => updateSidebarCollapsed(true)}
           />
         </div>

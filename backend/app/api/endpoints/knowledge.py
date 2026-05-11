@@ -312,6 +312,7 @@ def _add_initial_kb_members(
             role=member.role,
             entity_type=member.entity_type if member.entity_type != "user" else None,
             entity_id=member.entity_id if member.entity_type != "user" else None,
+            entity_display_name=member.entity_display_name,
         )
     db.commit()
 

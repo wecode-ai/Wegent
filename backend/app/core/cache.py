@@ -116,6 +116,34 @@ class RedisCache:
             logger.error(f"Error getting cache key {key} (sync): {str(e)}")
             return None
 
+    def set_sync(
+        self,
+        key: str,
+        value: Any,
+        expire: int | None = settings.REPO_CACHE_EXPIRED_TIME,
+    ) -> bool:
+        """Set value to cache synchronously with optional expiration (seconds)."""
+        try:
+            client = SyncRedis.from_url(
+                self._url,
+                encoding="utf-8",
+                decode_responses=False,
+                socket_timeout=5.0,
+                socket_connect_timeout=2.0,
+            )
+            try:
+                payload = orjson.dumps(value)
+                if expire is None:
+                    ok = client.set(key, payload)
+                else:
+                    ok = client.set(key, payload, ex=expire)
+                return bool(ok)
+            finally:
+                client.close()
+        except Exception as e:
+            logger.error(f"Error setting cache key {key} (sync): {str(e)}")
+            return False
+
     def get_user_repositories_sync(
         self, user_id: int, git_domain: str
     ) -> Optional[list]:

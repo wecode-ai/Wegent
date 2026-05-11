@@ -116,7 +116,7 @@
     },
     "table": {
       "name": "名称",
-      "group": "归属小组",
+      "group": "归属",
       "belongsTo": "归属",
       "from": "来自",
       "permission": "权限",
@@ -193,7 +193,7 @@
       "convertToNotebookConfirm": "转换为笔记本后，可直接在知识库内上传文件并开启对话，但文档数量将限制为最多 50 个。确定转换吗？",
       "convertSuccess": "知识库类型转换成功",
       "convertFailed": "知识库类型转换失败",
-      "targetGroup": "归属分组",
+      "targetGroup": "归属",
       "selectGroup": "选择分组"
     },
     "folder": {

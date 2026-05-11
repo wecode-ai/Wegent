@@ -5,11 +5,12 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Check, X, UserPlus, Pencil, Trash2, Users, Clock } from 'lucide-react'
+import { Check, X, UserPlus, Pencil, Trash2, User, Users, Clock } from 'lucide-react'
+
+import { getPermissionTabs, subscribePermissionTabs } from '../permission-tab-registry'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
-import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -22,14 +23,36 @@ import { useKnowledgePermissions } from '../hooks/useKnowledgePermissions'
 import { AddUserDialog } from './add-user-dialog'
 import { AddNamespaceDialog } from './add-namespace-dialog'
 import { ASSIGNABLE_ROLES } from '@/types/base-role'
-import type { MemberRole, PendingPermissionInfo, PermissionUserInfo } from '@/types/knowledge'
+import type {
+  MemberRole,
+  PendingPermissionInfo,
+  PermissionUserInfo,
+  ApprovedPermissionsByRole,
+} from '@/types/knowledge'
+
+/**
+ * Build role-grouped members by applying a filter to each role list.
+ */
+function buildRoleGroups(
+  approved: ApprovedPermissionsByRole,
+  filter: (user: PermissionUserInfo) => boolean
+): ApprovedPermissionsByRole {
+  return {
+    Owner: approved.Owner.filter(filter),
+    Maintainer: approved.Maintainer.filter(filter),
+    Developer: approved.Developer.filter(filter),
+    Reporter: approved.Reporter.filter(filter),
+    RestrictedAnalyst: approved.RestrictedAnalyst.filter(filter),
+  }
+}
 
 interface PermissionManagementTabProps {
   kbId: number
+  /** The namespace this KB belongs to; groups in this namespace are excluded from group authorization */
+  kbNamespace?: string
   /**
    * Extension tabs rendered alongside standard tabs (个人/群组).
-   * Used by internal deployments to add entity-type permission panels
-   * (e.g., department-level permissions).
+   * Used by internal deployments to add entity-type permission panels.
    */
   extensionTabs?: Array<{
     label: string
@@ -38,7 +61,11 @@ interface PermissionManagementTabProps {
   }>
 }
 
-export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManagementTabProps) {
+export function PermissionManagementTab({
+  kbId,
+  kbNamespace,
+  extensionTabs,
+}: PermissionManagementTabProps) {
   const { t } = useTranslation('knowledge')
 
   // Safe translation helper that falls back when key is not found
@@ -70,6 +97,13 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
   useEffect(() => {
     fetchPermissions()
   }, [fetchPermissions])
+
+  // Load optional KB extensions (e.g., org_department in internal builds)
+  useEffect(() => {
+    import('../../document/extension-loader').then(({ loadKBExtensions }) => {
+      loadKBExtensions().catch(() => {})
+    })
+  }, [])
 
   // Initialize approval roles when pending requests change
   useEffect(() => {
@@ -134,6 +168,12 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
     setEditingId(null)
   }
 
+  // Track registered external permission tabs (must be before any early return)
+  const [externalTabs, setExternalTabs] = useState(getPermissionTabs)
+  useEffect(() => {
+    return subscribePermissionTabs(() => setExternalTabs(getPermissionTabs()))
+  }, [])
+
   if (loading && !permissions) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -184,6 +224,14 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
     (userRoleGroups?.Reporter?.length || 0) +
     (userRoleGroups?.RestrictedAnalyst?.length || 0)
 
+  // Compute role groups for registered external permission tabs
+  const externalRoleGroups: Record<string, ReturnType<typeof buildRoleGroups>> = {}
+  if (allApproved) {
+    for (const tab of externalTabs) {
+      externalRoleGroups[tab.type] = buildRoleGroups(allApproved, tab.filter)
+    }
+  }
+
   return (
     <div className="space-y-6 p-4">
       {/* Error Message */}
@@ -208,6 +256,7 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
           }`}
           data-testid="perm-tab-user"
         >
+          <User className="w-4 h-4" />
           {loc('document.permission.individual', '个人')}
           {approvedCount > 0 && (
             <span className="bg-primary/10 text-primary px-1.5 py-0.5 rounded-full text-xs">
@@ -225,6 +274,7 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
           }`}
           data-testid="perm-tab-namespace"
         >
+          <Users className="w-4 h-4" />
           {loc('document.permission.namespace', '群组')}
           {namespaceGroupCount > 0 && (
             <span className="bg-primary/10 text-primary px-1.5 py-0.5 rounded-full text-xs">
@@ -232,7 +282,7 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
             </span>
           )}
         </button>
-        {/* Extension tabs */}
+        {/* Extension tabs (prop) */}
         {extensionTabs?.map((tab, index) => {
           const tabValue = `ext-${index}`
           return (
@@ -248,6 +298,34 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
             >
               {tab.icon && <span className="w-4 h-4">{tab.icon}</span>}
               {tab.label}
+            </button>
+          )
+        })}
+        {/* Registered external permission tabs */}
+        {externalTabs.map(tab => {
+          const tabValue = `ext-reg-${tab.type}`
+          const tabGroups = externalRoleGroups[tab.type]
+          const tabCount = tabGroups
+            ? Object.values(tabGroups).reduce((sum, arr) => sum + arr.length, 0)
+            : 0
+          return (
+            <button
+              key={tabValue}
+              type="button"
+              onClick={() => setActiveTab(tabValue)}
+              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === tabValue
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-text-muted hover:text-text-primary'
+              }`}
+            >
+              {tab.icon && <span className="w-4 h-4">{tab.icon}</span>}
+              {loc(tab.labelKey, tab.label || tab.type)}
+              {tabCount > 0 && (
+                <span className="bg-primary/10 text-primary px-1.5 py-0.5 rounded-full text-xs">
+                  {tabCount}
+                </span>
+              )}
             </button>
           )
         })}
@@ -346,11 +424,7 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
                   </span>
                 )}
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowAddUser(true)}
-              >
+              <Button variant="outline" size="sm" onClick={() => setShowAddUser(true)}>
                 <UserPlus className="w-4 h-4 mr-2" />
                 {loc('document.permission.addUser', '添加用户')}
               </Button>
@@ -449,13 +523,10 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
           <Card padding="default" className="space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-sm font-medium">
-                {loc('document.permission.namespaceMembers', '已授权群组')}
+                <Users className="w-4 h-4 text-primary" />
+                {loc('document.permission.namespaceMembers', '群组')}
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowAddNamespace(true)}
-              >
+              <Button variant="outline" size="sm" onClick={() => setShowAddNamespace(true)}>
                 <UserPlus className="w-4 h-4 mr-2" />
                 {loc('document.permission.addNamespace', '添加群组')}
               </Button>
@@ -548,12 +619,113 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
         </div>
       )}
 
-      {/* ===== Extension Tab Content ===== */}
+      {/* ===== Extension Tab Content (prop) ===== */}
       {extensionTabs?.map((tab, index) => {
         const tabValue = `ext-${index}`
+        return activeTab === tabValue ? <div key={tabValue}>{tab.render({ kbId })}</div> : null
+      })}
+
+      {/* ===== Registered External Tab Content ===== */}
+      {externalTabs.map(tab => {
+        const tabValue = `ext-reg-${tab.type}`
+        const tabGroups = externalRoleGroups[tab.type]
+        const tabCount = tabGroups
+          ? Object.values(tabGroups).reduce((sum, arr) => sum + arr.length, 0)
+          : 0
         return activeTab === tabValue ? (
-          <div key={tabValue}>
-            {tab.render({ kbId })}
+          <div key={tabValue} className="space-y-4">
+            <Card padding="default" className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  {tab.icon}
+                  {loc(tab.labelKey, tab.label || tab.type)}
+                </div>
+                {tab.renderAddButton && tab.renderAddButton({ kbId, onSuccess: fetchPermissions })}
+              </div>
+              {tabCount === 0 ? (
+                <p className="text-sm text-text-muted py-4 text-center">
+                  {loc('document.permission.noApprovedUsers', '暂无已授权用户')}
+                </p>
+              ) : (
+                <div className="space-y-4">
+                  {(tabGroups?.Owner?.length || 0) > 0 && (
+                    <PermissionGroup
+                      title={t('document.permission.role.Owner')}
+                      users={tabGroups!.Owner}
+                      editingId={editingId}
+                      editingRole={editingRole}
+                      setEditingRole={setEditingRole}
+                      onStartEditing={startEditing}
+                      onCancelEditing={cancelEditing}
+                      onUpdateRole={handleUpdateRole}
+                      onDelete={handleDelete}
+                      loading={loading}
+                      t={t}
+                    />
+                  )}
+                  {(tabGroups?.Maintainer?.length || 0) > 0 && (
+                    <PermissionGroup
+                      title={t('document.permission.role.Maintainer')}
+                      users={tabGroups!.Maintainer}
+                      editingId={editingId}
+                      editingRole={editingRole}
+                      setEditingRole={setEditingRole}
+                      onStartEditing={startEditing}
+                      onCancelEditing={cancelEditing}
+                      onUpdateRole={handleUpdateRole}
+                      onDelete={handleDelete}
+                      loading={loading}
+                      t={t}
+                    />
+                  )}
+                  {(tabGroups?.Developer?.length || 0) > 0 && (
+                    <PermissionGroup
+                      title={t('document.permission.role.Developer')}
+                      users={tabGroups!.Developer}
+                      editingId={editingId}
+                      editingRole={editingRole}
+                      setEditingRole={setEditingRole}
+                      onStartEditing={startEditing}
+                      onCancelEditing={cancelEditing}
+                      onUpdateRole={handleUpdateRole}
+                      onDelete={handleDelete}
+                      loading={loading}
+                      t={t}
+                    />
+                  )}
+                  {(tabGroups?.Reporter?.length || 0) > 0 && (
+                    <PermissionGroup
+                      title={t('document.permission.role.Reporter')}
+                      users={tabGroups!.Reporter}
+                      editingId={editingId}
+                      editingRole={editingRole}
+                      setEditingRole={setEditingRole}
+                      onStartEditing={startEditing}
+                      onCancelEditing={cancelEditing}
+                      onUpdateRole={handleUpdateRole}
+                      onDelete={handleDelete}
+                      loading={loading}
+                      t={t}
+                    />
+                  )}
+                  {(tabGroups?.RestrictedAnalyst?.length || 0) > 0 && (
+                    <PermissionGroup
+                      title={t('document.permission.role.RestrictedAnalyst')}
+                      users={tabGroups!.RestrictedAnalyst}
+                      editingId={editingId}
+                      editingRole={editingRole}
+                      setEditingRole={setEditingRole}
+                      onStartEditing={startEditing}
+                      onCancelEditing={cancelEditing}
+                      onUpdateRole={handleUpdateRole}
+                      onDelete={handleDelete}
+                      loading={loading}
+                      t={t}
+                    />
+                  )}
+                </div>
+              )}
+            </Card>
           </div>
         ) : null
       })}
@@ -572,6 +744,7 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
         onOpenChange={setShowAddNamespace}
         kbId={kbId}
         onSuccess={fetchPermissions}
+        excludedNamespaceId={kbNamespace}
       />
     </div>
   )
@@ -592,7 +765,7 @@ interface PermissionGroupProps {
   t: (key: string) => string
 }
 
-function PermissionGroup({
+export function PermissionGroup({
   title,
   users,
   editingId,
@@ -616,11 +789,7 @@ function PermissionGroup({
           >
             <div className="flex-1 min-w-0">
               <div className="font-medium text-sm truncate">{user.display_name}</div>
-              {user.email && (
-                <div className="text-xs text-text-muted truncate">
-                  {user.email}
-                </div>
-              )}
+              {user.email && <div className="text-xs text-text-muted truncate">{user.email}</div>}
             </div>
             {editingId === user.id ? (
               <div className="flex items-center gap-2">

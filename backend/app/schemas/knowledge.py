@@ -84,6 +84,10 @@ class InitialMemberCreate(BaseModel):
         default=BaseRole.Reporter,
         description="Member role: Maintainer, Developer, Reporter, RestrictedAnalyst",
     )
+    entity_display_name: Optional[str] = Field(
+        default=None,
+        description="Display name snapshot for the entity (e.g., department name, group display name)",
+    )
 
 
 class KnowledgeBaseCreate(BaseModel):
@@ -518,10 +522,15 @@ class KnowledgeBaseWithGroupInfo(BaseModel):
         None,
         description="Multiple share source user names for multi-source shared KBs in All mode",
     )
-    # Share via: 'user' | 'namespace' | 'org_department' etc.
+    # Share via entity type: 'user', 'namespace', or other registered entity types
     shared_via: Optional[str] = Field(
         None,
-        description="Share via: 'user' | 'namespace' | 'org_department' etc.",
+        description="Share via entity type: 'user', 'namespace', or other registered entity types",
+    )
+    # Knowledge base creator name for display fallback
+    owner_name: Optional[str] = Field(
+        None,
+        description="Knowledge base creator's user name",
     )
 
 

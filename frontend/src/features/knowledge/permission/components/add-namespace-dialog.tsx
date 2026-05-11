@@ -27,7 +27,6 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
 import { knowledgePermissionApi } from '@/apis/knowledge-permission'
 import { searchGroups } from '@/apis/groups'
-import { ASSIGNABLE_ROLES } from '@/types/base-role'
 import type { MemberRole } from '@/types/knowledge'
 import type { Group } from '@/types/group'
 
@@ -36,6 +35,8 @@ interface AddNamespaceDialogProps {
   onOpenChange: (open: boolean) => void
   kbId: number
   onSuccess?: () => void
+  /** Namespace ID to exclude from search (the KB's owning namespace) */
+  excludedNamespaceId?: string
 }
 
 export function AddNamespaceDialog({
@@ -43,6 +44,7 @@ export function AddNamespaceDialog({
   onOpenChange,
   kbId,
   onSuccess,
+  excludedNamespaceId,
 }: AddNamespaceDialogProps) {
   const { t } = useTranslation('knowledge')
   const { user: currentUser } = useUser()
@@ -121,9 +123,7 @@ export function AddNamespaceDialog({
 
   const handleToggleGroup = (group: Group) => {
     setSelectedGroups(prev =>
-      prev.some(g => g.id === group.id)
-        ? prev.filter(g => g.id !== group.id)
-        : [...prev, group]
+      prev.some(g => g.id === group.id) ? prev.filter(g => g.id !== group.id) : [...prev, group]
     )
     setSearchQuery('')
     setError(null)
@@ -219,34 +219,52 @@ export function AddNamespaceDialog({
                   ) : filteredGroups.length === 0 ? (
                     <div className="p-3 text-sm text-text-muted text-center">
                       {searchQuery.trim()
-                        ? (t('common:userSearch.noResults') || '未找到结果')
+                        ? loc('document.permission.noGroupResults', '没有匹配的组')
                         : loc('document.permission.noGroups', '暂无可用群组')}
                     </div>
                   ) : (
                     filteredGroups.map(group => {
                       const selected = isGroupSelected(group)
+                      const isBound = excludedNamespaceId
+                        ? group.name === excludedNamespaceId
+                        : false
                       return (
                         <button
                           key={group.id}
                           type="button"
-                          onClick={() => handleToggleGroup(group)}
-                          className={`w-full flex items-center justify-between gap-3 p-3 hover:bg-surface cursor-pointer text-left ${
-                            selected ? 'bg-primary/5' : ''
+                          onClick={() => !isBound && handleToggleGroup(group)}
+                          disabled={isBound}
+                          className={`w-full flex items-center justify-between gap-3 p-3 text-left ${
+                            isBound
+                              ? 'opacity-50 cursor-not-allowed'
+                              : `hover:bg-surface cursor-pointer ${selected ? 'bg-primary/5' : ''}`
                           }`}
                         >
-                          <span className="font-medium text-sm text-text-primary truncate flex items-center gap-2">
-                            {selected && (
-                              <svg className="w-3.5 h-3.5 text-primary flex-shrink-0" fill="currentColor" viewBox="0 0 16 16">
-                                <path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/>
+                          <span
+                            className={`font-medium text-sm truncate flex items-center gap-2 ${
+                              isBound ? 'text-text-muted' : 'text-text-primary'
+                            }`}
+                          >
+                            {!isBound && selected && (
+                              <svg
+                                className="w-3.5 h-3.5 text-primary flex-shrink-0"
+                                fill="currentColor"
+                                viewBox="0 0 16 16"
+                              >
+                                <path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z" />
                               </svg>
                             )}
                             {group.display_name || group.name}
                           </span>
-                          {group.my_role && (
+                          {isBound ? (
+                            <span className="flex-shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] leading-tight font-medium bg-muted text-text-muted border border-border">
+                              {loc('document.permission.alreadyBound', '已绑定')}
+                            </span>
+                          ) : group.my_role ? (
                             <span className="flex-shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] leading-tight font-medium bg-primary/10 text-primary border border-primary/20">
                               {t(`document.permission.role.${group.my_role}`)}
                             </span>
-                          )}
+                          ) : null}
                         </button>
                       )
                     })

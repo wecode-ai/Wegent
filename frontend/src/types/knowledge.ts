@@ -307,9 +307,10 @@ export interface KnowledgeBase {
 
 /** Initial member to add when creating a knowledge base */
 export interface InitialMember {
-  entity_type: 'user' | 'namespace'
+  entity_type: string
   entity_id: string
   role: MemberRole
+  entity_display_name?: string
 }
 
 export interface KnowledgeBaseCreate {
@@ -589,8 +590,16 @@ export interface PermissionUpdateRequest {
 }
 
 // Batch permission add types
+export interface BatchPermissionMember {
+  user_id: number
+  role: MemberRole
+  entity_type?: string
+  entity_id?: string
+  entity_display_name?: string
+}
+
 export interface BatchPermissionAddRequest {
-  members: { user_id: number; role: MemberRole }[]
+  members: BatchPermissionMember[]
 }
 
 export interface BatchPermissionAddResponse {
@@ -765,8 +774,10 @@ export interface KnowledgeBaseWithGroupInfo {
   shared_from?: string | null
   /** Multiple share source user names for multi-source shared KBs in All mode */
   shared_from_users?: string[]
-  /** Share via: 'user' | 'namespace' | 'org_department' etc. */
+  /** Share via entity type: 'user', 'namespace', or other registered types */
   shared_via?: string
+  /** Knowledge base creator's user name for display fallback */
+  owner_name?: string
 }
 
 /** Personal knowledge bases in all-grouped response */
