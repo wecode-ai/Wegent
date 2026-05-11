@@ -4,8 +4,8 @@
 
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
-import { Check, X, UserPlus, Pencil, Trash2, Users, Clock, Shield } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Check, X, UserPlus, Pencil, Trash2, Users, Clock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
@@ -186,14 +186,6 @@ export function PermissionManagementTab({ kbId, extensionTabs }: PermissionManag
 
   return (
     <div className="space-y-6 p-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold flex items-center gap-2">
-          <Shield className="w-5 h-5" />
-          {t('document.permission.management')}
-        </h2>
-      </div>
-
       {/* Error Message */}
       {error && (
         <div className="bg-error/10 text-error px-4 py-2 rounded-lg text-sm flex justify-between items-center">
