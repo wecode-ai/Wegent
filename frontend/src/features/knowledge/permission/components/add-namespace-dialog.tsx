@@ -25,7 +25,7 @@ import {
 } from '@/components/ui/select'
 import { useTranslation } from '@/hooks/useTranslation'
 import { knowledgePermissionApi } from '@/apis/knowledge-permission'
-import { listGroups } from '@/apis/groups'
+import { searchGroups } from '@/apis/groups'
 import { ASSIGNABLE_ROLES } from '@/types/base-role'
 import type { MemberRole } from '@/types/knowledge'
 import type { Group } from '@/types/group'
@@ -54,19 +54,29 @@ export function AddNamespaceDialog({
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null)
   const [role, setRole] = useState<MemberRole>('Reporter')
   const [loading, setLoading] = useState(false)
-  const [fetchingGroups, setFetchingGroups] = useState(false)
+  const [searching, setSearching] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [showDropdown, setShowDropdown] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
-  // Fetch groups when dialog opens
+  // Load initial groups when dialog opens
   useEffect(() => {
     if (open) {
-      fetchGroups()
+      setSearchQuery('')
+      performSearch('')
     }
   }, [open])
+
+  // Debounced search when query changes
+  useEffect(() => {
+    if (!open) return
+    const timer = setTimeout(() => {
+      performSearch(searchQuery)
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [searchQuery, open])
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -83,27 +93,20 @@ export function AddNamespaceDialog({
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  const fetchGroups = async () => {
-    setFetchingGroups(true)
+  const performSearch = async (query: string) => {
+    setSearching(true)
     try {
-      const result = await listGroups({ limit: 100 })
+      const result = await searchGroups({ q: query, limit: 20 })
       setGroups(result.items || [])
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to fetch groups'
+      const message = err instanceof Error ? err.message : 'Failed to search groups'
       setError(message)
     } finally {
-      setFetchingGroups(false)
+      setSearching(false)
     }
   }
 
-  const filteredGroups = searchQuery.trim()
-    ? groups.filter(
-        g =>
-          (g.display_name || g.name)
-            .toLowerCase()
-            .includes(searchQuery.trim().toLowerCase())
-      )
-    : groups
+  const filteredGroups = groups
 
   const handleSelectGroup = (group: Group) => {
     setSelectedGroup(group)
@@ -180,7 +183,7 @@ export function AddNamespaceDialog({
                     setShowDropdown(true)
                   }}
                   onFocus={() => {
-                    if (!fetchingGroups && groups.length === 0) fetchGroups()
+                    if (!searching && groups.length === 0) performSearch(searchQuery)
                     setShowDropdown(true)
                   }}
                   placeholder={loc('document.permission.searchGroupPlaceholder', '搜索群组...')}
@@ -194,7 +197,7 @@ export function AddNamespaceDialog({
                   className="absolute z-50 w-full mt-1 bg-base border border-border rounded-md shadow-lg max-h-48 overflow-y-auto"
                   data-testid="add-namespace-group-dropdown"
                 >
-                  {fetchingGroups ? (
+                  {searching ? (
                     <div className="flex items-center justify-center p-3">
                       <Spinner className="w-4 h-4" />
                     </div>

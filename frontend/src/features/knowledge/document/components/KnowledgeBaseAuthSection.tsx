@@ -22,7 +22,7 @@ import {
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { UserSearchSelect } from '@/components/common/UserSearchSelect'
-import { listGroups } from '@/apis/groups'
+import { searchGroups } from '@/apis/groups'
 import { useTranslation } from '@/hooks/useTranslation'
 import { ASSIGNABLE_ROLES } from '@/types/base-role'
 import type { MemberRole } from '@/types/knowledge'
@@ -284,15 +284,24 @@ function GroupSearchInput({ onSelect, role }: GroupSearchInputProps) {
     return v && v !== key ? v : fallback
   }
   const [groups, setGroups] = useState<Group[]>([])
-  const [fetching, setFetching] = useState(false)
+  const [searching, setSearching] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [showDropdown, setShowDropdown] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
+  // Load initial groups on mount
   useEffect(() => {
-    fetchGroups()
+    performSearch('')
   }, [])
+
+  // Debounced search when query changes
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      performSearch(searchQuery)
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [searchQuery])
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -309,26 +318,19 @@ function GroupSearchInput({ onSelect, role }: GroupSearchInputProps) {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  const fetchGroups = async () => {
-    setFetching(true)
+  const performSearch = async (query: string) => {
+    setSearching(true)
     try {
-      const result = await listGroups({ limit: 200 })
+      const result = await searchGroups({ q: query, limit: 20 })
       setGroups(result.items || [])
     } catch (_err) {
       // silently fail
     } finally {
-      setFetching(false)
+      setSearching(false)
     }
   }
 
-  const filteredGroups = searchQuery.trim()
-    ? groups.filter(
-        g =>
-          (g.display_name || g.name)
-            .toLowerCase()
-            .includes(searchQuery.trim().toLowerCase())
-      )
-    : groups
+  const filteredGroups = groups
 
   const handleSelect = (group: Group) => {
     onSelect({
@@ -354,7 +356,7 @@ function GroupSearchInput({ onSelect, role }: GroupSearchInputProps) {
             setShowDropdown(true)
           }}
           onFocus={() => {
-            if (!fetching && groups.length === 0) fetchGroups()
+            if (!searching && groups.length === 0) performSearch(searchQuery)
             setShowDropdown(true)
           }}
           placeholder={loc('document.permission.searchGroupPlaceholder', '搜索群组...')}
@@ -366,7 +368,7 @@ function GroupSearchInput({ onSelect, role }: GroupSearchInputProps) {
           ref={dropdownRef}
           className="absolute z-50 w-full mt-1 bg-base border border-border rounded-md shadow-lg max-h-48 overflow-y-auto"
         >
-          {fetching ? (
+          {searching ? (
             <div className="flex items-center justify-center p-3">
               <Spinner className="w-4 h-4" />
             </div>

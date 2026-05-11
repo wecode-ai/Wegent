@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import HTTPException
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import CustomHTTPException
@@ -253,6 +254,66 @@ def list_user_groups(
         result.append(group_response)
 
     return result
+
+
+def search_groups(
+    db: Session,
+    q: str,
+    skip: int = 0,
+    limit: int = 20,
+    user_id: int | None = None,
+    user_role: str | None = None,
+) -> tuple[list[GroupResponse], int]:
+    """
+    Search groups by name or display_name with level='group' filter.
+
+    Args:
+        db: Database session
+        q: Search query string
+        skip: Number of records to skip
+        limit: Maximum number of records to return
+        user_id: Current user ID (optional — filters to user's groups if provided)
+        user_role: Current user role (optional)
+    Returns:
+        Tuple of (list of GroupResponse objects, total count)
+    """
+    query = db.query(Namespace).filter(
+        Namespace.is_active == True,
+        Namespace.level == GroupLevel.group.value,
+    )
+
+    if q:
+        search_pattern = f"%{q}%"
+        query = query.filter(
+            or_(
+                Namespace.name.ilike(search_pattern),
+                Namespace.display_name.ilike(search_pattern),
+            )
+        )
+
+    # Filter to groups where user is a member
+    if user_id is not None:
+        member_data = get_user_groups_with_roles(db, user_id)
+        group_names = [name for name, _ in member_data]
+        if not group_names:
+            return [], 0
+        query = query.filter(Namespace.name.in_(group_names))
+
+    total = query.count()
+    groups = query.order_by(Namespace.created_at.desc()).offset(skip).limit(limit).all()
+
+    # Get member counts
+    member_counts = {}
+    for group in groups:
+        member_counts[group.name] = get_group_member_count(db, group.name)
+
+    result = []
+    for group in groups:
+        group_response = GroupResponse.model_validate(group)
+        group_response.member_count = member_counts.get(group.name, 0)
+        result.append(group_response)
+
+    return result, total
 
 
 def update_group(

@@ -288,7 +288,8 @@ class TestBatchAddMembers:
         reporter_member = ResourceMember(
             resource_type="KnowledgeBase",
             resource_id=knowledge_base.id,
-            user_id=test_user.id,
+            entity_type='user',
+            entity_id=str(test_user.id),
             role="Reporter",
             status=MemberStatus.APPROVED.value,
             invited_by_user_id=knowledge_base.user_id,

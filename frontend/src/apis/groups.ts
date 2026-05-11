@@ -35,6 +35,18 @@ export const listGroups = async (params?: {
 }
 
 /**
+ * Search groups by name or display_name (level=group only)
+ */
+export const searchGroups = async (params: {
+  q: string
+  page?: number
+  limit?: number
+}): Promise<GroupListResponse> => {
+  const queryString = `?${new URLSearchParams(params as Record<string, string>).toString()}`
+  return await apiClient.get<GroupListResponse>(`/groups/search${queryString}`)
+}
+
+/**
  * Create a new group
  */
 export const createGroup = async (data: GroupCreate): Promise<Group> => {

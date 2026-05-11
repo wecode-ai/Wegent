@@ -68,7 +68,8 @@ def _add_member(
     member = ResourceMember(
         resource_type="Namespace",
         resource_id=namespace.id,
-        user_id=user.id,
+        entity_type='user',
+        entity_id=str(user.id),
         role=role.value,
         status=MemberStatus.APPROVED.value,
         invited_by_user_id=invited_by_user_id,
@@ -103,7 +104,8 @@ def _add_kb_member(
     member = ResourceMember(
         resource_type="KnowledgeBase",
         resource_id=knowledge_base_id,
-        user_id=user.id,
+        entity_type='user',
+        entity_id=str(user.id),
         role=role.value,
         status=status,
         invited_by_user_id=invited_by_user_id,
