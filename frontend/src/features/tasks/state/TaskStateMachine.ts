@@ -518,17 +518,19 @@ export class TaskStateMachine {
       return
     }
 
+    // Check WebSocket connection before consuming the recovery debounce window.
+    // A recovery scheduled during a connection-state race must be able to retry
+    // immediately once the socket is actually available.
+    if (!this.deps.isConnected()) {
+      return
+    }
+
     // Debounce check
     const now = Date.now()
     if (!event.force && now - this.lastRecoveryTime < this.recoveryDebounceMs) {
       return
     }
     this.lastRecoveryTime = now
-
-    // Check WebSocket connection
-    if (!this.deps.isConnected()) {
-      return
-    }
 
     // Transition to joining
     this.state = { ...this.state, status: 'joining', error: null }
