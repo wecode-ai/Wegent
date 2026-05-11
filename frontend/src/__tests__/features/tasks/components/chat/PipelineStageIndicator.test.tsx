@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { taskApis } from '@/apis/tasks'
@@ -187,5 +187,64 @@ describe('PipelineStageIndicator', () => {
     await screen.findByText(/Pipeline Progress/)
 
     expect(screen.queryByTestId('pipeline-next-step-button')).not.toBeInTheDocument()
+  })
+
+  it('ignores stale pipeline stage responses after switching to a non-pipeline task', async () => {
+    let resolveStageInfo: (stageInfo: PipelineStageInfo) => void = () => {}
+    const pendingStageInfo = new Promise<PipelineStageInfo>(resolve => {
+      resolveStageInfo = resolve
+    })
+    mockGetPipelineStageInfo.mockReturnValue(pendingStageInfo)
+
+    const onStageInfoChange = jest.fn()
+
+    const { rerender } = renderIndicator({ onStageInfoChange })
+
+    rerender(
+      <PipelineStageIndicator
+        taskId={43}
+        taskStatus="COMPLETED"
+        collaborationModel="route"
+        onStageInfoChange={onStageInfoChange}
+      />
+    )
+
+    await act(async () => {
+      resolveStageInfo(createStageInfo())
+      await pendingStageInfo
+    })
+
+    await waitFor(() => {
+      expect(screen.queryByText(/Pipeline Progress/)).not.toBeInTheDocument()
+    })
+    expect(onStageInfoChange).not.toHaveBeenCalledWith(expect.objectContaining({ total_stages: 3 }))
+  })
+
+  it('clears previous stage info while loading a different pipeline task', async () => {
+    let resolveNextStageInfo: (stageInfo: PipelineStageInfo) => void = () => {}
+    const nextStageInfo = new Promise<PipelineStageInfo>(resolve => {
+      resolveNextStageInfo = resolve
+    })
+
+    mockGetPipelineStageInfo
+      .mockResolvedValueOnce(createStageInfo({ current_stage: 0 }))
+      .mockReturnValueOnce(nextStageInfo)
+
+    const { rerender } = renderIndicator({ taskId: 42 })
+
+    expect(await screen.findByText(/Pipeline Progress/)).toHaveTextContent('1/3')
+
+    rerender(
+      <PipelineStageIndicator taskId={43} taskStatus="RUNNING" collaborationModel="pipeline" />
+    )
+
+    expect(screen.queryByText(/Pipeline Progress/)).not.toBeInTheDocument()
+
+    await act(async () => {
+      resolveNextStageInfo(createStageInfo({ current_stage: 1 }))
+      await nextStageInfo
+    })
+
+    expect(await screen.findByText(/Pipeline Progress/)).toHaveTextContent('2/3')
   })
 })

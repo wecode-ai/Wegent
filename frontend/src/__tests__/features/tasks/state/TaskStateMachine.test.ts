@@ -5,6 +5,33 @@
 import { TaskStateMachine } from '@/features/tasks/state'
 
 describe('TaskStateMachine', () => {
+  it('does not debounce a recovery that exits before the socket is connected', async () => {
+    const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1000)
+    const consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
+    const joinTask = jest.fn().mockResolvedValue({ subtasks: [] })
+    let connected = false
+
+    const machine = new TaskStateMachine(100, {
+      joinTask,
+      isConnected: () => connected,
+    })
+
+    await machine.recover()
+    expect(joinTask).not.toHaveBeenCalled()
+
+    connected = true
+    await machine.recover()
+
+    expect(joinTask).toHaveBeenCalledTimes(1)
+    expect(joinTask).toHaveBeenCalledWith(100, {
+      forceRefresh: true,
+      afterMessageId: undefined,
+    })
+
+    nowSpy.mockRestore()
+    consoleInfoSpy.mockRestore()
+  })
+
   it('refreshes timestamp when the same AI message receives a new chat:error event', () => {
     const nowSpy = jest.spyOn(Date, 'now').mockReturnValueOnce(1000).mockReturnValueOnce(2000)
 

@@ -4,7 +4,7 @@
 
 'use client'
 
-import { memo, useEffect, useState, useMemo } from 'react'
+import { memo, useEffect, useRef, useState, useMemo } from 'react'
 import { ArrowRight, CheckCircle2, Circle, Loader2, Clock, XCircle, PlayCircle } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { taskApis, PipelineStageInfo } from '@/apis/tasks'
@@ -48,33 +48,62 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
   onNextStepClick,
 }: PipelineStageIndicatorProps) {
   const { t } = useTranslation()
-  const [stageInfo, setStageInfo] = useState<PipelineStageInfo | null>(null)
+  const [stageInfoState, setStageInfoState] = useState<{
+    taskId: number
+    info: PipelineStageInfo
+  } | null>(null)
   const [_loading, setLoading] = useState(false)
+  const stageInfoTaskIdRef = useRef<number | null>(null)
+  const stageInfo = stageInfoState?.taskId === taskId ? stageInfoState.info : null
 
   // Fetch pipeline stage info when task changes or status updates
   useEffect(() => {
+    let isActive = true
+
     if (!taskId || collaborationModel !== 'pipeline') {
-      setStageInfo(null)
+      stageInfoTaskIdRef.current = null
+      setStageInfoState(null)
       onStageInfoChange?.(null)
-      return
+      setLoading(false)
+      return () => {
+        isActive = false
+      }
+    }
+
+    if (stageInfoTaskIdRef.current !== taskId) {
+      stageInfoTaskIdRef.current = null
+      setStageInfoState(null)
+      onStageInfoChange?.(null)
     }
 
     const fetchStageInfo = async () => {
       setLoading(true)
       try {
         const info = await taskApis.getPipelineStageInfo(taskId)
-        setStageInfo(info)
+        if (!isActive) return
+
+        stageInfoTaskIdRef.current = taskId
+        setStageInfoState({ taskId, info })
         onStageInfoChange?.(info)
       } catch (error) {
+        if (!isActive) return
+
         console.error('Failed to fetch pipeline stage info:', error)
-        setStageInfo(null)
+        stageInfoTaskIdRef.current = null
+        setStageInfoState(null)
         onStageInfoChange?.(null)
       } finally {
-        setLoading(false)
+        if (isActive) {
+          setLoading(false)
+        }
       }
     }
 
     fetchStageInfo()
+
+    return () => {
+      isActive = false
+    }
   }, [taskId, taskStatus, collaborationModel, onStageInfoChange])
 
   // Build display stages with "Start" node prepended
@@ -100,7 +129,7 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
   }, [stageInfo, t])
 
   // Don't render if not a pipeline task or no stage info
-  if (!stageInfo || stageInfo.total_stages <= 1) {
+  if (!taskId || collaborationModel !== 'pipeline' || !stageInfo || stageInfo.total_stages <= 1) {
     return null
   }
 

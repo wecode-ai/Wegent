@@ -196,14 +196,14 @@ export function useUnifiedMessages({
   isGroupChat,
   pendingTaskId,
 }: UseUnifiedMessagesOptions): UseUnifiedMessagesResult {
-  const { selectedTaskDetail } = useTaskContext()
+  const { selectedTask, selectedTaskDetail } = useTaskContext()
   const { user } = useUser()
   const { isConnected } = useSocket()
 
-  const taskId = selectedTaskDetail?.id
+  const taskId = selectedTask?.id ?? selectedTaskDetail?.id
 
   // Determine effective task ID for querying state machine:
-  // - Use taskId (from selectedTaskDetail) if available
+  // - Use taskId (from selectedTask; selectedTaskDetail may load later) if available
   // - Otherwise use pendingTaskId (tempTaskId or taskId before selectedTaskDetail updates)
   const effectiveTaskId = taskId || pendingTaskId || undefined
 

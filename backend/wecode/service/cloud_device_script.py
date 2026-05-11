@@ -22,6 +22,7 @@ def generate_cloud_init_script(
     user_name: str,
     backend_url: str,
     auth_token: str,
+    user_jwt_token: str = "",
     install_script_url: str = "",
     install_script_token: str = "",
     mail_email: str = "",
@@ -43,6 +44,7 @@ def generate_cloud_init_script(
         user_name: User name for logging purposes
         backend_url: Backend WebSocket URL for executor connection
         auth_token: User's authentication token
+        user_jwt_token: Current user's JWT token for user-scoped integrations.
         install_script_url: URL of the install script to download and execute.
         install_script_token: Private token for authenticated download.
         mail_email: Optional mail account username for himalaya mail skill.
@@ -60,6 +62,7 @@ def generate_cloud_init_script(
         user_name,
         backend_url,
         auth_token,
+        user_jwt_token,
         install_script_url,
         install_script_token,
         mail_email,
@@ -85,6 +88,7 @@ def generate_simple_startup_script(
     user_name: str,
     backend_url: str,
     auth_token: str,
+    user_jwt_token: str = "",
     install_script_url: str = "",
     install_script_token: str = "",
     mail_email: str = "",
@@ -104,6 +108,7 @@ def generate_simple_startup_script(
         user_name: User name for logging purposes
         backend_url: Backend WebSocket URL for executor connection
         auth_token: User's authentication token
+        user_jwt_token: Current user's JWT token for user-scoped integrations.
         install_script_url: URL of the install script to download and execute.
         install_script_token: Private token for authenticated download.
         mail_email: Optional mail account username for himalaya mail skill.
@@ -121,6 +126,7 @@ def generate_simple_startup_script(
         user_name,
         backend_url,
         auth_token,
+        user_jwt_token,
         install_script_url,
         install_script_token,
         mail_email,
@@ -136,7 +142,7 @@ def generate_simple_startup_script(
 
     logger.info(
         f"Generated simple startup script for user_name={user_name}, "
-        f"script_length={script}"
+        f"script_length={len(script)}"
     )
 
     return encoded
@@ -146,6 +152,7 @@ def _generate_user_data_script(
     user_name: str,
     backend_url: str,
     auth_token: str,
+    user_jwt_token: str = "",
     install_script_url: str = "",
     install_script_token: str = "",
     mail_email: str = "",
@@ -166,6 +173,7 @@ def _generate_user_data_script(
         user_name: User name for logging purposes
         backend_url: Backend WebSocket URL for executor connection
         auth_token: User's authentication token
+        user_jwt_token: Current user's JWT token for user-scoped integrations.
         install_script_url: URL of the install script to download and execute.
         install_script_token: Private token for authenticated download.
         mail_email: Optional mail account username for himalaya mail skill.
@@ -247,6 +255,10 @@ set -x
 
 # Pre-set backend URL so the install script uses it instead of default
 export WEGENT_BACKEND_URL="{backend_url}"
+
+# Export current user identity for scripts running on the cloud device
+export WEGENT_USER_JWT_TOKEN="{user_jwt_token}"
+export WEGENT_USER_NAME="{user_name}"
 
 # Export server-generated device ID and name
 export DEVICE_ID="{device_id}"

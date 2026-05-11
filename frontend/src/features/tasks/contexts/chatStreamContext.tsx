@@ -213,11 +213,10 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
   // Ref to track temporary task ID to real task ID mapping
   const tempToRealTaskIdRef = useRef<Map<number, number>>(new Map())
-  // Ref to track isConnected state for TaskStateManager initialization
+  // Ref read by TaskStateManager deps. Keep it current during render so
+  // child recovery effects in the same commit see the latest socket state.
   const isConnectedRef = useRef(isConnected)
-  useEffect(() => {
-    isConnectedRef.current = isConnected
-  }, [isConnected])
+  isConnectedRef.current = isConnected
 
   // Initialize TaskStateManager with dependencies on mount
   useEffect(() => {

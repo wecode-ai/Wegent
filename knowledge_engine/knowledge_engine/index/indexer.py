@@ -15,6 +15,7 @@ from knowledge_engine.ingestion.pipeline import (
     build_ingestion_result,
     prepare_ingestion,
 )
+from knowledge_engine.parsers.xmind import parse_xmind_to_markdown
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 from knowledge_engine.text_sanitizer import sanitize_text_for_indexing
@@ -108,6 +109,23 @@ class DocumentIndexer:
         chunk_metadata: ChunkMetadata,
         **kwargs,
     ) -> Dict:
+        # XMind files require special parsing: extract content.json from the ZIP
+        # archive and convert the topic tree to Markdown before indexing.
+        if file_extension.lower() == ".xmind":
+            markdown_text = parse_xmind_to_markdown(binary_data)
+            filename_without_ext = Path(chunk_metadata.source_file).stem
+            documents = [
+                Document(
+                    text=markdown_text,
+                    metadata={"filename": filename_without_ext},
+                )
+            ]
+            return self._index_documents(
+                documents=documents,
+                chunk_metadata=chunk_metadata,
+                **kwargs,
+            )
+
         with tempfile.NamedTemporaryFile(
             suffix=file_extension,
             delete=False,

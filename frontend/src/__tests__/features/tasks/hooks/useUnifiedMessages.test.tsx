@@ -9,10 +9,13 @@ import { useUnifiedMessages } from '@/features/tasks/hooks/useUnifiedMessages'
 const recoverMock = jest.fn(() => Promise.resolve())
 
 let socketConnected = false
+let mockSelectedTask: { id: number } | null = null
+let mockSelectedTaskDetail: { id: number } | null = { id: 42 }
 
 jest.mock('@/features/tasks/contexts/taskContext', () => ({
   useTaskContext: () => ({
-    selectedTaskDetail: { id: 42 },
+    selectedTask: mockSelectedTask,
+    selectedTaskDetail: mockSelectedTaskDetail,
   }),
 }))
 
@@ -49,6 +52,8 @@ function Probe() {
 describe('useUnifiedMessages', () => {
   beforeEach(() => {
     socketConnected = false
+    mockSelectedTask = null
+    mockSelectedTaskDetail = { id: 42 }
     recoverMock.mockClear()
   })
 
@@ -59,6 +64,18 @@ describe('useUnifiedMessages', () => {
 
     socketConnected = true
     rerender(<Probe />)
+
+    await waitFor(() => {
+      expect(recoverMock).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  it('recovers messages from selectedTask while task detail is still loading', async () => {
+    socketConnected = true
+    mockSelectedTask = { id: 42 }
+    mockSelectedTaskDetail = null
+
+    render(<Probe />)
 
     await waitFor(() => {
       expect(recoverMock).toHaveBeenCalledTimes(1)

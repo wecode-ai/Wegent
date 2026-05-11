@@ -59,6 +59,15 @@ def _get_backend_url(request: Request) -> str:
     return f"{scheme}://{host}"
 
 
+def _get_bearer_token(request: Request) -> str:
+    """Extract the raw Bearer token from the incoming request."""
+    authorization = request.headers.get("authorization", "")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer":
+        return ""
+    return token.strip()
+
+
 async def _get_owned_cloud_device_status(
     device_id: str,
     db: Session,
@@ -152,6 +161,7 @@ async def create_cloud_device(
             user_name=current_user.user_name,
             auth_token=auth_token,
             backend_url=backend_url,
+            user_jwt_token=_get_bearer_token(request),
             mail_email=body.mail_email or "",
             mail_password=body.mail_password or "",
         )
