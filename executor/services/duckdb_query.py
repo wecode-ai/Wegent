@@ -7,13 +7,18 @@
 Executes SQL queries against cached .duckdb files downloaded from Backend.
 Cache lifecycle follows the container lifecycle - no LRU/TTL needed since
 the container is destroyed when the task completes.
+
+Security is enforced at the connection level, not via SQL keyword blocking:
+1. ATTACH with READ_ONLY: Prevents all write operations (DROP, DELETE, INSERT, etc.)
+2. enable_external_access = false: Blocks file/network access (read_csv_auto, etc.)
+
+These connection-level restrictions make SQL-level keyword filtering redundant.
 """
 
 from __future__ import annotations
 
 import hashlib
 import logging
-import re
 import time
 from pathlib import Path
 from typing import Any
@@ -29,31 +34,11 @@ class DuckDBQueryExecutor:
 
     Cache lifecycle follows the container lifecycle.
     No need for LRU/TTL - container destruction cleans everything.
+
+    Security is enforced at the DuckDB connection level:
+    - ATTACH with READ_ONLY prevents all write operations
+    - enable_external_access=false blocks file/network access
     """
-
-    # SQL keywords that are blocked for security
-    BLOCKED_KEYWORDS = [
-        "DROP",
-        "DELETE",
-        "INSERT",
-        "UPDATE",
-        "ALTER",
-        "CREATE",
-        "ATTACH",
-        "DETACH",
-        "COPY",
-        "EXPORT",
-        "PRAGMA",
-        "LOAD",
-        "INSTALL",
-        "FORCE",
-    ]
-
-    # Keywords allowed for read-only analysis (overrides BLOCKED for specific patterns)
-    ALLOWED_PATTERNS = [
-        # Allow CREATE TEMP TABLE/VIEW for complex analysis
-        r"\bCREATE\s+(TEMP|TEMPORARY)\s+(TABLE|VIEW)\b",
-    ]
 
     def __init__(self, cache_dir: str = "/tmp/wegent_duckdb_cache") -> None:
         self.cache_dir = Path(cache_dir)
@@ -144,14 +129,6 @@ class DuckDBQueryExecutor:
         Returns:
             Dict with columns, rows, row_count, truncated, and optionally error.
         """
-        # Validate SQL for blocked keywords
-        validation_error = self._validate_sql(sql)
-        if validation_error:
-            return {
-                "success": False,
-                "error": validation_error,
-            }
-
         safe_path = str(duckdb_path).replace("'", "\\'")
 
         conn = duckdb.connect(":memory:")
@@ -315,41 +292,6 @@ class DuckDBQueryExecutor:
             }
         finally:
             conn.close()
-
-    def _validate_sql(self, sql: str) -> str | None:
-        """Validate SQL for blocked keywords.
-
-        Checks for potentially dangerous SQL keywords using word-boundary
-        matching. Allows CREATE TEMP TABLE/VIEW patterns.
-
-        Args:
-            sql: SQL query to validate.
-
-        Returns:
-            Error message if validation fails, None if valid.
-        """
-        sql_upper = sql.upper().strip()
-
-        # Check if any allowed pattern matches first
-        is_allowed_by_pattern = False
-        for pattern in self.ALLOWED_PATTERNS:
-            if re.search(pattern, sql_upper, re.IGNORECASE):
-                is_allowed_by_pattern = True
-                break
-
-        # Check for blocked keywords with word boundary matching
-        for keyword in self.BLOCKED_KEYWORDS:
-            pattern = rf"\b{keyword}\b"
-            if re.search(pattern, sql_upper):
-                # Special case: allow CREATE TEMP/TEMPORARY TABLE/VIEW
-                if keyword == "CREATE" and is_allowed_by_pattern:
-                    continue
-                return (
-                    f"SQL contains blocked keyword '{keyword}'. "
-                    f"Only read-only operations are allowed."
-                )
-
-        return None
 
     def _is_valid_duckdb_data(self, data: bytes) -> bool:
         """Check if data appears to be a valid DuckDB file.

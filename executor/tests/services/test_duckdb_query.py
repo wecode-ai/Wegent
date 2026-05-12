@@ -188,54 +188,16 @@ class TestExecuteQuery:
         assert result["truncated"] is True
         assert result["total_count"] == 2
 
-    def test_blocked_keyword_drop(self, executor, sample_duckdb_path) -> None:
-        """Should block DROP queries."""
+    def test_write_operation_rejected_by_readonly(self, executor, sample_duckdb_path) -> None:
+        """Should reject write operations via READ_ONLY connection."""
         result = executor.execute_query(
             duckdb_path=sample_duckdb_path,
             sql="DROP TABLE data_db.sales",
         )
 
         assert result["success"] is False
-        assert "blocked keyword" in result["error"].lower()
-
-    def test_blocked_keyword_insert(self, executor, sample_duckdb_path) -> None:
-        """Should block INSERT queries."""
-        result = executor.execute_query(
-            duckdb_path=sample_duckdb_path,
-            sql="INSERT INTO data_db.sales VALUES (3, 'Eve', 300.0)",
-        )
-
-        assert result["success"] is False
-        assert "blocked keyword" in result["error"].lower()
-
-    def test_blocked_keyword_delete(self, executor, sample_duckdb_path) -> None:
-        """Should block DELETE queries."""
-        result = executor.execute_query(
-            duckdb_path=sample_duckdb_path,
-            sql="DELETE FROM data_db.sales WHERE id = 1",
-        )
-
-        assert result["success"] is False
-        assert "blocked keyword" in result["error"].lower()
-
-    def test_allowed_create_temp_table(self, executor, sample_duckdb_path) -> None:
-        """Should allow CREATE TEMP TABLE for complex analysis."""
-        result = executor.execute_query(
-            duckdb_path=sample_duckdb_path,
-            sql="CREATE TEMP TABLE temp_results AS SELECT * FROM data_db.sales",
-        )
-
-        assert result["success"] is True
-
-    def test_blocked_create_table(self, executor, sample_duckdb_path) -> None:
-        """Should block regular CREATE TABLE."""
-        result = executor.execute_query(
-            duckdb_path=sample_duckdb_path,
-            sql="CREATE TABLE hack (id INT)",
-        )
-
-        assert result["success"] is False
-        assert "blocked keyword" in result["error"].lower()
+        # READ_ONLY connection prevents write operations
+        assert "error" in result
 
     def test_invalid_sql(self, executor, sample_duckdb_path) -> None:
         """Should return error for invalid SQL."""
@@ -302,43 +264,3 @@ class TestGetSchema:
 
         assert result["success"] is False
         assert "error" in result
-
-
-class TestValidateSQL:
-    """Tests for SQL validation."""
-
-    def test_valid_select(self, executor) -> None:
-        """Should pass validation for SELECT queries."""
-        assert executor._validate_sql("SELECT * FROM data_db.sales") is None
-
-    def test_valid_select_with_where(self, executor) -> None:
-        """Should pass validation for SELECT with WHERE."""
-        assert (
-            executor._validate_sql("SELECT * FROM data_db.sales WHERE id > 0") is None
-        )
-
-    def test_blocked_drop(self, executor) -> None:
-        """Should block DROP keyword."""
-        result = executor._validate_sql("DROP TABLE sales")
-        assert result is not None
-        assert "DROP" in result
-
-    def test_blocked_attach(self, executor) -> None:
-        """Should block ATTACH keyword."""
-        result = executor._validate_sql("ATTACH '/etc/passwd' AS hack")
-        assert result is not None
-        assert "ATTACH" in result
-
-    def test_allowed_create_temp(self, executor) -> None:
-        """Should allow CREATE TEMP TABLE."""
-        assert executor._validate_sql("CREATE TEMP TABLE t AS SELECT 1") is None
-
-    def test_allowed_create_temporary_view(self, executor) -> None:
-        """Should allow CREATE TEMPORARY VIEW."""
-        assert executor._validate_sql("CREATE TEMPORARY VIEW v AS SELECT 1") is None
-
-    def test_blocked_create_table(self, executor) -> None:
-        """Should block CREATE TABLE (non-temp)."""
-        result = executor._validate_sql("CREATE TABLE t (id INT)")
-        assert result is not None
-        assert "CREATE" in result
