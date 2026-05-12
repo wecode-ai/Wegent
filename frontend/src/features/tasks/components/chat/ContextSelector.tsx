@@ -170,6 +170,14 @@ export default function ContextSelector({
   const [dingtalkConfigured, setDingtalkConfigured] = useState(true)
   const [dingtalkLastSyncedAt, setDingtalkLastSyncedAt] = useState<string | null>(null)
   const [dingtalkSearchQuery, setDingtalkSearchQuery] = useState('')
+  // Workspace (knowledge base) section state
+  const [dingtalkSection, setDingtalkSection] = useState<'my-docs' | 'workspace'>('my-docs')
+  const [workspaceNodes, setWorkspaceNodes] = useState<DingtalkDocNode[]>([])
+  const [workspaceLoading, setWorkspaceLoading] = useState(false)
+  const [workspaceSyncing, setWorkspaceSyncing] = useState(false)
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null)
+  const [workspaceConfigured, setWorkspaceConfigured] = useState(false)
+  const [workspaceLastSyncedAt, setWorkspaceLastSyncedAt] = useState<string | null>(null)
   const {
     organizationNamespace,
     loading: organizationNamespaceLoading,
@@ -258,6 +266,25 @@ export default function ContextSelector({
     }
   }, [t])
 
+  // Fetch DingTalk workspace (knowledge base) nodes
+  const fetchWorkspace = useCallback(async () => {
+    setWorkspaceLoading(true)
+    setWorkspaceError(null)
+    try {
+      const [tree, status] = await Promise.all([
+        dingtalkDocApi.getWorkspaceNodes(),
+        dingtalkDocApi.getWorkspaceSyncStatus(),
+      ])
+      setWorkspaceNodes(tree.nodes)
+      setWorkspaceConfigured(status.is_configured)
+      setWorkspaceLastSyncedAt(status.last_synced_at)
+    } catch {
+      setWorkspaceError(t('chat:dingtalkDocs.loadFailed'))
+    } finally {
+      setWorkspaceLoading(false)
+    }
+  }, [t])
+
   const handleDingtalkSync = useCallback(async () => {
     setDingtalkSyncing(true)
     setDingtalkError(null)
@@ -271,15 +298,29 @@ export default function ContextSelector({
     }
   }, [fetchDingtalkDocs, t])
 
+  const handleWorkspaceSync = useCallback(async () => {
+    setWorkspaceSyncing(true)
+    setWorkspaceError(null)
+    try {
+      await dingtalkDocApi.syncWorkspaceNodes()
+      await fetchWorkspace()
+    } catch {
+      setWorkspaceError(t('chat:dingtalkDocs.syncFailed'))
+    } finally {
+      setWorkspaceSyncing(false)
+    }
+  }, [fetchWorkspace, t])
+
   const handleTabChange = useCallback(
     (value: string) => {
       setActiveTab(value)
       if (value === 'dingtalk' && !hasFetchedDingtalk) {
         fetchDingtalkDocs()
+        fetchWorkspace()
         setHasFetchedDingtalk(true)
       }
     },
-    [fetchDingtalkDocs, hasFetchedDingtalk]
+    [fetchDingtalkDocs, fetchWorkspace, hasFetchedDingtalk]
   )
 
   // Group knowledge bases by category (personal, group, organization)
@@ -526,6 +567,7 @@ export default function ContextSelector({
       setSearchValue('')
       setDingtalkSearchQuery('')
       setActiveTab('knowledge')
+      setDingtalkSection('my-docs')
     }
   }, [open])
 
@@ -907,7 +949,37 @@ export default function ContextSelector({
           </TabsContent>
 
           {/* DingTalk Docs Tab */}
-          <TabsContent value="dingtalk" className="m-0">
+          <TabsContent value="dingtalk" className="m-0 flex flex-col">
+            {/* Section switcher: 我的文档 / 知识库 — always visible */}
+            <div className="flex border-b border-border flex-shrink-0">
+              <button
+                type="button"
+                onClick={() => setDingtalkSection('my-docs')}
+                className={cn(
+                  'flex-1 py-1.5 text-xs font-medium transition-colors',
+                  dingtalkSection === 'my-docs'
+                    ? 'text-text-primary border-b-2 border-orange-500'
+                    : 'text-text-muted hover:text-text-primary'
+                )}
+                data-testid="dingtalk-section-my-docs"
+              >
+                {t('chat:dingtalkDocs.myDocsTab')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setDingtalkSection('workspace')}
+                className={cn(
+                  'flex-1 py-1.5 text-xs font-medium transition-colors',
+                  dingtalkSection === 'workspace'
+                    ? 'text-text-primary border-b-2 border-orange-500'
+                    : 'text-text-muted hover:text-text-primary'
+                )}
+                data-testid="dingtalk-section-workspace"
+              >
+                {t('chat:dingtalkDocs.workspaceTab')}
+              </button>
+            </div>
+
             {/* Search input */}
             <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
               <Search className="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
@@ -923,74 +995,169 @@ export default function ContextSelector({
 
             {/* Sync toolbar */}
             <div className="flex items-center justify-between px-3 h-9 border-b border-border">
-              <span className="text-xs text-text-muted">
-                {dingtalkConfigured && dingtalkLastSyncedAt
-                  ? t('chat:dingtalkDocs.lastSynced', {
-                      time: new Date(dingtalkLastSyncedAt).toLocaleString(),
-                    })
-                  : null}
-              </span>
-              {dingtalkConfigured && (
-                <button
-                  type="button"
-                  onClick={handleDingtalkSync}
-                  disabled={dingtalkSyncing}
-                  className={cn(
-                    'flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors',
-                    dingtalkSyncing && 'opacity-50 cursor-not-allowed'
+              {dingtalkSection === 'my-docs' ? (
+                <>
+                  <span className="text-xs text-text-muted">
+                    {dingtalkConfigured && dingtalkLastSyncedAt
+                      ? t('chat:dingtalkDocs.lastSynced', {
+                          time: new Date(dingtalkLastSyncedAt).toLocaleString(),
+                        })
+                      : null}
+                  </span>
+                  {dingtalkConfigured && (
+                    <button
+                      type="button"
+                      onClick={handleDingtalkSync}
+                      disabled={dingtalkSyncing}
+                      className={cn(
+                        'flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors',
+                        dingtalkSyncing && 'opacity-50 cursor-not-allowed'
+                      )}
+                      data-testid="context-selector-dingtalk-sync"
+                    >
+                      <RefreshCw className={cn('w-3 h-3', dingtalkSyncing && 'animate-spin')} />
+                      {dingtalkSyncing
+                        ? t('chat:dingtalkDocs.syncing')
+                        : t('chat:dingtalkDocs.sync')}
+                    </button>
                   )}
-                  data-testid="context-selector-dingtalk-sync"
-                >
-                  <RefreshCw className={cn('w-3 h-3', dingtalkSyncing && 'animate-spin')} />
-                  {dingtalkSyncing ? t('chat:dingtalkDocs.syncing') : t('chat:dingtalkDocs.sync')}
-                </button>
+                </>
+              ) : (
+                <>
+                  <span className="text-xs text-text-muted">
+                    {workspaceConfigured && workspaceLastSyncedAt
+                      ? t('chat:dingtalkDocs.lastSynced', {
+                          time: new Date(workspaceLastSyncedAt).toLocaleString(),
+                        })
+                      : null}
+                  </span>
+                  {workspaceConfigured && (
+                    <button
+                      type="button"
+                      onClick={handleWorkspaceSync}
+                      disabled={workspaceSyncing}
+                      className={cn(
+                        'flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors',
+                        workspaceSyncing && 'opacity-50 cursor-not-allowed'
+                      )}
+                      data-testid="context-selector-workspace-sync"
+                    >
+                      <RefreshCw className={cn('w-3 h-3', workspaceSyncing && 'animate-spin')} />
+                      {workspaceSyncing
+                        ? t('chat:dingtalkDocs.syncing')
+                        : t('chat:dingtalkDocs.sync')}
+                    </button>
+                  )}
+                </>
               )}
             </div>
 
             {/* DingTalk content */}
-            <div className="max-h-[300px] overflow-y-auto">
-              {dingtalkLoading ? (
+            <div className="max-h-[260px] overflow-y-auto">
+              {dingtalkSection === 'my-docs' ? (
+                dingtalkLoading ? (
+                  <div className="py-6 px-4 text-center text-sm text-text-muted">
+                    {t('common:actions.loading')}
+                  </div>
+                ) : !dingtalkConfigured ? (
+                  <div className="py-6 px-4 text-center space-y-3">
+                    <p className="text-sm text-text-muted">
+                      {t('chat:dingtalkDocs.notConfigured')}
+                    </p>
+                    <Link
+                      href="/settings/integrations"
+                      className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium transition-colors"
+                    >
+                      {t('chat:dingtalkDocs.goToConfigure')}
+                    </Link>
+                  </div>
+                ) : dingtalkError ? (
+                  <div className="py-6 px-4 text-center space-y-2">
+                    <p className="text-sm text-red-500">{dingtalkError}</p>
+                    <button
+                      onClick={fetchDingtalkDocs}
+                      className="text-xs text-primary hover:underline"
+                    >
+                      {t('common:actions.retry')}
+                    </button>
+                  </div>
+                ) : dingtalkNodes.length === 0 ? (
+                  <div className="py-6 px-4 text-center space-y-3">
+                    <p className="text-sm text-text-muted">{t('chat:dingtalkDocs.empty')}</p>
+                    <button
+                      type="button"
+                      onClick={handleDingtalkSync}
+                      disabled={dingtalkSyncing}
+                      className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium transition-colors disabled:opacity-50"
+                    >
+                      <RefreshCw
+                        className={cn('w-3.5 h-3.5', dingtalkSyncing && 'animate-spin')}
+                      />
+                      {dingtalkSyncing
+                        ? t('chat:dingtalkDocs.syncing')
+                        : t('chat:dingtalkDocs.syncNow')}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="py-1 px-1">
+                    {dingtalkNodes.map(node => (
+                      <DingtalkContextTreeNode
+                        key={node.dingtalk_node_id}
+                        node={node}
+                        level={0}
+                        selectedIds={selectedDingTalkIds}
+                        onToggle={handleDingtalkToggle}
+                        searchQuery={dingtalkSearchQuery}
+                      />
+                    ))}
+                  </div>
+                )
+              ) : workspaceLoading ? (
                 <div className="py-6 px-4 text-center text-sm text-text-muted">
                   {t('common:actions.loading')}
                 </div>
-              ) : !dingtalkConfigured ? (
+              ) : !workspaceConfigured ? (
                 <div className="py-6 px-4 text-center space-y-3">
-                  <p className="text-sm text-text-muted">{t('chat:dingtalkDocs.notConfigured')}</p>
+                  <p className="text-sm text-text-muted">
+                    {t('chat:dingtalkDocs.workspaceNotConfigured')}
+                  </p>
                   <Link
-                    href="/settings/integrations"
+                    href="/settings?section=integrations&tab=integrations"
                     className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium transition-colors"
                   >
                     {t('chat:dingtalkDocs.goToConfigure')}
                   </Link>
                 </div>
-              ) : dingtalkError ? (
+              ) : workspaceError ? (
                 <div className="py-6 px-4 text-center space-y-2">
-                  <p className="text-sm text-red-500">{dingtalkError}</p>
+                  <p className="text-sm text-red-500">{workspaceError}</p>
                   <button
-                    onClick={fetchDingtalkDocs}
+                    onClick={fetchWorkspace}
                     className="text-xs text-primary hover:underline"
                   >
                     {t('common:actions.retry')}
                   </button>
                 </div>
-              ) : dingtalkNodes.length === 0 ? (
+              ) : workspaceNodes.length === 0 ? (
                 <div className="py-6 px-4 text-center space-y-3">
                   <p className="text-sm text-text-muted">{t('chat:dingtalkDocs.empty')}</p>
                   <button
                     type="button"
-                    onClick={handleDingtalkSync}
-                    disabled={dingtalkSyncing}
+                    onClick={handleWorkspaceSync}
+                    disabled={workspaceSyncing}
                     className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium transition-colors disabled:opacity-50"
                   >
-                    <RefreshCw className={cn('w-3.5 h-3.5', dingtalkSyncing && 'animate-spin')} />
-                    {dingtalkSyncing
+                    <RefreshCw
+                      className={cn('w-3.5 h-3.5', workspaceSyncing && 'animate-spin')}
+                    />
+                    {workspaceSyncing
                       ? t('chat:dingtalkDocs.syncing')
                       : t('chat:dingtalkDocs.syncNow')}
                   </button>
                 </div>
               ) : (
                 <div className="py-1 px-1">
-                  {dingtalkNodes.map(node => (
+                  {workspaceNodes.map(node => (
                     <DingtalkContextTreeNode
                       key={node.dingtalk_node_id}
                       node={node}
