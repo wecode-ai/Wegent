@@ -43,6 +43,8 @@ tools:
       max_file_size: 104857600
   - name: download_attachment
     provider: sandbox
+  - name: view_sandbox_image_file
+    provider: sandbox
 ---
 
 # Sandbox Environment
@@ -184,6 +186,29 @@ Read file contents.
 
 ---
 
+#### `view_sandbox_image_file`
+View an image file from the sandbox filesystem. Returns the visual content for direct rendering.
+
+**Parameters:**
+- `path` (required): Absolute path to the image file in the sandbox
+
+**Supported formats:** jpg, jpeg, png, gif, webp, bmp, tiff
+
+**Returns:**
+- Visual content as a base64-encoded image for the model to see
+
+**Example:**
+```json
+{
+  "name": "view_sandbox_image_file",
+  "arguments": {
+    "path": "/home/user/chart.png"
+  }
+}
+```
+
+---
+
 #### `write_file`
 Write content to a file.
 
@@ -310,6 +335,7 @@ Download a file from Wegent attachment URL to sandbox for processing.
 | Read files | `read_file` | Better error handling and size validation |
 | Write files | `write_file` | Auto directory creation, size validation |
 | Browse directories | `list_files` | Structured output with metadata |
+| View images in sandbox | `view_sandbox_image_file` | Returns visual content for the model to see |
 | Upload files for user download | `upload_attachment` | Get download URL for user-facing files |
 | Download attachments | `download_attachment` | Retrieve Wegent attachments into sandbox |
 | Complex tasks with Claude | `sub_claude_agent` | **Only when user explicitly requests** |

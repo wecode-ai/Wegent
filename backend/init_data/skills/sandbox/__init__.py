@@ -9,11 +9,13 @@ from . import _base
 
 __all__ = [
     "_base",
+    "claude_tool",
     "command_tool",
+    "download_attachment_tool",
     "list_files_tool",
     "read_file_tool",
+    "upload_attachment_tool",
+    "view_image_tool",
     "write_file_tool",
-    "make_dir_tool",
-    "remove_file_tool",
     "provider",
 ]

@@ -93,6 +93,7 @@ class SandboxToolProvider(SkillToolProvider):
             "write_file",
             "upload_attachment",
             "download_attachment",
+            "view_sandbox_image_file",
         ]
 
     def create_tool(
@@ -183,6 +184,11 @@ class SandboxToolProvider(SkillToolProvider):
                 **base_params,
                 api_base_url=config.get("api_base_url", ""),
             )
+
+        elif tool_name == "view_sandbox_image_file":
+            from .view_image_tool import SandboxViewImageTool
+
+            tool_instance = SandboxViewImageTool(**base_params)
 
         else:
             raise ValueError(f"Unknown tool: {tool_name}")
