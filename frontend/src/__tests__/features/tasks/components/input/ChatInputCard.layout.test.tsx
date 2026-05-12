@@ -183,11 +183,14 @@ describe('ChatInputCard layout', () => {
     expect(chatInputWrapper).not.toHaveClass('pt-3')
   })
 
-  it('forwards queued send availability to input controls', () => {
-    render(<ChatInputCard {...buildProps()} canQueueMessage />)
+  it('forwards queued and awaiting send state to input controls', () => {
+    render(<ChatInputCard {...buildProps()} canQueueMessage isAwaitingResponseStart />)
 
     expect(mockChatInputControls).toHaveBeenCalledWith(
-      expect.objectContaining({ canQueueMessage: true })
+      expect.objectContaining({
+        canQueueMessage: true,
+        isAwaitingResponseStart: true,
+      })
     )
   })
 })

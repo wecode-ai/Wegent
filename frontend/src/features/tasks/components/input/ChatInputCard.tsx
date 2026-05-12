@@ -157,6 +157,7 @@ export function ChatInputCard({
   onAttachmentRemove,
   isLoading,
   isStreaming,
+  isAwaitingResponseStart,
   isStopping,
   hasMessages,
   shouldCollapseSelectors,
@@ -386,6 +387,7 @@ export function ChatInputCard({
             onAttachmentRemove={onAttachmentRemove}
             isLoading={isLoading}
             isStreaming={isStreaming}
+            isAwaitingResponseStart={isAwaitingResponseStart}
             isStopping={isStopping}
             hasMessages={hasMessages}
             shouldCollapseSelectors={shouldCollapseSelectors}

@@ -4,11 +4,14 @@ import type { TaskDetail } from '@/types/api'
 
 import { ChatArea } from '@/features/tasks/components/chat'
 
+const mockChatInputCard = jest.fn(() => <div data-testid="chat-input-card" />)
+
 const defaultStreamHandlers = {
   pendingTaskId: null,
   isStreaming: false,
   isAwaitingResponseStart: false,
   isSubtaskStreaming: false,
+  canQueueMessage: false,
   isStopping: false,
   hasPendingUserMessage: false,
   localPendingMessage: null,
@@ -121,7 +124,7 @@ jest.mock('@/features/tasks/components/chat/SloganDisplay', () => ({
   SloganDisplay: () => <div data-testid="slogan-display" />,
 }))
 jest.mock('@/features/tasks/components/input/ChatInputCard', () => ({
-  ChatInputCard: () => <div data-testid="chat-input-card" />,
+  ChatInputCard: (props: Record<string, unknown>) => mockChatInputCard(props),
 }))
 jest.mock(
   '@/features/tasks/components/chat/PipelineStageIndicator',
@@ -214,6 +217,7 @@ describe('ChatArea queue message handler mounting', () => {
   beforeEach(() => {
     streamHandlersMock = { ...defaultStreamHandlers }
     selectedTaskDetailMock = null
+    mockChatInputCard.mockClear()
   })
 
   it('mounts QueueMessageHandler for chat mode', () => {
@@ -231,5 +235,25 @@ describe('ChatArea queue message handler mounting', () => {
       <ChatArea teams={[]} isTeamsLoading={false} taskType="task" showRepositorySelector={false} />
     )
     expect(screen.getByTestId('queue-message-handler')).toBeInTheDocument()
+  })
+
+  it('passes queued send availability to ChatInputCard for a running task', () => {
+    streamHandlersMock = {
+      ...defaultStreamHandlers,
+      isStreaming: true,
+      canQueueMessage: true,
+    }
+    selectedTaskDetailMock = {
+      id: 42,
+      status: 'RUNNING',
+      is_group_chat: false,
+      subtasks: [],
+    } as TaskDetail
+
+    render(<ChatArea teams={[]} isTeamsLoading={false} taskType="chat" showRepositorySelector />)
+
+    expect(mockChatInputCard).toHaveBeenCalledWith(
+      expect.objectContaining({ canQueueMessage: true })
+    )
   })
 })
