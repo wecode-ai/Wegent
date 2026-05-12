@@ -338,6 +338,7 @@ async def create_document_open(
         "knowledge_base_id": data.knowledge_base_id,
         "name": data.name,
         "source_type": source_type,
+        "folder_id": data.folder_id,
         "trigger_indexing": True,
         "trigger_summary": True,
         "splitter_config": splitter_config_dict,

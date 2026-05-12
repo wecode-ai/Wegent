@@ -1118,6 +1118,7 @@ class KnowledgeOrchestrator:
         knowledge_base_id: int,
         name: str,
         source_type: str,
+        folder_id: int = 0,
         content: Optional[str] = None,
         file_base64: Optional[str] = None,
         file_extension: Optional[str] = None,
@@ -1138,6 +1139,7 @@ class KnowledgeOrchestrator:
             knowledge_base_id: Target knowledge base ID
             name: Document name
             source_type: Source type (text, file, web, attachment)
+            folder_id: Optional folder ID to place the document in (0 means root)
             content: Text content for source_type="text"
             file_base64: Base64 encoded file for source_type="file"
             file_extension: File extension for source_type="file"
@@ -1249,6 +1251,7 @@ class KnowledgeOrchestrator:
                 attachment_id=attachment.id,
                 file_extension=normalized_ext,
                 file_size=len(binary_data),
+                folder_id=folder_id,
             )
 
             return self._create_and_index_document(
@@ -1282,6 +1285,7 @@ class KnowledgeOrchestrator:
             attachment_id=attachment.id,
             file_extension=normalized_ext,
             file_size=len(binary_data),
+            folder_id=folder_id,
         )
 
         return self._create_and_index_document(
