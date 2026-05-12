@@ -14,6 +14,7 @@ from collections import defaultdict, deque
 from typing import Dict, List, Optional
 
 from sqlalchemy import func, text
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
@@ -252,19 +253,37 @@ class KnowledgeFolderService:
 
         if data.parent_id is not None:
             new_parent_id = data.parent_id
-            # Prevent circular reference: cannot set parent to self or descendant
+            # Prevent circular reference: cannot set parent to self or descendant.
+            # Acquire row-level locks (SELECT FOR UPDATE) on the source folder and
+            # the target parent before re-running the descendant check so that
+            # concurrent move operations are serialized at the DB level.
             if new_parent_id > 0:
-                # Validate target parent exists
                 if new_parent_id == folder_id:
                     raise ValueError("Cannot move a folder into itself")
-                new_parent = KnowledgeFolderService.get_folder(
-                    db, new_parent_id, user_id
+                # Lock source folder row to prevent concurrent moves of the same folder
+                locked_folder = (
+                    db.query(KnowledgeFolder)
+                    .filter(KnowledgeFolder.id == folder_id)
+                    .with_for_update()
+                    .first()
                 )
-                if new_parent.kind_id != folder.kind_id:
+                if not locked_folder:
+                    raise ValueError("Folder not found")
+                # Lock target parent row to prevent it from being moved/deleted concurrently
+                locked_parent = (
+                    db.query(KnowledgeFolder)
+                    .filter(
+                        KnowledgeFolder.id == new_parent_id,
+                        KnowledgeFolder.kind_id == folder.kind_id,
+                    )
+                    .with_for_update()
+                    .first()
+                )
+                if not locked_parent:
                     raise ValueError(
                         "Target parent folder does not belong to the same knowledge base"
                     )
-                # Collect all descendant IDs to prevent circular moves
+                # Re-check descendant relationship after acquiring locks
                 descendant_ids = KnowledgeFolderService._collect_descendant_ids(
                     db, folder.id, folder.kind_id
                 )
@@ -417,7 +436,7 @@ class KnowledgeFolderService:
         instead of iterative BFS round-trips.  The CTE is scoped to a single
         knowledge base (kind_id) and leverages the composite index
         ix_knowledge_folders_parent (kind_id, parent_id) on every recursive
-        join, reducing total I/O from O(depth × fan-out) round-trips to a
+        join, reducing total I/O from O(depth * fan-out) round-trips to a
         single server-side traversal.
 
         Falls back to iterative BFS (using a deque for O(1) pops) when the
@@ -427,8 +446,11 @@ class KnowledgeFolderService:
             return KnowledgeFolderService._collect_descendant_ids_cte(
                 db, folder_id, kind_id
             )
-        except Exception:
-            # Fallback for databases that do not support recursive CTEs.
+        except ProgrammingError:
+            # Fallback for databases that do not support recursive CTEs
+            # (e.g. MySQL < 8.0 or SQLite < 3.35).  Only ProgrammingError
+            # (unsupported syntax) is caught here; connection/permission errors
+            # are allowed to propagate so callers can handle them correctly.
             logger.warning(
                 "Recursive CTE not supported, falling back to iterative BFS "
                 "for folder %d",

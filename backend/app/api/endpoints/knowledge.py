@@ -12,7 +12,7 @@ which provides a unified interface for both REST API and MCP tools.
 import asyncio
 import logging
 from datetime import datetime
-from typing import Optional, Union
+from typing import Dict, List, Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -93,14 +93,21 @@ def _serialize_standalone_document_detail(
 
 
 def _raise_document_detail_http_error(error: ValueError) -> None:
-    """Map orchestrator detail errors to stable HTTP responses."""
+    """Map orchestrator/service errors to stable HTTP responses.
+
+    Mapping rules:
+    - "not found"  -> 404
+    - "access denied" or "permission" -> 403
+    - anything else -> 400
+    """
     error_msg = str(error)
-    if "not found" in error_msg.lower():
+    lower = error_msg.lower()
+    if "not found" in lower:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=error_msg,
         )
-    if "access denied" in error_msg.lower():
+    if "access denied" in lower or "permission" in lower:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=error_msg,
@@ -937,7 +944,7 @@ def create_folder(
     data: KnowledgeFolderCreate,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
-):
+) -> KnowledgeFolderResponse:
     """Create a new folder in a knowledge base."""
     try:
         return KnowledgeFolderService.create_folder(
@@ -959,7 +966,7 @@ def get_folder_tree(
     knowledge_base_id: int,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
-):
+) -> List[KnowledgeFolderResponse]:
     """Get the full folder tree for a knowledge base."""
     try:
         return KnowledgeFolderService.get_folder_tree(
@@ -968,10 +975,7 @@ def get_folder_tree(
             user_id=current_user.id,
         )
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e),
-        )
+        _raise_document_detail_http_error(e)
 
 
 @router.put(
@@ -984,7 +988,7 @@ def update_folder(
     data: KnowledgeFolderUpdate,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
-):
+) -> KnowledgeFolderResponse:
     """Update a folder (rename and/or move)."""
     try:
         return KnowledgeFolderService.update_folder(
@@ -1007,7 +1011,7 @@ def delete_folder(
     folder_id: int,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
-):
+) -> Dict:
     """Delete a folder and move its documents to root level."""
     try:
         result = KnowledgeFolderService.delete_folder(
@@ -1018,7 +1022,6 @@ def delete_folder(
         )
         return result
     except ValueError as e:
-        _raise_document_detail_http_error(e)
         _raise_document_detail_http_error(e)
 
 
@@ -1035,7 +1038,7 @@ def move_document(
     data: DocumentMoveRequest,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
-):
+) -> KnowledgeDocumentResponse:
     """Move a document to a different folder (0 = root level)."""
     try:
         doc = KnowledgeFolderService.move_document(
