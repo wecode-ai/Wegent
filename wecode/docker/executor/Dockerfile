@@ -85,6 +85,7 @@ ENV LC_ALL=C.UTF-8
 RUN dnf install -y --setopt=install_weak_deps=False --setopt=tsflags=nodocs \
     libreoffice-core libreoffice-writer libreoffice-calc libreoffice-impress \
     poppler-utils pandoc tesseract \
+    jq zip \
     && dnf clean all && rm -rf /var/cache/dnf/*
 
 # Install npm packages for document generation (using China mirror for faster download)
