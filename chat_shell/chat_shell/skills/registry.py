@@ -422,15 +422,7 @@ class SkillToolRegistry:
             return False
 
         with self._providers_lock:
-            existing = self._providers.get(provider.provider_name)
-            if existing is not None:
-                # Update provider if supported tools changed (e.g., skill updated)
-                if set(existing.supported_tools) != set(provider.supported_tools):
-                    logger.info(
-                        f"[SkillToolRegistry] Updating provider '{provider.provider_name}' "
-                        f"tools changed from {existing.supported_tools} to {provider.supported_tools}"
-                    )
-                    self._providers[provider.provider_name] = provider
+            if provider.provider_name in self._providers:
                 return True
             self._providers[provider.provider_name] = provider
 
