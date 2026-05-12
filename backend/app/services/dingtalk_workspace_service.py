@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.models.dingtalk_doc import DingtalkSyncedNode
 from app.models.user import User
-from app.services.dingtalk_doc_service import DingTalkDocService
+from app.services.dingtalk_doc_service import DingTalkDocService, MCP_TOOL_LIST_NODES
 from app.services.user_mcp_service import UserMCPService
 
 logger = logging.getLogger(__name__)
@@ -81,7 +81,11 @@ class DingTalkWorkspaceService:
         """Fetch all workspace nodes from the DingTalk Workspace MCP server.
 
         The workspace MCP's list_nodes without params returns knowledge bases
-        as top-level nodes. We then recursively fetch their content.
+        as top-level entries. Each knowledge base must then be explored via
+        list_nodes(workspaceId=<kb_node_id>) to retrieve its documents and
+        folders. This two-level traversal is necessary because knowledge-base
+        root nodes are NOT regular folders — using folderId would return
+        nothing.
         """
         try:
             from mcp import ClientSession
@@ -99,13 +103,63 @@ class DingTalkWorkspaceService:
         ):
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
-                await DingTalkDocService._list_nodes_recursive(
-                    session,
-                    folder_id=None,
-                    workspace_id=None,
-                    all_nodes=all_nodes,
-                    depth=0,
+
+                # Step 1: List top-level entries from the workspace MCP.
+                # For the 知识库 MCP this returns the knowledge bases themselves.
+                page_token = None
+                kb_nodes: list[dict[str, Any]] = []
+                while True:
+                    args: dict[str, Any] = {"pageSize": 50}
+                    if page_token:
+                        args["pageToken"] = page_token
+                    root_result = await session.call_tool(MCP_TOOL_LIST_NODES, args)
+                    batch, page_token = DingTalkDocService._parse_list_nodes_result(
+                        root_result
+                    )
+                    kb_nodes.extend(batch)
+                    if not page_token:
+                        break
+
+                logger.info(
+                    "DingTalk workspace MCP returned %d top-level nodes",
+                    len(kb_nodes),
                 )
+
+                # Step 2: For each top-level node (knowledge base), fetch its
+                # documents using workspaceId — NOT folderId. The KB node's
+                # nodeId doubles as the workspaceId needed to list its root.
+                for kb_node in kb_nodes:
+                    kb_id = kb_node.get("nodeId") or kb_node.get("workspaceId")
+                    if not kb_id:
+                        logger.warning(
+                            "Skipping KB node with no nodeId/workspaceId: %s",
+                            kb_node,
+                        )
+                        continue
+
+                    # Include the knowledge-base root as a folder-like entry so
+                    # the front-end can display it as a tree root.
+                    kb_as_folder = {
+                        **kb_node,
+                        "nodeType": "folder",
+                        "workspaceId": kb_id,
+                    }
+                    all_nodes.append(kb_as_folder)
+
+                    logger.info(
+                        "Fetching nodes for knowledge base '%s' (id=%s)",
+                        kb_node.get("name", "?"),
+                        kb_id,
+                    )
+
+                    # Recursively list documents/folders within this KB.
+                    await DingTalkDocService._list_nodes_recursive(
+                        session,
+                        folder_id=None,       # list the KB root, not a sub-folder
+                        workspace_id=kb_id,   # crucial: use workspaceId, not folderId
+                        all_nodes=all_nodes,
+                        depth=0,
+                    )
 
         return all_nodes
 
