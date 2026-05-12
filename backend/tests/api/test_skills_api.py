@@ -5,6 +5,7 @@
 """
 API integration tests for Skills endpoints
 """
+
 import io
 import zipfile
 

@@ -8,6 +8,7 @@ Share link model for unified resource sharing.
 Stores share link configurations and tokens for shared resources.
 Supports Team, Task, and KnowledgeBase resource types.
 """
+
 from datetime import datetime
 from enum import Enum as PyEnum
 

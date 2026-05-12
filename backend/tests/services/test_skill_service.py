@@ -5,6 +5,7 @@
 """
 Unit tests for Skill service
 """
+
 import io
 import zipfile
 

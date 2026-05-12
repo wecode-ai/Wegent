@@ -958,13 +958,11 @@ class TaskOperationsMixin:
         """
         try:
             existing_placeholder = db.execute(
-                text(
-                    """
+                text("""
                 SELECT id FROM tasks
                 WHERE user_id = :user_id AND kind = 'Placeholder' AND is_active = false
                 LIMIT 1
-            """
-                ),
+            """),
                 {"user_id": user_id},
             ).fetchone()
 
@@ -980,12 +978,10 @@ class TaskOperationsMixin:
 
             now = datetime.now()
             result = db.execute(
-                text(
-                    """
+                text("""
                 INSERT INTO tasks (user_id, kind, name, namespace, json, is_active, created_at, updated_at, project_id, is_group_chat)
                 VALUES (:user_id, 'Placeholder', 'temp-placeholder', 'default', :json, false, :created_at, :updated_at, :project_id, false)
-            """
-                ),
+            """),
                 {
                     "user_id": user_id,
                     "json": json_lib.dumps(placeholder_json),

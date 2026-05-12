@@ -126,6 +126,11 @@ class TestUserScopedMcpInjection:
                 "namespace": "default",
                 "is_public": True,
             },
+            {
+                "name": "dingtalk-workspace",
+                "namespace": "default",
+                "is_public": True,
+            },
         ]
 
     def test_injects_table_skill_when_message_mentions_dingtalk_sheet(self, test_db):

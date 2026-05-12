@@ -15,8 +15,7 @@ from app.models.task import TaskResource
 
 logger = logging.getLogger(__name__)
 
-_ACCESSIBLE_COUNT_SQL = text(
-    """
+_ACCESSIBLE_COUNT_SQL = text("""
     SELECT COUNT(DISTINCT k.id)
     FROM tasks k
     LEFT JOIN resource_members tm ON k.id = tm.resource_id
@@ -28,11 +27,9 @@ _ACCESSIBLE_COUNT_SQL = text(
     AND k.is_active = :is_active
     AND k.namespace != 'system'
     AND (k.user_id = :user_id OR tm.id IS NOT NULL)
-"""
-)
+""")
 
-_ACCESSIBLE_IDS_SQL = text(
-    """
+_ACCESSIBLE_IDS_SQL = text("""
     SELECT DISTINCT k.id, k.created_at
     FROM tasks k
     LEFT JOIN resource_members tm ON k.id = tm.resource_id
@@ -46,22 +43,18 @@ _ACCESSIBLE_IDS_SQL = text(
     AND (k.user_id = :user_id OR tm.id IS NOT NULL)
     ORDER BY k.created_at DESC
     LIMIT :limit OFFSET :skip
-"""
-)
+""")
 
-_OWNED_COUNT_SQL = text(
-    """
+_OWNED_COUNT_SQL = text("""
     SELECT COUNT(*)
     FROM tasks k
     WHERE k.kind = 'Task'
     AND k.is_active = :is_active
     AND k.namespace != 'system'
     AND k.user_id = :user_id
-"""
-)
+""")
 
-_OWNED_IDS_SQL = text(
-    """
+_OWNED_IDS_SQL = text("""
     SELECT k.id, k.created_at
     FROM tasks k
     WHERE k.kind = 'Task'
@@ -70,15 +63,13 @@ _OWNED_IDS_SQL = text(
     AND k.user_id = :user_id
     ORDER BY k.created_at DESC
     LIMIT :limit OFFSET :skip
-"""
-)
+""")
 
 # Optimized group chat queries using physical is_group_chat column
 # These queries avoid JOIN and JSON_EXTRACT for better performance
 
 # Query 1: User's own group chat tasks (no JOIN, uses indexed column)
-_OWNED_GROUP_CHAT_SQL = text(
-    """
+_OWNED_GROUP_CHAT_SQL = text("""
     SELECT id
     FROM tasks
     WHERE kind = 'Task'
@@ -86,12 +77,10 @@ _OWNED_GROUP_CHAT_SQL = text(
     AND namespace != 'system'
     AND user_id = :user_id
     AND is_group_chat = 1
-"""
-)
+""")
 
 # Query 2: Task IDs where user is a member (no JOIN, only queries resource_members)
-_MEMBER_TASK_IDS_SQL = text(
-    """
+_MEMBER_TASK_IDS_SQL = text("""
     SELECT resource_id
     FROM resource_members
     WHERE resource_type = 'Task'
@@ -99,8 +88,7 @@ _MEMBER_TASK_IDS_SQL = text(
     AND entity_id = :entity_id
     AND status = 'approved'
     AND copied_resource_id = 0
-"""
-)
+""")
 
 
 def _timed_scalar(
