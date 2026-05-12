@@ -165,6 +165,75 @@ export interface AdminPersonalKeyListResponse {
   items: AdminPersonalKey[]
   total: number
 }
+
+// Outbound Token Management Types
+export interface SigningKey {
+  id: number
+  name: string
+  namespace: string
+  kid: string
+  algorithm: string
+  description: string
+  public_key_pem: string
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface SigningKeyCreateRequest {
+  name: string
+  description?: string
+}
+
+export interface SigningKeyListResponse {
+  items: SigningKey[]
+  total: number
+}
+
+export interface TokenIssuer {
+  id: number
+  name: string
+  namespace: string
+  issuer: string
+  audience: string
+  default_ttl_seconds: number
+  max_ttl_seconds: number
+  description: string
+  signing_key_id: number
+  signing_key_name: string
+  signing_key_kid: string
+  public_key_pem: string
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface TokenIssuerCreateRequest {
+  name: string
+  signing_key_id: number
+  issuer: string
+  audience: string
+  default_ttl_seconds: number
+  max_ttl_seconds: number
+  description?: string
+  enabled?: boolean
+}
+
+export interface TokenIssuerUpdateRequest {
+  name?: string
+  signing_key_id?: number
+  issuer?: string
+  audience?: string
+  default_ttl_seconds?: number
+  max_ttl_seconds?: number
+  description?: string
+  enabled?: boolean
+}
+
+export interface TokenIssuerListResponse {
+  items: TokenIssuer[]
+  total: number
+}
 // Background Execution Monitor Types
 export interface BackgroundExecutionMonitorStats {
   total_executions: number
@@ -755,6 +824,71 @@ export const adminApis = {
    */
   async deletePersonalKey(keyId: number): Promise<void> {
     return apiClient.delete(`/admin/personal-keys/${keyId}`)
+  },
+
+  // ==================== Outbound Token Management ====================
+
+  /**
+   * Get list of outbound signing keys
+   */
+  async getSigningKeys(): Promise<SigningKeyListResponse> {
+    return apiClient.get('/admin/signing-keys')
+  },
+
+  /**
+   * Create a new outbound signing key
+   */
+  async createSigningKey(data: SigningKeyCreateRequest): Promise<SigningKey> {
+    return apiClient.post('/admin/signing-keys', data)
+  },
+
+  /**
+   * Toggle outbound signing key status
+   */
+  async toggleSigningKeyStatus(keyId: number): Promise<SigningKey> {
+    return apiClient.post(`/admin/signing-keys/${keyId}/toggle-status`)
+  },
+
+  /**
+   * Delete an outbound signing key
+   */
+  async deleteSigningKey(keyId: number): Promise<void> {
+    return apiClient.delete(`/admin/signing-keys/${keyId}`)
+  },
+
+  /**
+   * Get list of outbound token issuers
+   */
+  async getTokenIssuers(): Promise<TokenIssuerListResponse> {
+    return apiClient.get('/admin/token-issuers')
+  },
+
+  /**
+   * Create a new outbound token issuer
+   */
+  async createTokenIssuer(data: TokenIssuerCreateRequest): Promise<TokenIssuer> {
+    return apiClient.post('/admin/token-issuers', data)
+  },
+
+  /**
+   * Update an outbound token issuer
+   */
+  async updateTokenIssuer(issuerId: number, data: TokenIssuerUpdateRequest): Promise<TokenIssuer> {
+    return apiClient.put(`/admin/token-issuers/${issuerId}`, data)
+  },
+
+  /**
+   * Toggle outbound token issuer status
+   */
+  async toggleTokenIssuerStatus(issuerId: number): Promise<TokenIssuer> {
+    return apiClient.post(`/admin/token-issuers/${issuerId}/toggle-status`)
+  },
+
+  /**
+   * Delete an outbound token issuer
+   */
+  async deleteTokenIssuer(issuerId: number): Promise<void> {
+    return apiClient.delete(`/admin/token-issuers/${issuerId}`)
   },
 
   // ==================== Public Retriever Management ====================

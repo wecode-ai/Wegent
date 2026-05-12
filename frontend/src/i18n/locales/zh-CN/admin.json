@@ -337,9 +337,10 @@
   },
   "api_keys": {
     "title": "密钥管理",
-    "description": "管理服务密钥和个人 API 密钥",
+    "description": "管理服务密钥、个人 API 密钥和对外签发配置",
     "service_keys": "服务密钥",
-    "personal_keys": "个人密钥"
+    "personal_keys": "个人密钥",
+    "outbound_tokens": "对外签发"
   },
   "service_keys": {
     "title": "服务密钥管理",
@@ -397,6 +398,103 @@
       "load_failed": "加载个人密钥失败",
       "delete_failed": "删除个人密钥失败",
       "toggle_failed": "切换个人密钥状态失败"
+    }
+  },
+  "outbound_tokens": {
+    "title": "对外签发管理",
+    "description": "管理技能访问外部服务时使用的签发器（TokenIssuer）和签名密钥（SigningKey）。",
+    "summary": "调用方使用 `issuer_id` 请求签发；对外 token 的受众（aud）由签发器内部配置决定。",
+    "empty_hint": "先创建一个签发器（TokenIssuer）；如果还没有签名密钥（SigningKey），可以在创建流程里直接生成。",
+    "common": {
+      "name": "名称",
+      "description": "描述",
+      "description_placeholder": "请输入描述（可选）",
+      "enabled": "状态",
+      "status_active": "已启用",
+      "status_disabled": "已禁用",
+      "created_at": "创建时间",
+      "delete_confirm_title": "确认删除"
+    },
+    "actions": {
+      "view_pem": "查看 PEM",
+      "copy_pem": "复制 PEM",
+      "edit": "编辑",
+      "enable": "启用",
+      "disable": "禁用"
+    },
+    "issuers": {
+      "create": "创建签发器（TokenIssuer）",
+      "create_dialog_title": "创建签发器（TokenIssuer）",
+      "edit_dialog_title": "编辑签发器（TokenIssuer）",
+      "dialog_description": "对外接入以签发器（TokenIssuer）为主配置。`issuer_id` 来自资源 id，签发时自动带出受众（aud）和签名密钥。",
+      "no_issuers": "暂无签发器（TokenIssuer）",
+      "name_placeholder": "例如 vip-sql-platform",
+      "audience": "受众（aud）",
+      "audience_placeholder": "例如 vip_sql_platform",
+      "jwt_issuer": "签发方（iss）",
+      "signing_key": "签名密钥（SigningKey）",
+      "current_signing_key": "当前签名密钥（SigningKey）",
+      "signing_key_hint": "此 issuer 的签发固定绑定到这把 key",
+      "signing_key_placeholder": "选择一个可用的签名密钥（SigningKey）",
+      "no_signing_keys_title": "暂无可用签名密钥",
+      "no_signing_keys_description": "请先生成一个签名密钥（SigningKey），再继续创建或编辑签发器。",
+      "default_ttl": "默认 TTL",
+      "max_ttl": "最大 TTL",
+      "create_success": "签发器（TokenIssuer）创建成功",
+      "update_success": "签发器（TokenIssuer）更新成功",
+      "delete_success": "签发器（TokenIssuer）删除成功",
+      "enabled_success": "签发器（TokenIssuer）已启用",
+      "disabled_success": "签发器（TokenIssuer）已禁用",
+      "delete_confirm_message": "确定要删除签发器（TokenIssuer）\"{{name}}\" 吗？删除后该 `issuer_id` 将无法继续签发 token。",
+      "errors": {
+        "create_failed": "创建签发器（TokenIssuer）失败",
+        "update_failed": "更新签发器（TokenIssuer）失败",
+        "delete_failed": "删除签发器（TokenIssuer）失败",
+        "toggle_failed": "切换签发器（TokenIssuer）状态失败",
+        "requires_active_signing_key": "签发器只能绑定已启用的签名密钥，请先启用对应的 SigningKey。"
+      }
+    },
+    "signing_keys": {
+      "section_title": "底层签名密钥（SigningKey）管理",
+      "section_description": "这里用于维护底层签名密钥。日常配置时优先从签发器（TokenIssuer）入口完成绑定和生成。",
+      "create": "创建签名密钥（SigningKey）",
+      "inline_create": "生成新签名密钥",
+      "cancel_inline_create": "收起",
+      "inline_create_title": "内联创建签名密钥（SigningKey）",
+      "name_placeholder": "例如 vip-signing-key",
+      "description_placeholder": "请输入密钥用途描述（可选）",
+      "loading": "正在加载签名密钥（SigningKey）...",
+      "kid": "KID",
+      "algorithm": "算法",
+      "usage_count": "关联签发器数",
+      "no_keys": "暂无签名密钥（SigningKey）",
+      "create_success": "签名密钥（SigningKey）创建成功",
+      "delete_success": "签名密钥（SigningKey）删除成功",
+      "enabled_success": "签名密钥（SigningKey）已启用",
+      "disabled_success": "签名密钥（SigningKey）已禁用",
+      "delete_confirm_message": "确定要删除签名密钥（SigningKey）\"{{name}}\" 吗？如果仍被启用中的签发器引用，删除会失败。",
+      "errors": {
+        "load_failed": "加载签名密钥（SigningKey）失败",
+        "create_failed": "创建签名密钥（SigningKey）失败",
+        "delete_failed": "删除签名密钥（SigningKey）失败",
+        "toggle_failed": "切换签名密钥（SigningKey）状态失败",
+        "disable_blocked_by_issuer": "该签名密钥仍被已启用的签发器引用，请先停用相关签发器再禁用此密钥。",
+        "delete_blocked_by_issuer": "该签名密钥仍被签发器引用，请先解除相关引用后再删除。"
+      }
+    },
+    "pem_dialog": {
+      "issuer_title": "签发器（TokenIssuer）公钥",
+      "key_title": "签名密钥（SigningKey）公钥",
+      "description": "当前显示的是 {{name}} 的 PEM 公钥，kid 为 {{kid}}。请把这把公钥提供给外部服务用于本地验签。"
+    },
+    "errors": {
+      "load_failed": "加载对外签发配置失败",
+      "copy_failed": "复制 PEM 失败",
+      "issuer_name_required": "签发器（TokenIssuer）名称不能为空",
+      "signing_key_required": "请选择签名密钥（SigningKey）",
+      "signing_key_name_required": "签名密钥（SigningKey）名称不能为空",
+      "audience_required": "受众（aud）不能为空",
+      "invalid_ttl": "TTL 配置不合法"
     }
   },
   "monitor": {
