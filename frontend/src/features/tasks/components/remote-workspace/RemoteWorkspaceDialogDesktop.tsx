@@ -4,8 +4,8 @@
 
 'use client'
 
-import { Download, X } from 'lucide-react'
-import { useState } from 'react'
+import { Download, Maximize2, Minimize2, X } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 import { type RemoteWorkspaceTreeEntry } from '@/apis/remoteWorkspace'
 import {
@@ -20,7 +20,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 
 import { TFunction } from 'i18next'
@@ -149,6 +149,7 @@ export function RemoteWorkspaceDialogDesktop({
   onDownload,
 }: RemoteWorkspaceDialogDesktopProps) {
   const [isDownloadConfirmOpen, setIsDownloadConfirmOpen] = useState(false)
+  const [isPreviewFullscreen, setIsPreviewFullscreen] = useState(false)
   const selectableEntries = visibleEntries.filter(entry => !entry.is_directory)
   const allEntriesSelected =
     selectableEntries.length > 0 && selectableEntries.every(entry => selectedPaths.has(entry.path))
@@ -170,6 +171,34 @@ export function RemoteWorkspaceDialogDesktop({
     downloadableSelectedEntries.forEach(entry => onDownload(entry))
     setIsDownloadConfirmOpen(false)
   }
+  const handlePreviewDialogOpenChange = (open: boolean) => {
+    if (!open) {
+      setIsPreviewFullscreen(false)
+    }
+    onPreviewDialogOpenChange(open)
+  }
+
+  useEffect(() => {
+    if (!isPreviewDialogOpen) {
+      setIsPreviewFullscreen(false)
+    }
+  }, [isPreviewDialogOpen])
+
+  useEffect(() => {
+    if (!isPreviewFullscreen) {
+      return
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setIsPreviewFullscreen(false)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isPreviewFullscreen])
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -510,15 +539,26 @@ export function RemoteWorkspaceDialogDesktop({
 
       <Dialog
         open={isPreviewDialogOpen && Boolean(previewEntry)}
-        onOpenChange={onPreviewDialogOpenChange}
+        onOpenChange={handlePreviewDialogOpenChange}
       >
         <DialogContent
-          className="!flex !h-[90vh] !w-[96vw] !max-w-[1400px] !flex-col gap-0 overflow-hidden p-0"
-          aria-label="Preview"
+          className={
+            isPreviewFullscreen
+              ? '!fixed !inset-0 !left-0 !top-0 !flex !h-dvh !w-screen !max-w-none !translate-x-0 !translate-y-0 !flex-col gap-0 overflow-hidden !rounded-none !border-0 p-0 sm:!rounded-none'
+              : '!flex !h-[90vh] !w-[96vw] !max-w-[1400px] !flex-col gap-0 overflow-hidden p-0'
+          }
+          aria-label={t('remote_workspace.preview.title', 'Preview')}
           hideCloseButton
+          preventEscapeClose={isPreviewFullscreen}
         >
           {previewEntry && (
             <>
+              <DialogTitle className="sr-only">
+                {t('remote_workspace.preview.title', 'Preview')}
+              </DialogTitle>
+              <DialogDescription className="sr-only">
+                {previewEntry.name} · {previewEntry.path}
+              </DialogDescription>
               {/* Header - Same style as FilePreviewPage */}
               <header className="flex items-center justify-between px-4 py-3 border-b border-border dark:border-gray-700 bg-white dark:bg-gray-900 shrink-0">
                 <div className="flex items-center gap-3 min-w-0">
@@ -534,6 +574,29 @@ export function RemoteWorkspaceDialogDesktop({
                 </div>
 
                 <div className="flex items-center gap-2 flex-shrink-0">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setIsPreviewFullscreen(current => !current)}
+                    className="h-10 w-10"
+                    aria-label={
+                      isPreviewFullscreen
+                        ? t('remote_workspace.actions.exit_fullscreen', 'Exit fullscreen')
+                        : t('remote_workspace.actions.fullscreen', 'Fullscreen preview')
+                    }
+                    data-testid="remote-workspace-preview-fullscreen-button"
+                    title={
+                      isPreviewFullscreen
+                        ? t('remote_workspace.actions.exit_fullscreen', 'Exit fullscreen')
+                        : t('remote_workspace.actions.fullscreen', 'Fullscreen preview')
+                    }
+                  >
+                    {isPreviewFullscreen ? (
+                      <Minimize2 className="w-5 h-5" />
+                    ) : (
+                      <Maximize2 className="w-5 h-5" />
+                    )}
+                  </Button>
                   <Button variant="primary" size="sm" onClick={() => onDownload(previewEntry)}>
                     <Download className="w-4 h-4 mr-2" />
                     {t('remote_workspace.actions.download')}

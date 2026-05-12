@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react'
 import { X, Maximize2, Minimize2, ExternalLink } from 'lucide-react'
 
 import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
 
 import { CloudDeviceFilesViewer } from './CloudDeviceFilesViewer'
 import { VncViewer } from './VncViewer'
@@ -14,6 +15,7 @@ import '@wecode/i18n'
 
 interface DeviceVncPanelProps {
   readonly deviceId: string
+  readonly ownerUserId?: number
   readonly hideFilesTab?: boolean
   readonly onClose: () => void
   readonly title?: string
@@ -22,6 +24,8 @@ interface DeviceVncPanelProps {
   readonly onToggleFullscreen?: () => void
   readonly fullscreenLabel?: string
   readonly exitFullscreenLabel?: string
+  readonly containerClassName?: string
+  readonly borderPosition?: 'left' | 'top'
 }
 
 /**
@@ -30,6 +34,7 @@ interface DeviceVncPanelProps {
  */
 export function DeviceVncPanel({
   deviceId,
+  ownerUserId,
   hideFilesTab = false,
   onClose,
   title,
@@ -38,6 +43,8 @@ export function DeviceVncPanel({
   onToggleFullscreen,
   fullscreenLabel,
   exitFullscreenLabel,
+  containerClassName,
+  borderPosition = 'left',
 }: DeviceVncPanelProps) {
   const { t } = useTranslation('devices')
   const [activeTab, setActiveTab] = useState<'desktop' | 'files'>('desktop')
@@ -64,7 +71,11 @@ export function DeviceVncPanel({
 
   return (
     <div
-      className={`flex flex-col overflow-hidden border-l border-border transition-[width,flex] duration-800 ease-in-out ${isFullscreen ? 'flex-1' : 'w-1/2'}`}
+      className={cn(
+        'flex flex-col overflow-hidden border-border transition-[width,flex] duration-800 ease-in-out',
+        borderPosition === 'top' ? 'border-t' : 'border-l',
+        containerClassName ?? (isFullscreen ? 'flex-1' : 'w-1/2')
+      )}
     >
       <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-surface px-4 py-2">
         <div className="flex min-w-0 items-center gap-3">
@@ -157,10 +168,11 @@ export function DeviceVncPanel({
 
       <div className="relative min-h-0 flex-1">
         {activeTab === 'desktop' ? (
-          <VncViewer deviceId={deviceId} />
+          <VncViewer deviceId={deviceId} ownerUserId={ownerUserId} />
         ) : (
           <CloudDeviceFilesViewer
             deviceId={deviceId}
+            ownerUserId={ownerUserId}
             isActive
             onFileConfigChange={handleFilesConfigChange}
           />

@@ -33,7 +33,10 @@
     },
     "actions": {
       "cancel": "Cancel",
+      "close": "Close",
       "download": "Download",
+      "exit_fullscreen": "Exit fullscreen",
+      "fullscreen": "Fullscreen preview",
       "go": "Go",
       "preview": "Preview",
       "refresh": "Refresh"
@@ -101,6 +104,19 @@
       "loading": "Loading preview...",
       "load_failed": "Failed to load preview",
       "unsupported": "This file type is not supported for preview. Please download."
+    },
+    "dingtalk_send": {
+      "success": "The file has been sent to you via DingTalk robot. Please check your DingTalk messages.",
+      "failed": "Failed to send file via DingTalk. Please try again later.",
+      "not_bound": "Your DingTalk account is not bound. Please find the WegentBot robot in DingTalk and send '绑定' to complete binding, then try again."
+    },
+    "dingtalk_download": {
+      "title": "Download File",
+      "description": "DingTalk's built-in browser restricts direct file downloads. Please choose one of the following options:",
+      "open_in_browser": "Open in native browser",
+      "send_via_robot": "Send via DingTalk robot",
+      "send_via_robot_hint": "The robot will send the file to your DingTalk messages",
+      "sending": "Sending..."
     }
   },
   "workbench": {

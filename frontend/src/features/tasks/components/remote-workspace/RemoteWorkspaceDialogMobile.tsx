@@ -4,7 +4,8 @@
 
 'use client'
 
-import { useState } from 'react'
+import { Maximize2, Minimize2 } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 import { type RemoteWorkspaceTreeEntry } from '@/apis/remoteWorkspace'
 import { FilePreview } from '@/components/common/FilePreview'
@@ -95,6 +96,7 @@ export function RemoteWorkspaceDialogMobile({
   onDownload,
 }: RemoteWorkspaceDialogMobileProps) {
   const [activeTab, setActiveTab] = useState('files')
+  const [isPreviewFullscreen, setIsPreviewFullscreen] = useState(false)
   const detailEntry = selectedEntries.length === 1 ? selectedEntries[0] : null
   const footerLabel = `${visibleEntries.length} ${t('remote_workspace.status.items')}`
 
@@ -102,6 +104,28 @@ export function RemoteWorkspaceDialogMobile({
     onOpenEntry(entry)
     setActiveTab(entry.is_directory ? 'files' : 'preview')
   }
+
+  useEffect(() => {
+    if (!detailEntry) {
+      setIsPreviewFullscreen(false)
+    }
+  }, [detailEntry])
+
+  useEffect(() => {
+    if (!isPreviewFullscreen) {
+      return
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setIsPreviewFullscreen(false)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isPreviewFullscreen])
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -260,35 +284,76 @@ export function RemoteWorkspaceDialogMobile({
               )}
 
               {!detailEntry.is_directory && (
-                <div className="h-[360px] rounded-md border border-border bg-surface p-3">
-                  {previewKind === 'unsupported' && (
-                    <p className="text-sm text-text-muted">
-                      {t('remote_workspace.preview.unsupported')}
-                    </p>
-                  )}
-                  {previewKind !== 'unsupported' && previewError && (
-                    <p className="text-sm text-error">{previewError}</p>
-                  )}
-                  {previewKind !== 'unsupported' &&
-                    !previewError &&
-                    (isPreviewLoading || !previewBlob) && (
+                <div
+                  className={
+                    isPreviewFullscreen
+                      ? 'fixed inset-0 z-[60] flex flex-col overflow-hidden bg-base p-4'
+                      : 'flex h-[360px] flex-col rounded-md border border-border bg-surface p-3'
+                  }
+                  data-testid="remote-workspace-mobile-preview-panel"
+                >
+                  <div className="mb-2 flex min-h-[44px] items-center justify-between gap-3">
+                    <div className={isPreviewFullscreen ? 'min-w-0' : 'sr-only'}>
+                      <p className="truncate text-sm font-medium text-text-primary">
+                        {detailEntry.name}
+                      </p>
+                      <p className="truncate text-xs text-text-muted">{detailEntry.path}</p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setIsPreviewFullscreen(current => !current)}
+                      className="h-11 w-11"
+                      aria-label={
+                        isPreviewFullscreen
+                          ? t('remote_workspace.actions.exit_fullscreen', 'Exit fullscreen')
+                          : t('remote_workspace.actions.fullscreen', 'Fullscreen preview')
+                      }
+                      data-testid="remote-workspace-mobile-preview-fullscreen-button"
+                      title={
+                        isPreviewFullscreen
+                          ? t('remote_workspace.actions.exit_fullscreen', 'Exit fullscreen')
+                          : t('remote_workspace.actions.fullscreen', 'Fullscreen preview')
+                      }
+                    >
+                      {isPreviewFullscreen ? (
+                        <Minimize2 className="h-5 w-5" />
+                      ) : (
+                        <Maximize2 className="h-5 w-5" />
+                      )}
+                    </Button>
+                  </div>
+
+                  <div className="min-h-0 flex-1 overflow-hidden">
+                    {previewKind === 'unsupported' && (
                       <p className="text-sm text-text-muted">
-                        {t('remote_workspace.preview.loading')}
+                        {t('remote_workspace.preview.unsupported')}
                       </p>
                     )}
-                  {previewKind !== 'unsupported' &&
-                    !previewError &&
-                    !isPreviewLoading &&
-                    previewBlob && (
-                      <FilePreview
-                        fileBlob={previewBlob}
-                        filename={detailEntry.name}
-                        mimeType={getMimeTypeFromPreviewKind(previewKind, detailEntry.name)}
-                        fileSize={detailEntry.size}
-                        showToolbar={false}
-                        onDownload={() => onDownload(detailEntry)}
-                      />
+                    {previewKind !== 'unsupported' && previewError && (
+                      <p className="text-sm text-error">{previewError}</p>
                     )}
+                    {previewKind !== 'unsupported' &&
+                      !previewError &&
+                      (isPreviewLoading || !previewBlob) && (
+                        <p className="text-sm text-text-muted">
+                          {t('remote_workspace.preview.loading')}
+                        </p>
+                      )}
+                    {previewKind !== 'unsupported' &&
+                      !previewError &&
+                      !isPreviewLoading &&
+                      previewBlob && (
+                        <FilePreview
+                          fileBlob={previewBlob}
+                          filename={detailEntry.name}
+                          mimeType={getMimeTypeFromPreviewKind(previewKind, detailEntry.name)}
+                          fileSize={detailEntry.size}
+                          showToolbar={false}
+                          onDownload={() => onDownload(detailEntry)}
+                        />
+                      )}
+                  </div>
                 </div>
               )}
             </div>

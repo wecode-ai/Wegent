@@ -25,6 +25,8 @@ WORKSPACE_ROOT = "/workspace"
 SANDBOX_HOME_ROOT = "/home/user"
 SANDBOX_RUNNING_STATUS = "running"
 LOG_PREVIEW_LIMIT = 300
+# Maximum file size allowed for download via browser (50 MB)
+MAX_DOWNLOAD_FILE_SIZE = 50 * 1024 * 1024
 logger = logging.getLogger(__name__)
 
 
@@ -203,6 +205,21 @@ class RemoteWorkspaceService:
                 path=normalized_path,
             )
 
+        # Enforce maximum download file size
+        if len(content) > MAX_DOWNLOAD_FILE_SIZE:
+            logger.warning(
+                "[remote_workspace] stream_file rejected task_id=%s user_id=%s normalized_path=%s size=%s exceeds_limit=%s",
+                task_id,
+                user_id,
+                normalized_path,
+                len(content),
+                MAX_DOWNLOAD_FILE_SIZE,
+            )
+            raise HTTPException(
+                status_code=413,
+                detail=f"File exceeds maximum download size of {MAX_DOWNLOAD_FILE_SIZE // (1024 * 1024)} MB",
+            )
+
         filename = posixpath.basename(normalized_path) or "download"
         response = StreamingResponse(
             iter([content]),
@@ -222,6 +239,63 @@ class RemoteWorkspaceService:
             sandbox_payload.get("base_url") if sandbox_payload else None,
         )
         return response
+
+    def fetch_file_bytes(
+        self,
+        db: Session,
+        task_id: int,
+        user_id: int,
+        path: str,
+    ) -> tuple[bytes, str]:
+        """
+        Fetch raw file bytes from the remote workspace.
+
+        Returns a tuple of (file_content, filename).
+        Raises HTTPException on failure.
+        """
+        sandbox_payload = self._get_sandbox_payload(task_id=task_id)
+        root_path = self._resolve_root_path(
+            task_id=task_id, sandbox_payload=sandbox_payload
+        )
+        normalized_path = self.normalize_and_validate_workspace_path(
+            path, root_path=root_path
+        )
+        self._get_task_detail(db=db, task_id=task_id, user_id=user_id)
+        logger.info(
+            "[remote_workspace] fetch_file_bytes start task_id=%s user_id=%s path=%s normalized_path=%s",
+            task_id,
+            user_id,
+            path,
+            normalized_path,
+        )
+
+        if self._is_sandbox_available(sandbox_payload):
+            sandbox_base_url = str(sandbox_payload.get("base_url", "")).rstrip("/")
+            content, _ = self._download_file_via_sandbox(
+                base_url=sandbox_base_url,
+                path=normalized_path,
+            )
+        else:
+            executor_name = self._ensure_sandbox_available(
+                db=db,
+                task_id=task_id,
+                user_id=user_id,
+            )
+            content, _ = self._download_file(
+                task_id=task_id,
+                executor_name=executor_name,
+                path=normalized_path,
+            )
+
+        filename = posixpath.basename(normalized_path) or "download"
+        logger.info(
+            "[remote_workspace] fetch_file_bytes success task_id=%s user_id=%s normalized_path=%s size=%s",
+            task_id,
+            user_id,
+            normalized_path,
+            len(content),
+        )
+        return content, filename
 
     def _build_content_disposition(self, disposition: str, filename: str) -> str:
         try:

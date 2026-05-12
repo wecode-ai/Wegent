@@ -48,12 +48,17 @@ async def _handle_vnc_ws(scope, receive, send) -> None:
     qs = scope.get("query_string", b"").decode("utf-8", errors="replace")
     params = urllib.parse.parse_qs(qs)
     token = params.get("token", [""])[0]
+    user_id_param = params.get("user_id", [None])[0]
+    try:
+        user_id = int(user_id_param) if user_id_param else None
+    except (TypeError, ValueError):
+        user_id = None
 
     # Create a FastAPI WebSocket object from the ASGI scope
     websocket = WebSocket(scope, receive, send)
 
     # Call the endpoint handler directly
-    await vnc_websocket_proxy(websocket, device_id, token)
+    await vnc_websocket_proxy(websocket, device_id, token, user_id)
 
 
 def create_vnc_interceptor_app(fastapi_app: Callable) -> Callable:

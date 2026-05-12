@@ -10,6 +10,7 @@ import '@wecode/i18n'
 
 interface CloudDeviceFilesViewerProps {
   readonly deviceId: string
+  readonly ownerUserId?: number
   readonly isActive: boolean
   readonly onFileConfigChange?: (config: CloudDeviceFileConfig | null) => void
 }
@@ -18,6 +19,7 @@ type FileViewerStatus = 'idle' | 'loading' | 'ready'
 
 export function CloudDeviceFilesViewer({
   deviceId,
+  ownerUserId,
   isActive,
   onFileConfigChange,
 }: CloudDeviceFilesViewerProps) {
@@ -46,7 +48,7 @@ export function CloudDeviceFilesViewer({
     setStatus('loading')
 
     cloudDeviceApis
-      .getFileConfig(deviceId)
+      .getFileConfig(deviceId, ownerUserId)
       .then(config => {
         if (requestIdRef.current === requestId) {
           setFileConfig(config)
@@ -64,7 +66,7 @@ export function CloudDeviceFilesViewer({
           setStatus('ready')
         }
       })
-  }, [deviceId, isActive, status])
+  }, [deviceId, isActive, ownerUserId, status])
 
   if (status === 'loading') {
     return (
