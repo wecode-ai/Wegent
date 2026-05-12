@@ -545,6 +545,7 @@
       "workspace": {
         "title": "DingTalk Knowledge Base",
         "description": "Access and manage DingTalk knowledge bases",
+        "default_name": "DingTalk Knowledge Base",
         "enable_label": "Enable DingTalk Knowledge Base",
         "enable_hint": "Allow AI to access your DingTalk knowledge bases",
         "save_success": "DingTalk Knowledge Base configuration saved",

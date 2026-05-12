@@ -545,6 +545,7 @@
       "workspace": {
         "title": "钉钉知识库",
         "description": "访问和管理钉钉知识库",
+        "default_name": "钉钉知识库",
         "enable_label": "启用钉钉知识库",
         "enable_hint": "允许 AI 访问您的钉钉知识库",
         "save_success": "钉钉知识库配置已保存",

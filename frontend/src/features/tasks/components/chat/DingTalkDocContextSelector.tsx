@@ -415,43 +415,89 @@ export function DingTalkDocContextSelector({
   const handleActiveSync = activeSection === 'my-docs' ? handleSync : handleSyncWorkspace
   const handleRetry = activeSection === 'my-docs' ? fetchDocs : fetchWorkspace
 
-  if (activeLoading) {
-    return (
-      <div className="py-6 px-4 text-center text-sm text-text-muted">
-        {t('common:actions.loading')}
-      </div>
-    )
-  }
+  /** Render the content area for the active section. */
+  const renderContent = () => {
+    if (activeLoading) {
+      return (
+        <div className="py-6 px-4 text-center text-sm text-text-muted">
+          {t('common:actions.loading')}
+        </div>
+      )
+    }
 
-  if (activeSection === 'my-docs' && !isConfigured) {
-    return (
-      <div className="py-6 px-4 text-center space-y-3">
-        <p className="text-sm text-text-muted">{t('chat:dingtalkDocs.notConfigured')}</p>
-        <Link
-          href="/settings/integrations"
-          className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium transition-colors"
-        >
-          {t('chat:dingtalkDocs.goToConfigure')}
-          <ExternalLink className="w-3.5 h-3.5" />
-        </Link>
-      </div>
-    )
-  }
+    if (activeSection === 'my-docs' && !isConfigured) {
+      return (
+        <div className="py-6 px-4 text-center space-y-3">
+          <p className="text-sm text-text-muted">{t('chat:dingtalkDocs.notConfigured')}</p>
+          <Link
+            href="/settings/integrations"
+            className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium transition-colors"
+          >
+            {t('chat:dingtalkDocs.goToConfigure')}
+            <ExternalLink className="w-3.5 h-3.5" />
+          </Link>
+        </div>
+      )
+    }
 
-  if (activeError) {
-    return (
-      <div className="py-4 px-3 text-center space-y-2">
-        <p className="text-sm text-red-500">{activeError}</p>
-        <button onClick={handleRetry} className="text-xs text-primary hover:underline">
-          {t('common:actions.retry')}
-        </button>
-      </div>
-    )
+    if (activeError) {
+      return (
+        <div className="py-4 px-3 text-center space-y-2">
+          <p className="text-sm text-red-500">{activeError}</p>
+          <button onClick={handleRetry} className="text-xs text-primary hover:underline">
+            {t('common:actions.retry')}
+          </button>
+        </div>
+      )
+    }
+
+    if (activeSection === 'workspace' && !workspaceConfigured) {
+      return (
+        <div className="py-6 px-4 text-center space-y-3">
+          <p className="text-sm text-text-muted">{t('chat:dingtalkDocs.workspaceNotConfigured')}</p>
+          <a
+            href="/settings?section=integrations&tab=integrations"
+            className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium transition-colors"
+          >
+            {t('chat:dingtalkDocs.goToConfigure')}
+            <ExternalLink className="w-3.5 h-3.5" />
+          </a>
+        </div>
+      )
+    }
+
+    if (activeNodes.length === 0) {
+      return (
+        <div className="py-6 px-4 text-center space-y-3">
+          <p className="text-sm text-text-muted">{t('chat:dingtalkDocs.empty')}</p>
+          <button
+            type="button"
+            onClick={handleActiveSync}
+            disabled={activeSyncing}
+            className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={cn('w-3.5 h-3.5', activeSyncing && 'animate-spin')} />
+            {activeSyncing ? t('chat:dingtalkDocs.syncing') : t('chat:dingtalkDocs.syncNow')}
+          </button>
+        </div>
+      )
+    }
+
+    return activeNodes.map(node => (
+      <DingtalkContextTreeNode
+        key={node.dingtalk_node_id}
+        node={node}
+        level={0}
+        selectedIds={selectedContexts}
+        onToggle={handleToggle}
+        searchQuery={searchQuery}
+      />
+    ))
   }
 
   return (
     <div className="flex flex-col min-h-0 flex-1">
-      {/* Section switcher */}
+      {/* Section switcher - always visible */}
       <div className="flex border-b border-border flex-shrink-0">
         <button
           type="button"
@@ -523,44 +569,9 @@ export function DingTalkDocContextSelector({
         </button>
       </div>
 
-      {/* Tree */}
+      {/* Tree content area */}
       <div className="overflow-y-auto flex-1 max-h-[260px] py-1 px-1">
-        {activeSection === 'workspace' && !workspaceConfigured ? (
-          <div className="py-6 px-4 text-center space-y-3">
-            <p className="text-sm text-text-muted">{t('chat:dingtalkDocs.workspaceNotConfigured')}</p>
-            <a
-              href="/settings?section=integrations&tab=integrations"
-              className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium transition-colors"
-            >
-              {t('chat:dingtalkDocs.goToConfigure')}
-              <ExternalLink className="w-3.5 h-3.5" />
-            </a>
-          </div>
-        ) : activeNodes.length === 0 ? (
-          <div className="py-6 px-4 text-center space-y-3">
-            <p className="text-sm text-text-muted">{t('chat:dingtalkDocs.empty')}</p>
-            <button
-              type="button"
-              onClick={handleActiveSync}
-              disabled={activeSyncing}
-              className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium transition-colors disabled:opacity-50"
-            >
-              <RefreshCw className={cn('w-3.5 h-3.5', activeSyncing && 'animate-spin')} />
-              {activeSyncing ? t('chat:dingtalkDocs.syncing') : t('chat:dingtalkDocs.syncNow')}
-            </button>
-          </div>
-        ) : (
-          activeNodes.map(node => (
-            <DingtalkContextTreeNode
-              key={node.dingtalk_node_id}
-              node={node}
-              level={0}
-              selectedIds={selectedContexts}
-              onToggle={handleToggle}
-              searchQuery={searchQuery}
-            />
-          ))
-        )}
+        {renderContent()}
       </div>
     </div>
   )
