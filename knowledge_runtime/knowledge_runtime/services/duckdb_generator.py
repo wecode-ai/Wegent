@@ -390,7 +390,7 @@ class DuckDBGenerator:
                 records = []
                 for row in data_rows:
                     record = {}
-                    for i, (header, value) in enumerate(zip(headers, row)):
+                    for i, (header, value) in enumerate(zip(headers, row, strict=True)):
                         record[header] = value
                     records.append(record)
 
@@ -541,15 +541,22 @@ class DuckDBGenerator:
                 rows = result.fetchall()
 
                 table_samples = []
-                for row in rows:
+                for row_idx, row in enumerate(rows):
                     row_dict = {}
-                    for col, val in zip(columns, row):
-                        # Convert non-serializable types to string
-                        if val is not None and not isinstance(
-                            val, (str, int, float, bool)
-                        ):
-                            val = str(val)
-                        row_dict[col] = val
+                    try:
+                        for col, val in zip(columns, row, strict=True):
+                            # Convert non-serializable types to string
+                            if val is not None and not isinstance(
+                                val, (str, int, float, bool)
+                            ):
+                                val = str(val)
+                            row_dict[col] = val
+                    except ValueError as exc:
+                        raise ValueError(
+                            f"Column/row length mismatch in table '{table_name}' "
+                            f"at row {row_idx}: expected {len(columns)} columns, "
+                            f"got {len(row)} values"
+                        ) from exc
                     table_samples.append(row_dict)
 
                 sample_data[table_name] = table_samples

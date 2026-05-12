@@ -140,7 +140,10 @@ class ArtifactUploader:
             )
             raise ArtifactUploadError(
                 f"Failed to upload artifact: HTTP {exc.response.status_code}",
-                retryable=exc.response.status_code >= 500,
+                retryable=(
+                    exc.response.status_code >= 500
+                    or exc.response.status_code in (408, 429)
+                ),
                 details={
                     "status_code": exc.response.status_code,
                     "url": url,

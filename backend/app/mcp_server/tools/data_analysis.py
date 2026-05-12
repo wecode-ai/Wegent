@@ -175,7 +175,7 @@ def get_data_schema(
         )
         return {
             "success": False,
-            "error": f"Failed to get schema: {str(e)}",
+            "error": "Failed to get schema",
         }
     finally:
         db.close()
@@ -244,7 +244,7 @@ def execute_data_query(
         )
         return {
             "success": False,
-            "error": f"Failed to execute query: {str(e)}",
+            "error": "Failed to execute query",
         }
     finally:
         db.close()

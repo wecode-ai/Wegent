@@ -304,8 +304,10 @@ def index_document_task(
                         )
                         if ctx:
                             ext = ctx.file_extension
-                            if ext and not ext.startswith("."):
-                                ext = f".{ext}"
+                            if ext:
+                                if not ext.startswith("."):
+                                    ext = f".{ext}"
+                                ext = ext.lower()
                             if ext in (".xlsx", ".xls", ".csv"):
                                 # Reset any existing cache record so re-indexing
                                 # can trigger a fresh DuckDB generation.

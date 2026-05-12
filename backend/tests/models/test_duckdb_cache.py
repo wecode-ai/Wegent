@@ -60,17 +60,23 @@ class TestDuckDBCacheModelCreation:
 
     def test_default_status_is_pending(self, test_db: Session) -> None:
         """Default status should be 'pending'."""
-        entry = DuckDBCache(attachment_id=1, status="pending")
+        entry = DuckDBCache(attachment_id=1)
+        test_db.add(entry)
+        test_db.flush()
         assert entry.status == "pending"
 
     def test_default_tables_count_is_zero(self, test_db: Session) -> None:
         """Default tables_count should be 0."""
-        entry = DuckDBCache(attachment_id=1, tables_count=0)
+        entry = DuckDBCache(attachment_id=1)
+        test_db.add(entry)
+        test_db.flush()
         assert entry.tables_count == 0
 
     def test_default_file_size_is_zero(self, test_db: Session) -> None:
         """Default file_size should be 0."""
-        entry = DuckDBCache(attachment_id=1, file_size=0)
+        entry = DuckDBCache(attachment_id=1)
+        test_db.add(entry)
+        test_db.flush()
         assert entry.file_size == 0
 
     def test_status_transitions(self, test_db: Session) -> None:
