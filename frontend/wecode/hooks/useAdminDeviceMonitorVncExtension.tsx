@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ComputerDesktopIcon } from '@heroicons/react/24/outline'
 
 import type { AdminDeviceInfo } from '@/apis/admin'
