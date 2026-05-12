@@ -285,21 +285,20 @@ class DuckDBGenerator:
             raise RuntimeError("No sheets found in the Excel file")
 
         base_name = self._extract_table_name(source_file)
-        safe_path = str(source_path).replace("'", "\\'")
 
         if len(sheet_names) == 1:
             # Single sheet: use filename as table name
             table_name = self._sanitize_table_name(base_name)
             conn.execute(
                 f'CREATE TABLE "{table_name}" AS '
-                f"SELECT * FROM read_xlsx('{safe_path}', header=true)"
+                "SELECT * FROM read_xlsx(?, header=true)",
+                [str(source_path)],
             )
             logger.info("Imported single sheet as table '%s'", table_name)
         else:
             # Multi-sheet: import each non-empty sheet
             used_names: list[str] = []
             for sheet_name in sheet_names:
-                safe_sheet = sheet_name.replace("'", "\\'")
                 table_name = self._sanitize_table_name(f"sheet_{sheet_name}")
                 table_name = self._deduplicate_table_name(table_name, used_names)
                 used_names.append(table_name)
@@ -307,8 +306,8 @@ class DuckDBGenerator:
                 try:
                     conn.execute(
                         f'CREATE TABLE "{table_name}" AS '
-                        f"SELECT * FROM read_xlsx('{safe_path}', "
-                        f"header=true, sheet='{safe_sheet}')"
+                        "SELECT * FROM read_xlsx(?, header=true, sheet=?)",
+                        [str(source_path), sheet_name],
                     )
                     # Check if the table has any rows; if empty, drop it
                     count = conn.execute(
@@ -430,11 +429,10 @@ class DuckDBGenerator:
         """
         base_name = self._extract_table_name(source_file)
         table_name = self._sanitize_table_name(base_name)
-        safe_path = str(source_path).replace("'", "\\'")
 
         conn.execute(
-            f'CREATE TABLE "{table_name}" AS '
-            f"SELECT * FROM read_csv_auto('{safe_path}')"
+            f'CREATE TABLE "{table_name}" AS ' "SELECT * FROM read_csv_auto(?)",
+            [str(source_path)],
         )
         logger.info("Imported CSV/TSV as table '%s'", table_name)
 
