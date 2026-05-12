@@ -127,7 +127,7 @@ export default function MobileModelSelector({
           type="button"
           disabled={isDisabled}
           className={cn(
-            'flex items-center min-w-0 max-w-full rounded-full px-3 py-2 h-9',
+            'flex w-full items-center min-w-0 max-w-full rounded-full px-3 py-2 h-9',
             'border transition-colors overflow-hidden',
             modelSelection.isModelRequired
               ? 'border-error text-error bg-error/5'
@@ -138,7 +138,9 @@ export default function MobileModelSelector({
             'disabled:cursor-not-allowed disabled:opacity-50'
           )}
         >
-          <span className="truncate text-xs min-w-0">{modelSelection.getDisplayText()}</span>
+          <span className="flex-1 truncate text-xs min-w-0">
+            {modelSelection.getDisplayText()}
+          </span>
         </button>
       </DrawerTrigger>
 

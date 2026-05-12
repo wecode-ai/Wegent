@@ -687,8 +687,8 @@ class SessionManager:
     ) -> None:
         """Add a tool block for a subtask.
 
-        This also finalizes any current text block before adding the tool block.
-        Uses Redis RPUSH for O(1) block addition.
+        This also finalizes any current text block before upserting the tool block.
+        Reuses block ids to make duplicate start callbacks idempotent.
 
         Args:
             subtask_id: Subtask ID
@@ -713,17 +713,11 @@ class SessionManager:
                 server_label=server_label,
             )
 
-            # Use RPUSH to append block to list (O(1) operation)
-            blocks_key = self._get_blocks_key(subtask_id)
-            redis_client = await self._cache._get_client()
-            try:
-                await redis_client.rpush(blocks_key, json.dumps(block))
-                await redis_client.expire(blocks_key, STREAMING_TTL)
-            finally:
-                await redis_client.aclose()
+            # Upsert by block id so callback retries do not duplicate tool blocks.
+            await self.add_block(subtask_id, block)
 
             logger.info(
-                f"[SessionManager] Added tool block for subtask {subtask_id}: "
+                f"[SessionManager] Upserted tool block for subtask {subtask_id}: "
                 f"id={block['id']}, tool_name={tool_name}"
             )
         except Exception as e:

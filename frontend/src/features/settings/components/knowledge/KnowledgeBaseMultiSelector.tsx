@@ -25,6 +25,8 @@ interface KnowledgeBaseMultiSelectorProps {
   value: KnowledgeBaseDefaultRef[]
   onChange: (value: KnowledgeBaseDefaultRef[]) => void
   disabled?: boolean
+  allowedSources?: KnowledgeBaseOptionSource[]
+  allowedGroupNamespaces?: string[]
 }
 
 interface GroupedKnowledgeBaseOption {
@@ -83,7 +85,7 @@ function getSourceLabel(source: KnowledgeBaseOptionSource, t: TFunction) {
     case 'group':
       return t('common:bot.default_knowledge_bases_source_group', '群组')
     case 'organization':
-      return t('common:bot.default_knowledge_bases_source_organization', '组织')
+      return t('common:bot.default_knowledge_bases_source_organization', '公司')
   }
 }
 
@@ -94,7 +96,7 @@ function getGroupTitle(source: KnowledgeBaseOptionSource, t: TFunction) {
     case 'group':
       return t('common:bot.default_knowledge_bases_group_group', '群组知识库')
     case 'organization':
-      return t('common:bot.default_knowledge_bases_group_organization', '组织知识库')
+      return t('common:bot.default_knowledge_bases_group_organization', '公司知识库')
   }
 }
 
@@ -278,6 +280,8 @@ export function KnowledgeBaseMultiSelector({
   value,
   onChange,
   disabled = false,
+  allowedSources,
+  allowedGroupNamespaces,
 }: KnowledgeBaseMultiSelectorProps) {
   const { t } = useTranslation()
   const { options, loading, error } = useKnowledgeBaseOptions()
@@ -293,8 +297,30 @@ export function KnowledgeBaseMultiSelector({
     }
   }, [open])
 
+  const filteredOptions = useMemo(() => {
+    return options.filter(option => {
+      if (allowedSources && allowedSources.length > 0 && !allowedSources.includes(option.source)) {
+        return false
+      }
+
+      if (
+        option.source === 'group' &&
+        allowedGroupNamespaces &&
+        allowedGroupNamespaces.length > 0 &&
+        !allowedGroupNamespaces.includes(option.namespace)
+      ) {
+        return false
+      }
+
+      return true
+    })
+  }, [options, allowedSources, allowedGroupNamespaces])
+
   const selectedIds = useMemo(() => new Set(value.map(item => item.id)), [value])
-  const optionsById = useMemo(() => new Map(options.map(option => [option.id, option])), [options])
+  const optionsById = useMemo(
+    () => new Map(filteredOptions.map(option => [option.id, option])),
+    [filteredOptions]
+  )
 
   const selectedItems = useMemo(
     () => value.map(item => optionsById.get(item.id) ?? buildFallbackOption(item)),
@@ -304,10 +330,12 @@ export function KnowledgeBaseMultiSelector({
   const groupedAvailableItems = useMemo(
     () =>
       groupAvailableKnowledgeBases(
-        options.filter(option => !selectedIds.has(option.id) && matchesSearch(option, search)),
+        filteredOptions.filter(
+          option => !selectedIds.has(option.id) && matchesSearch(option, search)
+        ),
         t
       ),
-    [options, search, selectedIds, t]
+    [filteredOptions, search, selectedIds, t]
   )
 
   const handleSelect = (option: KnowledgeBaseOption) => {

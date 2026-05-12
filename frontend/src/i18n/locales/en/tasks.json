@@ -19,6 +19,8 @@
     "title": "Remote Workspace",
     "root": "Workspace",
     "parent": "Parent",
+    "parent_entry": "Parent folder",
+    "parent_entry_hint": "Go back one level",
     "search_placeholder": "Search for the current file list",
     "sort": {
       "label": "Sort",
@@ -31,10 +33,17 @@
     },
     "actions": {
       "cancel": "Cancel",
+      "close": "Close",
       "download": "Download",
+      "exit_fullscreen": "Exit fullscreen",
+      "fullscreen": "Fullscreen preview",
       "go": "Go",
       "preview": "Preview",
       "refresh": "Refresh"
+    },
+    "download_confirm": {
+      "title": "Download selected files?",
+      "description": "This will download {{count}} selected files. Your browser may show multiple download prompts."
     },
     "columns": {
       "select_all": "Select all files",
@@ -46,7 +55,8 @@
     "status": {
       "path": "Path",
       "selected": "selected",
-      "items": "items"
+      "items": "items",
+      "has_files": "Files"
     },
     "path": {
       "edit": "Edit path",

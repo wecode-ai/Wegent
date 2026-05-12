@@ -4,6 +4,8 @@
     "description": "A whole dev team of AI agents in your editor."
   },
   "loading": "Loading...",
+  "noData": "No data",
+  "scroll_to_bottom": "Scroll to bottom",
   "repos": {
     "repository": "Select Repository",
     "branch": "Select Branch",
@@ -47,11 +49,14 @@
     "download": "Download",
     "share": "Share",
     "preview": "Preview",
+    "fullscreen": "Fullscreen preview",
+    "exit_fullscreen": "Exit fullscreen",
     "generating": "Generating...",
     "zoom_in": "Zoom In",
     "zoom_out": "Zoom Out",
     "rotate": "Rotate",
-    "clear": "Clear"
+    "clear": "Clear",
+    "move": "Move"
   },
   "errors": {
     "request_failed": "LLM API request failed, please click retry"
@@ -281,6 +286,7 @@
     "copy_skills_skip": "Agent Only",
     "copy_skills_count": "{{count}} skill(s)",
     "more": "More",
+    "reorder_quick_access": "Drag to reorder QuickCards",
     "more_teams": "View more teams",
     "more_actions": "More Actions",
     "no_teams": "No teams available",
@@ -288,6 +294,15 @@
     "no_teams_description": "Create your first agent to start intelligent conversations",
     "create_first_team": "Create Agent",
     "system_recommended": "Recommended",
+    "quick_access_title": "Favorite agents",
+    "quick_access_description": "This list shows your favorites and system-recommended agents by default.",
+    "quick_access_empty": "No favorite agents yet",
+    "quick_access_view_all": "View all agents",
+    "quick_access_back": "Back to favorites",
+    "all_agents_title": "All agents",
+    "all_agents_description": "Choose from all agents available for the current mode.",
+    "search_quick_access": "Search favorite agents...",
+    "search_all_agents": "Search all agents...",
     "new_team": "New Team",
     "search_placeholder": "Search team...",
     "no_match": "No matching teams",
@@ -1379,17 +1394,18 @@
     "preview": {
       "label": "Preview",
       "loading": "Loading preview...",
-      "unavailable": "Preview unavailable"
+      "unavailable": "Preview unavailable",
+      "dialog_description": "Previewing file {{filename}}"
     },
     "truncation": {
       "notice": "⚠️ Content too long, auto-truncated ({{original}} chars → {{truncated}} chars)"
     },
-    "supported_types": "PDF, Word, Excel, TXT, Markdown, Images, HTML, Code files",
+    "supported_types": "PDF, Word, Excel, XMind, TXT, Markdown, Images, HTML, Code files",
     "html_preview": "HTML Preview",
     "click_to_preview": "Click to preview",
     "click_to_download": "Click to download",
     "characters": "chars",
-    "upload_tooltip": "Supported file types: Documents (PDF, Word, PPT, Excel), Images, HTML, Markdown, Code files and text files\nHTML and Markdown files will be rendered with preview\nMax file size: {{size}} MB",
+    "upload_tooltip": "Supported file types: Documents (PDF, Word, PPT, Excel, XMind), Images, HTML, Markdown, Code files and text files\nHTML and Markdown files will be rendered with preview\nMax file size: {{size}} MB",
     "share": {
       "link_copied_title": "Share Link Copied",
       "copy_failed_title": "Failed to Copy to Clipboard",

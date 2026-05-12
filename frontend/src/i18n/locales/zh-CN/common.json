@@ -4,6 +4,8 @@
     "description": "浏览器中的完整 AI 团队。"
   },
   "loading": "加载中...",
+  "noData": "暂无数据",
+  "scroll_to_bottom": "滚动到底部",
   "repos": {
     "repository": "选择仓库",
     "branch": "选择分支",
@@ -47,11 +49,14 @@
     "download": "下载",
     "share": "分享",
     "preview": "预览",
+    "fullscreen": "全屏预览",
+    "exit_fullscreen": "退出全屏",
     "generating": "生成中...",
     "zoom_in": "放大",
     "zoom_out": "缩小",
     "rotate": "旋转",
-    "clear": "清除"
+    "clear": "清除",
+    "move": "移动"
   },
   "errors": {
     "request_failed": "请求大模型接口失败，请点击重试"
@@ -232,10 +237,10 @@
     "default_knowledge_bases_available_section": "可添加知识库",
     "default_knowledge_bases_group_personal": "个人知识库",
     "default_knowledge_bases_group_group": "群组知识库",
-    "default_knowledge_bases_group_organization": "组织知识库",
+    "default_knowledge_bases_group_organization": "公司知识库",
     "default_knowledge_bases_source_personal": "个人",
     "default_knowledge_bases_source_group": "群组",
-    "default_knowledge_bases_source_organization": "组织",
+    "default_knowledge_bases_source_organization": "公司",
     "default_knowledge_bases_source_shared": "共享",
     "default_knowledge_bases_updated_at": "最近更新",
     "default_knowledge_bases_selected_badge": "已选",
@@ -281,6 +286,7 @@
     "copy_skills_skip": "仅复制智能体",
     "copy_skills_count": "{{count}} 个 Skill",
     "more": "更多",
+    "reorder_quick_access": "拖拽调整 QuickCard 顺序",
     "more_teams": "查看更多智能体",
     "more_actions": "更多操作",
     "no_teams": "没有可用的智能体",
@@ -288,6 +294,15 @@
     "no_teams_description": "创建您的第一个智能体，开始智能对话",
     "create_first_team": "创建智能体",
     "system_recommended": "系统推荐",
+    "quick_access_title": "常用智能体",
+    "quick_access_description": "这里默认展示已收藏和系统推荐的智能体。",
+    "quick_access_empty": "暂无常用智能体",
+    "quick_access_view_all": "查看全部智能体",
+    "quick_access_back": "返回常用智能体",
+    "all_agents_title": "全部智能体",
+    "all_agents_description": "从当前模式可用的所有智能体中选择。",
+    "search_quick_access": "搜索常用智能体...",
+    "search_all_agents": "搜索全部智能体...",
     "new_team": "新建智能体",
     "search_placeholder": "搜索智能体...",
     "no_match": "没有匹配的智能体",
@@ -1373,17 +1388,18 @@
     "preview": {
       "label": "预览",
       "loading": "正在加载预览...",
-      "unavailable": "暂无预览"
+      "unavailable": "暂无预览",
+      "dialog_description": "正在预览文件 {{filename}}"
     },
     "truncation": {
       "notice": "⚠️ 文件内容过长，已自动压缩（原始 {{original}} 字符 → 压缩至 {{truncated}} 字符）"
     },
-    "supported_types": "PDF、Word、Excel、TXT、Markdown、图片、HTML、代码文件",
+    "supported_types": "PDF、Word、Excel、XMind、TXT、Markdown、图片、HTML、代码文件",
     "html_preview": "HTML 预览",
     "click_to_preview": "点击预览",
     "click_to_download": "点击下载",
     "characters": "字符",
-    "upload_tooltip": "支持的文件类型: 文档(PDF, Word, PPT, Excel), 图片, HTML, Markdown, 代码文件及各类文本文件\nHTML 和 Markdown 文件支持预览渲染\n最大文件大小: {{size}} MB",
+    "upload_tooltip": "支持的文件类型: 文档(PDF, Word, PPT, Excel, XMind), 图片, HTML, Markdown, 代码文件及各类文本文件\nHTML 和 Markdown 文件支持预览渲染\n最大文件大小: {{size}} MB",
     "share": {
       "link_copied_title": "分享链接已复制",
       "copy_failed_title": "复制到剪贴板失败",

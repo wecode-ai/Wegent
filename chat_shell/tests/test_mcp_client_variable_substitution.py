@@ -13,7 +13,12 @@ StdioConnection, StreamableHttpConnection) which are plain dicts,
 so we use dict-style access (conn["key"]) not attribute access.
 """
 
-from chat_shell.tools.mcp.client import build_connections
+from unittest.mock import patch
+
+import pytest
+from langchain_core.tools import StructuredTool
+
+from chat_shell.tools.mcp.client import MCPClient, build_connections
 from shared.models.execution import ExecutionRequest
 
 
@@ -136,3 +141,55 @@ class TestBuildConnectionsVariableSubstitution:
         assert conn["headers"]["X-User"] == "testuser"
         assert conn["headers"]["X-Task"] == "999"
         assert conn["headers"]["X-Team"] == "50"
+
+
+class TestMCPClientToolNamePrefix:
+    """Tests that MCPClient uses the adapter's official server-name prefix."""
+
+    @pytest.mark.asyncio
+    async def test_connect_enables_official_tool_name_prefix(self) -> None:
+        """MCP tools should be named with the official server_tool format."""
+
+        def list_files() -> str:
+            """List files from the fake MCP server."""
+            return "[]"
+
+        class FakeMultiServerMCPClient:
+            def __init__(
+                self,
+                connections,
+                *,
+                tool_name_prefix: bool = False,
+                **_kwargs,
+            ) -> None:
+                self.connections = connections
+                self.tool_name_prefix = tool_name_prefix
+
+            async def get_tools(self, *, server_name: str | None = None):
+                tool_name = (
+                    f"{server_name}_list_files"
+                    if self.tool_name_prefix
+                    else "list_files"
+                )
+                return [
+                    StructuredTool.from_function(
+                        func=list_files,
+                        name=tool_name,
+                    )
+                ]
+
+        config = {
+            "filesystem": {
+                "type": "streamable-http",
+                "url": "http://mcp.example.com/stream",
+            }
+        }
+
+        with patch(
+            "chat_shell.tools.mcp.client.MultiServerMCPClient",
+            FakeMultiServerMCPClient,
+        ):
+            client = MCPClient(config)
+            await client.connect()
+
+        assert [tool.name for tool in client.get_tools()] == ["filesystem_list_files"]

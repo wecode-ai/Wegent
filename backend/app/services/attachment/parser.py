@@ -6,8 +6,9 @@
 Document parser service for extracting text from various file formats.
 
 Supports: PDF, Word (.doc, .docx), PowerPoint (.ppt, .pptx),
-Excel (.xls, .xlsx, .csv), TXT, Markdown files, Images (.jpg, .jpeg, .png, .gif, .bmp, .webp),
-and any text-based files detected via MIME type analysis.
+Excel (.xls, .xlsx, .csv), XMind (.xmind), TXT, Markdown files,
+Images (.jpg, .jpeg, .png, .gif, .bmp, .webp), and any text-based files
+detected via MIME type analysis.
 
 Features smart truncation that preserves document structure:
 - Excel/CSV: Header + sample rows + ellipsis + tail rows
@@ -40,6 +41,7 @@ from app.services.attachment.smart_truncation import (
     SmartTruncationManager,
     TruncationType,
 )
+from shared.utils.xmind_parser import XMindParseError, parse_xmind_to_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -208,6 +210,7 @@ class DocumentParser:
     - Word (.doc, .docx)
     - PowerPoint (.ppt, .pptx)
     - Excel (.xls, .xlsx, .csv)
+    - XMind (.xmind)
     - Plain text (.txt)
     - Markdown (.md)
     - Images (.jpg, .jpeg, .png, .gif, .bmp, .webp)
@@ -231,6 +234,7 @@ class DocumentParser:
         ".xls": "application/vnd.ms-excel",
         ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         ".csv": "text/csv",
+        ".xmind": "application/vnd.xmind.workbook",
         ".txt": "text/plain",
         ".md": "text/markdown",
         ".jpg": "image/jpeg",
@@ -253,6 +257,7 @@ class DocumentParser:
         ".xls",
         ".xlsx",
         ".csv",
+        ".xmind",
         ".jpg",
         ".jpeg",
         ".png",
@@ -477,6 +482,8 @@ class DocumentParser:
                 )
             elif extension == ".csv":
                 text, truncation_info = self._parse_csv_smart(binary_data, max_length)
+            elif extension == ".xmind":
+                text, truncation_info = self._parse_xmind_smart(binary_data, max_length)
             elif extension in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]:
                 text, image_base64 = self._parse_image(binary_data, extension)
             elif extension == ".zip":
@@ -498,6 +505,8 @@ class DocumentParser:
                 text = self._parse_excel(binary_data, extension)
             elif extension == ".csv":
                 text = self._parse_csv(binary_data)
+            elif extension == ".xmind":
+                text = self._parse_xmind(binary_data)
             elif extension in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]:
                 text, image_base64 = self._parse_image(binary_data, extension)
             elif extension == ".zip":
@@ -981,16 +990,28 @@ class DocumentParser:
             text += f"颜色模式: {mode}\n"
             text += f"文件大小: {len(binary_data)} 字节"
 
-            # Try to extract EXIF data if available
-            if hasattr(img, "_getexif") and img._getexif():
-                text += "\n\n[EXIF 信息]"
-                exif_data = img._getexif()
-                if exif_data:
-                    # Just mention EXIF is available, don't extract all
-                    text += "\n包含 EXIF 元数据"
+            # Try to extract EXIF data if available (JPEG only; PNG raises OSError)
+            try:
+                if hasattr(img, "_getexif") and img._getexif():
+                    text += "\n\n[EXIF 信息]\n包含 EXIF 元数据"
+            except Exception:
+                pass
 
-            # Encode image to base64 for vision models
-            image_base64 = base64.b64encode(binary_data).decode("utf-8")
+            # Force full image load to validate pixel data (Image.open is lazy)
+            img.load()
+
+            # Re-encode to PNG to ensure valid image data for vision models
+            output_buf = io.BytesIO()
+            png_img = img
+            if img.mode == "CMYK":
+                png_img = img.convert("RGB")
+            elif img.mode == "P" and "transparency" in img.info:
+                png_img = img.convert("RGBA")
+            elif img.mode not in {"1", "L", "LA", "RGB", "RGBA", "P"}:
+                png_img = img.convert("RGB")
+
+            png_img.save(output_buf, format="PNG")
+            image_base64 = base64.b64encode(output_buf.getvalue()).decode("utf-8")
 
             return text, image_base64
 
@@ -1046,6 +1067,17 @@ class DocumentParser:
             logger.error(f"Error parsing archive: {e}", exc_info=True)
             raise DocumentParseError(
                 f"Failed to parse archive: {str(e)}",
+                DocumentParseError.PARSE_FAILED,
+            ) from e
+
+    def _parse_xmind(self, binary_data: bytes) -> str:
+        """Parse XMind mind-map topics into Markdown text."""
+        try:
+            return parse_xmind_to_markdown(binary_data)
+        except XMindParseError as e:
+            logger.error(f"Error parsing XMind file: {e}", exc_info=True)
+            raise DocumentParseError(
+                f"Failed to parse XMind file: {str(e)}",
                 DocumentParseError.PARSE_FAILED,
             ) from e
 
@@ -1463,8 +1495,19 @@ class DocumentParser:
         """
         # First decode the text
         text = self._parse_text(binary_data)
+        return self._truncate_text(text, max_length)
 
-        # Apply smart truncation
+    def _parse_xmind_smart(
+        self, binary_data: bytes, max_length: int
+    ) -> Tuple[str, Optional[TruncationInfo]]:
+        """Parse XMind and apply Markdown-aware text truncation."""
+        text = self._parse_xmind(binary_data)
+        return self._truncate_text(text, max_length)
+
+    def _truncate_text(
+        self, text: str, max_length: int
+    ) -> Tuple[str, Optional[TruncationInfo]]:
+        """Apply smart truncation to already-decoded text."""
         truncated_text, smart_info = self.truncation_manager.truncate_text(
             text, max_length
         )

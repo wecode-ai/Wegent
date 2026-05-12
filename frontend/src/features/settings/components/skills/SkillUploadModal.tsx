@@ -10,6 +10,8 @@ import {
   uploadSkill,
   updateSkill,
   fetchSkillByName,
+  uploadPublicSkill,
+  updatePublicSkillWithUpload,
   UnifiedSkill,
   scanGitRepoSkills,
   importGitRepoSkills,
@@ -97,7 +99,6 @@ export default function SkillUploadModal({
   // Upload tab state
   const [skillName, setSkillName] = useState(getSkillName(skill))
   const namespace = propNamespace || 'default'
-  console.log(`[SkillUploadModal] propNamespace=${propNamespace}, namespace=${namespace}`)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
@@ -125,17 +126,20 @@ export default function SkillUploadModal({
   // Upload Tab Logic
   // ============================================================================
 
-  const validateFile = (file: File): string | null => {
-    if (!file.name.endsWith('.zip')) {
-      return t('skills.error_file_format')
-    }
-    if (file.size > MAX_FILE_SIZE) {
-      return t('skills.error_file_size', {
-        fileSize: (file.size / (1024 * 1024)).toFixed(1),
-      })
-    }
-    return null
-  }
+  const validateFile = useCallback(
+    (file: File): string | null => {
+      if (!/\.zip$/i.test(file.name)) {
+        return t('skills.error_file_format')
+      }
+      if (file.size > MAX_FILE_SIZE) {
+        return t('skills.error_file_size', {
+          fileSize: (file.size / (1024 * 1024)).toFixed(1),
+        })
+      }
+      return null
+    },
+    [t]
+  )
 
   const handleFileSelect = useCallback(
     (file: File) => {
@@ -155,7 +159,7 @@ export default function SkillUploadModal({
         setSkillName(nameFromFile)
       }
     },
-    [isEditMode, skillName, t]
+    [isEditMode, skillName, validateFile]
   )
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -201,20 +205,15 @@ export default function SkillUploadModal({
     }
 
     // Check if skill with same name already exists (only for create mode)
-    console.log(
-      `[SkillUploadModal] Checking for existing skill: name=${skillName.trim()}, namespace=${namespace}`
-    )
-    if (!isEditMode) {
+    if (!isEditMode && !isPublic) {
       try {
         const existing = await fetchSkillByName(skillName.trim(), namespace)
-        console.log(`[SkillUploadModal] Existing skill check result:`, existing)
         if (existing) {
           setExistingSkill(existing)
           setOverwriteDialogOpen(true)
           return
         }
-      } catch (error) {
-        console.error(`[SkillUploadModal] Error checking for existing skill:`, error)
+      } catch (_error) {
         // Ignore errors when checking for existing skill
       }
     }
@@ -232,13 +231,21 @@ export default function SkillUploadModal({
     try {
       if (isEditMode && skill) {
         const skillId = getSkillId(skill)
-        await updateSkill(skillId, selectedFile, setUploadProgress)
+        if (isPublic) {
+          await updatePublicSkillWithUpload(skillId, selectedFile, setUploadProgress)
+        } else {
+          await updateSkill(skillId, selectedFile, setUploadProgress)
+        }
       } else if (overwrite && existingSkill) {
         // Update existing skill
         const skillId = parseInt(existingSkill.metadata.labels?.id || '0')
         await updateSkill(skillId, selectedFile, setUploadProgress)
       } else {
-        await uploadSkill(selectedFile, skillName.trim(), namespace, setUploadProgress)
+        if (isPublic) {
+          await uploadPublicSkill(selectedFile, skillName.trim(), setUploadProgress)
+        } else {
+          await uploadSkill(selectedFile, skillName.trim(), namespace, setUploadProgress)
+        }
       }
       onClose(true)
     } catch (err) {

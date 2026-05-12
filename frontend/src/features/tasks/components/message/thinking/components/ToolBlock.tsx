@@ -27,7 +27,7 @@ function getToolInputPreview(
   maxLength: number = 60
 ): string | null {
   const input = tool.toolUse?.details?.input as Record<string, unknown> | string | undefined
-  if (!input) return null
+  if (!hasMeaningfulToolInput(input)) return null
 
   const toolName = tool.toolName
 
@@ -105,6 +105,17 @@ function getToolInputPreview(
   }
 
   return null
+}
+
+function hasMeaningfulToolInput(input: Record<string, unknown> | string | undefined): boolean {
+  if (!input) return false
+  if (typeof input === 'string') {
+    const trimmed = input.trim()
+    if (!trimmed) return false
+    if (trimmed === '{}' || trimmed === '[]') return false
+    return true
+  }
+  return Object.keys(input).length > 0
 }
 
 /**
@@ -199,11 +210,9 @@ export const ToolBlock = memo(function ToolBlock({
   const inputPreview = useMemo(() => getToolInputPreview(tool), [tool])
 
   // Check if expandable (has content to show)
-  const hasInput =
-    tool.toolUse?.details?.input &&
-    (typeof tool.toolUse.details.input === 'string'
-      ? tool.toolUse.details.input.length > 0
-      : Object.keys(tool.toolUse.details.input).length > 0)
+  const hasInput = hasMeaningfulToolInput(
+    tool.toolUse?.details?.input as Record<string, unknown> | string | undefined
+  )
   const hasOutput = tool.toolResult?.details?.output || tool.toolResult?.details?.content
   const hasContent = hasInput || hasOutput
   const isExpandable = hasContent
@@ -285,11 +294,9 @@ export const ToolBlock = memo(function ToolBlock({
             const CurrentToolRenderer = getToolRenderer(toolItem.toolName)
             const preview = getToolInputPreview(toolItem, 80)
             // Check if tool has content to render
-            const toolHasInput =
-              toolItem.toolUse?.details?.input &&
-              (typeof toolItem.toolUse.details.input === 'string'
-                ? toolItem.toolUse.details.input.length > 0
-                : Object.keys(toolItem.toolUse.details.input).length > 0)
+            const toolHasInput = hasMeaningfulToolInput(
+              toolItem.toolUse?.details?.input as Record<string, unknown> | string | undefined
+            )
             const toolHasOutput =
               toolItem.toolResult?.details?.output || toolItem.toolResult?.details?.content
             const toolHasContent = toolHasInput || toolHasOutput

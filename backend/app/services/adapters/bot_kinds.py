@@ -27,6 +27,7 @@ from app.services.adapters.shell_utils import (
 )
 from app.services.adapters.task_kinds.running_tasks import get_running_tasks_for_team
 from app.services.base import BaseService
+from app.services.knowledge.knowledge_service import KnowledgeService
 from shared.utils.crypto import encrypt_sensitive_data, is_data_encrypted
 
 
@@ -58,6 +59,40 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         "DIFY_API_KEY",
         # Add more sensitive keys here as needed
     ]
+
+    def _validate_default_knowledge_bases(
+        self,
+        db: Session,
+        refs: Optional[List[Any]],
+        user_id: int,
+        namespace: str,
+    ) -> None:
+        """Restrict group bots to current-group and organization knowledge bases."""
+        if not refs or namespace == "default":
+            return
+
+        grouped_kbs = KnowledgeService.get_all_knowledge_bases_grouped(
+            db=db,
+            user_id=user_id,
+        )
+
+        allowed_ids = {kb.id for kb in grouped_kbs.organization.knowledge_bases}
+        current_group = next(
+            (group for group in grouped_kbs.groups if group.group_name == namespace),
+            None,
+        )
+        if current_group is not None:
+            allowed_ids.update(kb.id for kb in current_group.knowledge_bases)
+
+        invalid_refs = [ref.name for ref in refs if ref.id not in allowed_ids]
+        if invalid_refs:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Group bots can only bind knowledge bases from the current "
+                    "group or the organization"
+                ),
+            )
 
     def _encrypt_agent_config(self, agent_config: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -313,6 +348,12 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             self._validate_skills(db, obj_in.skills, user_id, namespace)
         if obj_in.preload_skills:
             self._validate_skills(db, obj_in.preload_skills, user_id, namespace)
+        self._validate_default_knowledge_bases(
+            db,
+            obj_in.default_knowledge_base_refs,
+            user_id,
+            namespace,
+        )
 
         # Encrypt sensitive data in agent_config before storing
         encrypted_agent_config = self._encrypt_agent_config(obj_in.agent_config)
@@ -755,6 +796,13 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
         # Get related components
         ghost, shell, model = self._get_bot_components(db, bot, user_id)
+        if "default_knowledge_base_refs" in update_data:
+            self._validate_default_knowledge_bases(
+                db,
+                obj_in.default_knowledge_base_refs,
+                user_id,
+                bot.namespace or "default",
+            )
 
         # Track the agent_config to return (for predefined models)
         return_agent_config = None

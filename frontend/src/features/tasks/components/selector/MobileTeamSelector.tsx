@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { Check, Search, Settings, ChevronDown } from 'lucide-react'
+import { Check, Search, Settings, ChevronDown, Star } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -15,6 +15,7 @@ import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDi
 import { Tag } from '@/components/ui/tag'
 import type { Team } from '@/types/api'
 import SystemTeamTag from './SystemTeamTag'
+import { useTeamFavorites } from './useTeamFavorites'
 
 interface MobileTeamSelectorProps {
   selectedTeam: Team | null
@@ -49,6 +50,13 @@ export default function MobileTeamSelector({
   const [isOpen, setIsOpen] = useState(false)
   const [searchValue, setSearchValue] = useState('')
   const [isSearchFocused, setIsSearchFocused] = useState(false)
+  const {
+    favoriteTeamIdSet,
+    favoriteUpdatingTeamId,
+    handleToggleFavorite,
+    quickAccessMetaLoaded,
+    systemRecommendedTeamIdSet,
+  } = useTeamFavorites()
 
   useEffect(() => {
     if (!isOpen) {
@@ -86,7 +94,7 @@ export default function MobileTeamSelector({
           type="button"
           disabled={isDisabled}
           className={cn(
-            'flex items-center min-w-0 max-w-full rounded-full px-3 py-2 h-9',
+            'flex w-full items-center min-w-0 max-w-full rounded-full px-3 py-2 h-9',
             'border border-border bg-base text-text-primary transition-colors overflow-hidden',
             isLoading ? 'animate-pulse' : '',
             'focus:outline-none focus:ring-0',
@@ -102,7 +110,7 @@ export default function MobileTeamSelector({
               className="text-text-muted flex-shrink-0"
             />
           )}
-          <span className="truncate text-xs min-w-0">
+          <span className="flex-1 truncate text-xs min-w-0">
             {triggerText || selectedTeamDisplayName || t('common:teams.select_team')}
           </span>
           {triggerText && <ChevronDown className="w-2.5 h-2.5 text-text-muted flex-shrink-0" />}
@@ -161,15 +169,22 @@ export default function MobileTeamSelector({
                 const isLast = index === searchFilteredTeams.length - 1
 
                 return (
-                  <button
+                  <div
                     key={team.id}
-                    type="button"
                     onClick={() => handleTeamSelect(team)}
                     className={cn(
                       'w-full flex items-center justify-between px-4 py-3',
                       'text-left active:bg-[#d1d1d6] dark:active:bg-[#3a3a3c]',
                       !isLast && 'border-b border-[#c6c6c8] dark:border-[#38383a]'
                     )}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={event => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        handleTeamSelect(team)
+                      }
+                    }}
                   >
                     <div className="flex items-center gap-2.5 flex-1 min-w-0">
                       <TeamIconDisplay
@@ -178,15 +193,18 @@ export default function MobileTeamSelector({
                         className="flex-shrink-0 text-text-muted"
                       />
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[15px] text-text-primary truncate">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-[15px] text-text-primary truncate flex-1 min-w-0">
                             {displayName}
                           </span>
-                          {isSystemTeam && <SystemTeamTag className="text-[11px] py-0 px-1.5" />}
+                          {isSystemTeam && (
+                            <SystemTeamTag className="text-[11px] py-0 px-1.5 flex-shrink-0" />
+                          )}
                           {isGroupTeam && (
                             <Tag
-                              className="text-[11px] !m-0 flex-shrink-0 py-0 px-1.5"
+                              className="text-[11px] !m-0 flex-shrink-0 py-0 px-1.5 max-w-[120px] truncate"
                               variant="info"
+                              title={team.namespace}
                             >
                               {team.namespace}
                             </Tag>
@@ -199,8 +217,42 @@ export default function MobileTeamSelector({
                         )}
                       </div>
                     </div>
-                    {isSelected && <Check className="h-5 w-5 text-[#007aff] flex-shrink-0 ml-3" />}
-                  </button>
+                    <div className="ml-3 flex items-center gap-2">
+                      {quickAccessMetaLoaded && !systemRecommendedTeamIdSet.has(team.id) && (
+                        <button
+                          type="button"
+                          data-testid={`mobile-favorite-team-button-${team.id}`}
+                          aria-label={
+                            favoriteTeamIdSet.has(team.id)
+                              ? t('common:teams.remove_from_quick_access')
+                              : t('common:teams.add_to_quick_access')
+                          }
+                          title={
+                            favoriteTeamIdSet.has(team.id)
+                              ? t('common:teams.remove_from_quick_access')
+                              : t('common:teams.add_to_quick_access')
+                          }
+                          disabled={favoriteUpdatingTeamId === team.id}
+                          onClick={event => handleToggleFavorite(event, team)}
+                          className={cn(
+                            'h-8 w-8 rounded-full inline-flex items-center justify-center',
+                            'text-[#8e8e93] active:bg-[#d1d1d6] dark:active:bg-[#3a3a3c]',
+                            'disabled:pointer-events-none disabled:opacity-50',
+                            favoriteTeamIdSet.has(team.id) && 'text-[#007aff]'
+                          )}
+                        >
+                          <Star
+                            className={cn(
+                              'h-4 w-4',
+                              favoriteTeamIdSet.has(team.id) && 'fill-current'
+                            )}
+                            aria-hidden="true"
+                          />
+                        </button>
+                      )}
+                      {isSelected && <Check className="h-5 w-5 text-[#007aff] flex-shrink-0" />}
+                    </div>
+                  </div>
                 )
               })}
             </div>
