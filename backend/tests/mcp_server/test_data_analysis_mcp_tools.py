@@ -14,51 +14,101 @@ from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools import data_analysis
 
 
-class TestGetDuckDBAttachmentId:
-    """Tests for _get_duckdb_attachment_id helper."""
+class TestGetDuckDBInfo:
+    """Tests for _get_duckdb_info helper."""
 
-    def test_returns_duckdb_attachment_id_when_found(self) -> None:
-        """Should return duckdb_attachment_id when type_data contains it."""
+    def test_returns_info_when_cache_ready(self) -> None:
+        """Should return duckdb info when cache entry is ready."""
         mock_db = MagicMock()
+
+        # Mock SubtaskContext lookup
         mock_context = MagicMock()
-        mock_context.type_data = {"duckdb_attachment_id": 99}
+        mock_context.type_data = {
+            "duckdb_attachment_id": 99,
+            "duckdb_summary": {"sales": [{"column_name": "id"}]},
+            "duckdb_tables": [{"name": "sales", "row_count": 100, "columns": []}],
+        }
         mock_db.query.return_value.filter.return_value.first.return_value = mock_context
 
-        result = data_analysis._get_duckdb_attachment_id(
-            db=mock_db, attachment_id=42, user_id=1
-        )
-        assert result == 99
+        # Mock DuckDBCache lookup
+        mock_cache = MagicMock()
+        mock_cache.status = "ready"
+        mock_cache.duckdb_attachment_id = 99
+
+        # Set up sequential query calls
+        mock_db.query.side_effect = [
+            MagicMock(filter=MagicMock(return_value=MagicMock(first=MagicMock(return_value=mock_context)))),
+            MagicMock(filter=MagicMock(return_value=MagicMock(first=MagicMock(return_value=mock_cache)))),
+        ]
+
+        # Mock content ref building
+        mock_content_ref = MagicMock()
+        mock_content_ref.model_dump.return_value = {
+            "kind": "backend_attachment_stream",
+            "url": "http://backend:8000/api/internal/rag/content/99",
+            "auth_token": "test-token",
+        }
+
+        with patch.object(
+            data_analysis, "build_content_ref_for_duckdb", return_value=mock_content_ref
+        ):
+            result = data_analysis._get_duckdb_info(
+                db=mock_db, attachment_id=42, user_id=1
+            )
+
+        assert result is not None
+        assert result["duckdb_attachment_id"] == 99
+        assert "content_ref" in result
+        assert "summary" in result
+        assert "tables" in result
 
     def test_returns_none_when_context_not_found(self) -> None:
         """Should return None when no context record exists."""
         mock_db = MagicMock()
         mock_db.query.return_value.filter.return_value.first.return_value = None
 
-        result = data_analysis._get_duckdb_attachment_id(
+        result = data_analysis._get_duckdb_info(
             db=mock_db, attachment_id=42, user_id=1
         )
         assert result is None
 
-    def test_returns_none_when_no_duckdb_key(self) -> None:
-        """Should return None when type_data has no duckdb_attachment_id."""
+    def test_returns_none_when_cache_not_ready(self) -> None:
+        """Should return None when cache entry is not ready."""
         mock_db = MagicMock()
-        mock_context = MagicMock()
-        mock_context.type_data = {"other_key": "value"}
-        mock_db.query.return_value.filter.return_value.first.return_value = mock_context
 
-        result = data_analysis._get_duckdb_attachment_id(
+        # Mock SubtaskContext lookup
+        mock_context = MagicMock()
+        mock_context.type_data = {}
+
+        # Mock DuckDBCache lookup - status is "generating"
+        mock_cache = MagicMock()
+        mock_cache.status = "generating"
+
+        mock_db.query.side_effect = [
+            MagicMock(filter=MagicMock(return_value=MagicMock(first=MagicMock(return_value=mock_context)))),
+            MagicMock(filter=MagicMock(return_value=MagicMock(first=MagicMock(return_value=mock_cache)))),
+        ]
+
+        result = data_analysis._get_duckdb_info(
             db=mock_db, attachment_id=42, user_id=1
         )
         assert result is None
 
-    def test_returns_none_when_type_data_is_none(self) -> None:
-        """Should return None when type_data is None."""
+    def test_returns_none_when_no_cache_entry(self) -> None:
+        """Should return None when no cache entry exists."""
         mock_db = MagicMock()
-        mock_context = MagicMock()
-        mock_context.type_data = None
-        mock_db.query.return_value.filter.return_value.first.return_value = mock_context
 
-        result = data_analysis._get_duckdb_attachment_id(
+        # Mock SubtaskContext lookup
+        mock_context = MagicMock()
+        mock_context.type_data = {}
+
+        # Mock DuckDBCache lookup - no entry
+        mock_db.query.side_effect = [
+            MagicMock(filter=MagicMock(return_value=MagicMock(first=MagicMock(return_value=mock_context)))),
+            MagicMock(filter=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))),
+        ]
+
+        result = data_analysis._get_duckdb_info(
             db=mock_db, attachment_id=42, user_id=1
         )
         assert result is None
@@ -83,12 +133,13 @@ class TestGetDataSchemaTool:
 
         with patch.object(data_analysis, "SessionLocal") as mock_session_cls:
             mock_db = MagicMock()
-            mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_db)
-            mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
+            mock_session_cls.return_value = mock_db
+            mock_db.__enter__ = MagicMock(return_value=mock_db)
+            mock_db.__exit__ = MagicMock(return_value=False)
 
             with patch.object(
                 data_analysis,
-                "_get_duckdb_attachment_id",
+                "_get_duckdb_info",
                 return_value=None,
             ):
                 result = data_analysis.get_data_schema(
@@ -99,8 +150,8 @@ class TestGetDataSchemaTool:
         assert result["success"] is False
         assert "No DuckDB data found" in result["error"]
 
-    def test_calls_kr_schema_when_duckdb_attachment_exists(self) -> None:
-        """Should call knowledge_runtime schema endpoint when DuckDB exists."""
+    def test_returns_schema_with_content_ref(self) -> None:
+        """Should return schema info and content_ref when DuckDB exists."""
         token_info = TaskTokenInfo(
             task_id=1,
             subtask_id=2,
@@ -108,29 +159,36 @@ class TestGetDataSchemaTool:
             user_name="testuser",
         )
 
-        expected_result = {
-            "success": True,
-            "attachment_id": 42,
-            "tables": [{"name": "sales", "row_count": 100, "columns": []}],
-            "error": None,
+        info = {
+            "duckdb_attachment_id": 99,
+            "content_ref": {
+                "kind": "backend_attachment_stream",
+                "url": "http://backend:8000/api/internal/rag/content/99",
+                "auth_token": "test-token",
+            },
+            "summary": {"sales": [{"column_name": "id", "column_type": "INTEGER"}]},
+            "tables": [
+                {
+                    "name": "sales",
+                    "row_count": 100,
+                    "columns": [
+                        {"name": "id", "type": "INTEGER", "null_count": 0},
+                        {"name": "name", "type": "VARCHAR", "null_count": 5},
+                    ],
+                }
+            ],
         }
 
         with patch.object(data_analysis, "SessionLocal") as mock_session_cls:
             mock_db = MagicMock()
-            mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_db)
-            mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
+            mock_session_cls.return_value = mock_db
+            mock_db.__enter__ = MagicMock(return_value=mock_db)
+            mock_db.__exit__ = MagicMock(return_value=False)
 
-            with (
-                patch.object(
-                    data_analysis,
-                    "_get_duckdb_attachment_id",
-                    return_value=99,
-                ),
-                patch.object(
-                    data_analysis,
-                    "_call_kr_schema",
-                    return_value=expected_result,
-                ) as mock_call_kr,
+            with patch.object(
+                data_analysis,
+                "_get_duckdb_info",
+                return_value=info,
             ):
                 result = data_analysis.get_data_schema(
                     attachment_id=42,
@@ -138,10 +196,11 @@ class TestGetDataSchemaTool:
                 )
 
         assert result["success"] is True
-        mock_call_kr.assert_called_once_with(
-            attachment_id=42,
-            duckdb_attachment_id=99,
-        )
+        assert result["attachment_id"] == 42
+        assert len(result["tables"]) == 1
+        assert result["tables"][0]["name"] == "sales"
+        assert "content_ref" in result
+        assert "summary" in result
 
 
 class TestExecuteDataQueryTool:
@@ -163,12 +222,13 @@ class TestExecuteDataQueryTool:
 
         with patch.object(data_analysis, "SessionLocal") as mock_session_cls:
             mock_db = MagicMock()
-            mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_db)
-            mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
+            mock_session_cls.return_value = mock_db
+            mock_db.__enter__ = MagicMock(return_value=mock_db)
+            mock_db.__exit__ = MagicMock(return_value=False)
 
             with patch.object(
                 data_analysis,
-                "_get_duckdb_attachment_id",
+                "_get_duckdb_info",
                 return_value=None,
             ):
                 result = data_analysis.execute_data_query(
@@ -180,8 +240,8 @@ class TestExecuteDataQueryTool:
         assert result["success"] is False
         assert "No DuckDB data found" in result["error"]
 
-    def test_calls_kr_query_when_duckdb_attachment_exists(self) -> None:
-        """Should call knowledge_runtime query endpoint when DuckDB exists."""
+    def test_returns_content_ref_and_tables(self) -> None:
+        """Should return content_ref and table names for local execution."""
         token_info = TaskTokenInfo(
             task_id=1,
             subtask_id=2,
@@ -189,31 +249,30 @@ class TestExecuteDataQueryTool:
             user_name="testuser",
         )
 
-        expected_result = {
-            "success": True,
-            "columns": ["id", "name"],
-            "rows": [[1, "Alice"]],
-            "row_count": 1,
-            "truncated": False,
-            "error": None,
+        info = {
+            "duckdb_attachment_id": 99,
+            "content_ref": {
+                "kind": "backend_attachment_stream",
+                "url": "http://backend:8000/api/internal/rag/content/99",
+                "auth_token": "test-token",
+            },
+            "summary": {},
+            "tables": [
+                {"name": "sales", "row_count": 100, "columns": []},
+                {"name": "orders", "row_count": 50, "columns": []},
+            ],
         }
 
         with patch.object(data_analysis, "SessionLocal") as mock_session_cls:
             mock_db = MagicMock()
-            mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_db)
-            mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
+            mock_session_cls.return_value = mock_db
+            mock_db.__enter__ = MagicMock(return_value=mock_db)
+            mock_db.__exit__ = MagicMock(return_value=False)
 
-            with (
-                patch.object(
-                    data_analysis,
-                    "_get_duckdb_attachment_id",
-                    return_value=99,
-                ),
-                patch.object(
-                    data_analysis,
-                    "_call_kr_query",
-                    return_value=expected_result,
-                ) as mock_call_kr,
+            with patch.object(
+                data_analysis,
+                "_get_duckdb_info",
+                return_value=info,
             ):
                 result = data_analysis.execute_data_query(
                     attachment_id=42,
@@ -222,11 +281,10 @@ class TestExecuteDataQueryTool:
                 )
 
         assert result["success"] is True
-        mock_call_kr.assert_called_once_with(
-            attachment_id=42,
-            duckdb_attachment_id=99,
-            sql="SELECT * FROM data_db.sales",
-        )
+        assert "content_ref" in result
+        assert result["tables"] == ["sales", "orders"]
+        assert result["sql"] == "SELECT * FROM data_db.sales"
+        assert "instruction" in result
 
     def test_handles_exception_gracefully(self) -> None:
         """Should return error dict on unexpected exceptions."""
@@ -239,12 +297,13 @@ class TestExecuteDataQueryTool:
 
         with patch.object(data_analysis, "SessionLocal") as mock_session_cls:
             mock_db = MagicMock()
-            mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_db)
-            mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
+            mock_session_cls.return_value = mock_db
+            mock_db.__enter__ = MagicMock(return_value=mock_db)
+            mock_db.__exit__ = MagicMock(return_value=False)
 
             with patch.object(
                 data_analysis,
-                "_get_duckdb_attachment_id",
+                "_get_duckdb_info",
                 side_effect=RuntimeError("Database connection failed"),
             ):
                 result = data_analysis.execute_data_query(

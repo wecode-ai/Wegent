@@ -5,7 +5,8 @@
 """Data analysis endpoints for DuckDB operations.
 
 Provides REST API endpoints for generating DuckDB files from Excel/CSV
-attachments, executing SQL queries, and retrieving schema information.
+attachments. Query execution has been moved to the Executor container
+to keep knowledge_runtime stateless.
 """
 
 from __future__ import annotations
@@ -16,10 +17,6 @@ from knowledge_runtime.services.data_service import DataService
 from shared.models.data_analysis_protocol import (
     RemoteDataGenerateRequest,
     RemoteDataGenerateResponse,
-    RemoteDataQueryRequest,
-    RemoteDataQueryResponse,
-    RemoteDataSchemaRequest,
-    RemoteDataSchemaResponse,
 )
 
 router = APIRouter()
@@ -37,27 +34,3 @@ async def generate_duckdb(
     and returns the summary with table metadata.
     """
     return await _data_service.generate_duckdb(request)
-
-
-@router.post("/query", response_model=RemoteDataQueryResponse)
-async def query_duckdb(
-    request: RemoteDataQueryRequest,
-) -> RemoteDataQueryResponse:
-    """Execute a SQL query against a DuckDB attachment.
-
-    Runs the query in :memory: + ATTACH read-only mode with security
-    validation, timeout enforcement, and result size limiting.
-    """
-    return await _data_service.query_duckdb(request)
-
-
-@router.post("/schema", response_model=RemoteDataSchemaResponse)
-async def get_schema(
-    request: RemoteDataSchemaRequest,
-) -> RemoteDataSchemaResponse:
-    """Get schema information for a DuckDB attachment.
-
-    Returns table names, row counts, and column metadata (name, type,
-    null_count) for all tables in the DuckDB file.
-    """
-    return await _data_service.get_schema(request)

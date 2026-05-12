@@ -2,11 +2,11 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""High-level data analysis service orchestrating DuckDB operations.
+"""High-level data analysis service orchestrating DuckDB generation.
 
-Provides a unified interface for generating DuckDB files from Excel/CSV data,
-executing SQL queries against existing DuckDB files, and retrieving schema
-information. Delegates to specialized services for each operation.
+Provides a unified interface for generating DuckDB files from Excel/CSV data.
+Query execution has been moved to the Executor container to keep
+knowledge_runtime stateless.
 """
 
 from __future__ import annotations
@@ -19,31 +19,26 @@ from knowledge_runtime.services.artifact_uploader import (
     ArtifactUploadError,
 )
 from knowledge_runtime.services.duckdb_generator import DuckDBGenerator
-from knowledge_runtime.services.duckdb_manager import DuckDBManager
-from knowledge_runtime.services.duckdb_query import DuckDBQueryService
 from shared.models.data_analysis_protocol import (
     RemoteDataGenerateRequest,
     RemoteDataGenerateResponse,
-    RemoteDataQueryRequest,
-    RemoteDataQueryResponse,
-    RemoteDataSchemaRequest,
-    RemoteDataSchemaResponse,
 )
 
 logger = logging.getLogger(__name__)
 
 
 class DataService:
-    """High-level data analysis service orchestrating DuckDB operations.
+    """High-level data analysis service for DuckDB file generation.
 
-    Coordinates between DuckDBGenerator, DuckDBManager, DuckDBQueryService,
-    and ArtifactUploader to provide a unified data analysis API.
+    Coordinates between DuckDBGenerator and ArtifactUploader to generate
+    .duckdb files from Excel/CSV attachments and upload them to Backend.
+
+    Query execution is handled by the Executor container, not knowledge_runtime,
+    to maintain statelessness and avoid per-node caching issues.
     """
 
     def __init__(self) -> None:
         self._generator = DuckDBGenerator()
-        self._manager = DuckDBManager()
-        self._query_service = DuckDBQueryService(self._manager)
         self._uploader = ArtifactUploader()
 
     async def generate_duckdb(
@@ -128,79 +123,4 @@ class DataService:
                 success=False,
                 attachment_id=request.attachment_id,
                 error=f"DuckDB generation failed: {exc}",
-            )
-
-    async def query_duckdb(
-        self, request: RemoteDataQueryRequest
-    ) -> RemoteDataQueryResponse:
-        """Execute SQL query against a DuckDB attachment.
-
-        Args:
-            request: Query request with SQL and attachment reference.
-
-        Returns:
-            RemoteDataQueryResponse with query results or error.
-        """
-        try:
-            result = await self._query_service.query(
-                attachment_id=request.attachment_id,
-                content_ref=request.content_ref,
-                sql=request.sql,
-                max_rows=request.max_rows,
-            )
-
-            return RemoteDataQueryResponse(
-                success=result.error is None,
-                columns=result.columns,
-                rows=result.rows,
-                row_count=result.row_count,
-                total_count=result.total_count,
-                execution_time_ms=result.execution_time_ms,
-                truncated=result.truncated,
-                error=result.error,
-            )
-
-        except Exception as exc:
-            logger.error(
-                "Query execution failed for attachment_id=%d: %s",
-                request.attachment_id,
-                exc,
-            )
-            return RemoteDataQueryResponse(
-                success=False,
-                error=f"Query execution failed: {exc}",
-            )
-
-    async def get_schema(
-        self, request: RemoteDataSchemaRequest
-    ) -> RemoteDataSchemaResponse:
-        """Get schema information for a DuckDB attachment.
-
-        Args:
-            request: Schema request with attachment reference.
-
-        Returns:
-            RemoteDataSchemaResponse with table and column metadata.
-        """
-        try:
-            result = await self._query_service.get_schema(
-                attachment_id=request.attachment_id,
-                content_ref=request.content_ref,
-            )
-
-            return RemoteDataSchemaResponse(
-                attachment_id=request.attachment_id,
-                tables=result.tables,
-                error=result.error,
-            )
-
-        except Exception as exc:
-            logger.error(
-                "Schema extraction failed for attachment_id=%d: %s",
-                request.attachment_id,
-                exc,
-            )
-            return RemoteDataSchemaResponse(
-                attachment_id=request.attachment_id,
-                error=f"Schema extraction failed: {exc}",
             )

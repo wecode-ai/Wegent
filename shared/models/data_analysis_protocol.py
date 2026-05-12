@@ -67,14 +67,17 @@ class RemoteDataGenerateResponse(KnowledgeRuntimeProtocolModel):
     error: str | None = None
 
 
-# ============== Query Request/Response ==============
+# ============== Query Request/Response (DEPRECATED) ==============
+# These models are no longer used for Backend <-> knowledge_runtime communication.
+# Query execution has been moved to the Executor container.
+# Kept for backward compatibility and potential future use.
 
 
 class RemoteDataQueryRequest(KnowledgeRuntimeProtocolModel):
     """Request to execute a SQL query against a DuckDB attachment.
 
-    The query runs in :memory: + ATTACH read-only mode.
-    Table names must use the data_db. prefix.
+    DEPRECATED: Query execution has been moved to the Executor container.
+    This model is kept for backward compatibility.
     """
 
     attachment_id: int
@@ -85,7 +88,11 @@ class RemoteDataQueryRequest(KnowledgeRuntimeProtocolModel):
 
 
 class RemoteDataQueryResponse(KnowledgeRuntimeProtocolModel):
-    """Response from a SQL query against a DuckDB attachment."""
+    """Response from a SQL query against a DuckDB attachment.
+
+    DEPRECATED: Query execution has been moved to the Executor container.
+    This model is kept for backward compatibility.
+    """
 
     success: bool
     columns: list[str] = []
@@ -97,11 +104,18 @@ class RemoteDataQueryResponse(KnowledgeRuntimeProtocolModel):
     error: str | None = None
 
 
-# ============== Schema Request/Response ==============
+# ============== Schema Request/Response (DEPRECATED) ==============
+# These models are no longer used for Backend <-> knowledge_runtime communication.
+# Schema retrieval is now served directly from Backend's duckdb_cache metadata.
+# Kept for backward compatibility and potential future use.
 
 
 class RemoteDataSchemaRequest(KnowledgeRuntimeProtocolModel):
-    """Request to get schema information for a DuckDB attachment."""
+    """Request to get schema information for a DuckDB attachment.
+
+    DEPRECATED: Schema retrieval is now served directly from Backend metadata.
+    This model is kept for backward compatibility.
+    """
 
     attachment_id: int
     content_ref: ContentRef
@@ -109,7 +123,11 @@ class RemoteDataSchemaRequest(KnowledgeRuntimeProtocolModel):
 
 
 class RemoteDataSchemaResponse(KnowledgeRuntimeProtocolModel):
-    """Schema information for tables in a DuckDB attachment."""
+    """Schema information for tables in a DuckDB attachment.
+
+    DEPRECATED: Schema retrieval is now served directly from Backend metadata.
+    This model is kept for backward compatibility.
+    """
 
     attachment_id: int
     tables: list[DuckDBTableInfo] = []

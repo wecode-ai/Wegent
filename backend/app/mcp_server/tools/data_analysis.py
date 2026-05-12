@@ -2,10 +2,22 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""MCP tools for data analysis - SQL querying and schema introspection for Excel/CSV files."""
+"""MCP tools for data analysis - SQL querying and schema introspection for Excel/CSV files.
+
+Architecture: Backend provides ContentRef for the Executor to download .duckdb files
+and execute queries locally. This keeps knowledge_runtime stateless and avoids
+per-node caching issues in load-balanced deployments.
+
+Flow:
+1. AI calls wegent_data_schema/wegent_data_query via MCP
+2. Backend returns ContentRef + schema/query instructions
+3. Executor downloads .duckdb file, executes query locally
+4. Result is returned to AI
+"""
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Dict
 
@@ -14,22 +26,17 @@ from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
 from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools.decorator import mcp_tool
+from app.models.duckdb_cache import DuckDBCache
 from app.models.subtask_context import ContextType, SubtaskContext
 from app.services.rag.content_refs import build_content_ref_for_duckdb
-from shared.models.data_analysis_protocol import (
-    RemoteDataQueryRequest,
-    RemoteDataQueryResponse,
-    RemoteDataSchemaRequest,
-    RemoteDataSchemaResponse,
-)
 
 logger = logging.getLogger(__name__)
 
 
-def _get_duckdb_attachment_id(
+def _get_duckdb_info(
     db: Session, attachment_id: int, user_id: int
-) -> int | None:
-    """Look up the duckdb_attachment_id from SubtaskContext.type_data.
+) -> Dict[str, Any] | None:
+    """Look up DuckDB metadata from duckdb_cache table and SubtaskContext.
 
     Args:
         db: Database session
@@ -37,8 +44,10 @@ def _get_duckdb_attachment_id(
         user_id: User ID for ownership verification
 
     Returns:
-        The duckdb_attachment_id if found, None otherwise
+        Dict with duckdb_attachment_id, content_ref, summary, tables
+        if found, None otherwise
     """
+    # Verify the attachment belongs to the user
     context = (
         db.query(SubtaskContext)
         .filter(
@@ -51,105 +60,42 @@ def _get_duckdb_attachment_id(
     if not context:
         return None
 
+    # Look up from duckdb_cache table (primary source of truth)
+    cache_entry = (
+        db.query(DuckDBCache).filter(DuckDBCache.attachment_id == attachment_id).first()
+    )
+    if (
+        not cache_entry
+        or cache_entry.status != "ready"
+        or not cache_entry.duckdb_attachment_id
+    ):
+        return None
+
+    # Build ContentRef for the .duckdb file
+    try:
+        content_ref = build_content_ref_for_duckdb(
+            db=db,
+            duckdb_attachment_id=cache_entry.duckdb_attachment_id,
+        )
+    except Exception as exc:
+        logger.error(
+            "Failed to build content ref for duckdb_attachment_id=%d: %s",
+            cache_entry.duckdb_attachment_id,
+            exc,
+        )
+        return None
+
+    # Get tables info from type_data (populated during generation)
     type_data = context.type_data or {}
-    return type_data.get("duckdb_attachment_id")
+    duckdb_tables = type_data.get("duckdb_tables", [])
+    duckdb_summary = type_data.get("duckdb_summary", {})
 
-
-def _call_kr_schema(attachment_id: int, duckdb_attachment_id: int) -> Dict[str, Any]:
-    """Call knowledge_runtime to get schema information.
-
-    Args:
-        attachment_id: Original source attachment ID
-        duckdb_attachment_id: The .duckdb file attachment ID
-
-    Returns:
-        Schema response dict with consistent success field
-    """
-    import httpx
-
-    from app.core.config import settings
-
-    db = SessionLocal()
-    try:
-        content_ref = build_content_ref_for_duckdb(
-            db=db,
-            duckdb_attachment_id=duckdb_attachment_id,
-        )
-        request = RemoteDataSchemaRequest(
-            attachment_id=attachment_id,
-            content_ref=content_ref,
-        )
-
-        kr_url = (
-            getattr(settings, "KNOWLEDGE_RUNTIME_URL", "http://localhost:8200")
-            or "http://localhost:8200"
-        )
-        with httpx.Client(timeout=30) as client:
-            response = client.post(
-                f"{kr_url}/internal/data/schema",
-                json=request.model_dump(mode="json"),
-                headers={
-                    "Authorization": f"Bearer {settings.INTERNAL_SERVICE_TOKEN}",
-                    "Content-Type": "application/json",
-                },
-            )
-            response.raise_for_status()
-            result = RemoteDataSchemaResponse.model_validate(response.json())
-            # Add success field for consistent response format
-            result_dict = result.model_dump()
-            result_dict["success"] = result.error is None
-            return result_dict
-    finally:
-        db.close()
-
-
-def _call_kr_query(
-    attachment_id: int, duckdb_attachment_id: int, sql: str
-) -> Dict[str, Any]:
-    """Call knowledge_runtime to execute a SQL query.
-
-    Args:
-        attachment_id: Original source attachment ID
-        duckdb_attachment_id: The .duckdb file attachment ID
-        sql: SQL query to execute
-
-    Returns:
-        Query response dict
-    """
-    import httpx
-
-    from app.core.config import settings
-
-    db = SessionLocal()
-    try:
-        content_ref = build_content_ref_for_duckdb(
-            db=db,
-            duckdb_attachment_id=duckdb_attachment_id,
-        )
-        request = RemoteDataQueryRequest(
-            attachment_id=attachment_id,
-            content_ref=content_ref,
-            sql=sql,
-        )
-
-        kr_url = (
-            getattr(settings, "KNOWLEDGE_RUNTIME_URL", "http://localhost:8200")
-            or "http://localhost:8200"
-        )
-        with httpx.Client(timeout=60) as client:
-            response = client.post(
-                f"{kr_url}/internal/data/query",
-                json=request.model_dump(mode="json"),
-                headers={
-                    "Authorization": f"Bearer {settings.INTERNAL_SERVICE_TOKEN}",
-                    "Content-Type": "application/json",
-                },
-            )
-            response.raise_for_status()
-            result = RemoteDataQueryResponse.model_validate(response.json())
-            return result.model_dump()
-    finally:
-        db.close()
+    return {
+        "duckdb_attachment_id": cache_entry.duckdb_attachment_id,
+        "content_ref": content_ref.model_dump(mode="json"),
+        "summary": duckdb_summary,
+        "tables": duckdb_tables,
+    }
 
 
 @mcp_tool(
@@ -168,33 +114,61 @@ def get_data_schema(
 
     Retrieves table names, column definitions, and statistical summaries
     for an Excel/CSV file that has been processed with DuckDB.
+    Also returns a ContentRef for the Executor to download the .duckdb file.
 
     Args:
         attachment_id: The ID of the attachment to inspect
         token_info: Task token info (injected by MCP framework)
 
     Returns:
-        Dict containing tables with their schema information
+        Dict containing tables with their schema information and content_ref
     """
     db = SessionLocal()
     try:
-        # Look up duckdb_attachment_id from the source attachment
-        duckdb_attachment_id = _get_duckdb_attachment_id(
+        info = _get_duckdb_info(
             db=db,
             attachment_id=attachment_id,
             user_id=token_info.user_id,
         )
-        if not duckdb_attachment_id:
+        if not info:
             return {
                 "success": False,
                 "error": f"No DuckDB data found for attachment {attachment_id}. "
                 "The file may not be an Excel/CSV file, or DuckDB generation may not have completed yet.",
             }
 
-        return _call_kr_schema(
-            attachment_id=attachment_id,
-            duckdb_attachment_id=duckdb_attachment_id,
-        )
+        # Build schema from stored summary and tables info
+        tables_schema = []
+        for table in info["tables"]:
+            table_name = table.get("name", "unknown")
+            row_count = table.get("row_count", 0)
+            columns = table.get("columns", [])
+
+            columns_info = []
+            for col in columns:
+                columns_info.append(
+                    {
+                        "name": col.get("name", ""),
+                        "type": col.get("type", ""),
+                        "null_count": col.get("null_count", 0),
+                    }
+                )
+
+            tables_schema.append(
+                {
+                    "name": table_name,
+                    "row_count": row_count,
+                    "columns": columns_info,
+                }
+            )
+
+        return {
+            "success": True,
+            "attachment_id": attachment_id,
+            "tables": tables_schema,
+            "summary": info["summary"],
+            "content_ref": info["content_ref"],
+        }
     except Exception as e:
         logger.exception(
             f"Error getting data schema for attachment {attachment_id}: {e}"
@@ -223,9 +197,9 @@ def execute_data_query(
 ) -> Dict[str, Any]:
     """Execute a SQL query against a data attachment.
 
-    Runs a read-only SQL query against the DuckDB database generated
-    from an Excel/CSV file. Use wegent_data_schema first to understand
-    the available tables and columns.
+    Returns a ContentRef for the Executor to download the .duckdb file
+    and execute the query locally. The actual SQL execution happens in
+    the Executor container, keeping knowledge_runtime stateless.
 
     Args:
         attachment_id: The ID of the attachment to query
@@ -233,28 +207,37 @@ def execute_data_query(
         token_info: Task token info (injected by MCP framework)
 
     Returns:
-        Dict containing query results with columns, rows, and metadata
+        Dict containing content_ref for downloading the .duckdb file,
+        available table names, and the validated SQL.
     """
     db = SessionLocal()
     try:
-        # Look up duckdb_attachment_id from the source attachment
-        duckdb_attachment_id = _get_duckdb_attachment_id(
+        info = _get_duckdb_info(
             db=db,
             attachment_id=attachment_id,
             user_id=token_info.user_id,
         )
-        if not duckdb_attachment_id:
+        if not info:
             return {
                 "success": False,
                 "error": f"No DuckDB data found for attachment {attachment_id}. "
                 "The file may not be an Excel/CSV file, or DuckDB generation may not have completed yet.",
             }
 
-        return _call_kr_query(
-            attachment_id=attachment_id,
-            duckdb_attachment_id=duckdb_attachment_id,
-            sql=sql,
-        )
+        # Extract available table names
+        table_names = [table.get("name", "") for table in info["tables"]]
+
+        return {
+            "success": True,
+            "content_ref": info["content_ref"],
+            "tables": table_names,
+            "sql": sql,
+            "instruction": (
+                "Download the .duckdb file using the content_ref, "
+                "then execute the SQL query locally in read-only mode. "
+                "Use data_db. prefix for table names."
+            ),
+        }
     except Exception as e:
         logger.exception(
             f"Error executing data query for attachment {attachment_id}: {e}"
