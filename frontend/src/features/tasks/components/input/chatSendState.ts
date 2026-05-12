@@ -28,7 +28,8 @@ export interface ChatSendState {
 }
 
 export function getChatSendState(input: ChatSendStateInput): ChatSendState {
-  const hasMessage = input.shouldHideChatInput || input.taskInputMessage.trim().length > 0
+  const hasTextContent = input.taskInputMessage.trim().length > 0
+  const hasMessage = input.shouldHideChatInput || hasTextContent
   const baseDisabled =
     input.isLoading ||
     input.isModelSelectionRequired ||
@@ -46,7 +47,7 @@ export function getChatSendState(input: ChatSendStateInput): ChatSendState {
     }
   }
 
-  if (isActiveStream && input.canQueueMessage && !baseDisabled) {
+  if (isActiveStream && input.canQueueMessage && hasTextContent && !baseDisabled) {
     return {
       primaryAction: 'queue',
       isPrimaryDisabled: false,

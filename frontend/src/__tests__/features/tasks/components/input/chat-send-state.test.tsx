@@ -200,6 +200,31 @@ describe('getChatSendState', () => {
     })
   })
 
+  it('keeps stop as the only action while streaming with hidden empty input', () => {
+    expect(
+      getChatSendState({
+        isLoading: false,
+        isStreaming: true,
+        isAwaitingResponseStart: false,
+        isStopping: false,
+        isModelSelectionRequired: false,
+        isAttachmentReadyToSend: true,
+        hasNoTeams: false,
+        shouldHideChatInput: true,
+        taskInputMessage: '',
+        selectedTaskStatus: 'RUNNING',
+        isSubtaskStreaming: true,
+        isGroupChat: false,
+        canQueueMessage: true,
+      })
+    ).toEqual({
+      primaryAction: 'stop',
+      isPrimaryDisabled: false,
+      showStopAction: true,
+      showPendingAction: false,
+    })
+  })
+
   it('uses normal send outside streaming', () => {
     expect(
       getChatSendState({
