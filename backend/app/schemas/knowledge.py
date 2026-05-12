@@ -324,6 +324,11 @@ class KnowledgeDocumentCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     file_extension: str = Field(..., max_length=50)
     file_size: int = Field(default=0, ge=0)
+    folder_id: int = Field(
+        default=0,
+        ge=0,
+        description="Target folder ID (0 = root level)",
+    )
     splitter_config: Optional[SplitterConfig] = None
     source_type: DocumentSourceType = Field(default=DocumentSourceType.FILE)
     source_config: dict = Field(
@@ -360,6 +365,7 @@ class KnowledgeDocumentResponse(BaseModel):
     splitter_config: Optional[SplitterConfig] = None
     source_type: DocumentSourceType = DocumentSourceType.FILE
     source_config: Optional[dict] = None
+    folder_id: int = Field(default=0, ge=0, description="Folder ID (0 = root level)")
     doc_ref: Optional[str] = Field(
         None, description="RAG storage document reference ID"
     )
@@ -402,6 +408,69 @@ class KnowledgeDocumentListResponse(BaseModel):
 
     total: int
     items: list[KnowledgeDocumentResponse]
+
+
+# ============== Knowledge Folder Schemas ==============
+
+
+class KnowledgeFolderCreate(BaseModel):
+    """Schema for creating a knowledge folder."""
+
+    name: str = Field(..., min_length=1, max_length=255)
+    parent_id: int = Field(
+        default=0, ge=0, description="Parent folder ID (0 = root level)"
+    )
+
+    @field_validator("name")
+    @classmethod
+    def validate_name_not_whitespace(cls, v: str) -> str:
+        """Reject names that are empty or consist only of whitespace."""
+        if not v.strip():
+            raise ValueError("Folder name must not be empty or whitespace-only")
+        return v.strip()
+
+
+class KnowledgeFolderUpdate(BaseModel):
+    """Schema for updating a knowledge folder."""
+
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    parent_id: Optional[int] = Field(
+        None,
+        ge=0,
+        description="New parent folder ID (0 = root level, None = no change)",
+    )
+
+    @field_validator("name")
+    @classmethod
+    def validate_name_not_whitespace(cls, v: Optional[str]) -> Optional[str]:
+        """Reject names that are empty or consist only of whitespace."""
+        if v is not None and not v.strip():
+            raise ValueError("Folder name must not be empty or whitespace-only")
+        return v.strip() if v is not None else v
+
+
+class KnowledgeFolderResponse(BaseModel):
+    """Schema for knowledge folder response with nested children."""
+
+    id: int
+    kind_id: int
+    parent_id: int = Field(..., description="Parent folder ID (0 = root level)")
+    name: str
+    children: list["KnowledgeFolderResponse"] = Field(default_factory=list)
+    document_count: int = Field(
+        default=0, description="Number of documents in this folder"
+    )
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class DocumentMoveRequest(BaseModel):
+    """Schema for moving a document to a different folder."""
+
+    folder_id: int = Field(..., ge=0, description="Target folder ID (0 = root level)")
 
 
 # ============== Batch Operation Schemas ==============
@@ -798,6 +867,7 @@ class KnowledgeDocumentCreateV1(BaseModel):
         description="Attachment context ID (required for source_type='attachment')",
     )
     # common optional
+    folder_id: int = Field(0, ge=0, description="Target folder ID (0 = root level)")
     splitter_config: Optional[SplitterConfig] = Field(
         None,
         description="Custom text splitter configuration",

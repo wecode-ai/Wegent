@@ -9,7 +9,7 @@
  * Uses the optimized all-grouped API to solve N+1 query problem.
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import { dingtalkDocApi } from '@/apis/dingtalk-doc'
 import { getKnowledgeBase } from '@/apis/knowledge'
@@ -412,25 +412,37 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     saveRecentAccess([])
   }, [])
 
+  // Ref to track the latest intended KB selection, used to discard stale async responses
+  const latestSelectedKbIdRef = useRef<number | null>(null)
+
   // Selection management
   const selectKb = useCallback(
     (kb: KnowledgeBase) => {
+      // Record the intended selection before starting any async work
+      latestSelectedKbIdRef.current = kb.id
       setSelectedKbId(kb.id)
-      setSelectedKb(kb)
       setSelectedGroupId(null)
       setViewMode('kb')
       addRecentAccess(kb)
 
       // For notebook type, fetch full KB data to get guided_questions
+      // before setting selectedKb - avoids a double render with incomplete data
       if (kb.kb_type === 'notebook') {
         getKnowledgeBase(kb.id)
           .then(fullKb => {
-            // Only update if still selected (avoid race condition)
-            setSelectedKb(prev => (prev?.id === kb.id ? fullKb : prev))
+            // Discard stale response if user has since selected a different KB
+            setSelectedKb(prev => {
+              if (latestSelectedKbIdRef.current !== kb.id) return prev
+              // First time setting or same KB
+              if (!prev || prev.id === kb.id) return fullKb
+              return prev
+            })
           })
           .catch(error => {
             console.error('Failed to fetch full knowledge base data:', error)
           })
+      } else {
+        setSelectedKb(kb)
       }
     },
     [addRecentAccess]
