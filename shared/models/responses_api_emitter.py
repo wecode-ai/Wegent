@@ -384,7 +384,7 @@ class ResponsesAPIEmitter:
                     failed_data,
                 )
             else:
-                completed_data = self.builder.mcp_call_completed(call_id)
+                completed_data = self.builder.mcp_call_completed(call_id, output)
                 await self._emit(
                     ResponsesAPIStreamEvents.MCP_CALL_COMPLETED.value,
                     completed_data,

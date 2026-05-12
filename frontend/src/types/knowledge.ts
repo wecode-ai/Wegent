@@ -368,6 +368,7 @@ export interface KnowledgeDocument {
   splitter_config?: SplitterConfig
   source_type: DocumentSourceType
   source_config: Record<string, unknown>
+  folder_id: number  // 0 = root level
   created_at: string
   updated_at: string
 }
@@ -377,6 +378,7 @@ export interface KnowledgeDocumentCreate {
   name: string
   file_extension: string
   file_size: number
+  folder_id?: number  // 0 = root level
   splitter_config?: Partial<SplitterConfig>
   source_type?: DocumentSourceType
   source_config?: Record<string, unknown>
@@ -786,4 +788,35 @@ export interface AllGroupedKnowledgeResponse {
   groups: AllGroupedTeamGroup[]
   organization: AllGroupedOrganization
   summary: AllGroupedSummary
+}
+
+// ============== Knowledge Folder Types ==============
+
+/** Knowledge folder node in the folder tree */
+export interface KnowledgeFolder {
+  id: number
+  kind_id: number
+  parent_id: number  // 0 = root level
+  name: string
+  children: KnowledgeFolder[]
+  document_count: number
+  created_at: string
+  updated_at: string
+}
+
+/** Request to create a new folder */
+export interface KnowledgeFolderCreate {
+  name: string
+  parent_id?: number  // 0 = root level
+}
+
+/** Request to update a folder */
+export interface KnowledgeFolderUpdate {
+  name?: string
+  parent_id?: number  // 0 = root level, undefined = no change
+}
+
+/** Request to move a document to a folder */
+export interface DocumentMoveRequest {
+  folder_id: number  // 0 = root level
 }

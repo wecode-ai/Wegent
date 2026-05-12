@@ -186,6 +186,7 @@ class DatabaseHandler:
             CollaborationStrategyFactory,
         )
 
+        should_schedule_dispatch = False
         try:
             with _db_session() as db:
                 task = (
@@ -225,12 +226,102 @@ class DatabaseHandler:
                     )
                     task_crd.status.updatedAt = datetime.now()
 
+                    # Check if pipeline should auto-advance to next stage
+                    advance_info = strategy.get_auto_advance_info(
+                        db, task_id, last_subtask.id, last_subtask.status.value
+                    )
+                    if advance_info:
+                        self._auto_advance_pipeline(
+                            db, task, task_crd, last_subtask, advance_info
+                        )
+                        # Keep task RUNNING while next stage executes
+                        task_crd.status.status = "PENDING"
+                        task_crd.status.updatedAt = datetime.now()
+                        should_schedule_dispatch = True
+
                 task.json = task_crd.model_dump(mode="json")
                 task.updated_at = datetime.now()
                 flag_modified(task, "json")
 
         except Exception:
             logger.exception("Error updating task %s status", task_id)
+            return
+
+        if should_schedule_dispatch:
+            from app.services.execution.schedule_helper import schedule_dispatch
+
+            schedule_dispatch(task_id)
+
+    def _auto_advance_pipeline(
+        self,
+        db: Session,
+        task: Any,
+        task_crd: Any,
+        last_subtask: Subtask,
+        advance_info: dict,
+    ) -> None:
+        """Create next pipeline stage subtask and advance currentStage in task spec.
+
+        Called when a pipeline stage completes with requireConfirmation=False
+        and more stages exist. The new subtask is added to the session; the
+        caller is responsible for committing.
+
+        Args:
+            db: Database session (open, not yet committed)
+            task: TaskResource ORM object
+            task_crd: Parsed Task CRD (mutated in place)
+            last_subtask: The subtask that just completed
+            advance_info: Dict from get_auto_advance_info() with next stage details
+        """
+        from app.models.subtask import Subtask as SubtaskModel
+        from app.models.subtask import SubtaskRole, SubtaskStatus
+
+        next_stage_index = advance_info["next_stage_index"]
+        next_bot_id = advance_info["next_bot_id"]
+        next_bot_name = advance_info["next_bot_name"]
+
+        # Reuse same executor container (pipeline runs all stages in one container)
+        executor_name = last_subtask.executor_name or ""
+        executor_namespace = last_subtask.executor_namespace or ""
+
+        # Compute next message_id from highest existing message_id in this task
+        latest = (
+            db.query(SubtaskModel)
+            .filter(SubtaskModel.task_id == task.id)
+            .order_by(SubtaskModel.message_id.desc())
+            .first()
+        )
+        next_message_id = (latest.message_id + 1) if latest else 1
+        parent_id = latest.message_id if latest else 0
+
+        # Advance currentStage in task spec
+        task_crd.spec.currentStage = next_stage_index
+
+        new_subtask = SubtaskModel(
+            user_id=task.user_id,
+            task_id=task.id,
+            team_id=last_subtask.team_id,
+            title=f"{task_crd.spec.title} - {next_bot_name}",
+            bot_ids=[next_bot_id],
+            role=SubtaskRole.ASSISTANT,
+            prompt="",
+            status=SubtaskStatus.PENDING,
+            progress=0,
+            message_id=next_message_id,
+            parent_id=parent_id,
+            executor_name=executor_name,
+            executor_namespace=executor_namespace,
+            error_message="",
+            completed_at=datetime.now(),
+            result=None,
+        )
+        db.add(new_subtask)
+        logger.info(
+            "[DB] Pipeline auto-advance task %s: stage %s, bot_id=%s",
+            task.id,
+            next_stage_index,
+            next_bot_id,
+        )
 
     def _apply_status_update(
         self,

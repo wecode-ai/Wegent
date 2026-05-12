@@ -4,11 +4,11 @@
 
 'use client'
 
-import Image from 'next/image'
+import { useState } from 'react'
 
 import { type RemoteWorkspaceTreeEntry } from '@/apis/remoteWorkspace'
+import { FilePreview } from '@/components/common/FilePreview'
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
@@ -17,6 +17,7 @@ import { TFunction } from 'i18next'
 import {
   formatModifiedAt,
   formatSize,
+  getMimeTypeFromPreviewKind,
   resolvePreviewKind,
   type PreviewKind,
   type SortOption,
@@ -31,7 +32,9 @@ type RemoteWorkspaceDialogMobileProps = {
   selectedPaths: Set<string>
   selectedEntries: RemoteWorkspaceTreeEntry[]
   previewKind: PreviewKind
-  inlineUrl: string
+  previewBlob: Blob | null
+  isPreviewLoading: boolean
+  previewError: string | null
   searchKeyword: string
   sortOption: SortOption
   canGoParent: boolean
@@ -42,7 +45,6 @@ type RemoteWorkspaceDialogMobileProps = {
   onRefresh: () => void
   onSearchChange: (value: string) => void
   onSortChange: (value: SortOption) => void
-  onToggleEntrySelection: (entry: RemoteWorkspaceTreeEntry, checked: boolean) => void
   onOpenEntry: (entry: RemoteWorkspaceTreeEntry) => void
 }
 
@@ -77,7 +79,9 @@ export function RemoteWorkspaceDialogMobile({
   selectedPaths,
   selectedEntries,
   previewKind,
-  inlineUrl,
+  previewBlob,
+  isPreviewLoading,
+  previewError,
   searchKeyword,
   sortOption,
   canGoParent,
@@ -87,12 +91,17 @@ export function RemoteWorkspaceDialogMobile({
   onRefresh,
   onSearchChange,
   onSortChange,
-  onToggleEntrySelection,
   onOpenEntry,
   onDownload,
 }: RemoteWorkspaceDialogMobileProps) {
-  const selectedCount = selectedPaths.size
+  const [activeTab, setActiveTab] = useState('files')
   const detailEntry = selectedEntries.length === 1 ? selectedEntries[0] : null
+  const footerLabel = `${visibleEntries.length} ${t('remote_workspace.status.items')}`
+
+  const handleEntryOpen = (entry: RemoteWorkspaceTreeEntry) => {
+    onOpenEntry(entry)
+    setActiveTab(entry.is_directory ? 'files' : 'preview')
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -106,16 +115,6 @@ export function RemoteWorkspaceDialogMobile({
             onClick={onGoRoot}
           >
             {t('remote_workspace.root')}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-11 min-w-[44px]"
-            onClick={onGoParent}
-            disabled={!canGoParent}
-          >
-            {t('remote_workspace.parent')}
           </Button>
           <Button
             type="button"
@@ -158,7 +157,11 @@ export function RemoteWorkspaceDialogMobile({
         {t('remote_workspace.status.path')}: {currentPath}
       </p>
 
-      <Tabs defaultValue="files" className="flex min-h-0 flex-1 flex-col px-4 py-3">
+      <Tabs
+        value={activeTab}
+        onValueChange={setActiveTab}
+        className="flex min-h-0 flex-1 flex-col px-4 py-3"
+      >
         <TabsList className="grid w-full grid-cols-2">
           <TabsTrigger value="files">{t('remote_workspace.mobile.tabs.files')}</TabsTrigger>
           <TabsTrigger value="preview">{t('remote_workspace.mobile.tabs.preview')}</TabsTrigger>
@@ -172,6 +175,26 @@ export function RemoteWorkspaceDialogMobile({
           {!isTreeLoading && !treeError && visibleEntries.length === 0 && (
             <p className="text-sm text-text-muted">{t('remote_workspace.tree.empty')}</p>
           )}
+          {!isTreeLoading && !treeError && canGoParent && (
+            <div className="mb-2 rounded-md border border-border bg-base p-3">
+              <button
+                type="button"
+                className="flex min-h-[44px] w-full flex-col items-start justify-center text-left"
+                data-testid="remote-workspace-mobile-parent-row"
+                onClick={() => {
+                  onGoParent()
+                  setActiveTab('files')
+                }}
+              >
+                <span className="text-sm text-text-primary">
+                  {t('remote_workspace.parent_entry', 'Parent folder')}
+                </span>
+                <span className="mt-1 text-xs text-text-muted">
+                  {t('remote_workspace.parent_entry_hint', 'Go back one level')}
+                </span>
+              </button>
+            </div>
+          )}
           {!isTreeLoading &&
             !treeError &&
             visibleEntries.map(entry => {
@@ -182,25 +205,18 @@ export function RemoteWorkspaceDialogMobile({
                   key={entry.path}
                   className={`mb-2 rounded-md border p-3 ${isSelected ? 'border-primary bg-primary/10' : 'border-border bg-base'}`}
                 >
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      checked={isSelected}
-                      onCheckedChange={checked => onToggleEntrySelection(entry, Boolean(checked))}
-                      aria-label={`select-${entry.name}`}
-                    />
-                    <button
-                      type="button"
-                      className="min-h-[44px] flex-1 text-left text-sm text-text-primary"
-                      onClick={() => onOpenEntry(entry)}
-                    >
-                      {entry.name}
-                    </button>
-                  </div>
-                  <div className="mt-1 text-xs text-text-muted">
-                    {resolveTypeLabel(entry, t)} ·{' '}
-                    {entry.is_directory ? '--' : formatSize(entry.size)} ·{' '}
-                    {formatModifiedAt(entry.modified_at)}
-                  </div>
+                  <button
+                    type="button"
+                    className="flex min-h-[44px] w-full flex-col items-start justify-center text-left"
+                    onClick={() => handleEntryOpen(entry)}
+                  >
+                    <span className="text-sm text-text-primary">{entry.name}</span>
+                    <span className="mt-1 text-xs text-text-muted">
+                      {resolveTypeLabel(entry, t)} ·{' '}
+                      {entry.is_directory ? '--' : formatSize(entry.size)} ·{' '}
+                      {formatModifiedAt(entry.modified_at)}
+                    </span>
+                  </button>
                 </div>
               )
             })}
@@ -244,34 +260,35 @@ export function RemoteWorkspaceDialogMobile({
               )}
 
               {!detailEntry.is_directory && (
-                <div className="min-h-[220px] rounded-md border border-border bg-surface p-3">
-                  {previewKind === 'image' && inlineUrl && (
-                    <Image
-                      src={inlineUrl}
-                      alt={detailEntry.name}
-                      width={1200}
-                      height={900}
-                      unoptimized
-                      className="max-h-[300px] max-w-full object-contain"
-                    />
-                  )}
-                  {previewKind === 'pdf' && inlineUrl && (
-                    <iframe
-                      title={detailEntry.name}
-                      src={inlineUrl}
-                      className="h-[300px] w-full rounded-md border border-border"
-                    />
-                  )}
-                  {previewKind === 'text' && (
-                    <p className="text-sm text-text-muted">
-                      {t('remote_workspace.preview.unsupported')}
-                    </p>
-                  )}
+                <div className="h-[360px] rounded-md border border-border bg-surface p-3">
                   {previewKind === 'unsupported' && (
                     <p className="text-sm text-text-muted">
                       {t('remote_workspace.preview.unsupported')}
                     </p>
                   )}
+                  {previewKind !== 'unsupported' && previewError && (
+                    <p className="text-sm text-error">{previewError}</p>
+                  )}
+                  {previewKind !== 'unsupported' &&
+                    !previewError &&
+                    (isPreviewLoading || !previewBlob) && (
+                      <p className="text-sm text-text-muted">
+                        {t('remote_workspace.preview.loading')}
+                      </p>
+                    )}
+                  {previewKind !== 'unsupported' &&
+                    !previewError &&
+                    !isPreviewLoading &&
+                    previewBlob && (
+                      <FilePreview
+                        fileBlob={previewBlob}
+                        filename={detailEntry.name}
+                        mimeType={getMimeTypeFromPreviewKind(previewKind, detailEntry.name)}
+                        fileSize={detailEntry.size}
+                        showToolbar={false}
+                        onDownload={() => onDownload(detailEntry)}
+                      />
+                    )}
                 </div>
               )}
             </div>
@@ -279,9 +296,8 @@ export function RemoteWorkspaceDialogMobile({
         </TabsContent>
       </Tabs>
 
-      <footer className="border-t border-border px-4 py-2 text-xs text-text-muted">
-        {selectedCount} {t('remote_workspace.status.selected')} · {visibleEntries.length}{' '}
-        {t('remote_workspace.status.items')}
+      <footer className="flex min-h-[60px] items-center justify-between gap-3 border-t border-border px-4 py-2 text-xs text-text-muted">
+        <span className="min-w-0 truncate">{footerLabel}</span>
       </footer>
     </div>
   )

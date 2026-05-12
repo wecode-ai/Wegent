@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.security import get_password_hash
 from app.models.kind import Kind
+from app.models.knowledge import KnowledgeFolder
 from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
 from app.models.user import User
@@ -15,9 +16,11 @@ from app.schemas.knowledge import (
     KnowledgeBaseCreate,
     KnowledgeBaseUpdate,
     KnowledgeDocumentCreate,
+    KnowledgeFolderCreate,
     ResourceScope,
 )
 from app.schemas.namespace import GroupRole
+from app.services.knowledge.folder_service import KnowledgeFolderService
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.share import knowledge_share_service
 
@@ -843,3 +846,53 @@ def test_owner_can_migrate_personal_knowledge_base_to_group(
     assert result["success"] is True
     assert result["new_namespace"] == namespace.name
     assert migrated_kb.namespace == namespace.name
+
+
+@pytest.mark.unit
+def test_delete_knowledge_base_removes_orphaned_folders(test_db: Session) -> None:
+    """Deleting a knowledge base must also delete all its folders to prevent orphaned records."""
+    owner = _create_user(test_db, "owner-kb-folder-cleanup")
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="kb-with-folders", namespace="default"),
+    )
+
+    # Create a root-level folder and a nested child folder inside the KB.
+    root_folder = KnowledgeFolderService.create_folder(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+        KnowledgeFolderCreate(name="root-folder", parent_id=0),
+    )
+    KnowledgeFolderService.create_folder(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+        KnowledgeFolderCreate(name="child-folder", parent_id=root_folder.id),
+    )
+
+    # Verify folders exist before deletion.
+    folder_count_before = (
+        test_db.query(KnowledgeFolder)
+        .filter(KnowledgeFolder.kind_id == knowledge_base_id)
+        .count()
+    )
+    assert folder_count_before == 2
+
+    # Delete the knowledge base (no documents, so deletion is allowed).
+    deleted = KnowledgeService.delete_knowledge_base(
+        test_db, knowledge_base_id, owner.id
+    )
+    assert deleted is True
+
+    # All folders belonging to the deleted KB must be gone.
+    folder_count_after = (
+        test_db.query(KnowledgeFolder)
+        .filter(KnowledgeFolder.kind_id == knowledge_base_id)
+        .count()
+    )
+    assert (
+        folder_count_after == 0
+    ), f"Expected 0 folders after KB deletion, but found {folder_count_after} orphaned folder(s)"

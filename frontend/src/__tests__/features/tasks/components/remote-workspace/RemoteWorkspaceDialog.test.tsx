@@ -6,6 +6,7 @@ import '@testing-library/jest-dom'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { remoteWorkspaceApis } from '@/apis/remoteWorkspace'
+import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { RemoteWorkspaceDialog } from '@/features/tasks/components/remote-workspace/RemoteWorkspaceDialog'
 
 jest.mock('@/apis/remoteWorkspace', () => ({
@@ -19,10 +20,18 @@ jest.mock('@/features/layout/hooks/useMediaQuery', () => ({
   useIsMobile: jest.fn(() => false),
 }))
 
+jest.mock('@/features/theme/ThemeProvider', () => ({
+  useTheme: () => ({
+    theme: 'light',
+  }),
+}))
+
 const translations: Record<string, string> = {
   'remote_workspace.title': 'Remote Workspace',
   'remote_workspace.root': 'Workspace',
   'remote_workspace.parent': 'Parent',
+  'remote_workspace.parent_entry': 'Parent folder',
+  'remote_workspace.parent_entry_hint': 'Go back one level',
   'remote_workspace.search_placeholder': 'Search files',
   'remote_workspace.sort.label': 'Sort',
   'remote_workspace.sort.options.name_asc': 'Name (A-Z)',
@@ -35,6 +44,8 @@ const translations: Record<string, string> = {
   'remote_workspace.actions.cancel': 'Cancel',
   'remote_workspace.actions.preview': 'Preview',
   'remote_workspace.actions.refresh': 'Refresh',
+  'remote_workspace.download_confirm.title': 'Download selected files?',
+  'remote_workspace.download_confirm.description': 'Download selected files.',
   'remote_workspace.columns.select_all': 'Select all files',
   'remote_workspace.columns.name': 'Name',
   'remote_workspace.columns.size': 'Size',
@@ -90,6 +101,7 @@ describe('RemoteWorkspaceDialog', () => {
     jest.clearAllMocks()
     ;(remoteWorkspaceApis.getTree as jest.Mock).mockReset()
     ;(remoteWorkspaceApis.getFileUrl as jest.Mock).mockReset()
+    ;(useIsMobile as jest.Mock).mockReturnValue(false)
   })
 
   function mockRootEntries() {
@@ -277,7 +289,7 @@ describe('RemoteWorkspaceDialog', () => {
     expect(rows[2]).toHaveTextContent('diagram.png')
   })
 
-  test('single click does not navigate directory and double click navigates', async () => {
+  test('single click navigates directory without a checkbox and readable parent row returns upward', async () => {
     ;(remoteWorkspaceApis.getTree as jest.Mock)
       .mockResolvedValueOnce({
         path: '/workspace',
@@ -313,19 +325,45 @@ describe('RemoteWorkspaceDialog', () => {
       expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace')
     })
 
+    expect(screen.queryByRole('button', { name: 'Parent' })).not.toBeInTheDocument()
+
     const user = userEvent.setup({ pointerEventsCheck: 0 })
     const fileTable = await screen.findByRole('table')
     const directoryNode = await within(fileTable).findByText(/^src$/i)
+    expect(screen.queryByRole('checkbox', { name: 'select-src' })).not.toBeInTheDocument()
     await user.click(directoryNode)
-
-    expect(remoteWorkspaceApis.getTree).toHaveBeenCalledTimes(1)
-
-    await user.dblClick(directoryNode)
 
     await waitFor(() => {
       expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace/src')
     })
     expect(screen.getByText(/index\.ts/i)).toBeInTheDocument()
+    expect(within(fileTable).getByText(/^Parent folder$/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/^0\s+selected$/i).length).toBeGreaterThan(0)
+
+    await user.click(within(fileTable).getByText(/^Parent folder$/i))
+
+    expect(screen.queryByText(/index\.ts/i)).not.toBeInTheDocument()
+    expect(within(fileTable).queryByText(/^Parent folder$/i)).not.toBeInTheDocument()
+    expect(within(fileTable).getByText(/^src$/i)).toBeInTheDocument()
+  })
+
+  test('select all only selects files', async () => {
+    mockRootEntries()
+    ;(remoteWorkspaceApis.getFileUrl as jest.Mock).mockReturnValue(
+      '/api/tasks/1/remote-workspace/file'
+    )
+
+    render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={jest.fn()} />)
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace')
+    })
+
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    await user.click(screen.getByRole('checkbox', { name: 'Select all files' }))
+
+    expect(screen.getAllByText(/^2\s+selected$/i).length).toBeGreaterThan(0)
+    expect(screen.queryByRole('checkbox', { name: 'select-src' })).not.toBeInTheDocument()
   })
 
   test('double click file opens preview dialog', async () => {
@@ -447,6 +485,211 @@ describe('RemoteWorkspaceDialog', () => {
 
     expect(screen.getAllByText(/^2\s+selected$/i).length).toBeGreaterThan(0)
     expect(screen.getByText('Multiple items selected')).toBeInTheDocument()
+  })
+
+  test('desktop toolbar downloads all selected files', async () => {
+    const originalFetch = global.fetch
+    const originalCreateObjectURL = URL.createObjectURL
+    const originalRevokeObjectURL = URL.revokeObjectURL
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      blob: jest.fn().mockResolvedValue(new Blob(['file'])),
+    })
+    global.fetch = fetchMock as unknown as typeof fetch
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: jest.fn(() => 'blob:remote-workspace-file'),
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: jest.fn(),
+    })
+    const anchorClickMock = jest
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => {})
+    mockRootEntries()
+    ;(remoteWorkspaceApis.getFileUrl as jest.Mock).mockImplementation(
+      (_taskId: number, path: string, disposition: string) =>
+        `/api/tasks/1/remote-workspace/file?path=${encodeURIComponent(path)}&disposition=${disposition}`
+    )
+
+    try {
+      render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={jest.fn()} />)
+
+      await waitFor(() => {
+        expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace')
+      })
+
+      await screen.findByText(/diagram\.png/i)
+
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      await user.click(screen.getByRole('checkbox', { name: 'select-diagram.png' }))
+      await user.click(screen.getByRole('checkbox', { name: 'select-notes.txt' }))
+
+      const downloadButton = screen.getByRole('button', { name: 'Download' })
+      expect(downloadButton).toBeEnabled()
+      await user.click(downloadButton)
+
+      expect(fetchMock).not.toHaveBeenCalled()
+      const confirmDialog = screen.getByRole('alertdialog', {
+        name: 'Download selected files?',
+      })
+      expect(confirmDialog).toBeInTheDocument()
+      await user.click(within(confirmDialog).getByRole('button', { name: 'Download' }))
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledTimes(2)
+      })
+      expect(remoteWorkspaceApis.getFileUrl).toHaveBeenCalledWith(
+        1,
+        '/workspace/diagram.png',
+        'attachment'
+      )
+      expect(remoteWorkspaceApis.getFileUrl).toHaveBeenCalledWith(
+        1,
+        '/workspace/notes.txt',
+        'attachment'
+      )
+    } finally {
+      global.fetch = originalFetch
+      Object.defineProperty(URL, 'createObjectURL', {
+        configurable: true,
+        value: originalCreateObjectURL,
+      })
+      Object.defineProperty(URL, 'revokeObjectURL', {
+        configurable: true,
+        value: originalRevokeObjectURL,
+      })
+      anchorClickMock.mockRestore()
+    }
+  })
+
+  test('mobile opens file preview directly and keeps download inside preview tab', async () => {
+    ;(useIsMobile as jest.Mock).mockReturnValue(true)
+    mockRootEntries()
+    ;(remoteWorkspaceApis.getFileUrl as jest.Mock).mockReturnValue(
+      '/api/tasks/1/remote-workspace/file'
+    )
+
+    render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={jest.fn()} />)
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace')
+    })
+
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    await user.click(await screen.findByText(/diagram\.png/i))
+
+    expect(screen.getByText('Path: /workspace/diagram.png')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Download' })).toBeInTheDocument()
+    expect(screen.queryByTestId('remote-workspace-mobile-preview-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('remote-workspace-mobile-download-button')).not.toBeInTheDocument()
+    expect(screen.queryByText(/^1\s+selected/i)).not.toBeInTheDocument()
+  })
+
+  test('mobile renders text file preview content', async () => {
+    const originalFetch = global.fetch
+    const originalCreateObjectURL = URL.createObjectURL
+    const originalRevokeObjectURL = URL.revokeObjectURL
+    let unmount: (() => void) | undefined
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      blob: jest.fn().mockResolvedValue({
+        text: jest.fn().mockResolvedValue('hello mobile preview'),
+      }),
+    }) as unknown as typeof fetch
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      value: jest.fn(() => 'blob:remote-workspace-preview'),
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      value: jest.fn(),
+    })
+    ;(useIsMobile as jest.Mock).mockReturnValue(true)
+    mockRootEntries()
+    ;(remoteWorkspaceApis.getFileUrl as jest.Mock).mockReturnValue(
+      '/api/tasks/1/remote-workspace/file'
+    )
+
+    try {
+      ;({ unmount } = render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={jest.fn()} />))
+
+      await waitFor(() => {
+        expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace')
+      })
+
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      await user.click(await screen.findByText(/notes\.txt/i))
+
+      expect(await screen.findByText('hello mobile preview')).toBeInTheDocument()
+      expect(
+        screen.queryByText('This file type is not supported for preview. Please download.')
+      ).not.toBeInTheDocument()
+    } finally {
+      unmount?.()
+      global.fetch = originalFetch
+      Object.defineProperty(URL, 'createObjectURL', {
+        configurable: true,
+        value: originalCreateObjectURL,
+      })
+      Object.defineProperty(URL, 'revokeObjectURL', {
+        configurable: true,
+        value: originalRevokeObjectURL,
+      })
+    }
+  })
+
+  test('mobile shows parent row in child directories', async () => {
+    ;(useIsMobile as jest.Mock).mockReturnValue(true)
+    ;(remoteWorkspaceApis.getTree as jest.Mock)
+      .mockResolvedValueOnce({
+        path: '/workspace',
+        entries: [
+          {
+            name: 'src',
+            path: '/workspace/src',
+            is_directory: true,
+            size: 0,
+            modified_at: null,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        path: '/workspace/src',
+        entries: [
+          {
+            name: 'index.ts',
+            path: '/workspace/src/index.ts',
+            is_directory: false,
+            size: 200,
+            modified_at: null,
+          },
+        ],
+      })
+
+    render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={jest.fn()} />)
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace')
+    })
+
+    expect(screen.queryByRole('button', { name: 'Parent' })).not.toBeInTheDocument()
+
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    await user.click(await screen.findByText(/^src$/i))
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace/src')
+    })
+    expect(screen.getByText('Path: /workspace/src')).toBeInTheDocument()
+    expect(screen.getByText(/^Parent folder$/i)).toBeInTheDocument()
+    expect(screen.getByText('Go back one level')).toBeInTheDocument()
+
+    await user.click(screen.getByText(/^Parent folder$/i))
+
+    expect(screen.getByText('Path: /workspace')).toBeInTheDocument()
+    expect(screen.queryByText(/^Parent folder$/i)).not.toBeInTheDocument()
   })
 
   test('keeps file list scroll inside dialog content area', async () => {
