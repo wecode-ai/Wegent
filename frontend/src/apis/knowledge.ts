@@ -20,6 +20,9 @@ import type {
   KnowledgeDocumentCreate,
   KnowledgeDocumentListResponse,
   KnowledgeDocumentUpdate,
+  KnowledgeFolder,
+  KnowledgeFolderCreate,
+  KnowledgeFolderUpdate,
   KnowledgeResourceScope,
   TableUrlValidationResponse,
   WebScrapeResponse,
@@ -256,12 +259,14 @@ export interface WebDocumentRefreshResponse {
 export async function createWebDocument(
   url: string,
   knowledgeBaseId: number,
-  name?: string
+  name?: string,
+  folderId?: number
 ): Promise<WebDocumentCreateResponse> {
   return apiClient.post<WebDocumentCreateResponse>('/web-scraper/create-document', {
     url,
     knowledge_base_id: knowledgeBaseId,
     name,
+    folder_id: folderId || 0,
   })
 }
 
@@ -375,4 +380,59 @@ export async function getDocumentChunk(
  */
 export async function getDocumentDetail(documentId: number): Promise<DocumentDetailResponse> {
   return apiClient.get<DocumentDetailResponse>(`/knowledge-documents/${documentId}/detail`)
+}
+
+// ============== Knowledge Folder APIs ==============
+
+/**
+ * Get the folder tree for a knowledge base
+ */
+export async function getFolderTree(knowledgeBaseId: number): Promise<KnowledgeFolder[]> {
+  return apiClient.get<KnowledgeFolder[]>(`/knowledge-bases/${knowledgeBaseId}/folders`)
+}
+
+/**
+ * Create a new folder in a knowledge base
+ */
+export async function createFolder(
+  knowledgeBaseId: number,
+  data: KnowledgeFolderCreate
+): Promise<KnowledgeFolder> {
+  return apiClient.post<KnowledgeFolder>(`/knowledge-bases/${knowledgeBaseId}/folders`, data)
+}
+
+/**
+ * Update a folder (rename and/or move)
+ */
+export async function updateFolder(
+  knowledgeBaseId: number,
+  folderId: number,
+  data: KnowledgeFolderUpdate
+): Promise<KnowledgeFolder> {
+  return apiClient.put<KnowledgeFolder>(
+    `/knowledge-bases/${knowledgeBaseId}/folders/${folderId}`,
+    data
+  )
+}
+
+/**
+ * Delete a folder and move its documents to root level
+ */
+export async function deleteFolder(
+  knowledgeBaseId: number,
+  folderId: number
+): Promise<{ deleted_folder_count: number; moved_document_count: number }> {
+  return apiClient.delete(`/knowledge-bases/${knowledgeBaseId}/folders/${folderId}`)
+}
+
+/**
+ * Move a document to a different folder
+ */
+export async function moveDocument(
+  documentId: number,
+  folderId: number
+): Promise<KnowledgeDocument> {
+  return apiClient.put<KnowledgeDocument>(`/knowledge-documents/${documentId}/move`, {
+    folder_id: folderId,
+  })
 }

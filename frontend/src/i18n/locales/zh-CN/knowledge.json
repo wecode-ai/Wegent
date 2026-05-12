@@ -189,7 +189,28 @@
       "selectGroup": "选择分组"
     },
     "folder": {
-      "docCount": "{{count}} 个文档"
+      "docCount": "{{count}} 个文档",
+      "create": "新建文件夹",
+      "createTitle": "新建文件夹",
+      "createPlaceholder": "输入文件夹名称",
+      "delete": "删除文件夹",
+      "deleteTitle": "删除文件夹",
+      "deleteConfirm": "确定要删除 \"{{name}}\" 及其所有子文件夹吗？其中的文档将移至根目录。",
+      "rename": "重命名文件夹",
+      "renameTitle": "重命名文件夹",
+      "renamePlaceholder": "输入新文件夹名称",
+      "moveDocument": "移动到文件夹",
+      "selectFolder": "选择目标文件夹",
+      "rootLevel": "根目录",
+      "createdToast": "文件夹 \"{{name}}\" 已创建",
+      "updatedToast": "文件夹 \"{{name}}\" 已更新",
+      "deletedToast": "文件夹已删除，{{count}} 个文档已移至根目录",
+      "createFailed": "创建文件夹失败",
+      "updateFailed": "更新文件夹失败",
+      "deleteFailed": "删除文件夹失败",
+      "moveDocumentFailed": "移动文档失败",
+      "moveDocumentHint": "将文档 \"{{name}}\" 移动到：",
+      "current": "当前"
     },
     "document": {
       "title": "文档",

@@ -189,7 +189,28 @@
       "selectGroup": "Select Group"
     },
     "folder": {
-      "docCount": "{{count}} docs"
+      "docCount": "{{count}} docs",
+      "create": "Create Folder",
+      "createTitle": "New Folder",
+      "createPlaceholder": "Enter folder name",
+      "delete": "Delete Folder",
+      "deleteTitle": "Delete Folder",
+      "deleteConfirm": "Are you sure you want to delete \"{{name}}\" and all its subfolders? Documents will be moved to root level.",
+      "rename": "Rename Folder",
+      "renameTitle": "Rename Folder",
+      "renamePlaceholder": "Enter new folder name",
+      "moveDocument": "Move to Folder",
+      "selectFolder": "Select target folder",
+      "rootLevel": "Root Level",
+      "createdToast": "Folder \"{{name}}\" created",
+      "updatedToast": "Folder \"{{name}}\" updated",
+      "deletedToast": "Folder deleted, {{count}} document(s) moved to root",
+      "createFailed": "Failed to create folder",
+      "updateFailed": "Failed to update folder",
+      "deleteFailed": "Failed to delete folder",
+      "moveDocumentFailed": "Failed to move document",
+      "moveDocumentHint": "Move \"{{name}}\" to:",
+      "current": "current"
     },
     "document": {
       "title": "Documents",

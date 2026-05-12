@@ -436,11 +436,16 @@ export function KnowledgeDocumentPageDesktop({
     (kb: KnowledgeBase | { id: number; name: string; namespace: string }) => {
       const fullKb = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
       if (fullKb) {
-        sidebar.selectKb(fullKb)
+        // Only set sidebar selection if we're already on a detail page (initialKbName is defined).
+        // When on the main page, skip selectKb to avoid flashing the detail panel
+        // before navigation - URL sync on the destination page will handle selection.
+        if (initialKbName) {
+          sidebar.selectKb(fullKb)
+        }
         navigateToKb(fullKb)
       }
     },
-    [sidebar, navigateToKb]
+    [sidebar, navigateToKb, initialKbName]
   )
 
   // Handle "All" selection

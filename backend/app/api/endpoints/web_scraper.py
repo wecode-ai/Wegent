@@ -37,6 +37,7 @@ class WebDocumentCreateRequest(BaseModel):
     name: Optional[str] = Field(
         None, description="Optional document name (uses page title if not provided)"
     )
+    folder_id: int = Field(0, ge=0, description="Target folder ID (0 = root level)")
 
 
 class WebDocumentCreateResponse(BaseModel):
@@ -155,6 +156,7 @@ async def create_web_document(
         url=request.url,
         knowledge_base_id=request.knowledge_base_id,
         name=request.name,
+        folder_id=request.folder_id,
         trigger_indexing=True,
         trigger_summary=True,
     )
