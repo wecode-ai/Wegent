@@ -67,6 +67,15 @@ export interface CloudDeviceFileConfig {
   available: boolean
 }
 
+function withOptionalUserId(path: string, userId?: number): string {
+  if (userId == null) {
+    return path
+  }
+
+  const params = new URLSearchParams({ user_id: String(userId) })
+  return `${path}?${params.toString()}`
+}
+
 /**
  * Cloud device API services
  */
@@ -97,8 +106,10 @@ export const cloudDeviceApis = {
    *
    * @param deviceId - Cloud device ID (sandbox ID)
    */
-  async getCloudDeviceStatus(deviceId: string): Promise<NevisSandboxStatus> {
-    return apiClient.get(`/cloud-devices/${encodeURIComponent(deviceId)}/status`)
+  async getCloudDeviceStatus(deviceId: string, userId?: number): Promise<NevisSandboxStatus> {
+    return apiClient.get(
+      withOptionalUserId(`/cloud-devices/${encodeURIComponent(deviceId)}/status`, userId)
+    )
   },
 
   /**
@@ -116,8 +127,10 @@ export const cloudDeviceApis = {
    *
    * @param deviceId - Cloud device ID (sandbox ID)
    */
-  async getVncConfig(deviceId: string): Promise<VncConfig> {
-    return apiClient.get(`/cloud-devices/${encodeURIComponent(deviceId)}/vnc-config`)
+  async getVncConfig(deviceId: string, userId?: number): Promise<VncConfig> {
+    return apiClient.get(
+      withOptionalUserId(`/cloud-devices/${encodeURIComponent(deviceId)}/vnc-config`, userId)
+    )
   },
 
   /**
@@ -125,7 +138,9 @@ export const cloudDeviceApis = {
    *
    * @param deviceId - Cloud device ID (UUID or sandbox ID)
    */
-  async getFileConfig(deviceId: string): Promise<CloudDeviceFileConfig> {
-    return apiClient.get(`/cloud-devices/${encodeURIComponent(deviceId)}/file-config`)
+  async getFileConfig(deviceId: string, userId?: number): Promise<CloudDeviceFileConfig> {
+    return apiClient.get(
+      withOptionalUserId(`/cloud-devices/${encodeURIComponent(deviceId)}/file-config`, userId)
+    )
   },
 }

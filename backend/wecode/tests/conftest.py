@@ -5,6 +5,8 @@
 """Shared pytest fixtures for WeCode tests."""
 
 from tests.conftest import (
+    test_admin_token,
+    test_admin_user,
     test_client,
     test_db,
     test_engine,

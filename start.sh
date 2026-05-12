@@ -58,7 +58,8 @@ save_config() {
         grep -v "^KNOWLEDGE_RUNTIME_PORT=" | \
         grep -v "^WEGENT_FRONTEND_PORT=" | \
         grep -v "^EXECUTOR_IMAGE=" | \
-        grep -v "^WEGENT_SOCKET_URL=" > "$temp_file" || true
+        grep -v "^WEGENT_SOCKET_URL=" | \
+        grep -v "^NEVIS_CALLBACK_URL=" > "$temp_file" || true
     fi
     
     # Check if the start.sh section header exists
@@ -91,6 +92,9 @@ EXECUTOR_IMAGE=$EXECUTOR_IMAGE
 # Socket URL (for WebSocket connections, should be accessible from browser)
 # For remote access, use your machine's IP address instead of localhost
 WEGENT_SOCKET_URL=$WEGENT_SOCKET_URL
+
+# Nevis Callback URL (for cloud device executors to connect back to backend)
+NEVIS_CALLBACK_URL=$NEVIS_CALLBACK_URL
 EOF
     else
         # Update existing values
@@ -102,8 +106,9 @@ EOF
         echo "WEGENT_FRONTEND_PORT=$WEGENT_FRONTEND_PORT" >> "$temp_file"
         echo "EXECUTOR_IMAGE=$EXECUTOR_IMAGE" >> "$temp_file"
         echo "WEGENT_SOCKET_URL=$WEGENT_SOCKET_URL" >> "$temp_file"
+        echo "NEVIS_CALLBACK_URL=$NEVIS_CALLBACK_URL" >> "$temp_file"
     fi
-    
+
     mv "$temp_file" "$CONFIG_FILE"
     echo -e "${GREEN}✓ Configuration saved to .env${NC}"
 }
@@ -204,6 +209,16 @@ init_config() {
     WEGENT_SOCKET_URL=${input_socket_url:-$default_socket}
     echo ""
 
+    # Nevis Callback URL
+    echo -e "${CYAN}8. Nevis Callback URL${NC}"
+    echo -e "   The URL for cloud device executors to connect back to backend."
+    echo -e "   For local development, use your machine's IP address."
+    echo -e "   Detected local IP: ${GREEN}$local_ip${NC}"
+    local default_nevis_callback="http://$local_ip:$BACKEND_PORT"
+    read -p "   Nevis Callback URL [$default_nevis_callback]: " input_nevis_callback_url
+    NEVIS_CALLBACK_URL=${input_nevis_callback_url:-$default_nevis_callback}
+    echo ""
+
     # Show summary
     echo -e "${BLUE}════════════════════════════════════════════════════════${NC}"
     echo -e "${GREEN}Configuration Summary:${NC}"
@@ -216,6 +231,7 @@ init_config() {
     echo -e "  ${YELLOW}Other Settings:${NC}"
     echo -e "    Executor Image:      ${CYAN}$EXECUTOR_IMAGE${NC}"
     echo -e "    Socket URL:          ${CYAN}$WEGENT_SOCKET_URL${NC}"
+    echo -e "    Nevis Callback URL:  ${CYAN}$NEVIS_CALLBACK_URL${NC}"
     echo -e "${BLUE}════════════════════════════════════════════════════════${NC}"
     echo ""
 
@@ -730,6 +746,7 @@ DEFAULT_WEGENT_FRONTEND_PORT=3000
 
 # Other settings
 DEFAULT_EXECUTOR_IMAGE="ghcr.io/wecode-ai/wegent-executor:latest"
+DEFAULT_NEVIS_CALLBACK_URL=""
 
 # Initialize port variables
 BACKEND_PORT=$DEFAULT_BACKEND_PORT
@@ -738,8 +755,7 @@ EXECUTOR_MANAGER_PORT=$DEFAULT_EXECUTOR_MANAGER_PORT
 KNOWLEDGE_RUNTIME_PORT=$DEFAULT_KNOWLEDGE_RUNTIME_PORT
 WEGENT_FRONTEND_PORT=$DEFAULT_WEGENT_FRONTEND_PORT
 EXECUTOR_IMAGE=$DEFAULT_EXECUTOR_IMAGE
-
-# These will be computed after ports are loaded from config
+NEVIS_CALLBACK_URL=""
 WEGENT_SOCKET_URL=""
 TASK_API_DOMAIN=""
 EXECUTOR_MANAGER_URL=""
@@ -762,6 +778,7 @@ Options:
   -p, --port PORT               Frontend port (default: $DEFAULT_WEGENT_FRONTEND_PORT)
   -e, --executor-image IMG      Executor image (default: $DEFAULT_EXECUTOR_IMAGE)
   --socket-url URL              Socket direct url (auto-computed from BACKEND_PORT)
+  --nevis-callback-url URL      Nevis callback URL for cloud device executors (auto-computed: http://LOCAL_IP:BACKEND_PORT)
     --clean-frontend-cache        Remove frontend .next cache before starting frontend
   --init                        Interactive configuration initialization
   --stop [services...]          Stop services (default: all). Can specify multiple:
@@ -788,6 +805,7 @@ Configuration File:
     Other Settings:
       EXECUTOR_IMAGE        - Docker image for executor
       WEGENT_SOCKET_URL     - WebSocket URL (auto-computed: http://LOCAL_IP:BACKEND_PORT)
+      NEVIS_CALLBACK_URL    - Nevis callback URL for cloud device executors (auto-computed: http://LOCAL_IP:BACKEND_PORT)
       TASK_API_DOMAIN       - URL for executor_manager to call backend (auto-computed)
       EXECUTOR_MANAGER_URL  - URL for backend to call executor_manager (auto-computed)
       KNOWLEDGE_RUNTIME_URL - URL for backend to call knowledge_runtime (auto-computed)
@@ -803,6 +821,7 @@ Examples:
   $0 -p 8080                            # Specify frontend port as 8080
   $0 -e my-executor:latest              # Specify custom executor image
   $0 --socket-url http://192.168.1.100:8000  # Specify socket URL with your IP
+  $0 --nevis-callback-url http://intra.weibo.com:8000  # Specify Nevis callback URL
   $0 --stop                             # Stop all services (force kill)
   $0 --stop backend frontend            # Stop only backend and frontend
   $0 --stop be cs kr                    # Stop backend, chat_shell, knowledge_runtime (short names)
@@ -824,6 +843,7 @@ CLI_KNOWLEDGE_RUNTIME_PORT=""
 CLI_WEGENT_FRONTEND_PORT=""
 CLI_EXECUTOR_IMAGE=""
 CLI_WEGENT_SOCKET_URL=""
+CLI_NEVIS_CALLBACK_URL=""
 CLI_CLEAN_FRONTEND_CACHE=""
 CLEAN_FRONTEND_CACHE="false"
 
@@ -855,6 +875,10 @@ case $1 in
         ;;
     --socket-url)
         CLI_WEGENT_SOCKET_URL="$2"
+        shift 2
+        ;;
+    --nevis-callback-url)
+        CLI_NEVIS_CALLBACK_URL="$2"
         shift 2
         ;;
     --clean-frontend-cache)
@@ -918,11 +942,14 @@ load_config
 [ -n "$CLI_WEGENT_FRONTEND_PORT" ] && WEGENT_FRONTEND_PORT="$CLI_WEGENT_FRONTEND_PORT"
 [ -n "$CLI_EXECUTOR_IMAGE" ] && EXECUTOR_IMAGE="$CLI_EXECUTOR_IMAGE"
 [ -n "$CLI_WEGENT_SOCKET_URL" ] && WEGENT_SOCKET_URL="$CLI_WEGENT_SOCKET_URL"
+[ -n "$CLI_NEVIS_CALLBACK_URL" ] && NEVIS_CALLBACK_URL="$CLI_NEVIS_CALLBACK_URL"
 [ -n "$CLI_CLEAN_FRONTEND_CACHE" ] && CLEAN_FRONTEND_CACHE="$CLI_CLEAN_FRONTEND_CACHE"
 
 # Compute derived URLs based on configured ports (if not already set from config)
 LOCAL_IP=$(get_local_ip)
 [ -z "$WEGENT_SOCKET_URL" ] && WEGENT_SOCKET_URL="http://$LOCAL_IP:$BACKEND_PORT"
+# NEVIS_CALLBACK_URL: URL for cloud device executors to connect back to backend
+[ -z "$NEVIS_CALLBACK_URL" ] && NEVIS_CALLBACK_URL="http://$LOCAL_IP:$BACKEND_PORT"
 # TASK_API_DOMAIN should be the same as WEGENT_SOCKET_URL (both point to backend)
 [ -z "$TASK_API_DOMAIN" ] && TASK_API_DOMAIN="$WEGENT_SOCKET_URL"
 [ -z "$EXECUTOR_MANAGER_URL" ] && EXECUTOR_MANAGER_URL="http://localhost:$EXECUTOR_MANAGER_PORT"
@@ -1483,6 +1510,7 @@ start_services() {
     echo -e "  Task API Domain:     $TASK_API_DOMAIN"
     echo -e "  Executor Manager:    $EXECUTOR_MANAGER_URL"
     echo -e "  Knowledge Runtime:   $KNOWLEDGE_RUNTIME_URL"
+    echo -e "  Nevis Callback URL:  $NEVIS_CALLBACK_URL"
     echo ""
 
     # Check if WEGENT_SOCKET_URL IP matches local IP
@@ -1588,7 +1616,7 @@ start_services() {
         # --reload-dir: Watch shared module for changes (editable dependency)
         # --reload-exclude: Exclude .venv and __pycache__ to reduce CPU usage
         start_service "backend" "backend" \
-            "export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=http://localhost:$BACKEND_PORT && export LOG_LEVEL=DEBUG && source .venv/bin/activate && uvicorn app.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $BACKEND_PORT --log-level debug"
+            "export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=http://localhost:$BACKEND_PORT && export NEVIS_CALLBACK_URL=$NEVIS_CALLBACK_URL && export LOG_LEVEL=DEBUG && source .venv/bin/activate && uvicorn app.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $BACKEND_PORT --log-level debug"
     fi
 
     # 2. Start Chat Shell
