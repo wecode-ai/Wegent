@@ -67,6 +67,15 @@ def _get_bearer_token(request: Request) -> str:
     return token.strip()
 
 
+def _get_bearer_token(request: Request) -> str:
+    """Extract the raw Bearer token from the incoming request."""
+    authorization = request.headers.get("authorization", "")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer":
+        return ""
+    return token.strip()
+
+
 def _resolve_target_user_id(
     current_user: User,
     target_user_id: int | None,
