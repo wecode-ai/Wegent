@@ -10,6 +10,7 @@ to knowledge bases. These tasks are triggered after successful RAG indexing.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 
 from app.core.celery_app import celery_app
@@ -73,15 +74,25 @@ def generate_duckdb_task(
             .first()
         )
         if existing and existing.status == "ready":
-            logger.info(
-                f"DuckDB already generated for attachment {attachment_id}, skipping"
-            )
-            return {
-                "success": True,
-                "duckdb_attachment_id": existing.duckdb_attachment_id,
-            }
+            # Source file hash may be empty for legacy entries;
+            # in that case we cannot skip, so proceed with generation.
+            if existing.source_file_hash:
+                logger.info(
+                    f"DuckDB already generated for attachment {attachment_id}, "
+                    f"skipping (source_file_hash={existing.source_file_hash[:8]}...)"
+                )
+                return {
+                    "success": True,
+                    "duckdb_attachment_id": existing.duckdb_attachment_id,
+                }
+            else:
+                logger.info(
+                    f"DuckDB exists for attachment {attachment_id} but has no "
+                    f"source_file_hash, regenerating for hash tracking"
+                )
 
         # Create or update cache entry with generating status
+        existing_hash = existing.source_file_hash if existing else None
         if existing:
             existing.status = "generating"
         else:
@@ -92,15 +103,45 @@ def generate_duckdb_task(
             db.add(cache_entry)
         db.commit()
 
-        # Call knowledge_runtime to generate DuckDB
+        # Call knowledge_runtime to generate DuckDB, passing existing hash
+        # so it can skip generation if source file has not changed
         result = _call_kr_generate(
             attachment_id=attachment_id,
             user_id=user_id,
             source_file=source_file,
             file_extension=file_extension,
+            existing_source_file_hash=existing_hash,
         )
 
         if result.get("success"):
+            # Handle source-unchanged case: file has not changed since last
+            # generation, so the existing DuckDB cache is still valid.
+            if result.get("source_unchanged"):
+                cache_entry = (
+                    db.query(DuckDBCache)
+                    .filter(DuckDBCache.attachment_id == attachment_id)
+                    .first()
+                )
+                if cache_entry:
+                    # Restore ready status - the existing DuckDB is still valid
+                    cache_entry.status = "ready"
+                    # Update the hash if it was missing (legacy migration)
+                    if not cache_entry.source_file_hash:
+                        cache_entry.source_file_hash = result.get("source_file_hash")
+                    db.commit()
+
+                logger.info(
+                    f"DuckDB cache still valid for attachment {attachment_id}, "
+                    f"source file unchanged"
+                )
+                return {
+                    "success": True,
+                    "duckdb_attachment_id": (
+                        cache_entry.duckdb_attachment_id if cache_entry else None
+                    ),
+                    "source_unchanged": True,
+                }
+
             # Update cache entry
             cache_entry = (
                 db.query(DuckDBCache)
@@ -195,6 +236,7 @@ def _call_kr_generate(
     user_id: int,
     source_file: str,
     file_extension: str,
+    existing_source_file_hash: str | None = None,
 ) -> dict:
     """Call knowledge_runtime to generate DuckDB from attachment.
 
@@ -203,6 +245,8 @@ def _call_kr_generate(
         user_id: User ID
         source_file: Original filename
         file_extension: File extension
+        existing_source_file_hash: Hash of the previously indexed source file,
+            used to skip generation if the file has not changed.
 
     Returns:
         Dict with generation result
@@ -233,6 +277,7 @@ def _call_kr_generate(
         content_ref=content_ref,
         source_file=source_file,
         file_extension=file_extension,
+        existing_source_file_hash=existing_source_file_hash,
     )
 
     kr_url = (

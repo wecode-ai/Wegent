@@ -113,6 +113,34 @@ class TestGenerateEndpoint:
         assert data["attachment_id"] == 42
         assert data["duckdb_attachment_id"] == 99
 
+    @patch(
+        "knowledge_runtime.api.endpoints.data._data_service",
+    )
+    def test_generate_endpoint_returns_source_unchanged(
+        self, mock_service, client, monkeypatch
+    ) -> None:
+        """POST /internal/data/generate should return source_unchanged when hash matches."""
+        monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", "")
+        reset_settings()
+
+        mock_service.generate_duckdb = AsyncMock(
+            return_value=RemoteDataGenerateResponse(
+                success=True,
+                attachment_id=42,
+                source_file_hash="a" * 64,
+                source_unchanged=True,
+            )
+        )
+
+        request = _make_generate_request()
+        request["existing_source_file_hash"] = "a" * 64
+
+        response = client.post("/internal/data/generate", json=request)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["source_unchanged"] is True
+
 
 class TestQueryAndSchemaEndpointsRemoved:
     """Tests verifying that query and schema endpoints have been removed.

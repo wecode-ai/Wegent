@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -108,6 +109,68 @@ class TestDuckDBGeneratorCSVImport:
         table = result.tables[0]
         assert table.row_count == 3
         assert len(table.columns) == 3
+
+    @pytest.mark.asyncio
+    async def test_csv_import_computes_source_file_hash(
+        self, generator, mock_content_fetcher
+    ) -> None:
+        """Generate should compute SHA256 hash of the source file bytes."""
+        csv_bytes = _make_csv_bytes(
+            rows=[
+                ["1", "Alice", "30"],
+                ["2", "Bob", "25"],
+            ],
+            header=["id", "name", "age"],
+        )
+        mock_content_fetcher.fetch = AsyncMock(
+            return_value=(csv_bytes, "test_data", ".csv")
+        )
+
+        result = await generator.generate(
+            content_ref=_make_content_ref(),
+            source_file="test_data",
+            file_extension=".csv",
+        )
+
+        # Verify source_file_hash is the SHA256 of the source bytes (not DuckDB bytes)
+        expected_hash = hashlib.sha256(csv_bytes).hexdigest()
+        assert result.source_file_hash == expected_hash
+        assert len(result.source_file_hash) == 64  # SHA256 hex length
+        assert result.source_file_size == len(csv_bytes)
+
+    @pytest.mark.asyncio
+    async def test_different_source_content_produces_different_hash(
+        self, generator, mock_content_fetcher
+    ) -> None:
+        """Different source file content should produce different hashes."""
+        csv_bytes_1 = _make_csv_bytes(
+            rows=[["1", "Alice"]],
+            header=["id", "name"],
+        )
+        csv_bytes_2 = _make_csv_bytes(
+            rows=[["2", "Bob"]],
+            header=["id", "name"],
+        )
+
+        mock_content_fetcher.fetch = AsyncMock(
+            return_value=(csv_bytes_1, "test_data", ".csv")
+        )
+        result1 = await generator.generate(
+            content_ref=_make_content_ref(),
+            source_file="test_data",
+            file_extension=".csv",
+        )
+
+        mock_content_fetcher.fetch = AsyncMock(
+            return_value=(csv_bytes_2, "test_data", ".csv")
+        )
+        result2 = await generator.generate(
+            content_ref=_make_content_ref(),
+            source_file="test_data",
+            file_extension=".csv",
+        )
+
+        assert result1.source_file_hash != result2.source_file_hash
 
     @pytest.mark.asyncio
     async def test_csv_import_table_name_from_filename(

@@ -44,7 +44,7 @@ class TestDuckDBCacheModelCreation:
             summary={"tables": [{"name": "sales", "rows": 500}]},
             tables_count=1,
             file_size=4096,
-            source_file_hash="abc123def456",
+            source_file_hash="a" * 64,  # SHA256 hash is 64 hex chars
             status="ready",
         )
         test_db.add(entry)
@@ -55,7 +55,7 @@ class TestDuckDBCacheModelCreation:
         assert entry.summary["tables"][0]["name"] == "sales"
         assert entry.tables_count == 1
         assert entry.file_size == 4096
-        assert entry.source_file_hash == "abc123def456"
+        assert entry.source_file_hash == "a" * 64
         assert entry.status == "ready"
 
     def test_default_status_is_pending(self, test_db: Session) -> None:

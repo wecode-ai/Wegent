@@ -58,7 +58,7 @@ class DuckDBCache(Base):
     source_file_hash = Column(
         String(64),
         nullable=True,
-        comment="SHA256 hash of the original file for integrity verification",
+        comment="SHA256 hash of the original source file for change detection",
     )
     status = Column(
         String(20),

@@ -10,6 +10,7 @@ including automatic table detection, SUMMARIZE analysis, and sample data extract
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import re
@@ -38,6 +39,8 @@ class DuckDBGenerateResult:
     tables: list[DuckDBTableInfo] = field(default_factory=list)
     sample_data: dict[str, list[Any]] = field(default_factory=dict)
     generation_time_ms: float = 0.0
+    source_file_hash: str = ""
+    source_file_size: int = 0
 
 
 class DuckDBGenerator:
@@ -110,6 +113,11 @@ class DuckDBGenerator:
         if ext:
             resolved_ext = ext
 
+        # Compute SHA256 hash of the SOURCE file (not the generated DuckDB)
+        # This allows detecting whether the source file has changed on re-index.
+        source_file_hash = hashlib.sha256(binary_data).hexdigest()
+        source_file_size = len(binary_data)
+
         # Step 2: Check file size
         max_size_bytes = self._settings.duckdb_max_file_size_mb * 1024 * 1024
         if len(binary_data) > max_size_bytes:
@@ -129,6 +137,8 @@ class DuckDBGenerator:
         )
 
         result.generation_time_ms = (time.monotonic() - start_time) * 1000
+        result.source_file_hash = source_file_hash
+        result.source_file_size = source_file_size
         return result
 
     def _check_available_memory(self) -> None:

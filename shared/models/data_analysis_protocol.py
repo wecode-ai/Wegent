@@ -44,6 +44,9 @@ class RemoteDataGenerateRequest(KnowledgeRuntimeProtocolModel):
 
     The knowledge_runtime fetches the source file via content_ref,
     imports it into DuckDB, runs SUMMARIZE, and returns the results.
+
+    If existing_source_file_hash is provided and the source file hash
+    matches, generation is skipped and a cached response is returned.
     """
 
     attachment_id: int
@@ -51,6 +54,7 @@ class RemoteDataGenerateRequest(KnowledgeRuntimeProtocolModel):
     source_file: str | None = None
     file_extension: str | None = None
     extensions: dict[str, Any] | None = None
+    existing_source_file_hash: str | None = None
 
 
 class RemoteDataGenerateResponse(KnowledgeRuntimeProtocolModel):
@@ -64,6 +68,7 @@ class RemoteDataGenerateResponse(KnowledgeRuntimeProtocolModel):
     generation_time_ms: float = 0.0
     duckdb_file_size: int = Field(default=0, ge=0)
     source_file_hash: str | None = None
+    source_unchanged: bool = False
     error: str | None = None
 
 

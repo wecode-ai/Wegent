@@ -308,7 +308,9 @@ def index_document_task(
                                 ext = f".{ext}"
                             if ext in (".xlsx", ".xls", ".csv"):
                                 # Reset any existing cache record so re-indexing
-                                # can trigger a fresh DuckDB generation
+                                # can trigger a fresh DuckDB generation.
+                                # Preserve source_file_hash so the generation
+                                # task can detect if the source file is unchanged.
                                 existing_cache = (
                                     duckdb_db.query(DuckDBCache)
                                     .filter(DuckDBCache.attachment_id == attachment_id)
