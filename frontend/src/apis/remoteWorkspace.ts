@@ -26,6 +26,11 @@ export interface RemoteWorkspaceTreeResponse {
   entries: RemoteWorkspaceTreeEntry[]
 }
 
+export interface SendToDingtalkResponse {
+  message: string
+  filename: string
+}
+
 export const remoteWorkspaceApis = {
   getStatus(taskId: number) {
     return apiClient.get<RemoteWorkspaceStatusResponse>(`/tasks/${taskId}/remote-workspace/status`)
@@ -39,5 +44,11 @@ export const remoteWorkspaceApis = {
 
   getFileUrl(taskId: number, path: string, disposition: RemoteWorkspaceDisposition) {
     return `/api/tasks/${taskId}/remote-workspace/file?path=${encodeURIComponent(path)}&disposition=${disposition}`
+  },
+
+  sendToDingtalk(taskId: number, path: string) {
+    return apiClient.post<SendToDingtalkResponse>(
+      `/tasks/${taskId}/remote-workspace/send-to-dingtalk?path=${encodeURIComponent(path)}`
+    )
   },
 }

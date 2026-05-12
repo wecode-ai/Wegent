@@ -1054,3 +1054,112 @@ def get_current_user_optional(
                 span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
                 span.set_attribute(SpanAttributes.AUTH_FAILURE_REASON, str(e)[:200])
             return None
+
+
+def get_current_user_from_query_or_header(
+    request: Request,
+    token: Optional[str] = Depends(oauth2_scheme_optional),
+    db: Session = Depends(get_db),
+) -> User:
+    """
+    Get current authenticated user from either Authorization header or ?token= query param.
+
+    This is useful for endpoints that may be opened directly in a browser (e.g. file
+    downloads inside DingTalk in-app browser) where custom headers cannot be set.
+
+    Priority:
+    1. Authorization: Bearer header (standard OAuth2)
+    2. ?token= query parameter
+
+    Args:
+        request: FastAPI Request object
+        token: JWT token from Authorization header (optional, via oauth2_scheme_optional)
+        db: Database session
+
+    Returns:
+        Authenticated User object
+
+    Raises:
+        HTTPException: 401 if authentication fails
+    """
+    with _get_tracer().start_as_current_span(
+        "auth.get_current_user_from_query_or_header"
+    ) as span:
+        if is_telemetry_enabled():
+            span.set_attribute(SpanAttributes.AUTH_METHOD, "jwt")
+            span.set_attribute(SpanAttributes.AUTH_TOKEN_TYPE, "bearer")
+
+        # Try standard header first
+        effective_token = token
+        auth_source = "authorization_header"
+
+        # Fall back to query parameter
+        if not effective_token:
+            effective_token = request.query_params.get("token")
+            if effective_token:
+                auth_source = "query_parameter"
+
+        if not effective_token:
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                span.set_attribute(
+                    SpanAttributes.AUTH_FAILURE_REASON, "missing_credentials"
+                )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        if is_telemetry_enabled():
+            span.set_attribute(SpanAttributes.AUTH_SOURCE, auth_source)
+
+        try:
+            token_data = verify_token(effective_token)
+            username = token_data.get("username")
+
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.USER_NAME, username)
+
+            user = user_service.get_user_by_name(db=db, user_name=username)
+            if user is None:
+                if is_telemetry_enabled():
+                    span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                    span.set_attribute(
+                        SpanAttributes.AUTH_FAILURE_REASON, "user_not_found"
+                    )
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Could not validate credentials",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            if not user.is_active:
+                if is_telemetry_enabled():
+                    span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                    span.set_attribute(
+                        SpanAttributes.AUTH_FAILURE_REASON, "user_inactive"
+                    )
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="User not activated",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_RESULT, "success")
+                span.set_attribute(SpanAttributes.USER_ID, str(user.id))
+                _set_user_context(user_id=str(user.id), user_name=user.user_name)
+
+            return user
+        except HTTPException:
+            raise
+        except Exception as e:
+            if is_telemetry_enabled():
+                span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                span.set_attribute(SpanAttributes.AUTH_FAILURE_REASON, str(e)[:200])
+                span.record_exception(e)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
