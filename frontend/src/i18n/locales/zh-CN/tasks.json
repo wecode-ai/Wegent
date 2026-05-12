@@ -19,6 +19,8 @@
     "title": "远程工作区",
     "root": "工作区",
     "parent": "上级目录",
+    "parent_entry": "返回上级目录",
+    "parent_entry_hint": "回到上一层文件夹",
     "search_placeholder": "搜索当前文件列表",
     "sort": {
       "label": "排序",
@@ -36,6 +38,10 @@
       "preview": "预览",
       "refresh": "刷新"
     },
+    "download_confirm": {
+      "title": "确认下载所选文件？",
+      "description": "将下载 {{count}} 个已选文件，浏览器可能会显示多个下载提示。"
+    },
     "columns": {
       "select_all": "全选文件",
       "name": "名称",
@@ -46,7 +52,8 @@
     "status": {
       "path": "路径",
       "selected": "已选中",
-      "items": "项"
+      "items": "项",
+      "has_files": "有文件"
     },
     "path": {
       "edit": "编辑路径",

@@ -10,6 +10,7 @@ import { RemoteWorkspaceEntry } from '@/features/tasks/components/remote-workspa
 jest.mock('@/apis/remoteWorkspace', () => ({
   remoteWorkspaceApis: {
     getStatus: jest.fn(),
+    getTree: jest.fn(),
   },
 }))
 
@@ -30,6 +31,7 @@ jest.mock('@/hooks/useTranslation', () => ({
         'remote_workspace.reason_booting': 'Remote workspace is booting',
         'remote_workspace.reason_warming': 'Remote workspace is warming up',
         'remote_workspace.reason_starting': 'Remote workspace is starting',
+        'remote_workspace.status.has_files': 'Files',
         'tasks:remote_workspace.button': 'Remote Workspace',
         'tasks:remote_workspace.unavailable': 'Remote session unavailable',
       }
@@ -41,6 +43,10 @@ jest.mock('@/hooks/useTranslation', () => ({
 describe('RemoteWorkspaceEntry', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    ;(remoteWorkspaceApis.getTree as jest.Mock).mockResolvedValue({
+      path: '/workspace',
+      entries: [],
+    })
   })
 
   afterEach(() => {
@@ -104,6 +110,176 @@ describe('RemoteWorkspaceEntry', () => {
     expect(button).toHaveClass('h-8')
     expect(button).toHaveClass('rounded-[7px]')
     expect(button).toHaveClass('text-sm')
+  })
+
+  test('shows file hint when root tree has any entry', async () => {
+    ;(remoteWorkspaceApis.getStatus as jest.Mock).mockResolvedValue({
+      connected: true,
+      available: true,
+      root_path: '/workspace',
+      reason: null,
+    })
+    ;(remoteWorkspaceApis.getTree as jest.Mock).mockResolvedValue({
+      path: '/workspace',
+      entries: [
+        {
+          name: 'src',
+          path: '/workspace/src',
+          is_directory: true,
+          size: 0,
+        },
+      ],
+    })
+
+    render(<RemoteWorkspaceEntry taskId={1} taskStatus="RUNNING" />)
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace')
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('remote-workspace-file-hint')).toHaveTextContent('Files')
+    })
+  })
+
+  test('shows visible file hint inside icon button when root tree has entries', async () => {
+    ;(remoteWorkspaceApis.getStatus as jest.Mock).mockResolvedValue({
+      connected: true,
+      available: true,
+      root_path: '/workspace',
+      reason: null,
+    })
+    ;(remoteWorkspaceApis.getTree as jest.Mock).mockResolvedValue({
+      path: '/workspace',
+      entries: [
+        {
+          name: 'output',
+          path: '/workspace/output',
+          is_directory: true,
+          size: 0,
+        },
+      ],
+    })
+
+    render(<RemoteWorkspaceEntry taskId={1} taskStatus="RUNNING" display="icon" />)
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace')
+    })
+
+    await waitFor(() => {
+      const button = screen.getByTestId('remote-workspace-button')
+      expect(button).toHaveClass('min-w-[64px]')
+      expect(screen.getByTestId('remote-workspace-file-hint')).toHaveTextContent('Files')
+      expect(screen.getByTestId('remote-workspace-file-hint')).not.toHaveClass('absolute')
+    })
+  })
+
+  test('hides file hint when root tree is empty', async () => {
+    ;(remoteWorkspaceApis.getStatus as jest.Mock).mockResolvedValue({
+      connected: true,
+      available: true,
+      root_path: '/workspace',
+      reason: null,
+    })
+    ;(remoteWorkspaceApis.getTree as jest.Mock).mockResolvedValue({
+      path: '/workspace',
+      entries: [],
+    })
+
+    render(<RemoteWorkspaceEntry taskId={1} taskStatus="RUNNING" />)
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace')
+    })
+
+    expect(screen.queryByTestId('remote-workspace-file-hint')).not.toBeInTheDocument()
+  })
+
+  test('refreshes file hint after task status changes', async () => {
+    ;(remoteWorkspaceApis.getStatus as jest.Mock).mockResolvedValue({
+      connected: true,
+      available: true,
+      root_path: '/workspace',
+      reason: null,
+    })
+    ;(remoteWorkspaceApis.getTree as jest.Mock)
+      .mockResolvedValueOnce({
+        path: '/workspace',
+        entries: [],
+      })
+      .mockResolvedValueOnce({
+        path: '/workspace',
+        entries: [
+          {
+            name: 'output',
+            path: '/workspace/output',
+            is_directory: true,
+            size: 0,
+          },
+        ],
+      })
+
+    const { rerender } = render(<RemoteWorkspaceEntry taskId={1} taskStatus="RUNNING" />)
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalledTimes(1)
+    })
+    expect(screen.queryByTestId('remote-workspace-file-hint')).not.toBeInTheDocument()
+
+    rerender(<RemoteWorkspaceEntry taskId={1} taskStatus="COMPLETED" />)
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalledTimes(2)
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('remote-workspace-file-hint')).toHaveTextContent('Files')
+    })
+  })
+
+  test('refreshes file hint when refresh key changes without task status change', async () => {
+    ;(remoteWorkspaceApis.getStatus as jest.Mock).mockResolvedValue({
+      connected: true,
+      available: true,
+      root_path: '/workspace',
+      reason: null,
+    })
+    ;(remoteWorkspaceApis.getTree as jest.Mock)
+      .mockResolvedValueOnce({
+        path: '/workspace',
+        entries: [],
+      })
+      .mockResolvedValueOnce({
+        path: '/workspace',
+        entries: [
+          {
+            name: 'result.html',
+            path: '/workspace/result.html',
+            is_directory: false,
+            size: 128,
+          },
+        ],
+      })
+
+    const { rerender } = render(
+      <RemoteWorkspaceEntry taskId={1} taskStatus="RUNNING" refreshKey="round-1" display="icon" />
+    )
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalledTimes(1)
+    })
+    expect(screen.queryByTestId('remote-workspace-file-hint')).not.toBeInTheDocument()
+
+    rerender(
+      <RemoteWorkspaceEntry taskId={1} taskStatus="RUNNING" refreshKey="round-2" display="icon" />
+    )
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalledTimes(2)
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('remote-workspace-file-hint')).toHaveTextContent('Files')
+    })
   })
 
   test('keeps button visible and disabled when workspace is not connected', async () => {

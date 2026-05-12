@@ -11,6 +11,8 @@ type RemoteWorkspaceTranslations = {
   title?: string
   root?: string
   parent?: string
+  parent_entry?: string
+  parent_entry_hint?: string
   search_placeholder?: string
   sort?: {
     label?: string
@@ -25,6 +27,10 @@ type RemoteWorkspaceTranslations = {
     download?: string
     refresh?: string
   }
+  download_confirm?: {
+    title?: string
+    description?: string
+  }
   columns?: {
     select_all?: string
     name?: string
@@ -36,6 +42,7 @@ type RemoteWorkspaceTranslations = {
     path?: string
     selected?: string
     items?: string
+    has_files?: string
   }
   detail?: {
     title?: string
@@ -73,6 +80,8 @@ function assertRemoteWorkspaceKeys(locale: RemoteWorkspaceTranslations) {
   expect(locale.title).toBeTruthy()
   expect(locale.root).toBeTruthy()
   expect(locale.parent).toBeTruthy()
+  expect(locale.parent_entry).toBeTruthy()
+  expect(locale.parent_entry_hint).toBeTruthy()
   expect(locale.search_placeholder).toBeTruthy()
   expect(locale.sort?.label).toBeTruthy()
   expect(locale.sort?.options?.name_asc).toBeTruthy()
@@ -81,6 +90,8 @@ function assertRemoteWorkspaceKeys(locale: RemoteWorkspaceTranslations) {
   expect(locale.sort?.options?.modified_desc).toBeTruthy()
   expect(locale.actions?.download).toBeTruthy()
   expect(locale.actions?.refresh).toBeTruthy()
+  expect(locale.download_confirm?.title).toBeTruthy()
+  expect(locale.download_confirm?.description).toBeTruthy()
   expect(locale.columns?.select_all).toBeTruthy()
   expect(locale.columns?.name).toBeTruthy()
   expect(locale.columns?.size).toBeTruthy()
@@ -89,6 +100,7 @@ function assertRemoteWorkspaceKeys(locale: RemoteWorkspaceTranslations) {
   expect(locale.status?.path).toBeTruthy()
   expect(locale.status?.selected).toBeTruthy()
   expect(locale.status?.items).toBeTruthy()
+  expect(locale.status?.has_files).toBeTruthy()
   expect(locale.detail?.title).toBeTruthy()
   expect(locale.detail?.no_file_selected).toBeTruthy()
   expect(locale.detail?.multiple_selected).toBeTruthy()
