@@ -65,6 +65,7 @@ export interface ChatInputCardProps extends Omit<
 
   // Submit
   canSubmit: boolean
+  canQueueMessage?: boolean
   handleSendMessage: (message?: string) => Promise<void>
 
   // Ref for container width measurement
@@ -119,6 +120,7 @@ export function ChatInputCard({
   onDragOver,
   onDrop,
   canSubmit,
+  canQueueMessage = false,
   handleSendMessage,
   onPasteFile,
   inputControlsRef,
@@ -265,7 +267,9 @@ export function ChatInputCard({
               <Upload className="h-8 w-8 text-primary" />
             </div>
             <p className="text-lg font-medium text-primary">释放以上传文件</p>
-            <p className="text-sm text-text-muted mt-1">支持 PDF, Word, XMind, TXT, Markdown 等格式</p>
+            <p className="text-sm text-text-muted mt-1">
+              支持 PDF, Word, XMind, TXT, Markdown 等格式
+            </p>
           </div>
         )}
 
@@ -391,6 +395,7 @@ export function ChatInputCard({
             isAttachmentReadyToSend={isAttachmentReadyToSend}
             taskInputMessage={taskInputMessage}
             isSubtaskStreaming={isSubtaskStreaming}
+            canQueueMessage={canQueueMessage}
             onStopStream={onStopStream}
             onSendMessage={onSendMessage}
             hasNoTeams={hasNoTeams}

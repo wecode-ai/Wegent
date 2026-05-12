@@ -326,6 +326,7 @@ export function ChatInputControls({
             onClick={onSendMessage}
             disabled={sendState.isPrimaryDisabled}
             isLoading={isLoading}
+            ariaLabel="Queue message"
           />
         </div>
       )

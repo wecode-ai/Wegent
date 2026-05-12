@@ -259,6 +259,7 @@ export function MobileChatInputControls({
             onClick={onSendMessage}
             disabled={sendState.isPrimaryDisabled}
             isLoading={isLoading}
+            ariaLabel="Queue message"
             compact
           />
         </div>
