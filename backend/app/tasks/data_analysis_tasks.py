@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from typing import Any
 
 from app.core.celery_app import celery_app
 from app.core.config import settings
@@ -36,7 +37,7 @@ def generate_duckdb_task(
     user_id: int,
     source_file: str,
     file_extension: str,
-) -> dict:
+) -> dict[str, Any]:
     """Async task for DuckDB generation on KB document upload.
 
     Generates a .duckdb file from an Excel/CSV attachment via knowledge_runtime,
