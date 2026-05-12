@@ -45,6 +45,7 @@ class IndexExecutionDecision:
 
 ACTIVE_INDEX_STATUSES = {
     DocumentIndexStatus.QUEUED,
+    DocumentIndexStatus.PENDING_CONVERSION,
     DocumentIndexStatus.CONVERTING,
     DocumentIndexStatus.INDEXING,
 }
@@ -68,6 +69,12 @@ def _get_active_index_stale_reason(
         and age_seconds >= settings.KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS
     ):
         return "stale_queued"
+
+    if (
+        document.index_status == DocumentIndexStatus.PENDING_CONVERSION
+        and age_seconds >= settings.KNOWLEDGE_INDEX_STALE_PENDING_CONVERSION_SECONDS
+    ):
+        return "stale_pending_conversion"
 
     if (
         document.index_status == DocumentIndexStatus.INDEXING
@@ -249,7 +256,12 @@ def mark_document_index_enqueue_failed(
         .filter(
             KnowledgeDocument.id == document_id,
             KnowledgeDocument.index_generation == generation,
-            KnowledgeDocument.index_status == DocumentIndexStatus.QUEUED,
+            KnowledgeDocument.index_status.in_(
+                [
+                    DocumentIndexStatus.QUEUED,
+                    DocumentIndexStatus.PENDING_CONVERSION,
+                ]
+            ),
         )
         .update(
             {
@@ -508,7 +520,10 @@ def mark_document_conversion_started(
         return IndexExecutionDecision(should_execute=False, reason="stale_generation")
 
     current_status = document.index_status or DocumentIndexStatus.NOT_INDEXED
-    if current_status != DocumentIndexStatus.QUEUED:
+    if current_status not in (
+        DocumentIndexStatus.QUEUED,
+        DocumentIndexStatus.PENDING_CONVERSION,
+    ):
         db.rollback()
         _record_transition(
             "knowledge.conversion.start.skipped",

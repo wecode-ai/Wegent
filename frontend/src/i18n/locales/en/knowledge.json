@@ -211,7 +211,9 @@
         "indexing": "Indexing",
         "indexingHint": "Index is being generated. Refresh the page later to check the latest status.",
         "converting": "Converting",
-        "convertingHint": "Document is being converted to a searchable format. This may take a few minutes."
+        "convertingHint": "Document is being converted to a searchable format. This may take a few minutes.",
+        "pendingConversion": "Pending Conversion",
+        "pendingConversionHint": "Document is waiting to be converted to a searchable format."
       },
       "reindex": "Reindex",
       "index": "Start Indexing",

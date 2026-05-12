@@ -164,14 +164,16 @@ def index_document_task(
                 )
 
             logger.warning(
-                f"[Celery RAG Indexing] Task skipped after lock retry exhaustion: "
+                f"[Celery RAG Indexing] Lock retry exhausted, marking failed: "
                 f"task_id={task_id}, document_id={document_id}, "
                 f"index_generation={index_generation}, retries={retry_count}"
             )
-            logger.info(
-                f"[Celery RAG Indexing] Task skipped: task_id={task_id}, "
-                f"document_id={document_id}, reason=lock_retry_exhausted"
-            )
+            with SessionLocal() as state_db:
+                mark_document_index_failed(
+                    db=state_db,
+                    document_id=document_id,
+                    generation=index_generation,
+                )
             return {
                 "status": "skipped",
                 "reason": "lock_retry_exhausted",
@@ -474,3 +476,59 @@ def update_kb_summary_task(
 
     finally:
         db.close()
+
+
+@celery_app.task(name="app.tasks.knowledge_tasks.scan_stale_index_tasks")
+def scan_stale_index_tasks():
+    """Scan all active indexing states and mark stale ones as FAILED.
+
+    This is the safety net for scenarios where converter/indexing workers
+    crash, timeout, or become unreachable. Without this scan, documents
+    stay in CONVERTING/INDEXING/QUEUED indefinitely.
+
+    Idempotency: mark_document_index_failed uses WHERE generation=N AND
+    status IN (ACTIVE), so normally completed documents are unaffected.
+    """
+    from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
+    from app.services.knowledge.index_state_machine import (
+        _get_active_index_stale_reason,
+        mark_document_index_failed,
+    )
+
+    with SessionLocal() as db:
+        active_docs = (
+            db.query(KnowledgeDocument)
+            .filter(
+                KnowledgeDocument.index_status.in_(
+                    [
+                        DocumentIndexStatus.QUEUED,
+                        DocumentIndexStatus.PENDING_CONVERSION,
+                        DocumentIndexStatus.CONVERTING,
+                        DocumentIndexStatus.INDEXING,
+                    ]
+                ),
+                KnowledgeDocument.is_active == True,  # noqa: E712
+            )
+            .all()
+        )
+
+        marked_count = 0
+        for doc in active_docs:
+            stale_reason = _get_active_index_stale_reason(doc)
+            if stale_reason is not None:
+                finalized = mark_document_index_failed(
+                    db=db,
+                    document_id=doc.id,
+                    generation=doc.index_generation,
+                )
+                if finalized:
+                    marked_count += 1
+                    logger.info(
+                        f"[StaleScanner] Marked document {doc.id} as FAILED, "
+                        f"reason={stale_reason}, status_was={doc.index_status}"
+                    )
+
+        logger.info(
+            f"[StaleScanner] Scan complete, marked {marked_count} documents as FAILED"
+        )
+        return {"marked_count": marked_count, "scanned_count": len(active_docs)}

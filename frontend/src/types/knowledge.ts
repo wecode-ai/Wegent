@@ -19,6 +19,7 @@ export type DocumentSourceType = 'file' | 'text' | 'table' | 'web'
 export type DocumentIndexStatus =
   | 'not_indexed'
   | 'queued'
+  | 'pending_conversion'
   | 'converting'
   | 'indexing'
   | 'success'

@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.kind import Kind
-from app.models.knowledge import KnowledgeDocument
+from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.knowledge import (
@@ -1636,8 +1636,19 @@ class KnowledgeOrchestrator:
             normalized_extension = _normalize_file_extension(document.file_extension)
             if settings.needs_conversion(normalized_extension):
                 # File type requires conversion before indexing
+                # Task is dispatched to knowledge_doc_converter microservice
+                # via the shared Celery broker (knowledge_conversion queue)
+
+                # Override QUEUED -> PENDING_CONVERSION: document is waiting
+                # for a conversion worker, not for direct indexing
+                from datetime import datetime, timezone
+
+                document.index_status = DocumentIndexStatus.PENDING_CONVERSION
+                document.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                db.commit()
+
+                from app.core.celery_app import celery_app
                 from app.models.subtask_context import ContextType, SubtaskContext
-                from app.tasks.conversion_tasks import convert_document_task
 
                 attachment = (
                     db.query(SubtaskContext)
@@ -1651,22 +1662,36 @@ class KnowledgeOrchestrator:
                     attachment.original_filename if attachment else document.name
                 )
 
-                async_result = convert_document_task.delay(
-                    document_id=document.id,
-                    attachment_id=document.attachment_id,
-                    knowledge_base_id=str(knowledge_base.id),
-                    knowledge_base_name=knowledge_base.name,
-                    index_generation=generation,
-                    user_id=index_owner_user_id,
-                    user_name=user.user_name,
-                    file_extension=normalized_extension,
-                    original_filename=original_filename,
-                    retriever_name=retriever_name,
-                    retriever_namespace=retriever_namespace,
-                    embedding_model_name=embedding_model_name,
-                    embedding_model_namespace=embedding_model_namespace,
-                    splitter_config_dict=splitter_config,
-                    trigger_summary=trigger_summary,
+                async_result = celery_app.send_task(
+                    "knowledge_doc_converter.convert_document",
+                    kwargs={
+                        "document_id": document.id,
+                        "attachment_id": document.attachment_id,
+                        "file_extension": normalized_extension,
+                        "original_filename": original_filename,
+                        "knowledge_base_name": knowledge_base.name,
+                        "index_generation": generation,
+                        "content_download_path": (
+                            f"/api/internal/attachments/{document.attachment_id}/download"
+                        ),
+                        "callback_status_path": "/api/internal/conversion/callback/status",
+                        "callback_completed_path": "/api/internal/conversion/callback/completed",
+                        "index_dispatch_payload": {
+                            "knowledge_base_id": str(knowledge_base.id),
+                            "attachment_id": document.attachment_id,
+                            "retriever_name": retriever_name,
+                            "retriever_namespace": retriever_namespace,
+                            "embedding_model_name": embedding_model_name,
+                            "embedding_model_namespace": embedding_model_namespace,
+                            "user_id": index_owner_user_id,
+                            "user_name": user.user_name,
+                            "document_id": document.id,
+                            "index_generation": generation,
+                            "splitter_config_dict": splitter_config,
+                            "trigger_summary": trigger_summary,
+                        },
+                    },
+                    queue=settings.KNOWLEDGE_CONVERSION_QUEUE,
                 )
 
                 logger.info(
@@ -1741,7 +1766,7 @@ class KnowledgeOrchestrator:
         Raises:
             ValueError: If document not found, access denied, or RAG not configured
         """
-        from app.models.knowledge import KnowledgeDocument
+        from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
         from app.services.knowledge.indexing import (
             extract_rag_config_from_knowledge_base,
             get_rag_indexing_skip_reason,
@@ -2015,7 +2040,7 @@ class KnowledgeOrchestrator:
         Raises:
             ValueError: If document not found, not a web document, or refresh fails
         """
-        from app.models.knowledge import KnowledgeDocument
+        from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
         from app.models.subtask_context import SubtaskContext
         from app.schemas.knowledge import DocumentSourceType
         from app.services.context import context_service

@@ -211,7 +211,9 @@
         "indexing": "索引中",
         "indexingHint": "索引正在生成中，稍后刷新页面查看最新状态",
         "converting": "转换中",
-        "convertingHint": "文档正在转换为可检索的格式，可能需要几分钟。"
+        "convertingHint": "文档正在转换为可检索的格式，可能需要几分钟。",
+        "pendingConversion": "待转换",
+        "pendingConversionHint": "文档正在等待转换为可检索的格式。"
       },
       "reindex": "重新索引",
       "index": "开始索引",

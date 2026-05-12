@@ -43,7 +43,6 @@ celery_app = Celery(
     include=[
         "app.tasks.subscription_tasks",
         "app.tasks.knowledge_tasks",
-        "app.tasks.conversion_tasks",
     ],
 )
 
@@ -69,8 +68,9 @@ celery_app.conf.update(
     # Default queue configuration
     task_default_queue=settings.CELERY_TASK_DEFAULT_QUEUE,
     # Task routing - conversion tasks go to dedicated queue
+    # knowledge_doc_converter microservice consumes this queue
     task_routes={
-        "app.tasks.conversion_tasks.*": {
+        "knowledge_doc_converter.convert_document": {
             "queue": settings.KNOWLEDGE_CONVERSION_QUEUE,
         },
     },
@@ -79,6 +79,10 @@ celery_app.conf.update(
         "check-due-subscriptions": {
             "task": "app.tasks.subscription_tasks.check_due_subscriptions",
             "schedule": float(settings.FLOW_SCHEDULER_INTERVAL_SECONDS),
+        },
+        "scan-stale-index-tasks": {
+            "task": "app.tasks.knowledge_tasks.scan_stale_index_tasks",
+            "schedule": 5 * 60,  # every 5 minutes
         },
     },
     # Beat scheduler class - Use default PersistentScheduler (file-based)

@@ -31,8 +31,8 @@ services:
       dockerfile: docker/knowledge_runtime/Dockerfile
     pull_policy: build
 
-  conversion_worker:
+  knowledge_doc_converter:
     pull_policy: build
     build:
       context: .
-      dockerfile: docker/conversion/Dockerfile
+      dockerfile: docker/knowledge_doc_converter/Dockerfile

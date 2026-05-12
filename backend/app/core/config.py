@@ -328,38 +328,43 @@ class Settings(BaseSettings):
     KNOWLEDGE_INDEX_LOCK_RETRY_DELAY_SECONDS: int = 15
     KNOWLEDGE_INDEX_LOCK_MAX_RETRIES: int = 1
     KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS: int = 600
+    KNOWLEDGE_INDEX_STALE_PENDING_CONVERSION_SECONDS: int = (
+        1200  # 20 min, between QUEUED and CONVERTING
+    )
     KNOWLEDGE_INDEX_STALE_INDEXING_SECONDS: int = 2700
 
     # --- Document Conversion Configuration ---
-    # Master switch: when False, all files indexed directly (original behavior)
+
+    # [Retained] Master switch: when False, all files indexed directly
     KNOWLEDGE_CONVERSION_ENABLED: bool = False
-    # Comma-separated file extensions requiring conversion (e.g., "pdf,pptx,docx")
+    # [Retained] Comma-separated file extensions requiring conversion
     KNOWLEDGE_CONVERSION_FILE_TYPES: str = ""
-    # Celery queue name for conversion tasks
+    # [Retained] Celery queue name for conversion tasks
     KNOWLEDGE_CONVERSION_QUEUE: str = "knowledge_conversion"
-    # Stale detection for CONVERTING status (seconds, default 30 min)
-    KNOWLEDGE_INDEX_STALE_CONVERTING_SECONDS: int = 1800
-    # Conversion distributed lock
-    KNOWLEDGE_CONVERSION_LOCK_TIMEOUT_SECONDS: int = 2000
-    KNOWLEDGE_CONVERSION_LOCK_EXTEND_INTERVAL_SECONDS: int = 60
-    KNOWLEDGE_CONVERSION_LOCK_MAX_RETRIES: int = 2
-    KNOWLEDGE_CONVERSION_LOCK_RETRY_DELAY_SECONDS: int = 30
-    # MinerU API
-    MINERU_API_BASE_URL: str = ""
-    MINERU_BACKEND: str = "pipeline"
-    MINERU_PARSE_METHOD: str = "ocr"
-    MINERU_LANG_LIST: str = "ch"
-    MINERU_FORMULA_ENABLE: bool = True
-    MINERU_TABLE_ENABLE: bool = True
-    MINERU_POLL_INTERVAL_SECONDS: int = 3
-    MINERU_MAX_WAIT_SECONDS: int = 600
-    # S3 storage for converted images
-    WORKER_CONVERSION_S3_ENABLED: bool = False
-    WORKER_CONVERSION_S3_ENDPOINT: str = ""
-    WORKER_CONVERSION_S3_ACCESS_KEY: str = ""
-    WORKER_CONVERSION_S3_SECRET_KEY: str = ""
-    WORKER_CONVERSION_S3_BUCKET_NAME: str = ""
-    WORKER_CONVERSION_S3_REGION_NAME: str = "us-east-1"
+    # [Retained, value adjusted] Stale detection for CONVERTING status
+    # MUST be > converter CONVERSION_TASK_TIME_LIMIT to avoid false kills
+    # See cross-service config constraints in design doc section 4.4
+    KNOWLEDGE_INDEX_STALE_CONVERTING_SECONDS: int = 12000  # was 1800
+
+    # [Migrated to knowledge_doc_converter] The following configs have been moved:
+    # KNOWLEDGE_CONVERSION_LOCK_TIMEOUT_SECONDS  -> converter config (value: 12000)
+    # KNOWLEDGE_CONVERSION_LOCK_EXTEND_INTERVAL_SECONDS -> converter config
+    # KNOWLEDGE_CONVERSION_LOCK_MAX_RETRIES -> converter config
+    # KNOWLEDGE_CONVERSION_LOCK_RETRY_DELAY_SECONDS -> converter config
+    # MINERU_API_BASE_URL -> converter config
+    # MINERU_BACKEND -> converter config
+    # MINERU_PARSE_METHOD -> converter config
+    # MINERU_LANG_LIST -> converter config
+    # MINERU_FORMULA_ENABLE -> converter config
+    # MINERU_TABLE_ENABLE -> converter config
+    # MINERU_POLL_INTERVAL_SECONDS -> converter config
+    # MINERU_MAX_WAIT_SECONDS -> converter config
+    # WORKER_CONVERSION_S3_ENABLED -> converter config
+    # WORKER_CONVERSION_S3_ENDPOINT -> converter config
+    # WORKER_CONVERSION_S3_ACCESS_KEY -> converter config
+    # WORKER_CONVERSION_S3_SECRET_KEY -> converter config
+    # WORKER_CONVERSION_S3_BUCKET_NAME -> converter config
+    # WORKER_CONVERSION_S3_REGION_NAME -> converter config
     # --- End Document Conversion Configuration ---
 
     # Circuit breaker configuration
