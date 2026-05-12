@@ -188,7 +188,9 @@ class TestExecuteQuery:
         assert result["truncated"] is True
         assert result["total_count"] == 2
 
-    def test_write_operation_rejected_by_readonly(self, executor, sample_duckdb_path) -> None:
+    def test_write_operation_rejected_by_readonly(
+        self, executor, sample_duckdb_path
+    ) -> None:
         """Should reject write operations via READ_ONLY connection."""
         result = executor.execute_query(
             duckdb_path=sample_duckdb_path,

@@ -250,6 +250,4 @@ api_router.include_router(
 api_router.include_router(
     callback_router, prefix="/internal", tags=["internal-callback"]
 )
-api_router.include_router(
-    data_router, prefix="/internal", tags=["internal-data"]
-)
+api_router.include_router(data_router, prefix="/internal", tags=["internal-data"])

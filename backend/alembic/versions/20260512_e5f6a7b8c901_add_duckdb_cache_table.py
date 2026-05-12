@@ -37,9 +37,7 @@ def upgrade() -> None:
             "file_size", sa.Integer(), nullable=False, server_default=sa.text("0")
         ),
         sa.Column("source_file_hash", sa.String(64), nullable=True),
-        sa.Column(
-            "status", sa.String(20), nullable=False, server_default="pending"
-        ),
+        sa.Column("status", sa.String(20), nullable=False, server_default="pending"),
         sa.Column(
             "created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()
         ),

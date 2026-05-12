@@ -37,8 +37,16 @@ class TestGetDuckDBInfo:
 
         # Set up sequential query calls
         mock_db.query.side_effect = [
-            MagicMock(filter=MagicMock(return_value=MagicMock(first=MagicMock(return_value=mock_context)))),
-            MagicMock(filter=MagicMock(return_value=MagicMock(first=MagicMock(return_value=mock_cache)))),
+            MagicMock(
+                filter=MagicMock(
+                    return_value=MagicMock(first=MagicMock(return_value=mock_context))
+                )
+            ),
+            MagicMock(
+                filter=MagicMock(
+                    return_value=MagicMock(first=MagicMock(return_value=mock_cache))
+                )
+            ),
         ]
 
         # Mock content ref building
@@ -67,9 +75,7 @@ class TestGetDuckDBInfo:
         mock_db = MagicMock()
         mock_db.query.return_value.filter.return_value.first.return_value = None
 
-        result = data_analysis._get_duckdb_info(
-            db=mock_db, attachment_id=42, user_id=1
-        )
+        result = data_analysis._get_duckdb_info(db=mock_db, attachment_id=42, user_id=1)
         assert result is None
 
     def test_returns_none_when_cache_not_ready(self) -> None:
@@ -85,13 +91,19 @@ class TestGetDuckDBInfo:
         mock_cache.status = "generating"
 
         mock_db.query.side_effect = [
-            MagicMock(filter=MagicMock(return_value=MagicMock(first=MagicMock(return_value=mock_context)))),
-            MagicMock(filter=MagicMock(return_value=MagicMock(first=MagicMock(return_value=mock_cache)))),
+            MagicMock(
+                filter=MagicMock(
+                    return_value=MagicMock(first=MagicMock(return_value=mock_context))
+                )
+            ),
+            MagicMock(
+                filter=MagicMock(
+                    return_value=MagicMock(first=MagicMock(return_value=mock_cache))
+                )
+            ),
         ]
 
-        result = data_analysis._get_duckdb_info(
-            db=mock_db, attachment_id=42, user_id=1
-        )
+        result = data_analysis._get_duckdb_info(db=mock_db, attachment_id=42, user_id=1)
         assert result is None
 
     def test_returns_none_when_no_cache_entry(self) -> None:
@@ -104,13 +116,19 @@ class TestGetDuckDBInfo:
 
         # Mock DuckDBCache lookup - no entry
         mock_db.query.side_effect = [
-            MagicMock(filter=MagicMock(return_value=MagicMock(first=MagicMock(return_value=mock_context)))),
-            MagicMock(filter=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))),
+            MagicMock(
+                filter=MagicMock(
+                    return_value=MagicMock(first=MagicMock(return_value=mock_context))
+                )
+            ),
+            MagicMock(
+                filter=MagicMock(
+                    return_value=MagicMock(first=MagicMock(return_value=None))
+                )
+            ),
         ]
 
-        result = data_analysis._get_duckdb_info(
-            db=mock_db, attachment_id=42, user_id=1
-        )
+        result = data_analysis._get_duckdb_info(db=mock_db, attachment_id=42, user_id=1)
         assert result is None
 
 
