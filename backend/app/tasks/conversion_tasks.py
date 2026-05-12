@@ -272,6 +272,22 @@ def convert_document_task(
 
         except Exception as exc:
             with SessionLocal() as db:
+                # If the document was deleted while we were converting,
+                # skip gracefully instead of retrying.
+                from app.models.knowledge import KnowledgeDocument
+
+                doc = (
+                    db.query(KnowledgeDocument)
+                    .filter(KnowledgeDocument.id == document_id)
+                    .first()
+                )
+                if not doc:
+                    logger.info(
+                        f"[Conversion] Document {document_id} was deleted during "
+                        f"conversion, skipping: error={exc}"
+                    )
+                    return {"status": "skipped", "reason": "document_deleted"}
+
                 mark_document_index_failed(
                     db=db, document_id=document_id, generation=index_generation
                 )
