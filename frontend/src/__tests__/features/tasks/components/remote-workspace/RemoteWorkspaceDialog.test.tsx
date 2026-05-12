@@ -587,6 +587,70 @@ describe('RemoteWorkspaceDialog', () => {
     expect(screen.queryByText(/^1\s+selected/i)).not.toBeInTheDocument()
   })
 
+  test('mobile DingTalk download navigates directly to attachment URL', async () => {
+    const originalFetch = global.fetch
+    const originalLocation = window.location
+    const originalUserAgent = window.navigator.userAgent
+    const fetchMock = jest.fn()
+    const assignMock = jest.fn()
+
+    global.fetch = fetchMock as unknown as typeof fetch
+    Object.defineProperty(window.navigator, 'userAgent', {
+      configurable: true,
+      value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) DingTalk/7.1.0',
+    })
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: {
+        assign: assignMock,
+      },
+    })
+    ;(useIsMobile as jest.Mock).mockReturnValue(true)
+    ;(remoteWorkspaceApis.getTree as jest.Mock).mockResolvedValue({
+      path: '/workspace',
+      entries: [
+        {
+          name: 'archive.zip',
+          path: '/workspace/archive.zip',
+          is_directory: false,
+          size: 1024,
+          modified_at: null,
+        },
+      ],
+    })
+    ;(remoteWorkspaceApis.getFileUrl as jest.Mock).mockImplementation(
+      (_taskId: number, path: string, disposition: string) =>
+        `/api/tasks/1/remote-workspace/file?path=${encodeURIComponent(path)}&disposition=${disposition}`
+    )
+
+    try {
+      render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={jest.fn()} />)
+
+      await waitFor(() => {
+        expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace')
+      })
+
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      await user.click(await screen.findByText(/archive\.zip/i))
+      await user.click(screen.getByRole('button', { name: 'Download' }))
+
+      expect(assignMock).toHaveBeenCalledWith(
+        '/api/tasks/1/remote-workspace/file?path=%2Fworkspace%2Farchive.zip&disposition=attachment'
+      )
+      expect(fetchMock).not.toHaveBeenCalled()
+    } finally {
+      global.fetch = originalFetch
+      Object.defineProperty(window.navigator, 'userAgent', {
+        configurable: true,
+        value: originalUserAgent,
+      })
+      Object.defineProperty(window, 'location', {
+        configurable: true,
+        value: originalLocation,
+      })
+    }
+  })
+
   test('mobile renders text file preview content', async () => {
     const originalFetch = global.fetch
     const originalCreateObjectURL = URL.createObjectURL

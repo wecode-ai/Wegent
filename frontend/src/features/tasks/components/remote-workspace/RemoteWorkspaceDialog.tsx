@@ -44,6 +44,18 @@ type LoadDirectoryOptions = {
   errorMessage?: string
 }
 
+function isDingTalkInAppBrowser(): boolean {
+  if (typeof navigator === 'undefined') {
+    return false
+  }
+
+  return /dingtalk/i.test(navigator.userAgent)
+}
+
+function navigateToDownloadUrl(url: string) {
+  window.location.assign(url)
+}
+
 export function RemoteWorkspaceDialog({
   open,
   taskId,
@@ -139,8 +151,14 @@ export function RemoteWorkspaceDialog({
   const handleDownloadFile = useCallback(
     async (entry: RemoteWorkspaceTreeEntry) => {
       try {
-        const token = getToken()
         const url = remoteWorkspaceApis.getFileUrl(taskId, entry.path, 'attachment')
+
+        if (isMobile && isDingTalkInAppBrowser()) {
+          navigateToDownloadUrl(url)
+          return
+        }
+
+        const token = getToken()
         const response = await fetch(url, {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         })
@@ -166,7 +184,7 @@ export function RemoteWorkspaceDialog({
         // Error handling - could add toast notification here
       }
     },
-    [taskId]
+    [isMobile, taskId]
   )
 
   useEffect(() => {
