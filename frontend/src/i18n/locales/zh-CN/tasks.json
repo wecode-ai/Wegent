@@ -33,7 +33,10 @@
     },
     "actions": {
       "cancel": "取消",
+      "close": "关闭",
       "download": "下载",
+      "exit_fullscreen": "退出全屏",
+      "fullscreen": "全屏预览",
       "go": "前往",
       "preview": "预览",
       "refresh": "刷新"

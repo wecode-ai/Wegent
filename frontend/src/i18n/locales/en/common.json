@@ -49,6 +49,8 @@
     "download": "Download",
     "share": "Share",
     "preview": "Preview",
+    "fullscreen": "Fullscreen preview",
+    "exit_fullscreen": "Exit fullscreen",
     "generating": "Generating...",
     "zoom_in": "Zoom In",
     "zoom_out": "Zoom Out",
@@ -1392,7 +1394,8 @@
     "preview": {
       "label": "Preview",
       "loading": "Loading preview...",
-      "unavailable": "Preview unavailable"
+      "unavailable": "Preview unavailable",
+      "dialog_description": "Previewing file {{filename}}"
     },
     "truncation": {
       "notice": "⚠️ Content too long, auto-truncated ({{original}} chars → {{truncated}} chars)"
