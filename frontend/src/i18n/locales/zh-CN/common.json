@@ -541,6 +541,14 @@
         "enable_hint": "启用后，Wegent 会将你的钉钉AI表格 MCP 自动注入到支持的智能体中。",
         "save_success": "钉钉AI表格配置已保存",
         "save_failed": "保存钉钉AI表格配置失败"
+      },
+      "workspace": {
+        "title": "钉钉知识库",
+        "description": "访问和管理钉钉知识库",
+        "enable_label": "启用钉钉知识库",
+        "enable_hint": "允许 AI 访问您的钉钉知识库",
+        "save_success": "钉钉知识库配置已保存",
+        "save_failed": "钉钉知识库配置保存失败"
       }
     }
   },

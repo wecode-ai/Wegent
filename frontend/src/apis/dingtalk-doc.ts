@@ -41,4 +41,25 @@ export const dingtalkDocApi = {
   deleteDoc: async (nodeId: number): Promise<void> => {
     await client.delete(`/dingtalk-docs/${nodeId}`)
   },
+
+  /**
+   * Get all synced DingTalk workspace nodes as a tree structure.
+   */
+  getWorkspaceNodes: async (): Promise<DingtalkDocTreeResponse> => {
+    return client.get<DingtalkDocTreeResponse>('/dingtalk-workspace')
+  },
+
+  /**
+   * Trigger sync of DingTalk workspace nodes from the user's workspace MCP server.
+   */
+  syncWorkspaceNodes: async (): Promise<DingtalkSyncResult> => {
+    return client.post<DingtalkSyncResult>('/dingtalk-workspace/sync')
+  },
+
+  /**
+   * Get the workspace sync status for the current user.
+   */
+  getWorkspaceSyncStatus: async (): Promise<DingtalkSyncStatus> => {
+    return client.get<DingtalkSyncStatus>('/dingtalk-workspace/sync-status')
+  },
 }

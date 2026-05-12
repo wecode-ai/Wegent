@@ -108,6 +108,7 @@ export interface UseKnowledgeSidebarReturn {
   dingtalkDocCount: number
   isDingtalkConfigured: boolean
   isDingtalkLoading: boolean
+  isWorkspaceConfigured: boolean
 
   // Summary counts from backend
   summary?: {
@@ -194,6 +195,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
   const [dingtalkDocCount, setDingtalkDocCount] = useState(0)
   const [isDingtalkConfigured, setIsDingtalkConfigured] = useState(false)
   const [isDingtalkLoading, setIsDingtalkLoading] = useState(true)
+  const [isWorkspaceConfigured, setIsWorkspaceConfigured] = useState(false)
 
   // Load initial data using the optimized all-grouped API
   const loadInitialData = useCallback(async () => {
@@ -218,13 +220,26 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
   const loadDingtalkStatus = useCallback(async () => {
     setIsDingtalkLoading(true)
     try {
-      const status = await dingtalkDocApi.getSyncStatus()
-      setDingtalkDocCount(status.total_nodes)
-      setIsDingtalkConfigured(status.is_configured)
+      const [docsResult, wsResult] = await Promise.allSettled([
+        dingtalkDocApi.getSyncStatus(),
+        dingtalkDocApi.getWorkspaceSyncStatus(),
+      ])
+      if (docsResult.status === 'fulfilled') {
+        setDingtalkDocCount(docsResult.value.total_nodes)
+        setIsDingtalkConfigured(docsResult.value.is_configured)
+      } else {
+        setIsDingtalkConfigured(false)
+        setDingtalkDocCount(0)
+      }
+      if (wsResult.status === 'fulfilled') {
+        setIsWorkspaceConfigured(wsResult.value.is_configured)
+      } else {
+        setIsWorkspaceConfigured(false)
+      }
     } catch {
-      // Not critical - DingTalk may not be configured
       setIsDingtalkConfigured(false)
       setDingtalkDocCount(0)
+      setIsWorkspaceConfigured(false)
     } finally {
       setIsDingtalkLoading(false)
     }
@@ -580,6 +595,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     dingtalkDocCount,
     isDingtalkConfigured,
     isDingtalkLoading,
+    isWorkspaceConfigured,
 
     // Summary from backend
     summary: allGroupedData?.summary,

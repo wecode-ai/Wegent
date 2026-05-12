@@ -375,6 +375,24 @@ export function KnowledgeDocumentPageDesktop({
   )
 
   const renderMainContent = () => {
+    if (sidebar.viewMode === 'dingtalk') {
+      // Wait for DingTalk status to finish loading before rendering
+      if (sidebar.isDingtalkLoading) {
+        return (
+          <div className="flex-1 flex items-center justify-center">
+            <Spinner size="lg" />
+          </div>
+        )
+      }
+      return (
+        <DingtalkDocsPage
+          isConfigured={sidebar.isDingtalkConfigured}
+          isWorkspaceConfigured={sidebar.isWorkspaceConfigured}
+          onSyncComplete={() => sidebar.refreshAll()}
+        />
+      )
+    }
+
     if (sidebar.selectedKb) {
       return (
         <KnowledgeDetailPanel

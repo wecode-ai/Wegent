@@ -109,7 +109,13 @@
       "columnSyncedAt": "Synced At",
       "columnActions": "Actions",
       "openInDingtalk": "Open in DingTalk",
-      "lastModified": "Last modified"
+      "lastModified": "Last modified",
+      "myDocs": "My Documents",
+      "workspace": "Knowledge Base",
+      "workspaceSyncHint": "Click sync to pull knowledge bases from DingTalk",
+      "workspaceEmpty": "No knowledge base content",
+      "workspaceNotConfigured": "DingTalk Knowledge Base MCP is not configured",
+      "workspaceConfigureHint": "Please go to settings to configure DingTalk Knowledge Base MCP"
     },
     "groupFilter": {
       "all": "All Groups"

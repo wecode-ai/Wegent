@@ -680,6 +680,14 @@
     "goToConfigure": "前往配置",
     "docBadgeHint": "钉钉文档",
     "searchPlaceholder": "搜索文档...",
-    "referencedDocsLabel": "引用的钉钉文档："
+    "referencedDocsLabel": "引用的钉钉文档：",
+    "myDocsTab": "我的文档",
+    "workspaceTab": "知识库",
+    "workspaceSync": "同步",
+    "workspaceSyncing": "同步中...",
+    "workspaceEmpty": "暂无知识库内容",
+    "workspaceNotConfigured": "钉钉知识库 MCP 未配置",
+    "workspaceLastSynced": "上次同步: {{time}}",
+    "workspaceNeverSynced": "从未同步"
   }
 }

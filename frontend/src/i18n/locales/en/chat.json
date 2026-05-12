@@ -702,6 +702,14 @@
     "goToConfigure": "Go to configure",
     "docBadgeHint": "DingTalk Doc",
     "searchPlaceholder": "Search documents...",
-    "referencedDocsLabel": "Referenced DingTalk Documents:"
+    "referencedDocsLabel": "Referenced DingTalk Documents:",
+    "myDocsTab": "My Documents",
+    "workspaceTab": "Knowledge Base",
+    "workspaceSync": "Sync",
+    "workspaceSyncing": "Syncing...",
+    "workspaceEmpty": "No knowledge base content",
+    "workspaceNotConfigured": "DingTalk Knowledge Base MCP is not configured",
+    "workspaceLastSynced": "Last synced: {{time}}",
+    "workspaceNeverSynced": "Never synced"
   }
 }

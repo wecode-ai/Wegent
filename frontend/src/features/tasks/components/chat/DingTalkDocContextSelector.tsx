@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 Weibo, Inc.
+// SPDX-FileCopyrightText: 2025 ZINFOID_00AQ, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -7,6 +7,7 @@
  *
  * Renders the synced DingTalk document tree with checkboxes.
  * Selecting a folder automatically selects all its descendant nodes.
+ * Supports two sections: "My Documents" and "Knowledge Base".
  */
 
 'use client'
@@ -233,6 +234,7 @@ interface DingTalkDocContextSelectorProps {
 /**
  * DingTalk document context selector panel.
  * Displays the synced document tree with checkboxes for multi-selection.
+ * Supports two sections: My Documents and Knowledge Base.
  */
 export function DingTalkDocContextSelector({
   selectedContexts,
@@ -242,12 +244,27 @@ export function DingTalkDocContextSelector({
   onDeselectMultiple,
 }: DingTalkDocContextSelectorProps) {
   const { t } = useTranslation('chat')
+
+  // Section state
+  const [activeSection, setActiveSection] = useState<'my-docs' | 'workspace'>('my-docs')
+
+  // My Docs state
   const [nodes, setNodes] = useState<DingtalkDocNode[]>([])
   const [loading, setLoading] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isConfigured, setIsConfigured] = useState(true)
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null)
+
+  // Workspace state
+  const [workspaceNodes, setWorkspaceNodes] = useState<DingtalkDocNode[]>([])
+  const [workspaceLoading, setWorkspaceLoading] = useState(false)
+  const [workspaceSyncing, setWorkspaceSyncing] = useState(false)
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null)
+  const [workspaceConfigured, setWorkspaceConfigured] = useState(false)
+  const [workspaceLastSyncedAt, setWorkspaceLastSyncedAt] = useState<string | null>(null)
+
+  // Shared search state
   const [searchQuery, setSearchQuery] = useState('')
 
   const fetchDocs = useCallback(async () => {
@@ -269,9 +286,29 @@ export function DingTalkDocContextSelector({
     }
   }, [t])
 
+  const fetchWorkspace = useCallback(async () => {
+    setWorkspaceLoading(true)
+    setWorkspaceError(null)
+    try {
+      const [tree, status] = await Promise.all([
+        dingtalkDocApi.getWorkspaceNodes(),
+        dingtalkDocApi.getWorkspaceSyncStatus(),
+      ])
+      setWorkspaceNodes(tree.nodes)
+      setWorkspaceConfigured(status.is_configured)
+      setWorkspaceLastSyncedAt(status.last_synced_at)
+    } catch (err) {
+      console.error('Failed to fetch DingTalk workspace:', err)
+      setWorkspaceError(t('chat:dingtalkDocs.loadFailed'))
+    } finally {
+      setWorkspaceLoading(false)
+    }
+  }, [t])
+
   useEffect(() => {
     fetchDocs()
-  }, [fetchDocs])
+    fetchWorkspace()
+  }, [fetchDocs, fetchWorkspace])
 
   const handleSync = useCallback(async () => {
     setSyncing(true)
@@ -286,6 +323,20 @@ export function DingTalkDocContextSelector({
       setSyncing(false)
     }
   }, [fetchDocs, t])
+
+  const handleSyncWorkspace = useCallback(async () => {
+    setWorkspaceSyncing(true)
+    setWorkspaceError(null)
+    try {
+      await dingtalkDocApi.syncWorkspaceNodes()
+      await fetchWorkspace()
+    } catch (err) {
+      console.error('Failed to sync DingTalk workspace:', err)
+      setWorkspaceError(t('chat:dingtalkDocs.syncFailed'))
+    } finally {
+      setWorkspaceSyncing(false)
+    }
+  }, [fetchWorkspace, t])
 
   /** Build a DingTalkDocContext from a node. */
   const buildContext = useCallback((node: DingtalkDocNode): DingTalkDocContext => {
@@ -338,7 +389,7 @@ export function DingTalkDocContextSelector({
     [selectedContexts, buildContext, onSelect, onDeselect, onSelectMultiple, onDeselectMultiple]
   )
 
-  // Count of selected doc/file nodes (not folders, which are virtual containers)
+  // Count of selected doc/file nodes across both sections
   const selectedDocCount = useMemo(() => {
     const countDocs = (nodeList: DingtalkDocNode[]): number => {
       let count = 0
@@ -352,10 +403,19 @@ export function DingTalkDocContextSelector({
       }
       return count
     }
-    return countDocs(nodes)
-  }, [nodes, selectedContexts])
+    return countDocs(nodes) + countDocs(workspaceNodes)
+  }, [nodes, workspaceNodes, selectedContexts])
 
-  if (loading) {
+  // Derived active section values
+  const activeNodes = activeSection === 'my-docs' ? nodes : workspaceNodes
+  const activeLoading = activeSection === 'my-docs' ? loading : workspaceLoading
+  const activeSyncing = activeSection === 'my-docs' ? syncing : workspaceSyncing
+  const activeError = activeSection === 'my-docs' ? error : workspaceError
+  const activeLastSyncedAt = activeSection === 'my-docs' ? lastSyncedAt : workspaceLastSyncedAt
+  const handleActiveSync = activeSection === 'my-docs' ? handleSync : handleSyncWorkspace
+  const handleRetry = activeSection === 'my-docs' ? fetchDocs : fetchWorkspace
+
+  if (activeLoading) {
     return (
       <div className="py-6 px-4 text-center text-sm text-text-muted">
         {t('common:actions.loading')}
@@ -363,7 +423,7 @@ export function DingTalkDocContextSelector({
     )
   }
 
-  if (!isConfigured) {
+  if (activeSection === 'my-docs' && !isConfigured) {
     return (
       <div className="py-6 px-4 text-center space-y-3">
         <p className="text-sm text-text-muted">{t('chat:dingtalkDocs.notConfigured')}</p>
@@ -378,11 +438,11 @@ export function DingTalkDocContextSelector({
     )
   }
 
-  if (error) {
+  if (activeError) {
     return (
       <div className="py-4 px-3 text-center space-y-2">
-        <p className="text-sm text-red-500">{error}</p>
-        <button onClick={fetchDocs} className="text-xs text-primary hover:underline">
+        <p className="text-sm text-red-500">{activeError}</p>
+        <button onClick={handleRetry} className="text-xs text-primary hover:underline">
           {t('common:actions.retry')}
         </button>
       </div>
@@ -391,6 +451,36 @@ export function DingTalkDocContextSelector({
 
   return (
     <div className="flex flex-col min-h-0 flex-1">
+      {/* Section switcher */}
+      <div className="flex border-b border-border flex-shrink-0">
+        <button
+          type="button"
+          onClick={() => setActiveSection('my-docs')}
+          className={cn(
+            'flex-1 py-1.5 text-xs font-medium transition-colors',
+            activeSection === 'my-docs'
+              ? 'text-text-primary border-b-2 border-primary'
+              : 'text-text-muted hover:text-text-primary'
+          )}
+          data-testid="dingtalk-section-my-docs"
+        >
+          {t('chat:dingtalkDocs.myDocsTab')}
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveSection('workspace')}
+          className={cn(
+            'flex-1 py-1.5 text-xs font-medium transition-colors',
+            activeSection === 'workspace'
+              ? 'text-text-primary border-b-2 border-primary'
+              : 'text-text-muted hover:text-text-primary'
+          )}
+          data-testid="dingtalk-section-workspace"
+        >
+          {t('chat:dingtalkDocs.workspaceTab')}
+        </button>
+      </div>
+
       {/* Search input */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-border flex-shrink-0">
         <Search className="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
@@ -407,9 +497,9 @@ export function DingTalkDocContextSelector({
       {/* Sync toolbar */}
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-border flex-shrink-0">
         <span className="text-xs text-text-muted">
-          {lastSyncedAt
+          {activeLastSyncedAt
             ? t('chat:dingtalkDocs.lastSynced', {
-                time: new Date(lastSyncedAt).toLocaleString(),
+                time: new Date(activeLastSyncedAt).toLocaleString(),
               })
             : t('chat:dingtalkDocs.neverSynced')}
           {selectedDocCount > 0 && (
@@ -420,36 +510,47 @@ export function DingTalkDocContextSelector({
         </span>
         <button
           type="button"
-          onClick={handleSync}
-          disabled={syncing}
+          onClick={handleActiveSync}
+          disabled={activeSyncing}
           className={cn(
             'flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors',
-            syncing && 'opacity-50 cursor-not-allowed'
+            activeSyncing && 'opacity-50 cursor-not-allowed'
           )}
           data-testid="dingtalk-sync-button"
         >
-          <RefreshCw className={cn('w-3 h-3', syncing && 'animate-spin')} />
-          {syncing ? t('chat:dingtalkDocs.syncing') : t('chat:dingtalkDocs.sync')}
+          <RefreshCw className={cn('w-3 h-3', activeSyncing && 'animate-spin')} />
+          {activeSyncing ? t('chat:dingtalkDocs.syncing') : t('chat:dingtalkDocs.sync')}
         </button>
       </div>
 
       {/* Tree */}
       <div className="overflow-y-auto flex-1 max-h-[260px] py-1 px-1">
-        {nodes.length === 0 ? (
+        {activeSection === 'workspace' && !workspaceConfigured ? (
+          <div className="py-6 px-4 text-center space-y-3">
+            <p className="text-sm text-text-muted">{t('chat:dingtalkDocs.workspaceNotConfigured')}</p>
+            <a
+              href="/settings?section=integrations&tab=integrations"
+              className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium transition-colors"
+            >
+              {t('chat:dingtalkDocs.goToConfigure')}
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+          </div>
+        ) : activeNodes.length === 0 ? (
           <div className="py-6 px-4 text-center space-y-3">
             <p className="text-sm text-text-muted">{t('chat:dingtalkDocs.empty')}</p>
             <button
               type="button"
-              onClick={handleSync}
-              disabled={syncing}
+              onClick={handleActiveSync}
+              disabled={activeSyncing}
               className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium transition-colors disabled:opacity-50"
             >
-              <RefreshCw className={cn('w-3.5 h-3.5', syncing && 'animate-spin')} />
-              {syncing ? t('chat:dingtalkDocs.syncing') : t('chat:dingtalkDocs.syncNow')}
+              <RefreshCw className={cn('w-3.5 h-3.5', activeSyncing && 'animate-spin')} />
+              {activeSyncing ? t('chat:dingtalkDocs.syncing') : t('chat:dingtalkDocs.syncNow')}
             </button>
           </div>
         ) : (
-          nodes.map(node => (
+          activeNodes.map(node => (
             <DingtalkContextTreeNode
               key={node.dingtalk_node_id}
               node={node}
