@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Import endpoints - RAG module is conditionally imported based on STANDALONE_MODE
 from app.api.endpoints import (
     admin,
     api_keys,
@@ -35,6 +34,9 @@ from app.api.endpoints import (
     wiki,
     wizard,
     work_queue,
+)
+from app.api.endpoints.dingtalk_docs import (
+    workspace_router as dingtalk_workspace_router,
 )
 from app.core.config import settings
 
@@ -174,6 +176,11 @@ api_router.include_router(share.router, prefix="/share", tags=["share"])
 api_router.include_router(tables.router, prefix="/tables", tags=["tables"])
 api_router.include_router(
     dingtalk_docs.router, prefix="/dingtalk-docs", tags=["dingtalk-docs"]
+)
+api_router.include_router(
+    dingtalk_workspace_router,
+    prefix="/dingtalk-workspace",
+    tags=["dingtalk-workspace"],
 )
 
 # Work queue endpoints (message forwarding and inbox)

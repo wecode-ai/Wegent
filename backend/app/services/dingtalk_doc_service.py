@@ -84,7 +84,9 @@ class DingTalkDocService:
 
         # Sync to database - use local time (no timezone) consistent with created_at
         now = datetime.now()
-        stats = DingTalkDocService._sync_nodes_to_db(user.id, all_nodes, now, db)
+        stats = DingTalkDocService._sync_nodes_to_db(
+            user.id, all_nodes, now, db, source="docs"
+        )
 
         return stats
 
@@ -242,10 +244,12 @@ class DingTalkDocService:
         nodes: list[dict[str, Any]],
         sync_time: datetime,
         db: Session,
+        source: str = "docs",
     ) -> dict[str, Any]:
         """Sync fetched nodes to the database.
 
         Compares with existing records and performs add/update/delete operations.
+        Only operates on nodes with the given source value.
         """
         added = 0
         updated = 0
@@ -259,11 +263,12 @@ class DingTalkDocService:
                 continue
             dingtalk_node_ids.add(node_id)
 
-        # Mark nodes no longer in DingTalk as inactive
+        # Mark nodes no longer in DingTalk as inactive (filter by source)
         existing_active = (
             db.query(DingtalkSyncedNode)
             .filter(
                 DingtalkSyncedNode.user_id == user_id,
+                DingtalkSyncedNode.source == source,
                 DingtalkSyncedNode.is_active == True,  # noqa: E712
             )
             .all()
@@ -287,6 +292,7 @@ class DingTalkDocService:
                 db.query(DingtalkSyncedNode)
                 .filter(
                     DingtalkSyncedNode.user_id == user_id,
+                    DingtalkSyncedNode.source == source,
                     DingtalkSyncedNode.dingtalk_node_id.in_(node_ids),
                 )
                 .all()
@@ -375,6 +381,7 @@ class DingTalkDocService:
                     content_updated_at=content_updated_at,
                     is_active=True,
                     last_synced_at=sync_time,
+                    source=source,
                 )
                 db.add(new_node)
                 added += 1
@@ -385,6 +392,7 @@ class DingTalkDocService:
             db.query(DingtalkSyncedNode)
             .filter(
                 DingtalkSyncedNode.user_id == user_id,
+                DingtalkSyncedNode.source == source,
                 DingtalkSyncedNode.is_active == True,  # noqa: E712
             )
             .count()
@@ -437,6 +445,7 @@ class DingTalkDocService:
             db.query(DingtalkSyncedNode)
             .filter(
                 DingtalkSyncedNode.user_id == user_id,
+                DingtalkSyncedNode.source == "docs",
                 DingtalkSyncedNode.is_active == True,  # noqa: E712
             )
             .order_by(DingtalkSyncedNode.node_type, DingtalkSyncedNode.name)
@@ -452,6 +461,7 @@ class DingTalkDocService:
             db.query(DingtalkSyncedNode.last_synced_at)
             .filter(
                 DingtalkSyncedNode.user_id == user.id,
+                DingtalkSyncedNode.source == "docs",
                 DingtalkSyncedNode.is_active == True,  # noqa: E712
             )
             .order_by(DingtalkSyncedNode.last_synced_at.desc())
@@ -462,6 +472,7 @@ class DingTalkDocService:
             db.query(DingtalkSyncedNode)
             .filter(
                 DingtalkSyncedNode.user_id == user.id,
+                DingtalkSyncedNode.source == "docs",
                 DingtalkSyncedNode.is_active == True,  # noqa: E712
             )
             .count()
