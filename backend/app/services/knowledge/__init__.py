@@ -22,6 +22,10 @@ _EXPORT_MAP = {
         "app.services.knowledge.knowledge_base_qa_service",
         "knowledge_base_qa_service",
     ),
+    "KnowledgeFolderService": (
+        "app.services.knowledge.folder_service",
+        "KnowledgeFolderService",
+    ),
     "KnowledgeService": (
         "app.services.knowledge.knowledge_service",
         "KnowledgeService",

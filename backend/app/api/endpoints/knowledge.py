@@ -12,7 +12,7 @@ which provides a unified interface for both REST API and MCP tools.
 import asyncio
 import logging
 from datetime import datetime
-from typing import Optional, Union
+from typing import Dict, List, Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -31,6 +31,7 @@ from app.schemas.knowledge import (
     BatchOperationResult,
     DocumentContentUpdate,
     DocumentDetailResponse,
+    DocumentMoveRequest,
     KnowledgeBaseCreate,
     KnowledgeBaseListResponse,
     KnowledgeBaseMigrateRequest,
@@ -42,11 +43,15 @@ from app.schemas.knowledge import (
     KnowledgeDocumentListResponse,
     KnowledgeDocumentResponse,
     KnowledgeDocumentUpdate,
+    KnowledgeFolderCreate,
+    KnowledgeFolderResponse,
+    KnowledgeFolderUpdate,
     PersonalKnowledgeBaseGroup,
     ResourceScope,
 )
 from app.schemas.knowledge_qa_history import QAHistoryResponse
 from app.services.knowledge import (
+    KnowledgeFolderService,
     KnowledgeService,
     knowledge_base_qa_service,
 )
@@ -88,14 +93,21 @@ def _serialize_standalone_document_detail(
 
 
 def _raise_document_detail_http_error(error: ValueError) -> None:
-    """Map orchestrator detail errors to stable HTTP responses."""
+    """Map orchestrator/service errors to stable HTTP responses.
+
+    Mapping rules:
+    - "not found"  -> 404
+    - "access denied" or "permission" -> 403
+    - anything else -> 400
+    """
     error_msg = str(error)
-    if "not found" in error_msg.lower():
+    lower = error_msg.lower()
+    if "not found" in lower:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=error_msg,
         )
-    if "access denied" in error_msg.lower():
+    if "access denied" in lower or "permission" in lower:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=error_msg,
@@ -555,16 +567,20 @@ def migrate_knowledge_base_to_group(
 @trace_sync("list_documents", "knowledge.api")
 def list_documents(
     knowledge_base_id: int,
+    folder_id: Optional[int] = Query(
+        default=None, ge=0, description="Filter documents by folder (None = all)"
+    ),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
-    """List documents in a knowledge base."""
+    """List documents in a knowledge base. Optionally filter by folder_id."""
     try:
         # Use Orchestrator for unified business logic (REST API and MCP tools share the same logic)
         return knowledge_orchestrator.list_documents(
             db=db,
             user=current_user,
             knowledge_base_id=knowledge_base_id,
+            folder_id=folder_id,
         )
     except ValueError as e:
         raise HTTPException(
@@ -912,6 +928,128 @@ def batch_delete_documents(
             )
 
     return result
+
+
+# ============== Knowledge Folder Endpoints ==============
+
+
+@router.post(
+    "/{knowledge_base_id}/folders",
+    response_model=KnowledgeFolderResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+@trace_sync("create_folder", "knowledge.api")
+def create_folder(
+    knowledge_base_id: int,
+    data: KnowledgeFolderCreate,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> KnowledgeFolderResponse:
+    """Create a new folder in a knowledge base."""
+    try:
+        return KnowledgeFolderService.create_folder(
+            db=db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=current_user.id,
+            data=data,
+        )
+    except ValueError as e:
+        _raise_document_detail_http_error(e)
+
+
+@router.get(
+    "/{knowledge_base_id}/folders",
+    response_model=list[KnowledgeFolderResponse],
+)
+@trace_sync("get_folder_tree", "knowledge.api")
+def get_folder_tree(
+    knowledge_base_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> List[KnowledgeFolderResponse]:
+    """Get the full folder tree for a knowledge base."""
+    try:
+        return KnowledgeFolderService.get_folder_tree(
+            db=db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=current_user.id,
+        )
+    except ValueError as e:
+        _raise_document_detail_http_error(e)
+
+
+@router.put(
+    "/{knowledge_base_id}/folders/{folder_id}",
+    response_model=KnowledgeFolderResponse,
+)
+def update_folder(
+    knowledge_base_id: int,
+    folder_id: int,
+    data: KnowledgeFolderUpdate,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> KnowledgeFolderResponse:
+    """Update a folder (rename and/or move)."""
+    try:
+        return KnowledgeFolderService.update_folder(
+            db=db,
+            folder_id=folder_id,
+            user_id=current_user.id,
+            data=data,
+            knowledge_base_id=knowledge_base_id,
+        )
+    except ValueError as e:
+        _raise_document_detail_http_error(e)
+
+
+@router.delete(
+    "/{knowledge_base_id}/folders/{folder_id}",
+)
+@trace_sync("delete_folder", "knowledge.api")
+def delete_folder(
+    knowledge_base_id: int,
+    folder_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> Dict:
+    """Delete a folder and move its documents to root level."""
+    try:
+        result = KnowledgeFolderService.delete_folder(
+            db=db,
+            folder_id=folder_id,
+            user_id=current_user.id,
+            knowledge_base_id=knowledge_base_id,
+        )
+        return result
+    except ValueError as e:
+        _raise_document_detail_http_error(e)
+
+
+# ============== Document Move Endpoint ==============
+
+
+@document_router.put(
+    "/{document_id}/move",
+    response_model=KnowledgeDocumentResponse,
+)
+@trace_sync("move_document", "knowledge.api")
+def move_document(
+    document_id: int,
+    data: DocumentMoveRequest,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> KnowledgeDocumentResponse:
+    """Move a document to a different folder (0 = root level)."""
+    try:
+        doc = KnowledgeFolderService.move_document(
+            db=db,
+            document_id=document_id,
+            folder_id=data.folder_id,
+            user_id=current_user.id,
+        )
+        return KnowledgeDocumentResponse.model_validate(doc)
+    except ValueError as e:
+        _raise_document_detail_http_error(e)
 
 
 @document_router.post("/batch/enable", response_model=BatchOperationResult)

@@ -626,6 +626,7 @@ class KnowledgeOrchestrator:
         db: Session,
         user: User,
         knowledge_base_id: int,
+        folder_id: int | None = None,
     ) -> KnowledgeDocumentListResponse:
         """
         List documents in a knowledge base.
@@ -634,6 +635,7 @@ class KnowledgeOrchestrator:
             db: Database session
             user: Current user
             knowledge_base_id: Knowledge base ID
+            folder_id: Optional folder ID to filter by
 
         Returns:
             KnowledgeDocumentListResponse with document list.
@@ -656,6 +658,7 @@ class KnowledgeOrchestrator:
             db=db,
             knowledge_base_id=knowledge_base_id,
             user_id=user.id,
+            folder_id=folder_id,
         )
 
         # Batch query user names for created_by field
@@ -1115,6 +1118,7 @@ class KnowledgeOrchestrator:
         knowledge_base_id: int,
         name: str,
         source_type: str,
+        folder_id: int = 0,
         content: Optional[str] = None,
         file_base64: Optional[str] = None,
         file_extension: Optional[str] = None,
@@ -1135,6 +1139,7 @@ class KnowledgeOrchestrator:
             knowledge_base_id: Target knowledge base ID
             name: Document name
             source_type: Source type (text, file, web, attachment)
+            folder_id: Optional folder ID to place the document in (0 means root)
             content: Text content for source_type="text"
             file_base64: Base64 encoded file for source_type="file"
             file_extension: File extension for source_type="file"
@@ -1246,6 +1251,7 @@ class KnowledgeOrchestrator:
                 attachment_id=attachment.id,
                 file_extension=normalized_ext,
                 file_size=len(binary_data),
+                folder_id=folder_id,
             )
 
             return self._create_and_index_document(
@@ -1279,6 +1285,7 @@ class KnowledgeOrchestrator:
             attachment_id=attachment.id,
             file_extension=normalized_ext,
             file_size=len(binary_data),
+            folder_id=folder_id,
         )
 
         return self._create_and_index_document(
@@ -1795,6 +1802,7 @@ class KnowledgeOrchestrator:
         url: str,
         knowledge_base_id: int,
         name: Optional[str] = None,
+        folder_id: int = 0,
         trigger_indexing: bool = True,
         trigger_summary: bool = True,
     ) -> Dict[str, Any]:
@@ -1890,6 +1898,7 @@ class KnowledgeOrchestrator:
                 name=doc_name,
                 file_extension="md",
                 file_size=content_size,
+                folder_id=folder_id,
                 source_type=DocumentSourceType.WEB,
                 source_config={
                     "url": result.url,

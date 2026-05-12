@@ -28,6 +28,13 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
   Accordion,
   AccordionContent,
   AccordionItem,
@@ -95,6 +102,12 @@ interface DocumentUploadProps {
   kbType?: string
   /** Current document count in the knowledge base */
   currentDocumentCount?: number
+  /** Currently selected folder ID for upload destination (0 = root) */
+  folderId?: number
+  /** Flat list of folder names with IDs for the selector */
+  folderOptions?: Array<{ id: number; name: string; depth: number }>
+  /** Callback when folder selection changes */
+  onFolderChange?: (folderId: number) => void
 }
 
 export function DocumentUpload({
@@ -105,6 +118,9 @@ export function DocumentUpload({
   onWebAdd,
   kbType = 'classic',
   currentDocumentCount = 0,
+  folderId = 0,
+  folderOptions = [],
+  onFolderChange,
 }: DocumentUploadProps) {
   const { t } = useTranslation('knowledge')
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -650,6 +666,27 @@ export function DocumentUpload({
             <span>{textError}</span>
           </div>
         )}
+
+        {/* Folder selection */}
+        {folderOptions.length > 0 && (
+          <div className="space-y-1.5">
+            <Label className="text-sm font-medium">{t('document.folder.selectFolder')}</Label>
+            <Select value={String(folderId)} onValueChange={val => onFolderChange?.(Number(val))}>
+              <SelectTrigger className="h-11 min-w-[44px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="0">{t('document.folder.rootLevel')}</SelectItem>
+                {folderOptions.map(folder => (
+                  <SelectItem key={folder.id} value={String(folder.id)}>
+                    {'\u00A0'.repeat(folder.depth * 2)}
+                    {folder.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
       </div>
 
       <div className="flex justify-end gap-2">
@@ -745,6 +782,27 @@ export function DocumentUpload({
             disabled={state.isUploading}
           />
         </div>
+
+        {/* Folder selection - show when there are folders */}
+        {folderOptions.length > 0 && (
+          <div className="mt-4 space-y-1.5">
+            <Label className="text-sm font-medium">{t('document.folder.selectFolder')}</Label>
+            <Select value={String(folderId)} onValueChange={val => onFolderChange?.(Number(val))}>
+              <SelectTrigger className="h-11 min-w-[44px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="0">{t('document.folder.rootLevel')}</SelectItem>
+                {folderOptions.map(folder => (
+                  <SelectItem key={folder.id} value={String(folder.id)}>
+                    {'\u00A0'.repeat(folder.depth * 2)}
+                    {folder.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
 
         {/* Web URL Input Section - inline style like the reference image */}
         {onWebAdd && (
@@ -1129,6 +1187,27 @@ export function DocumentUpload({
             <span>{tableError}</span>
           </div>
         )}
+
+        {/* Folder selection */}
+        {folderOptions.length > 0 && (
+          <div className="space-y-1.5">
+            <Label className="text-sm font-medium">{t('document.folder.selectFolder')}</Label>
+            <Select value={String(folderId)} onValueChange={val => onFolderChange?.(Number(val))}>
+              <SelectTrigger className="h-11 min-w-[44px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="0">{t('document.folder.rootLevel')}</SelectItem>
+                {folderOptions.map(folder => (
+                  <SelectItem key={folder.id} value={String(folder.id)}>
+                    {'\u00A0'.repeat(folder.depth * 2)}
+                    {folder.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
       </div>
 
       <div className="flex justify-end gap-2">
@@ -1224,6 +1303,27 @@ export function DocumentUpload({
           <div className="flex items-center gap-2 p-3 bg-error/10 text-error rounded-lg text-sm">
             <AlertCircle className="w-4 h-4 flex-shrink-0" />
             <span>{webError}</span>
+          </div>
+        )}
+
+        {/* Folder selection */}
+        {folderOptions.length > 0 && (
+          <div className="space-y-1.5">
+            <Label className="text-sm font-medium">{t('document.folder.selectFolder')}</Label>
+            <Select value={String(folderId)} onValueChange={val => onFolderChange?.(Number(val))}>
+              <SelectTrigger className="h-11 min-w-[44px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="0">{t('document.folder.rootLevel')}</SelectItem>
+                {folderOptions.map(folder => (
+                  <SelectItem key={folder.id} value={String(folder.id)}>
+                    {'\u00A0'.repeat(folder.depth * 2)}
+                    {folder.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         )}
       </div>
