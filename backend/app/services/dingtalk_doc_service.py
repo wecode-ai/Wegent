@@ -87,6 +87,7 @@ class DingTalkDocService:
         stats = DingTalkDocService._sync_nodes_to_db(
             user.id, all_nodes, now, db, source="docs"
         )
+        stats["mcp_nodes_fetched"] = len(all_nodes)
 
         return stats
 
@@ -199,6 +200,20 @@ class DingTalkDocService:
             if not page_token:
                 break
 
+    # Candidate keys that may contain a list of nodes in the MCP response dict.
+    # Ordered from most specific to least specific so we prefer the right one.
+    _NODE_LIST_KEYS = (
+        "items",
+        "nodes",
+        "data",
+        "list",
+        "records",
+        "documents",
+        "files",
+        "children",
+        "result",
+    )
+
     @staticmethod
     def _parse_list_nodes_result(
         result: Any,
@@ -206,35 +221,74 @@ class DingTalkDocService:
         """Parse the result from MCP list_nodes tool call.
 
         The MCP tool returns content items that contain the node list data.
+        Handles various response envelope shapes used by different DingTalk
+        MCP servers (docs MCP vs workspace/knowledge-base MCP).
 
         Returns a tuple of (nodes, next_page_token).
         """
+        import json
+
         nodes: list[dict[str, Any]] = []
         next_page_token: str | None = None
 
         if not hasattr(result, "content") or not result.content:
+            logger.debug("list_nodes result has no content attribute or empty content")
             return nodes, next_page_token
 
         for content_item in result.content:
             # Text content contains JSON data
             if hasattr(content_item, "type") and content_item.type == "text":
-                import json
-
+                raw_text = getattr(content_item, "text", "") or ""
                 try:
-                    data = json.loads(content_item.text)
-                    if isinstance(data, list):
-                        nodes.extend(data)
-                    elif isinstance(data, dict):
-                        # Could be wrapped in a response object
-                        items = data.get("items") or data.get("nodes") or []
-                        if isinstance(items, list):
-                            nodes.extend(items)
-                        # Extract pagination token from payload
-                        token = data.get("nextPageToken")
-                        if token:
-                            next_page_token = token
+                    data = json.loads(raw_text)
                 except (json.JSONDecodeError, TypeError):
-                    logger.warning("Failed to parse list_nodes result content")
+                    logger.warning(
+                        "Failed to parse list_nodes result content as JSON. "
+                        "Raw text (first 500 chars): %.500s",
+                        raw_text,
+                    )
+                    continue
+
+                if isinstance(data, list):
+                    # Direct list of node objects
+                    nodes.extend(item for item in data if isinstance(item, dict))
+                elif isinstance(data, dict):
+                    # Wrapped response envelope — try known list keys
+                    found_list: list[dict[str, Any]] | None = None
+                    for key in DingTalkDocService._NODE_LIST_KEYS:
+                        candidate = data.get(key)
+                        if isinstance(candidate, list):
+                            found_list = [
+                                item
+                                for item in candidate
+                                if isinstance(item, dict)
+                            ]
+                            break
+
+                    if found_list is not None:
+                        nodes.extend(found_list)
+                    else:
+                        # Log keys so we can diagnose unknown envelope shapes
+                        logger.debug(
+                            "list_nodes response dict has no recognised list key. "
+                            "Available keys: %s",
+                            list(data.keys()),
+                        )
+
+                    # Extract pagination token (several possible key names)
+                    token = (
+                        data.get("nextPageToken")
+                        or data.get("next_page_token")
+                        or data.get("pageToken")
+                        or data.get("cursor")
+                    )
+                    if token and isinstance(token, str):
+                        next_page_token = token
+                else:
+                    logger.debug(
+                        "list_nodes response content is neither list nor dict: %s",
+                        type(data).__name__,
+                    )
 
         return nodes, next_page_token
 

@@ -74,7 +74,64 @@ class DingTalkWorkspaceService:
         stats = DingTalkDocService._sync_nodes_to_db(
             user.id, all_nodes, now, db, source=WORKSPACE_SOURCE
         )
+        stats["mcp_nodes_fetched"] = len(all_nodes)
         return stats
+
+    @staticmethod
+    async def _discover_list_tool(session: Any) -> str:
+        """Discover which list_nodes-like tool the MCP server exposes.
+
+        Returns the tool name to call for listing nodes/documents. Falls back
+        to the default `list_nodes` name if discovery is not available or no
+        better match is found.
+        """
+        try:
+            tools_result = await session.list_tools()
+            tool_names: list[str] = []
+            if hasattr(tools_result, "tools"):
+                tool_names = [
+                    t.name
+                    for t in tools_result.tools
+                    if hasattr(t, "name")
+                ]
+            elif isinstance(tools_result, list):
+                tool_names = [
+                    t.get("name", "")
+                    for t in tools_result
+                    if isinstance(t, dict)
+                ]
+
+            logger.info(
+                "DingTalk workspace MCP exposes %d tools: %s",
+                len(tool_names),
+                tool_names,
+            )
+
+            # Prefer an exact match; fall back to any name containing "list" and
+            # ("node" or "doc" or "file" or "space").
+            if MCP_TOOL_LIST_NODES in tool_names:
+                return MCP_TOOL_LIST_NODES
+
+            for name in tool_names:
+                lower = name.lower()
+                if "list" in lower and any(
+                    kw in lower for kw in ("node", "doc", "file", "space", "item")
+                ):
+                    logger.info(
+                        "Using alternative list tool '%s' instead of '%s'",
+                        name,
+                        MCP_TOOL_LIST_NODES,
+                    )
+                    return name
+        except Exception as exc:
+            logger.warning(
+                "Could not list tools from workspace MCP: %s. "
+                "Falling back to default tool name '%s'.",
+                exc,
+                MCP_TOOL_LIST_NODES,
+            )
+
+        return MCP_TOOL_LIST_NODES
 
     @staticmethod
     async def _fetch_all_workspace_nodes(mcp_url: str) -> list[dict[str, Any]]:
@@ -104,6 +161,9 @@ class DingTalkWorkspaceService:
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
 
+                # Discover the actual tool name for listing nodes.
+                list_tool = await DingTalkWorkspaceService._discover_list_tool(session)
+
                 # Step 1: List top-level entries from the workspace MCP.
                 # For the 知识库 MCP this returns the knowledge bases themselves.
                 page_token = None
@@ -112,7 +172,20 @@ class DingTalkWorkspaceService:
                     args: dict[str, Any] = {"pageSize": 50}
                     if page_token:
                         args["pageToken"] = page_token
-                    root_result = await session.call_tool(MCP_TOOL_LIST_NODES, args)
+                    root_result = await session.call_tool(list_tool, args)
+
+                    # Log a sample of the raw response on first call to aid debugging.
+                    if not kb_nodes:
+                        try:
+                            raw_repr = repr(root_result)
+                            logger.info(
+                                "Workspace MCP root list_nodes raw response "
+                                "(first 1000 chars): %.1000s",
+                                raw_repr,
+                            )
+                        except Exception:
+                            pass
+
                     batch, page_token = DingTalkDocService._parse_list_nodes_result(
                         root_result
                     )
@@ -124,6 +197,13 @@ class DingTalkWorkspaceService:
                     "DingTalk workspace MCP returned %d top-level nodes",
                     len(kb_nodes),
                 )
+
+                if not kb_nodes:
+                    logger.warning(
+                        "Workspace MCP returned 0 top-level nodes. "
+                        "Check that the MCP URL is correct and the server is "
+                        "returning data in a recognised format."
+                    )
 
                 # Step 2: For each top-level node (knowledge base), fetch its
                 # documents using workspaceId — NOT folderId. The KB node's
@@ -153,15 +233,80 @@ class DingTalkWorkspaceService:
                     )
 
                     # Recursively list documents/folders within this KB.
-                    await DingTalkDocService._list_nodes_recursive(
+                    # Pass the discovered tool name via a thin wrapper so that
+                    # _list_nodes_recursive uses the right tool for this server.
+                    await DingTalkWorkspaceService._list_nodes_recursive_with_tool(
                         session,
-                        folder_id=None,       # list the KB root, not a sub-folder
-                        workspace_id=kb_id,   # crucial: use workspaceId, not folderId
+                        list_tool=list_tool,
+                        folder_id=None,      # list the KB root, not a sub-folder
+                        workspace_id=kb_id,  # crucial: use workspaceId, not folderId
                         all_nodes=all_nodes,
                         depth=0,
                     )
 
         return all_nodes
+
+    @staticmethod
+    async def _list_nodes_recursive_with_tool(
+        session: Any,
+        list_tool: str,
+        folder_id: str | None,
+        workspace_id: str | None,
+        all_nodes: list[dict[str, Any]],
+        depth: int,
+    ) -> None:
+        """Recursively list nodes using the specified MCP tool name.
+
+        This is a workspace-specific variant of DingTalkDocService._list_nodes_recursive
+        that allows using a dynamically discovered tool name instead of the
+        hard-coded MCP_TOOL_LIST_NODES constant.
+        """
+        from app.services.dingtalk_doc_service import MAX_RECURSION_DEPTH
+
+        if depth >= MAX_RECURSION_DEPTH:
+            logger.warning(
+                "Max recursion depth %d reached at folder %s",
+                depth,
+                folder_id,
+            )
+            return
+
+        page_token: str | None = None
+        while True:
+            args: dict[str, Any] = {"pageSize": 50}
+            if folder_id:
+                args["folderId"] = folder_id
+            if workspace_id:
+                args["workspaceId"] = workspace_id
+            if page_token:
+                args["pageToken"] = page_token
+
+            result = await session.call_tool(list_tool, args)
+            nodes_data, page_token = DingTalkDocService._parse_list_nodes_result(result)
+
+            # Inject parentId when it is not already present
+            for node in nodes_data:
+                if folder_id and not node.get("parentId"):
+                    node["parentId"] = folder_id
+
+            all_nodes.extend(nodes_data)
+
+            # Recurse into sub-folders
+            for node in nodes_data:
+                if node.get("nodeType") == "folder":
+                    node_id = node.get("nodeId", "")
+                    ws_id = node.get("workspaceId") or workspace_id
+                    await DingTalkWorkspaceService._list_nodes_recursive_with_tool(
+                        session,
+                        list_tool=list_tool,
+                        folder_id=node_id,
+                        workspace_id=ws_id,
+                        all_nodes=all_nodes,
+                        depth=depth + 1,
+                    )
+
+            if not page_token:
+                break
 
     @staticmethod
     def get_workspace_nodes(user_id: int, db: Session) -> list[DingtalkSyncedNode]:

@@ -66,3 +66,7 @@ class DingtalkSyncResult(BaseModel):
     deleted: int = 0
     total: int = 0
     sync_time: datetime
+    # Number of nodes returned by the MCP server before DB filtering.
+    # Useful for diagnosing issues where the MCP returns data but nothing is
+    # written (e.g. all nodes lack a nodeId).
+    mcp_nodes_fetched: int = 0
