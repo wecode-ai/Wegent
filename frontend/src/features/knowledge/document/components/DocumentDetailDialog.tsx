@@ -7,7 +7,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import {
   FileText,
-  RefreshCw,
   Copy,
   Check,
   Pencil,
@@ -42,17 +41,21 @@ import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
 import { useDocumentDetail } from '../hooks/useDocumentDetail'
 import { ChunksSection } from './ChunksSection'
+import { DocumentSummarySection } from './DocumentSummarySection'
+import { DocumentContentViewer } from './DocumentContentViewer'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
-import { getKnowledgeConfig, listKnowledgeBases } from '@/apis/knowledge'
+import { getKnowledgeConfig } from '@/apis/knowledge'
 import { buildKbUrl } from '@/utils/knowledgeUrl'
 import type { KnowledgeDocument } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { toast } from 'sonner'
 import dynamic from 'next/dynamic'
-import { useTheme } from '@/features/theme/ThemeProvider'
-import { useRouter } from 'next/navigation'
-// Import WysiwygEditorProps type for language prop
-import type { WysiwygEditorProps } from '@/components/common/WysiwygEditor'
+import {
+  getEditorLanguage,
+  formatJsonContent,
+  isJsonFileExtension,
+} from '@/utils/languageDetection'
+import { isDocumentEditable } from '../utils/documentUtils'
 
 // Dynamically import the WYSIWYG editor to avoid SSR issues
 const WysiwygEditor = dynamic(
@@ -66,158 +69,6 @@ const WysiwygEditor = dynamic(
     ),
   }
 )
-
-// Dynamically import EnhancedMarkdown for markdown preview
-const EnhancedMarkdown = dynamic(() => import('@/components/common/EnhancedMarkdown'), {
-  ssr: false,
-  loading: () => (
-    <div className="min-h-[100px] animate-pulse rounded-lg bg-surface flex items-center justify-center">
-      <Spinner />
-    </div>
-  ),
-})
-
-/**
- * Check if content contains markdown syntax
- * Returns true if the content appears to be markdown
- */
-function containsMarkdownSyntax(content: string): boolean {
-  if (!content) return false
-
-  // Check for common markdown patterns
-  // Note: Table separator regex uses string concatenation to avoid Tailwind CSS
-  // scanner misinterpreting the pattern as an arbitrary value class
-  const markdownPatterns = [
-    /^#{1,6}\s+.+$/m, // Headers: # Header
-    /\*\*[^*]+\*\*/, // Bold: **text**
-    /\*[^*]+\*/, // Italic: *text*
-    /__[^_]+__/, // Bold: __text__
-    /_[^_]+_/, // Italic: _text_
-    /\[.+\]\(.+\)/, // Links: [text](url)
-    /!\[.*\]\(.+\)/, // Images: ![alt](url)
-    /^[-*+]\s+.+$/m, // Unordered lists: - item or * item
-    /^\d+\.\s+.+$/m, // Ordered lists: 1. item
-    /^>\s+.+$/m, // Blockquotes: > quote
-    /`[^`]+`/, // Inline code: `code`
-    /^```[\s\S]*?```$/m, // Code blocks: ```code```
-    /^\|.+\|$/m, // Tables: | col1 | col2 |
-    // Table separators: |---|---| - split pattern to avoid Tailwind scanner
-    new RegExp('^' + '[-' + ':]+\\|' + '[-' + ':|\\s]+$', 'm'),
-    /^---+$/m, // Horizontal rules: ---
-    /^\*\*\*+$/m, // Horizontal rules: ***
-  ]
-
-  return markdownPatterns.some(pattern => pattern.test(content))
-}
-
-/**
- * Check if file extension indicates markdown content
- */
-function isMarkdownFileExtension(extension: string | undefined): boolean {
-  if (!extension) return false
-  const mdExtensions = ['md', 'markdown', 'mdx', 'mdown', 'mkd', 'mkdn']
-  return mdExtensions.includes(extension.toLowerCase())
-}
-
-/**
- * Check if file extension indicates JSON content
- */
-function isJsonFileExtension(extension: string | undefined): boolean {
-  if (!extension) return false
-  const jsonExtensions = ['json', 'jsonl', 'json5']
-  return jsonExtensions.includes(extension.toLowerCase())
-}
-
-/**
- * Map file extension to editor language for syntax highlighting
- */
-function getEditorLanguage(extension: string | undefined): WysiwygEditorProps['language'] {
-  if (!extension) return 'markdown'
-
-  const ext = extension.toLowerCase()
-
-  const languageMap: Record<string, WysiwygEditorProps['language']> = {
-    // Markdown
-    md: 'markdown',
-    markdown: 'markdown',
-    mdx: 'markdown',
-    mdown: 'markdown',
-    mkd: 'markdown',
-    mkdn: 'markdown',
-    // JSON
-    json: 'json',
-    jsonl: 'json',
-    json5: 'json',
-    // JavaScript
-    js: 'javascript',
-    mjs: 'javascript',
-    jsx: 'jsx',
-    // TypeScript
-    ts: 'typescript',
-    tsx: 'tsx',
-    // Python
-    py: 'python',
-    // HTML
-    html: 'html',
-    htm: 'html',
-    // CSS
-    css: 'css',
-    scss: 'css',
-    sass: 'css',
-    less: 'css',
-    // YAML
-    yaml: 'yaml',
-    yml: 'yaml',
-    // SQL
-    sql: 'sql',
-    // XML
-    xml: 'xml',
-    svg: 'xml',
-    // C/C++
-    c: 'c',
-    h: 'c',
-    cpp: 'cpp',
-    cc: 'cpp',
-    // Go
-    go: 'go',
-    // Java
-    java: 'java',
-    // Rust
-    rs: 'rust',
-    rust: 'rust',
-  }
-
-  return languageMap[ext] || 'text'
-}
-
-/**
- * Try to parse and format JSON content
- * Returns formatted JSON string if valid, null if invalid
- */
-function formatJsonContent(content: string): string | null {
-  if (!content) return null
-  try {
-    // Try to parse as JSON
-    const parsed = JSON.parse(content)
-    // Format with 2-space indentation
-    return JSON.stringify(parsed, null, 2)
-  } catch {
-    // Not valid JSON
-    return null
-  }
-}
-
-/**
- * Check if content appears to be JSON (even if file extension doesn't indicate it)
- */
-function looksLikeJson(content: string): boolean {
-  if (!content) return false
-  const trimmed = content.trim()
-  return (
-    (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
-    (trimmed.startsWith('[') && trimmed.endsWith(']'))
-  )
-}
 
 interface DocumentDetailDialogProps {
   open: boolean
@@ -236,144 +87,6 @@ interface DocumentDetailDialogProps {
   isOrganization?: boolean
 }
 
-/**
- * Resolve a relative wiki document link to a knowledge base page URL.
- *
- * The virtual path hierarchy is: namespace/kb-name/doc-path/file.ext
- * Resolution uses standard relative path semantics from the current document's
- * virtual full path.
- *
- * Examples (current doc: "default/my-wiki/src/rag.md"):
- *   - "sibling.md"                    → same KB (stays within "default/my-wiki/src/")
- *   - "../other.md"                   → same KB parent dir ("default/my-wiki/")
- *   - "../../other-kb/path.md"        → cross-KB, same namespace ("default/other-kb/")
- *   - "../../../other-ns/kb/path.md"  → cross-namespace KB
- *
- * Returns null if the href is not a relative wiki link (e.g. absolute HTTP URL).
- */
-async function resolveWikiLink(
-  href: string,
-  currentKbId: number,
-  currentDocName: string,
-  currentKbName: string,
-  currentNamespace: string,
-  currentIsOrganization: boolean
-): Promise<string | null> {
-  // Skip external URLs and anchor-only links
-  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(href) || href.startsWith('#')) {
-    return null
-  }
-
-  // Handle absolute virtual paths: /namespace/kb-name/optional/path/doc.md
-  if (href.startsWith('/')) {
-    const parts = href.slice(1).split('/').filter(Boolean)
-    if (parts.length < 2) return null
-    // Decode URI components to handle non-ASCII characters in namespace/kb-name
-    const targetNamespace = decodeURIComponent(parts[0])
-    const targetKbName = decodeURIComponent(parts[1])
-    // doc path is everything after namespace/kb-name (decode each segment)
-    const docPath = parts
-      .slice(2)
-      .map(p => decodeURIComponent(p))
-      .join('/')
-
-    // Same KB - no lookup needed
-    if (targetNamespace === currentNamespace && targetKbName === currentKbName) {
-      return buildKbUrl(
-        currentNamespace,
-        currentKbName,
-        currentIsOrganization,
-        docPath || undefined
-      )
-    }
-
-    // Different KB - verify it exists then construct virtual URL directly (no kbId lookup needed)
-    // For cross-KB links, we don't know isOrganization, so use namespace-based URL
-    const exists = await checkKnowledgeBaseExists(targetKbName, targetNamespace)
-    if (!exists) return null
-    return buildKbUrl(targetNamespace, targetKbName, false, docPath || undefined)
-  }
-
-  // Handle relative paths using virtual path hierarchy: namespace/kb-name/doc-path
-  // e.g. current doc "default/my-wiki/src/rag.md" → virtualDir = "default/my-wiki/src"
-  const virtualDocPath = `${currentNamespace}/${currentKbName}/${currentDocName}`
-  const virtualDir = virtualDocPath.slice(0, virtualDocPath.lastIndexOf('/'))
-
-  // Decode href in case the markdown renderer URL-encoded non-ASCII characters
-  const decodedHref = decodeURIComponent(href)
-  const resolved = resolveRelativePath(virtualDir, decodedHref)
-
-  // resolved is a normalized path like "default/other-kb/path.md" or "../escaped/path.md"
-  // Since the virtual base has at least 2 segments (ns/kb), any non-escaped result
-  // will have the first segment as namespace and second as kb-name.
-  const parts = resolved.split('/')
-
-  if (parts.length >= 2 && !parts[0].startsWith('..')) {
-    const targetNamespace = parts[0]
-    const targetKbName = parts[1]
-    // doc path is everything after namespace/kb-name
-    const docPath = parts.slice(2).join('/')
-
-    // Same KB - no lookup needed
-    if (targetNamespace === currentNamespace && targetKbName === currentKbName) {
-      return buildKbUrl(
-        currentNamespace,
-        currentKbName,
-        currentIsOrganization,
-        docPath || undefined
-      )
-    }
-
-    // Different KB - verify it exists then construct virtual URL directly (no kbId lookup needed)
-    // For cross-KB links, we don't know isOrganization, so use namespace-based URL
-    const exists = await checkKnowledgeBaseExists(targetKbName, targetNamespace)
-    if (!exists) return null
-    return buildKbUrl(targetNamespace, targetKbName, false, docPath || undefined)
-  }
-  // Resolved path escaped the virtual root entirely - treat as same KB fallback
-  return buildKbUrl(currentNamespace, currentKbName, currentIsOrganization)
-}
-
-/**
- * Resolve a relative path against a base directory.
- * Returns the normalized path (may start with "../" if it escapes the root).
- */
-function resolveRelativePath(baseDir: string, relativePath: string): string {
-  // Split base dir into segments (filter empty strings)
-  const baseParts = baseDir ? baseDir.split('/').filter(Boolean) : []
-  const relParts = relativePath.split('/')
-
-  const stack = [...baseParts]
-  for (const part of relParts) {
-    if (part === '..') {
-      if (stack.length > 0) {
-        stack.pop()
-      } else {
-        // Escaping root - push sentinel to track depth
-        stack.push('..')
-      }
-    } else if (part !== '.') {
-      stack.push(part)
-    }
-  }
-
-  return stack.join('/')
-}
-
-/** Check if a knowledge base exists by name and namespace. Returns true if found. */
-async function checkKnowledgeBaseExists(name: string, namespace: string): Promise<boolean> {
-  try {
-    const response = await listKnowledgeBases('all')
-    return response.items.some(
-      item =>
-        item.name.toLowerCase() === name.toLowerCase() &&
-        item.namespace.toLowerCase() === namespace.toLowerCase()
-    )
-  } catch {
-    return false
-  }
-}
-
 export function DocumentDetailDialog({
   open,
   onOpenChange,
@@ -386,8 +99,6 @@ export function DocumentDetailDialog({
   isOrganization = false,
 }: DocumentDetailDialogProps) {
   const { t, getCurrentLanguage } = useTranslation('knowledge')
-  const { theme } = useTheme()
-  const router = useRouter()
   const [copiedContent, setCopiedContent] = useState(false)
   const [copiedLink, setCopiedLink] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
@@ -433,95 +144,14 @@ export function DocumentDetailDialog({
     enabled: open && !!document,
   })
 
-  // Check if content is JSON (by file extension or content detection)
-  const isJsonContent = useMemo(() => {
-    if (!fullContent) return false
-    return isJsonFileExtension(document?.file_extension) || looksLikeJson(fullContent)
-  }, [fullContent, document?.file_extension])
-
-  // Format JSON content for display
-  const formattedJsonContent = useMemo(() => {
-    if (!isJsonContent || !fullContent) return null
-    return formatJsonContent(fullContent)
-  }, [isJsonContent, fullContent])
-
-  // Check if document is editable (for both notebook and classic KB types, TEXT type or plain text files)
-  const editableExtensions = [
-    'adoc',
-    'asciidoc',
-    'asm',
-    'bat',
-    'c',
-    'cc',
-    'cpp',
-    'css',
-    'csv',
-    'conf',
-    'config',
-    'dart',
-    'env',
-    'go',
-    'gradle',
-    'groovy',
-    'h',
-    'html',
-    'ini',
-    'java',
-    'js',
-    'json',
-    'jsx',
-    'kotlin',
-    'less',
-    'license',
-    'log',
-    'lua',
-    'markdown',
-    'md',
-    'mjs',
-    'php',
-    'pl',
-    'properties',
-    'ps1',
-    'py',
-    'rb',
-    'readme',
-    'rst',
-    'rust',
-    'sass',
-    'scala',
-    'scss',
-    'sh',
-    'sql',
-    'srt',
-    'styl',
-    'svg',
-    'swift',
-    'textile',
-    'toml',
-    'ts',
-    'tsx',
-    'tsv',
-    'txt',
-    'vue',
-    'wiki',
-    'xml',
-    'yaml',
-    'yml',
-  ]
-  const isEditable =
-    canEdit &&
-    (document?.source_type === 'text' ||
-      (document?.source_type === 'file' &&
-        editableExtensions.includes(document?.file_extension?.toLowerCase() || '')))
+  // Check if document is editable
+  const isEditable = useMemo(
+    () => isDocumentEditable(document?.source_type, document?.file_extension, canEdit),
+    [document?.source_type, document?.file_extension, canEdit]
+  )
 
   // Track if content has changed (compare against content at edit start)
-  const hasChanges = editedContent !== (editStartContentRef.current || detail?.content || '')
-
-  // Check if content should be rendered as markdown (based on file extension or content detection)
-  const isMarkdownContent = useMemo(() => {
-    if (!fullContent) return false
-    return isMarkdownFileExtension(document?.file_extension) || containsMarkdownSyntax(fullContent)
-  }, [fullContent, document?.file_extension])
+  const hasChanges = editedContent !== (editStartContentRef.current || fullContent || '')
 
   // Reset editing state when dialog closes or document changes
   useEffect(() => {
@@ -539,11 +169,7 @@ export function DocumentDetailDialog({
     }
   }, [isEditing])
 
-  // Build the full accessible URL using virtual path (no kbId):
-  // Uses buildKbUrl to generate the correct format based on KB type:
-  //   - personal (namespace="default"): /knowledge/default/{kbName}/{docPath}
-  //   - organization: /knowledge/public/{kbName}/{docPath}
-  //   - team: /knowledge/{namespace}/{kbName}/{docPath}
+  // Build the full accessible URL using virtual path
   const documentFullUrl = document
     ? `${typeof window !== 'undefined' ? window.location.origin : ''}${buildKbUrl(knowledgeBaseNamespace, knowledgeBaseName, isOrganization, document.name)}`
     : null
@@ -563,8 +189,7 @@ export function DocumentDetailDialog({
   }
 
   const handleCopyContent = async () => {
-    // Prefer fullContent when available, fall back to detail.content
-    const contentToCopy = fullContent || detail?.content
+    const contentToCopy = fullContent
     if (!contentToCopy) return
     try {
       await navigator.clipboard.writeText(contentToCopy)
@@ -584,7 +209,7 @@ export function DocumentDetailDialog({
     if (!isEditable) return
 
     // If there's more content to load, load it first before editing
-    let contentToEdit = fullContent || detail?.content || ''
+    let contentToEdit = fullContent || ''
     if (hasMoreContent) {
       setIsLoadingFullContent(true)
       try {
@@ -602,11 +227,20 @@ export function DocumentDetailDialog({
       }
     }
 
+    // Format JSON content for editing to match preview formatting
+    if (document?.file_extension && isJsonFileExtension(document.file_extension)) {
+      const formatted = formatJsonContent(contentToEdit)
+      if (formatted) {
+        contentToEdit = formatted
+      }
+    }
+
     setEditedContent(contentToEdit)
+
     // Store the content at edit start for accurate change detection
     editStartContentRef.current = contentToEdit
     setIsEditing(true)
-  }, [isEditable, hasMoreContent, loadAllContent, fullContent, detail?.content])
+  }, [isEditable, hasMoreContent, loadAllContent, fullContent])
 
   const handleSave = async () => {
     if (!document || !isEditable) return
@@ -743,69 +377,7 @@ export function DocumentDetailDialog({
               >
                 {/* Summary Section - only show when not editing */}
                 {!isEditing && detail?.summary && (
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-medium text-text-primary">
-                        {t('document.document.detail.summary')}
-                      </h3>
-                      <Button variant="ghost" size="sm" onClick={handleRefresh}>
-                        <RefreshCw className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
-
-                    {/* Summary Status */}
-                    {detail.summary.status && (
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-text-muted">
-                          {t('document.document.detail.status')}:
-                        </span>
-                        <Badge
-                          variant={
-                            detail.summary.status === 'completed'
-                              ? 'success'
-                              : detail.summary.status === 'generating'
-                                ? 'warning'
-                                : 'default'
-                          }
-                          size="sm"
-                        >
-                          {t(`document.document.detail.statusValues.${detail.summary.status}`)}
-                        </Badge>
-                      </div>
-                    )}
-
-                    {/* Short Summary */}
-                    {detail.summary.short_summary && (
-                      <div className="p-3 bg-surface rounded-lg">
-                        <p className="text-sm text-text-primary">{detail.summary.short_summary}</p>
-                      </div>
-                    )}
-
-                    {/* Long Summary */}
-                    {detail.summary.long_summary && (
-                      <div className="p-3 bg-surface rounded-lg">
-                        <p className="text-sm text-text-secondary leading-relaxed whitespace-pre-wrap">
-                          {detail.summary.long_summary}
-                        </p>
-                      </div>
-                    )}
-
-                    {/* Topics */}
-                    {detail.summary.topics && detail.summary.topics.length > 0 && (
-                      <div className="space-y-2">
-                        <span className="text-xs text-text-muted">
-                          {t('document.document.detail.topics')}:
-                        </span>
-                        <div className="flex flex-wrap gap-2">
-                          {detail.summary.topics.map((topic, index) => (
-                            <Badge key={index} variant="secondary" size="sm">
-                              {topic}
-                            </Badge>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                  <DocumentSummarySection summary={detail.summary} onRefresh={handleRefresh} />
                 )}
 
                 {/* Chunks Section - only show when not editing and chunk storage is enabled */}
@@ -814,7 +386,7 @@ export function DocumentDetailDialog({
                 )}
 
                 {/* Content Section */}
-                {detail?.content !== undefined && (
+                {fullContent !== undefined && (
                   <div
                     className={cn(
                       isEditing && isFullscreen ? 'flex-1 flex flex-col h-full' : 'space-y-3',
@@ -888,7 +460,7 @@ export function DocumentDetailDialog({
                         ) : (
                           <>
                             {/* View mode toggle - show for markdown or JSON content */}
-                            {(isMarkdownContent || isJsonContent) && fullContent && (
+                            {fullContent && (
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <Button
@@ -971,7 +543,7 @@ export function DocumentDetailDialog({
                                 )}
                               </Button>
                             )}
-                            {detail.content && (
+                            {fullContent && (
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -1011,136 +583,21 @@ export function DocumentDetailDialog({
                           language={getEditorLanguage(document.file_extension)}
                         />
                       </div>
-                    ) : fullContent ? (
-                      <div className="p-4 bg-white rounded-lg border border-border">
-                        {/* Render based on content type and view mode */}
-                        {isMarkdownContent && viewMode === 'preview' ? (
-                          <EnhancedMarkdown
-                            source={fullContent}
-                            theme={theme}
-                            components={{
-                              a: ({
-                                href,
-                                children,
-                                ...props
-                              }: React.AnchorHTMLAttributes<HTMLAnchorElement> & {
-                                children?: React.ReactNode
-                              }) => {
-                                if (!href) {
-                                  return <a {...props}>{children}</a>
-                                }
-                                // Check if this is a wiki link (relative path or absolute virtual path)
-                                // Absolute virtual paths start with "/" but are NOT external URLs
-                                const isExternalUrl = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(href)
-                                const isAnchor = href.startsWith('#')
-                                const isWikiLink = !isExternalUrl && !isAnchor
-                                if (!isWikiLink) {
-                                  // Absolute URL - open in new tab
-                                  return (
-                                    <a
-                                      href={href}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="text-primary hover:underline"
-                                      {...props}
-                                    >
-                                      {children}
-                                    </a>
-                                  )
-                                }
-                                // Relative wiki link - resolve and navigate
-                                const handleClick = async (
-                                  e: React.MouseEvent<HTMLButtonElement>
-                                ) => {
-                                  e.preventDefault()
-                                  const url = await resolveWikiLink(
-                                    href,
-                                    knowledgeBaseId,
-                                    document.name,
-                                    knowledgeBaseName,
-                                    knowledgeBaseNamespace,
-                                    isOrganization
-                                  )
-                                  if (url) {
-                                    router.push(url)
-                                    onOpenChange(false)
-                                  } else {
-                                    toast.error(
-                                      t('document.document.detail.linkNotFound', {
-                                        defaultValue: `Knowledge base not found: ${href}`,
-                                      })
-                                    )
-                                  }
-                                }
-                                return (
-                                  <button
-                                    type="button"
-                                    onClick={handleClick}
-                                    className="text-primary hover:underline cursor-pointer inline bg-transparent border-none p-0 font-inherit"
-                                    title={decodeURIComponent(href)}
-                                  >
-                                    {children}
-                                  </button>
-                                )
-                              },
-                            }}
-                          />
-                        ) : (
-                          <pre className="text-xs text-text-secondary whitespace-pre-wrap break-words font-mono leading-relaxed">
-                            {/* For JSON content in preview mode, show formatted JSON if valid */}
-                            {/* For JSON content in raw mode, show raw content */}
-                            {/* For other content, always show raw */}
-                            {isJsonContent && viewMode === 'preview' && formattedJsonContent
-                              ? formattedJsonContent
-                              : fullContent}
-                          </pre>
-                        )}
-                        {/* Content length and truncation info */}
-                        <div className="mt-3 pt-3 border-t border-border text-xs text-text-muted flex items-center justify-between">
-                          <span>
-                            {detail?.content_length !== undefined && (
-                              <>
-                                {t('document.document.detail.contentLength')}:{' '}
-                                {fullContent.length.toLocaleString()}
-                                {hasMoreContent && detail.content_length > fullContent.length
-                                  ? ` / ${detail.content_length.toLocaleString()}`
-                                  : ''}{' '}
-                                {t('document.document.detail.characters')}
-                              </>
-                            )}
-                          </span>
-                          {/* Load more button */}
-                          {hasMoreContent && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={loadMore}
-                              disabled={loadingMore}
-                              data-testid="load-more-button"
-                              className="h-11 min-w-[44px]"
-                            >
-                              {loadingMore ? (
-                                <>
-                                  <Spinner className="w-3 h-3 mr-1" />
-                                  {t('document.document.detail.loadingMore', {
-                                    defaultValue: 'Loading...',
-                                  })}
-                                </>
-                              ) : (
-                                <>
-                                  {t('document.document.detail.loadMore', {
-                                    defaultValue: 'Load More',
-                                  })}
-                                </>
-                              )}
-                            </Button>
-                          )}
-                        </div>
-                      </div>
                     ) : (
-                      <div className="p-4 bg-surface rounded-lg border border-border text-center text-sm text-text-muted">
-                        {t('document.document.detail.noContent')}
-                      </div>
+                      <DocumentContentViewer
+                        content={fullContent}
+                        document={document}
+                        knowledgeBaseId={knowledgeBaseId}
+                        knowledgeBaseName={knowledgeBaseName}
+                        knowledgeBaseNamespace={knowledgeBaseNamespace}
+                        isOrganization={isOrganization}
+                        viewMode={viewMode}
+                        hasMoreContent={hasMoreContent}
+                        loadingMore={loadingMore}
+                        contentLength={detail?.content_length}
+                        onLoadMore={loadMore}
+                        onOpenChange={onOpenChange}
+                      />
                     )}
                   </div>
                 )}

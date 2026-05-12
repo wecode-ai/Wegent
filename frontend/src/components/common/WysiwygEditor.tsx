@@ -14,6 +14,7 @@ import { CodeMirrorEditor, VimModeIndicator, VimMode } from './CodeMirrorEditor'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { toast } from 'sonner'
+import type { EditorLanguage } from '@/types/editor'
 
 const VIM_MODE_STORAGE_KEY = 'editor-vim-mode'
 
@@ -26,25 +27,7 @@ export interface WysiwygEditorProps {
   readOnly?: boolean
   defaultVimMode?: boolean
   /** Language mode for syntax highlighting */
-  language?:
-    | 'markdown'
-    | 'json'
-    | 'javascript'
-    | 'typescript'
-    | 'jsx'
-    | 'tsx'
-    | 'python'
-    | 'html'
-    | 'css'
-    | 'yaml'
-    | 'sql'
-    | 'xml'
-    | 'cpp'
-    | 'c'
-    | 'go'
-    | 'java'
-    | 'rust'
-    | 'text'
+  language?: EditorLanguage
 }
 
 type ViewMode = 'edit' | 'preview' | 'split'

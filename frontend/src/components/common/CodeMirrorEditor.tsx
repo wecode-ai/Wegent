@@ -26,11 +26,12 @@ import { vim, Vim, getCM } from '@replit/codemirror-vim'
 import { cn } from '@/lib/utils'
 import type { ThemeMode } from '@/features/theme/ThemeProvider'
 import { LanguageSupport } from '@codemirror/language'
+import type { EditorLanguage } from '@/types/editor'
 
 /**
  * Get the appropriate CodeMirror language extension based on language name
  */
-function getLanguageExtension(language: CodeMirrorEditorProps['language']): LanguageSupport {
+function getLanguageExtension(language: EditorLanguage): LanguageSupport {
   switch (language) {
     case 'json':
       return json()
@@ -113,25 +114,7 @@ interface CodeMirrorEditorProps {
   /** Callback when Vim mode changes */
   onVimModeChange?: (mode: VimMode) => void
   /** Language mode for syntax highlighting */
-  language?:
-    | 'markdown'
-    | 'json'
-    | 'javascript'
-    | 'typescript'
-    | 'jsx'
-    | 'tsx'
-    | 'python'
-    | 'html'
-    | 'css'
-    | 'yaml'
-    | 'sql'
-    | 'xml'
-    | 'cpp'
-    | 'c'
-    | 'go'
-    | 'java'
-    | 'rust'
-    | 'text'
+  language?: EditorLanguage
 }
 
 /**
