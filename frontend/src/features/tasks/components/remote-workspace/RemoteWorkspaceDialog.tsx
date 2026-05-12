@@ -67,8 +67,8 @@ export function RemoteWorkspaceDialog({
 
   // Blob for file preview (to support authenticated file access)
   const [previewBlob, setPreviewBlob] = useState<Blob | null>(null)
-  const [_isPreviewLoading, setIsPreviewLoading] = useState(false)
-  const [_previewError, setPreviewError] = useState<string | null>(null)
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false)
+  const [previewError, setPreviewError] = useState<string | null>(null)
 
   const expandPathToDirectory = useCallback(
     (path: string) => {
@@ -239,14 +239,6 @@ export function RemoteWorkspaceDialog({
     return resolvePreviewKind(previewEntry.name)
   }, [previewEntry])
 
-  const inlineUrl = useMemo(() => {
-    if (!previewEntry) {
-      return ''
-    }
-
-    return remoteWorkspaceApis.getFileUrl(taskId, previewEntry.path, 'inline')
-  }, [previewEntry, taskId])
-
   const downloadUrl = useMemo(() => {
     if (!previewEntry) {
       return ''
@@ -263,13 +255,20 @@ export function RemoteWorkspaceDialog({
 
   // Effect to load blob for previews
   useEffect(() => {
-    if (!isPreviewDialogOpen || !previewEntry) {
+    const shouldLoadPreviewBlob = isPreviewDialogOpen || isMobile
+
+    if (!shouldLoadPreviewBlob || !previewEntry) {
       setPreviewBlob(null)
+      setIsPreviewLoading(false)
+      setPreviewError(null)
       return
     }
 
     // Load blob for all previewable types (image, pdf, excel, text)
     if (previewKind === 'unsupported' || previewKind === 'none') {
+      setPreviewBlob(null)
+      setIsPreviewLoading(false)
+      setPreviewError(null)
       return
     }
 
@@ -303,9 +302,10 @@ export function RemoteWorkspaceDialog({
     return () => {
       setPreviewBlob(null)
     }
-  }, [isPreviewDialogOpen, previewEntry, previewKind, taskId, t])
+  }, [isMobile, isPreviewDialogOpen, previewEntry, previewKind, taskId, t])
 
-  const canGoParent = Boolean(getParentPath(rootPath, currentPath))
+  const parentPath = getParentPath(rootPath, currentPath)
+  const canGoParent = Boolean(parentPath)
   const breadcrumbs = useMemo(
     () => buildBreadcrumbSegments(rootPath, currentPath),
     [currentPath, rootPath]
@@ -350,9 +350,17 @@ export function RemoteWorkspaceDialog({
     [navigateToDirectory]
   )
 
-  const handleSelectEntry = useCallback((entry: RemoteWorkspaceTreeEntry) => {
-    setSelectedPaths([entry.path])
-  }, [])
+  const handleSelectEntry = useCallback(
+    (entry: RemoteWorkspaceTreeEntry) => {
+      if (entry.is_directory) {
+        navigateToDirectory(entry.path)
+        return
+      }
+
+      setSelectedPaths([entry.path])
+    },
+    [navigateToDirectory]
+  )
 
   const handleOpenEntryDesktop = useCallback(
     (entry: RemoteWorkspaceTreeEntry) => {
@@ -398,6 +406,10 @@ export function RemoteWorkspaceDialog({
 
   const handleToggleEntrySelection = useCallback(
     (entry: RemoteWorkspaceTreeEntry, checked: boolean) => {
+      if (entry.is_directory) {
+        return
+      }
+
       setSelectedPaths(previous => {
         if (checked) {
           if (previous.includes(entry.path)) {
@@ -419,7 +431,7 @@ export function RemoteWorkspaceDialog({
         return
       }
 
-      setSelectedPaths(visibleEntries.map(entry => entry.path))
+      setSelectedPaths(visibleEntries.filter(entry => !entry.is_directory).map(entry => entry.path))
     },
     [visibleEntries]
   )
@@ -499,7 +511,9 @@ export function RemoteWorkspaceDialog({
             selectedPaths={selectedPathSet}
             selectedEntries={selectedEntries}
             previewKind={previewKind}
-            inlineUrl={inlineUrl}
+            previewBlob={previewBlob}
+            isPreviewLoading={isPreviewLoading}
+            previewError={previewError}
             searchKeyword={searchKeyword}
             sortOption={sortOption}
             canGoParent={canGoParent}
@@ -519,7 +533,6 @@ export function RemoteWorkspaceDialog({
             }
             onSearchChange={setSearchKeyword}
             onSortChange={setSortOption}
-            onToggleEntrySelection={handleToggleEntrySelection}
             onOpenEntry={handleOpenEntryMobile}
           />
         ) : (
@@ -544,7 +557,6 @@ export function RemoteWorkspaceDialog({
             pathInputError={pathInputError}
             isPathEditing={isPathEditing}
             canGoParent={canGoParent}
-            canDownloadPreview={canDownloadPreview}
             isPreviewDialogOpen={isPreviewDialogOpen}
             onDownload={handleDownloadFile}
             onGoRoot={() => navigateToDirectory(rootPath)}

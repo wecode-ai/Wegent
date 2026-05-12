@@ -29,6 +29,7 @@ import { fetchBotsList } from '@/features/settings/services/bots'
 import TeamEditDialog from '@/features/settings/components/TeamEditDialog'
 import type { BaseRole } from '@/types/base-role'
 import { CreateGroupChatDialog } from '@/features/tasks/components/group-chat'
+import { RemoteWorkspaceEntry } from '@/features/tasks/components/remote-workspace'
 
 /**
  * Mobile-specific implementation of Chat Page
@@ -48,8 +49,13 @@ export function ChatPageMobile() {
   const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
 
   // Task context for refreshing task list
-  const { refreshTasks, selectedTaskDetail, setSelectedTask, refreshSelectedTaskDetail } =
-    useTaskContext()
+  const {
+    refreshTasks,
+    selectedTask,
+    selectedTaskDetail,
+    setSelectedTask,
+    refreshSelectedTaskDetail,
+  } = useTaskContext()
 
   // Device context - when a device is selected, switch to 'task' mode
   const { selectedDeviceId, devices } = useDevices()
@@ -263,11 +269,19 @@ export function ChatPageMobile() {
               variant="outline"
               size="sm"
               onClick={() => setIsCreateGroupChatOpen(true)}
-              className="gap-1 h-11 min-w-[44px] pl-2 pr-3 rounded-[7px] text-sm"
+              className="h-8 w-8 p-0 rounded-[7px]"
             >
-              <UserGroupIcon className="h-4 w-4" />
+              <UserGroupIcon className="h-3.5 w-3.5" />
               <span className="sr-only">{t('groupChat.create.button')}</span>
             </Button>
+          )}
+          {(selectedTask?.id || selectedTaskDetail?.id) && (
+            <RemoteWorkspaceEntry
+              taskId={selectedTask?.id || selectedTaskDetail?.id}
+              taskStatus={selectedTaskDetail?.status}
+              refreshKey={selectedTaskDetail?.updated_at}
+              display="icon"
+            />
           )}
           {shareButton}
           <ThemeToggle />
