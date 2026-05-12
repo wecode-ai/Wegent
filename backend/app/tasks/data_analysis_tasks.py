@@ -27,8 +27,7 @@ DUCKDB_SUPPORTED_EXTENSIONS = {".xlsx", ".xls", ".csv"}
 @celery_app.task(
     bind=True,
     name="app.tasks.data_analysis_tasks.generate_duckdb",
-    max_retries=2,
-    default_retry_delay=30,
+    max_retries=0,  # No auto-retry; users can re-index to retry
 )
 def generate_duckdb_task(
     self,
@@ -41,6 +40,9 @@ def generate_duckdb_task(
 
     Generates a .duckdb file from an Excel/CSV attachment via knowledge_runtime,
     then updates the duckdb_cache table and SubtaskContext metadata.
+
+    No automatic retry: if generation fails (e.g., file format issues, timeout),
+    the status is set to "failed". Users can re-index the document to retry.
 
     Args:
         attachment_id: Source attachment ID
@@ -164,19 +166,13 @@ def generate_duckdb_task(
                 f"DuckDB generation failed for attachment {attachment_id}: {error}"
             )
 
-            # Retry if appropriate
-            if self.request.retries < self.max_retries:
-                raise self.retry(exc=Exception(error))
-
             return {"success": False, "error": error}
 
-    except self.retry:
-        raise
     except Exception as e:
         logger.exception(
             f"Error in DuckDB generation task for attachment {attachment_id}: {e}"
         )
-        # Update cache entry status
+        # Update cache entry status to failed
         try:
             cache_entry = (
                 db.query(DuckDBCache)
@@ -188,9 +184,6 @@ def generate_duckdb_task(
                 db.commit()
         except Exception:
             pass
-
-        if self.request.retries < self.max_retries:
-            raise self.retry(exc=e)
 
         return {"success": False, "error": str(e)}
     finally:
