@@ -33,6 +33,8 @@ class DingTalkRobotSender:
     """
 
     BASE_URL = "https://api.dingtalk.com"
+    # Legacy oapi endpoint used for media upload (access_token as query param)
+    OAPI_BASE_URL = "https://oapi.dingtalk.com"
 
     def __init__(self, client_id: str, client_secret: str):
         """Initialize the sender.
@@ -520,6 +522,198 @@ class DingTalkRobotSender:
         except Exception as e:
             # Don't fail the whole operation if marking fails
             logger.warning(f"[DingTalkSender] Failed to mark card as finished: {e}")
+
+    async def _get_oapi_access_token(self) -> str:
+        """Get access token via the legacy oapi.dingtalk.com endpoint.
+
+        The media upload API uses the old oapi endpoint which requires a different
+        token obtained via appkey/appsecret (not appKey/appSecret).
+
+        Returns:
+            Access token string
+
+        Raises:
+            Exception: If token fetch fails
+        """
+        url = f"{self.OAPI_BASE_URL}/gettoken"
+        params = {
+            "appkey": self.client_id,
+            "appsecret": self.client_secret,
+        }
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+            if data.get("errcode", 0) != 0:
+                error_msg = data.get("errmsg", "Unknown error")
+                raise Exception(f"Failed to get oapi access token: {error_msg}")
+
+            access_token = data.get("access_token")
+            if not access_token:
+                raise Exception("Missing access_token in oapi response")
+
+            return access_token
+
+    async def upload_media(
+        self,
+        file_content: bytes,
+        filename: str,
+        media_type: str = "file",
+    ) -> Optional[str]:
+        """Upload a file to DingTalk media server and return the media_id.
+
+        Uses the legacy oapi.dingtalk.com/media/upload endpoint which accepts
+        access_token as a query parameter and returns media_id (not mediaId).
+
+        Args:
+            file_content: Raw file bytes
+            filename: Original filename
+            media_type: DingTalk media type - 'image', 'voice', 'video', or 'file'
+                        For files: max 10MB, supported types: doc, docx, xls, xlsx,
+                        ppt, pptx, zip, pdf, rar
+
+        Returns:
+            media_id string if successful, None otherwise
+        """
+        try:
+            access_token = await self._get_oapi_access_token()
+            url = f"{self.OAPI_BASE_URL}/media/upload"
+
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    url,
+                    params={"access_token": access_token},
+                    files={
+                        "type": (None, media_type),
+                        "media": (filename, file_content),
+                    },
+                )
+                response.raise_for_status()
+                data = response.json()
+
+                if data.get("errcode", 0) != 0:
+                    logger.error(
+                        f"[DingTalkSender] Media upload API error: "
+                        f"errcode={data.get('errcode')} errmsg={data.get('errmsg')}"
+                    )
+                    return None
+
+                media_id = data.get("media_id")
+                logger.info(
+                    f"[DingTalkSender] Media uploaded: filename={filename}, media_id={media_id}"
+                )
+                return media_id
+
+        except httpx.HTTPStatusError as e:
+            error_data = {}
+            try:
+                error_data = e.response.json()
+            except Exception:
+                pass
+            logger.error(
+                f"[DingTalkSender] HTTP error uploading media '{filename}': "
+                f"status={e.response.status_code} "
+                f"errcode={error_data.get('errcode')} errmsg={error_data.get('errmsg', e.response.text)}"
+            )
+            return None
+
+        except Exception as e:
+            logger.error(f"[DingTalkSender] Error uploading media '{filename}': {e}")
+            return None
+
+    # DingTalk media upload supported file extensions
+    SUPPORTED_MEDIA_EXTENSIONS = frozenset(
+        ["doc", "docx", "xls", "xlsx", "ppt", "pptx", "zip", "pdf", "rar"]
+    )
+
+    @staticmethod
+    def _wrap_in_zip(file_content: bytes, filename: str) -> tuple[bytes, str]:
+        """Wrap a file in a ZIP archive if its extension is not supported by DingTalk.
+
+        DingTalk media upload only supports: doc, docx, xls, xlsx, ppt, pptx, zip, pdf, rar.
+        Unsupported files (e.g. .html, .txt, .py) are wrapped in a ZIP so they can be
+        uploaded and the recipient can extract them.
+
+        Args:
+            file_content: Raw file bytes
+            filename: Original filename
+
+        Returns:
+            Tuple of (bytes_to_upload, filename_to_use). If wrapping occurred,
+            filename_to_use will be '<original_name>.zip'.
+        """
+        import io
+        import zipfile
+
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(
+            zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED
+        ) as zf:
+            zf.writestr(filename, file_content)
+        return zip_buffer.getvalue(), f"{filename}.zip"
+
+    async def send_file(
+        self,
+        user_ids: List[str],
+        file_content: bytes,
+        filename: str,
+        robot_code: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Upload a file and send it to users via DingTalk robot.
+
+        Uploads the file to DingTalk media server first, then sends it as a
+        sampleFile message via the robot oToMessages API.
+
+        DingTalk only supports uploading: doc, docx, xls, xlsx, ppt, pptx, zip, pdf, rar.
+        Files with unsupported extensions (e.g. .html, .txt) are automatically wrapped
+        in a ZIP archive before uploading so the recipient can extract them.
+
+        Args:
+            user_ids: List of DingTalk user IDs (staffId or unionId)
+            file_content: Raw file bytes
+            filename: Original filename shown to the recipient
+            robot_code: Robot code (defaults to client_id)
+
+        Returns:
+            API response dict with success status
+        """
+        if not user_ids:
+            return {"success": False, "error": "No user IDs provided"}
+
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        upload_content = file_content
+        upload_filename = filename
+
+        # Wrap unsupported file types in a ZIP archive
+        if ext not in self.SUPPORTED_MEDIA_EXTENSIONS:
+            logger.info(
+                f"[DingTalkSender] File extension '.{ext}' not supported by DingTalk media upload; "
+                f"wrapping '{filename}' in a ZIP archive"
+            )
+            upload_content, upload_filename = self._wrap_in_zip(file_content, filename)
+
+        # Upload file to DingTalk media server
+        media_id = await self.upload_media(
+            upload_content, upload_filename, media_type="file"
+        )
+        if not media_id:
+            return {
+                "success": False,
+                "error": f"Media upload failed for '{upload_filename}'",
+            }
+
+        return await self._send_message(
+            user_ids=user_ids,
+            msg_key="sampleFile",
+            msg_param={
+                "mediaId": media_id,
+                "fileName": upload_filename,
+                "fileType": "zip" if upload_filename != filename else ext or "bin",
+            },
+            robot_code=robot_code,
+        )
 
     async def update_ai_card(
         self,

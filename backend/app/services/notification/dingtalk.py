@@ -8,7 +8,7 @@ Dingtalk notification client for sending messages via Dingtalk robot.
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -252,4 +252,141 @@ class DingtalkClient:
             return True
         except Exception as e:
             logger.error(f"[Dingtalk] Failed to send text to {username}: {e}")
+            return False
+
+    async def upload_media(
+        self,
+        file_content: bytes,
+        filename: str,
+        media_type: str = "file",
+    ) -> Optional[str]:
+        """
+        Upload a file to Dingtalk media server and return the mediaId.
+
+        Args:
+            file_content: Raw file bytes
+            filename: Original filename (used for Content-Disposition)
+            media_type: Dingtalk media type - 'image', 'voice', 'video', or 'file'
+
+        Returns:
+            mediaId string if successful, None otherwise
+        """
+        if not self._client:
+            raise RuntimeError("Client not initialized. Use 'async with' context.")
+
+        await self._ensure_valid_token()
+
+        url = "https://api.dingtalk.com/v1.0/robot/upload/media"
+
+        try:
+            response = await self._client.post(
+                url,
+                headers={
+                    "x-acs-dingtalk-access-token": self._token,
+                },
+                files={
+                    "media": (filename, file_content),
+                    "type": (None, media_type),
+                },
+            )
+
+            if not response.is_success:
+                error_text = response.text
+                logger.error(
+                    f"[Dingtalk] Failed to upload media '{filename}': "
+                    f"{response.status_code} - {error_text}"
+                )
+                return None
+
+            data = response.json()
+            media_id = data.get("mediaId")
+            logger.info(
+                f"[Dingtalk] Media uploaded successfully: filename={filename} mediaId={media_id}"
+            )
+            return media_id
+        except Exception as e:
+            logger.error(f"[Dingtalk] Failed to upload media '{filename}': {e}")
+            return None
+
+    async def send_file(
+        self,
+        username: str,
+        file_content: bytes,
+        filename: str,
+    ) -> bool:
+        """
+        Send a file to a user via Dingtalk robot.
+
+        Uploads the file to Dingtalk media server first, then sends it as a
+        sampleFile message via the robot oToMessages API.
+
+        Args:
+            username: User's email or username
+            file_content: Raw file bytes
+            filename: Original filename shown to the recipient
+
+        Returns:
+            True if sent successfully, False otherwise
+        """
+        if not self._client:
+            raise RuntimeError("Client not initialized. Use 'async with' context.")
+
+        # Get user info
+        email = username if "@" in username else f"{username}@staff.weibo.com"
+        user = await self.get_user_by_email(email)
+        if not user:
+            logger.error(f"[Dingtalk] Cannot send file: user not found for {username}")
+            return False
+
+        # Upload file to Dingtalk media server
+        media_id = await self.upload_media(file_content, filename, media_type="file")
+        if not media_id:
+            logger.error(
+                f"[Dingtalk] Cannot send file: media upload failed for '{filename}'"
+            )
+            return False
+
+        # Ensure valid token
+        await self._ensure_valid_token()
+
+        url = "https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend"
+        msg_param = {
+            "mediaId": media_id,
+            "fileName": filename,
+            "fileType": (
+                filename.rsplit(".", 1)[-1].lower() if "." in filename else "bin"
+            ),
+        }
+
+        message_request = {
+            "robotCode": settings.DINGTALK_APP_KEY,
+            "userIds": [user.employee_id],
+            "msgKey": "sampleFile",
+            "msgParam": str(msg_param).replace("'", '"'),
+        }
+
+        try:
+            response = await self._client.post(
+                url,
+                headers={
+                    "Content-Type": "application/json",
+                    "x-acs-dingtalk-access-token": self._token,
+                },
+                json=message_request,
+            )
+
+            if not response.is_success:
+                error_text = response.text
+                logger.error(
+                    f"[Dingtalk] Failed to send file '{filename}' to {username}: "
+                    f"{response.status_code} - {error_text}"
+                )
+                return False
+
+            logger.info(f"[Dingtalk] File '{filename}' sent successfully to {username}")
+            return True
+        except Exception as e:
+            logger.error(
+                f"[Dingtalk] Failed to send file '{filename}' to {username}: {e}"
+            )
             return False

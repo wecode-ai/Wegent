@@ -101,6 +101,19 @@
       "loading": "正在加载预览...",
       "load_failed": "预览加载失败",
       "unsupported": "当前文件类型暂不支持预览，请下载后查看。"
+    },
+    "dingtalk_send": {
+      "success": "文件已通过钉钉机器人发送给您，请在钉钉消息中查收。",
+      "failed": "通过钉钉发送文件失败，请稍后重试。",
+      "not_bound": "您尚未绑定钉钉账号。请在钉钉中找到 WegentBot 机器人，发送「绑定」消息完成绑定后重试。"
+    },
+    "dingtalk_download": {
+      "title": "下载文件",
+      "description": "钉钉内置浏览器限制，无法直接下载文件。请选择以下方式获取文件：",
+      "open_in_browser": "生成下载链接",
+      "send_via_robot": "使用钉钉机器人发送",
+      "send_via_robot_hint": "机器人将文件发送到您的钉钉消息",
+      "sending": "正在发送..."
     }
   },
   "workbench": {

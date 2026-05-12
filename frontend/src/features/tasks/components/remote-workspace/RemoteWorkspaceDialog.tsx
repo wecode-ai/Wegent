@@ -8,7 +8,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { getToken } from '@/apis/user'
 
+import { ApiError } from '@/apis/client'
 import { type RemoteWorkspaceTreeEntry, remoteWorkspaceApis } from '@/apis/remoteWorkspace'
+import { detectInAppBrowser } from '@/utils/browserDetection'
 import {
   Dialog,
   DialogContent,
@@ -19,6 +21,7 @@ import {
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useTranslation } from '@/hooks/useTranslation'
 
+import { DingTalkDownloadDialog } from './DingTalkDownloadDialog'
 import { RemoteWorkspaceDialogDesktop } from './RemoteWorkspaceDialogDesktop'
 import { RemoteWorkspaceDialogMobile } from './RemoteWorkspaceDialogMobile'
 import { type RemoteWorkspaceDirectoryCache } from './RemoteWorkspaceDirectoryTree'
@@ -52,6 +55,14 @@ export function RemoteWorkspaceDialog({
 }: RemoteWorkspaceDialogProps) {
   const { t } = useTranslation('tasks')
   const isMobile = useIsMobile()
+  const isDingTalk = useMemo(() => detectInAppBrowser().browserName === 'DingTalk', [])
+
+  // DingTalk download dialog state
+  const [dingTalkDialogEntry, setDingTalkDialogEntry] = useState<RemoteWorkspaceTreeEntry | null>(
+    null
+  )
+  const [isDingTalkSending, setIsDingTalkSending] = useState(false)
+
   const [currentPath, setCurrentPath] = useState(rootPath)
   const [directoryCache, setDirectoryCache] = useState<RemoteWorkspaceDirectoryCache>({})
   const [expandedDirectoryPaths, setExpandedDirectoryPaths] = useState<Set<string>>(
@@ -135,9 +146,48 @@ export function RemoteWorkspaceDialog({
     [expandPathToDirectory, t, taskId]
   )
 
+  // Send file via DingTalk robot (called from the DingTalk download dialog)
+  const handleSendViaDingTalkRobot = useCallback(
+    async (entry: RemoteWorkspaceTreeEntry) => {
+      setIsDingTalkSending(true)
+      try {
+        await remoteWorkspaceApis.sendToDingtalk(taskId, entry.path)
+        setDingTalkDialogEntry(null)
+        alert(
+          t(
+            'remote_workspace.dingtalk_send.success',
+            '文件已通过钉钉机器人发送给您，请在钉钉消息中查收。'
+          )
+        )
+      } catch (err: unknown) {
+        const isNotBound = err instanceof ApiError && err.errorCode === 'no_dingtalk_binding'
+        if (isNotBound) {
+          alert(
+            t(
+              'remote_workspace.dingtalk_send.not_bound',
+              '您尚未绑定钉钉账号。请在钉钉中找到 WegentBot 机器人，发送「绑定」消息完成绑定后重试。'
+            )
+          )
+        } else {
+          alert(t('remote_workspace.dingtalk_send.failed', '通过钉钉发送文件失败，请稍后重试。'))
+        }
+      } finally {
+        setIsDingTalkSending(false)
+      }
+    },
+    [t, taskId]
+  )
+
   // Handle file download with authentication
+  // In DingTalk in-app browser, show a dialog to let user choose download method.
   const handleDownloadFile = useCallback(
     async (entry: RemoteWorkspaceTreeEntry) => {
+      if (isDingTalk) {
+        // Show the DingTalk download options dialog
+        setDingTalkDialogEntry(entry)
+        return
+      }
+
       try {
         const token = getToken()
         const url = remoteWorkspaceApis.getFileUrl(taskId, entry.path, 'attachment')
@@ -166,7 +216,7 @@ export function RemoteWorkspaceDialog({
         // Error handling - could add toast notification here
       }
     },
-    [taskId]
+    [isDingTalk, taskId]
   )
 
   useEffect(() => {
@@ -494,100 +544,126 @@ export function RemoteWorkspaceDialog({
   const canDownloadPreview = Boolean(previewEntry && downloadUrl)
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="!flex !h-[85vh] !w-[96vw] !max-w-[1680px] !flex-col p-0 gap-0 overflow-hidden">
-        <DialogHeader className="shrink-0 px-6 py-4 border-b border-border">
-          <DialogTitle>{t('remote_workspace.title')}</DialogTitle>
-          <DialogDescription className="sr-only">{t('remote_workspace.title')}</DialogDescription>
-        </DialogHeader>
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="!flex !h-[85vh] !w-[96vw] !max-w-[1680px] !flex-col p-0 gap-0 overflow-hidden">
+          <DialogHeader className="shrink-0 px-6 py-4 border-b border-border">
+            <DialogTitle>{t('remote_workspace.title')}</DialogTitle>
+            <DialogDescription className="sr-only">{t('remote_workspace.title')}</DialogDescription>
+          </DialogHeader>
 
-        {isMobile ? (
-          <RemoteWorkspaceDialogMobile
-            t={t}
-            currentPath={currentPath}
-            isTreeLoading={isTreeLoading}
-            treeError={treeError}
-            visibleEntries={visibleEntries}
-            selectedPaths={selectedPathSet}
-            selectedEntries={selectedEntries}
-            previewKind={previewKind}
-            previewBlob={previewBlob}
-            isPreviewLoading={isPreviewLoading}
-            previewError={previewError}
-            searchKeyword={searchKeyword}
-            sortOption={sortOption}
-            canGoParent={canGoParent}
-            canDownloadPreview={canDownloadPreview}
-            onDownload={handleDownloadFile}
-            onGoRoot={() => navigateToDirectory(rootPath)}
-            onGoParent={handleGoParent}
-            onRefresh={() =>
-              void loadDirectory(currentPath, {
-                setAsCurrent: true,
-                clearSelection: true,
-                errorMessage: t(
-                  'remote_workspace.tree.load_failed',
-                  'Failed to load workspace tree'
-                ),
-              })
-            }
-            onSearchChange={setSearchKeyword}
-            onSortChange={setSortOption}
-            onOpenEntry={handleOpenEntryMobile}
-          />
-        ) : (
-          <RemoteWorkspaceDialogDesktop
-            t={t}
-            rootPath={rootPath}
-            currentPath={currentPath}
-            breadcrumbs={breadcrumbs}
-            directoryCache={directoryCache}
-            expandedDirectoryPaths={expandedDirectoryPaths}
-            isTreeLoading={isTreeLoading}
-            treeError={treeError}
-            visibleEntries={visibleEntries}
-            selectedPaths={selectedPathSet}
-            selectedEntries={selectedEntries}
-            previewEntry={previewEntry}
-            previewKind={previewKind}
-            previewBlob={previewBlob}
-            searchKeyword={searchKeyword}
-            sortOption={sortOption}
-            pathInputValue={pathInputValue}
-            pathInputError={pathInputError}
-            isPathEditing={isPathEditing}
-            canGoParent={canGoParent}
-            isPreviewDialogOpen={isPreviewDialogOpen}
-            onDownload={handleDownloadFile}
-            onGoRoot={() => navigateToDirectory(rootPath)}
-            onGoParent={handleGoParent}
-            onRefresh={() =>
-              void loadDirectory(currentPath, {
-                setAsCurrent: true,
-                clearSelection: true,
-                errorMessage: t(
-                  'remote_workspace.tree.load_failed',
-                  'Failed to load workspace tree'
-                ),
-              })
-            }
-            onToggleDirectoryExpand={handleToggleDirectoryExpand}
-            onSelectDirectory={navigateToDirectory}
-            onRetryDirectoryLoad={handleRetryDirectoryLoad}
-            onSearchChange={setSearchKeyword}
-            onSortChange={setSortOption}
-            onPathEditStart={handleStartPathEdit}
-            onPathInputChange={setPathInputValue}
-            onPathSubmit={handlePathSubmit}
-            onPathEditCancel={handleCancelPathEdit}
-            onToggleAllEntries={handleToggleAllEntries}
-            onToggleEntrySelection={handleToggleEntrySelection}
-            onSelectEntry={handleSelectEntry}
-            onOpenEntry={handleOpenEntryDesktop}
-            onPreviewDialogOpenChange={setIsPreviewDialogOpen}
-          />
-        )}
-      </DialogContent>
-    </Dialog>
+          {isMobile ? (
+            <RemoteWorkspaceDialogMobile
+              t={t}
+              currentPath={currentPath}
+              isTreeLoading={isTreeLoading}
+              treeError={treeError}
+              visibleEntries={visibleEntries}
+              selectedPaths={selectedPathSet}
+              selectedEntries={selectedEntries}
+              previewKind={previewKind}
+              previewBlob={previewBlob}
+              isPreviewLoading={isPreviewLoading}
+              previewError={previewError}
+              searchKeyword={searchKeyword}
+              sortOption={sortOption}
+              canGoParent={canGoParent}
+              canDownloadPreview={canDownloadPreview}
+              onDownload={handleDownloadFile}
+              onGoRoot={() => navigateToDirectory(rootPath)}
+              onGoParent={handleGoParent}
+              onRefresh={() =>
+                void loadDirectory(currentPath, {
+                  setAsCurrent: true,
+                  clearSelection: true,
+                  errorMessage: t(
+                    'remote_workspace.tree.load_failed',
+                    'Failed to load workspace tree'
+                  ),
+                })
+              }
+              onSearchChange={setSearchKeyword}
+              onSortChange={setSortOption}
+              onOpenEntry={handleOpenEntryMobile}
+            />
+          ) : (
+            <RemoteWorkspaceDialogDesktop
+              t={t}
+              rootPath={rootPath}
+              currentPath={currentPath}
+              breadcrumbs={breadcrumbs}
+              directoryCache={directoryCache}
+              expandedDirectoryPaths={expandedDirectoryPaths}
+              isTreeLoading={isTreeLoading}
+              treeError={treeError}
+              visibleEntries={visibleEntries}
+              selectedPaths={selectedPathSet}
+              selectedEntries={selectedEntries}
+              previewEntry={previewEntry}
+              previewKind={previewKind}
+              previewBlob={previewBlob}
+              searchKeyword={searchKeyword}
+              sortOption={sortOption}
+              pathInputValue={pathInputValue}
+              pathInputError={pathInputError}
+              isPathEditing={isPathEditing}
+              canGoParent={canGoParent}
+              isPreviewDialogOpen={isPreviewDialogOpen}
+              onDownload={handleDownloadFile}
+              onGoRoot={() => navigateToDirectory(rootPath)}
+              onGoParent={handleGoParent}
+              onRefresh={() =>
+                void loadDirectory(currentPath, {
+                  setAsCurrent: true,
+                  clearSelection: true,
+                  errorMessage: t(
+                    'remote_workspace.tree.load_failed',
+                    'Failed to load workspace tree'
+                  ),
+                })
+              }
+              onToggleDirectoryExpand={handleToggleDirectoryExpand}
+              onSelectDirectory={navigateToDirectory}
+              onRetryDirectoryLoad={handleRetryDirectoryLoad}
+              onSearchChange={setSearchKeyword}
+              onSortChange={setSortOption}
+              onPathEditStart={handleStartPathEdit}
+              onPathInputChange={setPathInputValue}
+              onPathSubmit={handlePathSubmit}
+              onPathEditCancel={handleCancelPathEdit}
+              onToggleAllEntries={handleToggleAllEntries}
+              onToggleEntrySelection={handleToggleEntrySelection}
+              onSelectEntry={handleSelectEntry}
+              onOpenEntry={handleOpenEntryDesktop}
+              onPreviewDialogOpenChange={setIsPreviewDialogOpen}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* DingTalk download options dialog */}
+      <DingTalkDownloadDialog
+        open={Boolean(dingTalkDialogEntry)}
+        filename={dingTalkDialogEntry?.name ?? ''}
+        fileSize={dingTalkDialogEntry?.size ?? 0}
+        isSending={isDingTalkSending}
+        onOpenChange={open => {
+          if (!open) setDingTalkDialogEntry(null)
+        }}
+        onOpenInBrowser={() => {
+          if (!dingTalkDialogEntry) return
+          const token = getToken()
+          const url = remoteWorkspaceApis.getFileUrl(taskId, dingTalkDialogEntry.path, 'attachment')
+          // Open in native browser with auth token as query param
+          const urlWithToken = token ? `${url}&token=${encodeURIComponent(token)}` : url
+          window.open(urlWithToken, '_blank')
+          setDingTalkDialogEntry(null)
+        }}
+        onSendViaRobot={() => {
+          if (!dingTalkDialogEntry) return
+          void handleSendViaDingTalkRobot(dingTalkDialogEntry)
+        }}
+      />
+    </>
   )
 }

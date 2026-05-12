@@ -250,7 +250,7 @@ def get_remote_workspace_file(
         "inline", pattern="^(inline|attachment)$", description="File disposition"
     ),
     task_id: int = Depends(with_task_telemetry),
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(security.get_current_user_from_query_or_header),
     db: Session = Depends(get_db),
 ):
     """Stream remote workspace file for inline preview or attachment download."""
@@ -261,6 +261,166 @@ def get_remote_workspace_file(
         path=path,
         disposition=disposition,
     )
+
+
+@router.post("/{task_id}/remote-workspace/send-to-dingtalk")
+async def send_remote_workspace_file_to_dingtalk(
+    path: str = Query(..., description="Workspace file path to send"),
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Fetch a remote workspace file and send it to the current user via DingTalk robot.
+
+    Uses the DingTalk Messager channel configured in the integrations module (database),
+    along with the user's DingTalk binding stored in their preferences.
+
+    Used when the client is running inside the DingTalk in-app browser where
+    direct file downloads are not supported.
+    """
+    from app.models.kind import Kind
+    from app.services.channels.dingtalk.sender import DingTalkRobotSender
+    from app.services.subscription.notification_service import (
+        subscription_notification_service,
+    )
+
+    # Fetch file bytes from remote workspace
+    file_content, filename = remote_workspace_service.fetch_file_bytes(
+        db=db,
+        task_id=task_id,
+        user_id=current_user.id,
+        path=path,
+    )
+
+    # Get user's DingTalk IM bindings from preferences
+    user_bindings = subscription_notification_service.get_user_im_bindings(
+        db, user_id=current_user.id
+    )
+
+    logger.info(
+        "[send_to_dingtalk] user_id=%s, bindings=%s",
+        current_user.id,
+        {
+            k: {
+                "channel_type": v.channel_type,
+                "sender_id": v.sender_id,
+                "sender_staff_id": v.sender_staff_id,
+            }
+            for k, v in user_bindings.items()
+        },
+    )
+
+    # Find a DingTalk channel binding for this user
+    dingtalk_user_id: Optional[str] = None
+    dingtalk_channel: Optional[Kind] = None
+
+    for channel_id_str, binding in user_bindings.items():
+        if binding.channel_type != "dingtalk":
+            continue
+
+        # Look up the Messager channel in the database
+        channel = (
+            db.query(Kind)
+            .filter(
+                Kind.id == int(channel_id_str),
+                Kind.kind == "Messager",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if not channel:
+            logger.warning(
+                "[send_to_dingtalk] channel %s not found in DB", channel_id_str
+            )
+            continue
+
+        spec = channel.json.get("spec", {}) if channel.json else {}
+        channel_type_in_spec = spec.get("channelType")
+        logger.info(
+            "[send_to_dingtalk] channel %s spec.channelType=%s",
+            channel_id_str,
+            channel_type_in_spec,
+        )
+        if channel_type_in_spec != "dingtalk":
+            continue
+
+        # Prefer sender_staff_id, fall back to sender_id
+        candidate_id = binding.sender_staff_id or binding.sender_id
+        if candidate_id:
+            dingtalk_user_id = candidate_id
+            dingtalk_channel = channel
+            break
+
+    if not dingtalk_user_id or not dingtalk_channel:
+        logger.error(
+            "[send_to_dingtalk] No DingTalk binding found for user %s. bindings=%s",
+            current_user.id,
+            list(user_bindings.keys()),
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_code": "no_dingtalk_binding",
+                "message": (
+                    "No DingTalk channel binding found for this user. "
+                    "Please find the WegentBot robot in DingTalk and send '绑定' to bind your account."
+                ),
+            },
+        )
+
+    # Extract robot credentials from channel config
+    # Field names use snake_case as defined in DingTalkChannelProvider.client_id/client_secret
+    # The client_secret is stored encrypted in the database
+    from shared.utils.crypto import decrypt_sensitive_data
+
+    spec = dingtalk_channel.json.get("spec", {})
+    config = spec.get("config", {})
+    client_id = config.get("client_id")
+    client_secret_raw = config.get("client_secret")
+
+    if not client_id or not client_secret_raw:
+        raise HTTPException(
+            status_code=500,
+            detail="DingTalk channel is missing client_id or client_secret configuration",
+        )
+
+    # Decrypt the client_secret (stored encrypted in database)
+    client_secret = decrypt_sensitive_data(client_secret_raw)
+
+    sender = DingTalkRobotSender(
+        client_id=client_id,
+        client_secret=client_secret,
+    )
+
+    result = await sender.send_file(
+        user_ids=[dingtalk_user_id],
+        file_content=file_content,
+        filename=filename,
+    )
+
+    if not result.get("success"):
+        error_detail = result.get("error", "Unknown error")
+        logger.error(
+            "Failed to send file '%s' to DingTalk for user %s (task_id=%s): %s",
+            filename,
+            current_user.id,
+            task_id,
+            error_detail,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to send file via DingTalk robot: {error_detail}",
+        )
+
+    logger.info(
+        "File '%s' sent to DingTalk for user %s (dingtalk_id=%s, task_id=%s)",
+        filename,
+        current_user.id,
+        dingtalk_user_id,
+        task_id,
+    )
+    return {"message": "File sent via DingTalk", "filename": filename}
 
 
 @router.get("/{task_id}/skills", response_model=TaskSkillsResponse)

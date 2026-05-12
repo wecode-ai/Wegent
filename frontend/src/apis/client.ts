@@ -118,6 +118,17 @@ class APIClient {
           const json = JSON.parse(errorText)
           if (json && typeof json.detail === 'string') {
             errorMsg = json.detail
+          } else if (json && typeof json.detail === 'object' && json.detail !== null) {
+            // detail is an object (e.g. { error_code: 'no_dingtalk_binding', message: '...' })
+            if (typeof json.detail.message === 'string') {
+              errorMsg = json.detail.message
+            }
+            if (
+              typeof json.detail.error_code === 'string' ||
+              typeof json.detail.error_code === 'number'
+            ) {
+              errorCode = json.detail.error_code
+            }
           }
           if (
             json &&
