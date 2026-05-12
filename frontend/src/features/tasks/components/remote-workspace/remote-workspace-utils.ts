@@ -69,6 +69,30 @@ export function resolvePreviewKind(fileName: string): PreviewKind {
   return 'unsupported'
 }
 
+export function getMimeTypeFromPreviewKind(previewKind: PreviewKind, filename: string): string {
+  switch (previewKind) {
+    case 'image':
+      return 'image/png'
+    case 'pdf':
+      return 'application/pdf'
+    case 'excel':
+      return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    case 'text':
+      if (filename.endsWith('.py')) return 'text/x-python'
+      if (filename.endsWith('.js')) return 'application/javascript'
+      if (filename.endsWith('.ts')) return 'application/typescript'
+      if (filename.endsWith('.json')) return 'application/json'
+      if (filename.endsWith('.md')) return 'text/markdown'
+      if (filename.endsWith('.html') || filename.endsWith('.htm')) return 'text/html'
+      if (filename.endsWith('.css')) return 'text/css'
+      if (filename.endsWith('.xml')) return 'application/xml'
+      if (filename.endsWith('.yaml') || filename.endsWith('.yml')) return 'application/yaml'
+      return 'text/plain'
+    default:
+      return 'application/octet-stream'
+  }
+}
+
 function parseModifiedAt(modifiedAt?: string | null): number {
   if (!modifiedAt) {
     return 0
