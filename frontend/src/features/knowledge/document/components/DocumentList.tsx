@@ -795,7 +795,11 @@ export function DocumentList({
 
         {/* Create folder button */}
         {canUpload && (
-          <Button variant="outline" size="sm" onClick={() => handleCreateFolder(0)}>
+          <Button
+            variant="outline"
+            className="h-11 min-w-[44px]"
+            onClick={() => handleCreateFolder(0)}
+          >
             <FolderPlus className="w-4 h-4 mr-1" />
             {t('document.folder.create')}
           </Button>

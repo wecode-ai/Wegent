@@ -1052,6 +1052,21 @@ class KnowledgeService:
                     f"Current count: {current_count}"
                 )
 
+        # Validate that the folder belongs to this knowledge base (if a non-root folder is specified)
+        if data.folder_id and data.folder_id != 0:
+            folder = (
+                db.query(KnowledgeFolder)
+                .filter(
+                    KnowledgeFolder.id == data.folder_id,
+                    KnowledgeFolder.kind_id == knowledge_base_id,
+                )
+                .first()
+            )
+            if not folder:
+                raise ValueError(
+                    f"Folder {data.folder_id} not found in this knowledge base"
+                )
+
         document = KnowledgeDocument(
             kind_id=knowledge_base_id,
             attachment_id=data.attachment_id if data.attachment_id is not None else 0,

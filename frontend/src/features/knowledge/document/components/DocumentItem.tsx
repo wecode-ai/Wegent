@@ -580,9 +580,10 @@ export function DocumentItem({
           {/* Move to folder button */}
           {onMove && (
             <button
-              className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"
+              className="h-11 min-w-[44px] p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"
               onClick={handleMove}
               title={t('knowledge:document.folder.moveDocument')}
+              data-testid="move-button"
             >
               <FolderInput className="w-3.5 h-3.5" />
             </button>

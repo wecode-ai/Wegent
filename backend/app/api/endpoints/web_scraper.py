@@ -37,7 +37,7 @@ class WebDocumentCreateRequest(BaseModel):
     name: Optional[str] = Field(
         None, description="Optional document name (uses page title if not provided)"
     )
-    folder_id: int = Field(0, description="Target folder ID (0 = root level)")
+    folder_id: int = Field(0, ge=0, description="Target folder ID (0 = root level)")
 
 
 class WebDocumentCreateResponse(BaseModel):

@@ -978,7 +978,6 @@ def get_folder_tree(
     "/{knowledge_base_id}/folders/{folder_id}",
     response_model=KnowledgeFolderResponse,
 )
-@trace_sync("update_folder", "knowledge.api")
 def update_folder(
     knowledge_base_id: int,
     folder_id: int,
@@ -993,6 +992,7 @@ def update_folder(
             folder_id=folder_id,
             user_id=current_user.id,
             data=data,
+            knowledge_base_id=knowledge_base_id,
         )
     except ValueError as e:
         _raise_document_detail_http_error(e)
@@ -1014,9 +1014,11 @@ def delete_folder(
             db=db,
             folder_id=folder_id,
             user_id=current_user.id,
+            knowledge_base_id=knowledge_base_id,
         )
         return result
     except ValueError as e:
+        _raise_document_detail_http_error(e)
         _raise_document_detail_http_error(e)
 
 

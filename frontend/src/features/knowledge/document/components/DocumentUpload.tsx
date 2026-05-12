@@ -672,7 +672,7 @@ export function DocumentUpload({
           <div className="space-y-1.5">
             <Label className="text-sm font-medium">{t('document.folder.selectFolder')}</Label>
             <Select value={String(folderId)} onValueChange={val => onFolderChange?.(Number(val))}>
-              <SelectTrigger className="h-9">
+              <SelectTrigger className="h-11 min-w-[44px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -788,7 +788,7 @@ export function DocumentUpload({
           <div className="mt-4 space-y-1.5">
             <Label className="text-sm font-medium">{t('document.folder.selectFolder')}</Label>
             <Select value={String(folderId)} onValueChange={val => onFolderChange?.(Number(val))}>
-              <SelectTrigger className="h-9">
+              <SelectTrigger className="h-11 min-w-[44px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -1193,7 +1193,7 @@ export function DocumentUpload({
           <div className="space-y-1.5">
             <Label className="text-sm font-medium">{t('document.folder.selectFolder')}</Label>
             <Select value={String(folderId)} onValueChange={val => onFolderChange?.(Number(val))}>
-              <SelectTrigger className="h-9">
+              <SelectTrigger className="h-11 min-w-[44px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -1311,7 +1311,7 @@ export function DocumentUpload({
           <div className="space-y-1.5">
             <Label className="text-sm font-medium">{t('document.folder.selectFolder')}</Label>
             <Select value={String(folderId)} onValueChange={val => onFolderChange?.(Number(val))}>
-              <SelectTrigger className="h-9">
+              <SelectTrigger className="h-11 min-w-[44px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

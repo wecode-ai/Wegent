@@ -223,6 +223,7 @@ class KnowledgeFolderService:
         folder_id: int,
         user_id: int,
         data: KnowledgeFolderUpdate,
+        knowledge_base_id: Optional[int] = None,
     ) -> KnowledgeFolderResponse:
         """Update a folder (rename and/or move).
 
@@ -231,14 +232,19 @@ class KnowledgeFolderService:
             folder_id: Target folder ID
             user_id: Requesting user ID
             data: Update data
+            knowledge_base_id: Expected knowledge base ID for ownership validation
 
         Returns:
             Updated folder as response
 
         Raises:
-            ValueError: If folder not found, circular move, or access denied
+            ValueError: If folder not found, circular move, access denied, or
+                folder does not belong to the specified knowledge base
         """
         folder = KnowledgeFolderService.get_folder(db, folder_id, user_id)
+        # Verify the folder belongs to the expected knowledge base when provided
+        if knowledge_base_id is not None and folder.kind_id != knowledge_base_id:
+            raise ValueError("Folder does not belong to the specified knowledge base")
         KnowledgeFolderService._check_kb_write_access(db, folder.kind_id, user_id)
 
         if data.name is not None:
@@ -291,6 +297,7 @@ class KnowledgeFolderService:
         db: Session,
         folder_id: int,
         user_id: int,
+        knowledge_base_id: Optional[int] = None,
     ) -> dict:
         """Delete a folder and all its contents recursively.
 
@@ -301,14 +308,19 @@ class KnowledgeFolderService:
             db: Database session
             folder_id: Folder to delete
             user_id: Requesting user ID
+            knowledge_base_id: Expected knowledge base ID for ownership validation
 
         Returns:
             Dict with deleted_folder_count and moved_document_count
 
         Raises:
-            ValueError: If folder not found or access denied
+            ValueError: If folder not found, access denied, or folder does not
+                belong to the specified knowledge base
         """
         folder = KnowledgeFolderService.get_folder(db, folder_id, user_id)
+        # Verify the folder belongs to the expected knowledge base when provided
+        if knowledge_base_id is not None and folder.kind_id != knowledge_base_id:
+            raise ValueError("Folder does not belong to the specified knowledge base")
         KnowledgeFolderService._check_kb_write_access(db, folder.kind_id, user_id)
 
         # Collect all descendant folder IDs (including self) via a single
