@@ -326,6 +326,12 @@ class EmitterBridgeTransport(EventTransport):
                 context=event_type,
             )
             tool_context = self._pop_tool_context(item_id)
+            failure_reason = data.get("failure_reason")
+            tool_output = (
+                failure_reason
+                if event_type == ResponsesAPIStreamEvents.MCP_CALL_FAILED.value
+                else data.get("output")
+            )
             return ExecutionEvent(
                 type=EventType.TOOL_RESULT.value,
                 task_id=self.task_id,
@@ -333,6 +339,7 @@ class EmitterBridgeTransport(EventTransport):
                 tool_name=tool_context.get("name"),
                 tool_use_id=item_id,
                 tool_input=tool_context.get("arguments"),
+                tool_output=tool_output,
                 data={
                     "tool_protocol": "mcp_call",
                     "server_label": tool_context.get("server_label", ""),
@@ -341,7 +348,7 @@ class EmitterBridgeTransport(EventTransport):
                         if event_type == ResponsesAPIStreamEvents.MCP_CALL_FAILED.value
                         else "completed"
                     ),
-                    "error": data.get("error"),
+                    "error": failure_reason,
                 },
                 message_id=message_id,
             )

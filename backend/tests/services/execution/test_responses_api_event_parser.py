@@ -216,6 +216,51 @@ class TestResponsesAPIEventParserToolIds:
         assert done.data["tool_protocol"] == "mcp_call"
         assert done.data["status"] == "completed"
 
+    def test_mcp_tool_completion_carries_output(self):
+        parser = ResponsesAPIEventParser()
+
+        parser.parse(
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+            event_type=ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value,
+            data={
+                "item": {
+                    "type": "mcp_call",
+                    "id": "mcp_789",
+                    "name": "search_docs",
+                    "server_label": "wegent-knowledge",
+                }
+            },
+        )
+        parser.parse(
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+            event_type=ResponsesAPIStreamEvents.MCP_CALL_ARGUMENTS_DONE.value,
+            data={
+                "item_id": "mcp_789",
+                "arguments": '{"query": "tool blocks"}',
+            },
+        )
+
+        done = parser.parse(
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+            event_type=ResponsesAPIStreamEvents.MCP_CALL_COMPLETED.value,
+            data={
+                "item_id": "mcp_789",
+                "output": '{"results":["block output"]}',
+            },
+        )
+
+        assert done is not None
+        assert done.type == "tool_result"
+        assert done.tool_use_id == "mcp_789"
+        assert done.tool_output == '{"results":["block output"]}'
+        assert done.tool_input == {"query": "tool blocks"}
+
     def test_mcp_tool_failed_carries_error(self):
         parser = ResponsesAPIEventParser()
 
@@ -476,6 +521,48 @@ class TestResponsesAPIEventParserToolIds:
                 },
                 message_id=3,
             )
+
+    def test_inprocess_bridge_mcp_completion_carries_output(self):
+        transport = EmitterBridgeTransport(
+            emitter=AsyncMock(),
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+        )
+
+        transport._convert_event(
+            ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value,
+            {
+                "item": {
+                    "type": "mcp_call",
+                    "id": "mcp_789",
+                    "name": "search_docs",
+                    "server_label": "wegent-knowledge",
+                }
+            },
+            message_id=3,
+        )
+        transport._convert_event(
+            ResponsesAPIStreamEvents.MCP_CALL_ARGUMENTS_DONE.value,
+            {
+                "item_id": "mcp_789",
+                "arguments": '{"query": "tool blocks"}',
+            },
+            message_id=3,
+        )
+
+        result = transport._convert_event(
+            ResponsesAPIStreamEvents.MCP_CALL_COMPLETED.value,
+            {
+                "item_id": "mcp_789",
+                "output": '{"results":["block output"]}',
+            },
+            message_id=3,
+        )
+
+        assert result is not None
+        assert result.tool_output == '{"results":["block output"]}'
+        assert result.tool_input == {"query": "tool blocks"}
 
     def test_inprocess_bridge_shell_call_lifecycle(self):
         transport = EmitterBridgeTransport(

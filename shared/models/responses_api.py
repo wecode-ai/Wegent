@@ -918,14 +918,17 @@ class ResponsesAPIEventBuilder:
             "output_index": self._tool_output_index,
         }
 
-    def mcp_call_completed(self, item_id: str) -> dict:
+    def mcp_call_completed(self, item_id: str, output: Optional[Any] = None) -> dict:
         """Create response.mcp_call.completed event."""
-        return {
+        data = {
             "type": ResponsesAPIStreamEvents.MCP_CALL_COMPLETED.value,
             "response_id": self.response_id,
             "item_id": item_id,
             "output_index": self._tool_output_index,
         }
+        if output is not None:
+            data["output"] = output
+        return data
 
     def mcp_call_failed(self, item_id: str, error: Optional[str] = None) -> dict:
         """Create response.mcp_call.failed event."""

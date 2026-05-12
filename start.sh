@@ -1609,7 +1609,7 @@ start_services() {
         # --reload-exclude: Exclude .venv and __pycache__ to reduce CPU usage
         local CALLBACK_HOST="http://$LOCAL_IP:$EXECUTOR_MANAGER_PORT"
         start_service "executor_manager" "executor_manager" \
-            "export EXECUTOR_IMAGE=$EXECUTOR_IMAGE && export TASK_API_DOMAIN=$TASK_API_DOMAIN && export DOCKER_HOST_ADDR=localhost && export NETWORK=wegent-network && export CALLBACK_HOST=$CALLBACK_HOST && source .venv/bin/activate && uvicorn main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $EXECUTOR_MANAGER_PORT --log-level debug"
+            "export EXECUTOR_IMAGE=$EXECUTOR_IMAGE && export TASK_API_DOMAIN=$TASK_API_DOMAIN && export DOCKER_HOST_ADDR=localhost && export NO_PROXY=localhost,127.0.0.1 && export no_proxy=localhost,127.0.0.1 && export NETWORK=wegent-network && export CALLBACK_HOST=$CALLBACK_HOST && source .venv/bin/activate && uvicorn main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $EXECUTOR_MANAGER_PORT --log-level debug"
     fi
 
     # 4. Start Knowledge Runtime
