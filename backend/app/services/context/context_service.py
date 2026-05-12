@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.models.duckdb_cache import DuckDBCache
 from app.models.subtask_context import (
     ContextStatus,
     ContextType,
@@ -1560,12 +1561,71 @@ class ContextService:
                 )
                 # Continue with database deletion even if storage deletion fails
 
+        # Clean up DuckDB cache and .duckdb file if this attachment had one
+        self._cleanup_duckdb_on_delete(db, context_id)
+
         db.delete(context)
         db.commit()
 
         logger.info(f"Context {context_id} deleted")
 
         return True
+
+    def _cleanup_duckdb_on_delete(self, db: Session, context_id: int) -> None:
+        """Clean up DuckDB cache and .duckdb file when an attachment is deleted.
+
+        Finds the DuckDBCache record for the source attachment, deletes the
+        .duckdb file attachment (via storage backend), and removes the cache
+        record. Errors are logged but do not prevent the source attachment
+        deletion from completing.
+
+        Args:
+            db: Database session.
+            context_id: The ID of the source attachment being deleted.
+        """
+        try:
+            cache_record = (
+                db.query(DuckDBCache)
+                .filter(DuckDBCache.attachment_id == context_id)
+                .first()
+            )
+            if cache_record is None:
+                return
+
+            # Delete the .duckdb file attachment if it exists
+            duckdb_attachment_id = cache_record.duckdb_attachment_id
+            if duckdb_attachment_id:
+                duckdb_context = (
+                    db.query(SubtaskContext)
+                    .filter(SubtaskContext.id == duckdb_attachment_id)
+                    .first()
+                )
+                if duckdb_context and duckdb_context.storage_key:
+                    try:
+                        storage_backend = get_storage_backend(db)
+                        storage_backend.delete(duckdb_context.storage_key)
+                    except StorageError as e:
+                        logger.warning(
+                            f"Failed to delete .duckdb file from storage "
+                            f"for attachment {duckdb_attachment_id}: {e}"
+                        )
+                if duckdb_context:
+                    db.delete(duckdb_context)
+                    logger.info(
+                        f"Deleted .duckdb file attachment {duckdb_attachment_id} "
+                        f"(source attachment {context_id})"
+                    )
+
+            # Delete the cache record
+            db.delete(cache_record)
+            logger.info(
+                f"Deleted DuckDB cache record for source attachment {context_id}"
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to clean up DuckDB cache for attachment {context_id}: {e}. "
+                f"The source attachment deletion will continue."
+            )
 
     def get_unlinked_contexts(
         self,
