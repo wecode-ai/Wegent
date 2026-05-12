@@ -45,6 +45,14 @@ jest.mock('@/apis/tasks', () => ({
   },
 }))
 
+jest.mock('@/contexts/SocketContext', () => ({
+  useSocket: () => ({
+    socket: null,
+    isConnected: false,
+    registerChatHandlers: jest.fn(() => jest.fn()),
+  }),
+}))
+
 const mockGetPipelineStageInfo = taskApis.getPipelineStageInfo as jest.MockedFunction<
   typeof taskApis.getPipelineStageInfo
 >

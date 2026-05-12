@@ -245,10 +245,11 @@ class ResponsesAPIEventParser:
             tool_context = self._tool_contexts.pop(tool_key, None)
             if tool_context is None:
                 logger.warning(
-                    "[ResponsesAPIEventParser] Missing function_call context for %s",
+                    "[ResponsesAPIEventParser] Missing function_call context for %s; "
+                    "continuing with self-contained completion payload",
                     tool_key,
                 )
-                return None
+                tool_context = {}
             # Parse arguments from the event data to get tool_input
             arguments_str = data.get("arguments", "")
             tool_input = None
@@ -424,10 +425,11 @@ class ResponsesAPIEventParser:
             tool_context = self._tool_contexts.pop(tool_key, None)
             if tool_context is None:
                 logger.warning(
-                    "[ResponsesAPIEventParser] Missing mcp_call completion context for %s",
+                    "[ResponsesAPIEventParser] Missing mcp_call completion context for %s; "
+                    "continuing with self-contained completion payload",
                     tool_key,
                 )
-                return None
+                tool_context = {}
             failure_reason = data.get("failure_reason")
             tool_output = (
                 failure_reason
@@ -467,10 +469,11 @@ class ResponsesAPIEventParser:
             tool_context = self._tool_contexts.pop(tool_key, None)
             if tool_context is None:
                 logger.warning(
-                    "[ResponsesAPIEventParser] Missing shell_call completion context for %s",
+                    "[ResponsesAPIEventParser] Missing shell_call completion context for %s; "
+                    "continuing with self-contained completion payload",
                     tool_key,
                 )
-                return None
+                tool_context = {}
             tool_input = _extract_shell_call_input(item) or tool_context.get(
                 "arguments"
             )
@@ -478,7 +481,7 @@ class ResponsesAPIEventParser:
                 type=EventType.TOOL_RESULT,
                 task_id=task_id,
                 subtask_id=subtask_id,
-                tool_name=tool_context.get("name"),
+                tool_name=tool_context.get("name") or item.get("name"),
                 tool_use_id=call_id,
                 tool_input=tool_input,
                 data={

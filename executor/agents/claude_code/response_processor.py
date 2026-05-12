@@ -593,28 +593,23 @@ async def _handle_assistant_message(
 
             logger.info(f"ToolUseBlock: tool = {block.name}")
 
-            # Skip sending tool_start if streaming already sent it
-            if not stream_event_sent:
-                # Send tool_start event (response.output_item.added) via emitter
-                try:
-                    # Flush any buffered text_delta events before sending tool_start
-                    # This ensures text content is sent before tool events
-                    await emitter.flush()
+            # Always emit tool_start from the finalized ToolUseBlock. Raw stream
+            # events do not contain complete arguments and may not correlate with
+            # the later ToolResultBlock in Claude Code SDK output.
+            try:
+                # Flush any buffered text_delta events before sending tool_start
+                # This ensures text content is sent before tool events
+                await emitter.flush()
 
-                    # Convert tool input to JSON string for arguments
-                    arguments = (
-                        json.dumps(block.input, ensure_ascii=False)
-                        if isinstance(block.input, (dict, list))
-                        else str(block.input) if block.input else "{}"
-                    )
-                    await emitter.tool_start(
-                        call_id=block.id,
-                        name=block.name,
-                        arguments=arguments,
-                    )
-                    logger.info(f"Sent tool_start event for tool {block.name}")
-                except Exception as e:
-                    logger.warning(f"Failed to send tool_start event: {e}")
+                arguments = block.input if isinstance(block.input, dict) else {}
+                await emitter.tool_start(
+                    call_id=block.id,
+                    name=block.name,
+                    arguments=arguments,
+                )
+                logger.info(f"Sent tool_start event for tool {block.name}")
+            except Exception as e:
+                logger.warning(f"Failed to send tool_start event: {e}")
 
         elif isinstance(block, TextBlock):
             # Text content details in target format
@@ -734,24 +729,10 @@ async def _handle_stream_event(
         logger.debug(f"StreamEvent: content_block_start, type={block_type}")
 
         if block_type == "tool_use":
-            # Tool use is starting - send tool_start event
-            tool_id = content_block.get("id", "")
-            tool_name = content_block.get("name", "")
-            if tool_id and tool_name:
-                try:
-                    # Flush any buffered text_delta events before sending tool_start
-                    # This ensures text content is sent before tool events
-                    await emitter.flush()
-
-                    await emitter.tool_start(
-                        call_id=tool_id,
-                        name=tool_name,
-                        arguments="{}",  # Arguments will be streamed via input_json_delta
-                    )
-                    logger.debug(f"StreamEvent: sent tool_start for {tool_name}")
-                    sent_content = True
-                except Exception as e:
-                    logger.warning(f"Failed to send stream tool_start: {e}")
+            # Do not emit tool_start from raw stream start. The finalized
+            # AssistantMessage ToolUseBlock carries complete input and is the
+            # stable source for the tool_use_id used by ToolResultBlock.
+            logger.debug("StreamEvent: defer tool_start until ToolUseBlock")
 
         elif block_type == "text":
             # Text block is starting - mark as sent to avoid duplicate in AssistantMessage
