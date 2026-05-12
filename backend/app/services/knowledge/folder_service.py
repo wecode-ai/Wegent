@@ -14,7 +14,7 @@ from collections import defaultdict, deque
 from typing import Dict, List, Optional
 
 from sqlalchemy import func, text
-from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
@@ -260,32 +260,26 @@ class KnowledgeFolderService:
             if new_parent_id > 0:
                 if new_parent_id == folder_id:
                     raise ValueError("Cannot move a folder into itself")
-                # Lock source folder row to prevent concurrent moves of the same folder
-                locked_folder = (
+                locked_rows = (
                     db.query(KnowledgeFolder)
-                    .filter(KnowledgeFolder.id == folder_id)
+                    .filter(KnowledgeFolder.id.in_([folder_id, new_parent_id]))
+                    .order_by(KnowledgeFolder.id)
                     .with_for_update()
-                    .first()
+                    .all()
                 )
+                locked_map = {row.id: row for row in locked_rows}
+                locked_folder = locked_map.get(folder_id)
+                locked_parent = locked_map.get(new_parent_id)
                 if not locked_folder:
                     raise ValueError("Folder not found")
-                # Lock target parent row to prevent it from being moved/deleted concurrently
-                locked_parent = (
-                    db.query(KnowledgeFolder)
-                    .filter(
-                        KnowledgeFolder.id == new_parent_id,
-                        KnowledgeFolder.kind_id == folder.kind_id,
-                    )
-                    .with_for_update()
-                    .first()
-                )
-                if not locked_parent:
+                if not locked_parent or locked_parent.kind_id != folder.kind_id:
                     raise ValueError(
                         "Target parent folder does not belong to the same knowledge base"
                     )
+                folder = locked_folder
                 # Re-check descendant relationship after acquiring locks
                 descendant_ids = KnowledgeFolderService._collect_descendant_ids(
-                    db, folder.id, folder.kind_id
+                    db, locked_folder.id, locked_folder.kind_id
                 )
                 if new_parent_id in descendant_ids:
                     raise ValueError("Cannot move a folder into one of its descendants")
@@ -446,7 +440,7 @@ class KnowledgeFolderService:
             return KnowledgeFolderService._collect_descendant_ids_cte(
                 db, folder_id, kind_id
             )
-        except ProgrammingError:
+        except (ProgrammingError, OperationalError):
             # Fallback for databases that do not support recursive CTEs
             # (e.g. MySQL < 8.0 or SQLite < 3.35).  Only ProgrammingError
             # (unsupported syntax) is caught here; connection/permission errors
