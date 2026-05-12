@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { ExternalLink, Send } from 'lucide-react'
+import { AlertTriangle, ExternalLink, Send } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -14,9 +14,23 @@ import {
 } from '@/components/ui/dialog'
 import { useTranslation } from '@/hooks/useTranslation'
 
+/** Maximum file size allowed for download (50 MB) */
+const MAX_DOWNLOAD_SIZE = 50 * 1024 * 1024
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`
+  } else if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`
+  } else {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  }
+}
+
 type DingTalkDownloadDialogProps = {
   open: boolean
   filename: string
+  fileSize: number
   /** Whether the robot-send action is currently in progress */
   isSending: boolean
   onOpenChange: (open: boolean) => void
@@ -29,12 +43,14 @@ type DingTalkDownloadDialogProps = {
 export function DingTalkDownloadDialog({
   open,
   filename,
+  fileSize,
   isSending,
   onOpenChange,
   onOpenInBrowser,
   onSendViaRobot,
 }: DingTalkDownloadDialogProps) {
   const { t } = useTranslation('tasks')
+  const isOversized = fileSize > MAX_DOWNLOAD_SIZE
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -50,12 +66,26 @@ export function DingTalkDownloadDialog({
           </DialogDescription>
         </DialogHeader>
 
+        {isOversized && (
+          <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 p-3 text-amber-800">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div className="text-sm">
+              {t(
+                'remote_workspace.dingtalk_download.oversized',
+                '文件大小为 {{size}}，超过 {{limit}} 限制，无法下载或发送。',
+                { size: formatFileSize(fileSize), limit: formatFileSize(MAX_DOWNLOAD_SIZE) }
+              )}
+            </div>
+          </div>
+        )}
+
         <div className="flex flex-col gap-3 pt-2">
           {/* Option 1: Open in native browser */}
           <button
             type="button"
             onClick={onOpenInBrowser}
-            className="flex items-start gap-3 rounded-lg border border-border p-4 text-left hover:bg-surface transition-colors"
+            disabled={isOversized}
+            className="flex items-start gap-3 rounded-lg border border-border p-4 text-left hover:bg-surface transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <ExternalLink className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
             <div>
@@ -69,7 +99,7 @@ export function DingTalkDownloadDialog({
           <button
             type="button"
             onClick={onSendViaRobot}
-            disabled={isSending}
+            disabled={isSending || isOversized}
             className="flex items-start gap-3 rounded-lg border border-border p-4 text-left hover:bg-surface transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Send className="mt-0.5 h-5 w-5 shrink-0 text-primary" />

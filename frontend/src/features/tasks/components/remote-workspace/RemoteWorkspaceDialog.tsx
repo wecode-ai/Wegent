@@ -645,6 +645,7 @@ export function RemoteWorkspaceDialog({
       <DingTalkDownloadDialog
         open={Boolean(dingTalkDialogEntry)}
         filename={dingTalkDialogEntry?.name ?? ''}
+        fileSize={dingTalkDialogEntry?.size ?? 0}
         isSending={isDingTalkSending}
         onOpenChange={open => {
           if (!open) setDingTalkDialogEntry(null)

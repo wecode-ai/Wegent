@@ -25,6 +25,8 @@ WORKSPACE_ROOT = "/workspace"
 SANDBOX_HOME_ROOT = "/home/user"
 SANDBOX_RUNNING_STATUS = "running"
 LOG_PREVIEW_LIMIT = 300
+# Maximum file size allowed for download via browser (50 MB)
+MAX_DOWNLOAD_FILE_SIZE = 50 * 1024 * 1024
 logger = logging.getLogger(__name__)
 
 
@@ -201,6 +203,21 @@ class RemoteWorkspaceService:
                 task_id=task_id,
                 executor_name=executor_name,
                 path=normalized_path,
+            )
+
+        # Enforce maximum download file size
+        if len(content) > MAX_DOWNLOAD_FILE_SIZE:
+            logger.warning(
+                "[remote_workspace] stream_file rejected task_id=%s user_id=%s normalized_path=%s size=%s exceeds_limit=%s",
+                task_id,
+                user_id,
+                normalized_path,
+                len(content),
+                MAX_DOWNLOAD_FILE_SIZE,
+            )
+            raise HTTPException(
+                status_code=413,
+                detail=f"File exceeds maximum download size of {MAX_DOWNLOAD_FILE_SIZE // (1024 * 1024)} MB",
             )
 
         filename = posixpath.basename(normalized_path) or "download"
