@@ -42,6 +42,9 @@ const translations: Record<string, string> = {
   'remote_workspace.actions.open': 'Open',
   'remote_workspace.actions.go': 'Go',
   'remote_workspace.actions.cancel': 'Cancel',
+  'remote_workspace.actions.close': 'Close',
+  'remote_workspace.actions.exit_fullscreen': 'Exit fullscreen',
+  'remote_workspace.actions.fullscreen': 'Fullscreen preview',
   'remote_workspace.actions.preview': 'Preview',
   'remote_workspace.actions.refresh': 'Refresh',
   'remote_workspace.download_confirm.title': 'Download selected files?',
@@ -390,6 +393,36 @@ describe('RemoteWorkspaceDialog', () => {
     )
   })
 
+  test('desktop preview dialog toggles application fullscreen', async () => {
+    mockRootEntries()
+    ;(remoteWorkspaceApis.getFileUrl as jest.Mock).mockReturnValue(
+      '/api/tasks/1/remote-workspace/file'
+    )
+
+    render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={jest.fn()} />)
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace')
+    })
+
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    const fileNode = await screen.findByText(/diagram\.png/i)
+    await user.dblClick(fileNode)
+
+    const previewDialog = screen.getByRole('dialog', { name: 'Preview' })
+    const fullscreenButton = within(previewDialog).getByTestId(
+      'remote-workspace-preview-fullscreen-button'
+    )
+
+    expect(previewDialog).toHaveClass('!max-w-[1400px]')
+    expect(fullscreenButton).toHaveAttribute('aria-label', 'Fullscreen preview')
+
+    await user.click(fullscreenButton)
+
+    expect(previewDialog).toHaveClass('!max-w-none', '!h-dvh')
+    expect(fullscreenButton).toHaveAttribute('aria-label', 'Exit fullscreen')
+  })
+
   test('supports editing address bar and navigating on Enter', async () => {
     ;(remoteWorkspaceApis.getTree as jest.Mock)
       .mockResolvedValueOnce({
@@ -585,6 +618,34 @@ describe('RemoteWorkspaceDialog', () => {
     expect(screen.queryByTestId('remote-workspace-mobile-preview-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('remote-workspace-mobile-download-button')).not.toBeInTheDocument()
     expect(screen.queryByText(/^1\s+selected/i)).not.toBeInTheDocument()
+  })
+
+  test('mobile preview tab toggles application fullscreen', async () => {
+    ;(useIsMobile as jest.Mock).mockReturnValue(true)
+    mockRootEntries()
+    ;(remoteWorkspaceApis.getFileUrl as jest.Mock).mockReturnValue(
+      '/api/tasks/1/remote-workspace/file'
+    )
+
+    render(<RemoteWorkspaceDialog open taskId={1} onOpenChange={jest.fn()} />)
+
+    await waitFor(() => {
+      expect(remoteWorkspaceApis.getTree).toHaveBeenCalledWith(1, '/workspace')
+    })
+
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    await user.click(await screen.findByText(/diagram\.png/i))
+
+    const previewPanel = screen.getByTestId('remote-workspace-mobile-preview-panel')
+    const fullscreenButton = screen.getByTestId('remote-workspace-mobile-preview-fullscreen-button')
+
+    expect(previewPanel).toHaveClass('h-[360px]')
+    expect(fullscreenButton).toHaveAttribute('aria-label', 'Fullscreen preview')
+
+    await user.click(fullscreenButton)
+
+    expect(previewPanel).toHaveClass('fixed', 'inset-0')
+    expect(fullscreenButton).toHaveAttribute('aria-label', 'Exit fullscreen')
   })
 
   test('mobile renders text file preview content', async () => {

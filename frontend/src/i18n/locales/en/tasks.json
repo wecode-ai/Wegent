@@ -33,7 +33,10 @@
     },
     "actions": {
       "cancel": "Cancel",
+      "close": "Close",
       "download": "Download",
+      "exit_fullscreen": "Exit fullscreen",
+      "fullscreen": "Fullscreen preview",
       "go": "Go",
       "preview": "Preview",
       "refresh": "Refresh"
