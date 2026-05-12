@@ -128,6 +128,9 @@ class KnowledgeDocument(Base):
     source_config = Column(
         JSON, nullable=False, default={}
     )  # Source configuration (e.g., {"url": "..."} for table)
+    # References knowledge_folders.id, 0 = root level (no FK constraint,
+    # referential integrity managed at the application layer)
+    folder_id = Column(Integer, nullable=False, default=0, index=True)
     summary = Column(JSON, nullable=True)  # Document summary information (JSON)
     chunks = Column(
         JSON, nullable=True
@@ -153,5 +156,39 @@ class KnowledgeDocument(Base):
             "mysql_charset": "utf8mb4",
             "mysql_collate": "utf8mb4_unicode_ci",
             "comment": "Knowledge document table for file metadata",
+        },
+    )
+
+
+class KnowledgeFolder(Base):
+    """
+    Knowledge folder model for multi-level document organization.
+
+    Folders form a tree structure within a knowledge base via parent_id.
+    parent_id = 0 means the folder is at root level.
+    """
+
+    __tablename__ = "knowledge_folders"
+
+    id = Column(Integer, primary_key=True, index=True)
+    # References kinds.id (Kind='KnowledgeBase') without FK constraint
+    kind_id = Column(Integer, nullable=False, index=True)
+    # Self-referencing parent folder, 0 = root level
+    parent_id = Column(Integer, nullable=False, default=0)
+    name = Column(String(255), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=func.now())
+    updated_at = Column(
+        DateTime, nullable=False, default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        # Index for querying child folders under a parent within a knowledge base
+        Index("ix_knowledge_folders_parent", "kind_id", "parent_id"),
+        {
+            "sqlite_autoincrement": True,
+            "mysql_engine": "InnoDB",
+            "mysql_charset": "utf8mb4",
+            "mysql_collate": "utf8mb4_unicode_ci",
+            "comment": "Knowledge base folder hierarchy for multi-level document organization",
         },
     )

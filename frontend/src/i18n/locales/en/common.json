@@ -53,7 +53,8 @@
     "zoom_in": "Zoom In",
     "zoom_out": "Zoom Out",
     "rotate": "Rotate",
-    "clear": "Clear"
+    "clear": "Clear",
+    "move": "Move"
   },
   "errors": {
     "request_failed": "LLM API request failed, please click retry"
