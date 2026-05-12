@@ -188,12 +188,17 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         if requires_workspace is not None:
             spec["requiresWorkspace"] = requires_workspace
 
+        metadata = {"name": obj_in.name, "namespace": namespace}
+        display_name = getattr(obj_in, "displayName", None)
+        if display_name is not None:
+            metadata["displayName"] = display_name
+
         # Create Team JSON
         team_json = {
             "kind": "Team",
             "spec": spec,
             "status": {"state": "Available"},
-            "metadata": {"name": obj_in.name, "namespace": namespace},
+            "metadata": metadata,
             "apiVersion": "agent.wecode.io/v1",
         }
 
@@ -858,6 +863,9 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 db, old_name, team.namespace, new_name, team.namespace, user_id
             )
 
+        if "displayName" in update_data:
+            team_crd.metadata.displayName = update_data["displayName"]
+
         if "bots" in update_data:
             # Validate bots
             self._validate_bots(db, update_data["bots"], user_id)
@@ -1375,6 +1383,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "id": team.id,
             "user_id": team.user_id,
             "name": team.name,
+            "displayName": team_crd.metadata.displayName,
             "namespace": team.namespace,  # Add namespace field
             "description": description,
             "bots": bots,
@@ -1567,6 +1576,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "id": team.id,
             "user_id": team.user_id,
             "name": team.name,
+            "displayName": team_crd.metadata.displayName,
             "namespace": team.namespace,
             "description": description,
             "bots": bots,
@@ -1713,7 +1723,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
             logger.debug(f"[_get_bot_summary] Model found: {model is not None}")
 
-            if model:
+            if model and model.json:
                 model_crd = Model.model_validate(model.json)
                 is_custom_config = model_crd.spec.isCustomConfig
                 # Determine if this is a user's private model or public model
@@ -2141,6 +2151,399 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "skills": sorted(all_skills),
             "preload_skills": sorted(all_preload_skills),
         }
+
+    def _find_available_name(
+        self,
+        db: Session,
+        *,
+        base_name: str,
+        kind: str,
+        user_id: int,
+        namespace: str,
+    ) -> str:
+        """Return the first available name: base_name → base_name (2) → base_name (3) ..."""
+        is_group_namespace = namespace != "default"
+        candidate = base_name
+        counter = 2
+        while True:
+            query = db.query(Kind).filter(
+                Kind.kind == kind,
+                Kind.name == candidate,
+                Kind.namespace == namespace,
+                Kind.is_active == True,
+            )
+            # For personal namespace, scope uniqueness check to the user
+            # For group namespaces, uniqueness is across all users in the namespace
+            if not is_group_namespace:
+                query = query.filter(Kind.user_id == user_id)
+            existing = query.first()
+            if not existing:
+                return candidate
+            candidate = f"{base_name} ({counter})"
+            counter += 1
+
+    def copy_team(
+        self,
+        db: Session,
+        *,
+        team_id: int,
+        user_id: int,
+        target_namespace: Optional[str] = None,
+        copy_skills: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Copy a team. Creates a new team with 'Copy of {name}'.
+
+        Solo mode: deep copy — also clones the leader bot.
+        Non-solo mode: shallow copy — new team references the same bots.
+
+        If target_namespace is provided, the copy is placed in that namespace.
+        Otherwise, copies to the original team's namespace.
+        """
+        from app.schemas.team import BotInfo, TeamCreate
+        from app.services.adapters.bot_kinds import bot_kinds_service
+
+        # Fetch the original team
+        original = (
+            db.query(Kind)
+            .filter(
+                Kind.id == team_id,
+                Kind.kind == "Team",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if not original:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        spec = original.json.get("spec", {})
+        collaboration_model = spec.get("collaborationModel", "pipeline")
+        members = spec.get("members", [])
+        bind_mode = spec.get("bind_mode", ["chat"])
+        description = original.json.get("metadata", {}).get("description", "")
+        icon = spec.get("icon")
+        requires_workspace = spec.get("requiresWorkspace", True)
+        workflow = {"mode": collaboration_model}
+
+        # Determine the effective target namespace
+        dest_namespace = (
+            target_namespace if target_namespace is not None else original.namespace
+        )
+
+        # Build bots list — for solo mode, clone the leader bot
+        new_bots: list[Dict[str, Any]] = []
+
+        if collaboration_model == "solo" and members:
+            leader_member = next(
+                (m for m in members if m.get("role") == "leader"), members[0]
+            )
+            bot_ref = leader_member.get("botRef", {})
+
+            # Find the original bot Kind record
+            original_bot = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Bot",
+                    Kind.name == bot_ref.get("name"),
+                    Kind.namespace == bot_ref.get("namespace", original.namespace),
+                    Kind.user_id == original.user_id,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if not original_bot:
+                raise HTTPException(status_code=400, detail="Leader bot not found")
+
+            # Find available bot name in the destination namespace
+            bot_name = bot_kinds_service.find_available_bot_name(
+                db,
+                base_name=f"Copy of {original_bot.name}",
+                user_id=user_id,
+                namespace=dest_namespace,
+            )
+
+            # Build skill_id_mapping if copy_skills requested
+            skill_mapping: Dict[int, int] = {}
+            if copy_skills and dest_namespace != original.namespace:
+                skill_mapping = self._copy_bot_skills_to_namespace(
+                    db,
+                    bot=original_bot,
+                    target_namespace=dest_namespace,
+                    user_id=user_id,
+                )
+
+            # Clone the bot into the destination namespace
+            cloned_bot = bot_kinds_service.clone_bot(
+                db,
+                bot_id=original_bot.id,
+                user_id=user_id,
+                new_name=bot_name,
+                namespace=dest_namespace,
+                skill_id_mapping=skill_mapping if skill_mapping else None,
+            )
+            new_bots.append(
+                {
+                    "bot_id": cloned_bot["id"],
+                    "bot_prompt": leader_member.get("prompt", ""),
+                    "role": "leader",
+                }
+            )
+        else:
+            # Non-solo: resolve bot_ids from member botRefs.
+            # When copying to a different namespace, clone each bot into the target namespace.
+            for member in members:
+                bot_ref = member.get("botRef", {})
+                bot = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.kind == "Bot",
+                        Kind.name == bot_ref.get("name"),
+                        Kind.namespace == bot_ref.get("namespace", original.namespace),
+                        Kind.user_id == original.user_id,
+                        Kind.is_active == True,
+                    )
+                    .first()
+                )
+                if bot:
+                    if dest_namespace != original.namespace:
+                        # Clone the bot into the destination namespace
+                        bot_name = bot_kinds_service.find_available_bot_name(
+                            db,
+                            base_name=bot.name,
+                            user_id=user_id,
+                            namespace=dest_namespace,
+                        )
+                        skill_mapping: Dict[int, int] = {}
+                        if copy_skills:
+                            skill_mapping = self._copy_bot_skills_to_namespace(
+                                db,
+                                bot=bot,
+                                target_namespace=dest_namespace,
+                                user_id=user_id,
+                            )
+                        cloned = bot_kinds_service.clone_bot(
+                            db,
+                            bot_id=bot.id,
+                            user_id=user_id,
+                            new_name=bot_name,
+                            namespace=dest_namespace,
+                            skill_id_mapping=skill_mapping if skill_mapping else None,
+                        )
+                        new_bots.append(
+                            {
+                                "bot_id": cloned["id"],
+                                "bot_prompt": member.get("prompt", ""),
+                                "role": member.get("role", ""),
+                            }
+                        )
+                    else:
+                        new_bots.append(
+                            {
+                                "bot_id": bot.id,
+                                "bot_prompt": member.get("prompt", ""),
+                                "role": member.get("role", ""),
+                            }
+                        )
+
+        # Determine group_name for permission check
+        group_name = dest_namespace if dest_namespace != "default" else None
+
+        team_name = self._find_available_name(
+            db,
+            base_name=f"Copy of {original.name}",
+            kind="Team",
+            user_id=user_id,
+            namespace=dest_namespace,
+        )
+
+        team_create = TeamCreate(
+            name=team_name,
+            description=description or None,
+            workflow=workflow,
+            bind_mode=bind_mode,
+            bots=[BotInfo(**b) for b in new_bots],
+            namespace=dest_namespace,
+            icon=icon,
+            requires_workspace=requires_workspace,
+        )
+
+        return self.create_with_user(
+            db=db,
+            obj_in=team_create,
+            user_id=user_id,
+            group_name=group_name,
+        )
+
+    def _collect_personal_skill_ids(self, db: Session, bot: Kind) -> Dict[str, int]:
+        """Return {skill_name: skill_id} for personal (namespace=default) skill refs on a bot.
+
+        Skills are stored in the ghost's spec, not the bot's spec.
+        """
+        # Look up the ghost that holds skill_refs
+        bot_spec = bot.json.get("spec", {})
+        ghost_ref = bot_spec.get("ghostRef", {})
+        ghost = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Ghost",
+                Kind.name == ghost_ref.get("name"),
+                Kind.namespace == ghost_ref.get("namespace", bot.namespace),
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if not ghost:
+            return {}
+        spec = ghost.json.get("spec", {})
+        result: Dict[str, int] = {}
+        for ref_map in (
+            spec.get("skill_refs") or {},
+            spec.get("preload_skill_refs") or {},
+        ):
+            for skill_name, meta in ref_map.items():
+                if isinstance(meta, dict):
+                    is_public = meta.get("is_public", False)
+                    ns = meta.get("namespace", "default")
+                    skill_id = meta.get("skill_id")
+                else:
+                    is_public = getattr(meta, "is_public", False)
+                    ns = getattr(meta, "namespace", "default")
+                    skill_id = getattr(meta, "skill_id", None)
+                if not is_public and ns == "default" and skill_id is not None:
+                    result[skill_name] = skill_id
+        return result
+
+    def _copy_bot_skills_to_namespace(
+        self,
+        db: Session,
+        *,
+        bot: Kind,
+        target_namespace: str,
+        user_id: int,
+    ) -> Dict[int, int]:
+        """Copy personal skills from a bot to target_namespace.
+
+        Returns {old_skill_id: new_skill_id} mapping.
+        """
+        from app.services.adapters.skill_kinds import skill_kinds_service
+
+        personal_skill_ids = self._collect_personal_skill_ids(db, bot)
+        mapping: Dict[int, int] = {}
+        for _skill_name, skill_id in personal_skill_ids.items():
+            copy_result = skill_kinds_service.copy_skill_to_namespace(
+                db,
+                skill_id=skill_id,
+                target_namespace=target_namespace,
+                user_id=user_id,
+            )
+            mapping[copy_result["original_id"]] = copy_result["target_id"]
+        return mapping
+
+    def get_copy_preflight(
+        self,
+        db: Session,
+        *,
+        team_id: int,
+        user_id: int,
+        target_namespace: str,
+    ) -> Dict[str, Any]:
+        """Identify personal skills on a team's bots that would need copying.
+
+        A personal skill is one where the skill_ref has namespace="default"
+        and is_public=False, and the skill Kind is owned by the team owner.
+
+        Returns:
+            {"personal_skills": [{id, name, description}, ...]}
+        """
+        team = (
+            db.query(Kind)
+            .filter(Kind.id == team_id, Kind.kind == "Team", Kind.is_active == True)
+            .first()
+        )
+        if not team:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        spec = team.json.get("spec", {})
+        members = spec.get("members", [])
+
+        personal_skills: List[Dict[str, Any]] = []
+        seen_skill_ids: set = set()
+
+        for member in members:
+            bot_ref = member.get("botRef", {})
+            bot = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Bot",
+                    Kind.name == bot_ref.get("name"),
+                    Kind.namespace == bot_ref.get("namespace", team.namespace),
+                    Kind.user_id == team.user_id,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if not bot:
+                continue
+
+            bot_spec = bot.json.get("spec", {})
+            # Skills are stored in the ghost's spec, not the bot's spec
+            ghost_ref = bot_spec.get("ghostRef", {})
+            ghost = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Ghost",
+                    Kind.name == ghost_ref.get("name"),
+                    Kind.namespace == ghost_ref.get("namespace", bot.namespace),
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if not ghost:
+                continue
+            ghost_spec = ghost.json.get("spec", {})
+            skill_refs = ghost_spec.get("skill_refs") or {}
+            preload_skill_refs = ghost_spec.get("preload_skill_refs") or {}
+
+            for ref_map in (skill_refs, preload_skill_refs):
+                for skill_name, ref_meta in ref_map.items():
+                    if isinstance(ref_meta, dict):
+                        ref_ns = ref_meta.get("namespace", "default")
+                        is_public = ref_meta.get("is_public", False)
+                        skill_id = ref_meta.get("skill_id")
+                    else:
+                        ref_ns = getattr(ref_meta, "namespace", "default")
+                        is_public = getattr(ref_meta, "is_public", False)
+                        skill_id = getattr(ref_meta, "skill_id", None)
+
+                    if (
+                        ref_ns == "default"
+                        and not is_public
+                        and skill_id is not None
+                        and skill_id not in seen_skill_ids
+                    ):
+                        skill = (
+                            db.query(Kind)
+                            .filter(
+                                Kind.id == skill_id,
+                                Kind.kind == "Skill",
+                                Kind.user_id == team.user_id,
+                                Kind.is_active == True,
+                            )
+                            .first()
+                        )
+                        if skill:
+                            seen_skill_ids.add(skill_id)
+                            personal_skills.append(
+                                {
+                                    "id": skill.id,
+                                    "name": skill.name,
+                                    "description": skill.json.get("spec", {}).get(
+                                        "description", ""
+                                    ),
+                                }
+                            )
+
+        return {"personal_skills": personal_skills}
 
 
 team_kinds_service = TeamKindsService(Kind)

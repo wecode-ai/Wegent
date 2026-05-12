@@ -11,6 +11,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
+import { dingtalkDocApi } from '@/apis/dingtalk-doc'
 import { getKnowledgeBase } from '@/apis/knowledge'
 import { useUser } from '@/features/common/UserContext'
 import type {
@@ -27,10 +28,10 @@ import type { User } from '@/types/api'
 const RECENT_STORAGE_KEY = 'knowledge-recent-access'
 const MAX_RECENT_ITEMS = 5
 
-export type GroupType = 'personal' | 'group' | 'organization'
+export type GroupType = 'personal' | 'group' | 'organization' | 'dingtalk'
 
 /** View mode for the knowledge page */
-export type ViewMode = 'all' | 'group' | 'kb' | 'groups'
+export type ViewMode = 'all' | 'group' | 'kb' | 'groups' | 'dingtalk'
 
 export interface KnowledgeGroup {
   id: string
@@ -85,6 +86,7 @@ export interface UseKnowledgeSidebarReturn {
   // View mode
   viewMode: ViewMode
   selectAll: () => void
+  selectDingtalk: () => void
   filterGroupId: string | null
   setFilterGroupId: (groupId: string | null) => void
 
@@ -101,6 +103,11 @@ export interface UseKnowledgeSidebarReturn {
 
   // Current user
   currentUser: User | null
+
+  // DingTalk docs
+  dingtalkDocCount: number
+  isDingtalkConfigured: boolean
+  isDingtalkLoading: boolean
 
   // Refresh
   refreshAll: () => Promise<void>
@@ -175,6 +182,11 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
   const [viewMode, setViewMode] = useState<ViewMode>('all')
   const [filterGroupId, setFilterGroupId] = useState<string | null>(null)
 
+  // DingTalk docs state
+  const [dingtalkDocCount, setDingtalkDocCount] = useState(0)
+  const [isDingtalkConfigured, setIsDingtalkConfigured] = useState(false)
+  const [isDingtalkLoading, setIsDingtalkLoading] = useState(true)
+
   // Load initial data using the optimized all-grouped API
   const loadInitialData = useCallback(async () => {
     setIsLoading(true)
@@ -193,6 +205,28 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
       loadInitialData()
     }
   }, [user, loadInitialData])
+
+  // Load DingTalk docs sync status
+  const loadDingtalkStatus = useCallback(async () => {
+    setIsDingtalkLoading(true)
+    try {
+      const status = await dingtalkDocApi.getSyncStatus()
+      setDingtalkDocCount(status.total_nodes)
+      setIsDingtalkConfigured(status.is_configured)
+    } catch {
+      // Not critical - DingTalk may not be configured
+      setIsDingtalkConfigured(false)
+      setDingtalkDocCount(0)
+    } finally {
+      setIsDingtalkLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (user) {
+      loadDingtalkStatus()
+    }
+  }, [user, loadDingtalkStatus])
 
   // Build all knowledge bases with group info list
   const allKnowledgeBasesWithGroupInfo = useMemo((): KnowledgeBaseWithGroupInfo[] => {
@@ -426,6 +460,14 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     setFilterGroupId(null)
   }, [])
 
+  const selectDingtalk = useCallback(() => {
+    setSelectedGroupId(null)
+    setSelectedKbId(null)
+    setSelectedKb(null)
+    setViewMode('dingtalk')
+    setFilterGroupId(null)
+  }, [])
+
   const clearSelection = useCallback(() => {
     setSelectedKbId(null)
     setSelectedKb(null)
@@ -436,8 +478,8 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
 
   // Refresh all data
   const refreshAll = useCallback(async () => {
-    await loadInitialData()
-  }, [loadInitialData])
+    await Promise.all([loadInitialData(), loadDingtalkStatus()])
+  }, [loadInitialData, loadDingtalkStatus])
 
   // Personal KBs grouped by ownership
   const personalCreatedByMe = useMemo((): KnowledgeBaseWithGroupInfo[] => {
@@ -477,6 +519,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     // View mode
     viewMode,
     selectAll,
+    selectDingtalk,
     filterGroupId,
     setFilterGroupId,
 
@@ -493,6 +536,11 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
 
     // Current user
     currentUser: user,
+
+    // DingTalk docs
+    dingtalkDocCount,
+    isDingtalkConfigured,
+    isDingtalkLoading,
 
     // Refresh
     refreshAll,

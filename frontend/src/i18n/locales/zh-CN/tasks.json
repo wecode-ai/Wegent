@@ -114,6 +114,7 @@
     "status": {
       "completed": "已完成",
       "failed": "失败",
+      "pending_confirmation": "等待确认",
       "running": "运行中"
     },
     "summary": "摘要",

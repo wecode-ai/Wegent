@@ -268,6 +268,7 @@ export interface AdminPublicBot {
   skills: string[] | null
   // Expanded Model fields for UI convenience
   agent_config: Record<string, unknown> | null
+  default_knowledge_base_refs: { id: number; name: string }[] | null
 }
 
 export interface AdminPublicBotListResponse {
@@ -285,6 +286,7 @@ export interface AdminPublicBotCreate {
   mcp_servers?: Record<string, unknown>
   skills?: string[]
   agent_config?: Record<string, unknown>
+  default_knowledge_base_refs?: { id: number; name: string }[]
 }
 
 export interface AdminPublicBotUpdate {
@@ -298,6 +300,7 @@ export interface AdminPublicBotUpdate {
   mcp_servers?: Record<string, unknown>
   skills?: string[]
   agent_config?: Record<string, unknown>
+  default_knowledge_base_refs?: { id: number; name: string }[]
 }
 
 // Public Ghost Types

@@ -285,8 +285,11 @@ class SkillKindsService:
                 detail=f"Skill name '{name}' already exists in namespace '{namespace}'",
             )
 
-        # Validate ZIP package and extract metadata
+        # Validate original ZIP first to capture full metadata (including mcpServers)
         metadata = SkillValidator.validate_zip(file_content, file_name)
+
+        # Sanitize ZIP binary: strip mcpServers from SKILL.md before storage
+        file_content = SkillValidator.sanitize_zip(file_content)
 
         # Build skill JSON
         skill_json = {
@@ -369,6 +372,92 @@ class SkillKindsService:
         db.commit()
 
         return result
+
+    def copy_skill_to_namespace(
+        self,
+        db: Session,
+        *,
+        skill_id: int,
+        target_namespace: str,
+        user_id: int,
+    ) -> Dict[str, Any]:
+        """Copy a skill to a target namespace.
+
+        If a skill with the same name already exists in the target namespace
+        for this user, returns the existing skill without creating a duplicate.
+
+        Returns:
+            Dict with keys:
+              - original_id: source skill Kind.id
+              - target_id: destination skill Kind.id (new or existing)
+              - was_copied: True if a new skill was created, False if existing reused
+        """
+        source = (
+            db.query(Kind)
+            .filter(Kind.id == skill_id, Kind.kind == "Skill", Kind.is_active == True)
+            .first()
+        )
+        if not source:
+            raise HTTPException(status_code=404, detail=f"Skill {skill_id} not found")
+
+        # Check if same-name skill already exists in target namespace for this user
+        existing = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == user_id,
+                Kind.kind == "Skill",
+                Kind.name == source.name,
+                Kind.namespace == target_namespace,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if existing:
+            return {
+                "original_id": source.id,
+                "target_id": existing.id,
+                "was_copied": False,
+            }
+
+        # Copy the Kind record
+        new_skill = Kind(
+            user_id=user_id,
+            kind="Skill",
+            name=source.name,
+            namespace=target_namespace,
+            json={
+                **source.json,
+                "metadata": {
+                    **source.json.get("metadata", {}),
+                    "namespace": target_namespace,
+                },
+            },
+            is_active=True,
+        )
+        db.add(new_skill)
+        db.flush()  # get new_skill.id
+
+        # Copy the SkillBinary
+        source_binary = (
+            db.query(SkillBinary).filter(SkillBinary.kind_id == source.id).first()
+        )
+        if source_binary:
+            new_binary = SkillBinary(
+                kind_id=new_skill.id,
+                binary_data=source_binary.binary_data,
+                file_size=source_binary.file_size,
+                file_hash=source_binary.file_hash,
+            )
+            db.add(new_binary)
+
+        db.commit()
+        db.refresh(new_skill)
+
+        return {
+            "original_id": source.id,
+            "target_id": new_skill.id,
+            "was_copied": True,
+        }
 
     def get_skill_by_id(
         self, db: Session, *, skill_id: int, user_id: int
@@ -582,8 +671,11 @@ class SkillKindsService:
         if not skill_kind:
             raise HTTPException(status_code=404, detail="Skill not found")
 
-        # Validate new ZIP package
+        # Validate original ZIP first to capture full metadata (including mcpServers)
         metadata = SkillValidator.validate_zip(file_content, file_name)
+
+        # Sanitize ZIP binary: strip mcpServers from SKILL.md before storage
+        file_content = SkillValidator.sanitize_zip(file_content)
 
         # Update skill_kind JSON
         skill_json = skill_kind.json

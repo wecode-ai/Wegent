@@ -12,22 +12,24 @@
 
 'use client'
 
-import React, { useState } from 'react'
-import { Check, Search } from 'lucide-react'
+import React, { useMemo, useState } from 'react'
+import { Search } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { SparklesIcon, Cog6ToothIcon } from '@heroicons/react/24/outline'
 import { ActionButton } from '@/components/ui/action-button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Input } from '@/components/ui/input'
-import { Tag } from '@/components/ui/tag'
 import { AgentIcon } from '@/components/icons/AgentIcon'
 import { cn } from '@/lib/utils'
 import { paths } from '@/config/paths'
 import { useTranslation } from '@/hooks/useTranslation'
-import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles'
 import type { Team, TaskDetail, TaskType } from '@/types/api'
 import TeamCreationWizard from '@/features/settings/components/wizard/TeamCreationWizard'
+import TeamSelectorList from './TeamSelectorList'
+import { TEAM_SELECTOR_POPOVER_CLASS_NAME } from './team-selector-popover'
+import { filterTeamsByMode, getTeamDisplayName } from './team-selector-utils'
+import { useTeamFavorites } from './useTeamFavorites'
 
 interface TeamSelectorButtonProps {
   selectedTeam: Team | null
@@ -56,28 +58,28 @@ export default function TeamSelectorButton({
   const [open, setOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [wizardOpen, setWizardOpen] = useState(false)
-  const sharedBadgeStyle = getSharedBadgeStyle()
+  const {
+    favoriteTeamIdSet,
+    favoriteUpdatingTeamId,
+    handleToggleFavorite,
+    quickAccessMetaLoaded,
+    systemRecommendedTeamIdSet,
+  } = useTeamFavorites()
 
   // Filter teams by bind_mode based on current mode
-  const filteredTeamsByMode = React.useMemo(() => {
-    // First filter out teams with empty bind_mode array
-    const teamsWithValidBindMode = teams.filter(team => {
-      if (Array.isArray(team.bind_mode) && team.bind_mode.length === 0) return false
-      return true
-    })
-
-    return teamsWithValidBindMode.filter(team => {
-      // If bind_mode is not set (undefined/null), show in all modes
-      if (!team.bind_mode) return true
-      // Otherwise, only show if current mode is in bind_mode
-      return team.bind_mode.includes(currentMode)
-    })
-  }, [teams, currentMode])
+  const filteredTeamsByMode = useMemo(
+    () => filterTeamsByMode(teams, currentMode),
+    [teams, currentMode]
+  )
 
   // Filter teams by search query
-  const filteredTeams = filteredTeamsByMode.filter(team =>
-    team.name.toLowerCase().includes(searchQuery.toLowerCase())
-  )
+  const filteredTeams = filteredTeamsByMode.filter(team => {
+    const normalizedSearch = searchQuery.toLowerCase()
+    return (
+      team.name.toLowerCase().includes(normalizedSearch) ||
+      getTeamDisplayName(team).toLowerCase().includes(normalizedSearch)
+    )
+  })
 
   const handleSelectTeam = (team: Team) => {
     setSelectedTeam(team)
@@ -134,11 +136,7 @@ export default function TeamSelectorButton({
           </TooltipContent>
         </Tooltip>
 
-        <PopoverContent
-          align="start"
-          side="top"
-          className="w-[280px] p-2 max-h-[320px] overflow-hidden flex flex-col"
-        >
+        <PopoverContent align="start" side="top" className={TEAM_SELECTOR_POPOVER_CLASS_NAME}>
           <div className="px-2 pb-2 text-sm font-medium text-text-primary">
             {t('common:teams.select_team')}
           </div>
@@ -158,76 +156,17 @@ export default function TeamSelectorButton({
 
           {/* Teams list */}
           <div className="flex-1 overflow-y-auto custom-scrollbar">
-            {filteredTeams.length === 0 ? (
-              <div className="py-4 text-center text-sm text-text-muted">
-                {searchQuery ? t('common:teams.no_match') : t('common:teams.no_match')}
-              </div>
-            ) : (
-              filteredTeams.map(team => {
-                const isSelected = selectedTeam?.id === team.id
-                const isSharedTeam = team.share_status === 2 && team.user?.user_name
-                const isGroupTeam =
-                  team.namespace && team.namespace !== 'default' && team.namespace !== 'community'
-
-                return (
-                  <div
-                    key={team.id}
-                    data-testid={`team-option-${team.name}`}
-                    className={`flex items-center gap-2 px-2 py-2 rounded-md cursor-pointer transition-colors ${
-                      isSelected ? 'bg-primary/10' : 'hover:bg-hover'
-                    }`}
-                    onClick={() => handleSelectTeam(team)}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault()
-                        handleSelectTeam(team)
-                      }
-                    }}
-                  >
-                    <div
-                      className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${
-                        isSelected
-                          ? 'bg-primary border-primary text-white'
-                          : 'border-border bg-background'
-                      }`}
-                    >
-                      {isSelected && <Check className="h-3 w-3" />}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span
-                          className="text-sm text-text-primary truncate flex-1 min-w-0"
-                          title={team.name}
-                        >
-                          {team.name}
-                        </span>
-                        {isGroupTeam && (
-                          <Tag
-                            className="text-xs !m-0 flex-shrink-0 max-w-[120px] truncate"
-                            variant="info"
-                            title={team.namespace}
-                          >
-                            {team.namespace}
-                          </Tag>
-                        )}
-                        {isSharedTeam && (
-                          <Tag
-                            className="text-xs !m-0 flex-shrink-0 max-w-[120px] truncate"
-                            variant="default"
-                            style={sharedBadgeStyle}
-                            title={t('common:teams.shared_by', { author: team.user?.user_name })}
-                          >
-                            {t('common:teams.shared_by', { author: team.user?.user_name })}
-                          </Tag>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )
-              })
-            )}
+            <TeamSelectorList
+              teams={filteredTeams}
+              selectedTeam={selectedTeam}
+              onTeamSelect={handleSelectTeam}
+              emptyText={t('common:teams.no_match')}
+              favoriteTeamIdSet={favoriteTeamIdSet}
+              systemRecommendedTeamIdSet={systemRecommendedTeamIdSet}
+              quickAccessMetaLoaded={quickAccessMetaLoaded}
+              favoriteUpdatingTeamId={favoriteUpdatingTeamId}
+              onToggleFavorite={handleToggleFavorite}
+            />
           </div>
 
           {/* Footer with create and settings buttons */}

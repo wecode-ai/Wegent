@@ -1848,9 +1848,29 @@ class KnowledgeService:
         from app.services.group_permission import get_user_groups_with_roles
 
         accessible_groups_with_roles = get_user_groups_with_roles(db, user_id)
-        accessible_groups = [g[0] for g in accessible_groups_with_roles]
+        accessible_group_names = [g[0] for g in accessible_groups_with_roles]
         # Build a map from group_name to role
         group_roles: dict[str, str] = {g[0]: g[1] for g in accessible_groups_with_roles}
+
+        accessible_group_namespaces = {}
+        if accessible_group_names:
+            accessible_group_namespaces = {
+                ns.name: ns
+                for ns in db.query(Namespace)
+                .filter(
+                    Namespace.name.in_(accessible_group_names),
+                    Namespace.is_active == True,
+                )
+                .all()
+            }
+
+        accessible_groups = [
+            group_name
+            for group_name in accessible_group_names
+            if accessible_group_namespaces.get(group_name) is None
+            or accessible_group_namespaces[group_name].level
+            != GroupLevel.organization.value
+        ]
         shared_group_names = list(
             dict.fromkeys(kb.namespace for kb in shared_group_kbs)
         )

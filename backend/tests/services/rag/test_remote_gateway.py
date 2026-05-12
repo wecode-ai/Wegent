@@ -93,6 +93,7 @@ async def test_remote_gateway_index_document_posts_reference_mode_request(
         "content_ref": {
             "kind": "presigned_url",
             "url": "https://storage.example.com/release-notes.md",
+            "is_encrypted": False,
         },
     }
 

@@ -16,6 +16,7 @@ Design:
 """
 
 import asyncio
+import json
 import logging
 from typing import Optional
 
@@ -29,7 +30,12 @@ from shared.models.responses_api import ResponsesAPIStreamEvents
 from shared.models.responses_api_emitter import EventTransport
 from shared.status import TaskStatus
 
-from .dispatcher import _require_non_empty_tool_use_id, extract_completed_result
+from .dispatcher import (
+    _build_shell_call_context,
+    _extract_shell_call_input,
+    _require_non_empty_tool_use_id,
+    extract_completed_result,
+)
 from .emitters import ResultEmitter
 
 logger = logging.getLogger(__name__)
@@ -62,6 +68,16 @@ class EmitterBridgeTransport(EventTransport):
         self.subtask_id = subtask_id
         self.message_id = message_id
         self._offset = 0  # Track cumulative text offset
+        self._tool_contexts: dict[str, dict] = {}
+
+    def _pop_tool_context(self, tool_use_id: str) -> dict:
+        """Return tracked tool context or fail fast for invalid tool lifecycles."""
+        tool_context = self._tool_contexts.pop(tool_use_id, None)
+        if tool_context is None:
+            raise ValueError(
+                f"Received tool completion event for unknown tool: {tool_use_id}"
+            )
+        return tool_context
 
     async def send(
         self,
@@ -162,8 +178,6 @@ class EmitterBridgeTransport(EventTransport):
         elif event_type == ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value:
             item = data.get("item", {})
             if item.get("type") == "function_call":
-                import json
-
                 call_id = _require_non_empty_tool_use_id(
                     item.get("call_id") or item.get("id"),
                     context="response.output_item.added(function_call)",
@@ -176,6 +190,11 @@ class EmitterBridgeTransport(EventTransport):
                         arguments = json.loads(arguments_str)
                     except (json.JSONDecodeError, TypeError):
                         pass
+                self._tool_contexts[call_id] = {
+                    "protocol": "function_call",
+                    "name": name,
+                    "arguments": arguments,
+                }
 
                 return ExecutionEvent(
                     type=EventType.TOOL_START.value,
@@ -187,6 +206,52 @@ class EmitterBridgeTransport(EventTransport):
                     data={
                         "blocks": data.get("blocks", []),
                         "display_name": data.get("display_name"),
+                        "tool_protocol": "function_call",
+                    },
+                    message_id=message_id,
+                )
+            if item.get("type") == "mcp_call":
+                item_id = _require_non_empty_tool_use_id(
+                    item.get("id"),
+                    context="response.output_item.added(mcp_call)",
+                )
+                server_label = item.get("server_label", "")
+                name = item.get("name", "")
+                self._tool_contexts[item_id] = {
+                    "protocol": "mcp_call",
+                    "name": name,
+                    "server_label": server_label,
+                }
+                return ExecutionEvent(
+                    type=EventType.TOOL_START.value,
+                    task_id=self.task_id,
+                    subtask_id=self.subtask_id,
+                    tool_use_id=item_id,
+                    tool_name=name,
+                    data={
+                        "tool_protocol": "mcp_call",
+                        "server_label": server_label,
+                    },
+                    message_id=message_id,
+                )
+            if item.get("type") == "shell_call":
+                call_id = _require_non_empty_tool_use_id(
+                    item.get("call_id") or item.get("id"),
+                    context="response.output_item.added(shell_call)",
+                )
+                tool_context = _build_shell_call_context(item)
+                self._tool_contexts[call_id] = tool_context
+                return ExecutionEvent(
+                    type=EventType.TOOL_START.value,
+                    task_id=self.task_id,
+                    subtask_id=self.subtask_id,
+                    tool_use_id=call_id,
+                    tool_name=tool_context["name"],
+                    tool_input=tool_context["arguments"],
+                    data={
+                        "blocks": data.get("blocks", []),
+                        "display_name": data.get("display_name"),
+                        "tool_protocol": "shell_call",
                     },
                     message_id=message_id,
                 )
@@ -198,13 +263,110 @@ class EmitterBridgeTransport(EventTransport):
                 data.get("call_id") or data.get("item_id"),
                 context="function_call_arguments.done",
             )
+            tool_context = self._pop_tool_context(tool_use_id)
+            arguments = tool_context.get("arguments")
+            arguments_str = data.get("arguments", "")
+            if arguments_str:
+                try:
+                    arguments = json.loads(arguments_str)
+                except (json.JSONDecodeError, TypeError):
+                    pass
             return ExecutionEvent(
                 type=EventType.TOOL_RESULT.value,
                 task_id=self.task_id,
                 subtask_id=self.subtask_id,
+                tool_name=tool_context.get("name"),
                 tool_use_id=tool_use_id,
+                tool_input=arguments,
                 tool_output=data.get("output"),
-                data={"blocks": data.get("blocks", [])},
+                data={
+                    "blocks": data.get("blocks", []),
+                    "tool_protocol": "function_call",
+                },
+                message_id=message_id,
+            )
+
+        elif event_type == ResponsesAPIStreamEvents.MCP_CALL_ARGUMENTS_DONE.value:
+            item_id = _require_non_empty_tool_use_id(
+                data.get("item_id"),
+                context="response.mcp_call_arguments.done",
+            )
+            tool_context = self._tool_contexts.get(item_id)
+            if tool_context is None:
+                raise ValueError(
+                    f"Received tool arguments event for unknown tool: {item_id}"
+                )
+            arguments_str = data.get("arguments", "")
+            arguments = None
+            if arguments_str:
+                try:
+                    arguments = json.loads(arguments_str)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            tool_context["arguments"] = arguments
+            return ExecutionEvent(
+                type=EventType.TOOL.value,
+                task_id=self.task_id,
+                subtask_id=self.subtask_id,
+                tool_use_id=item_id,
+                tool_input=arguments,
+                data={"tool_protocol": "mcp_call", "phase": "arguments_done"},
+                message_id=message_id,
+            )
+
+        elif event_type == ResponsesAPIStreamEvents.MCP_CALL_IN_PROGRESS.value:
+            return None
+
+        elif event_type in (
+            ResponsesAPIStreamEvents.MCP_CALL_COMPLETED.value,
+            ResponsesAPIStreamEvents.MCP_CALL_FAILED.value,
+        ):
+            item_id = _require_non_empty_tool_use_id(
+                data.get("item_id"),
+                context=event_type,
+            )
+            tool_context = self._pop_tool_context(item_id)
+            return ExecutionEvent(
+                type=EventType.TOOL_RESULT.value,
+                task_id=self.task_id,
+                subtask_id=self.subtask_id,
+                tool_name=tool_context.get("name"),
+                tool_use_id=item_id,
+                tool_input=tool_context.get("arguments"),
+                data={
+                    "tool_protocol": "mcp_call",
+                    "server_label": tool_context.get("server_label", ""),
+                    "status": (
+                        "failed"
+                        if event_type == ResponsesAPIStreamEvents.MCP_CALL_FAILED.value
+                        else "completed"
+                    ),
+                    "error": data.get("error"),
+                },
+                message_id=message_id,
+            )
+
+        elif event_type == ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value:
+            item = data.get("item", {})
+            if item.get("type") != "shell_call":
+                return None
+            call_id = _require_non_empty_tool_use_id(
+                item.get("call_id") or item.get("id"),
+                context="response.output_item.done(shell_call)",
+            )
+            tool_context = self._pop_tool_context(call_id)
+            return ExecutionEvent(
+                type=EventType.TOOL_RESULT.value,
+                task_id=self.task_id,
+                subtask_id=self.subtask_id,
+                tool_name=tool_context.get("name"),
+                tool_use_id=call_id,
+                tool_input=_extract_shell_call_input(item)
+                or tool_context.get("arguments"),
+                data={
+                    "tool_protocol": "shell_call",
+                    "status": item.get("status", "completed"),
+                },
                 message_id=message_id,
             )
 
@@ -225,11 +387,11 @@ class EmitterBridgeTransport(EventTransport):
         elif event_type in (
             ResponsesAPIStreamEvents.RESPONSE_CREATED.value,
             ResponsesAPIStreamEvents.RESPONSE_IN_PROGRESS.value,
-            ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value,
             ResponsesAPIStreamEvents.CONTENT_PART_ADDED.value,
             ResponsesAPIStreamEvents.CONTENT_PART_DONE.value,
             ResponsesAPIStreamEvents.OUTPUT_TEXT_DONE.value,
             ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DELTA.value,
+            ResponsesAPIStreamEvents.MCP_CALL_ARGUMENTS_DELTA.value,
         ):
             return None
 

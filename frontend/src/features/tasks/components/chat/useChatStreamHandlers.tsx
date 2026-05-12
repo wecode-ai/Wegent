@@ -521,12 +521,13 @@ export function useChatStreamHandlers({
       try {
         // Convert selected contexts to backend format
         // Each context item contains type and data fields
-        // Note: queue_message contexts are handled separately - their content is prepended to the message
+        // Note: queue_message and dingtalk_doc contexts are handled separately -
+        //       their content is prepended to the message text
         const contextItems: Array<{
           type: 'knowledge_base' | 'table' | 'selected_documents'
           data: Record<string, unknown>
         }> = selectedContexts
-          .filter(ctx => ctx.type !== 'queue_message')
+          .filter(ctx => ctx.type !== 'queue_message' && ctx.type !== 'dingtalk_doc')
           .map(ctx => {
             if (ctx.type === 'knowledge_base') {
               return {
@@ -558,6 +559,20 @@ export function useChatStreamHandlers({
             .map(ctx => (ctx as import('@/types/context').QueueMessageContext).fullContent)
             .join('\n\n---\n\n')
           messageWithQueueContent = `${queueContents}\n\n---\n\n${finalMessage}`
+        }
+
+        // Handle dingtalk_doc contexts - prepend document references to the message
+        // This allows the AI to know which DingTalk documents are being referenced
+        const dingtalkDocContexts = selectedContexts.filter(ctx => ctx.type === 'dingtalk_doc')
+        if (dingtalkDocContexts.length > 0) {
+          const docRefs = dingtalkDocContexts
+            .map(ctx => {
+              const docCtx = ctx as import('@/types/context').DingTalkDocContext
+              return `- [${docCtx.name}](${docCtx.doc_url})`
+            })
+            .join('\n')
+          const dingtalkPrefix = `**${t('chat:dingtalkDocs.referencedDocsLabel')}**\n${docRefs}\n\n---\n\n`
+          messageWithQueueContent = `${dingtalkPrefix}${messageWithQueueContent}`
         }
 
         // Collect attachment context IDs from queue_message contexts so the AI
@@ -600,6 +615,8 @@ export function useChatStreamHandlers({
           file_size?: number
           mime_type?: string
           document_count?: number
+          knowledge_id?: number
+          document_id?: number
           source_config?: {
             url?: string
           }
@@ -641,15 +658,20 @@ export function useChatStreamHandlers({
               context_type: 'knowledge_base',
               name: ctx.name,
               status: 'ready',
+              knowledge_id: typeof ctx.id === 'number' ? ctx.id : parseInt(String(ctx.id), 10),
               document_count: kbContext.document_count,
             })
           } else if (ctx.type === 'table') {
-            const tableContext = ctx as typeof ctx & { source_config?: { url?: string } }
+            const tableContext = ctx as typeof ctx & {
+              document_id: number
+              source_config?: { url?: string }
+            }
             pendingContexts.push({
-              id: typeof ctx.id === 'number' ? ctx.id : parseInt(String(ctx.id), 10),
+              id: tableContext.document_id,
               context_type: 'table',
               name: ctx.name,
               status: 'ready',
+              document_id: tableContext.document_id,
               source_config: tableContext.source_config,
             })
           }
@@ -797,6 +819,7 @@ export function useChatStreamHandlers({
       effectiveRequiresWorkspace,
       additionalSkills,
       generateParams,
+      t,
     ]
   )
   /**
@@ -883,20 +906,20 @@ export function useChatStreamHandlers({
 
         if (existingContexts) {
           for (const ctx of existingContexts) {
-            if (ctx.context_type === 'knowledge_base') {
+            if (ctx.context_type === 'knowledge_base' && ctx.knowledge_id) {
               contextItems.push({
                 type: 'knowledge_base' as const,
                 data: {
-                  knowledge_id: ctx.id,
+                  knowledge_id: ctx.knowledge_id,
                   name: ctx.name,
                   document_count: ctx.document_count,
                 },
               })
-            } else if (ctx.context_type === 'table') {
+            } else if (ctx.context_type === 'table' && ctx.document_id) {
               contextItems.push({
                 type: 'table' as const,
                 data: {
-                  document_id: ctx.id,
+                  document_id: ctx.document_id,
                   name: ctx.name,
                   source_config: ctx.source_config,
                 },
@@ -915,6 +938,8 @@ export function useChatStreamHandlers({
           file_size?: number
           mime_type?: string
           document_count?: number
+          knowledge_id?: number
+          document_id?: number
           source_config?: {
             url?: string
           }
@@ -928,6 +953,8 @@ export function useChatStreamHandlers({
             file_size: ctx.file_size ?? undefined,
             mime_type: ctx.mime_type ?? undefined,
             document_count: ctx.document_count ?? undefined,
+            knowledge_id: ctx.knowledge_id ?? undefined,
+            document_id: ctx.document_id ?? undefined,
             source_config: ctx.source_config ?? undefined,
           })) || []
 

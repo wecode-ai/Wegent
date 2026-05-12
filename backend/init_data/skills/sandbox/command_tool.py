@@ -78,6 +78,7 @@ class SandboxCommandTool(BaseSandboxTool):
 
     name: str = "exec"
     display_name: str = "执行命令"
+    _wegent_tool_protocol: str = "shell_call"
     description: str = """Execute a command in an isolated sandbox environment.
 
 Use this tool to run shell commands safely in a containerized environment.

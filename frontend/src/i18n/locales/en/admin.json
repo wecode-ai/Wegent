@@ -318,6 +318,12 @@
     "tip_en_placeholder": "Enter English tip text",
     "delete_tip_title": "Delete Tip",
     "delete_tip_message": "Are you sure you want to delete this tip? This action cannot be undone.",
+    "quick_access_title": "Homepage Recommended Agents",
+    "quick_access_description": "Select the built-in agents shown in the homepage QuickCard. The right-side order is the display order.",
+    "quick_access_available": "Available Agents",
+    "quick_access_selected": "Homepage Agents",
+    "quick_access_name": "Name",
+    "quick_access_version": "Homepage Agents Version",
     "version": "Version",
     "success": {
       "updated": "Configuration updated successfully"
@@ -443,6 +449,7 @@
     "title": "Public Agent Management",
     "description": "Manage system-level public agents available to all users",
     "create_description": "Create a new public agent. All referenced bots must be public bots.",
+    "edit_description": "Edit the public agent's basic information and resource configuration.",
     "loading": "Loading agents...",
     "no_teams": "No public agents found",
     "create_team": "Create Agent",
@@ -497,6 +504,7 @@
     "title": "Public Bot Management",
     "description": "Manage system-level public bots available to all users",
     "create_description": "Create a new public bot. All referenced resources (Ghost, Shell, Model) must be public.",
+    "edit_description": "Edit the public bot's basic information and resource configuration.",
     "loading": "Loading bots...",
     "no_bots": "No public bots found",
     "create_bot": "Create Bot",

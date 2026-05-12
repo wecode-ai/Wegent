@@ -12,6 +12,7 @@ This module uses the unified trigger architecture:
 - execution_dispatcher.dispatch: Unified dispatch with SSEResultEmitter for streaming
 """
 
+import json
 import logging
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -30,8 +31,6 @@ from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Bot, Task, Team
 from app.schemas.openapi_response import (
-    OutputMessage,
-    OutputTextContent,
     ResponseCreateInput,
     ResponseDeletedObject,
     ResponseError,
@@ -39,15 +38,18 @@ from app.schemas.openapi_response import (
 )
 from app.services.adapters.task_kinds import task_kinds_service
 from app.services.chat.preprocessing.contexts import link_contexts_to_subtask
+from app.services.chat.trigger.lifecycle import (
+    collect_completed_result,
+    persist_completed_result,
+)
 from app.services.openapi.helpers import (
     extract_input_text,
     parse_model_string,
     parse_wegent_tools,
-    subtask_status_to_message_status,
     wegent_status_to_openai_status,
 )
+from app.services.openapi.output_builder import build_response_output
 from app.services.readers.kinds import KindType, kindReader
-from app.utils.prompt_utils import extract_display_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +57,10 @@ router = APIRouter()
 
 # Get rate limiter instance
 limiter = get_limiter()
+
+
+class _DispatchWithoutTerminalError(RuntimeError):
+    """Raised when dispatch fails before any terminal event is emitted."""
 
 
 def _task_to_response_object(
@@ -74,35 +80,9 @@ def _task_to_response_object(
     else:
         created_at_unix = int(datetime.now().timestamp())
 
-    # Build output from subtasks
     output = []
     if subtasks:
-        for subtask in subtasks:
-            if subtask.role == SubtaskRole.USER:
-                msg = OutputMessage(
-                    id=f"msg_{subtask.id}",
-                    status=subtask_status_to_message_status(subtask.status.value),
-                    content=[
-                        OutputTextContent(text=extract_display_prompt(subtask.prompt))
-                    ],
-                    role="user",
-                )
-                output.append(msg)
-
-            if subtask.role == SubtaskRole.ASSISTANT:
-                result_text = ""
-                if isinstance(subtask.result, dict):
-                    result_text = subtask.result.get("value", str(subtask.result))
-                elif isinstance(subtask.result, str):
-                    result_text = subtask.result
-
-                msg = OutputMessage(
-                    id=f"msg_{subtask.id}",
-                    status=subtask_status_to_message_status(subtask.status.value),
-                    content=[OutputTextContent(text=result_text)],
-                    role="assistant",
-                )
-                output.append(msg)
+        output = build_response_output(subtasks)
 
     # Build error if failed
     error = None
@@ -118,6 +98,36 @@ def _task_to_response_object(
         model=model_string,
         output=output,
         previous_response_id=previous_response_id,
+    )
+
+
+def _filter_current_assistant_turn(
+    subtasks: list[Subtask],
+    assistant_subtask_id: int,
+) -> list[Subtask]:
+    return [subtask for subtask in subtasks if subtask.id == assistant_subtask_id]
+
+
+async def _persist_terminal_failure(
+    *,
+    subtask_id: int,
+    task_id: int,
+    error_message: str,
+    error_code: Optional[str] = None,
+) -> None:
+    """Persist a terminal FAILED result when execution aborts before emitting one."""
+    result = await collect_completed_result(
+        subtask_id,
+        status="FAILED",
+        error_message=error_message,
+        error_code=error_code,
+    )
+    await persist_completed_result(
+        subtask_id=subtask_id,
+        task_id=task_id,
+        status="FAILED",
+        result=result,
+        error=error_message,
     )
 
 
@@ -358,14 +368,13 @@ async def _create_non_streaming_response_unified(
     """
     import asyncio
 
-    from sqlalchemy.orm.attributes import flag_modified
-
     from app.db.session import SessionLocal
-    from app.services.chat.storage import db_handler, session_manager
+    from app.services.chat.storage import session_manager
     from app.services.chat.trigger.unified import build_execution_request
     from app.services.execution import execution_dispatcher
     from app.services.execution.emitters import SSEResultEmitter
     from app.services.openapi.chat_session import setup_chat_session
+    from shared.models import EventType
 
     # Set up chat session (creates task and subtasks)
     setup = setup_chat_session(
@@ -431,6 +440,11 @@ async def _create_non_streaming_response_unified(
         )
     except Exception as e:
         logger.error(f"Failed to build execution request: {e}")
+        await _persist_terminal_failure(
+            subtask_id=assistant_subtask_id,
+            task_id=task_kind_id,
+            error_message=str(e),
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to build execution request: {str(e)}",
@@ -445,7 +459,7 @@ async def _create_non_streaming_response_unified(
         db.close()
 
     # Helper: execute and collect content using SSEResultEmitter
-    async def _execute_and_collect() -> str:
+    async def _execute_and_collect() -> tuple[str, Optional[Any]]:
         emitter = SSEResultEmitter(
             task_id=execution_request.task_id,
             subtask_id=execution_request.subtask_id,
@@ -453,101 +467,19 @@ async def _create_non_streaming_response_unified(
         dispatch_task = asyncio.create_task(
             execution_dispatcher.dispatch(execution_request, emitter=emitter)
         )
-        accumulated_content, _ = await emitter.collect()
+        accumulated_content, final_event = await emitter.collect()
+        dispatch_error = None
         try:
             await dispatch_task
-        except Exception:
-            pass
-        return accumulated_content
+        except Exception as exc:
+            dispatch_error = exc
 
-    # Helper: handle successful completion
-    async def _handle_completion(accumulated_content: str):
-        result = {"value": accumulated_content}
-        await db_handler.update_subtask_status(
-            assistant_subtask_id, "COMPLETED", result=result
-        )
-        await session_manager.append_user_and_assistant_messages(
-            task_kind_id, input_text, accumulated_content
-        )
-        update_db = SessionLocal()
-        try:
-            task_resource = (
-                update_db.query(TaskResource)
-                .filter(TaskResource.id == task_kind_id)
-                .first()
-            )
-            if task_resource:
-                task_crd = Task.model_validate(task_resource.json)
-                if task_crd.status:
-                    task_crd.status.status = "COMPLETED"
-                    task_crd.status.updatedAt = datetime.now()
-                    task_crd.status.completedAt = datetime.now()
-                    task_crd.status.result = result
-                    task_resource.json = task_crd.model_dump(mode="json")
-                    task_resource.updated_at = datetime.now()
-                    flag_modified(task_resource, "json")
-                    update_db.commit()
-        finally:
-            update_db.close()
+        if final_event and final_event.type == EventType.ERROR.value:
+            raise RuntimeError(final_event.error or "Unknown error")
+        if dispatch_error is not None and final_event is None:
+            raise _DispatchWithoutTerminalError(str(dispatch_error)) from dispatch_error
 
-    # Helper: handle failure
-    async def _handle_failure(error_message: str):
-        try:
-            await db_handler.update_subtask_status(
-                assistant_subtask_id, "FAILED", error=error_message
-            )
-        except Exception:
-            pass
-        error_db = SessionLocal()
-        try:
-            task_resource = (
-                error_db.query(TaskResource)
-                .filter(TaskResource.id == task_kind_id)
-                .first()
-            )
-            if task_resource:
-                task_crd = Task.model_validate(task_resource.json)
-                if task_crd.status:
-                    task_crd.status.status = "FAILED"
-                    task_crd.status.errorMessage = error_message
-                    task_crd.status.updatedAt = datetime.now()
-                    task_resource.json = task_crd.model_dump(mode="json")
-                    task_resource.updated_at = datetime.now()
-                    flag_modified(task_resource, "json")
-                    error_db.commit()
-        finally:
-            error_db.close()
-
-    # Helper: build output messages from subtasks
-    def _build_output(subtasks, assistant_status: str, assistant_content: str = ""):
-        output = []
-        for subtask in subtasks:
-            if subtask.role == SubtaskRole.USER:
-                output.append(
-                    OutputMessage(
-                        id=f"msg_{subtask.id}",
-                        status="completed",
-                        content=[
-                            OutputTextContent(
-                                text=extract_display_prompt(subtask.prompt)
-                            )
-                        ],
-                        role="user",
-                    )
-                )
-            elif subtask.role == SubtaskRole.ASSISTANT:
-                content = assistant_content
-                if not content and subtask.result and isinstance(subtask.result, dict):
-                    content = subtask.result.get("value", "")
-                output.append(
-                    OutputMessage(
-                        id=f"msg_{subtask.id}",
-                        status=assistant_status,
-                        content=[OutputTextContent(text=content)],
-                        role="assistant",
-                    )
-                )
-        return output
+        return accumulated_content, final_event
 
     # Helper: query subtasks
     def _query_subtasks():
@@ -575,13 +507,20 @@ async def _create_non_streaming_response_unified(
             f"[OPENAPI] Dispatched non-SSE task: task_id={task_kind_id}, "
             f"subtask_id={assistant_subtask_id}"
         )
-        subtasks = _query_subtasks()
+        subtasks = _filter_current_assistant_turn(
+            _query_subtasks(),
+            assistant_subtask_id,
+        )
         return ResponseObject(
             id=response_id,
             created_at=created_at,
             status="queued",
             model=request_body.model,
-            output=_build_output(subtasks, "in_progress"),
+            output=build_response_output(
+                subtasks,
+                active_assistant_subtask_id=assistant_subtask_id,
+                active_assistant_status="in_progress",
+            ),
             previous_response_id=request_body.previous_response_id,
         )
 
@@ -591,58 +530,81 @@ async def _create_non_streaming_response_unified(
 
         async def _run_background_task():
             try:
-                accumulated_content = await _execute_and_collect()
+                accumulated_content, _ = await _execute_and_collect()
                 logger.info(
                     f"[BACKGROUND] Task completed: task_id={task_kind_id}, "
-                    f"subtask_id={assistant_subtask_id}"
+                    f"subtask_id={assistant_subtask_id}, content_len={len(accumulated_content)}"
                 )
-                await _handle_completion(accumulated_content)
+            except _DispatchWithoutTerminalError as e:
+                await _persist_terminal_failure(
+                    subtask_id=assistant_subtask_id,
+                    task_id=task_kind_id,
+                    error_message=str(e),
+                )
+                logger.exception(f"[BACKGROUND] Error in background task: {e}")
             except Exception as e:
                 logger.exception(f"[BACKGROUND] Error in background task: {e}")
-                await _handle_failure(str(e))
 
         asyncio.create_task(_run_background_task())
         logger.info(
             f"[BACKGROUND] Task started: task_id={task_kind_id}, "
             f"subtask_id={assistant_subtask_id}"
         )
-        subtasks = _query_subtasks()
+        subtasks = _filter_current_assistant_turn(
+            _query_subtasks(),
+            assistant_subtask_id,
+        )
         return ResponseObject(
             id=response_id,
             created_at=created_at,
             status="in_progress",
             model=request_body.model,
-            output=_build_output(subtasks, "in_progress"),
+            output=build_response_output(
+                subtasks,
+                active_assistant_subtask_id=assistant_subtask_id,
+                active_assistant_status="in_progress",
+            ),
             previous_response_id=request_body.previous_response_id,
         )
 
     # SSE mode with background=False: sync wait for completion
     _close_db()
     try:
-        accumulated_content = await _execute_and_collect()
+        accumulated_content, _ = await _execute_and_collect()
         logger.info(f"[OPENAPI] Sync completed for subtask {assistant_subtask_id}")
-        await _handle_completion(accumulated_content)
+    except _DispatchWithoutTerminalError as e:
+        await _persist_terminal_failure(
+            subtask_id=assistant_subtask_id,
+            task_id=task_kind_id,
+            error_message=str(e),
+        )
+        logger.exception(f"Error in sync chat response: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"LLM request failed: {str(e)}",
+        )
     except Exception as e:
         logger.exception(f"Error in sync chat response: {e}")
-        await _handle_failure(str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"LLM request failed: {str(e)}",
         )
 
+    subtasks = _filter_current_assistant_turn(
+        _query_subtasks(),
+        assistant_subtask_id,
+    )
     return ResponseObject(
         id=response_id,
         created_at=created_at,
         status="completed",
         model=request_body.model,
-        output=[
-            OutputMessage(
-                id=f"msg_{assistant_subtask_id}",
-                status="completed",
-                role="assistant",
-                content=[OutputTextContent(text=accumulated_content)],
-            )
-        ],
+        output=build_response_output(
+            subtasks,
+            active_assistant_subtask_id=assistant_subtask_id,
+            active_assistant_status="completed",
+            active_assistant_content=accumulated_content,
+        ),
         previous_response_id=request_body.previous_response_id,
     )
 
@@ -663,8 +625,7 @@ async def _create_streaming_response_unified(
     Uses build_execution_request + dispatch_sse_stream for streaming.
     Raises NotImplementedError if the shell type doesn't support streaming.
     """
-    from app.db.session import SessionLocal
-    from app.services.chat.storage import db_handler, session_manager
+    from app.services.chat.storage import session_manager
     from app.services.chat.trigger.unified import build_execution_request
     from app.services.execution import execution_dispatcher
     from app.services.openapi.chat_session import setup_chat_session
@@ -736,6 +697,17 @@ async def _create_streaming_response_unified(
             knowledge_base_names=knowledge_base_names,
             reasoning_config=reasoning_config,
         )
+    except Exception as e:
+        logger.error(f"Failed to build execution request: {e}")
+        await _persist_terminal_failure(
+            subtask_id=assistant_subtask_id,
+            task_id=task_kind_id,
+            error_message=str(e),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to build execution request: {str(e)}",
+        )
     finally:
         # Close the database session before streaming starts
         try:
@@ -753,8 +725,39 @@ async def _create_streaming_response_unified(
 
         accumulated_content = ""
         accumulated_reasoning = ""
+        tool_states: Dict[str, Dict[str, Any]] = {}
+        next_output_index = 0
+        reasoning_output_started = False
+        message_output_started = False
+
+        def allocate_output_index() -> int:
+            nonlocal next_output_index
+            assigned = next_output_index
+            next_output_index += 1
+            return assigned
+
+        def _normalize_protocol_type(
+            value: str | None, tool_name: str | None = None
+        ) -> str:
+            if value in {"mcp", "mcp_call"}:
+                return "mcp_call"
+            if value == "shell_call":
+                return "shell_call"
+            if tool_name == "exec":
+                return "shell_call"
+            return "function_call"
 
         try:
+            if not execution_dispatcher.supports_streaming(execution_request):
+                error_message = "Streaming not supported for this shell type"
+                await _persist_terminal_failure(
+                    subtask_id=assistant_subtask_id,
+                    task_id=task_kind_id,
+                    error_message=error_message,
+                    error_code="not_implemented",
+                )
+                raise NotImplementedError(error_message)
+
             cancel_event = await session_manager.register_stream(assistant_subtask_id)
 
             # Create SSEResultEmitter for streaming
@@ -782,18 +785,177 @@ async def _create_streaming_response_unified(
                     if event.type == EventType.CHUNK.value:
                         content = event.content or ""
                         if content:
+                            if not message_output_started:
+                                message_output_started = True
+                                allocate_output_index()
                             accumulated_content += content
                             yield StreamingChunk(type="text", content=content)
                     elif event.type == EventType.THINKING.value:
                         # Handle reasoning/thinking content
                         reasoning = event.content or ""
                         if reasoning:
+                            if not reasoning_output_started:
+                                reasoning_output_started = True
+                                allocate_output_index()
                             accumulated_reasoning += reasoning
                             yield StreamingChunk(type="reasoning", content=reasoning)
+                    elif event.type == EventType.TOOL_START.value:
+                        tool_use_id = event.tool_use_id or ""
+                        if not tool_use_id:
+                            continue
+
+                        tool_protocol = _normalize_protocol_type(
+                            event.data.get("tool_protocol") if event.data else None,
+                            event.tool_name,
+                        )
+                        tool_name = event.tool_name or ""
+                        tool_input = event.tool_input or {}
+                        tool_state = {
+                            "protocol": tool_protocol,
+                            "name": tool_name,
+                            "arguments": tool_input,
+                            "output_index": allocate_output_index(),
+                        }
+                        if event.data and event.data.get("server_label"):
+                            tool_state["server_label"] = event.data["server_label"]
+                        tool_states[tool_use_id] = tool_state
+
+                        if tool_protocol == "mcp_call":
+                            yield StreamingChunk(
+                                type="mcp_call_added",
+                                data={
+                                    "item_id": tool_use_id,
+                                    "name": tool_name,
+                                    "server_label": tool_state.get("server_label", ""),
+                                    "output_index": tool_state["output_index"],
+                                },
+                            )
+                        elif tool_protocol == "shell_call":
+                            yield StreamingChunk(
+                                type="shell_call_added",
+                                data={
+                                    "call_id": tool_use_id,
+                                    "name": tool_name,
+                                    "arguments": tool_input,
+                                    "output_index": tool_state["output_index"],
+                                },
+                            )
+                        else:
+                            yield StreamingChunk(
+                                type="function_call_added",
+                                data={
+                                    "call_id": tool_use_id,
+                                    "name": tool_name,
+                                    "arguments": (
+                                        json.dumps(tool_input, ensure_ascii=False)
+                                        if tool_input
+                                        else ""
+                                    ),
+                                    "output_index": tool_state["output_index"],
+                                },
+                            )
+                    elif event.type == EventType.TOOL.value:
+                        tool_use_id = event.tool_use_id or ""
+                        if not tool_use_id:
+                            continue
+                        tool_state = tool_states.get(tool_use_id)
+                        if not tool_state:
+                            continue
+                        if tool_state.get("protocol") == "mcp_call":
+                            tool_state["arguments"] = event.tool_input or {}
                     elif event.type == EventType.ERROR.value:
                         error_msg = event.error or "Unknown error"
                         logger.error(f"[OPENAPI] Error from execution: {error_msg}")
                         raise Exception(error_msg)
+                    elif event.type == EventType.TOOL_RESULT.value:
+                        tool_use_id = event.tool_use_id or ""
+                        if not tool_use_id:
+                            continue
+                        tool_state = tool_states.pop(tool_use_id, None)
+                        if tool_state is None:
+                            tool_state = {
+                                "protocol": _normalize_protocol_type(
+                                    (
+                                        event.data.get("tool_protocol")
+                                        if event.data
+                                        else None
+                                    ),
+                                    event.tool_name,
+                                ),
+                                "name": event.tool_name or "",
+                                "arguments": event.tool_input or {},
+                                "output_index": allocate_output_index(),
+                            }
+                            if event.data and event.data.get("server_label"):
+                                tool_state["server_label"] = event.data["server_label"]
+                        tool_protocol = _normalize_protocol_type(
+                            tool_state.get("protocol")
+                            or (
+                                event.data.get("tool_protocol") if event.data else None
+                            ),
+                            tool_state.get("name") or event.tool_name,
+                        )
+                        tool_name = tool_state.get("name") or event.tool_name or ""
+                        arguments = (
+                            event.tool_input or tool_state.get("arguments") or {}
+                        )
+                        output_index = tool_state["output_index"]
+
+                        if tool_protocol == "mcp_call":
+                            yield StreamingChunk(
+                                type="mcp_call_done",
+                                data={
+                                    "item_id": tool_use_id,
+                                    "name": tool_name,
+                                    "server_label": tool_state.get("server_label", ""),
+                                    "arguments": (
+                                        json.dumps(arguments, ensure_ascii=False)
+                                        if arguments
+                                        else ""
+                                    ),
+                                    "output_index": output_index,
+                                    "status": (
+                                        "failed"
+                                        if event.data
+                                        and event.data.get("status") == "failed"
+                                        else "completed"
+                                    ),
+                                    "error": event.error
+                                    or (
+                                        event.data.get("error") if event.data else None
+                                    ),
+                                },
+                            )
+                        elif tool_protocol == "shell_call":
+                            yield StreamingChunk(
+                                type="shell_call_done",
+                                data={
+                                    "call_id": tool_use_id,
+                                    "name": tool_name,
+                                    "arguments": arguments,
+                                    "output_index": output_index,
+                                    "status": (
+                                        "failed"
+                                        if event.data
+                                        and event.data.get("status") == "failed"
+                                        else "completed"
+                                    ),
+                                },
+                            )
+                        else:
+                            yield StreamingChunk(
+                                type="function_call_done",
+                                data={
+                                    "call_id": tool_use_id,
+                                    "name": tool_name,
+                                    "arguments": (
+                                        json.dumps(arguments, ensure_ascii=False)
+                                        if arguments
+                                        else ""
+                                    ),
+                                    "output_index": output_index,
+                                },
+                            )
                     elif event.type == EventType.DONE.value:
                         logger.info(
                             f"[OPENAPI] Stream completed for subtask {assistant_subtask_id}"
@@ -805,62 +967,12 @@ async def _create_streaming_response_unified(
                 except Exception:
                     pass  # Error already handled via emitter
 
-            # Stream completed (not cancelled)
-            if not cancel_event.is_set() and not await session_manager.is_cancelled(
-                assistant_subtask_id
-            ):
-                # Include reasoning in result if present
-                result = {"value": accumulated_content}
-                if accumulated_reasoning:
-                    result["reasoning"] = accumulated_reasoning
-
-                await session_manager.save_streaming_content(
-                    assistant_subtask_id, accumulated_content
-                )
-                await session_manager.append_user_and_assistant_messages(
-                    task_kind_id, input_text, accumulated_content
-                )
-                await db_handler.update_subtask_status(
-                    assistant_subtask_id, "COMPLETED", result=result
-                )
-
-                # Update task status
-                stream_db = SessionLocal()
-                try:
-                    task_resource = (
-                        stream_db.query(TaskResource)
-                        .filter(TaskResource.id == task_kind_id)
-                        .first()
-                    )
-                    if task_resource:
-                        task_crd = Task.model_validate(task_resource.json)
-                        if task_crd.status:
-                            task_crd.status.status = "COMPLETED"
-                            task_crd.status.updatedAt = datetime.now()
-                            task_crd.status.completedAt = datetime.now()
-                            task_resource.json = task_crd.model_dump(mode="json")
-                            from sqlalchemy.orm.attributes import flag_modified
-
-                            flag_modified(task_resource, "json")
-                            stream_db.commit()
-                finally:
-                    stream_db.close()
-
         except NotImplementedError as e:
             # Streaming not supported for this shell type
             logger.error(f"[OPENAPI] Streaming not supported: {e}")
-            await db_handler.update_subtask_status(
-                assistant_subtask_id, "FAILED", error=str(e)
-            )
             raise
         except Exception as e:
             logger.exception(f"Error in streaming: {e}")
-            try:
-                await db_handler.update_subtask_status(
-                    assistant_subtask_id, "FAILED", error=str(e)
-                )
-            except Exception:
-                pass
             raise
         finally:
             await session_manager.unregister_stream(assistant_subtask_id)
@@ -874,6 +986,15 @@ async def _create_streaming_response_unified(
                 chat_stream=raw_chat_stream(),
                 created_at=created_at,
                 previous_response_id=request_body.previous_response_id,
+                task_context=(
+                    {
+                        "task_id": setup.task_id,
+                        "task_path": f"/chat?task_id={setup.task_id}",
+                    }
+                    if request_body.wegent_options
+                    and request_body.wegent_options.include_task_context
+                    else None
+                ),
             ):
                 yield event
         except NotImplementedError as e:

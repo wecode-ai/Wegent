@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -58,6 +59,7 @@ interface PublicTeamEditDialogProps {
  */
 function buildTeamJson(data: {
   name: string
+  displayName: string
   description: string
   bindMode: TaskType[]
   icon: string | null
@@ -71,6 +73,7 @@ function buildTeamJson(data: {
     metadata: {
       name: data.name,
       namespace: 'default',
+      displayName: data.displayName.trim() || undefined,
     },
     spec: {
       collaborationModel: data.mode,
@@ -109,6 +112,7 @@ function extractBotName(botRef: unknown): string {
  */
 function parseTeamJson(json: Record<string, unknown>): {
   name: string
+  displayName: string
   description: string
   bindMode: TaskType[]
   icon: string | null
@@ -121,6 +125,7 @@ function parseTeamJson(json: Record<string, unknown>): {
     const spec = (json?.spec as Record<string, unknown>) || {}
 
     const name = (metadata?.name as string) || ''
+    const displayName = (metadata?.displayName as string) || ''
     const description = (spec?.description as string) || ''
     const bindMode = (spec?.bind_mode as TaskType[]) || ['chat', 'code']
     const icon = (spec?.icon as string) || null
@@ -135,7 +140,7 @@ function parseTeamJson(json: Record<string, unknown>): {
       requireConfirmation: (m?.requireConfirmation as boolean) || undefined,
     }))
 
-    return { name, description, bindMode, icon, requiresWorkspace, mode, members }
+    return { name, displayName, description, bindMode, icon, requiresWorkspace, mode, members }
   } catch {
     return null
   }
@@ -158,6 +163,7 @@ export default function PublicTeamEditDialog({
 
   // Basic mode form state
   const [name, setName] = useState('')
+  const [displayName, setDisplayName] = useState('')
   const [description, setDescription] = useState('')
   const [mode, setMode] = useState<TeamMode>('solo')
   const [bindMode, setBindMode] = useState<TaskType[]>(['chat'])
@@ -242,6 +248,7 @@ export default function PublicTeamEditDialog({
       const parsed = parseTeamJson(editingTeam.json)
       if (parsed) {
         setName(parsed.name)
+        setDisplayName(parsed.displayName)
         setDescription(parsed.description)
         setBindMode(parsed.bindMode)
         setIcon(parsed.icon)
@@ -290,6 +297,7 @@ export default function PublicTeamEditDialog({
       // Create mode - reset to defaults
       setIsActive(true)
       setName('')
+      setDisplayName('')
       setDescription('')
       setBindMode(['chat'])
       setIcon(null)
@@ -507,6 +515,7 @@ export default function PublicTeamEditDialog({
 
     const json = buildTeamJson({
       name,
+      displayName,
       description,
       bindMode,
       icon,
@@ -519,6 +528,7 @@ export default function PublicTeamEditDialog({
     setJsonError('')
   }, [
     name,
+    displayName,
     description,
     bindMode,
     icon,
@@ -543,6 +553,7 @@ export default function PublicTeamEditDialog({
     }
 
     setName(parsed.name)
+    setDisplayName(parsed.displayName)
     setDescription(parsed.description)
     setBindMode(parsed.bindMode)
     setIcon(parsed.icon)
@@ -665,6 +676,7 @@ export default function PublicTeamEditDialog({
 
           teamJson = buildTeamJson({
             name,
+            displayName,
             description,
             bindMode,
             icon,
@@ -719,6 +731,7 @@ export default function PublicTeamEditDialog({
 
           teamJson = buildTeamJson({
             name,
+            displayName,
             description,
             bindMode,
             icon,
@@ -782,6 +795,7 @@ export default function PublicTeamEditDialog({
     return {
       id: editingTeam.id,
       name: editingTeam.name,
+      displayName: editingTeam.display_name || undefined,
       namespace: editingTeam.namespace,
       description: editingTeam.description || '',
       bots: [],
@@ -804,9 +818,16 @@ export default function PublicTeamEditDialog({
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
           <DialogHeader>
             <div className="flex items-center justify-between">
-              <DialogTitle>
-                {isEditing ? t('public_teams.edit_team') : t('public_teams.create_team')}
-              </DialogTitle>
+              <div>
+                <DialogTitle>
+                  {isEditing ? t('public_teams.edit_team') : t('public_teams.create_team')}
+                </DialogTitle>
+                <DialogDescription>
+                  {isEditing
+                    ? t('public_teams.edit_description')
+                    : t('public_teams.create_description')}
+                </DialogDescription>
+              </div>
               {isEditing && (
                 <div className="flex items-center gap-2 mr-8">
                   <Label htmlFor="status-toggle" className="text-sm text-text-muted">
@@ -839,6 +860,8 @@ export default function PublicTeamEditDialog({
                   <TeamBasicInfoForm
                     name={name}
                     setName={setName}
+                    displayName={displayName}
+                    setDisplayName={setDisplayName}
                     description={description}
                     setDescription={setDescription}
                     bindMode={bindMode}
