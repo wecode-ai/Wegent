@@ -1086,9 +1086,9 @@ class DocumentParser:
             Metadata text describing the DuckDB database
         """
         try:
-            text = "[DuckDB数据库文件]\n"
-            text += "格式: DuckDB\n"
-            text += f"文件大小: {len(binary_data)} 字节"
+            text = "[DuckDB Database File]\n"
+            text += "Format: DuckDB\n"
+            text += f"File size: {len(binary_data)} bytes"
             return text
         except Exception as e:
             logger.error(f"Error parsing DuckDB: {e}", exc_info=True)
