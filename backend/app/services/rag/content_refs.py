@@ -70,3 +70,21 @@ def build_content_ref_for_attachment(
         auth_token=auth_token,
         expires_at=expires_at,
     )
+
+
+def build_content_ref_for_duckdb(
+    *,
+    db: Session,
+    duckdb_attachment_id: int,
+    expires_delta_seconds: int = DEFAULT_CONTENT_REF_TTL_SECONDS,
+) -> BackendAttachmentStreamContentRef | PresignedUrlContentRef:
+    """Build a content reference for a .duckdb artifact attachment.
+
+    Convenience wrapper around build_content_ref_for_attachment for DuckDB files.
+    The .duckdb file is stored as a regular SubtaskContext attachment.
+    """
+    return build_content_ref_for_attachment(
+        db=db,
+        attachment_id=duckdb_attachment_id,
+        expires_delta_seconds=expires_delta_seconds,
+    )

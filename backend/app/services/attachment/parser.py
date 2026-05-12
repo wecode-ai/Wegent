@@ -245,6 +245,8 @@ class DocumentParser:
         ".webp": "image/webp",
         # Archive formats (binary, no text extraction)
         ".zip": "application/zip",
+        # Database formats (binary, no text extraction)
+        ".duckdb": "application/x-duckdb",
     }
 
     # Special format extensions that have dedicated parsers
@@ -266,6 +268,8 @@ class DocumentParser:
         ".webp",
         # Archive formats (binary, no text extraction)
         ".zip",
+        # Database formats (binary, no text extraction)
+        ".duckdb",
     }
 
     # Known text format extensions (no MIME detection needed)
@@ -290,11 +294,6 @@ class DocumentParser:
     def get_max_text_length(cls) -> int:
         """Get maximum extracted text length from configuration."""
         return settings.MAX_EXTRACTED_TEXT_LENGTH
-
-    @classmethod
-    def is_supported_extension(cls, extension: str) -> bool:
-        """Check if the file extension is supported."""
-        return extension.lower() in cls.SUPPORTED_EXTENSIONS
 
     @classmethod
     def get_mime_type(cls, extension: str) -> str:
@@ -488,6 +487,8 @@ class DocumentParser:
                 text, image_base64 = self._parse_image(binary_data, extension)
             elif extension == ".zip":
                 text = self._parse_archive(binary_data, extension)
+            elif extension == ".duckdb":
+                text = self._parse_duckdb(binary_data)
             else:
                 raise DocumentParseError(
                     f"Unsupported file type: {extension}",
@@ -511,6 +512,8 @@ class DocumentParser:
                 text, image_base64 = self._parse_image(binary_data, extension)
             elif extension == ".zip":
                 text = self._parse_archive(binary_data, extension)
+            elif extension == ".duckdb":
+                text = self._parse_duckdb(binary_data)
             else:
                 raise DocumentParseError(
                     f"Unsupported file type: {extension}",
@@ -1067,6 +1070,30 @@ class DocumentParser:
             logger.error(f"Error parsing archive: {e}", exc_info=True)
             raise DocumentParseError(
                 f"Failed to parse archive: {str(e)}",
+                DocumentParseError.PARSE_FAILED,
+            ) from e
+
+    def _parse_duckdb(self, binary_data: bytes) -> str:
+        """Parse DuckDB file and return metadata information.
+
+        DuckDB files are stored as binary attachments without text extraction.
+        Only metadata (file size, format) is returned as text.
+
+        Args:
+            binary_data: DuckDB file binary data
+
+        Returns:
+            Metadata text describing the DuckDB database
+        """
+        try:
+            text = "[DuckDB数据库文件]\n"
+            text += "格式: DuckDB\n"
+            text += f"文件大小: {len(binary_data)} 字节"
+            return text
+        except Exception as e:
+            logger.error(f"Error parsing DuckDB: {e}", exc_info=True)
+            raise DocumentParseError(
+                f"Failed to parse DuckDB: {str(e)}",
                 DocumentParseError.PARSE_FAILED,
             ) from e
 

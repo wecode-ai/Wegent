@@ -322,6 +322,10 @@ class Settings(BaseSettings):
         3  # RUNNING executions older than this will be marked FAILED
     )
 
+    # DuckDB data analysis configuration
+    DUCKDB_DATA_ANALYSIS_ENABLED: bool = False
+    DUCKDB_GENERATION_TIMEOUT: int = 5  # Timeout in seconds for sync DuckDB generation during chat upload
+
     # Knowledge indexing protection configuration
     KNOWLEDGE_INDEX_LOCK_TIMEOUT_SECONDS: int = 120
     KNOWLEDGE_INDEX_LOCK_EXTEND_INTERVAL_SECONDS: int = 30

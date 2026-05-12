@@ -44,6 +44,18 @@ from .blocks import (
     create_tool_block,
 )
 
+# Data analysis protocol models for DuckDB operations
+from .data_analysis_protocol import (
+    DuckDBColumnInfo,
+    DuckDBTableInfo,
+    RemoteDataGenerateRequest,
+    RemoteDataGenerateResponse,
+    RemoteDataQueryRequest,
+    RemoteDataQueryResponse,
+    RemoteDataSchemaRequest,
+    RemoteDataSchemaResponse,
+)
+
 # Unified execution protocol
 from .execution import EventType, ExecutionEvent, ExecutionRequest
 from .knowledge_runtime_protocol import (
@@ -161,6 +173,15 @@ __all__ = [
     "RedisTransport",
     "ThrottleConfig",
     "ThrottledTransport",
+    # Data analysis protocol models
+    "DuckDBColumnInfo",
+    "DuckDBTableInfo",
+    "RemoteDataGenerateRequest",
+    "RemoteDataGenerateResponse",
+    "RemoteDataQueryRequest",
+    "RemoteDataQueryResponse",
+    "RemoteDataSchemaRequest",
+    "RemoteDataSchemaResponse",
     # OpenAI Request Converter
     "OpenAIRequestConverter",
     "OpenAIEventConverter",

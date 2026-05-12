@@ -290,6 +290,43 @@ def index_document_task(
                         exc_info=True,
                     )
 
+            # After successful indexing, enqueue DuckDB generation for Excel/CSV files
+            if settings.DUCKDB_DATA_ANALYSIS_ENABLED:
+                try:
+                    from app.models.subtask_context import SubtaskContext
+
+                    with SessionLocal() as duckdb_db:
+                        ctx = (
+                            duckdb_db.query(SubtaskContext)
+                            .filter(SubtaskContext.id == attachment_id)
+                            .first()
+                        )
+                        if ctx:
+                            ext = ctx.file_extension
+                            if ext and not ext.startswith("."):
+                                ext = f".{ext}"
+                            if ext in (".xlsx", ".xls", ".csv"):
+                                from app.tasks.data_analysis_tasks import (
+                                    generate_duckdb_task,
+                                )
+
+                                generate_duckdb_task.delay(
+                                    attachment_id=attachment_id,
+                                    user_id=user_id,
+                                    source_file=ctx.name or "",
+                                    file_extension=ext or "",
+                                )
+                                logger.info(
+                                    f"[Celery RAG Indexing] Enqueued DuckDB generation "
+                                    f"for attachment {attachment_id}"
+                                )
+                except Exception as duckdb_error:
+                    logger.warning(
+                        f"[Celery RAG Indexing] Failed to enqueue DuckDB generation "
+                        f"for attachment {attachment_id}: {duckdb_error}",
+                        exc_info=True,
+                    )
+
             logger.info(
                 f"[Celery RAG Indexing] Completed: task_id={task_id}, "
                 f"document_id={document_id}, attachment_id={attachment_id}, "

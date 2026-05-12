@@ -58,6 +58,8 @@ PROMPT_OPTIMIZATION_MCP_MOUNT_PATH = "/mcp/prompt-optimization"
 PROMPT_OPTIMIZATION_MCP_TRANSPORT_PATH = "/sse"
 SUBSCRIPTION_MCP_MOUNT_PATH = "/mcp/subscription"
 SUBSCRIPTION_MCP_TRANSPORT_PATH = "/sse"
+DATA_ANALYSIS_MCP_MOUNT_PATH = "/mcp/data-analysis"
+DATA_ANALYSIS_MCP_TRANSPORT_PATH = "/sse"
 
 
 @dataclass(frozen=True)
@@ -414,6 +416,50 @@ def ensure_subscription_tools_registered() -> None:
     _register_subscription_tools()
 
 
+# ============== Data Analysis MCP Server ==============
+# Provides data analysis tools for Excel/CSV files
+# Available via Skill configuration
+# Uses decorator-based auto-registration from @mcp_tool decorated endpoints
+
+data_analysis_mcp_server = FastMCP(
+    "wegent-data-analysis-mcp",
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/",
+    transport_security=_build_transport_security_settings(),
+)
+
+# Store for data_analysis MCP request context (used by McpAppSpec)
+_data_analysis_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
+    contextvars.ContextVar("data_analysis_request_token_info", default=None)
+)
+
+# Flag to track if tools have been registered
+_data_analysis_tools_registered = False
+
+
+def _register_data_analysis_tools() -> None:
+    """Register data analysis MCP tools from decorated endpoints."""
+    global _data_analysis_tools_registered
+    if _data_analysis_tools_registered:
+        return
+
+    from app.mcp_server.tool_registry import register_tools_to_server
+    from app.mcp_server.tools import (  # noqa: F401 side-effect: triggers @mcp_tool registration
+        data_analysis,
+    )
+
+    count = register_tools_to_server(data_analysis_mcp_server, "data_analysis")
+    logger.info(f"[MCP:DataAnalysis] Registered {count} tools from decorated endpoints")
+
+    _data_analysis_tools_registered = True
+
+
+def ensure_data_analysis_tools_registered() -> None:
+    """Ensure data analysis MCP tools are registered."""
+    _register_data_analysis_tools()
+
+
 # ============== Starlette App Factory ==============
 
 _SYSTEM_MCP_SPEC = McpAppSpec(
@@ -471,12 +517,24 @@ _SUBSCRIPTION_MCP_SPEC = McpAppSpec(
     include_root_metadata=True,
 )
 
+_DATA_ANALYSIS_MCP_SPEC = McpAppSpec(
+    name="data_analysis",
+    service_name="wegent-data-analysis-mcp",
+    mount_path=DATA_ANALYSIS_MCP_MOUNT_PATH,
+    transport_path=DATA_ANALYSIS_MCP_TRANSPORT_PATH,
+    server=data_analysis_mcp_server,
+    token_context=_data_analysis_request_token_info,
+    log_prefix="DataAnalysis",
+    include_root_metadata=True,
+)
+
 MCP_APP_SPECS = (
     _SYSTEM_MCP_SPEC,
     _KNOWLEDGE_MCP_SPEC,
     _INTERACTIVE_FORM_MCP_SPEC,
     _PROMPT_OPTIMIZATION_MCP_SPEC,
     _SUBSCRIPTION_MCP_SPEC,
+    _DATA_ANALYSIS_MCP_SPEC,
 )
 
 
@@ -510,6 +568,8 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
         ensure_prompt_optimization_tools_registered()
     elif spec.name == "subscription":
         ensure_subscription_tools_registered()
+    elif spec.name == "data_analysis":
+        ensure_data_analysis_tools_registered()
 
     @asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
@@ -556,6 +616,7 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
                     "interactive_form_question",
                     "prompt_optimization",
                     "subscription",
+                    "data_analysis",
                 ):
                     mcp_ctx = MCPRequestContext(
                         token_info=token_info,
@@ -794,4 +855,22 @@ def get_mcp_subscription_config(backend_url: str, auth_token: str) -> Dict[str, 
         url=f"{backend_url}{SUBSCRIPTION_MCP_MOUNT_PATH}{SUBSCRIPTION_MCP_TRANSPORT_PATH}",
         auth_token=auth_token,
         timeout=60,
+    )
+
+
+def get_mcp_data_analysis_config(backend_url: str, auth_token: str) -> Dict[str, Any]:
+    """Get data analysis MCP server configuration for Skill injection.
+
+    Args:
+        backend_url: Backend URL (e.g., "http://localhost:8000")
+        auth_token: Authentication token for MCP server (uses placeholder for Skill)
+
+    Returns:
+        MCP server configuration dictionary
+    """
+    return _build_streamable_http_config(
+        name="wegent-data-analysis",
+        url=f"{backend_url}{DATA_ANALYSIS_MCP_MOUNT_PATH}{DATA_ANALYSIS_MCP_TRANSPORT_PATH}",
+        auth_token=auth_token,
+        timeout=300,  # 5 minutes for data analysis queries
     )
