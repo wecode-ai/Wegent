@@ -462,3 +462,32 @@ class TestResponsesAPIEmitter:
             "response.output_item.done",
         ]
         assert events[-1][1]["item"]["type"] == "mcp_call"
+
+    @pytest.mark.asyncio
+    async def test_mcp_tool_done_completed_carries_output(self):
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+
+        await emitter.tool_start(
+            call_id="mcp_789",
+            name="search_docs",
+            arguments={"query": "tool blocks"},
+            tool_protocol="mcp_call",
+            server_label="wegent-knowledge",
+        )
+        await emitter.tool_done(
+            call_id="mcp_789",
+            name="search_docs",
+            output='{"results":["block output"]}',
+            tool_protocol="mcp_call",
+            server_label="wegent-knowledge",
+        )
+
+        events = transport.get_events()
+        completed_event = next(
+            data
+            for event_type, data in events
+            if event_type == "response.mcp_call.completed"
+        )
+
+        assert completed_event["output"] == '{"results":["block output"]}'
