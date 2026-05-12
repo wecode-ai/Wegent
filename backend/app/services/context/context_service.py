@@ -13,11 +13,9 @@ import logging
 import os
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import httpx
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models.duckdb_cache import DuckDBCache
 from app.models.subtask_context import (
     ContextStatus,
     ContextType,
@@ -36,12 +34,6 @@ from app.services.attachment.parser import (
 )
 from app.services.attachment.storage_backend import StorageError, generate_storage_key
 from app.services.attachment.storage_factory import get_storage_backend
-from app.services.auth.rag_download_token import create_rag_download_token
-from shared.models import BackendAttachmentStreamContentRef
-from shared.models.data_analysis_protocol import (
-    RemoteDataGenerateRequest,
-    RemoteDataGenerateResponse,
-)
 from shared.telemetry.decorators import trace_sync
 from shared.utils.crypto import decrypt_attachment, encrypt_attachment
 
@@ -317,9 +309,6 @@ class ContextService:
 
         return truncation_info
 
-    # File extensions eligible for DuckDB data analysis
-    DUCKDB_ELIGIBLE_EXTENSIONS = frozenset([".xlsx", ".xls", ".csv"])
-
     def format_duckdb_summary(
         self,
         summary: dict,
@@ -369,158 +358,6 @@ class ContextService:
             "wegent_data_query to execute SQL queries for detailed analysis."
         )
         return "\n".join(lines)
-
-    def _try_duckdb_generation(
-        self,
-        db: Session,
-        context: SubtaskContext,
-        binary_data: bytes,
-        extension: str,
-    ) -> Optional[dict]:
-        """Attempt synchronous DuckDB generation for Excel/CSV files.
-
-        Called after _parse_and_update_context() in upload_attachment().
-        If DuckDB generation succeeds, overwrites context.extracted_text
-        with the DuckDB summary. On failure, keeps the parser output as fallback.
-
-        This method MUST NOT raise exceptions - all errors are caught and
-        logged, returning None on failure so the caller can continue normally.
-
-        Args:
-            db: Database session.
-            context: The attachment SubtaskContext record.
-            binary_data: Original file binary data.
-            extension: Lowercase file extension (e.g. ".xlsx").
-
-        Returns:
-            Dict with duckdb info on success, None on failure/fallback.
-        """
-        # Guard: feature must be enabled
-        if not settings.DUCKDB_DATA_ANALYSIS_ENABLED:
-            return None
-
-        # Guard: only eligible extensions
-        if extension not in self.DUCKDB_ELIGIBLE_EXTENSIONS:
-            return None
-
-        try:
-            # Build content reference for knowledge_runtime to fetch the file
-            auth_token = create_rag_download_token(
-                attachment_id=context.id,
-                expires_delta_seconds=300,
-            )
-            base_url = settings.BACKEND_INTERNAL_URL.rstrip("/")
-            content_ref = BackendAttachmentStreamContentRef(
-                kind="backend_attachment_stream",
-                url=f"{base_url}{settings.API_PREFIX}/internal/rag/content/{context.id}",
-                auth_token=auth_token,
-            )
-
-            # Build request
-            kr_url = settings.KNOWLEDGE_RUNTIME_URL or "http://localhost:8200"
-            request = RemoteDataGenerateRequest(
-                attachment_id=context.id,
-                content_ref=content_ref,
-                source_file=context.name,
-                file_extension=extension,
-            )
-
-            # Synchronous HTTP call to knowledge_runtime
-            with httpx.Client(timeout=settings.DUCKDB_GENERATION_TIMEOUT) as client:
-                response = client.post(
-                    f"{kr_url}/internal/data/generate",
-                    json=request.model_dump(mode="json"),
-                    headers={
-                        "Authorization": f"Bearer {settings.INTERNAL_SERVICE_TOKEN}",
-                        "Content-Type": "application/json",
-                    },
-                )
-                response.raise_for_status()
-                result = RemoteDataGenerateResponse.model_validate(response.json())
-
-            if not result.success:
-                logger.warning(
-                    f"DuckDB generation failed for context {context.id}: "
-                    f"{result.error}"
-                )
-                return None
-
-            # Format summary text
-            summary_text = self.format_duckdb_summary(
-                summary=result.summary or {},
-                tables=result.tables,
-                filename=context.name or "unknown",
-            )
-
-            # Overwrite extracted_text with DuckDB summary
-            context.extracted_text = summary_text
-            context.text_length = len(summary_text)
-
-            # Update type_data with DuckDB metadata
-            base_type_data = context.type_data or {}
-            context.type_data = {
-                **base_type_data,
-                "duckdb_attachment_id": result.duckdb_attachment_id,
-                "duckdb_summary": result.summary,
-                "duckdb_tables": [t.model_dump() for t in result.tables],
-            }
-
-            # Create or update DuckDB cache record
-            cache_record = (
-                db.query(DuckDBCache)
-                .filter(DuckDBCache.attachment_id == context.id)
-                .first()
-            )
-            if cache_record is None:
-                cache_record = DuckDBCache(
-                    attachment_id=context.id,
-                    duckdb_attachment_id=result.duckdb_attachment_id,
-                    summary=result.summary,
-                    tables_count=len(result.tables),
-                    file_size=result.duckdb_file_size,
-                    source_file_hash=result.source_file_hash,
-                    status="ready",
-                )
-                db.add(cache_record)
-            else:
-                cache_record.duckdb_attachment_id = result.duckdb_attachment_id
-                cache_record.summary = result.summary
-                cache_record.tables_count = len(result.tables)
-                cache_record.file_size = result.duckdb_file_size
-                cache_record.source_file_hash = result.source_file_hash
-                cache_record.status = "ready"
-
-            logger.info(
-                f"DuckDB generation succeeded for context {context.id}: "
-                f"tables={len(result.tables)}, "
-                f"duckdb_attachment_id={result.duckdb_attachment_id}, "
-                f"generation_time_ms={result.generation_time_ms:.1f}"
-            )
-
-            return {
-                "duckdb_attachment_id": result.duckdb_attachment_id,
-                "tables_count": len(result.tables),
-                "generation_time_ms": result.generation_time_ms,
-            }
-
-        except httpx.TimeoutException:
-            logger.warning(
-                f"DuckDB generation timed out for context {context.id}, "
-                f"keeping parser output as fallback"
-            )
-            return None
-        except httpx.HTTPStatusError as e:
-            logger.warning(
-                f"DuckDB generation HTTP error for context {context.id}: "
-                f"status={e.response.status_code}, keeping parser output as fallback"
-            )
-            return None
-        except Exception:
-            logger.exception(
-                f"DuckDB generation failed unexpectedly for context {context.id}, "
-                f"keeping parser output as fallback"
-            )
-            return None
 
     def upload_attachment(
         self,
@@ -603,15 +440,9 @@ class ContextService:
             db.commit()
             raise
 
-        # Try DuckDB generation for eligible Excel/CSV files (post-parse step)
-        # On success, overwrites extracted_text with DuckDB summary.
-        # On failure, keeps parser output as fallback.
-        self._try_duckdb_generation(
-            db=db,
-            context=context,
-            binary_data=binary_data,
-            extension=extension,
-        )
+        # Note: DuckDB generation for chat-uploaded files is not supported.
+        # DuckDB data analysis is only available for knowledge base uploads
+        # via async Celery tasks (see data_analysis_tasks.py).
 
         db.commit()
         db.refresh(context)
@@ -697,15 +528,9 @@ class ContextService:
             db.commit()
             raise
 
-        # Try DuckDB generation for eligible Excel/CSV files (post-parse step)
-        # On success, overwrites extracted_text with DuckDB summary.
-        # On failure, keeps parser output as fallback.
-        self._try_duckdb_generation(
-            db=db,
-            context=context,
-            binary_data=binary_data,
-            extension=extension,
-        )
+        # Note: DuckDB generation for chat-uploaded files is not supported.
+        # DuckDB data analysis is only available for knowledge base uploads
+        # via async Celery tasks (see data_analysis_tasks.py).
 
         db.commit()
         db.refresh(context)
