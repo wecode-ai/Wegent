@@ -6,6 +6,7 @@ import '@testing-library/jest-dom'
 import { render, screen } from '@testing-library/react'
 import type { ChatInputControlsProps } from '@/features/tasks/components/input/ChatInputControls'
 import { ChatInputControls } from '@/features/tasks/components/input/ChatInputControls'
+import { getChatSendState } from '@/features/tasks/components/input/chatSendState'
 
 jest.mock('@/features/layout/hooks/useMediaQuery', () => ({
   useIsMobile: () => false,
@@ -145,5 +146,82 @@ describe('ChatInputControls send state', () => {
 
     expect(screen.getByRole('button', { name: 'Stop generating' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Send' })).not.toBeInTheDocument()
+  })
+})
+
+describe('getChatSendState', () => {
+  it('allows queue send while streaming when input has content and queuing is available', () => {
+    expect(
+      getChatSendState({
+        isLoading: false,
+        isStreaming: true,
+        isAwaitingResponseStart: false,
+        isStopping: false,
+        isModelSelectionRequired: false,
+        isAttachmentReadyToSend: true,
+        hasNoTeams: false,
+        shouldHideChatInput: false,
+        taskInputMessage: 'next question',
+        selectedTaskStatus: 'RUNNING',
+        isSubtaskStreaming: true,
+        isGroupChat: false,
+        canQueueMessage: true,
+      })
+    ).toEqual({
+      primaryAction: 'queue',
+      isPrimaryDisabled: false,
+      showStopAction: true,
+      showPendingAction: false,
+    })
+  })
+
+  it('keeps stop as the only action while streaming with empty input', () => {
+    expect(
+      getChatSendState({
+        isLoading: false,
+        isStreaming: true,
+        isAwaitingResponseStart: false,
+        isStopping: false,
+        isModelSelectionRequired: false,
+        isAttachmentReadyToSend: true,
+        hasNoTeams: false,
+        shouldHideChatInput: false,
+        taskInputMessage: '',
+        selectedTaskStatus: 'RUNNING',
+        isSubtaskStreaming: true,
+        isGroupChat: false,
+        canQueueMessage: true,
+      })
+    ).toEqual({
+      primaryAction: 'stop',
+      isPrimaryDisabled: false,
+      showStopAction: true,
+      showPendingAction: false,
+    })
+  })
+
+  it('uses normal send outside streaming', () => {
+    expect(
+      getChatSendState({
+        isLoading: false,
+        isStreaming: false,
+        isAwaitingResponseStart: false,
+        isStopping: false,
+        isModelSelectionRequired: false,
+        isAttachmentReadyToSend: true,
+        hasNoTeams: false,
+        shouldHideChatInput: false,
+        taskInputMessage: 'hello',
+        selectedTaskStatus: undefined,
+        isSubtaskStreaming: false,
+        isGroupChat: false,
+        canQueueMessage: false,
+      })
+    ).toEqual({
+      primaryAction: 'send',
+      isPrimaryDisabled: false,
+      showStopAction: false,
+      showPendingAction: false,
+    })
   })
 })
