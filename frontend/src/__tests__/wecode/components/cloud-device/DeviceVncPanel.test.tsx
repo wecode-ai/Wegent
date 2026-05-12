@@ -57,7 +57,7 @@ describe('DeviceVncPanel', () => {
     await user.click(screen.getByRole('tab', { name: 'Files' }))
 
     await waitFor(() => {
-      expect(cloudDeviceApis.getFileConfig).toHaveBeenCalledWith('device-1')
+      expect(cloudDeviceApis.getFileConfig).toHaveBeenCalledWith('device-1', undefined)
     })
 
     expect(screen.getByTestId('cloud-device-files-credentials')).toBeInTheDocument()
@@ -106,7 +106,7 @@ describe('DeviceVncPanel', () => {
 
     await user.click(screen.getByRole('tab', { name: 'Files' }))
     await waitFor(() => {
-      expect(cloudDeviceApis.getFileConfig).toHaveBeenCalledWith('device-1')
+      expect(cloudDeviceApis.getFileConfig).toHaveBeenCalledWith('device-1', undefined)
     })
 
     await user.click(await screen.findByTestId('cloud-device-files-open-button'))

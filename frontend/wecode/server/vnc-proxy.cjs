@@ -45,6 +45,7 @@ function createVncProxy(backendUrl) {
 
     const deviceId = decodeURIComponent(match[1])
     const token = query.token
+    const ownerUserId = query.user_id
 
     if (!token) {
       socket.destroy()
@@ -52,11 +53,17 @@ function createVncProxy(backendUrl) {
     }
 
     // Fetch VNC config from backend
-    const configUrl = `${backendUrl}/api/cloud-devices/${encodeURIComponent(deviceId)}/vnc-config`
-    const http = configUrl.startsWith('https') ? require('https') : require('http')
+    const configUrl = new URL(
+      `${backendUrl}/api/cloud-devices/${encodeURIComponent(deviceId)}/vnc-config`
+    )
+    if (ownerUserId) {
+      configUrl.searchParams.set('user_id', String(ownerUserId))
+    }
+    const configUrlString = configUrl.toString()
+    const http = configUrlString.startsWith('https') ? require('https') : require('http')
 
     const configReq = http.get(
-      configUrl,
+      configUrlString,
       {
         headers: { Authorization: `Bearer ${token}` },
       },

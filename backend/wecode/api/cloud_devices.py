@@ -58,6 +58,14 @@ def _get_backend_url(request: Request) -> str:
     host = request.headers.get("host", request.url.netloc)
     return f"{scheme}://{host}"
 
+def _get_bearer_token(request: Request) -> str:
+    """Extract the raw Bearer token from the incoming request."""
+    authorization = request.headers.get("authorization", "")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer":
+        return ""
+    return token.strip()
+
 
 def _get_bearer_token(request: Request) -> str:
     """Extract the raw Bearer token from the incoming request."""
@@ -68,15 +76,38 @@ def _get_bearer_token(request: Request) -> str:
     return token.strip()
 
 
-async def _get_owned_cloud_device_status(
+def _resolve_target_user_id(
+    current_user: User,
+    target_user_id: int | None,
+) -> int:
+    """Resolve the target owner for cloud device access.
+
+    Non-admin users can only access their own devices. Admin users may
+    explicitly target another owner's device by passing ``user_id``.
+    """
+    if target_user_id is None or target_user_id == current_user.id:
+        return current_user.id
+
+    if getattr(current_user, "role", "user") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admins can access another user's cloud device",
+        )
+
+    return target_user_id
+
+
+async def _get_accessible_cloud_device_status(
     device_id: str,
     db: Session,
     current_user: User,
+    target_user_id: int | None = None,
 ) -> dict[str, Any]:
-    """Load a cloud device status payload and validate ownership."""
+    """Load a cloud device status payload and validate access."""
+    resolved_user_id = _resolve_target_user_id(current_user, target_user_id)
     device_status = await cloud_device_provider.get_status(
         db=db,
-        user_id=current_user.id,
+        user_id=resolved_user_id,
         device_id=device_id,
     )
     if not device_status:
@@ -254,6 +285,7 @@ async def delete_cloud_device(
 @router.get("/{device_id}/status", response_model=NevisSandboxStatus)
 async def get_cloud_device_nevis_status(
     device_id: str,
+    user_id: int | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -273,7 +305,12 @@ async def get_cloud_device_nevis_status(
         HTTPException 404: If device not found
         HTTPException 500: If Nevis API call fails
     """
-    device_status = await _get_owned_cloud_device_status(device_id, db, current_user)
+    device_status = await _get_accessible_cloud_device_status(
+        device_id,
+        db,
+        current_user,
+        user_id,
+    )
     sandbox_id = _resolve_sandbox_id(device_id, device_status)
 
     try:
@@ -303,6 +340,7 @@ async def get_cloud_device_nevis_status(
 @router.get("/{device_id}/vnc-config", response_model=VncConfigResponse)
 async def get_vnc_config(
     device_id: str,
+    user_id: int | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -327,7 +365,12 @@ async def get_vnc_config(
             detail="Cloud device provider is not configured",
         )
 
-    device_status = await _get_owned_cloud_device_status(device_id, db, current_user)
+    device_status = await _get_accessible_cloud_device_status(
+        device_id,
+        db,
+        current_user,
+        user_id,
+    )
     sandbox_id = _resolve_sandbox_id(device_id, device_status)
 
     # Build upstream VNC WebSocket URL from Nevis settings
@@ -356,6 +399,7 @@ async def get_vnc_config(
 @router.get("/{device_id}/file-config", response_model=CloudDeviceFileConfigResponse)
 async def get_cloud_device_file_config(
     device_id: str,
+    user_id: int | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -366,7 +410,12 @@ async def get_cloud_device_file_config(
             detail="Cloud device provider is not configured",
         )
 
-    device_status = await _get_owned_cloud_device_status(device_id, db, current_user)
+    device_status = await _get_accessible_cloud_device_status(
+        device_id,
+        db,
+        current_user,
+        user_id,
+    )
     sandbox_id = _resolve_sandbox_id(device_id, device_status)
 
     try:
@@ -423,6 +472,7 @@ async def vnc_websocket_proxy(
     websocket: WebSocket,
     device_id: str,
     token: str = "",
+    user_id: int | None = None,
 ):
     """WebSocket proxy for VNC connections to Nevis cloud devices.
 
@@ -469,10 +519,11 @@ async def vnc_websocket_proxy(
                 await websocket.close(code=4001, reason="Invalid token")
                 return
 
-            # Verify device ownership
+            # Verify device access for the authenticated user.
+            resolved_user_id = _resolve_target_user_id(user, user_id)
             device_status = await cloud_device_provider.get_status(
                 db=db,
-                user_id=user.id,
+                user_id=resolved_user_id,
                 device_id=device_id,
             )
             logger.info(f"[VNC Proxy] Device status: {bool(device_status)}")

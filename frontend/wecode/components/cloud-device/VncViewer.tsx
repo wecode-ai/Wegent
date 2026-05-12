@@ -12,10 +12,11 @@ type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error'
 
 interface VncViewerProps {
   readonly deviceId: string
+  readonly ownerUserId?: number
   readonly className?: string
 }
 
-export function VncViewer({ deviceId, className = '' }: VncViewerProps) {
+export function VncViewer({ deviceId, ownerUserId, className = '' }: VncViewerProps) {
   const { t } = useTranslation('devices')
   const containerRef = useRef<HTMLDivElement>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -61,15 +62,22 @@ export function VncViewer({ deviceId, className = '' }: VncViewerProps) {
       // 2. Proxy mode (npm run dev:proxy / production): getSocketUrl() is empty
       //    -> connect to ws://current-host/vnc-proxy/{deviceId}?token=jwt (handled by server.cjs)
       const backendUrl = getSocketUrl()
+      const searchParams = new URLSearchParams({
+        token,
+      })
+      if (ownerUserId != null) {
+        searchParams.set('user_id', String(ownerUserId))
+      }
+
       let wsUrl: string
       if (backendUrl) {
         // Direct backend mode
         const wsBase = backendUrl.replace(/^http/, 'ws')
-        wsUrl = `${wsBase}/api/cloud-devices/${encodeURIComponent(deviceId)}/vnc-ws?token=${encodeURIComponent(token)}`
+        wsUrl = `${wsBase}/api/cloud-devices/${encodeURIComponent(deviceId)}/vnc-ws?${searchParams.toString()}`
       } else {
         // Proxy mode (server.cjs)
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-        wsUrl = `${protocol}//${window.location.host}/vnc-proxy/${encodeURIComponent(deviceId)}?token=${encodeURIComponent(token)}`
+        wsUrl = `${protocol}//${window.location.host}/vnc-proxy/${encodeURIComponent(deviceId)}?${searchParams.toString()}`
       }
 
       const rfb = new RFB(containerRef.current, wsUrl)
@@ -107,7 +115,7 @@ export function VncViewer({ deviceId, className = '' }: VncViewerProps) {
       setStatus('error')
       setErrorMessage(err instanceof Error ? err.message : t('vnc_error'))
     }
-  }, [deviceId, t])
+  }, [deviceId, ownerUserId, t])
 
   useEffect(() => {
     connect()
