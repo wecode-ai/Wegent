@@ -820,7 +820,7 @@ export function useChatStreamHandlers({
     activeTaskQueue,
     enqueueMessage,
     retryMessage: retryQueuedMessage,
-    cancelMessage: cancelQueuedMessage,
+    cancelMessage,
     updateQueuedMessage,
   } = useMessageSendQueue<PreparedChatSend>({
     taskId: activeTaskId,
@@ -830,6 +830,21 @@ export function useChatStreamHandlers({
     dispatchMode: 'one-per-unblock',
   })
   retryQueuedMessageRef.current = retryQueuedMessage
+
+  const cancelQueuedMessage = useCallback(
+    (id: string) => {
+      const queuedMessage = activeTaskQueue.find(message => message.id === id)
+      if (!queuedMessage || queuedMessage.status === 'sending') return
+
+      cancelMessage(id)
+
+      const restoredMessage = queuedMessage.snapshot.sourceMessage || queuedMessage.displayMessage
+      setTaskInputMessage(
+        taskInputMessage.trim() ? `${restoredMessage}\n\n${taskInputMessage}` : restoredMessage
+      )
+    },
+    [activeTaskQueue, cancelMessage, setTaskInputMessage, taskInputMessage]
+  )
 
   const queuedMessages = useMemo<QueuedChatMessagePreview[]>(
     () =>
