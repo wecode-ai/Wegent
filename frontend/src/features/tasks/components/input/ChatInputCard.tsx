@@ -18,6 +18,13 @@ import type { Team, ChatTipItem, TaskType } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { SkillSelectorPopoverRef } from '../selector/SkillSelectorPopover'
 
+export interface QueuedInputMessage {
+  id: string
+  displayMessage: string
+  status: 'queued' | 'sending' | 'failed'
+  error?: string
+}
+
 export interface ChatInputCardProps extends Omit<
   ChatInputControlsProps,
   'taskInputMessage' | 'taskType'
@@ -66,6 +73,7 @@ export interface ChatInputCardProps extends Omit<
   // Submit
   canSubmit: boolean
   canQueueMessage?: boolean
+  queuedMessages?: QueuedInputMessage[]
   handleSendMessage: (message?: string) => Promise<void>
 
   // Ref for container width measurement
@@ -121,6 +129,7 @@ export function ChatInputCard({
   onDrop,
   canSubmit,
   canQueueMessage = false,
+  queuedMessages = [],
   handleSendMessage,
   onPasteFile,
   inputControlsRef,
@@ -215,6 +224,12 @@ export function ChatInputCard({
     !taskInputMessage.trim() &&
     selectedContexts.some(context => context.type === 'queue_message')
 
+  const getQueuedMessageStatusLabel = (status: QueuedInputMessage['status']) => {
+    if (status === 'sending') return t('messages.status_sending')
+    if (status === 'failed') return t('messages.queue_failed')
+    return t('messages.status_queued')
+  }
+
   // Get skill button element for fly animation
   const getSkillButtonElement = () => {
     return skillSelectorRef.current?.getButtonElement() ?? null
@@ -290,6 +305,34 @@ export function ChatInputCard({
 
         {/* Connection Status Banner - shows WebSocket connection status */}
         {!shouldHideChatInput && <ConnectionStatusBanner />}
+
+        {queuedMessages.length > 0 && !shouldHideChatInput && (
+          <div className="px-4 pt-3">
+            <div
+              data-testid="queued-message-list"
+              className="space-y-2 rounded-xl border border-border bg-surface/80 px-3 py-2"
+            >
+              {queuedMessages.map(message => (
+                <div key={message.id} data-testid="queued-message-item" className="min-w-0">
+                  <div className="mb-1 flex items-center gap-2">
+                    <span
+                      className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs ${
+                        message.status === 'failed'
+                          ? 'bg-destructive/10 text-destructive'
+                          : 'bg-primary/10 text-primary'
+                      }`}
+                    >
+                      {getQueuedMessageStatusLabel(message.status)}
+                    </span>
+                  </div>
+                  <p className="line-clamp-2 whitespace-pre-wrap break-words text-sm text-text-secondary">
+                    {message.displayMessage}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Chat Input with inline badge */}
         {!shouldHideChatInput && (

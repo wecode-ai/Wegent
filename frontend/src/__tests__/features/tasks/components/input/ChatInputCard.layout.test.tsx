@@ -195,4 +195,28 @@ describe('ChatInputCard layout', () => {
       })
     )
   })
+
+  it('renders queued messages above the chat input', () => {
+    render(
+      <ChatInputCard
+        {...buildProps()}
+        queuedMessages={[
+          {
+            id: '42:local-user-1',
+            displayMessage: 'next question',
+            status: 'queued',
+          },
+        ]}
+      />
+    )
+
+    const queuedList = screen.getByTestId('queued-message-list')
+    const chatInput = screen.getByTestId('chat-input')
+
+    expect(queuedList).toHaveTextContent('next question')
+    expect(queuedList).toHaveTextContent('messages.status_queued')
+    expect(queuedList.compareDocumentPosition(chatInput) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+  })
 })

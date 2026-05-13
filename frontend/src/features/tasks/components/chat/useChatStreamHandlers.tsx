@@ -18,9 +18,13 @@ import { isChatShell, teamRequiresWorkspace } from '../../service/messageService
 import { Button } from '@/components/ui/button'
 import { DEFAULT_MODEL_NAME, unifiedToModel } from '../../hooks/useModelSelection'
 import { useTaskStateMachine } from '../../hooks/useTaskStateMachine'
-import { taskStateManager, generateMessageId, type UnifiedMessage } from '../../state'
+import { generateMessageId } from '../../state'
 import { getStreamingJoinWarningKey } from './streamingJoinWarning'
-import { useMessageSendQueue, type QueuedMessage } from './useMessageSendQueue'
+import {
+  useMessageSendQueue,
+  type QueuedMessage,
+  type QueuedMessageStatus,
+} from './useMessageSendQueue'
 import type { Model } from '../selector/ModelSelector'
 import type { UnifiedModel } from '@/apis/models'
 import type {
@@ -128,6 +132,7 @@ export interface ChatStreamHandlers {
   localPendingMessage: string | null
   canQueueMessage: boolean
   queuedMessageCount: number
+  queuedMessages: QueuedChatMessagePreview[]
 
   // Actions
   handleSendMessage: (overrideMessage?: string) => Promise<void>
@@ -159,6 +164,13 @@ export interface ChatStreamHandlers {
 
   // State
   isCancelling: boolean
+}
+
+export interface QueuedChatMessagePreview {
+  id: string
+  displayMessage: string
+  status: QueuedMessageStatus
+  error?: string
 }
 
 /**
@@ -772,12 +784,6 @@ export function useChatStreamHandlers({
       const prepared = queuedMessage.snapshot
       setIsLoading(true)
       setIsAwaitingResponseStart(true)
-      taskStateManager
-        .getOrCreate(queuedMessage.taskId)
-        .updateUserMessage(prepared.localMessageId, {
-          queued: true,
-          queueStatus: 'sending',
-        })
 
       try {
         await sendPreparedChatMessage(prepared, { onError: undefined })
@@ -790,23 +796,10 @@ export function useChatStreamHandlers({
 
   const handleQueuedDispatchError = useCallback(
     (queuedMessage: QueuedMessage<PreparedChatSend>, error: Error) => {
-      const machine = taskStateManager.getOrCreate(queuedMessage.taskId)
       const retryQueuedMessage = () => {
-        machine.updateUserMessage(queuedMessage.localMessageId, {
-          status: 'pending',
-          queued: true,
-          queueStatus: 'queued',
-          error: undefined,
-        })
         retryQueuedMessageRef.current?.(queuedMessage.id)
       }
 
-      machine.updateUserMessage(queuedMessage.localMessageId, {
-        status: 'error',
-        queued: true,
-        queueStatus: 'failed',
-        error: error.message,
-      })
       setIsAwaitingResponseStart(false)
       setIsLoading(false)
       toast({
@@ -826,6 +819,7 @@ export function useChatStreamHandlers({
     activeTaskQueue,
     enqueueMessage,
     retryMessage: retryQueuedMessage,
+    updateQueuedMessage,
   } = useMessageSendQueue<PreparedChatSend>({
     taskId: activeTaskId,
     isDispatchBlocked: isActiveTaskBlocked,
@@ -835,35 +829,55 @@ export function useChatStreamHandlers({
   })
   retryQueuedMessageRef.current = retryQueuedMessage
 
-  const addQueuedUserMessage = useCallback(
-    (prepared: PreparedChatSend, taskId: number) => {
-      const videoConfig = prepared.request.generate_params
-        ? {
-            model: prepared.request.generate_params.model,
-            resolution: prepared.request.generate_params.resolution,
-            ratio: prepared.request.generate_params.ratio,
-            duration: prepared.request.generate_params.duration,
-          }
-        : undefined
+  const queuedMessages = useMemo<QueuedChatMessagePreview[]>(
+    () =>
+      activeTaskQueue.map(message => ({
+        id: message.id,
+        displayMessage: message.displayMessage,
+        status: message.status,
+        error: message.error,
+      })),
+    [activeTaskQueue]
+  )
 
-      const userMessage: UnifiedMessage = {
-        id: prepared.localMessageId,
-        type: 'user',
-        status: 'pending',
-        content: prepared.displayMessage,
-        attachments: prepared.options.pendingAttachments,
-        contexts: prepared.options.pendingContexts,
-        timestamp: Date.now(),
-        senderUserId: user?.id,
-        shouldShowSender: prepared.request.is_group_chat,
-        queued: true,
-        queueStatus: 'queued',
-        result: videoConfig ? { video_config: videoConfig } : undefined,
+  const mergePreparedChatSend = useCallback(
+    (current: PreparedChatSend, next: PreparedChatSend): PreparedChatSend => {
+      const displayMessage = `${current.displayMessage}\n\n${next.displayMessage}`
+      const sourceMessage = `${current.sourceMessage}\n\n${next.sourceMessage}`
+
+      return {
+        ...current,
+        displayMessage,
+        sourceMessage,
+        request: {
+          ...current.request,
+          message: sourceMessage,
+          attachment_ids: [
+            ...(current.request.attachment_ids ?? []),
+            ...(next.request.attachment_ids ?? []),
+          ],
+          contexts: [...(current.request.contexts ?? []), ...(next.request.contexts ?? [])],
+          additional_skills: [
+            ...(current.request.additional_skills ?? []),
+            ...(next.request.additional_skills ?? []),
+          ],
+          generate_params: next.request.generate_params ?? current.request.generate_params,
+        },
+        options: {
+          ...current.options,
+          pendingUserMessage: sourceMessage,
+          pendingAttachments: [
+            ...(current.options.pendingAttachments ?? []),
+            ...(next.options.pendingAttachments ?? []),
+          ],
+          pendingContexts: [
+            ...(current.options.pendingContexts ?? []),
+            ...(next.options.pendingContexts ?? []),
+          ],
+        },
       }
-
-      taskStateManager.getOrCreate(taskId).addUserMessage(userMessage)
     },
-    [user?.id]
+    []
   )
 
   // Core message sending logic
@@ -909,13 +923,27 @@ export function useChatStreamHandlers({
       const prepared = prepareChatSend(message, localMessageId, immediateTaskId, effectiveRepo)
 
       if (canQueueMessage && activeTaskId) {
-        addQueuedUserMessage(prepared, activeTaskId)
-        enqueueMessage({
-          taskId: activeTaskId,
-          localMessageId,
-          displayMessage: prepared.displayMessage,
-          snapshot: prepared,
-        })
+        const mergeTarget = [...activeTaskQueue]
+          .reverse()
+          .find(queuedMessage => queuedMessage.status === 'queued')
+
+        if (mergeTarget) {
+          updateQueuedMessage(mergeTarget.id, queuedMessage => {
+            const mergedPrepared = mergePreparedChatSend(queuedMessage.snapshot, prepared)
+            return {
+              ...queuedMessage,
+              displayMessage: mergedPrepared.displayMessage,
+              snapshot: mergedPrepared,
+            }
+          })
+        } else {
+          enqueueMessage({
+            taskId: activeTaskId,
+            localMessageId,
+            displayMessage: prepared.displayMessage,
+            snapshot: prepared,
+          })
+        }
         setTaskInputMessage('')
         resetAttachment()
         resetContexts?.()
@@ -956,8 +984,10 @@ export function useChatStreamHandlers({
       prepareChatSend,
       canQueueMessage,
       activeTaskId,
-      addQueuedUserMessage,
+      activeTaskQueue,
       enqueueMessage,
+      updateQueuedMessage,
+      mergePreparedChatSend,
       setTaskInputMessage,
       resetAttachment,
       resetContexts,
@@ -1406,6 +1436,7 @@ export function useChatStreamHandlers({
     localPendingMessage,
     canQueueMessage,
     queuedMessageCount: activeTaskQueue.length,
+    queuedMessages,
 
     // Actions
     handleSendMessage,

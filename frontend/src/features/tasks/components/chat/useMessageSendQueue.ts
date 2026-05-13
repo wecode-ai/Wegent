@@ -64,6 +64,17 @@ export function useMessageSendQueue<TSnapshot>({
     )
   }, [])
 
+  const updateQueuedMessage = useCallback(
+    (id: string, updater: (message: QueuedMessage<TSnapshot>) => QueuedMessage<TSnapshot>) => {
+      setQueuedMessages(current =>
+        current.map(message =>
+          message.id === id && message.status === 'queued' ? updater(message) : message
+        )
+      )
+    },
+    []
+  )
+
   const activeTaskQueue = useMemo(() => {
     if (!taskId) return []
     return queuedMessages.filter(message => message.taskId === taskId)
@@ -119,5 +130,6 @@ export function useMessageSendQueue<TSnapshot>({
     activeTaskQueue,
     enqueueMessage,
     retryMessage,
+    updateQueuedMessage,
   }
 }

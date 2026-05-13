@@ -14,6 +14,7 @@ const mockUpdateUserMessage = jest.fn()
 const mockToast = jest.fn()
 
 let isMachineStreamingMock = true
+let taskInputMessageMock = 'next question'
 let selectedTaskDetailMock = {
   id: 42,
   status: 'RUNNING',
@@ -99,7 +100,7 @@ function renderQueueableHook() {
       selectedBranch: null,
       showRepositorySelector: false,
       effectiveRequiresWorkspace: false,
-      taskInputMessage: 'next question',
+      taskInputMessage: taskInputMessageMock,
       setTaskInputMessage: mockSetTaskInputMessage,
       setIsLoading: mockSetIsLoading,
       enableDeepThinking: false,
@@ -128,6 +129,7 @@ describe('useChatStreamHandlers queue integration', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     isMachineStreamingMock = true
+    taskInputMessageMock = 'next question'
     selectedTaskDetailMock = {
       id: 42,
       status: 'RUNNING',
@@ -136,7 +138,7 @@ describe('useChatStreamHandlers queue integration', () => {
     } as unknown as TaskDetail
   })
 
-  it('queues a follow-up locally instead of sending immediately while the active task is streaming', async () => {
+  it('queues a follow-up outside the chat message stream while the active task is streaming', async () => {
     const { result } = renderQueueableHook()
 
     await act(async () => {
@@ -144,19 +146,60 @@ describe('useChatStreamHandlers queue integration', () => {
     })
 
     expect(mockContextSendMessage).not.toHaveBeenCalled()
-    expect(mockAddUserMessage).toHaveBeenCalledWith(
+    expect(mockAddUserMessage).not.toHaveBeenCalled()
+    expect(result.current.queuedMessages).toEqual([
       expect.objectContaining({
-        id: 'local-user-1',
-        type: 'user',
-        status: 'pending',
-        queued: true,
-        queueStatus: 'queued',
-        content: 'next question',
-      })
-    )
+        id: '42:local-user-1',
+        displayMessage: 'next question',
+        status: 'queued',
+      }),
+    ])
     expect(mockSetTaskInputMessage).toHaveBeenCalledWith('')
     expect(mockResetAttachment).toHaveBeenCalled()
     expect(mockResetContexts).toHaveBeenCalled()
+  })
+
+  it('merges a new queued input into the existing queued message and sends once', async () => {
+    taskInputMessageMock = 'first question'
+    const { result, rerender } = renderQueueableHook()
+
+    await act(async () => {
+      await result.current.handleSendMessage()
+    })
+
+    taskInputMessageMock = 'second question'
+    rerender()
+
+    await act(async () => {
+      await result.current.handleSendMessage()
+    })
+
+    expect(result.current.queuedMessages).toEqual([
+      expect.objectContaining({
+        displayMessage: 'first question\n\nsecond question',
+        status: 'queued',
+      }),
+    ])
+    expect(mockContextSendMessage).not.toHaveBeenCalled()
+
+    isMachineStreamingMock = false
+    selectedTaskDetailMock = {
+      id: 42,
+      status: 'COMPLETED',
+      is_group_chat: false,
+      subtasks: [],
+    } as unknown as TaskDetail
+    rerender()
+
+    await waitFor(() => {
+      expect(mockContextSendMessage).toHaveBeenCalledTimes(1)
+    })
+    expect(mockContextSendMessage.mock.calls[0][0]).toMatchObject({
+      message: 'first question\n\nsecond question',
+    })
+    expect(mockContextSendMessage.mock.calls[0][1]).toMatchObject({
+      pendingUserMessage: 'first question\n\nsecond question',
+    })
   })
 
   it('does not expose queue availability for a pending task unless it is streaming or awaiting response', () => {
@@ -173,7 +216,7 @@ describe('useChatStreamHandlers queue integration', () => {
     expect(result.current.canQueueMessage).toBe(false)
   })
 
-  it('shows a retry action that resets a failed queued message to queued', async () => {
+  it('shows a retry action that resends a failed queued message', async () => {
     mockContextSendMessage.mockImplementationOnce(async (_request, options) => {
       options?.onError?.(new Error('network down'))
       throw new Error('network down')
@@ -203,6 +246,10 @@ describe('useChatStreamHandlers queue integration', () => {
       )
     })
     expect(mockToast).toHaveBeenCalledTimes(1)
+    expect(result.current.queuedMessages[0]).toMatchObject({
+      status: 'failed',
+      error: 'network down',
+    })
 
     const toastAction = mockToast.mock.calls[0][0].action as React.ReactElement<{
       onClick: () => void
@@ -212,11 +259,9 @@ describe('useChatStreamHandlers queue integration', () => {
       await Promise.resolve()
     })
 
-    expect(mockUpdateUserMessage).toHaveBeenCalledWith('local-user-1', {
-      status: 'pending',
-      queued: true,
-      queueStatus: 'queued',
-      error: undefined,
+    await waitFor(() => {
+      expect(mockContextSendMessage).toHaveBeenCalledTimes(2)
     })
+    expect(mockUpdateUserMessage).not.toHaveBeenCalled()
   })
 })

@@ -164,6 +164,43 @@ describe('useMessageSendQueue', () => {
     expect(result.current.activeTaskQueue).toEqual([])
   })
 
+  it('updates a queued message snapshot before it is dispatched', async () => {
+    const dispatchMessage = jest.fn().mockResolvedValue(undefined)
+    let isDispatchBlocked = true
+
+    const { result, rerender } = renderHook(() =>
+      useMessageSendQueue<Snapshot>({
+        taskId: 42,
+        isDispatchBlocked,
+        dispatchMessage,
+      })
+    )
+
+    act(() => {
+      result.current.enqueueMessage(queued('first'))
+    })
+
+    const queuedId = result.current.activeTaskQueue[0].id
+    act(() => {
+      result.current.updateQueuedMessage(queuedId, message => ({
+        ...message,
+        displayMessage: 'first\n\nsecond',
+        snapshot: { message: 'first\n\nsecond' },
+      }))
+    })
+
+    isDispatchBlocked = false
+    rerender()
+
+    await waitFor(() => {
+      expect(dispatchMessage).toHaveBeenCalledTimes(1)
+    })
+    expect(dispatchMessage.mock.calls[0][0]).toMatchObject({
+      displayMessage: 'first\n\nsecond',
+      snapshot: { message: 'first\n\nsecond' },
+    })
+  })
+
   it('only dispatches messages for the active task', async () => {
     const dispatchMessage = jest.fn().mockResolvedValue(undefined)
 

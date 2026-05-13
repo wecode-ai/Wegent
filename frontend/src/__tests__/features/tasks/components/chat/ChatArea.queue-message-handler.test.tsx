@@ -15,6 +15,7 @@ const defaultStreamHandlers = {
   isSubtaskStreaming: false,
   canQueueMessage: false,
   queuedMessageCount: 0,
+  queuedMessages: [],
   isStopping: false,
   hasPendingUserMessage: false,
   localPendingMessage: null,
@@ -256,7 +257,7 @@ describe('ChatArea queue message handler mounting', () => {
     render(<ChatArea teams={[]} isTeamsLoading={false} taskType="chat" showRepositorySelector />)
 
     expect(mockChatInputCard).toHaveBeenCalledWith(
-      expect.objectContaining({ canQueueMessage: true, canSubmit: true })
+      expect.objectContaining({ canQueueMessage: true, canSubmit: true, queuedMessages: [] })
     )
   })
 

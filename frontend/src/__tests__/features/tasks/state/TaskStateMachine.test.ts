@@ -55,36 +55,4 @@ describe('TaskStateMachine', () => {
 
     nowSpy.mockRestore()
   })
-
-  it('preserves queued metadata on local user messages until the sender updates it', () => {
-    const machine = new TaskStateMachine(100, {
-      joinTask: jest.fn(),
-      isConnected: () => true,
-    })
-
-    machine.addUserMessage({
-      id: 'queued-local',
-      type: 'user',
-      status: 'pending',
-      content: 'next question',
-      timestamp: 1000,
-      queued: true,
-      queueStatus: 'queued',
-    })
-
-    expect(machine.getState().messages.get('queued-local')).toMatchObject({
-      queued: true,
-      queueStatus: 'queued',
-    })
-
-    machine.updateUserMessage('queued-local', {
-      queued: false,
-      queueStatus: 'sending',
-    })
-
-    expect(machine.getState().messages.get('queued-local')).toMatchObject({
-      queued: false,
-      queueStatus: 'sending',
-    })
-  })
 })
