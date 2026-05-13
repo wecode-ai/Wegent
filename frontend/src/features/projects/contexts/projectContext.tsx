@@ -10,6 +10,7 @@ import { projectApis, CreateProjectRequest, UpdateProjectRequest } from '@/apis/
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { ApiError } from '@/apis/client'
+import { getRuntimeConfigSync } from '@/lib/runtime-config'
 
 interface ProjectContextValue {
   // Data
@@ -44,6 +45,7 @@ const ProjectContext = createContext<ProjectContextValue | undefined>(undefined)
 export function ProjectProvider({ children }: { children: React.ReactNode }) {
   const { t } = useTranslation('projects')
   const { toast } = useToast()
+  const enableProjectWorkspace = getRuntimeConfigSync().enableProjectWorkspace
 
   const [projects, setProjects] = useState<ProjectWithTasks[]>([])
   const [isLoading, setIsLoading] = useState(false)
@@ -58,12 +60,15 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
   const projectTaskIds = useMemo(() => {
     const ids = new Set<number>()
     projects.forEach(project => {
+      if (!enableProjectWorkspace && project.config?.mode === 'workspace') {
+        return
+      }
       project.tasks?.forEach(task => {
         ids.add(task.task_id)
       })
     })
     return ids
-  }, [projects])
+  }, [projects, enableProjectWorkspace])
 
   // Fetch projects
   const refreshProjects = useCallback(async () => {

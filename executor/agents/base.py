@@ -306,9 +306,7 @@ class Agent:
             git_url = self.task_data.git_url or ""
             if git_url:
                 repo_name = git_util.get_repo_name_from_url(git_url)
-                project_path = os.path.join(
-                    config.get_workspace_root(), str(self.task_id), repo_name
-                )
+                project_path = self._resolve_git_project_path(repo_name)
                 if self.project_path is None:
                     self.project_path = project_path
             return
@@ -336,9 +334,7 @@ class Agent:
 
         logger.info(user_config)
 
-        project_path = os.path.join(
-            config.get_workspace_root(), str(self.task_id), repo_name
-        )
+        project_path = self._resolve_git_project_path(repo_name)
         if self.project_path is None:
             self.project_path = project_path
 
@@ -368,6 +364,28 @@ class Agent:
             logger.info(
                 f"Agent[{self.get_name()}][{self.task_id}] Project already exists at {project_path}, skip cloning"
             )
+
+    def _resolve_git_project_path(self, repo_name: str) -> str:
+        """Resolve the checkout path for git-backed tasks."""
+
+        project_workspace_path = getattr(self.task_data, "project_workspace_path", None)
+        if project_workspace_path:
+            expanded_path = os.path.expanduser(project_workspace_path)
+            if not os.path.isabs(expanded_path):
+                expanded_path = os.path.join(config.get_workspace_root(), expanded_path)
+            return expanded_path
+
+        project_id = getattr(self.task_data, "project_id", None)
+        if project_id:
+            safe_repo_name = repo_name.replace("/", "_").replace("\\", "_")
+            return os.path.join(
+                config.get_workspace_root(),
+                "projects",
+                str(project_id),
+                safe_repo_name,
+            )
+
+        return os.path.join(config.get_workspace_root(), str(self.task_id), repo_name)
 
     def initialize(self) -> TaskStatus:
         """

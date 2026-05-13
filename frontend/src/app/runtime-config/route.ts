@@ -78,6 +78,12 @@ export async function GET() {
         process.env.RUNTIME_ENABLE_CODE_KNOWLEDGE_ADD_REPO !== 'false' &&
         process.env.NEXT_PUBLIC_ENABLE_CODE_KNOWLEDGE_ADD_REPO !== 'false',
 
+      // Enable workspace project UI
+      // Priority: RUNTIME_ENABLE_PROJECT_WORKSPACE > NEXT_PUBLIC_ENABLE_PROJECT_WORKSPACE > false
+      enableProjectWorkspace:
+        process.env.RUNTIME_ENABLE_PROJECT_WORKSPACE === 'true' ||
+        process.env.NEXT_PUBLIC_ENABLE_PROJECT_WORKSPACE === 'true',
+
       // VSCode link template for deep linking
       // Priority: RUNTIME_VSCODE_LINK_TEMPLATE > NEXT_PUBLIC_VSCODE_LINK_TEMPLATE > empty
       vscodeLinkTemplate:
@@ -128,10 +134,7 @@ export async function GET() {
 
       // Application version (injected at Docker build time)
       // Priority: RUNTIME_APP_VERSION > NEXT_PUBLIC_APP_VERSION > 'dev'
-      appVersion:
-        process.env.RUNTIME_APP_VERSION ||
-        process.env.NEXT_PUBLIC_APP_VERSION ||
-        'dev',
+      appVersion: process.env.RUNTIME_APP_VERSION || process.env.NEXT_PUBLIC_APP_VERSION || 'dev',
     },
     {
       headers: {

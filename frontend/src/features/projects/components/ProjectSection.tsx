@@ -38,6 +38,7 @@ import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContex
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { TaskInlineRename } from '@/components/common/TaskInlineRename'
 import { taskApis } from '@/apis/tasks'
+import { getRuntimeConfigSync } from '@/lib/runtime-config'
 
 interface ProjectSectionProps {
   onTaskSelect?: () => void
@@ -57,6 +58,10 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
   } = useProjectContext()
   const { clearAllStreams } = useChatStreamContext()
   const { setSelectedTask } = useTaskContext()
+  const enableProjectWorkspace = getRuntimeConfigSync().enableProjectWorkspace
+  const visibleProjects = enableProjectWorkspace
+    ? projects
+    : projects.filter(project => project.config?.mode !== 'workspace')
 
   // Dialog states
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
@@ -124,7 +129,7 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
             <ChevronDown className="w-3.5 h-3.5" />
           )}
           <span>{t('section.title')}</span>
-          <span className="text-text-muted ml-1">({projects.length})</span>
+          <span className="text-text-muted ml-1">({visibleProjects.length})</span>
         </button>
         <Button
           variant="ghost"
@@ -142,10 +147,10 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
         <div className="space-y-0.5">
           {isLoading ? (
             <div className="px-4 py-2 text-xs text-text-muted">{t('common:loading')}</div>
-          ) : projects.length === 0 ? (
+          ) : visibleProjects.length === 0 ? (
             <div className="px-4 py-2 text-xs text-text-muted">{t('section.empty')}</div>
           ) : (
-            projects.map(project => (
+            visibleProjects.map(project => (
               <DroppableProject key={project.id} projectId={project.id}>
                 <ProjectItem
                   project={project}

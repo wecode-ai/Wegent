@@ -27,6 +27,20 @@
     "submit": "Create",
     "cancel": "Cancel"
   },
+  "workspace": {
+    "enable": "Create as workspace project",
+    "local": "Local device",
+    "cloud": "Cloud device",
+    "deviceId": "Local device ID",
+    "teamId": "Agent ID",
+    "git": "Clone from Git",
+    "localPath": "Local path",
+    "gitUrl": "Git URL",
+    "gitRepo": "Repository name (optional)",
+    "gitBranch": "Branch, default main",
+    "checkoutPath": "Checkout path (optional)",
+    "localPathPlaceholder": "Directory path"
+  },
   "edit": {
     "title": "Edit Project",
     "description": "Modify project information",

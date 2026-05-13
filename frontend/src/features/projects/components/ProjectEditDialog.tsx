@@ -142,7 +142,7 @@ export function ProjectEditDialog({ open, onOpenChange, project }: ProjectEditDi
           <Button variant="outline" onClick={handleClose} disabled={isSaving}>
             {t('edit.cancel')}
           </Button>
-          <Button onClick={handleSave} disabled={isSaving || !name.trim()}>
+          <Button variant="primary" onClick={handleSave} disabled={isSaving || !name.trim()}>
             {isSaving ? t('common:actions.saving') : t('edit.submit')}
           </Button>
         </div>

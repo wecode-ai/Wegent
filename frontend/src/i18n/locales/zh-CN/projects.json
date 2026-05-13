@@ -27,6 +27,20 @@
     "submit": "创建",
     "cancel": "取消"
   },
+  "workspace": {
+    "enable": "创建为项目工作区",
+    "local": "本地设备",
+    "cloud": "云端设备",
+    "deviceId": "本地设备 ID",
+    "teamId": "智能体 ID",
+    "git": "从 Git 拉取",
+    "localPath": "指定目录",
+    "gitUrl": "Git URL",
+    "gitRepo": "仓库名称（可选）",
+    "gitBranch": "分支，默认 main",
+    "checkoutPath": "目标目录（可选）",
+    "localPathPlaceholder": "目录地址"
+  },
   "edit": {
     "title": "编辑分组",
     "description": "修改分组信息",

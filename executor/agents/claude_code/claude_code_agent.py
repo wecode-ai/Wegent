@@ -67,6 +67,7 @@ from shared.models.responses_api_emitter import ResponsesAPIEmitter
 from shared.models.task import ExecutionResult, ThinkingStep
 from shared.status import TaskStatus
 from shared.telemetry.decorators import add_span_event, trace_async
+from shared.utils import git_util
 
 logger = setup_logger("claude_code_agent")
 
@@ -417,6 +418,7 @@ class ClaudeCodeAgent(Agent):
                 - Optional[str]: Error message if failed, None if successful
         """
         try:
+            self._prepare_project_workspace()
             git_url = self.task_data.git_url
             # Download code if git_url is provided
             if git_url and git_url != "":
@@ -470,6 +472,46 @@ class ClaudeCodeAgent(Agent):
                 details={"error": str(e)},
             )
             return TaskStatus.FAILED, error_msg
+
+    def _prepare_project_workspace(self) -> None:
+        """Resolve project workspace paths before Claude Code starts."""
+
+        project_id = getattr(self.task_data, "project_id", None)
+        workspace_source = getattr(self.task_data, "workspace_source", None)
+        if not project_id or not workspace_source:
+            return
+
+        project_path = getattr(self.task_data, "project_workspace_path", None)
+        if project_path:
+            project_path = os.path.expanduser(str(project_path))
+            if not os.path.isabs(project_path):
+                project_path = os.path.join(config.get_workspace_root(), project_path)
+        elif workspace_source == "git" and self.task_data.git_url:
+            repo_name = git_util.get_repo_name_from_url(self.task_data.git_url)
+            safe_repo_name = repo_name.replace("/", "_").replace("\\", "_")
+            project_path = os.path.join(
+                config.get_workspace_root(),
+                "projects",
+                str(project_id),
+                safe_repo_name,
+            )
+
+        if not project_path:
+            return
+
+        if workspace_source == "local_path":
+            os.makedirs(project_path, exist_ok=True)
+        else:
+            parent_dir = os.path.dirname(project_path)
+            if parent_dir:
+                os.makedirs(parent_dir, exist_ok=True)
+
+        self.project_path = project_path
+        self.options["cwd"] = project_path
+        SessionManager.set_task_session_root(self.task_id, project_path)
+        logger.info(
+            "Using project workspace path for task %s: %s", self.task_id, project_path
+        )
 
     def execute(self) -> TaskStatus:
         """
