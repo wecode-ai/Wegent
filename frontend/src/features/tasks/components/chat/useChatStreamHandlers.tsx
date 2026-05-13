@@ -18,7 +18,13 @@ import { isChatShell, teamRequiresWorkspace } from '../../service/messageService
 import { Button } from '@/components/ui/button'
 import { DEFAULT_MODEL_NAME, unifiedToModel } from '../../hooks/useModelSelection'
 import { useTaskStateMachine } from '../../hooks/useTaskStateMachine'
+import { generateMessageId } from '../../state'
 import { getStreamingJoinWarningKey } from './streamingJoinWarning'
+import {
+  useMessageSendQueue,
+  type QueuedMessage,
+  type QueuedMessageStatus,
+} from './useMessageSendQueue'
 import type { Model } from '../selector/ModelSelector'
 import type { UnifiedModel } from '@/apis/models'
 import type {
@@ -124,6 +130,10 @@ export interface ChatStreamHandlers {
   isStopping: boolean
   hasPendingUserMessage: boolean
   localPendingMessage: string | null
+  canQueueMessage: boolean
+  queuedMessageCount: number
+  queuedMessages: QueuedChatMessagePreview[]
+  cancelQueuedMessage: (id: string) => void
 
   // Actions
   handleSendMessage: (overrideMessage?: string) => Promise<void>
@@ -155,6 +165,13 @@ export interface ChatStreamHandlers {
 
   // State
   isCancelling: boolean
+}
+
+export interface QueuedChatMessagePreview {
+  id: string
+  displayMessage: string
+  status: QueuedMessageStatus
+  error?: string
 }
 
 /**
@@ -218,6 +235,17 @@ export function useChatStreamHandlers({
     clearVersion,
   } = useChatStreamContext()
 
+  type ContextSendRequest = Parameters<typeof contextSendMessage>[0]
+  type ContextSendOptions = NonNullable<Parameters<typeof contextSendMessage>[1]>
+
+  interface PreparedChatSend {
+    localMessageId: string
+    displayMessage: string
+    sourceMessage: string
+    request: ContextSendRequest
+    options: ContextSendOptions
+  }
+
   const { retryMessage } = useSocket()
 
   // Get selected device ID for executor-based tasks
@@ -247,6 +275,7 @@ export function useChatStreamHandlers({
   const prevTaskIdForModelRef = useRef<number | null | undefined>(undefined)
   const prevClearVersionRef = useRef(clearVersion)
   const lastJoinWarningRef = useRef<string | null>(null)
+  const retryQueuedMessageRef = useRef<((id: string) => void) | null>(null)
 
   // Unified function to reset streaming-related state
   const resetStreamingState = useCallback(() => {
@@ -452,6 +481,422 @@ export function useChatStreamHandlers({
     [resetStreamingState, toast, t, createRetryButton]
   )
 
+  const prepareChatSend = useCallback(
+    (
+      message: string,
+      localMessageId: string,
+      immediateTaskId: number,
+      effectiveRepo: Pick<GitRepoInfo, 'git_url' | 'git_repo' | 'git_repo_id' | 'git_domain'> | null
+    ): PreparedChatSend => {
+      const snapshotAttachments = [...attachments]
+      const snapshotContexts = [...selectedContexts]
+      const snapshotAdditionalSkills = additionalSkills ? [...additionalSkills] : undefined
+      const modelId = selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name
+
+      let finalMessage = message
+      if (Object.keys(externalApiParams).length > 0) {
+        const paramsJson = JSON.stringify(externalApiParams)
+        finalMessage = `[EXTERNAL_API_PARAMS]${paramsJson}[/EXTERNAL_API_PARAMS]\n${message}`
+      }
+
+      const contextItems: Array<{
+        type: 'knowledge_base' | 'table' | 'selected_documents'
+        data: Record<string, unknown>
+      }> = snapshotContexts
+        .filter(ctx => ctx.type !== 'queue_message' && ctx.type !== 'dingtalk_doc')
+        .map(ctx => {
+          if (ctx.type === 'knowledge_base') {
+            return {
+              type: 'knowledge_base' as const,
+              data: {
+                knowledge_id: ctx.id,
+                name: ctx.name,
+                document_count: ctx.document_count,
+              },
+            }
+          }
+          return {
+            type: 'table' as const,
+            data: {
+              document_id: (ctx as { document_id: number }).document_id,
+              name: ctx.name,
+              source_config: (ctx as { source_config?: { url?: string } }).source_config,
+            },
+          }
+        })
+
+      let messageWithQueueContent = finalMessage
+      const queueMessageContexts = snapshotContexts.filter(ctx => ctx.type === 'queue_message')
+      if (queueMessageContexts.length > 0) {
+        const queueContents = queueMessageContexts
+          .map(ctx => (ctx as import('@/types/context').QueueMessageContext).fullContent)
+          .join('\n\n---\n\n')
+        messageWithQueueContent = `${queueContents}\n\n---\n\n${finalMessage}`
+      }
+
+      const dingtalkDocContexts = snapshotContexts.filter(ctx => ctx.type === 'dingtalk_doc')
+      if (dingtalkDocContexts.length > 0) {
+        const docRefs = dingtalkDocContexts
+          .map(ctx => {
+            const docCtx = ctx as import('@/types/context').DingTalkDocContext
+            return `- [${docCtx.name}](${docCtx.doc_url})`
+          })
+          .join('\n')
+        const dingtalkPrefix = `**${t('chat:dingtalkDocs.referencedDocsLabel')}**\n${docRefs}\n\n---\n\n`
+        messageWithQueueContent = `${dingtalkPrefix}${messageWithQueueContent}`
+      }
+
+      const queueAttachmentIds = queueMessageContexts.flatMap(
+        ctx => (ctx as import('@/types/context').QueueMessageContext).attachmentContextIds ?? []
+      )
+
+      const inboxAttachmentContexts = queueMessageContexts.flatMap(
+        ctx => (ctx as import('@/types/context').QueueMessageContext).inboxAttachments ?? []
+      )
+
+      if (
+        taskType === 'knowledge' &&
+        selectedDocumentIds &&
+        selectedDocumentIds.length > 0 &&
+        knowledgeBaseId
+      ) {
+        contextItems.push({
+          type: 'selected_documents' as const,
+          data: {
+            knowledge_base_id: knowledgeBaseId,
+            document_ids: selectedDocumentIds,
+          },
+        })
+      }
+
+      const pendingContexts: Array<{
+        id: number
+        context_type: 'attachment' | 'knowledge_base' | 'table'
+        name: string
+        status: 'pending' | 'ready'
+        file_extension?: string
+        file_size?: number
+        mime_type?: string
+        document_count?: number
+        knowledge_id?: number
+        document_id?: number
+        source_config?: {
+          url?: string
+        }
+      }> = []
+
+      for (const attachment of snapshotAttachments) {
+        pendingContexts.push({
+          id: attachment.id,
+          context_type: 'attachment',
+          name: attachment.filename,
+          status: attachment.status === 'ready' ? 'ready' : 'pending',
+          file_extension: attachment.file_extension,
+          file_size: attachment.file_size,
+          mime_type: attachment.mime_type,
+        })
+      }
+
+      for (const inboxAtt of inboxAttachmentContexts) {
+        pendingContexts.push({
+          id: inboxAtt.id,
+          context_type: 'attachment',
+          name: inboxAtt.name,
+          status: 'ready',
+          file_extension: inboxAtt.file_extension,
+          file_size: inboxAtt.file_size,
+          mime_type: inboxAtt.mime_type,
+        })
+      }
+
+      for (const ctx of snapshotContexts) {
+        if (ctx.type === 'knowledge_base') {
+          const kbContext = ctx as typeof ctx & { document_count?: number }
+          pendingContexts.push({
+            id: typeof ctx.id === 'number' ? ctx.id : parseInt(String(ctx.id), 10),
+            context_type: 'knowledge_base',
+            name: ctx.name,
+            status: 'ready',
+            knowledge_id: typeof ctx.id === 'number' ? ctx.id : parseInt(String(ctx.id), 10),
+            document_count: kbContext.document_count,
+          })
+        } else if (ctx.type === 'table') {
+          const tableContext = ctx as typeof ctx & {
+            document_id: number
+            source_config?: { url?: string }
+          }
+          pendingContexts.push({
+            id: tableContext.document_id,
+            context_type: 'table',
+            name: ctx.name,
+            status: 'ready',
+            document_id: tableContext.document_id,
+            source_config: tableContext.source_config,
+          })
+        }
+      }
+
+      const request: ContextSendRequest = {
+        message: messageWithQueueContent,
+        team_id: selectedTeam?.id ?? 0,
+        task_id: selectedTaskDetail?.id,
+        model_id: modelId,
+        force_override_bot_model: forceOverride,
+        force_override_bot_model_type: selectedModel?.type,
+        attachment_ids: [...snapshotAttachments.map(a => a.id), ...queueAttachmentIds],
+        enable_deep_thinking: enableDeepThinking,
+        enable_clarification: enableClarification,
+        is_group_chat: selectedTaskDetail?.is_group_chat || false,
+        git_url: showRepositorySelector ? effectiveRepo?.git_url : undefined,
+        git_repo: showRepositorySelector ? effectiveRepo?.git_repo : undefined,
+        git_repo_id: showRepositorySelector ? effectiveRepo?.git_repo_id : undefined,
+        git_domain: showRepositorySelector ? effectiveRepo?.git_domain : undefined,
+        branch_name: showRepositorySelector
+          ? selectedBranch?.name || selectedTaskDetail?.branch_name
+          : undefined,
+        task_type: taskType,
+        knowledge_base_id: taskType === 'knowledge' ? knowledgeBaseId : undefined,
+        contexts: contextItems.length > 0 ? contextItems : undefined,
+        device_id: effectiveDeviceId,
+        additional_skills:
+          snapshotAdditionalSkills && snapshotAdditionalSkills.length > 0
+            ? snapshotAdditionalSkills
+            : undefined,
+        generate_params: generateParams,
+      }
+
+      const options: ContextSendOptions = {
+        pendingUserMessage: messageWithQueueContent,
+        pendingAttachments: snapshotAttachments,
+        pendingContexts: pendingContexts.length > 0 ? pendingContexts : undefined,
+        immediateTaskId,
+        currentUserId: user?.id,
+        onMessageSent: (_localMessageId: string, completedTaskId: number) => {
+          if (completedTaskId > 0) {
+            setPendingTaskId(completedTaskId)
+          }
+
+          if (completedTaskId && !selectedTaskDetail?.id && onTaskCreated) {
+            onTaskCreated(completedTaskId)
+          }
+
+          if (completedTaskId && !selectedTaskDetail?.id) {
+            if (taskType === 'knowledge' && knowledgeBaseId && pathname === '/knowledge') {
+              router.push(`/knowledge/document/${knowledgeBaseId}?taskId=${completedTaskId}`)
+            } else if (taskType === 'task' && !pathname?.startsWith('/devices')) {
+              const params = new URLSearchParams()
+              params.set('taskId', String(completedTaskId))
+              if (effectiveDeviceId) {
+                params.set('deviceId', effectiveDeviceId)
+              }
+              router.push(`/devices/chat?${params.toString()}`)
+            } else {
+              const params = new URLSearchParams(Array.from(searchParams.entries()))
+              params.set('taskId', String(completedTaskId))
+              router.push(`?${params.toString()}`)
+            }
+            refreshTasks()
+          }
+
+          if (selectedTaskDetail?.is_group_chat && completedTaskId) {
+            markTaskAsViewed(completedTaskId, selectedTaskDetail.status, new Date().toISOString())
+          }
+        },
+        onError: (error: Error) => {
+          handleSendError(error, message)
+        },
+      }
+
+      return {
+        localMessageId,
+        displayMessage: message,
+        sourceMessage: messageWithQueueContent,
+        request,
+        options,
+      }
+    },
+    [
+      attachments,
+      selectedContexts,
+      additionalSkills,
+      selectedModel?.name,
+      selectedModel?.type,
+      externalApiParams,
+      taskType,
+      selectedDocumentIds,
+      knowledgeBaseId,
+      t,
+      selectedTeam?.id,
+      selectedTaskDetail,
+      forceOverride,
+      enableDeepThinking,
+      enableClarification,
+      showRepositorySelector,
+      selectedBranch?.name,
+      effectiveDeviceId,
+      generateParams,
+      user?.id,
+      onTaskCreated,
+      pathname,
+      router,
+      searchParams,
+      refreshTasks,
+      markTaskAsViewed,
+      handleSendError,
+    ]
+  )
+
+  const sendPreparedChatMessage = useCallback(
+    async (prepared: PreparedChatSend, optionOverrides?: Partial<ContextSendOptions>) => {
+      const tempTaskId = await contextSendMessage(prepared.request, {
+        ...prepared.options,
+        ...optionOverrides,
+        localMessageId: prepared.localMessageId,
+      })
+
+      const immediateTaskId = prepared.options.immediateTaskId || prepared.request.task_id || 0
+      if (tempTaskId !== immediateTaskId && tempTaskId > 0) {
+        setPendingTaskId(tempTaskId)
+      }
+
+      if (selectedTaskDetail?.id) {
+        refreshSelectedTaskDetail(false)
+      }
+
+      setTimeout(() => scrollToBottom(true), 0)
+    },
+    [contextSendMessage, refreshSelectedTaskDetail, scrollToBottom, selectedTaskDetail?.id]
+  )
+
+  const activeTaskId =
+    selectedTaskDetail?.id && selectedTaskDetail.id > 0 ? selectedTaskDetail.id : null
+  const isActiveTaskBlocked =
+    isStreaming ||
+    isAwaitingResponseStart ||
+    selectedTaskDetail?.status === 'RUNNING' ||
+    selectedTaskDetail?.status === 'PENDING'
+  const canQueueMessage = Boolean(
+    activeTaskId &&
+    (isStreaming || isAwaitingResponseStart || selectedTaskDetail?.status === 'RUNNING')
+  )
+
+  const dispatchQueuedMessage = useCallback(
+    async (queuedMessage: QueuedMessage<PreparedChatSend>) => {
+      const prepared = queuedMessage.snapshot
+      setIsLoading(true)
+      setIsAwaitingResponseStart(true)
+
+      try {
+        await sendPreparedChatMessage(prepared, { onError: undefined })
+      } finally {
+        setIsLoading(false)
+      }
+    },
+    [sendPreparedChatMessage, setIsLoading]
+  )
+
+  const handleQueuedDispatchError = useCallback(
+    (queuedMessage: QueuedMessage<PreparedChatSend>, error: Error) => {
+      const retryQueuedMessage = () => {
+        retryQueuedMessageRef.current?.(queuedMessage.id)
+      }
+
+      setIsAwaitingResponseStart(false)
+      setIsLoading(false)
+      toast({
+        variant: 'destructive',
+        title: error.message,
+        action: (
+          <Button variant="outline" size="sm" onClick={retryQueuedMessage}>
+            {t('chat:actions.retry') || 'Retry'}
+          </Button>
+        ),
+      })
+    },
+    [setIsLoading, t, toast]
+  )
+
+  const {
+    activeTaskQueue,
+    enqueueMessage,
+    retryMessage: retryQueuedMessage,
+    cancelMessage,
+    updateQueuedMessage,
+  } = useMessageSendQueue<PreparedChatSend>({
+    taskId: activeTaskId,
+    isDispatchBlocked: isActiveTaskBlocked,
+    dispatchMessage: dispatchQueuedMessage,
+    onDispatchError: handleQueuedDispatchError,
+    dispatchMode: 'one-per-unblock',
+  })
+  retryQueuedMessageRef.current = retryQueuedMessage
+
+  const cancelQueuedMessage = useCallback(
+    (id: string) => {
+      const queuedMessage = activeTaskQueue.find(message => message.id === id)
+      if (!queuedMessage || queuedMessage.status === 'sending') return
+
+      cancelMessage(id)
+
+      const restoredMessage = queuedMessage.snapshot.sourceMessage || queuedMessage.displayMessage
+      setTaskInputMessage(
+        taskInputMessage.trim() ? `${restoredMessage}\n\n${taskInputMessage}` : restoredMessage
+      )
+    },
+    [activeTaskQueue, cancelMessage, setTaskInputMessage, taskInputMessage]
+  )
+
+  const queuedMessages = useMemo<QueuedChatMessagePreview[]>(
+    () =>
+      activeTaskQueue.map(message => ({
+        id: message.id,
+        displayMessage: message.displayMessage,
+        status: message.status,
+        error: message.error,
+      })),
+    [activeTaskQueue]
+  )
+
+  const mergePreparedChatSend = useCallback(
+    (current: PreparedChatSend, next: PreparedChatSend): PreparedChatSend => {
+      const displayMessage = `${current.displayMessage}\n\n${next.displayMessage}`
+      const sourceMessage = `${current.sourceMessage}\n\n${next.sourceMessage}`
+
+      return {
+        ...current,
+        displayMessage,
+        sourceMessage,
+        request: {
+          ...current.request,
+          message: sourceMessage,
+          attachment_ids: [
+            ...(current.request.attachment_ids ?? []),
+            ...(next.request.attachment_ids ?? []),
+          ],
+          contexts: [...(current.request.contexts ?? []), ...(next.request.contexts ?? [])],
+          additional_skills: [
+            ...(current.request.additional_skills ?? []),
+            ...(next.request.additional_skills ?? []),
+          ],
+          generate_params: next.request.generate_params ?? current.request.generate_params,
+        },
+        options: {
+          ...current.options,
+          pendingUserMessage: sourceMessage,
+          pendingAttachments: [
+            ...(current.options.pendingAttachments ?? []),
+            ...(next.options.pendingAttachments ?? []),
+          ],
+          pendingContexts: [
+            ...(current.options.pendingContexts ?? []),
+            ...(next.options.pendingContexts ?? []),
+          ],
+        },
+      }
+    },
+    []
+  )
+
   // Core message sending logic
   const handleSendMessage = useCallback(
     async (overrideMessage?: string) => {
@@ -466,7 +911,6 @@ export function useChatStreamHandlers({
         return
       }
 
-      // For code type tasks, repository is required
       const effectiveRepo =
         selectedRepo ||
         (selectedTaskDetail
@@ -491,288 +935,52 @@ export function useChatStreamHandlers({
         return
       }
 
+      const immediateTaskId = selectedTaskDetail?.id || -Date.now()
+      const localMessageId = generateMessageId('user')
+      const prepared = prepareChatSend(message, localMessageId, immediateTaskId, effectiveRepo)
+
+      if (canQueueMessage && activeTaskId) {
+        const mergeTarget = [...activeTaskQueue]
+          .reverse()
+          .find(queuedMessage => queuedMessage.status === 'queued')
+
+        if (mergeTarget) {
+          updateQueuedMessage(mergeTarget.id, queuedMessage => {
+            const mergedPrepared = mergePreparedChatSend(queuedMessage.snapshot, prepared)
+            return {
+              ...queuedMessage,
+              displayMessage: mergedPrepared.displayMessage,
+              snapshot: mergedPrepared,
+            }
+          })
+        } else {
+          enqueueMessage({
+            taskId: activeTaskId,
+            localMessageId,
+            displayMessage: prepared.displayMessage,
+            snapshot: prepared,
+          })
+        }
+        setTaskInputMessage('')
+        resetAttachment()
+        resetContexts?.()
+        setTimeout(() => scrollToBottom(true), 0)
+        return
+      }
+
       setIsLoading(true)
       setIsAwaitingResponseStart(!(selectedTaskDetail?.is_group_chat || false))
-
-      // Set local pending state immediately
       setLocalPendingMessage(message)
       setTaskInputMessage('')
       resetAttachment()
       resetContexts?.()
 
-      // For new tasks, set pendingTaskId to immediateTaskId immediately
-      // This ensures useTaskStateMachine subscribes to the temp state machine
-      // and can track streaming state from the start
-      const immediateTaskId = selectedTaskDetail?.id || -Date.now()
       if (!selectedTaskDetail?.id) {
         setPendingTaskId(immediateTaskId)
       }
 
-      // Model ID handling
-      const modelId = selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name
-
-      // Prepare message with external API parameters
-      let finalMessage = message
-      if (Object.keys(externalApiParams).length > 0) {
-        const paramsJson = JSON.stringify(externalApiParams)
-        finalMessage = `[EXTERNAL_API_PARAMS]${paramsJson}[/EXTERNAL_API_PARAMS]\n${message}`
-      }
-
       try {
-        // Convert selected contexts to backend format
-        // Each context item contains type and data fields
-        // Note: queue_message and dingtalk_doc contexts are handled separately -
-        //       their content is prepended to the message text
-        const contextItems: Array<{
-          type: 'knowledge_base' | 'table' | 'selected_documents'
-          data: Record<string, unknown>
-        }> = selectedContexts
-          .filter(ctx => ctx.type !== 'queue_message' && ctx.type !== 'dingtalk_doc')
-          .map(ctx => {
-            if (ctx.type === 'knowledge_base') {
-              return {
-                type: 'knowledge_base' as const,
-                data: {
-                  knowledge_id: ctx.id,
-                  name: ctx.name,
-                  document_count: ctx.document_count,
-                },
-              }
-            }
-            // ctx.type === 'table'
-            return {
-              type: 'table' as const,
-              data: {
-                document_id: (ctx as { document_id: number }).document_id,
-                name: ctx.name,
-                source_config: (ctx as { source_config?: { url?: string } }).source_config,
-              },
-            }
-          })
-
-        // Handle queue_message contexts - prepend their content to the message
-        // This allows the AI to see the forwarded message content
-        let messageWithQueueContent = finalMessage
-        const queueMessageContexts = selectedContexts.filter(ctx => ctx.type === 'queue_message')
-        if (queueMessageContexts.length > 0) {
-          const queueContents = queueMessageContexts
-            .map(ctx => (ctx as import('@/types/context').QueueMessageContext).fullContent)
-            .join('\n\n---\n\n')
-          messageWithQueueContent = `${queueContents}\n\n---\n\n${finalMessage}`
-        }
-
-        // Handle dingtalk_doc contexts - prepend document references to the message
-        // This allows the AI to know which DingTalk documents are being referenced
-        const dingtalkDocContexts = selectedContexts.filter(ctx => ctx.type === 'dingtalk_doc')
-        if (dingtalkDocContexts.length > 0) {
-          const docRefs = dingtalkDocContexts
-            .map(ctx => {
-              const docCtx = ctx as import('@/types/context').DingTalkDocContext
-              return `- [${docCtx.name}](${docCtx.doc_url})`
-            })
-            .join('\n')
-          const dingtalkPrefix = `**${t('chat:dingtalkDocs.referencedDocsLabel')}**\n${docRefs}\n\n---\n\n`
-          messageWithQueueContent = `${dingtalkPrefix}${messageWithQueueContent}`
-        }
-
-        // Collect attachment context IDs from queue_message contexts so the AI
-        // can access uploaded file content via context injection.
-        const queueAttachmentIds = queueMessageContexts.flatMap(
-          ctx => (ctx as import('@/types/context').QueueMessageContext).attachmentContextIds ?? []
-        )
-
-        // Collect inbox attachment metadata for immediate display in message bubble.
-        // These are SubtaskContext records pre-written during ingest, displayed as attachment badges.
-        const inboxAttachmentContexts = queueMessageContexts.flatMap(
-          ctx => (ctx as import('@/types/context').QueueMessageContext).inboxAttachments ?? []
-        )
-
-        // Add selected document IDs as a context for notebook mode
-        // This allows direct content injection of selected documents
-        if (
-          taskType === 'knowledge' &&
-          selectedDocumentIds &&
-          selectedDocumentIds.length > 0 &&
-          knowledgeBaseId
-        ) {
-          contextItems.push({
-            type: 'selected_documents' as const,
-            data: {
-              knowledge_base_id: knowledgeBaseId,
-              document_ids: selectedDocumentIds,
-            },
-          })
-        }
-
-        // Build pending contexts for immediate display (SubtaskContextBrief format)
-        // This includes attachments, knowledge bases, and tables
-        const pendingContexts: Array<{
-          id: number
-          context_type: 'attachment' | 'knowledge_base' | 'table'
-          name: string
-          status: 'pending' | 'ready'
-          file_extension?: string
-          file_size?: number
-          mime_type?: string
-          document_count?: number
-          knowledge_id?: number
-          document_id?: number
-          source_config?: {
-            url?: string
-          }
-        }> = []
-
-        // Add attachments as contexts
-        for (const attachment of attachments) {
-          pendingContexts.push({
-            id: attachment.id,
-            context_type: 'attachment',
-            name: attachment.filename,
-            status: attachment.status === 'ready' ? 'ready' : 'pending',
-            file_extension: attachment.file_extension,
-            file_size: attachment.file_size,
-            mime_type: attachment.mime_type,
-          })
-        }
-
-        // Add inbox attachments (from queue_message contexts) as attachment contexts
-        // so they appear as badges in the sent message bubble
-        for (const inboxAtt of inboxAttachmentContexts) {
-          pendingContexts.push({
-            id: inboxAtt.id,
-            context_type: 'attachment',
-            name: inboxAtt.name,
-            status: 'ready',
-            file_extension: inboxAtt.file_extension,
-            file_size: inboxAtt.file_size,
-            mime_type: inboxAtt.mime_type,
-          })
-        }
-
-        // Add knowledge bases and tables as contexts
-        for (const ctx of selectedContexts) {
-          if (ctx.type === 'knowledge_base') {
-            const kbContext = ctx as typeof ctx & { document_count?: number }
-            pendingContexts.push({
-              id: typeof ctx.id === 'number' ? ctx.id : parseInt(String(ctx.id), 10),
-              context_type: 'knowledge_base',
-              name: ctx.name,
-              status: 'ready',
-              knowledge_id: typeof ctx.id === 'number' ? ctx.id : parseInt(String(ctx.id), 10),
-              document_count: kbContext.document_count,
-            })
-          } else if (ctx.type === 'table') {
-            const tableContext = ctx as typeof ctx & {
-              document_id: number
-              source_config?: { url?: string }
-            }
-            pendingContexts.push({
-              id: tableContext.document_id,
-              context_type: 'table',
-              name: ctx.name,
-              status: 'ready',
-              document_id: tableContext.document_id,
-              source_config: tableContext.source_config,
-            })
-          }
-        }
-
-        const tempTaskId = await contextSendMessage(
-          {
-            message: messageWithQueueContent,
-            team_id: selectedTeam?.id ?? 0,
-            task_id: selectedTaskDetail?.id,
-            model_id: modelId,
-            force_override_bot_model: forceOverride,
-            force_override_bot_model_type: selectedModel?.type,
-            attachment_ids: [...attachments.map(a => a.id), ...queueAttachmentIds],
-            enable_deep_thinking: enableDeepThinking,
-            enable_clarification: enableClarification,
-            is_group_chat: selectedTaskDetail?.is_group_chat || false,
-            git_url: showRepositorySelector ? effectiveRepo?.git_url : undefined,
-            git_repo: showRepositorySelector ? effectiveRepo?.git_repo : undefined,
-            git_repo_id: showRepositorySelector ? effectiveRepo?.git_repo_id : undefined,
-            git_domain: showRepositorySelector ? effectiveRepo?.git_domain : undefined,
-            branch_name: showRepositorySelector
-              ? selectedBranch?.name || selectedTaskDetail?.branch_name
-              : undefined,
-            task_type: taskType,
-            knowledge_base_id: taskType === 'knowledge' ? knowledgeBaseId : undefined,
-            contexts: contextItems.length > 0 ? contextItems : undefined,
-            // Device ID for local device execution
-            // Only send device_id when on devices page to prevent coding tasks from being routed to devices
-            device_id: effectiveDeviceId,
-            // Skill selection - backend determines preload vs download based on executor type
-            additional_skills:
-              additionalSkills && additionalSkills.length > 0 ? additionalSkills : undefined,
-            // Generation parameters for video/image generation tasks
-            generate_params: generateParams,
-          },
-          {
-            pendingUserMessage: messageWithQueueContent,
-            pendingAttachments: attachments,
-            pendingContexts: pendingContexts.length > 0 ? pendingContexts : undefined,
-            immediateTaskId: immediateTaskId,
-            currentUserId: user?.id,
-            onMessageSent: (
-              _localMessageId: string,
-              completedTaskId: number,
-              _subtaskId: number
-            ) => {
-              if (completedTaskId > 0) {
-                setPendingTaskId(completedTaskId)
-              }
-
-              // Call onTaskCreated callback when a new task is created
-              // This is used for binding knowledge base to the task
-              if (completedTaskId && !selectedTaskDetail?.id && onTaskCreated) {
-                onTaskCreated(completedTaskId)
-              }
-
-              if (completedTaskId && !selectedTaskDetail?.id) {
-                // For knowledge type tasks on /knowledge page, navigate to the dedicated KB chat page
-                // This ensures full task functionality (follow-up questions, link sharing, etc.)
-                if (taskType === 'knowledge' && knowledgeBaseId && pathname === '/knowledge') {
-                  router.push(`/knowledge/document/${knowledgeBaseId}?taskId=${completedTaskId}`)
-                } else if (taskType === 'task' && !pathname?.startsWith('/devices')) {
-                  // For device tasks started from /chat, navigate to /devices/chat
-                  const params = new URLSearchParams()
-                  params.set('taskId', String(completedTaskId))
-                  if (effectiveDeviceId) {
-                    params.set('deviceId', effectiveDeviceId)
-                  }
-                  router.push(`/devices/chat?${params.toString()}`)
-                } else {
-                  const params = new URLSearchParams(Array.from(searchParams.entries()))
-                  params.set('taskId', String(completedTaskId))
-                  router.push(`?${params.toString()}`)
-                }
-                refreshTasks()
-              }
-
-              if (selectedTaskDetail?.is_group_chat && completedTaskId) {
-                markTaskAsViewed(
-                  completedTaskId,
-                  selectedTaskDetail.status,
-                  new Date().toISOString()
-                )
-              }
-            },
-            onError: (error: Error) => {
-              handleSendError(error, message)
-            },
-          }
-        )
-
-        if (tempTaskId !== immediateTaskId && tempTaskId > 0) {
-          setPendingTaskId(tempTaskId)
-        }
-
-        if (selectedTaskDetail?.id) {
-          refreshSelectedTaskDetail(false)
-        }
-
-        setTimeout(() => scrollToBottom(true), 0)
+        await sendPreparedChatMessage(prepared)
       } catch (err) {
         handleSendError(err as Error, message)
       }
@@ -784,42 +992,26 @@ export function useChatStreamHandlers({
       shouldHideChatInput,
       isAttachmentReadyToSend,
       toast,
-      selectedTeam,
-      attachments,
-      resetAttachment,
-      selectedContexts,
-      resetContexts,
-      selectedModel?.name,
-      selectedModel?.type,
-      selectedTaskDetail,
-      contextSendMessage,
-      forceOverride,
-      enableDeepThinking,
-      enableClarification,
-      refreshTasks,
-      refreshSelectedTaskDetail,
-      searchParams,
-      router,
-      pathname,
-      showRepositorySelector,
       selectedRepo,
-      selectedBranch,
+      selectedTaskDetail,
       taskType,
-      knowledgeBaseId,
-      markTaskAsViewed,
-      user?.id,
-      handleSendError,
+      showRepositorySelector,
+      effectiveRequiresWorkspace,
+      selectedTeam,
+      prepareChatSend,
+      canQueueMessage,
+      activeTaskId,
+      activeTaskQueue,
+      enqueueMessage,
+      updateQueuedMessage,
+      mergePreparedChatSend,
+      setTaskInputMessage,
+      resetAttachment,
+      resetContexts,
       scrollToBottom,
       setIsLoading,
-      setTaskInputMessage,
-      externalApiParams,
-      onTaskCreated,
-      selectedDocumentIds,
-      effectiveDeviceId,
-      effectiveRequiresWorkspace,
-      additionalSkills,
-      generateParams,
-      t,
+      sendPreparedChatMessage,
+      handleSendError,
     ]
   )
   /**
@@ -1259,6 +1451,10 @@ export function useChatStreamHandlers({
     isStopping,
     hasPendingUserMessage,
     localPendingMessage,
+    canQueueMessage,
+    queuedMessageCount: activeTaskQueue.length,
+    queuedMessages,
+    cancelQueuedMessage,
 
     // Actions
     handleSendMessage,

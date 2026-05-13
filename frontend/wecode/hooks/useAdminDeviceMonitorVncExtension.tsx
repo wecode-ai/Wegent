@@ -65,7 +65,8 @@ export function useAdminDeviceMonitorVncExtension(
     if (
       !activeVncDeviceDetails ||
       activeVncDeviceDetails.device_type !== 'cloud' ||
-      activeVncDeviceDetails.bind_shell !== 'claudecode'
+      activeVncDeviceDetails.bind_shell !== 'claudecode' ||
+      activeVncDeviceDetails.status !== 'online'
     ) {
       closeVncPanel()
     }
@@ -134,9 +135,7 @@ export function useAdminDeviceMonitorVncExtension(
             isFullscreen={isVncFullscreen}
             onToggleFullscreen={() => setIsVncFullscreen(prev => !prev)}
             containerClassName={
-              isVncFullscreen
-                ? 'w-full h-[70vh] min-h-[70vh]'
-                : 'w-full h-[60vh] min-h-[60vh]'
+              isVncFullscreen ? 'w-full h-[70vh] min-h-[70vh]' : 'w-full h-[60vh] min-h-[60vh]'
             }
             borderPosition={isMobile ? 'top' : 'left'}
           />
