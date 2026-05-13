@@ -43,23 +43,23 @@ export const dingtalkDocApi = {
   },
 
   /**
-   * Get all synced DingTalk workspace nodes as a tree structure.
+   * Get all synced DingTalk wikispace nodes as a tree structure.
    */
-  getWorkspaceNodes: async (): Promise<DingtalkDocTreeResponse> => {
-    return client.get<DingtalkDocTreeResponse>('/dingtalk-workspace')
+  getWikispaceNodes: async (): Promise<DingtalkDocTreeResponse> => {
+    return client.get<DingtalkDocTreeResponse>('/dingtalk-wikispace')
   },
 
   /**
-   * Trigger sync of DingTalk workspace nodes from the user's workspace MCP server.
+   * Trigger sync of DingTalk wikispace nodes from the user's wikispace MCP server.
    */
-  syncWorkspaceNodes: async (): Promise<DingtalkSyncResult> => {
-    return client.post<DingtalkSyncResult>('/dingtalk-workspace/sync')
+  syncWikispaceNodes: async (): Promise<DingtalkSyncResult> => {
+    return client.post<DingtalkSyncResult>('/dingtalk-wikispace/sync')
   },
 
   /**
-   * Get the workspace sync status for the current user.
+   * Get the wikispace sync status for the current user.
    */
-  getWorkspaceSyncStatus: async (): Promise<DingtalkSyncStatus> => {
-    return client.get<DingtalkSyncStatus>('/dingtalk-workspace/sync-status')
+  getWikispaceSyncStatus: async (): Promise<DingtalkSyncStatus> => {
+    return client.get<DingtalkSyncStatus>('/dingtalk-wikispace/sync-status')
   },
 }

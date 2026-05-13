@@ -36,7 +36,7 @@ from app.api.endpoints import (
     work_queue,
 )
 from app.api.endpoints.dingtalk_docs import (
-    workspace_router as dingtalk_workspace_router,
+    wikispace_router as dingtalk_wikispace_router,
 )
 from app.core.config import settings
 
@@ -178,9 +178,9 @@ api_router.include_router(
     dingtalk_docs.router, prefix="/dingtalk-docs", tags=["dingtalk-docs"]
 )
 api_router.include_router(
-    dingtalk_workspace_router,
-    prefix="/dingtalk-workspace",
-    tags=["dingtalk-workspace"],
+    dingtalk_wikispace_router,
+    prefix="/dingtalk-wikispace",
+    tags=["dingtalk-wikispace"],
 )
 
 # Work queue endpoints (message forwarding and inbox)

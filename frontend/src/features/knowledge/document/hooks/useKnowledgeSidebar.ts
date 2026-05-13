@@ -108,7 +108,7 @@ export interface UseKnowledgeSidebarReturn {
   dingtalkDocCount: number
   isDingtalkConfigured: boolean
   isDingtalkLoading: boolean
-  isWorkspaceConfigured: boolean
+  isWikispaceConfigured: boolean
 
   // Summary counts from backend
   summary?: {
@@ -195,7 +195,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
   const [dingtalkDocCount, setDingtalkDocCount] = useState(0)
   const [isDingtalkConfigured, setIsDingtalkConfigured] = useState(false)
   const [isDingtalkLoading, setIsDingtalkLoading] = useState(true)
-  const [isWorkspaceConfigured, setIsWorkspaceConfigured] = useState(false)
+  const [isWikispaceConfigured, setIsWikispaceConfigured] = useState(false)
 
   // Load initial data using the optimized all-grouped API
   const loadInitialData = useCallback(async () => {
@@ -222,7 +222,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     try {
       const [docsResult, wsResult] = await Promise.allSettled([
         dingtalkDocApi.getSyncStatus(),
-        dingtalkDocApi.getWorkspaceSyncStatus(),
+        dingtalkDocApi.getWikispaceSyncStatus(),
       ])
       if (docsResult.status === 'fulfilled') {
         setDingtalkDocCount(docsResult.value.total_nodes)
@@ -232,14 +232,14 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
         setDingtalkDocCount(0)
       }
       if (wsResult.status === 'fulfilled') {
-        setIsWorkspaceConfigured(wsResult.value.is_configured)
+        setIsWikispaceConfigured(wsResult.value.is_configured)
       } else {
-        setIsWorkspaceConfigured(false)
+        setIsWikispaceConfigured(false)
       }
     } catch {
       setIsDingtalkConfigured(false)
       setDingtalkDocCount(0)
-      setIsWorkspaceConfigured(false)
+      setIsWikispaceConfigured(false)
     } finally {
       setIsDingtalkLoading(false)
     }
@@ -595,7 +595,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     dingtalkDocCount,
     isDingtalkConfigured,
     isDingtalkLoading,
-    isWorkspaceConfigured,
+    isWikispaceConfigured,
 
     // Summary from backend
     summary: allGroupedData?.summary,

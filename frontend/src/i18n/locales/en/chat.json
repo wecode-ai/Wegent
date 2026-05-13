@@ -704,12 +704,12 @@
     "searchPlaceholder": "Search documents...",
     "referencedDocsLabel": "Referenced DingTalk Documents:",
     "myDocsTab": "My Documents",
-    "workspaceTab": "Knowledge Base",
-    "workspaceSync": "Sync",
-    "workspaceSyncing": "Syncing...",
-    "workspaceEmpty": "No knowledge base content",
-    "workspaceNotConfigured": "DingTalk Knowledge Base MCP is not configured",
-    "workspaceLastSynced": "Last synced: {{time}}",
-    "workspaceNeverSynced": "Never synced"
+    "wikispaceTab": "Knowledge Base",
+    "wikispaceSync": "Sync",
+    "wikispaceSyncing": "Syncing...",
+    "wikispaceEmpty": "No knowledge base content",
+    "wikispaceNotConfigured": "DingTalk Knowledge Base MCP is not configured",
+    "wikispaceLastSynced": "Last synced: {{time}}",
+    "wikispaceNeverSynced": "Never synced"
   }
 }

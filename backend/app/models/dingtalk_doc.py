@@ -37,7 +37,7 @@ class DingtalkSyncedNode(Base):
     node_type = Column(String(32), nullable=False)
     # DingTalk workspace (knowledge base) ID
     workspace_id = Column(String(64), nullable=False, default="")
-    # Source of the node: 'docs' (personal documents) or 'workspace' (knowledge base)
+    # Source of the node: 'docs' (personal documents) or 'wikispace' (knowledge base)
     source = Column(String(16), nullable=False, default="docs")
     # Content type (e.g., ALIDOC)
     content_type = Column(String(32), nullable=False, default="")

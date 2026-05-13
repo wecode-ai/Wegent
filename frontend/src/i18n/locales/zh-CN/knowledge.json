@@ -111,11 +111,11 @@
       "openInDingtalk": "在钉钉中打开",
       "lastModified": "最近修改",
       "myDocs": "我的文档",
-      "workspace": "知识库",
-      "workspaceSyncHint": "点击同步按钮从钉钉拉取知识库",
-      "workspaceEmpty": "暂无知识库内容",
-      "workspaceNotConfigured": "钉钉知识库 MCP 未配置",
-      "workspaceConfigureHint": "请前往设置配置钉钉知识库 MCP"
+      "wikispace": "知识库",
+      "wikispaceSyncHint": "点击同步按钮从钉钉拉取知识库",
+      "wikispaceEmpty": "暂无知识库内容",
+      "wikispaceNotConfigured": "钉钉知识库 MCP 未配置",
+      "wikispaceConfigureHint": "请前往设置配置钉钉知识库 MCP"
     },
     "groupFilter": {
       "all": "全部分组"

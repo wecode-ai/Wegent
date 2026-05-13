@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2025 ZINFOID_00AQ, Inc.
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -9,7 +9,7 @@ Revises: c3d4e5f6a708
 Create Date: 2026-05-12
 
 Add source column to dingtalk_synced_nodes table to distinguish between
-'docs' (personal documents) and 'workspace' (knowledge base) nodes.
+'docs' (personal documents) and 'wikispace' (knowledge base) nodes.
 Also replaces the unique index to include source so that the same node ID
 can exist in both sources without conflict.
 """

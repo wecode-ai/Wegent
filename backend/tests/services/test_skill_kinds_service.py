@@ -5,7 +5,6 @@
 """
 Integration tests for SkillKindsService
 """
-
 import io
 import zipfile
 

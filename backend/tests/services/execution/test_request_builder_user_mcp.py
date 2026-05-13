@@ -127,7 +127,7 @@ class TestUserScopedMcpInjection:
                 "is_public": True,
             },
             {
-                "name": "dingtalk-workspace",
+                "name": "dingtalk-wikispace",
                 "namespace": "default",
                 "is_public": True,
             },

@@ -542,7 +542,7 @@
         "save_success": "钉钉AI表格配置已保存",
         "save_failed": "保存钉钉AI表格配置失败"
       },
-      "workspace": {
+      "wikispace": {
         "title": "钉钉知识库",
         "description": "访问和管理钉钉知识库",
         "default_name": "钉钉知识库",

@@ -170,14 +170,14 @@ export default function ContextSelector({
   const [dingtalkConfigured, setDingtalkConfigured] = useState(true)
   const [dingtalkLastSyncedAt, setDingtalkLastSyncedAt] = useState<string | null>(null)
   const [dingtalkSearchQuery, setDingtalkSearchQuery] = useState('')
-  // Workspace (knowledge base) section state
-  const [dingtalkSection, setDingtalkSection] = useState<'my-docs' | 'workspace'>('my-docs')
-  const [workspaceNodes, setWorkspaceNodes] = useState<DingtalkDocNode[]>([])
-  const [workspaceLoading, setWorkspaceLoading] = useState(false)
-  const [workspaceSyncing, setWorkspaceSyncing] = useState(false)
-  const [workspaceError, setWorkspaceError] = useState<string | null>(null)
-  const [workspaceConfigured, setWorkspaceConfigured] = useState(false)
-  const [workspaceLastSyncedAt, setWorkspaceLastSyncedAt] = useState<string | null>(null)
+  // Wikispace (knowledge base) section state
+  const [dingtalkSection, setDingtalkSection] = useState<'my-docs' | 'wikispace'>('my-docs')
+  const [wikispaceNodes, setWikispaceNodes] = useState<DingtalkDocNode[]>([])
+  const [wikispaceLoading, setWikispaceLoading] = useState(false)
+  const [wikispaceSyncing, setWikispaceSyncing] = useState(false)
+  const [wikispaceError, setWikispaceError] = useState<string | null>(null)
+  const [wikispaceConfigured, setWikispaceConfigured] = useState(false)
+  const [wikispaceLastSyncedAt, setWikispaceLastSyncedAt] = useState<string | null>(null)
   const {
     organizationNamespace,
     loading: organizationNamespaceLoading,
@@ -266,22 +266,22 @@ export default function ContextSelector({
     }
   }, [t])
 
-  // Fetch DingTalk workspace (knowledge base) nodes
-  const fetchWorkspace = useCallback(async () => {
-    setWorkspaceLoading(true)
-    setWorkspaceError(null)
+  // Fetch DingTalk wikispace (knowledge base) nodes
+  const fetchWikispace = useCallback(async () => {
+    setWikispaceLoading(true)
+    setWikispaceError(null)
     try {
       const [tree, status] = await Promise.all([
-        dingtalkDocApi.getWorkspaceNodes(),
-        dingtalkDocApi.getWorkspaceSyncStatus(),
+        dingtalkDocApi.getWikispaceNodes(),
+        dingtalkDocApi.getWikispaceSyncStatus(),
       ])
-      setWorkspaceNodes(tree.nodes)
-      setWorkspaceConfigured(status.is_configured)
-      setWorkspaceLastSyncedAt(status.last_synced_at)
+      setWikispaceNodes(tree.nodes)
+      setWikispaceConfigured(status.is_configured)
+      setWikispaceLastSyncedAt(status.last_synced_at)
     } catch {
-      setWorkspaceError(t('chat:dingtalkDocs.loadFailed'))
+      setWikispaceError(t('chat:dingtalkDocs.loadFailed'))
     } finally {
-      setWorkspaceLoading(false)
+      setWikispaceLoading(false)
     }
   }, [t])
 
@@ -298,29 +298,29 @@ export default function ContextSelector({
     }
   }, [fetchDingtalkDocs, t])
 
-  const handleWorkspaceSync = useCallback(async () => {
-    setWorkspaceSyncing(true)
-    setWorkspaceError(null)
+  const handleWikispaceSync = useCallback(async () => {
+    setWikispaceSyncing(true)
+    setWikispaceError(null)
     try {
-      await dingtalkDocApi.syncWorkspaceNodes()
-      await fetchWorkspace()
+      await dingtalkDocApi.syncWikispaceNodes()
+      await fetchWikispace()
     } catch {
-      setWorkspaceError(t('chat:dingtalkDocs.syncFailed'))
+      setWikispaceError(t('chat:dingtalkDocs.syncFailed'))
     } finally {
-      setWorkspaceSyncing(false)
+      setWikispaceSyncing(false)
     }
-  }, [fetchWorkspace, t])
+  }, [fetchWikispace, t])
 
   const handleTabChange = useCallback(
     (value: string) => {
       setActiveTab(value)
       if (value === 'dingtalk' && !hasFetchedDingtalk) {
         fetchDingtalkDocs()
-        fetchWorkspace()
+        fetchWikispace()
         setHasFetchedDingtalk(true)
       }
     },
-    [fetchDingtalkDocs, fetchWorkspace, hasFetchedDingtalk]
+    [fetchDingtalkDocs, fetchWikispace, hasFetchedDingtalk]
   )
 
   // Group knowledge bases by category (personal, group, organization)
@@ -967,16 +967,16 @@ export default function ContextSelector({
               </button>
               <button
                 type="button"
-                onClick={() => setDingtalkSection('workspace')}
+                onClick={() => setDingtalkSection('wikispace')}
                 className={cn(
                   'flex-1 py-1.5 text-xs font-medium transition-colors',
-                  dingtalkSection === 'workspace'
+                  dingtalkSection === 'wikispace'
                     ? 'text-text-primary border-b-2 border-orange-500'
                     : 'text-text-muted hover:text-text-primary'
                 )}
-                data-testid="dingtalk-section-workspace"
+                data-testid="dingtalk-section-wikispace"
               >
-                {t('chat:dingtalkDocs.workspaceTab')}
+                {t('chat:dingtalkDocs.wikispaceTab')}
               </button>
             </div>
 
@@ -1025,25 +1025,25 @@ export default function ContextSelector({
               ) : (
                 <>
                   <span className="text-xs text-text-muted">
-                    {workspaceConfigured && workspaceLastSyncedAt
+                    {wikispaceConfigured && wikispaceLastSyncedAt
                       ? t('chat:dingtalkDocs.lastSynced', {
-                          time: new Date(workspaceLastSyncedAt).toLocaleString(),
+                          time: new Date(wikispaceLastSyncedAt).toLocaleString(),
                         })
                       : null}
                   </span>
-                  {workspaceConfigured && (
+                  {wikispaceConfigured && (
                     <button
                       type="button"
-                      onClick={handleWorkspaceSync}
-                      disabled={workspaceSyncing}
+                      onClick={handleWikispaceSync}
+                      disabled={wikispaceSyncing}
                       className={cn(
                         'flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors',
-                        workspaceSyncing && 'opacity-50 cursor-not-allowed'
+                        wikispaceSyncing && 'opacity-50 cursor-not-allowed'
                       )}
-                      data-testid="context-selector-workspace-sync"
+                      data-testid="context-selector-wikispace-sync"
                     >
-                      <RefreshCw className={cn('w-3 h-3', workspaceSyncing && 'animate-spin')} />
-                      {workspaceSyncing
+                      <RefreshCw className={cn('w-3 h-3', wikispaceSyncing && 'animate-spin')} />
+                      {wikispaceSyncing
                         ? t('chat:dingtalkDocs.syncing')
                         : t('chat:dingtalkDocs.sync')}
                     </button>
@@ -1090,9 +1090,7 @@ export default function ContextSelector({
                       disabled={dingtalkSyncing}
                       className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium transition-colors disabled:opacity-50"
                     >
-                      <RefreshCw
-                        className={cn('w-3.5 h-3.5', dingtalkSyncing && 'animate-spin')}
-                      />
+                      <RefreshCw className={cn('w-3.5 h-3.5', dingtalkSyncing && 'animate-spin')} />
                       {dingtalkSyncing
                         ? t('chat:dingtalkDocs.syncing')
                         : t('chat:dingtalkDocs.syncNow')}
@@ -1112,14 +1110,14 @@ export default function ContextSelector({
                     ))}
                   </div>
                 )
-              ) : workspaceLoading ? (
+              ) : wikispaceLoading ? (
                 <div className="py-6 px-4 text-center text-sm text-text-muted">
                   {t('common:actions.loading')}
                 </div>
-              ) : !workspaceConfigured ? (
+              ) : !wikispaceConfigured ? (
                 <div className="py-6 px-4 text-center space-y-3">
                   <p className="text-sm text-text-muted">
-                    {t('chat:dingtalkDocs.workspaceNotConfigured')}
+                    {t('chat:dingtalkDocs.wikispaceNotConfigured')}
                   </p>
                   <Link
                     href="/settings?section=integrations&tab=integrations"
@@ -1128,36 +1126,31 @@ export default function ContextSelector({
                     {t('chat:dingtalkDocs.goToConfigure')}
                   </Link>
                 </div>
-              ) : workspaceError ? (
+              ) : wikispaceError ? (
                 <div className="py-6 px-4 text-center space-y-2">
-                  <p className="text-sm text-red-500">{workspaceError}</p>
-                  <button
-                    onClick={fetchWorkspace}
-                    className="text-xs text-primary hover:underline"
-                  >
+                  <p className="text-sm text-red-500">{wikispaceError}</p>
+                  <button onClick={fetchWikispace} className="text-xs text-primary hover:underline">
                     {t('common:actions.retry')}
                   </button>
                 </div>
-              ) : workspaceNodes.length === 0 ? (
+              ) : wikispaceNodes.length === 0 ? (
                 <div className="py-6 px-4 text-center space-y-3">
                   <p className="text-sm text-text-muted">{t('chat:dingtalkDocs.empty')}</p>
                   <button
                     type="button"
-                    onClick={handleWorkspaceSync}
-                    disabled={workspaceSyncing}
+                    onClick={handleWikispaceSync}
+                    disabled={wikispaceSyncing}
                     className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium transition-colors disabled:opacity-50"
                   >
-                    <RefreshCw
-                      className={cn('w-3.5 h-3.5', workspaceSyncing && 'animate-spin')}
-                    />
-                    {workspaceSyncing
+                    <RefreshCw className={cn('w-3.5 h-3.5', wikispaceSyncing && 'animate-spin')} />
+                    {wikispaceSyncing
                       ? t('chat:dingtalkDocs.syncing')
                       : t('chat:dingtalkDocs.syncNow')}
                   </button>
                 </div>
               ) : (
                 <div className="py-1 px-1">
-                  {workspaceNodes.map(node => (
+                  {wikispaceNodes.map(node => (
                     <DingtalkContextTreeNode
                       key={node.dingtalk_node_id}
                       node={node}

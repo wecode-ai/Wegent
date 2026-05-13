@@ -118,8 +118,8 @@ class TestUserMcpsAPI:
             },
             {
                 "provider_id": "dingtalk",
-                "service_id": "workspace",
-                "server_name": "dingtalk_workspace",
+                "service_id": "wikispace",
+                "server_name": "dingtalk_wikispace",
                 "detail_url": "https://mcp.dingtalk.com/#/detail?mcpId=9730",
                 "enabled": False,
                 "url": "",

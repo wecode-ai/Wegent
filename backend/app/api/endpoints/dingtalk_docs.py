@@ -22,7 +22,7 @@ from app.schemas.dingtalk_doc import (
     DingtalkSyncStatus,
 )
 from app.services.dingtalk_doc_service import DingTalkDocService
-from app.services.dingtalk_workspace_service import DingTalkWorkspaceService
+from app.services.dingtalk_wikispace_service import DingTalkWikiSpaceService
 
 router = APIRouter()
 
@@ -137,51 +137,51 @@ def delete_synced_node(
     return {"status": "ok"}
 
 
-workspace_router = APIRouter()
+wikispace_router = APIRouter()
 
 
-@workspace_router.get("", response_model=DingtalkDocTreeResponse)
-def get_workspace_nodes(
+@wikispace_router.get("", response_model=DingtalkDocTreeResponse)
+def get_wikispace_nodes(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> DingtalkDocTreeResponse:
-    """Get all synced DingTalk workspace nodes for the current user as a tree."""
-    nodes = DingTalkWorkspaceService.get_workspace_nodes(current_user.id, db)
+    """Get all synced DingTalk wikispace nodes for the current user as a tree."""
+    nodes = DingTalkWikiSpaceService.get_wikispace_nodes(current_user.id, db)
     node_schemas = [DingtalkDocNode.model_validate(node) for node in nodes]
     tree = _build_tree(node_schemas)
     return DingtalkDocTreeResponse(nodes=tree, total_count=len(node_schemas))
 
 
-@workspace_router.post("/sync", response_model=DingtalkSyncResult)
-async def sync_workspace_nodes(
+@wikispace_router.post("/sync", response_model=DingtalkSyncResult)
+async def sync_wikispace_nodes(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> DingtalkSyncResult:
-    """Trigger sync of DingTalk workspace nodes from the user's workspace MCP server."""
-    if not DingTalkWorkspaceService.is_configured(current_user, db):
+    """Trigger sync of DingTalk wikispace nodes from the user's wikispace MCP server."""
+    if not DingTalkWikiSpaceService.is_configured(current_user, db):
         raise HTTPException(
             status_code=400,
-            detail="DingTalk Workspace MCP is not configured. "
+            detail="DingTalk WikiSpace MCP is not configured. "
             "Please enable it in Settings > Integrations first.",
         )
     try:
-        result = await DingTalkWorkspaceService.sync_workspace_nodes(current_user, db)
+        result = await DingTalkWikiSpaceService.sync_wikispace_nodes(current_user, db)
         return DingtalkSyncResult(**result)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.exception("Failed to sync DingTalk workspace nodes: %s", e)
+        logger.exception("Failed to sync DingTalk wikispace nodes: %s", e)
         raise HTTPException(
             status_code=500,
-            detail="Failed to sync DingTalk workspace nodes",
+            detail="Failed to sync DingTalk wikispace nodes",
         )
 
 
-@workspace_router.get("/sync-status", response_model=DingtalkSyncStatus)
-def get_workspace_sync_status(
+@wikispace_router.get("/sync-status", response_model=DingtalkSyncStatus)
+def get_wikispace_sync_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> DingtalkSyncStatus:
-    """Get the sync status for the current user's DingTalk workspace nodes."""
-    status = DingTalkWorkspaceService.get_sync_status(current_user, db)
+    """Get the sync status for the current user's DingTalk wikispace nodes."""
+    status = DingTalkWikiSpaceService.get_sync_status(current_user, db)
     return DingtalkSyncStatus(**status)
