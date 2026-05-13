@@ -169,12 +169,16 @@ def convert_document_task(
                 record_conversion_skipped("not_exists_or_stale")
                 return {"status": "skipped", "reason": "not_exists_or_stale"}
         except Exception as e:
-            logger.error(
-                f"[Conversion] Failed to notify started: document_id={document_id}, "
-                f"error={e}"
+            # Log but do NOT abort — the conversion itself can still proceed.
+            # If notify_started fails (transient backend outage), the document
+            # status stays at pending_conversion. When notify_completed succeeds
+            # later, the backend state machine still handles the transition
+            # correctly (mark_document_conversion_started accepts both QUEUED
+            # and PENDING_CONVERSION as valid pre-states).
+            logger.warning(
+                f"[Conversion] Failed to notify started (non-fatal): "
+                f"document_id={document_id}, error={e}"
             )
-            record_conversion_failed(file_extension, time.monotonic() - start_time)
-            return {"status": "error", "reason": "callback_failed"}
 
         try:
             # Step 2: Fetch binary content from backend
@@ -233,6 +237,14 @@ def convert_document_task(
                 )
                 record_conversion_skipped("stale_conversion")
                 return {"status": "skipped", "reason": "stale_conversion"}
+
+            if not resp.get("ok"):
+                logger.error(
+                    f"[Conversion] Backend rejected completion: document_id={document_id}, "
+                    f"resp={resp}"
+                )
+                record_conversion_failed(file_extension, time.monotonic() - start_time)
+                return {"status": "error", "reason": "backend_rejected"}
 
             duration = time.monotonic() - start_time
             record_conversion_succeeded(

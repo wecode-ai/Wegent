@@ -110,7 +110,13 @@ def conversion_completed_callback(
         )
 
     # Step 2: Overwrite attachment with markdown
-    markdown_bytes = base64.b64decode(request.markdown_bytes)
+    try:
+        markdown_bytes = base64.b64decode(request.markdown_bytes, validate=True)
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid base64 payload for markdown_bytes",
+        )
     payload = request.index_dispatch_payload
     context_service.overwrite_attachment(
         db=db,

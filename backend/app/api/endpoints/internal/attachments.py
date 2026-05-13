@@ -4,6 +4,8 @@ Allows the standalone converter microservice to download attachment
 binary content via HTTP instead of direct DB access.
 """
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
@@ -41,10 +43,18 @@ def download_attachment(attachment_id: int, db: Session = Depends(get_db)):
     if binary_data is None:
         raise HTTPException(status_code=404, detail="Attachment has no binary data")
 
+    # RFC 5987: encode filename for Unicode/special chars
+    # filename="..." for ASCII fallback, filename*=UTF-8''... for full encoding
+    raw_name = context.original_filename
+    encoded_name = quote(raw_name, safe="")
+    disposition = (
+        f"attachment; filename=\"{encoded_name}\"; filename*=UTF-8''{encoded_name}"
+    )
+
     return Response(
         content=binary_data,
         media_type="application/octet-stream",
         headers={
-            "Content-Disposition": f"attachment; filename={context.original_filename}",
+            "Content-Disposition": disposition,
         },
     )
