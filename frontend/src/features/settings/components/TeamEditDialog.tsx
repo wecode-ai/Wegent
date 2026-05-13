@@ -30,6 +30,7 @@ import TeamBasicInfoForm from './team-edit/TeamBasicInfoForm'
 import TeamModeSelector from './team-edit/TeamModeSelector'
 import TeamModeEditor from './team-edit/TeamModeEditor'
 import TeamModeChangeDialog from './team-edit/TeamModeChangeDialog'
+import { getAllowedAgentsForBindMode } from '../utils/team-bind-mode-rules'
 
 interface TeamEditDialogProps {
   open: boolean
@@ -140,6 +141,11 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     const allowed = MODE_AGENT_FILTER[mode]
     return allowed === null ? undefined : allowed
   }, [mode])
+
+  const effectiveAllowedAgents = useMemo(
+    () => getAllowedAgentsForBindMode(bindMode, allowedAgentsForMode),
+    [bindMode, allowedAgentsForMode]
+  )
 
   const teamPromptMap = useMemo(() => {
     const map = new Map<number, boolean>()
@@ -599,7 +605,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
               teamPromptMap={teamPromptMap}
               isDifyLeader={isDifyLeader}
               leaderOptions={leaderOptions}
-              allowedAgentsForMode={allowedAgentsForMode}
+              allowedAgentsForMode={effectiveAllowedAgents}
               botEditRef={botEditRef}
               scope={scope}
               groupName={groupName}
@@ -643,7 +649,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
         leaderBotId={leaderBotId}
         unsavedPrompts={unsavedPrompts}
         setUnsavedPrompts={setUnsavedPrompts}
-        allowedAgents={allowedAgentsForMode}
+        allowedAgents={effectiveAllowedAgents}
         scope={scope}
         groupName={groupName}
       />
