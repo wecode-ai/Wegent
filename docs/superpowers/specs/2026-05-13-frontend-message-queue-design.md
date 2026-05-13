@@ -31,8 +31,10 @@ sidebar_position: 3
 - 用户在 streaming 期间点击发送时，消息进入前端队列
 - 当前 AI 回复结束后，队列按 FIFO 自动发送下一条
 - 入队时清空输入框，避免用户误以为没有响应
-- 队列消息在消息区有明确的本地状态，至少能区分 pending、queued、failed
-- 支持连续入队多条消息
+- 队列消息在发送框上方展示，不进入聊天消息流
+- 队列展示至少能区分 queued、sending、failed
+- 支持取消排队消息，取消后内容回到输入框继续编辑
+- 用户在已有排队消息时继续输入并发送，合并到现有排队消息中，一次发送
 - 保留停止当前生成的能力
 - 保持现有 WebSocket 协议和后端发送接口不变
 
@@ -42,7 +44,7 @@ sidebar_position: 3
 - 本轮不允许同一任务并发发送多个子任务
 - 本轮不改变 `TaskStateMachine` 作为消息展示单一来源的原则
 - 本轮不修改 group chat 的后端协作语义
-- 本轮不重做聊天输入区视觉设计
+- 本轮不重做聊天页整体视觉设计
 - 本轮不支持跨页面持久化未发送队列
 
 ## 方案对比
@@ -121,16 +123,16 @@ sidebar_position: 3
 新增一个前端队列项类型，放在聊天发送相关模块附近，例如 `useMessageSendQueue`：
 
 ```ts
-type QueuedMessageStatus = 'queued' | 'sending' | 'failed'
+type QueuedMessageStatus = "queued" | "sending" | "failed";
 
 interface QueuedMessage {
-  id: string
-  taskId: number
-  content: string
-  createdAt: number
-  status: QueuedMessageStatus
-  error?: string
-  requestSnapshot: SendMessageSnapshot
+  id: string;
+  taskId: number;
+  content: string;
+  createdAt: number;
+  status: QueuedMessageStatus;
+  error?: string;
+  requestSnapshot: SendMessageSnapshot;
 }
 ```
 
@@ -162,8 +164,10 @@ interface QueuedMessage {
 
 - 清空输入框
 - 清空当前附件和上下文选择
-- 在消息区追加一条本地用户消息，状态显示为 queued
+- 在发送框上方展示队列预览，状态显示为 queued
 - 保持输入框可继续编辑
+
+如果当前任务已有未发送的 queued 项，新的输入不会创建第二条可见队列项，而是合并到现有 queued 项中。合并后的队列项保留所有发送快照信息，并在当前 AI 回复结束后作为一次请求发送。
 
 新任务第一条消息仍按现有流程发送。原因是第一条消息发送前没有真实任务 ID，继续入队会让后续队列难以稳定绑定任务。
 
@@ -180,8 +184,8 @@ interface QueuedMessage {
 
 发送成功后：
 
-- 将 queued 本地消息更新为 completed，并绑定后端返回的 subtask/message ID
 - 从队列移除该项
+- 通过现有发送链路创建正常的本地用户消息和后续 AI 回复
 - 如果发送后又进入 streaming，等待下一轮完成后再发下一条
 
 发送失败后：
@@ -191,17 +195,17 @@ interface QueuedMessage {
 - 暂停后续队列自动发送
 - 保留失败项，后续可通过重试能力继续发送
 
-### 消息展示
+### 队列展示
 
-`TaskStateMachine` 当前只支持 `pending`、`streaming`、`completed`、`error`。首版可以采用最小扩展：
+队列预览属于输入区状态，不属于聊天消息流：
 
-- 为 `UnifiedMessage` 增加可选字段 `queued?: boolean`
-- 入队消息使用 `status: 'pending'` 且 `queued: true`
-- `MessageBubble` 根据 `queued` 展示“已排队”状态
-- 自动发送时移除 `queued`，状态保持现有 pending/completed 流程
-- 失败时使用 `status: 'error'` 和 `error` 文案
+- 队列预览显示在发送框上方，而不是发送框内部
+- 每个队列项展示状态标签和最多两行消息内容
+- queued 和 failed 项显示取消按钮
+- sending 项不显示取消按钮，避免移除已经开始发送的请求
+- 点击取消按钮会从队列移除该项，并把消息内容恢复到输入框
 
-这样可以避免把队列状态混入后端消息状态枚举。
+这样可以避免把尚未发送的内容混入 `TaskStateMachine` 消息列表，也能让用户清楚地区分“已发送消息”和“等待发送的输入”。
 
 ### 输入区行为
 
@@ -210,9 +214,10 @@ Desktop 和 mobile 保持一致：
 - streaming 时输入框不禁用
 - streaming 且输入为空时，保留停止当前生成的入口
 - streaming 且输入非空时，显示入队发送入口，同时仍保留停止入口
+- 队列预览显示在输入卡片外侧上方
 - 非 streaming 时维持现有发送行为
 
-为了控制改动范围，第一版不重做输入区布局，只在发送按钮状态计算中区分“发送当前消息”和“加入队列”。
+为了控制改动范围，第一版只增加输入区上方的队列预览和发送按钮状态区分，不重做聊天页整体布局。
 
 ### 停止当前生成
 
@@ -253,11 +258,11 @@ Desktop 和 mobile 保持一致：
 自动发送失败时：
 
 - 队列项标记为 failed
-- 消息气泡展示错误状态
+- 队列预览展示错误状态
 - toast 展示错误原因
 - 后续队列暂停
 
-失败项需要用户显式重试或删除。首版可以先复用现有 retry 入口或提供队列项重试入口，具体实现时优先复用已有 `handleRetry`/发送能力，避免新增复杂 UI。
+失败项需要用户显式重试或取消。重试优先复用 toast 中的 retry 入口；取消会把该队列项内容恢复到输入框。
 
 ### 当前流异常结束
 
@@ -270,13 +275,16 @@ Desktop 和 mobile 保持一致：
 - streaming 时 `canSubmit` 不再因为 streaming 变 false
 - streaming 时输入非空点击发送会创建队列项，不会立即调用 WebSocket send
 - 当前流结束后自动发送队首
-- 多条队列消息按 FIFO 发送
+- 已有 queued 项时再次发送会合并为一次 queued 请求
+- 取消 queued 项会从队列移除，并把内容恢复到输入框
 - 自动发送失败时暂停后续队列
 
 ### Desktop 控件测试
 
 - streaming 且输入为空时仍可停止生成
 - streaming 且输入非空时可以加入队列
+- 队列预览显示在发送框上方，而不是聊天消息区或发送框内部
+- queued 和 failed 项可以取消，sending 项不能取消
 - 非 streaming 时发送按钮保持现有行为
 
 ### Mobile 控件测试
@@ -291,6 +299,7 @@ Desktop 和 mobile 保持一致：
 - 附件、知识库、表格上下文入队后按快照发送
 - code 任务仓库和分支快照正确发送
 - group chat 不回归已有发送和已读标记逻辑
+- 取消排队后恢复的内容可继续编辑并重新发送
 
 ## 实施顺序
 
@@ -298,7 +307,7 @@ Desktop 和 mobile 保持一致：
 2. 提取发送请求快照构建逻辑，保证普通发送和队列发送复用
 3. 新增 per-task 消息队列 hook
 4. 调整 `ChatInputControls` 和 `MobileChatInputControls` 的 streaming 发送状态
-5. 接入本地 queued 消息展示
+5. 在发送框上方接入 queued 消息预览、合并和取消恢复输入
 6. 补齐失败、重试和任务切换测试
 
 ## 风险
