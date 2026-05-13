@@ -5,8 +5,6 @@ version: "1.0.0"
 author: "Wegent Team"
 tags: ["data-analysis", "excel", "csv", "sql", "duckdb", "query"]
 bindShells:
-  - Chat
-  - Agno
   - ClaudeCode
 mcpServers:
   wegent-data-analysis:
