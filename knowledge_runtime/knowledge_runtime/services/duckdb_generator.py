@@ -46,12 +46,12 @@ class DuckDBGenerateResult:
 class DuckDBGenerator:
     """Generates .duckdb files from Excel/CSV binary data.
 
-    Handles multi-sheet Excel files, CSV/TSV imports, and legacy .xls format.
+    Handles multi-sheet Excel files (.xlsx) and CSV/TSV imports.
     Produces a DuckDB database file with SUMMARIZE metadata and sample data.
     """
 
-    # Supported file extensions
-    SUPPORTED_EXTENSIONS = {".xlsx", ".xls", ".csv", ".tsv"}
+    # Supported file extensions (Note: .xls BIFF format not supported, use .xlsx)
+    SUPPORTED_EXTENSIONS = {".xlsx", ".csv", ".tsv"}
 
     def __init__(self) -> None:
         self._settings = get_settings()
@@ -226,8 +226,6 @@ class DuckDBGenerator:
                 # Import data based on file type
                 if file_extension == ".xlsx":
                     self._import_xlsx(conn, temp_source_path, source_file)
-                elif file_extension == ".xls":
-                    self._import_xls(conn, temp_source_path, source_file)
                 elif file_extension in (".csv", ".tsv"):
                     self._import_csv(conn, temp_source_path, source_file)
                 else:
@@ -345,93 +343,6 @@ class DuckDBGenerator:
                         )
                 except Exception as exc:
                     logger.warning("Failed to import sheet '%s': %s", sheet_name, exc)
-
-    def _import_xls(
-        self, conn: duckdb.DuckDBPyConnection, source_path: Path, source_file: str
-    ) -> None:
-        """Import legacy .xls file using openpyxl as best-effort fallback.
-
-        Note: openpyxl only supports .xlsx format (Office Open XML).
-        Legacy .xls files (Binary Excel format) require xlrd. If openpyxl
-        fails to read the file, a clear error is raised.
-
-        Args:
-            conn: Active DuckDB connection.
-            source_path: Path to the temporary source file.
-            source_file: Original filename for table naming.
-        """
-        try:
-            import openpyxl
-        except ImportError as exc:
-            raise RuntimeError(
-                "openpyxl is required for .xls file support. "
-                "Install it with: pip install openpyxl"
-            ) from exc
-
-        try:
-            wb = openpyxl.load_workbook(
-                str(source_path), read_only=True, data_only=True
-            )
-        except Exception as exc:
-            raise RuntimeError(
-                f"Failed to read .xls file. openpyxl only supports .xlsx format. "
-                f"For legacy .xls files, please convert to .xlsx first. Error: {exc}"
-            ) from exc
-        try:
-            base_name = self._extract_table_name(source_file)
-            used_names: list[str] = []
-
-            sheet_names = wb.sheetnames
-            if not sheet_names:
-                raise RuntimeError("No sheets found in the .xls file")
-
-            for sheet_name in sheet_names:
-                ws = wb[sheet_name]
-
-                # Read sheet data into rows
-                rows = list(ws.iter_rows(values_only=True))
-                if not rows or len(rows) < 2:
-                    # Skip empty sheets or sheets with only headers
-                    continue
-
-                # First row as headers
-                headers = [
-                    str(h) if h is not None else f"column_{i}"
-                    for i, h in enumerate(rows[0])
-                ]
-                data_rows = rows[1:]
-
-                # Convert to list of dicts for DataFrame
-                records = []
-                for row in data_rows:
-                    record = {}
-                    for i, (header, value) in enumerate(zip(headers, row, strict=True)):
-                        record[header] = value
-                    records.append(record)
-
-                if not records:
-                    continue
-
-                # Create DataFrame and register as DuckDB table
-                import pandas as pd
-
-                df = pd.DataFrame(records)
-
-                if len(sheet_names) == 1:
-                    table_name = self._sanitize_table_name(base_name)
-                else:
-                    table_name = self._sanitize_table_name(f"sheet_{sheet_name}")
-
-                table_name = self._deduplicate_table_name(table_name, used_names)
-                used_names.append(table_name)
-
-                conn.execute(f'CREATE TABLE "{table_name}" AS SELECT * FROM df')
-                logger.info(
-                    "Imported .xls sheet '%s' as table '%s'", sheet_name, table_name
-                )
-
-        finally:
-            wb.close()
 
     def _import_csv(
         self, conn: duckdb.DuckDBPyConnection, source_path: Path, source_file: str
