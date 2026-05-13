@@ -147,9 +147,7 @@ class DingTalkWorkspaceService:
                     tool_names: list[str] = []
                     if hasattr(tools_result, "tools"):
                         tool_names = [
-                            t.name
-                            for t in tools_result.tools
-                            if hasattr(t, "name")
+                            t.name for t in tools_result.tools if hasattr(t, "name")
                         ]
                     elif isinstance(tools_result, list):
                         tool_names = [
@@ -341,9 +339,7 @@ class DingTalkWorkspaceService:
         for kb_node in kb_nodes:
             # The workspace MCP returns workspaceId as the KB identifier.
             kb_id = (
-                kb_node.get("workspaceId")
-                or kb_node.get("nodeId")
-                or kb_node.get("id")
+                kb_node.get("workspaceId") or kb_node.get("nodeId") or kb_node.get("id")
             )
             if not kb_id:
                 logger.warning(

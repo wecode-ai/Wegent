@@ -264,9 +264,7 @@ class DingTalkDocService:
                         candidate = data.get(key)
                         if isinstance(candidate, list):
                             found_list = [
-                                item
-                                for item in candidate
-                                if isinstance(item, dict)
+                                item for item in candidate if isinstance(item, dict)
                             ]
                             break
 

@@ -12,6 +12,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { RefreshCw, FolderOpen, BookOpen, ExternalLink } from 'lucide-react'
+import type { TFunction } from 'i18next'
 import { useTranslation } from '@/hooks/useTranslation'
 import { formatDateTime } from '@/utils/dateTime'
 import { dingtalkDocApi } from '@/apis/dingtalk-doc'
@@ -55,13 +56,19 @@ export function DingtalkDocsPage({
 
   // Load docs sync status on mount
   useEffect(() => {
-    dingtalkDocApi.getSyncStatus().then(setDocSyncStatus).catch(() => {})
+    dingtalkDocApi
+      .getSyncStatus()
+      .then(setDocSyncStatus)
+      .catch(() => {})
   }, [])
 
   // Load workspace sync status on mount
   useEffect(() => {
     if (isWorkspaceConfigured) {
-      dingtalkDocApi.getWorkspaceSyncStatus().then(setWorkspaceSyncStatus).catch(() => {})
+      dingtalkDocApi
+        .getWorkspaceSyncStatus()
+        .then(setWorkspaceSyncStatus)
+        .catch(() => {})
     }
   }, [isWorkspaceConfigured])
 
@@ -173,8 +180,7 @@ export function DingtalkDocsPage({
             size="sm"
             onClick={handleSync}
             disabled={
-              isSyncing ||
-              (activeTab === 'my-docs' ? !isConfigured : !isWorkspaceConfigured)
+              isSyncing || (activeTab === 'my-docs' ? !isConfigured : !isWorkspaceConfigured)
             }
             className="h-11 min-w-[44px]"
             data-testid="dingtalk-sync-button"
@@ -197,7 +203,7 @@ export function DingtalkDocsPage({
       {/* Tabs */}
       <Tabs
         value={activeTab}
-        onValueChange={(v) => setActiveTab(v as 'my-docs' | 'workspace')}
+        onValueChange={v => setActiveTab(v as 'my-docs' | 'workspace')}
         className="flex flex-col flex-1 min-h-0"
       >
         <TabsList className="mx-6 mt-3 self-start rounded-md">
@@ -275,7 +281,7 @@ function DingtalkEmptyState({
   onSync: () => void
   isSyncing: boolean
   hint: string
-  t: (key: string, fallback?: string) => string
+  t: TFunction
 }) {
   return (
     <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
@@ -284,12 +290,7 @@ function DingtalkEmptyState({
         {t('document.dingtalk.emptyState', '暂无文档')}
       </h3>
       <p className="text-sm text-text-muted mb-4">{hint}</p>
-      <Button
-        variant="primary"
-        onClick={onSync}
-        disabled={isSyncing}
-        className="h-11 min-w-[44px]"
-      >
+      <Button variant="primary" onClick={onSync} disabled={isSyncing} className="h-11 min-w-[44px]">
         {isSyncing ? (
           <>
             <Spinner size="sm" className="mr-1" />
@@ -307,7 +308,7 @@ function DingtalkEmptyState({
 }
 
 /** Shown in workspace tab when workspace MCP is not configured. */
-function WorkspaceNotConfigured({ t }: { t: (key: string, fallback?: string) => string }) {
+function WorkspaceNotConfigured({ t }: { t: TFunction }) {
   return (
     <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
       <BookOpen className="w-16 h-16 text-text-muted mb-4" />

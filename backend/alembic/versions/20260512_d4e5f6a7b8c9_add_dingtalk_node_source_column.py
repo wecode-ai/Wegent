@@ -4,8 +4,8 @@
 
 """add dingtalk node source column
 
-Revision ID: c3d4e5f6g8h9
-Revises: b2c3d4e5f707
+Revision ID: d4e5f6a7b8c9
+Revises: c3d4e5f6a708
 Create Date: 2026-05-12
 
 Add source column to dingtalk_synced_nodes table to distinguish between
@@ -19,8 +19,8 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "c3d4e5f6g8h9"
-down_revision = "b2c3d4e5f707"
+revision = "d4e5f6a7b8c9"
+down_revision = "c3d4e5f6a708"
 branch_labels = None
 depends_on = None
 
