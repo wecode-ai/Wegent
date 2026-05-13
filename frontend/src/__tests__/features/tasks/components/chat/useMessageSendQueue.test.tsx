@@ -201,6 +201,36 @@ describe('useMessageSendQueue', () => {
     })
   })
 
+  it('cancels a queued message before dispatch', async () => {
+    const dispatchMessage = jest.fn().mockResolvedValue(undefined)
+    let isDispatchBlocked = true
+
+    const { result, rerender } = renderHook(() =>
+      useMessageSendQueue<Snapshot>({
+        taskId: 42,
+        isDispatchBlocked,
+        dispatchMessage,
+      })
+    )
+
+    act(() => {
+      result.current.enqueueMessage(queued('first'))
+    })
+
+    const queuedId = result.current.activeTaskQueue[0].id
+    act(() => {
+      result.current.cancelMessage(queuedId)
+    })
+
+    expect(result.current.activeTaskQueue).toEqual([])
+
+    isDispatchBlocked = false
+    rerender()
+
+    await Promise.resolve()
+    expect(dispatchMessage).not.toHaveBeenCalled()
+  })
+
   it('only dispatches messages for the active task', async () => {
     const dispatchMessage = jest.fn().mockResolvedValue(undefined)
 

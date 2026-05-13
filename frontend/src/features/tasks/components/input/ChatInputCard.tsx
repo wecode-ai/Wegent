@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useRef, useState, useCallback } from 'react'
-import { Upload, Sparkles } from 'lucide-react'
+import { Upload, Sparkles, X } from 'lucide-react'
 import ChatInput from './ChatInput'
 import InputBadgeDisplay from './InputBadgeDisplay'
 import ExternalApiParamsInput from '../params/ExternalApiParamsInput'
@@ -74,6 +74,7 @@ export interface ChatInputCardProps extends Omit<
   canSubmit: boolean
   canQueueMessage?: boolean
   queuedMessages?: QueuedInputMessage[]
+  onCancelQueuedMessage?: (id: string) => void
   handleSendMessage: (message?: string) => Promise<void>
 
   // Ref for container width measurement
@@ -130,6 +131,7 @@ export function ChatInputCard({
   canSubmit,
   canQueueMessage = false,
   queuedMessages = [],
+  onCancelQueuedMessage,
   handleSendMessage,
   onPasteFile,
   inputControlsRef,
@@ -255,8 +257,55 @@ export function ChatInputCard({
         </div>
       )}
 
+      {queuedMessages.length > 0 && !shouldHideChatInput && (
+        <div className="mx-auto mb-9 w-full max-w-[820px] px-1">
+          <div
+            data-testid="queued-message-list"
+            className="space-y-2 rounded-xl border border-border bg-surface/90 px-3 py-2 shadow-sm"
+          >
+            {queuedMessages.map(message => (
+              <div
+                key={message.id}
+                data-testid="queued-message-item"
+                className="flex min-w-0 items-start gap-2"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="mb-1 flex items-center gap-2">
+                    <span
+                      className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs ${
+                        message.status === 'failed'
+                          ? 'bg-destructive/10 text-destructive'
+                          : 'bg-primary/10 text-primary'
+                      }`}
+                    >
+                      {getQueuedMessageStatusLabel(message.status)}
+                    </span>
+                  </div>
+                  <p className="line-clamp-2 whitespace-pre-wrap break-words text-sm text-text-secondary">
+                    {message.displayMessage}
+                  </p>
+                </div>
+                {message.status !== 'sending' && onCancelQueuedMessage && (
+                  <button
+                    type="button"
+                    data-testid="cancel-queued-message-button"
+                    aria-label={t('messages.cancel_queued')}
+                    title={t('messages.cancel_queued')}
+                    onClick={() => onCancelQueuedMessage(message.id)}
+                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-base hover:text-text-primary md:h-8 md:w-8"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Chat Input Card */}
       <div
+        data-testid="chat-input-card"
         className={`relative w-full max-w-[820px] mx-auto rounded-3xl border bg-base shadow-card-hover transition-colors flex flex-col justify-start ${isDragging ? 'border-primary ring-2 ring-primary/20' : 'border-primary/40'}`}
         onDragEnter={onDragEnter}
         onDragLeave={onDragLeave}
@@ -305,34 +354,6 @@ export function ChatInputCard({
 
         {/* Connection Status Banner - shows WebSocket connection status */}
         {!shouldHideChatInput && <ConnectionStatusBanner />}
-
-        {queuedMessages.length > 0 && !shouldHideChatInput && (
-          <div className="px-4 pt-3">
-            <div
-              data-testid="queued-message-list"
-              className="space-y-2 rounded-xl border border-border bg-surface/80 px-3 py-2"
-            >
-              {queuedMessages.map(message => (
-                <div key={message.id} data-testid="queued-message-item" className="min-w-0">
-                  <div className="mb-1 flex items-center gap-2">
-                    <span
-                      className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs ${
-                        message.status === 'failed'
-                          ? 'bg-destructive/10 text-destructive'
-                          : 'bg-primary/10 text-primary'
-                      }`}
-                    >
-                      {getQueuedMessageStatusLabel(message.status)}
-                    </span>
-                  </div>
-                  <p className="line-clamp-2 whitespace-pre-wrap break-words text-sm text-text-secondary">
-                    {message.displayMessage}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
 
         {/* Chat Input with inline badge */}
         {!shouldHideChatInput && (

@@ -64,6 +64,12 @@ export function useMessageSendQueue<TSnapshot>({
     )
   }, [])
 
+  const cancelMessage = useCallback((id: string) => {
+    setQueuedMessages(current =>
+      current.filter(message => message.id !== id || message.status === 'sending')
+    )
+  }, [])
+
   const updateQueuedMessage = useCallback(
     (id: string, updater: (message: QueuedMessage<TSnapshot>) => QueuedMessage<TSnapshot>) => {
       setQueuedMessages(current =>
@@ -130,6 +136,7 @@ export function useMessageSendQueue<TSnapshot>({
     activeTaskQueue,
     enqueueMessage,
     retryMessage,
+    cancelMessage,
     updateQueuedMessage,
   }
 }

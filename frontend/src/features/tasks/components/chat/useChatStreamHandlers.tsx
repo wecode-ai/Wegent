@@ -133,6 +133,7 @@ export interface ChatStreamHandlers {
   canQueueMessage: boolean
   queuedMessageCount: number
   queuedMessages: QueuedChatMessagePreview[]
+  cancelQueuedMessage: (id: string) => void
 
   // Actions
   handleSendMessage: (overrideMessage?: string) => Promise<void>
@@ -819,6 +820,7 @@ export function useChatStreamHandlers({
     activeTaskQueue,
     enqueueMessage,
     retryMessage: retryQueuedMessage,
+    cancelMessage: cancelQueuedMessage,
     updateQueuedMessage,
   } = useMessageSendQueue<PreparedChatSend>({
     taskId: activeTaskId,
@@ -1437,6 +1439,7 @@ export function useChatStreamHandlers({
     canQueueMessage,
     queuedMessageCount: activeTaskQueue.length,
     queuedMessages,
+    cancelQueuedMessage,
 
     // Actions
     handleSendMessage,

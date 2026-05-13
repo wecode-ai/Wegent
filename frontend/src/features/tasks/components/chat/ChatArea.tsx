@@ -1137,6 +1137,7 @@ function ChatAreaContent({
     canSubmit,
     canQueueMessage: streamHandlers.canQueueMessage,
     queuedMessages: streamHandlers.queuedMessages,
+    onCancelQueuedMessage: streamHandlers.cancelQueuedMessage,
     handleSendMessage: async (overrideMessage?: string) => {
       // Format message with quote if present, then clear quote
       const baseMessage = overrideMessage?.trim() || chatState.taskInputMessage.trim()

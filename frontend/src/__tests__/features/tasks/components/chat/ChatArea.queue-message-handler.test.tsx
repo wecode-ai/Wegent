@@ -15,7 +15,13 @@ const defaultStreamHandlers = {
   isSubtaskStreaming: false,
   canQueueMessage: false,
   queuedMessageCount: 0,
-  queuedMessages: [],
+  queuedMessages: [] as Array<{
+    id: string
+    displayMessage: string
+    status: 'queued' | 'sending' | 'failed'
+    error?: string
+  }>,
+  cancelQueuedMessage: jest.fn(),
   isStopping: false,
   hasPendingUserMessage: false,
   localPendingMessage: null,
@@ -258,6 +264,39 @@ describe('ChatArea queue message handler mounting', () => {
 
     expect(mockChatInputCard).toHaveBeenCalledWith(
       expect.objectContaining({ canQueueMessage: true, canSubmit: true, queuedMessages: [] })
+    )
+  })
+
+  it('passes queued message cancellation to ChatInputCard', () => {
+    const cancelQueuedMessage = jest.fn()
+    const queuedMessages = [
+      {
+        id: '42:local-user-1',
+        displayMessage: 'next question',
+        status: 'queued' as const,
+      },
+    ]
+    streamHandlersMock = {
+      ...defaultStreamHandlers,
+      isStreaming: true,
+      canQueueMessage: true,
+      queuedMessages,
+      cancelQueuedMessage,
+    }
+    selectedTaskDetailMock = {
+      id: 42,
+      status: 'RUNNING',
+      is_group_chat: false,
+      subtasks: [],
+    } as unknown as TaskDetail
+
+    render(<ChatArea teams={[]} isTeamsLoading={false} taskType="chat" showRepositorySelector />)
+
+    expect(mockChatInputCard).toHaveBeenCalledWith(
+      expect.objectContaining({
+        queuedMessages,
+        onCancelQueuedMessage: cancelQueuedMessage,
+      })
     )
   })
 

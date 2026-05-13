@@ -159,6 +159,32 @@ describe('useChatStreamHandlers queue integration', () => {
     expect(mockResetContexts).toHaveBeenCalled()
   })
 
+  it('cancels a queued follow-up before it is dispatched', async () => {
+    const { result, rerender } = renderQueueableHook()
+
+    await act(async () => {
+      await result.current.handleSendMessage()
+    })
+
+    act(() => {
+      result.current.cancelQueuedMessage('42:local-user-1')
+    })
+
+    expect(result.current.queuedMessages).toEqual([])
+
+    isMachineStreamingMock = false
+    selectedTaskDetailMock = {
+      id: 42,
+      status: 'COMPLETED',
+      is_group_chat: false,
+      subtasks: [],
+    } as unknown as TaskDetail
+    rerender()
+
+    await Promise.resolve()
+    expect(mockContextSendMessage).not.toHaveBeenCalled()
+  })
+
   it('merges a new queued input into the existing queued message and sends once', async () => {
     taskInputMessageMock = 'first question'
     const { result, rerender } = renderQueueableHook()

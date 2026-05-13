@@ -82,6 +82,7 @@
     "status_cancelling": "Cancelling",
     "status_queued": "Queued",
     "status_sending": "Sending",
+    "cancel_queued": "Cancel queued message",
     "queue_failed": "Queued message failed",
     "recovered": "Recovered",
     "content_recovered": "Content Recovered",

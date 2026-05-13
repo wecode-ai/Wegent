@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 
 import {
   ChatInputCard,
@@ -211,12 +211,56 @@ describe('ChatInputCard layout', () => {
     )
 
     const queuedList = screen.getByTestId('queued-message-list')
+    const card = screen.getByTestId('chat-input-card')
     const chatInput = screen.getByTestId('chat-input')
 
     expect(queuedList).toHaveTextContent('next question')
     expect(queuedList).toHaveTextContent('messages.status_queued')
-    expect(queuedList.compareDocumentPosition(chatInput) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+    expect(queuedList.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     )
+    expect(card).toContainElement(chatInput)
+    expect(card).not.toContainElement(queuedList)
+  })
+
+  it('cancels a queued message from the queue preview', () => {
+    const onCancelQueuedMessage = jest.fn()
+
+    render(
+      <ChatInputCard
+        {...buildProps()}
+        onCancelQueuedMessage={onCancelQueuedMessage}
+        queuedMessages={[
+          {
+            id: '42:local-user-1',
+            displayMessage: 'next question',
+            status: 'queued',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('cancel-queued-message-button'))
+
+    expect(onCancelQueuedMessage).toHaveBeenCalledWith('42:local-user-1')
+  })
+
+  it('does not allow cancelling a queued message that is already sending', () => {
+    render(
+      <ChatInputCard
+        {...buildProps()}
+        onCancelQueuedMessage={jest.fn()}
+        queuedMessages={[
+          {
+            id: '42:local-user-1',
+            displayMessage: 'next question',
+            status: 'sending',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('queued-message-list')).toHaveTextContent('messages.status_sending')
+    expect(screen.queryByTestId('cancel-queued-message-button')).not.toBeInTheDocument()
   })
 })
