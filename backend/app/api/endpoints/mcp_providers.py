@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import json
 from typing import Optional
 
@@ -15,11 +16,15 @@ from app.schemas.mcp_providers import (
     MCPProviderKeysResponse,
     MCPProviderListResponse,
     MCPServerListResponse,
+    MCPTestRequest,
+    MCPTestResponse,
+    MCPToolInfo,
 )
 from app.schemas.user import MCPProviderKeys, UserInDB, UserPreferences, UserUpdate
 from app.services.mcp_providers.security import encrypt_mcp_provider_keys
 from app.services.mcp_providers.service import MCPProviderService
 from app.services.user import user_service
+from chat_shell.tools.mcp.client import MCPClient
 from shared.logger import setup_logger
 
 router = APIRouter(tags=["mcp-providers"])
@@ -35,6 +40,56 @@ async def list_mcp_providers(
     parsed_prefs = _parse_user_preferences(current_user.preferences)
     providers = MCPProviderService.list_providers(parsed_prefs)
     return MCPProviderListResponse(providers=providers)
+
+
+def _parse_user_preferences(prefs_data: Optional[str]) -> UserPreferences:
+    """Parse user preferences from JSON string or return default"""
+    if not prefs_data:
+        return UserPreferences()
+    try:
+        if isinstance(prefs_data, str):
+            prefs_dict = json.loads(prefs_data)
+            return UserPreferences.model_validate(prefs_dict)
+        return UserPreferences.model_validate(prefs_data)
+    except Exception:
+        return UserPreferences()
+
+
+@router.post("/test", response_model=MCPTestResponse)
+async def test_mcp_connection(
+    request: MCPTestRequest,
+    current_user: UserInDB = Depends(security.get_current_user),
+) -> MCPTestResponse:
+    """Test an MCP server connection and list its available tools.
+
+    Returns success=False (HTTP 200) for all connection failures so callers
+    can display the error message without treating it as a server error.
+    """
+    server_type = request.server_config.get("type", "")
+    if server_type == "stdio":
+        return MCPTestResponse(success=False, error="stdio type is not testable")
+
+    # Normalize "http" to "streamable-http" — the frontend may store the type as "http"
+    # after saving, but MCPClient only understands "streamable-http" for HTTP transports
+    server_config = dict(request.server_config)
+    if server_type == "http":
+        server_config["type"] = "streamable-http"
+
+    try:
+        config = {request.server_name: server_config}
+        raw_tools = await asyncio.wait_for(_connect_and_get_tools(config), timeout=15)
+        tools = [
+            MCPToolInfo(
+                name=getattr(tool, "name", ""),
+                description=getattr(tool, "description", ""),
+            )
+            for tool in raw_tools
+        ]
+        return MCPTestResponse(success=True, tools=tools)
+    except asyncio.TimeoutError:
+        return MCPTestResponse(success=False, error="Connection timed out (15s)")
+    except Exception as e:
+        return MCPTestResponse(success=False, error=str(e))
 
 
 @router.post("/{provider_key}/servers", response_model=MCPServerListResponse)
@@ -72,19 +127,6 @@ async def get_provider_servers(
         servers=servers,
         error_details=error_details,
     )
-
-
-def _parse_user_preferences(prefs_data: Optional[str]) -> UserPreferences:
-    """Parse user preferences from JSON string or return default"""
-    if not prefs_data:
-        return UserPreferences()
-    try:
-        if isinstance(prefs_data, str):
-            prefs_dict = json.loads(prefs_data)
-            return UserPreferences.model_validate(prefs_dict)
-        return UserPreferences.model_validate(prefs_data)
-    except Exception:
-        return UserPreferences()
 
 
 @router.put("/keys", response_model=MCPProviderKeysResponse)
@@ -134,3 +176,9 @@ async def update_mcp_provider_keys(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Failed to update MCP provider keys: {str(e)}",
         )
+
+
+async def _connect_and_get_tools(config: dict) -> list:
+    """Connect to MCP server and retrieve its tools list."""
+    async with MCPClient(config) as client:
+        return client.get_tools()

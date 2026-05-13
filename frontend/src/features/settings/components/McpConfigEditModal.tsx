@@ -51,12 +51,29 @@ const McpConfigEditModal: React.FC<McpConfigEditModalProps> = ({
       onSave(normalized)
       setEditConfigError(false)
       onOpenChange(false)
-    } catch {
+    } catch (error) {
       setEditConfigError(true)
-      toast({
-        variant: 'destructive',
-        title: t('bot.errors.mcp_config_json'),
-      })
+      if (error instanceof SyntaxError) {
+        toast({
+          variant: 'destructive',
+          title: t('bot.errors.mcp_config_json'),
+        })
+      } else if (error instanceof Error && error.message === 'mcp_config_missing_server_name') {
+        toast({
+          variant: 'destructive',
+          title: t('bot.errors.mcp_config_missing_server_name'),
+        })
+      } else if (error instanceof Error && error.message.startsWith('mcp_server_name_invalid:')) {
+        toast({
+          variant: 'destructive',
+          title: t('bot.errors.mcp_server_name_invalid'),
+        })
+      } else {
+        toast({
+          variant: 'destructive',
+          title: t('bot.errors.mcp_config_invalid'),
+        })
+      }
     }
   }, [editConfig, agentType, onSave, onOpenChange, toast, t])
 

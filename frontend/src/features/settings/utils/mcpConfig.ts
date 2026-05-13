@@ -28,6 +28,9 @@ export function stringifyMcpConfig(config: McpServersConfig): string {
   return JSON.stringify(config, null, 2)
 }
 
+// Valid MCP server names: ASCII letters, digits, underscores, hyphens, dots, colons
+const MCP_SERVER_NAME_REGEX = /^[a-zA-Z0-9_\-.:]+$/
+
 /**
  * Normalize MCP servers config from one of these shapes:
  * - { mcpServers: {...} }
@@ -46,9 +49,12 @@ export function normalizeMcpServers(
   const normalizedServers: McpServersConfig = {}
 
   Object.entries(servers).forEach(([serverName, serverValue]) => {
+    if (!MCP_SERVER_NAME_REGEX.test(serverName)) {
+      throw new Error(`mcp_server_name_invalid:${serverName}`)
+    }
+
     if (!serverValue || typeof serverValue !== 'object' || Array.isArray(serverValue)) {
-      normalizedServers[serverName] = serverValue
-      return
+      throw new Error('mcp_config_missing_server_name')
     }
 
     const server = { ...(serverValue as McpServersConfig) }
