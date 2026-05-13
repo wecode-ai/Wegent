@@ -213,15 +213,17 @@ def list_knowledge_bases(
 
 @mcp_tool(
     name="wegent_kb_list_documents",
-    description="List all documents in a knowledge base.",
+    description="List all documents in a knowledge base, optionally filtered by folder.",
     server="knowledge",
     param_descriptions={
         "knowledge_base_id": "Knowledge base ID to list documents from",
+        "folder_id": "Optional folder ID to filter documents by (0 or omit for root/all documents)",
     },
 )
 def list_documents(
     token_info: TaskTokenInfo,
     knowledge_base_id: int,
+    folder_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     List all documents in a knowledge base.
@@ -229,6 +231,7 @@ def list_documents(
     Args:
         token_info: Task token information containing user context
         knowledge_base_id: Knowledge base ID
+        folder_id: Optional folder ID to filter documents by
 
     Returns:
         Dict with total count and list of documents
@@ -243,6 +246,7 @@ def list_documents(
             db=db,
             user=user,
             knowledge_base_id=knowledge_base_id,
+            folder_id=folder_id,
         )
 
         return {
@@ -355,6 +359,7 @@ def create_knowledge_base(
             "Source type: 'text', 'file', 'web', or 'attachment'. "
             "Use 'attachment' for inbox messages (see contentAttachmentIds in inbox context)."
         ),
+        "folder_id": "Optional folder ID to place the document in (0 or omit for root folder)",
         "content": "Text content (for source_type='text'). Avoid for large content - use 'attachment' instead.",
         "file_base64": "Base64-encoded file content (for source_type='file')",
         "file_extension": "File extension like 'txt', 'md', 'pdf' (for source_type='file')",
@@ -374,6 +379,7 @@ def create_document(
     knowledge_base_id: int,
     name: str,
     source_type: str,
+    folder_id: int = 0,
     content: Optional[str] = None,
     file_base64: Optional[str] = None,
     file_extension: Optional[str] = None,
@@ -399,6 +405,7 @@ def create_document(
         knowledge_base_id: Target knowledge base ID
         name: Document name
         source_type: Source type ("text", "file", "web", or "attachment")
+        folder_id: Optional folder ID to place the document in (0 means root folder)
         content: Text content (for source_type="text")
         file_base64: Base64-encoded file content (for source_type="file")
         file_extension: File extension (for source_type="file", e.g., "txt", "md", "pdf")
@@ -423,6 +430,7 @@ def create_document(
             knowledge_base_id=knowledge_base_id,
             name=name,
             source_type=source_type,
+            folder_id=folder_id,
             content=content,
             file_base64=file_base64,
             file_extension=file_extension,

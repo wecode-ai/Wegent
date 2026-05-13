@@ -318,6 +318,12 @@
     "tip_en_placeholder": "请输入英文提示内容",
     "delete_tip_title": "删除提示",
     "delete_tip_message": "确定要删除此提示吗？此操作无法撤销。",
+    "quick_access_title": "首页推荐智能体",
+    "quick_access_description": "选择首页 QuickCard 展示的系统内置智能体，右侧顺序即展示顺序。",
+    "quick_access_available": "可选智能体",
+    "quick_access_selected": "首页智能体",
+    "quick_access_name": "名称",
+    "quick_access_version": "首页智能体版本",
     "version": "版本",
     "success": {
       "updated": "配置更新成功"
@@ -443,6 +449,7 @@
     "title": "公共智能体管理",
     "description": "管理系统级公共智能体，所有用户可用",
     "create_description": "创建新的公共智能体。所有引用的机器人必须是公共机器人。",
+    "edit_description": "编辑公共智能体的基础信息和资源配置。",
     "loading": "加载智能体中...",
     "no_teams": "暂无公共智能体",
     "create_team": "创建智能体",
@@ -497,6 +504,7 @@
     "title": "公共机器人管理",
     "description": "管理系统级公共机器人，所有用户可用",
     "create_description": "创建新的公共机器人。所有引用的资源（Ghost、Shell、Model）必须是公共资源。",
+    "edit_description": "编辑公共机器人的基础信息和资源配置。",
     "loading": "加载机器人中...",
     "no_bots": "暂无公共机器人",
     "create_bot": "创建机器人",

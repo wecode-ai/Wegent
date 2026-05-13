@@ -15,6 +15,7 @@ import {
   CloudDownload,
   RotateCcw,
   Download,
+  FolderInput,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -38,6 +39,7 @@ interface DocumentItemProps {
   onRefresh?: (doc: KnowledgeDocument) => void
   onReindex?: (doc: KnowledgeDocument) => void
   onViewDetail?: (doc: KnowledgeDocument) => void
+  onMove?: (doc: KnowledgeDocument) => void
   canManage?: boolean
   canSelect?: boolean
   showBorder?: boolean
@@ -62,6 +64,7 @@ export function DocumentItem({
   onRefresh,
   onReindex,
   onViewDetail,
+  onMove,
   canManage = true,
   canSelect = canManage,
   showBorder = true,
@@ -107,6 +110,11 @@ export function DocumentItem({
   const handleEdit = (e: React.MouseEvent) => {
     e.stopPropagation()
     onEdit?.(document)
+  }
+
+  const handleMove = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    onMove?.(document)
   }
 
   const handleDelete = (e: React.MouseEvent) => {
@@ -351,6 +359,12 @@ export function DocumentItem({
                     <Pencil className="w-3.5 h-3.5 mr-2" />
                     {t('common:actions.edit')}
                   </DropdownMenuItem>
+                  {onMove && (
+                    <DropdownMenuItem onClick={handleMove}>
+                      <FolderInput className="w-3.5 h-3.5 mr-2" />
+                      {t('knowledge:document.folder.moveDocument')}
+                    </DropdownMenuItem>
+                  )}
                   {isWeb && onRefresh && (
                     <DropdownMenuItem onClick={handleRefresh} disabled={isRefreshing}>
                       <CloudDownload
@@ -563,6 +577,17 @@ export function DocumentItem({
       {/* Action buttons */}
       {canManage && (
         <div className="w-20 flex-shrink-0 flex items-center justify-center gap-1">
+          {/* Move to folder button */}
+          {onMove && (
+            <button
+              className="h-11 min-w-[44px] p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"
+              onClick={handleMove}
+              title={t('knowledge:document.folder.moveDocument')}
+              data-testid="move-button"
+            >
+              <FolderInput className="w-3.5 h-3.5" />
+            </button>
+          )}
           {/* Re-fetch button - only for web documents */}
           {isWeb && onRefresh && (
             <button

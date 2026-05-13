@@ -7,6 +7,8 @@ Unit tests for the document parser service.
 """
 
 import io
+import json
+import zipfile
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -18,6 +20,28 @@ from app.services.attachment.parser import (
     ParseResult,
     TruncationInfo,
 )
+
+
+def _build_xmind_archive() -> bytes:
+    """Build a minimal XMind archive for parser tests."""
+    content = [
+        {
+            "title": "Planning",
+            "rootTopic": {
+                "title": "Roadmap",
+                "children": {
+                    "attached": [
+                        {"title": "Discovery"},
+                        {"title": "Implementation"},
+                    ]
+                },
+            },
+        }
+    ]
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("content.json", json.dumps(content))
+    return archive.getvalue()
 
 
 class TestDocumentParser:
@@ -46,6 +70,7 @@ class TestDocumentParser:
             ".gif",
             ".bmp",
             ".webp",
+            ".xmind",
         ]
         for ext in expected_extensions:
             assert self.parser.is_supported_extension(
@@ -155,6 +180,18 @@ class TestDocumentParser:
         assert isinstance(result, ParseResult)
         assert "Alice" in result.text
         assert "Bob" in result.text
+        assert result.truncation_info is None
+
+    def test_parse_xmind_file_extracts_topics_as_markdown(self):
+        """Test parsing XMind mind-map topics into Markdown text."""
+        result = self.parser.parse(_build_xmind_archive(), ".xmind")
+
+        assert isinstance(result, ParseResult)
+        assert "# Planning" in result.text
+        assert "- Roadmap" in result.text
+        assert "Discovery" in result.text
+        assert "Implementation" in result.text
+        assert result.text_length == len(result.text)
         assert result.truncation_info is None
 
     def test_document_parse_error_codes(self):

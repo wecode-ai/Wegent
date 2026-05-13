@@ -78,6 +78,7 @@ async def upload_attachment_open(
     - Word (.doc, .docx)
     - PowerPoint (.ppt, .pptx)
     - Excel (.xls, .xlsx, .csv)
+    - XMind (.xmind)
     - Plain text (.txt)
     - Markdown (.md)
     - Images (.jpg, .jpeg, .png, .gif, .bmp, .webp)

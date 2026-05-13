@@ -12,6 +12,12 @@ import { QuickAccessCards } from './QuickAccessCards'
 import { SloganDisplay } from './SloganDisplay'
 import { ChatInputCard } from '../input/ChatInputCard'
 import PipelineStageIndicator from './PipelineStageIndicator'
+import PipelineNextStepDialog from './PipelineNextStepDialog'
+import {
+  buildPipelineNextStepDraft,
+  type PipelineNextStepMessage,
+  type PipelineNextStepPayload,
+} from './pipelineNextStep'
 import { ScrollToBottomIndicator } from './ScrollToBottomIndicator'
 import { ScrollbarMarkers } from './ScrollbarMarkers'
 import { GuidedQuestions } from '@/features/knowledge/document/components/GuidedQuestions'
@@ -27,7 +33,9 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useRouter } from 'next/navigation'
 import { useTaskContext } from '../../contexts/taskContext'
 import { useTaskStateMachine } from '../../hooks/useTaskStateMachine'
+import { useOptionalChatStreamContext } from '../../contexts/chatStreamContext'
 import { Button } from '@/components/ui/button'
+import { useToast } from '@/hooks/use-toast'
 import { useScrollManagement } from '../hooks/useScrollManagement'
 import { useFloatingInput } from '../hooks/useFloatingInput'
 import { getAttachment } from '@/apis/attachments'
@@ -47,6 +55,38 @@ const COLLAPSE_SELECTORS_THRESHOLD = 420
 
 /** Generation mode type - video or image */
 type GenerateMode = 'video' | 'image'
+
+const PIPELINE_NEXT_STEP_CONTEXT_TYPES = new Set<SubtaskContextBrief['context_type']>([
+  'attachment',
+  'knowledge_base',
+  'table',
+])
+
+function isPipelineNextStepContext(context: unknown): context is SubtaskContextBrief {
+  if (!context || typeof context !== 'object') {
+    return false
+  }
+
+  const candidate = context as Partial<SubtaskContextBrief>
+  return (
+    typeof candidate.id === 'number' &&
+    typeof candidate.name === 'string' &&
+    typeof candidate.status === 'string' &&
+    PIPELINE_NEXT_STEP_CONTEXT_TYPES.has(
+      candidate.context_type as SubtaskContextBrief['context_type']
+    )
+  )
+}
+
+function getPipelineNextStepContexts(contexts: unknown): SubtaskContextBrief[] | undefined {
+  if (!Array.isArray(contexts)) {
+    return undefined
+  }
+
+  const validContexts = contexts.filter(isPipelineNextStepContext)
+  return validContexts.length > 0 ? validContexts : undefined
+}
+
 interface ChatAreaProps {
   teams: Team[]
   isTeamsLoading: boolean
@@ -109,17 +149,22 @@ function ChatAreaContent({
   extension,
 }: ChatAreaProps) {
   const { t } = useTranslation()
+  const { toast } = useToast()
   const router = useRouter()
+  const chatStreamContext = useOptionalChatStreamContext()
 
   // Pipeline stage info state - shared between PipelineStageIndicator and MessagesArea
   const [pipelineStageInfo, setPipelineStageInfo] = useState<PipelineStageInfo | null>(null)
+  const [isPipelineNextStepOpen, setIsPipelineNextStepOpen] = useState(false)
+  const [isPipelineNextStepConfirming, setIsPipelineNextStepConfirming] = useState(false)
   const { quote, clearQuote, formatQuoteForMessage } = useQuote()
 
   // Task context
-  const { selectedTaskDetail, setSelectedTask, accessDenied } = useTaskContext()
+  const { selectedTask, selectedTaskDetail, setSelectedTask, accessDenied } = useTaskContext()
+  const effectiveTaskId = selectedTask?.id ?? selectedTaskDetail?.id
 
   // Use useTaskStateMachine hook for reactive state updates (SINGLE SOURCE OF TRUTH per AGENTS.md)
-  const { state: taskState } = useTaskStateMachine(selectedTaskDetail?.id)
+  const { state: taskState } = useTaskStateMachine(effectiveTaskId)
 
   // Video model selection state - only enabled for video mode
   // Uses unified useModelSelection hook with modelCategoryType='video'
@@ -274,16 +319,18 @@ function ChatAreaContent({
   // Determine if there are messages to display (computed early for hooks)
   // Uses state machine messages as the single source of truth, not selectedTaskDetail.subtasks
   const hasMessagesForHooks = useMemo(() => {
-    const hasSelectedTask = selectedTaskDetail && selectedTaskDetail.id
+    const hasSelectedTask = Boolean(effectiveTaskId)
     // Check messages from state machine (single source of truth)
     const hasContextMessages = taskState?.messages && taskState.messages.size > 0
     return Boolean(hasSelectedTask || hasContextMessages)
-  }, [selectedTaskDetail, taskState?.messages])
+  }, [effectiveTaskId, taskState?.messages])
 
   // Get taskId from URL for team sync logic
   const searchParams = useSearchParams()
   const taskIdFromUrl =
     searchParams.get('taskId') || searchParams.get('task_id') || searchParams.get('taskid')
+  // Get teamId from URL for auto-selecting a specific team (e.g. after accepting a share invite)
+  const teamIdFromUrl = searchParams.get('teamId')
 
   // Track initialization and last synced task for team selection
   const hasInitializedTeamRef = useRef(false)
@@ -356,6 +403,20 @@ function ChatAreaContent({
       }
     }
 
+    // Case 2a: teamId URL param present - select specific team regardless of initialization state
+    // This handles navigation after accepting a share invite (/chat?teamId=xxx)
+    if (!taskIdFromUrl && teamIdFromUrl) {
+      const targetTeamId = Number(teamIdFromUrl)
+      const teamFromUrl =
+        filteredTeams.find(t => t.id === targetTeamId) || teams.find(t => t.id === targetTeamId)
+      if (teamFromUrl) {
+        handleTeamChange(teamFromUrl)
+        hasInitializedTeamRef.current = true
+        lastSyncedTaskIdRef.current = null
+        return
+      }
+    }
+
     // Case 2: New chat (no taskId in URL) - use default team from server config
     if (!taskIdFromUrl && !hasInitializedTeamRef.current) {
       // Use the default team computed from server config
@@ -389,8 +450,10 @@ function ChatAreaContent({
     }
   }, [
     filteredTeams,
+    teams,
     selectedTaskDetail,
     taskIdFromUrl,
+    teamIdFromUrl,
     selectedTeam,
     handleTeamChange,
     findDefaultTeamForMode,
@@ -532,9 +595,9 @@ function ChatAreaContent({
   // Determine if there are messages to display (full computation)
   // Note: Now using taskState.messages from state machine instead of selectedTaskDetail.subtasks
   const hasMessages = useMemo(() => {
-    const hasSelectedTask = selectedTaskDetail && selectedTaskDetail.id
+    const hasSelectedTask = Boolean(effectiveTaskId)
     const hasNewTaskStream =
-      !selectedTaskDetail?.id && streamHandlers.pendingTaskId && streamHandlers.isStreaming
+      !effectiveTaskId && streamHandlers.pendingTaskId && streamHandlers.isStreaming
     const hasLocalPending = streamHandlers.localPendingMessage !== null
     // Use taskState from state machine (single source of truth)
     const hasUnifiedMessages = taskState?.messages && taskState.messages.size > 0
@@ -565,7 +628,7 @@ function ChatAreaContent({
       hasUnifiedMessages
     )
   }, [
-    selectedTaskDetail,
+    effectiveTaskId,
     streamHandlers.hasPendingUserMessage,
     streamHandlers.isStreaming,
     streamHandlers.pendingTaskId,
@@ -573,6 +636,31 @@ function ChatAreaContent({
     taskState?.messages,
     inputAlwaysAtBottom,
   ])
+
+  const pipelineNextStepMessages = useMemo<PipelineNextStepMessage[]>(() => {
+    if (!taskState?.messages) return []
+
+    return Array.from(taskState.messages.values()).map(message => ({
+      id: message.id,
+      type: message.type,
+      status: message.status,
+      content: message.content,
+      timestamp: message.timestamp,
+      messageId: message.messageId,
+      contexts: getPipelineNextStepContexts(message.contexts),
+    }))
+  }, [taskState?.messages])
+
+  const pipelineNextStepDraft = useMemo(
+    () => buildPipelineNextStepDraft(pipelineNextStepMessages),
+    [pipelineNextStepMessages]
+  )
+
+  useEffect(() => {
+    if (!pipelineStageInfo?.is_pending_confirmation) {
+      setIsPipelineNextStepOpen(false)
+    }
+  }, [pipelineStageInfo?.is_pending_confirmation])
 
   // Note: Team selection is now handled by useTeamSelection hook in TeamSelector component
   // Model selection is handled by useModelSelection hook in ModelSelector component
@@ -752,18 +840,20 @@ function ChatAreaContent({
       let contextItem: ContextItem | null = null
 
       if (context.context_type === 'knowledge_base') {
+        if (!context.knowledge_id) return
         contextItem = {
-          id: context.id,
+          id: context.knowledge_id,
           name: context.name,
           type: 'knowledge_base',
           document_count: context.document_count ?? undefined,
         }
       } else if (context.context_type === 'table') {
+        if (!context.document_id) return
         contextItem = {
-          id: context.id,
+          id: `table-${context.document_id}`,
           name: context.name,
           type: 'table',
-          document_id: 0, // Not available in SubtaskContextBrief, backend will resolve it
+          document_id: context.document_id,
           source_config: context.source_config ?? undefined,
         }
       }
@@ -779,6 +869,76 @@ function ChatAreaContent({
       setSelectedContexts([...currentContexts, contextItem])
     },
     [setSelectedContexts]
+  )
+
+  const handlePipelineNextStepClick = useCallback(() => {
+    setIsPipelineNextStepOpen(true)
+  }, [])
+
+  const handlePipelineNextStepConfirm = useCallback(
+    async (payload: PipelineNextStepPayload) => {
+      const taskId = selectedTaskDetail?.id
+      const teamId = chatState.selectedTeam?.id ?? selectedTaskDetail?.team?.id
+
+      if (!taskId || !teamId) {
+        toast({
+          variant: 'destructive',
+          title: t('chat:pipeline.next_step_dialog.missing_task'),
+        })
+        return
+      }
+
+      if (!chatStreamContext) {
+        toast({
+          variant: 'destructive',
+          title: t('chat:pipeline.confirm_failed'),
+        })
+        return
+      }
+
+      setIsPipelineNextStepConfirming(true)
+      try {
+        await chatStreamContext.sendMessage(
+          {
+            task_id: taskId,
+            team_id: teamId,
+            message: payload.message,
+            action: 'pipeline:confirm',
+            attachment_ids: payload.attachmentIds.length > 0 ? payload.attachmentIds : undefined,
+            contexts: payload.contexts.length > 0 ? payload.contexts : undefined,
+          },
+          {
+            pendingUserMessage: payload.message,
+            pendingContexts: payload.pendingContexts,
+            immediateTaskId: taskId,
+            onError: error => {
+              throw error
+            },
+          }
+        )
+
+        setIsPipelineNextStepOpen(false)
+        toast({
+          title: t('chat:pipeline.stage_confirmed'),
+        })
+      } catch (error) {
+        console.error('Failed to confirm pipeline next step:', error)
+        toast({
+          variant: 'destructive',
+          title: t('chat:pipeline.confirm_failed'),
+        })
+      } finally {
+        setIsPipelineNextStepConfirming(false)
+      }
+    },
+    [
+      chatState.selectedTeam?.id,
+      chatStreamContext,
+      selectedTaskDetail?.id,
+      selectedTaskDetail?.team?.id,
+      t,
+      toast,
+    ]
   )
 
   // Callback when user wants to use a previously generated image as reference
@@ -898,18 +1058,20 @@ function ChatAreaContent({
       const restoredContextItems: ContextItem[] = []
       for (const ctx of rawContexts) {
         if (ctx.context_type === 'knowledge_base') {
+          if (!ctx.knowledge_id) continue
           restoredContextItems.push({
-            id: ctx.id,
+            id: ctx.knowledge_id,
             name: ctx.name,
             type: 'knowledge_base',
             document_count: ctx.document_count ?? undefined,
           })
         } else if (ctx.context_type === 'table') {
+          if (!ctx.document_id) continue
           restoredContextItems.push({
-            id: ctx.id,
+            id: `table-${ctx.document_id}`,
             name: ctx.name,
             type: 'table',
-            document_id: 0,
+            document_id: ctx.document_id,
             source_config: ctx.source_config ?? undefined,
           })
         }
@@ -1126,6 +1288,8 @@ function ChatAreaContent({
             selectedTaskDetail.team?.workflow?.mode || chatState.selectedTeam?.workflow?.mode
           }
           onStageInfoChange={setPipelineStageInfo}
+          canContinueToNextStage={pipelineNextStepDraft.canSubmit}
+          onNextStepClick={handlePipelineNextStepClick}
         />
       )}
 
@@ -1301,6 +1465,15 @@ function ChatAreaContent({
       </div>
 
       {/* Team Edit Dialog - rendered via extension if provided */}
+      {selectedTaskDetail?.id && (
+        <PipelineNextStepDialog
+          open={isPipelineNextStepOpen}
+          messages={pipelineNextStepMessages}
+          isConfirming={isPipelineNextStepConfirming}
+          onOpenChange={setIsPipelineNextStepOpen}
+          onConfirm={handlePipelineNextStepConfirm}
+        />
+      )}
       {extension?.teamEdit?.renderDialog()}
     </div>
   )

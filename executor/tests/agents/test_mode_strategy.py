@@ -110,8 +110,11 @@ class TestLocalModeStrategy:
         self, strategy, temp_workspace, agent_config, claude_json_config
     ):
         """Test that settings.json is NOT created (security)."""
-        with patch(
-            "executor.config.config.get_workspace_root", return_value=temp_workspace
+        with (
+            patch(
+                "executor.config.config.get_workspace_root", return_value=temp_workspace
+            ),
+            patch.dict(os.environ, {"WEGENT_FILE_EDIT_HOOK_COMMAND": ""}, clear=False),
         ):
             config_dir, _ = strategy.save_config_files(
                 task_id=12345,
@@ -121,6 +124,46 @@ class TestLocalModeStrategy:
 
             settings_path = os.path.join(config_dir, "settings.json")
             assert not os.path.exists(settings_path), "settings.json should NOT exist"
+
+    def test_save_config_files_writes_file_edit_hook_settings_when_configured(
+        self, strategy, temp_workspace, agent_config, claude_json_config
+    ):
+        """Test WEGENT_FILE_EDIT_HOOK_COMMAND creates a hook-only settings file."""
+        hook_command = (
+            "curl -sS -X POST http://127.0.0.1:3456/api/file-edit-log "
+            '-H "Content-Type: application/json" --data-binary @-'
+        )
+
+        with (
+            patch(
+                "executor.config.config.get_workspace_root", return_value=temp_workspace
+            ),
+            patch.dict(
+                os.environ,
+                {"WEGENT_FILE_EDIT_HOOK_COMMAND": hook_command},
+                clear=False,
+            ),
+        ):
+            config_dir, _ = strategy.save_config_files(
+                task_id=12345,
+                agent_config=agent_config,
+                claude_json_config=claude_json_config,
+            )
+
+            settings_path = os.path.join(config_dir, "settings.json")
+            with open(settings_path) as f:
+                saved_config = json.load(f)
+
+            assert saved_config == {
+                "hooks": {
+                    "PostToolUse": [
+                        {
+                            "matcher": "Write|Edit",
+                            "hooks": [{"type": "command", "command": hook_command}],
+                        }
+                    ]
+                }
+            }
 
     def test_save_config_files_writes_claude_json(
         self, strategy, temp_workspace, agent_config, claude_json_config

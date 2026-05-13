@@ -11,10 +11,12 @@ import { useTranslation } from '@/hooks/useTranslation'
  * Props for StreamingWaitIndicator component
  */
 interface StreamingWaitIndicatorProps {
-  /** Whether the indicator should be shown (waiting for first character) */
+  /** Whether the indicator should be shown */
   isWaiting: boolean
   /** Optional start time for calculating wait duration (defaults to current time when isWaiting becomes true) */
   startTime?: number
+  /** Optional fixed message for non-progressive waiting states */
+  message?: string
 }
 
 /**
@@ -28,27 +30,29 @@ interface WaitStage {
   messageKey: string
 }
 
+const RUNNER_ANIMATION_LAP_MS = 5400
+
 /**
  * Wait stages configuration:
- * - 0-500ms: No text, just dots
- * - 500ms-3s: "Thinking..."
- * - 3-6s: "Analyzing in depth..."
- * - 6-10s: "Please wait, generating response..."
- * - 10s+: "Response is taking longer than usual..."
+ * Text changes are aligned with complete runner animation laps.
+ * - 0-5.4s: "Thinking..."
+ * - 5.4-10.8s: "Analyzing in depth..."
+ * - 10.8-16.2s: "Please wait, generating response..."
+ * - 16.2s+: "Response is taking longer than usual..."
  */
 const WAIT_STAGES: WaitStage[] = [
-  { minTime: 10000, messageKey: 'tasks:streaming_wait.longer_than_usual' },
-  { minTime: 6000, messageKey: 'tasks:streaming_wait.generating_response' },
-  { minTime: 3000, messageKey: 'tasks:streaming_wait.analyzing' },
-  { minTime: 500, messageKey: 'tasks:streaming_wait.thinking' },
+  { minTime: RUNNER_ANIMATION_LAP_MS * 3, messageKey: 'tasks:streaming_wait.longer_than_usual' },
+  { minTime: RUNNER_ANIMATION_LAP_MS * 2, messageKey: 'tasks:streaming_wait.generating_response' },
+  { minTime: RUNNER_ANIMATION_LAP_MS, messageKey: 'tasks:streaming_wait.analyzing' },
+  { minTime: 0, messageKey: 'tasks:streaming_wait.thinking' },
 ]
 
 /**
- * StreamingWaitIndicator - Displays a typing indicator with progressive text
- * during the wait time before receiving the first character from the AI.
+ * StreamingWaitIndicator - Displays a runner indicator with progressive or fixed text
+ * while an AI message is waiting or still processing.
  *
  * Features:
- * - Three bouncing dots animation
+ * - Single purple runner dot animation
  * - Progressive text that changes based on wait duration
  * - i18n support for Chinese and English
  * - Calm UI design with low saturation colors
@@ -61,6 +65,7 @@ const WAIT_STAGES: WaitStage[] = [
 export default function StreamingWaitIndicator({
   isWaiting,
   startTime: externalStartTime,
+  message,
 }: StreamingWaitIndicatorProps) {
   const { t } = useTranslation()
   const [internalStartTime, setInternalStartTime] = useState<number | null>(null)
@@ -93,34 +98,40 @@ export default function StreamingWaitIndicator({
 
   // Determine current stage message based on elapsed time
   const stageMessage = useMemo(() => {
+    if (message) return message
+
     // Find the first stage whose minTime is <= elapsedTime (stages are sorted descending)
     const stage = WAIT_STAGES.find(s => elapsedTime >= s.minTime)
     return stage ? t(stage.messageKey) : null
-  }, [elapsedTime, t])
+  }, [elapsedTime, message, t])
 
   // Don't render if not waiting
   if (!isWaiting) return null
 
   return (
-    <div className="flex items-center gap-1">
-      {/* Progressive text message */}
-      {stageMessage && <span className="text-sm text-text-muted">{stageMessage}</span>}
-
-      {/* Typing indicator - three subtle pulsing dots */}
-      <div className="flex items-center gap-1 h-4">
+    <div
+      className="inline-flex items-center"
+      role="status"
+      aria-live="polite"
+      data-testid="streaming-wait-indicator"
+    >
+      <span className="streaming-wait-runner-track" data-testid="streaming-wait-runner-track">
+        <span className="streaming-wait-runner-text-wrap">
+          <span className="streaming-wait-runner-text">{stageMessage}</span>
+          <span
+            className="streaming-wait-runner-text-mask"
+            aria-hidden="true"
+            data-testid="streaming-wait-runner-text-mask"
+          >
+            {stageMessage}
+          </span>
+        </span>
         <span
-          className="w-1 h-1 rounded-full bg-text-muted/60 animate-pulse"
-          style={{ animationDelay: '0ms', animationDuration: '1.5s' }}
+          className="streaming-wait-runner-dot"
+          aria-hidden="true"
+          data-testid="streaming-wait-runner-dot"
         />
-        <span
-          className="w-1 h-1 rounded-full bg-text-muted/60 animate-pulse"
-          style={{ animationDelay: '300ms', animationDuration: '1.5s' }}
-        />
-        <span
-          className="w-1 h-1 rounded-full bg-text-muted/60 animate-pulse"
-          style={{ animationDelay: '600ms', animationDuration: '1.5s' }}
-        />
-      </div>
+      </span>
     </div>
   )
 }

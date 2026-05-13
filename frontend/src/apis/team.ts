@@ -9,6 +9,7 @@ import type { CheckRunningTasksResponse } from './common'
 // Team Request/Response Types
 export interface CreateTeamRequest {
   name: string
+  displayName?: string | null
   description?: string
   bots?: TeamBot[]
   workflow?: Record<string, unknown>
@@ -36,6 +37,7 @@ export interface TeamShareInfoResponse {
   user_name: string
   team_id: number
   team_name: string
+  bind_mode?: string[]
 }
 
 // Team Share Join Request Type

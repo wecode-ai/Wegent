@@ -518,17 +518,19 @@ export class TaskStateMachine {
       return
     }
 
+    // Check WebSocket connection before consuming the recovery debounce window.
+    // A recovery scheduled during a connection-state race must be able to retry
+    // immediately once the socket is actually available.
+    if (!this.deps.isConnected()) {
+      return
+    }
+
     // Debounce check
     const now = Date.now()
     if (!event.force && now - this.lastRecoveryTime < this.recoveryDebounceMs) {
       return
     }
     this.lastRecoveryTime = now
-
-    // Check WebSocket connection
-    if (!this.deps.isConnected()) {
-      return
-    }
 
     // Transition to joining
     this.state = { ...this.state, status: 'joining', error: null }
@@ -561,6 +563,22 @@ export class TaskStateMachine {
 
       // Pass subtasks to JOIN_SUCCESS event for immediate sync
       const subtasks = response.subtasks as TaskDetailSubtask[] | undefined
+      const messageIds = Array.isArray(subtasks)
+        ? subtasks
+            .map(subtask => subtask.message_id)
+            .filter((messageId): messageId is number => typeof messageId === 'number')
+        : []
+
+      console.info('[TaskStateMachine] recover join ack', {
+        taskId: this.state.taskId,
+        maxMessageId,
+        messagesBeforeSync: this.state.messages.size,
+        subtasksCount: Array.isArray(subtasks) ? subtasks.length : null,
+        firstMessageId: messageIds[0],
+        lastMessageId: messageIds[messageIds.length - 1],
+        hasStreaming: Boolean(response.streaming),
+        streamingSubtaskId: response.streaming?.subtask_id,
+      })
 
       await this.dispatch({
         type: 'JOIN_SUCCESS',
@@ -582,7 +600,15 @@ export class TaskStateMachine {
   private async doSync(subtasks?: TaskDetailSubtask[]): Promise<void> {
     try {
       if (subtasks && subtasks.length > 0) {
+        const messagesBefore = this.state.messages.size
         this.buildMessages(subtasks)
+        console.info('[TaskStateMachine] sync subtasks', {
+          taskId: this.state.taskId,
+          subtasksCount: subtasks.length,
+          messagesBefore,
+          messagesAfter: this.state.messages.size,
+          status: this.state.status,
+        })
       }
 
       // CRITICAL: If streamingInfo exists but no streaming message was created,
@@ -662,6 +688,11 @@ export class TaskStateMachine {
       this.applyPendingChunks()
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Sync failed'
+      console.error('[TaskStateMachine] sync failed', {
+        taskId: this.state.taskId,
+        subtasksCount: subtasks?.length ?? null,
+        error,
+      })
       await this.dispatch({ type: 'SYNC_ERROR', error: errorMsg })
     }
   }

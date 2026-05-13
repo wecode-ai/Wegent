@@ -19,6 +19,7 @@ from app.models.kind import Kind
 from app.models.knowledge import (
     DocumentStatus,
     KnowledgeDocument,
+    KnowledgeFolder,
 )
 from app.models.namespace import Namespace
 from app.models.user import User
@@ -674,6 +675,12 @@ class KnowledgeService:
                 "Please delete all documents first."
             )
 
+        # Delete all folders belonging to this knowledge base to prevent orphaned records.
+        # Folders have no FK constraint on kind_id, so they must be cleaned up explicitly.
+        db.query(KnowledgeFolder).filter(
+            KnowledgeFolder.kind_id == knowledge_base_id
+        ).delete(synchronize_session=False)
+
         # Delete all members for this KB
         knowledge_share_service.delete_members_for_kb(db, knowledge_base_id)
 
@@ -1045,6 +1052,21 @@ class KnowledgeService:
                     f"Current count: {current_count}"
                 )
 
+        # Validate that the folder belongs to this knowledge base (if a non-root folder is specified)
+        if data.folder_id and data.folder_id != 0:
+            folder = (
+                db.query(KnowledgeFolder)
+                .filter(
+                    KnowledgeFolder.id == data.folder_id,
+                    KnowledgeFolder.kind_id == knowledge_base_id,
+                )
+                .first()
+            )
+            if not folder:
+                raise ValueError(
+                    f"Folder {data.folder_id} not found in this knowledge base"
+                )
+
         document = KnowledgeDocument(
             kind_id=knowledge_base_id,
             attachment_id=data.attachment_id if data.attachment_id is not None else 0,
@@ -1052,6 +1074,7 @@ class KnowledgeService:
             file_extension=data.file_extension,
             file_size=data.file_size,
             user_id=user_id,
+            folder_id=data.folder_id,
             splitter_config=(
                 data.splitter_config.model_dump(exclude_none=True)
                 if data.splitter_config
@@ -1110,6 +1133,7 @@ class KnowledgeService:
         db: Session,
         knowledge_base_id: int,
         user_id: int,
+        folder_id: int | None = None,
     ) -> list[KnowledgeDocument]:
         """
         List documents in a knowledge base.
@@ -1118,6 +1142,7 @@ class KnowledgeService:
             db: Database session
             knowledge_base_id: Knowledge base ID
             user_id: Requesting user ID
+            folder_id: Optional folder ID to filter by (None = all documents)
 
         Returns:
             List of documents
@@ -1129,14 +1154,14 @@ class KnowledgeService:
         if not kb or not has_access:
             return []
 
-        return (
-            db.query(KnowledgeDocument)
-            .filter(
-                KnowledgeDocument.kind_id == knowledge_base_id,
-            )
-            .order_by(KnowledgeDocument.created_at.desc())
-            .all()
+        query = db.query(KnowledgeDocument).filter(
+            KnowledgeDocument.kind_id == knowledge_base_id,
         )
+
+        if folder_id is not None:
+            query = query.filter(KnowledgeDocument.folder_id == folder_id)
+
+        return query.order_by(KnowledgeDocument.created_at.desc()).all()
 
     @staticmethod
     def _assert_can_manage_document(
@@ -1848,9 +1873,29 @@ class KnowledgeService:
         from app.services.group_permission import get_user_groups_with_roles
 
         accessible_groups_with_roles = get_user_groups_with_roles(db, user_id)
-        accessible_groups = [g[0] for g in accessible_groups_with_roles]
+        accessible_group_names = [g[0] for g in accessible_groups_with_roles]
         # Build a map from group_name to role
         group_roles: dict[str, str] = {g[0]: g[1] for g in accessible_groups_with_roles}
+
+        accessible_group_namespaces = {}
+        if accessible_group_names:
+            accessible_group_namespaces = {
+                ns.name: ns
+                for ns in db.query(Namespace)
+                .filter(
+                    Namespace.name.in_(accessible_group_names),
+                    Namespace.is_active == True,
+                )
+                .all()
+            }
+
+        accessible_groups = [
+            group_name
+            for group_name in accessible_group_names
+            if accessible_group_namespaces.get(group_name) is None
+            or accessible_group_namespaces[group_name].level
+            != GroupLevel.organization.value
+        ]
         shared_group_names = list(
             dict.fromkeys(kb.namespace for kb in shared_group_kbs)
         )

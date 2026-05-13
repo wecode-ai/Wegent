@@ -4,11 +4,13 @@
 
 'use client'
 
-import { memo, useEffect, useState, useMemo } from 'react'
-import { CheckCircle2, Circle, Loader2, Clock, XCircle, PlayCircle } from 'lucide-react'
+import { memo, useEffect, useRef, useState, useMemo } from 'react'
+import { ArrowRight, CheckCircle2, Circle, Loader2, Clock, XCircle, PlayCircle } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { taskApis, PipelineStageInfo } from '@/apis/tasks'
 import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import { useSocket } from '@/contexts/SocketContext'
 
 interface PipelineStageIndicatorProps {
   taskId: number | null
@@ -16,6 +18,8 @@ interface PipelineStageIndicatorProps {
   collaborationModel?: string
   /** Callback when stage info changes - allows parent to access pipeline state */
   onStageInfoChange?: (stageInfo: PipelineStageInfo | null) => void
+  canContinueToNextStage?: boolean
+  onNextStepClick?: (stageInfo: PipelineStageInfo) => void
 }
 
 /**
@@ -41,36 +45,87 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
   taskStatus,
   collaborationModel,
   onStageInfoChange,
+  canContinueToNextStage,
+  onNextStepClick,
 }: PipelineStageIndicatorProps) {
-  const { t } = useTranslation('chat')
-  const [stageInfo, setStageInfo] = useState<PipelineStageInfo | null>(null)
+  const { t } = useTranslation()
+  const { registerChatHandlers } = useSocket()
+  const [stageInfoState, setStageInfoState] = useState<{
+    taskId: number
+    info: PipelineStageInfo
+  } | null>(null)
   const [_loading, setLoading] = useState(false)
+  // Incremented on chat:done to force re-fetch regardless of taskStatus change
+  const [chatDoneKey, setChatDoneKey] = useState(0)
+  const stageInfoTaskIdRef = useRef<number | null>(null)
+  const stageInfo = stageInfoState?.taskId === taskId ? stageInfoState.info : null
 
-  // Fetch pipeline stage info when task changes or status updates
+  // Re-fetch when any subtask completes for this task (chat:done → task room)
+  // This handles the case where taskStatus doesn't change between pipeline stages
+  // (e.g., both stage 0 and stage 1 emit "COMPLETED", so taskStatus stays "COMPLETED")
   useEffect(() => {
+    if (!taskId || collaborationModel !== 'pipeline') return
+
+    const cleanup = registerChatHandlers({
+      onChatDone: data => {
+        if (data.task_id === taskId) {
+          setChatDoneKey(k => k + 1)
+        }
+      },
+    })
+
+    return cleanup
+  }, [taskId, collaborationModel, registerChatHandlers, taskStatus])
+
+  // Fetch pipeline stage info when task changes, status updates, or any subtask completes
+  useEffect(() => {
+    let isActive = true
+
     if (!taskId || collaborationModel !== 'pipeline') {
-      setStageInfo(null)
+      stageInfoTaskIdRef.current = null
+      setStageInfoState(null)
       onStageInfoChange?.(null)
-      return
+      setLoading(false)
+      return () => {
+        isActive = false
+      }
+    }
+
+    if (stageInfoTaskIdRef.current !== taskId) {
+      stageInfoTaskIdRef.current = null
+      setStageInfoState(null)
+      onStageInfoChange?.(null)
     }
 
     const fetchStageInfo = async () => {
       setLoading(true)
       try {
         const info = await taskApis.getPipelineStageInfo(taskId)
-        setStageInfo(info)
+        if (!isActive) return
+
+        stageInfoTaskIdRef.current = taskId
+        setStageInfoState({ taskId, info })
         onStageInfoChange?.(info)
       } catch (error) {
+        if (!isActive) return
+
         console.error('Failed to fetch pipeline stage info:', error)
-        setStageInfo(null)
+        stageInfoTaskIdRef.current = null
+        setStageInfoState(null)
         onStageInfoChange?.(null)
       } finally {
-        setLoading(false)
+        if (isActive) {
+          setLoading(false)
+        }
       }
     }
 
     fetchStageInfo()
-  }, [taskId, taskStatus, collaborationModel, onStageInfoChange])
+
+    return () => {
+      isActive = false
+    }
+  }, [taskId, taskStatus, chatDoneKey, collaborationModel, onStageInfoChange])
 
   // Build display stages with "Start" node prepended
   const displayStages = useMemo((): DisplayStage[] => {
@@ -79,7 +134,7 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
     // Create the "Start" node - always completed once pipeline has started
     const startNode: DisplayStage = {
       index: -1, // Special index for start node
-      name: t('pipeline.start_node'),
+      name: t('chat:pipeline.start_node'),
       require_confirmation: false,
       status: 'start', // Special status for start node (always shows as completed)
       isStartNode: true,
@@ -95,9 +150,12 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
   }, [stageInfo, t])
 
   // Don't render if not a pipeline task or no stage info
-  if (!stageInfo || stageInfo.total_stages <= 1) {
+  if (!taskId || collaborationModel !== 'pipeline' || !stageInfo || stageInfo.total_stages <= 1) {
     return null
   }
+
+  const shouldShowNextStepButton =
+    stageInfo.is_pending_confirmation && stageInfo.current_stage < stageInfo.total_stages - 1
 
   const getStageIcon = (stage: DisplayStage, isCurrentStage: boolean) => {
     // Start node always shows as completed (green checkmark)
@@ -124,21 +182,21 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
 
   const getStatusLabel = (stage: DisplayStage) => {
     if (stage.isStartNode) {
-      return t('pipeline.stage_started')
+      return t('chat:pipeline.stage_started')
     }
 
     switch (stage.status) {
       case 'completed':
-        return t('pipeline.stage_completed')
+        return t('chat:pipeline.stage_completed')
       case 'running':
-        return t('pipeline.stage_running')
+        return t('chat:pipeline.stage_running')
       case 'pending_confirmation':
-        return t('pipeline.stage_awaiting_confirmation')
+        return t('chat:pipeline.stage_awaiting_confirmation')
       case 'failed':
-        return t('pipeline.stage_failed')
+        return t('chat:pipeline.stage_failed')
       case 'pending':
       default:
-        return t('pipeline.stage_pending')
+        return t('chat:pipeline.stage_pending')
     }
   }
 
@@ -196,8 +254,23 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
     <div className="px-4 py-2 bg-surface/50 border-b border-border">
       <div className="flex items-center justify-between mb-2">
         <span className="text-xs font-medium text-text-secondary">
-          {t('pipeline.progress_label')} ({stageInfo.current_stage + 1}/{stageInfo.total_stages})
+          {t('chat:pipeline.progress_label')} ({stageInfo.current_stage + 1}/
+          {stageInfo.total_stages})
         </span>
+        {shouldShowNextStepButton && (
+          <Button
+            type="button"
+            variant="primary"
+            size="sm"
+            className="h-7 px-2 text-xs"
+            disabled={canContinueToNextStage === false}
+            onClick={() => onNextStepClick?.(stageInfo)}
+            data-testid="pipeline-next-step-button"
+          >
+            {t('chat:pipeline.next_step')}
+            <ArrowRight className="h-3.5 w-3.5" />
+          </Button>
+        )}
       </div>
 
       {/* Stage Progress Bar - includes Start node + all bot stages */}
@@ -229,7 +302,7 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
                 {/* Awaiting Confirmation Label - shown above the node */}
                 {isPendingConfirmation && (
                   <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400 whitespace-nowrap mb-1">
-                    {t('pipeline.awaiting_confirmation')}
+                    {t('chat:pipeline.awaiting_confirmation')}
                   </span>
                 )}
 
@@ -253,7 +326,7 @@ const PipelineStageIndicator = memo(function PipelineStageIndicator({
                     <div className="text-text-muted">{getStatusLabel(stage)}</div>
                     {stage.require_confirmation && !stage.isStartNode && (
                       <div className="text-amber-500 text-[10px] mt-0.5">
-                        {t('pipeline.requires_confirmation')}
+                        {t('chat:pipeline.requires_confirmation')}
                       </div>
                     )}
                   </div>

@@ -4,12 +4,23 @@
 
 'use client'
 
-import { Download, X } from 'lucide-react'
+import { Download, Maximize2, Minimize2, X } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 import { type RemoteWorkspaceTreeEntry } from '@/apis/remoteWorkspace'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 
 import { TFunction } from 'i18next'
@@ -17,6 +28,7 @@ import { TFunction } from 'i18next'
 import {
   formatModifiedAt,
   formatSize,
+  getMimeTypeFromPreviewKind,
   resolvePreviewKind,
   type BreadcrumbSegment,
   type PreviewKind,
@@ -49,7 +61,6 @@ type RemoteWorkspaceDialogDesktopProps = {
   pathInputError: string | null
   isPathEditing: boolean
   canGoParent: boolean
-  canDownloadPreview: boolean
   isPreviewDialogOpen: boolean
   onDownload: (entry: RemoteWorkspaceTreeEntry) => void
   onGoRoot: () => void
@@ -117,7 +128,6 @@ export function RemoteWorkspaceDialogDesktop({
   pathInputError,
   isPathEditing,
   canGoParent,
-  canDownloadPreview,
   isPreviewDialogOpen,
   onGoRoot,
   onGoParent,
@@ -138,10 +148,57 @@ export function RemoteWorkspaceDialogDesktop({
   onPreviewDialogOpenChange,
   onDownload,
 }: RemoteWorkspaceDialogDesktopProps) {
+  const [isDownloadConfirmOpen, setIsDownloadConfirmOpen] = useState(false)
+  const [isPreviewFullscreen, setIsPreviewFullscreen] = useState(false)
+  const selectableEntries = visibleEntries.filter(entry => !entry.is_directory)
   const allEntriesSelected =
-    visibleEntries.length > 0 && visibleEntries.every(entry => selectedPaths.has(entry.path))
+    selectableEntries.length > 0 && selectableEntries.every(entry => selectedPaths.has(entry.path))
   const selectedCount = selectedPaths.size
   const detailEntry = selectedEntries.length === 1 ? selectedEntries[0] : null
+  const downloadableSelectedEntries = selectedEntries.filter(entry => !entry.is_directory)
+  const downloadableSelectedCount = downloadableSelectedEntries.length
+  const handleDownloadSelectedEntries = () => {
+    if (downloadableSelectedCount === 1) {
+      onDownload(downloadableSelectedEntries[0])
+      return
+    }
+
+    if (downloadableSelectedCount > 1) {
+      setIsDownloadConfirmOpen(true)
+    }
+  }
+  const handleConfirmDownloadSelectedEntries = () => {
+    downloadableSelectedEntries.forEach(entry => onDownload(entry))
+    setIsDownloadConfirmOpen(false)
+  }
+  const handlePreviewDialogOpenChange = (open: boolean) => {
+    if (!open) {
+      setIsPreviewFullscreen(false)
+    }
+    onPreviewDialogOpenChange(open)
+  }
+
+  useEffect(() => {
+    if (!isPreviewDialogOpen) {
+      setIsPreviewFullscreen(false)
+    }
+  }, [isPreviewDialogOpen])
+
+  useEffect(() => {
+    if (!isPreviewFullscreen) {
+      return
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setIsPreviewFullscreen(false)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isPreviewFullscreen])
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -149,15 +206,6 @@ export function RemoteWorkspaceDialogDesktop({
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" variant="outline" size="sm" onClick={onGoRoot}>
             {t('remote_workspace.root')}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={onGoParent}
-            disabled={!canGoParent}
-          >
-            {t('remote_workspace.parent')}
           </Button>
           <div className="w-full min-w-[200px] flex-1 md:max-w-[420px]">
             <Input
@@ -198,20 +246,15 @@ export function RemoteWorkspaceDialogDesktop({
           >
             {t('remote_workspace.actions.preview', 'Preview')}
           </Button>
-          {canDownloadPreview && previewEntry ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => onDownload(previewEntry)}
-            >
-              {t('remote_workspace.actions.download')}
-            </Button>
-          ) : (
-            <Button type="button" variant="outline" size="sm" disabled>
-              {t('remote_workspace.actions.download')}
-            </Button>
-          )}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={downloadableSelectedCount === 0}
+            onClick={handleDownloadSelectedEntries}
+          >
+            {t('remote_workspace.actions.download')}
+          </Button>
         </div>
 
         {isPathEditing ? (
@@ -287,6 +330,7 @@ export function RemoteWorkspaceDialogDesktop({
                     <Checkbox
                       aria-label={t('remote_workspace.columns.select_all')}
                       checked={allEntriesSelected}
+                      disabled={selectableEntries.length === 0}
                       onCheckedChange={checked => onToggleAllEntries(Boolean(checked))}
                     />
                   </th>
@@ -330,10 +374,31 @@ export function RemoteWorkspaceDialogDesktop({
                   </tr>
                 )}
 
+                {!isTreeLoading && !treeError && canGoParent && (
+                  <tr
+                    className="cursor-pointer hover:bg-surface"
+                    data-testid="remote-workspace-parent-row"
+                    onClick={onGoParent}
+                  >
+                    <td className="px-3 py-2 align-middle" />
+                    <td className="px-3 py-2 align-middle">
+                      <span className="block max-w-[280px] truncate rounded px-1 py-1 text-left text-text-primary">
+                        {t('remote_workspace.parent_entry', 'Parent folder')}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 align-middle text-text-muted">
+                      {t('remote_workspace.types.folder', 'Folder')}
+                    </td>
+                    <td className="px-3 py-2 align-middle text-text-muted">--</td>
+                    <td className="px-3 py-2 align-middle text-text-muted">--</td>
+                  </tr>
+                )}
+
                 {!isTreeLoading &&
                   !treeError &&
                   visibleEntries.map(entry => {
-                    const isSelected = selectedPaths.has(entry.path)
+                    const isSelectable = !entry.is_directory
+                    const isSelected = isSelectable && selectedPaths.has(entry.path)
 
                     return (
                       <tr
@@ -343,19 +408,28 @@ export function RemoteWorkspaceDialogDesktop({
                             ? 'bg-primary/10 cursor-pointer'
                             : 'hover:bg-surface cursor-pointer'
                         }
-                        onClick={() => onSelectEntry(entry)}
+                        onClick={() => {
+                          if (entry.is_directory) {
+                            onOpenEntry(entry)
+                            return
+                          }
+
+                          onSelectEntry(entry)
+                        }}
                         onDoubleClick={() => onOpenEntry(entry)}
                       >
                         <td className="px-3 py-2 align-middle">
-                          <Checkbox
-                            checked={isSelected}
-                            onCheckedChange={checked =>
-                              onToggleEntrySelection(entry, Boolean(checked))
-                            }
-                            onClick={event => event.stopPropagation()}
-                            onDoubleClick={event => event.stopPropagation()}
-                            aria-label={`select-${entry.name}`}
-                          />
+                          {isSelectable && (
+                            <Checkbox
+                              checked={isSelected}
+                              onCheckedChange={checked =>
+                                onToggleEntrySelection(entry, Boolean(checked))
+                              }
+                              onClick={event => event.stopPropagation()}
+                              onDoubleClick={event => event.stopPropagation()}
+                              aria-label={`select-${entry.name}`}
+                            />
+                          )}
                         </td>
                         <td className="px-3 py-2 align-middle">
                           <span className="block max-w-[280px] truncate rounded px-1 py-1 text-left text-text-primary">
@@ -441,17 +515,50 @@ export function RemoteWorkspaceDialogDesktop({
         </div>
       </footer>
 
+      <AlertDialog open={isDownloadConfirmOpen} onOpenChange={setIsDownloadConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('remote_workspace.download_confirm.title')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('remote_workspace.download_confirm.description', {
+                count: downloadableSelectedCount,
+              })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('remote_workspace.actions.cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              className="border-primary bg-primary text-white hover:bg-primary/90"
+              onClick={handleConfirmDownloadSelectedEntries}
+            >
+              {t('remote_workspace.actions.download')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <Dialog
         open={isPreviewDialogOpen && Boolean(previewEntry)}
-        onOpenChange={onPreviewDialogOpenChange}
+        onOpenChange={handlePreviewDialogOpenChange}
       >
         <DialogContent
-          className="!flex !h-[90vh] !w-[96vw] !max-w-[1400px] !flex-col gap-0 overflow-hidden p-0"
-          aria-label="Preview"
+          className={
+            isPreviewFullscreen
+              ? '!fixed !inset-0 !left-0 !top-0 !flex !h-dvh !w-screen !max-w-none !translate-x-0 !translate-y-0 !flex-col gap-0 overflow-hidden !rounded-none !border-0 p-0 sm:!rounded-none'
+              : '!flex !h-[90vh] !w-[96vw] !max-w-[1400px] !flex-col gap-0 overflow-hidden p-0'
+          }
+          aria-label={t('remote_workspace.preview.title', 'Preview')}
           hideCloseButton
+          preventEscapeClose={isPreviewFullscreen}
         >
           {previewEntry && (
             <>
+              <DialogTitle className="sr-only">
+                {t('remote_workspace.preview.title', 'Preview')}
+              </DialogTitle>
+              <DialogDescription className="sr-only">
+                {previewEntry.name} · {previewEntry.path}
+              </DialogDescription>
               {/* Header - Same style as FilePreviewPage */}
               <header className="flex items-center justify-between px-4 py-3 border-b border-border dark:border-gray-700 bg-white dark:bg-gray-900 shrink-0">
                 <div className="flex items-center gap-3 min-w-0">
@@ -467,6 +574,29 @@ export function RemoteWorkspaceDialogDesktop({
                 </div>
 
                 <div className="flex items-center gap-2 flex-shrink-0">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setIsPreviewFullscreen(current => !current)}
+                    className="h-10 w-10"
+                    aria-label={
+                      isPreviewFullscreen
+                        ? t('remote_workspace.actions.exit_fullscreen', 'Exit fullscreen')
+                        : t('remote_workspace.actions.fullscreen', 'Fullscreen preview')
+                    }
+                    data-testid="remote-workspace-preview-fullscreen-button"
+                    title={
+                      isPreviewFullscreen
+                        ? t('remote_workspace.actions.exit_fullscreen', 'Exit fullscreen')
+                        : t('remote_workspace.actions.fullscreen', 'Fullscreen preview')
+                    }
+                  >
+                    {isPreviewFullscreen ? (
+                      <Minimize2 className="w-5 h-5" />
+                    ) : (
+                      <Maximize2 className="w-5 h-5" />
+                    )}
+                  </Button>
                   <Button variant="primary" size="sm" onClick={() => onDownload(previewEntry)}>
                     <Download className="w-4 h-4 mr-2" />
                     {t('remote_workspace.actions.download')}
@@ -533,33 +663,5 @@ function getFileIcon(previewKind: PreviewKind): string {
       return '📃'
     default:
       return '📎'
-  }
-}
-
-/**
- * Convert preview kind to MIME type
- */
-function getMimeTypeFromPreviewKind(previewKind: PreviewKind, filename: string): string {
-  switch (previewKind) {
-    case 'image':
-      return 'image/png'
-    case 'pdf':
-      return 'application/pdf'
-    case 'excel':
-      return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    case 'text':
-      // Return appropriate mime type based on file extension
-      if (filename.endsWith('.py')) return 'text/x-python'
-      if (filename.endsWith('.js')) return 'application/javascript'
-      if (filename.endsWith('.ts')) return 'application/typescript'
-      if (filename.endsWith('.json')) return 'application/json'
-      if (filename.endsWith('.md')) return 'text/markdown'
-      if (filename.endsWith('.html') || filename.endsWith('.htm')) return 'text/html'
-      if (filename.endsWith('.css')) return 'text/css'
-      if (filename.endsWith('.xml')) return 'application/xml'
-      if (filename.endsWith('.yaml') || filename.endsWith('.yml')) return 'application/yaml'
-      return 'text/plain'
-    default:
-      return 'application/octet-stream'
   }
 }
