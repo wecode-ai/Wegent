@@ -1,10 +1,14 @@
 import '@testing-library/jest-dom'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 
 import {
   ChatInputCard,
   type ChatInputCardProps,
 } from '@/features/tasks/components/input/ChatInputCard'
+
+const mockChatInputControls = jest.fn((_props: Record<string, unknown>) => (
+  <div data-testid="chat-input-controls" />
+))
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -35,7 +39,7 @@ jest.mock('@/features/tasks/components/selector/SelectedTeamBadge', () => ({
 
 jest.mock('@/features/tasks/components/input/ChatInputControls', () => ({
   __esModule: true,
-  default: () => <div data-testid="chat-input-controls" />,
+  default: (props: Record<string, unknown>) => mockChatInputControls(props),
 }))
 
 jest.mock('@/features/tasks/components/input/DeviceSelectorTab', () => ({
@@ -161,6 +165,10 @@ const buildProps = (): ChatInputCardProps => ({
 })
 
 describe('ChatInputCard layout', () => {
+  beforeEach(() => {
+    mockChatInputControls.mockClear()
+  })
+
   it('keeps the badge area attached to the input content instead of distributing vertical gaps', () => {
     render(<ChatInputCard {...buildProps()} />)
 
@@ -175,5 +183,84 @@ describe('ChatInputCard layout', () => {
     expect(chatInput).toHaveAttribute('data-compact-spacing', 'true')
     expect(chatInputWrapper).toHaveClass('pt-1.5')
     expect(chatInputWrapper).not.toHaveClass('pt-3')
+  })
+
+  it('forwards queued and awaiting send state to input controls', () => {
+    render(<ChatInputCard {...buildProps()} canQueueMessage isAwaitingResponseStart />)
+
+    expect(mockChatInputControls).toHaveBeenCalledWith(
+      expect.objectContaining({
+        canQueueMessage: true,
+        isAwaitingResponseStart: true,
+      })
+    )
+  })
+
+  it('renders queued messages above the chat input', () => {
+    render(
+      <ChatInputCard
+        {...buildProps()}
+        queuedMessages={[
+          {
+            id: '42:local-user-1',
+            displayMessage: 'next question',
+            status: 'queued',
+          },
+        ]}
+      />
+    )
+
+    const queuedList = screen.getByTestId('queued-message-list')
+    const card = screen.getByTestId('chat-input-card')
+    const chatInput = screen.getByTestId('chat-input')
+
+    expect(queuedList).toHaveTextContent('next question')
+    expect(queuedList).toHaveTextContent('messages.status_queued')
+    expect(queuedList.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(card).toContainElement(chatInput)
+    expect(card).not.toContainElement(queuedList)
+  })
+
+  it('cancels a queued message from the queue preview', () => {
+    const onCancelQueuedMessage = jest.fn()
+
+    render(
+      <ChatInputCard
+        {...buildProps()}
+        onCancelQueuedMessage={onCancelQueuedMessage}
+        queuedMessages={[
+          {
+            id: '42:local-user-1',
+            displayMessage: 'next question',
+            status: 'queued',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('cancel-queued-message-button'))
+
+    expect(onCancelQueuedMessage).toHaveBeenCalledWith('42:local-user-1')
+  })
+
+  it('does not allow cancelling a queued message that is already sending', () => {
+    render(
+      <ChatInputCard
+        {...buildProps()}
+        onCancelQueuedMessage={jest.fn()}
+        queuedMessages={[
+          {
+            id: '42:local-user-1',
+            displayMessage: 'next question',
+            status: 'sending',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('queued-message-list')).toHaveTextContent('messages.status_sending')
+    expect(screen.queryByTestId('cancel-queued-message-button')).not.toBeInTheDocument()
   })
 })
