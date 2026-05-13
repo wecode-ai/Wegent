@@ -6,7 +6,9 @@ import {
   type ChatInputCardProps,
 } from '@/features/tasks/components/input/ChatInputCard'
 
-const mockChatInputControls = jest.fn(() => <div data-testid="chat-input-controls" />)
+const mockChatInputControls = jest.fn((_props: Record<string, unknown>) => (
+  <div data-testid="chat-input-controls" />
+))
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({

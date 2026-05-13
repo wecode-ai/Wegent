@@ -679,7 +679,7 @@ function ChatAreaContent({
     return (
       !disabledReason &&
       !chatState.isLoading &&
-      !streamHandlers.isStreaming &&
+      (!streamHandlers.isStreaming || streamHandlers.canQueueMessage) &&
       !isModelSelectionRequired &&
       chatState.isAttachmentReadyToSend
     )
@@ -687,6 +687,7 @@ function ChatAreaContent({
     disabledReason,
     chatState.isLoading,
     streamHandlers.isStreaming,
+    streamHandlers.canQueueMessage,
     isModelSelectionRequired,
     chatState.isAttachmentReadyToSend,
   ])

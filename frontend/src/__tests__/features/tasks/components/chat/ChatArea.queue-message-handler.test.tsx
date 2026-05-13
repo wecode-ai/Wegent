@@ -4,7 +4,9 @@ import type { TaskDetail } from '@/types/api'
 
 import { ChatArea } from '@/features/tasks/components/chat'
 
-const mockChatInputCard = jest.fn(() => <div data-testid="chat-input-card" />)
+const mockChatInputCard = jest.fn((_props: Record<string, unknown>) => (
+  <div data-testid="chat-input-card" />
+))
 
 const defaultStreamHandlers = {
   pendingTaskId: null,
@@ -12,6 +14,7 @@ const defaultStreamHandlers = {
   isAwaitingResponseStart: false,
   isSubtaskStreaming: false,
   canQueueMessage: false,
+  queuedMessageCount: 0,
   isStopping: false,
   hasPendingUserMessage: false,
   localPendingMessage: null,
@@ -248,12 +251,32 @@ describe('ChatArea queue message handler mounting', () => {
       status: 'RUNNING',
       is_group_chat: false,
       subtasks: [],
-    } as TaskDetail
+    } as unknown as TaskDetail
 
     render(<ChatArea teams={[]} isTeamsLoading={false} taskType="chat" showRepositorySelector />)
 
     expect(mockChatInputCard).toHaveBeenCalledWith(
-      expect.objectContaining({ canQueueMessage: true })
+      expect.objectContaining({ canQueueMessage: true, canSubmit: true })
+    )
+  })
+
+  it('keeps submit disabled while streaming when queueing is unavailable', () => {
+    streamHandlersMock = {
+      ...defaultStreamHandlers,
+      isStreaming: true,
+      canQueueMessage: false,
+    }
+    selectedTaskDetailMock = {
+      id: 42,
+      status: 'RUNNING',
+      is_group_chat: false,
+      subtasks: [],
+    } as unknown as TaskDetail
+
+    render(<ChatArea teams={[]} isTeamsLoading={false} taskType="chat" showRepositorySelector />)
+
+    expect(mockChatInputCard).toHaveBeenCalledWith(
+      expect.objectContaining({ canQueueMessage: false, canSubmit: false })
     )
   })
 })
