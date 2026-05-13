@@ -281,12 +281,28 @@ class DuckDBGenerator:
         # Read sheet names from the Excel file
         sheet_names = self._get_xlsx_sheet_names(source_path)
 
-        if not sheet_names:
-            raise RuntimeError("No sheets found in the Excel file")
-
         base_name = self._extract_table_name(source_file)
 
-        if len(sheet_names) == 1:
+        if not sheet_names:
+            # Fallback: openpyxl could not enumerate sheets, let DuckDB try
+            # the default sheet (works for single-sheet or default-sheet files)
+            logger.warning(
+                "Could not enumerate sheets via openpyxl, "
+                "attempting DuckDB default sheet import"
+            )
+            table_name = self._sanitize_table_name(base_name)
+            try:
+                conn.execute(
+                    f'CREATE TABLE "{table_name}" AS '
+                    "SELECT * FROM read_xlsx(?, header=true)",
+                    [str(source_path)],
+                )
+                logger.info("Imported default sheet as table '%s'", table_name)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Failed to import Excel file (no sheets found): {exc}"
+                ) from exc
+        elif len(sheet_names) == 1:
             # Single sheet: use filename as table name
             table_name = self._sanitize_table_name(base_name)
             conn.execute(
@@ -443,7 +459,9 @@ class DuckDBGenerator:
             source_path: Path to the Excel file.
 
         Returns:
-            List of sheet names.
+            List of sheet names, or empty list if openpyxl cannot read the file.
+            An empty list signals the caller to fall back to DuckDB's default
+            sheet import (read_xlsx without sheet parameter).
         """
         try:
             import openpyxl
