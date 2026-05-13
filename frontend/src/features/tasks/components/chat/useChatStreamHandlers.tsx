@@ -124,6 +124,8 @@ export interface ChatStreamHandlers {
   isStopping: boolean
   hasPendingUserMessage: boolean
   localPendingMessage: string | null
+  canQueueMessage: boolean
+  queuedMessageCount: number
 
   // Actions
   handleSendMessage: (overrideMessage?: string) => Promise<void>
@@ -1259,6 +1261,8 @@ export function useChatStreamHandlers({
     isStopping,
     hasPendingUserMessage,
     localPendingMessage,
+    canQueueMessage: false,
+    queuedMessageCount: 0,
 
     // Actions
     handleSendMessage,
