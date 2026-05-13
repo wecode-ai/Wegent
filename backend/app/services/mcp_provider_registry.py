@@ -78,7 +78,7 @@ MCP_PROVIDER_REGISTRY: dict[str, MCPProviderDefinition] = {
             "workspace": {
                 "service_id": "workspace",
                 "server_name": "dingtalk_workspace",
-                "detail_url": "https://aihub.dingtalk.com/#/detail?instanceId=2198726&detailType=instanceMcpDetail&mcpId=9730",
+                "detail_url": "https://mcp.dingtalk.com/#/detail?mcpId=9730",
                 "skill_name": "dingtalk-workspace",
                 "display_name": "钉钉知识库",
                 "message_keywords": (
