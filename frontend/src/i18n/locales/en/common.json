@@ -363,6 +363,19 @@
     "public": "Public",
     "icon": "Icon",
     "selectIcon": "Select Icon",
+    "api_call": {
+      "action": "API Call",
+      "title": "API Call: {{name}}",
+      "description": "Call this agent from external apps using the Responses API.",
+      "endpoint": "Endpoint",
+      "model": "Model",
+      "curl_example": "curl example",
+      "copy_curl": "Copy curl",
+      "manage_api_keys": "Manage API Keys",
+      "view_docs": "View docs",
+      "copy_success": "curl copied",
+      "copy_failed": "Failed to copy curl"
+    },
     "share": {
       "title": "Agent Share",
       "confirm_message": "Do you want to use {{userName}}'s agent \"{{teamName}}\" to execute tasks?",
