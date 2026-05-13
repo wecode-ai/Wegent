@@ -620,6 +620,20 @@ patch_backend_service_urls() {
             echo -e "  ${GREEN}✓${NC} REDIS_URL patched to use REDIS_PORT=$REDIS_PORT"
         fi
     fi
+
+    # Sync NEVIS_CALLBACK_URL to backend/.env so the file stays up to date
+    if [ -n "$NEVIS_CALLBACK_URL" ]; then
+        local nevis_line
+        nevis_line=$(grep "^NEVIS_CALLBACK_URL=" "$backend_env" || true)
+        if [ -n "$nevis_line" ]; then
+            # Replace existing line in backend/.env
+            local temp_file
+            temp_file=$(mktemp)
+            sed "s|^NEVIS_CALLBACK_URL=.*|NEVIS_CALLBACK_URL=$NEVIS_CALLBACK_URL|" "$backend_env" > "$temp_file"
+            mv "$temp_file" "$backend_env"
+            echo -e "  ${GREEN}✓${NC} NEVIS_CALLBACK_URL synced in backend/.env"
+        fi
+    fi
 }
 
 # Check frontend dependencies
