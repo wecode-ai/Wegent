@@ -362,6 +362,8 @@
       "confirm_join": "Confirm Join",
       "self_share_message": "\"{{teamName}}\" is your own agent, no need to join.",
       "already_joined_message": "\"{{teamName}}\" is already in your agent list, no need to join again.",
+      "already_joined_title": "Agent Already Joined",
+      "start_chat": "Start Chat",
       "fetch_info_failed": "Failed to fetch shared agent information",
       "join_failed": "Failed to join agent, please try again",
       "join_success": "Successfully joined agent \"{{teamName}}\"",

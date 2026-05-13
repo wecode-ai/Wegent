@@ -570,6 +570,201 @@ button:focus-visible {
   animation-delay: 2s;
 }
 
+/* Single runner dot used while an AI message is waiting or still processing */
+.streaming-wait-runner-track {
+  --runner-dot-size: 0.75rem;
+  --runner-text-spot-size: 1.15rem;
+  --runner-y-offset: 1px;
+
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  min-height: 1.5rem;
+  align-items: center;
+  padding: 0 1.25rem;
+  color: rgb(var(--color-text-muted));
+}
+
+.streaming-wait-runner-text-wrap {
+  position: relative;
+  z-index: 2;
+  display: inline-block;
+}
+
+.streaming-wait-runner-text,
+.streaming-wait-runner-text-mask {
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  white-space: nowrap;
+}
+
+.streaming-wait-runner-text-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  color: transparent;
+  background-image: radial-gradient(
+    circle,
+    rgb(var(--color-primary)) 0 38%,
+    rgb(var(--color-primary) / 0.9) 48%,
+    transparent 70%
+  );
+  background-repeat: no-repeat;
+  background-size: var(--runner-text-spot-size) var(--runner-text-spot-size);
+  background-position: calc(var(--runner-text-spot-size) * -1) calc(50% + var(--runner-y-offset));
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  pointer-events: none;
+  will-change: background-position, opacity;
+  animation: streaming-wait-runner-text-mask 5.4s linear infinite;
+}
+
+.streaming-wait-runner-dot {
+  position: absolute;
+  top: calc(50% + var(--runner-y-offset));
+  left: 0;
+  z-index: 1;
+  width: var(--runner-dot-size);
+  height: var(--runner-dot-size);
+  border-radius: 9999px;
+  background:
+    radial-gradient(circle at 34% 28%, rgba(255, 255, 255, 0.72) 0 16%, transparent 24%),
+    rgb(var(--color-primary));
+  box-shadow:
+    0 1px 5px rgb(var(--color-primary) / 0.3),
+    inset -1px -1px 2px rgb(0 0 0 / 0.08);
+  transform: translateY(-50%) scale(1);
+  transform-origin: 50% 68%;
+  opacity: 1;
+  will-change: left, transform, border-radius, opacity;
+  animation: streaming-wait-runner-travel 5.4s linear infinite;
+}
+
+@keyframes streaming-wait-runner-travel {
+  0%,
+  10% {
+    left: 0;
+    opacity: 1;
+    border-radius: 9999px;
+    transform: translateY(-50%) scale(1);
+  }
+
+  13% {
+    opacity: 0;
+  }
+
+  18% {
+    opacity: 0;
+    border-radius: 58% 44% 50% 62% / 44% 54% 46% 56%;
+    transform: translateY(-50%) scaleX(1.42) scaleY(0.78) skewX(16deg) rotate(-3deg);
+  }
+
+  23% {
+    border-radius: 54% 46% 48% 60% / 46% 56% 44% 54%;
+    transform: translateY(-50%) scaleX(1.24) scaleY(0.86) skewX(10deg) rotate(-2deg);
+  }
+
+  26%,
+  35% {
+    left: calc(100% - var(--runner-dot-size));
+    opacity: 1;
+    border-radius: 9999px;
+    transform: translateY(-50%) scale(1);
+  }
+
+  38%,
+  44% {
+    border-radius: 56% 44% 54% 46% / 48% 52% 44% 56%;
+    transform: translateY(-50%) translateY(-4px) scaleX(0.94) scaleY(1.08);
+  }
+
+  41%,
+  47% {
+    border-radius: 52% 48% 46% 54% / 58% 58% 42% 42%;
+    transform: translateY(-50%) translateY(1px) scaleX(1.16) scaleY(0.84);
+  }
+
+  50% {
+    left: calc(100% - var(--runner-dot-size));
+    opacity: 1;
+    border-radius: 9999px;
+    transform: translateY(-50%) scale(1);
+  }
+
+  52% {
+    opacity: 0;
+  }
+
+  56% {
+    opacity: 0;
+    border-radius: 44% 58% 62% 50% / 54% 44% 56% 46%;
+    transform: translateY(-50%) scaleX(1.24) scaleY(0.86) skewX(-10deg) rotate(2deg);
+  }
+
+  66% {
+    border-radius: 44% 58% 62% 50% / 54% 44% 56% 46%;
+    transform: translateY(-50%) scaleX(1.42) scaleY(0.78) skewX(-16deg) rotate(3deg);
+  }
+
+  72%,
+  100% {
+    left: 0;
+    opacity: 1;
+    border-radius: 9999px;
+    transform: translateY(-50%) scale(1);
+  }
+}
+
+@keyframes streaming-wait-runner-text-mask {
+  0%,
+  10% {
+    opacity: 0;
+    background-position: calc(var(--runner-text-spot-size) * -1) calc(50% + var(--runner-y-offset));
+  }
+
+  13% {
+    opacity: 1;
+  }
+
+  26% {
+    opacity: 1;
+    background-position: calc(100% + var(--runner-text-spot-size))
+      calc(50% + var(--runner-y-offset));
+  }
+
+  30%,
+  50% {
+    opacity: 0;
+    background-position: calc(100% + var(--runner-text-spot-size))
+      calc(50% + var(--runner-y-offset));
+  }
+
+  52% {
+    opacity: 1;
+    background-position: calc(100% + var(--runner-text-spot-size))
+      calc(50% + var(--runner-y-offset));
+  }
+
+  72% {
+    opacity: 1;
+    background-position: calc(var(--runner-text-spot-size) * -1) calc(50% + var(--runner-y-offset));
+  }
+
+  76%,
+  100% {
+    opacity: 0;
+    background-position: calc(var(--runner-text-spot-size) * -1) calc(50% + var(--runner-y-offset));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .streaming-wait-runner-dot,
+  .streaming-wait-runner-text-mask {
+    animation: none;
+  }
+}
+
 /* Pulse animation for unread task notification dots */
 @keyframes pulse-dot {
   0%,

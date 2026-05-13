@@ -15,6 +15,7 @@ import { processCitePatterns } from '../../../utils/processCitePatterns'
 import type { GeminiAnnotation } from '@/types/socket'
 import VideoPlayer from '../VideoPlayer'
 import { ImageGallery } from '../ImageGallery'
+import StreamingWaitIndicator from '../StreamingWaitIndicator'
 import { AskUserForm } from '../../clarification'
 import type { AskUserFormData } from '@/types/api'
 import { blockRendererRegistry } from '../block-registry'
@@ -599,9 +600,11 @@ const MixedContentView = memo(function MixedContentView({
 
       {/* Show "Processing..." indicator when task is running and last block is complete */}
       {shouldShowProcessing && (
-        <div className="flex items-center gap-2 text-xs text-text-muted italic px-2 py-1">
-          <div className="h-2 w-2 rounded-full bg-primary animate-pulse" />
-          <span>{t('thinking.processing') || 'Processing...'}</span>
+        <div className="px-2 py-1">
+          <StreamingWaitIndicator
+            isWaiting={true}
+            message={t('thinking.processing') || 'Processing...'}
+          />
         </div>
       )}
     </div>

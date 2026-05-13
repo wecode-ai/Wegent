@@ -159,6 +159,11 @@ class SharedTeamService:
                     user_name=user.user_name,
                     team_id=team_id,
                     team_name=team.name,
+                    bind_mode=(
+                        team.json.get("spec", {}).get("bind_mode")
+                        if isinstance(team.json, dict)
+                        else None
+                    ),
                 )
             else:
                 # Without database session, return basic info with placeholder names

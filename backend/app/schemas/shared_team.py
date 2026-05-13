@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel
 
@@ -51,6 +51,7 @@ class TeamShareInfo(BaseModel):
     user_name: str
     team_id: int
     team_name: str
+    bind_mode: Optional[List[str]] = None
 
 
 class JoinSharedTeamRequest(BaseModel):
