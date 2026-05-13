@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 export type QueuedMessageStatus = 'queued' | 'sending' | 'failed'
+export type QueueDispatchMode = 'drain' | 'one-per-unblock'
 
 export interface EnqueueMessageInput<TSnapshot> {
   taskId: number
@@ -21,6 +22,7 @@ interface UseMessageSendQueueOptions<TSnapshot> {
   isDispatchBlocked: boolean
   dispatchMessage: (message: QueuedMessage<TSnapshot>) => Promise<void>
   onDispatchError?: (message: QueuedMessage<TSnapshot>, error: Error) => void
+  dispatchMode?: QueueDispatchMode
 }
 
 export function useMessageSendQueue<TSnapshot>({
@@ -28,9 +30,11 @@ export function useMessageSendQueue<TSnapshot>({
   isDispatchBlocked,
   dispatchMessage,
   onDispatchError,
+  dispatchMode = 'drain',
 }: UseMessageSendQueueOptions<TSnapshot>) {
   const [queuedMessages, setQueuedMessages] = useState<Array<QueuedMessage<TSnapshot>>>([])
   const isDispatchingRef = useRef(false)
+  const hasDispatchedInUnblockedWindowRef = useRef(false)
   const dispatchMessageRef = useRef(dispatchMessage)
   const onDispatchErrorRef = useRef(onDispatchError)
 
@@ -49,19 +53,40 @@ export function useMessageSendQueue<TSnapshot>({
     return queuedMessage
   }, [])
 
+  const retryMessage = useCallback((id: string) => {
+    hasDispatchedInUnblockedWindowRef.current = false
+    setQueuedMessages(current =>
+      current.map(message =>
+        message.id === id && message.status === 'failed'
+          ? { ...message, status: 'queued', error: undefined }
+          : message
+      )
+    )
+  }, [])
+
   const activeTaskQueue = useMemo(() => {
     if (!taskId) return []
     return queuedMessages.filter(message => message.taskId === taskId)
   }, [queuedMessages, taskId])
 
   useEffect(() => {
+    if (isDispatchBlocked) {
+      hasDispatchedInUnblockedWindowRef.current = false
+    }
+  }, [isDispatchBlocked])
+
+  useEffect(() => {
     if (!taskId || isDispatchBlocked || isDispatchingRef.current) return
+    if (dispatchMode === 'one-per-unblock' && hasDispatchedInUnblockedWindowRef.current) return
     if (activeTaskQueue.some(message => message.status === 'failed')) return
 
     const nextMessage = activeTaskQueue.find(message => message.status === 'queued')
     if (!nextMessage) return
 
     isDispatchingRef.current = true
+    if (dispatchMode === 'one-per-unblock') {
+      hasDispatchedInUnblockedWindowRef.current = true
+    }
     setQueuedMessages(current =>
       current.map(message =>
         message.id === nextMessage.id ? { ...message, status: 'sending' } : message
@@ -87,11 +112,12 @@ export function useMessageSendQueue<TSnapshot>({
       .finally(() => {
         isDispatchingRef.current = false
       })
-  }, [activeTaskQueue, isDispatchBlocked, taskId])
+  }, [activeTaskQueue, dispatchMode, isDispatchBlocked, taskId])
 
   return {
     queuedMessages,
     activeTaskQueue,
     enqueueMessage,
+    retryMessage,
   }
 }

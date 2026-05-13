@@ -262,6 +262,7 @@ export function useChatStreamHandlers({
   const prevTaskIdForModelRef = useRef<number | null | undefined>(undefined)
   const prevClearVersionRef = useRef(clearVersion)
   const lastJoinWarningRef = useRef<string | null>(null)
+  const retryQueuedMessageRef = useRef<((id: string) => void) | null>(null)
 
   // Unified function to reset streaming-related state
   const resetStreamingState = useCallback(() => {
@@ -733,9 +734,10 @@ export function useChatStreamHandlers({
   )
 
   const sendPreparedChatMessage = useCallback(
-    async (prepared: PreparedChatSend) => {
+    async (prepared: PreparedChatSend, optionOverrides?: Partial<ContextSendOptions>) => {
       const tempTaskId = await contextSendMessage(prepared.request, {
         ...prepared.options,
+        ...optionOverrides,
         localMessageId: prepared.localMessageId,
       })
 
@@ -778,7 +780,7 @@ export function useChatStreamHandlers({
         })
 
       try {
-        await sendPreparedChatMessage(prepared)
+        await sendPreparedChatMessage(prepared, { onError: undefined })
       } finally {
         setIsLoading(false)
       }
@@ -788,26 +790,50 @@ export function useChatStreamHandlers({
 
   const handleQueuedDispatchError = useCallback(
     (queuedMessage: QueuedMessage<PreparedChatSend>, error: Error) => {
-      taskStateManager
-        .getOrCreate(queuedMessage.taskId)
-        .updateUserMessage(queuedMessage.localMessageId, {
-          status: 'error',
+      const machine = taskStateManager.getOrCreate(queuedMessage.taskId)
+      const retryQueuedMessage = () => {
+        machine.updateUserMessage(queuedMessage.localMessageId, {
+          status: 'pending',
           queued: true,
-          queueStatus: 'failed',
-          error: error.message,
+          queueStatus: 'queued',
+          error: undefined,
         })
+        retryQueuedMessageRef.current?.(queuedMessage.id)
+      }
+
+      machine.updateUserMessage(queuedMessage.localMessageId, {
+        status: 'error',
+        queued: true,
+        queueStatus: 'failed',
+        error: error.message,
+      })
       setIsAwaitingResponseStart(false)
       setIsLoading(false)
+      toast({
+        variant: 'destructive',
+        title: error.message,
+        action: (
+          <Button variant="outline" size="sm" onClick={retryQueuedMessage}>
+            {t('chat:actions.retry') || 'Retry'}
+          </Button>
+        ),
+      })
     },
-    [setIsLoading]
+    [setIsLoading, t, toast]
   )
 
-  const { activeTaskQueue, enqueueMessage } = useMessageSendQueue<PreparedChatSend>({
+  const {
+    activeTaskQueue,
+    enqueueMessage,
+    retryMessage: retryQueuedMessage,
+  } = useMessageSendQueue<PreparedChatSend>({
     taskId: activeTaskId,
     isDispatchBlocked: isActiveTaskBlocked,
     dispatchMessage: dispatchQueuedMessage,
     onDispatchError: handleQueuedDispatchError,
+    dispatchMode: 'one-per-unblock',
   })
+  retryQueuedMessageRef.current = retryQueuedMessage
 
   const addQueuedUserMessage = useCallback(
     (prepared: PreparedChatSend, taskId: number) => {

@@ -1,6 +1,7 @@
-import { act, renderHook } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { useChatStreamHandlers } from '@/features/tasks/components/chat/useChatStreamHandlers'
 import type { TaskDetail } from '@/types/api'
+import type React from 'react'
 
 const mockContextSendMessage = jest.fn()
 const mockSetTaskInputMessage = jest.fn()
@@ -9,6 +10,8 @@ const mockResetAttachment = jest.fn()
 const mockResetContexts = jest.fn()
 const mockScrollToBottom = jest.fn()
 const mockAddUserMessage = jest.fn()
+const mockUpdateUserMessage = jest.fn()
+const mockToast = jest.fn()
 
 let isMachineStreamingMock = true
 let selectedTaskDetailMock = {
@@ -50,7 +53,7 @@ jest.mock('@/contexts/DeviceContext', () => ({
 }))
 
 jest.mock('@/hooks/use-toast', () => ({
-  useToast: () => ({ toast: jest.fn() }),
+  useToast: () => ({ toast: mockToast }),
 }))
 
 jest.mock('@/hooks/useTranslation', () => ({
@@ -79,7 +82,7 @@ jest.mock('@/features/tasks/state', () => ({
   taskStateManager: {
     getOrCreate: () => ({
       addUserMessage: mockAddUserMessage,
-      updateUserMessage: jest.fn(),
+      updateUserMessage: mockUpdateUserMessage,
     }),
   },
 }))
@@ -168,5 +171,52 @@ describe('useChatStreamHandlers queue integration', () => {
     const { result } = renderQueueableHook()
 
     expect(result.current.canQueueMessage).toBe(false)
+  })
+
+  it('shows a retry action that resets a failed queued message to queued', async () => {
+    mockContextSendMessage.mockImplementationOnce(async (_request, options) => {
+      options?.onError?.(new Error('network down'))
+      throw new Error('network down')
+    })
+    const { result, rerender } = renderQueueableHook()
+
+    await act(async () => {
+      await result.current.handleSendMessage()
+    })
+
+    isMachineStreamingMock = false
+    selectedTaskDetailMock = {
+      id: 42,
+      status: 'COMPLETED',
+      is_group_chat: false,
+      subtasks: [],
+    } as unknown as TaskDetail
+    rerender()
+
+    await waitFor(() => {
+      expect(mockToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          variant: 'destructive',
+          title: 'network down',
+          action: expect.anything(),
+        })
+      )
+    })
+    expect(mockToast).toHaveBeenCalledTimes(1)
+
+    const toastAction = mockToast.mock.calls[0][0].action as React.ReactElement<{
+      onClick: () => void
+    }>
+    await act(async () => {
+      toastAction.props.onClick()
+      await Promise.resolve()
+    })
+
+    expect(mockUpdateUserMessage).toHaveBeenCalledWith('local-user-1', {
+      status: 'pending',
+      queued: true,
+      queueStatus: 'queued',
+      error: undefined,
+    })
   })
 })

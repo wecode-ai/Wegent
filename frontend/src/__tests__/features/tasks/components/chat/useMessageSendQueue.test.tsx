@@ -77,6 +77,93 @@ describe('useMessageSendQueue', () => {
     ])
   })
 
+  it('dispatches only one message per unblocked window in one-per-unblock mode', async () => {
+    const dispatchMessage = jest.fn().mockResolvedValue(undefined)
+    let isDispatchBlocked = true
+
+    const { result, rerender } = renderHook(() =>
+      useMessageSendQueue<Snapshot>({
+        taskId: 42,
+        isDispatchBlocked,
+        dispatchMessage,
+        dispatchMode: 'one-per-unblock',
+      })
+    )
+
+    act(() => {
+      result.current.enqueueMessage(queued('first'))
+      result.current.enqueueMessage(queued('second'))
+    })
+
+    isDispatchBlocked = false
+    rerender()
+
+    await waitFor(() => {
+      expect(dispatchMessage).toHaveBeenCalledTimes(1)
+    })
+    expect(dispatchMessage.mock.calls[0][0].snapshot.message).toBe('first')
+    await waitFor(() => {
+      expect(result.current.activeTaskQueue.map(item => item.snapshot.message)).toEqual(['second'])
+    })
+    expect(dispatchMessage).toHaveBeenCalledTimes(1)
+
+    isDispatchBlocked = true
+    rerender()
+    isDispatchBlocked = false
+    rerender()
+
+    await waitFor(() => {
+      expect(dispatchMessage).toHaveBeenCalledTimes(2)
+    })
+    expect(dispatchMessage.mock.calls.map(call => call[0].snapshot.message)).toEqual([
+      'first',
+      'second',
+    ])
+  })
+
+  it('retries a failed queued message before later queued messages continue', async () => {
+    const dispatchMessage = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValue(undefined)
+
+    const { result } = renderHook(() =>
+      useMessageSendQueue<Snapshot>({
+        taskId: 42,
+        isDispatchBlocked: false,
+        dispatchMessage,
+      })
+    )
+
+    act(() => {
+      result.current.enqueueMessage(queued('first'))
+      result.current.enqueueMessage(queued('second'))
+    })
+
+    await waitFor(() => {
+      expect(result.current.activeTaskQueue[0]).toMatchObject({
+        status: 'failed',
+        error: 'network down',
+      })
+    })
+    expect(dispatchMessage).toHaveBeenCalledTimes(1)
+
+    const failedId = result.current.activeTaskQueue[0].id
+    act(() => {
+      result.current.retryMessage(failedId)
+    })
+
+    await waitFor(() => {
+      expect(dispatchMessage).toHaveBeenCalledTimes(3)
+    })
+    expect(dispatchMessage.mock.calls.map(call => call[0].snapshot.message)).toEqual([
+      'first',
+      'first',
+      'second',
+    ])
+    expect(result.current.activeTaskQueue).toEqual([])
+  })
+
   it('only dispatches messages for the active task', async () => {
     const dispatchMessage = jest.fn().mockResolvedValue(undefined)
 
