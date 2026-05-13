@@ -475,7 +475,8 @@ class DuckDBGenerator:
 
         for (table_name,) in tables:
             try:
-                result = conn.execute(f'SUMMARIZE "{table_name}"').fetchall()
+                escaped_table = self._escape_identifier(table_name)
+                result = conn.execute(f'SUMMARIZE "{escaped_table}"').fetchall()
                 columns = [
                     "column_name",
                     "column_type",
@@ -593,9 +594,10 @@ class DuckDBGenerator:
 
         for (table_name,) in tables:
             try:
+                escaped_table = self._escape_identifier(table_name)
                 # Get row count
                 count_result = conn.execute(
-                    f'SELECT COUNT(*) FROM "{table_name}"'
+                    f'SELECT COUNT(*) FROM "{escaped_table}"'
                 ).fetchone()
                 row_count = count_result[0] if count_result else 0
 
@@ -612,9 +614,10 @@ class DuckDBGenerator:
                 for col_name, col_type, _is_nullable in col_result:
                     # Get null count for this column
                     try:
+                        escaped_col = self._escape_identifier(col_name)
                         null_count_result = conn.execute(
-                            f'SELECT COUNT(*) FROM "{table_name}" '
-                            f'WHERE "{col_name}" IS NULL'
+                            f'SELECT COUNT(*) FROM "{escaped_table}" '
+                            f'WHERE "{escaped_col}" IS NULL'
                         ).fetchone()
                         null_count = null_count_result[0] if null_count_result else 0
                     except Exception:
@@ -696,6 +699,21 @@ class DuckDBGenerator:
         while f"{name}_{counter}" in existing_names:
             counter += 1
         return f"{name}_{counter}"
+
+    def _escape_identifier(self, identifier: str) -> str:
+        """Escape a SQL identifier for safe use in queries.
+
+        Escapes double quotes by doubling them per SQL standard.
+        This prevents SQL injection and syntax errors from identifiers
+        containing special characters.
+
+        Args:
+            identifier: Raw identifier (table name, column name, etc.)
+
+        Returns:
+            Escaped identifier safe for use in double-quoted context.
+        """
+        return identifier.replace('"', '""')
 
     def _cleanup_temp_dir(self, temp_dir: str) -> None:
         """Clean up temporary directory and its contents.
