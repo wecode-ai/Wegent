@@ -329,6 +329,8 @@ function ChatAreaContent({
   const searchParams = useSearchParams()
   const taskIdFromUrl =
     searchParams.get('taskId') || searchParams.get('task_id') || searchParams.get('taskid')
+  // Get teamId from URL for auto-selecting a specific team (e.g. after accepting a share invite)
+  const teamIdFromUrl = searchParams.get('teamId')
 
   // Track initialization and last synced task for team selection
   const hasInitializedTeamRef = useRef(false)
@@ -401,6 +403,20 @@ function ChatAreaContent({
       }
     }
 
+    // Case 2a: teamId URL param present - select specific team regardless of initialization state
+    // This handles navigation after accepting a share invite (/chat?teamId=xxx)
+    if (!taskIdFromUrl && teamIdFromUrl) {
+      const targetTeamId = Number(teamIdFromUrl)
+      const teamFromUrl =
+        filteredTeams.find(t => t.id === targetTeamId) || teams.find(t => t.id === targetTeamId)
+      if (teamFromUrl) {
+        handleTeamChange(teamFromUrl)
+        hasInitializedTeamRef.current = true
+        lastSyncedTaskIdRef.current = null
+        return
+      }
+    }
+
     // Case 2: New chat (no taskId in URL) - use default team from server config
     if (!taskIdFromUrl && !hasInitializedTeamRef.current) {
       // Use the default team computed from server config
@@ -434,8 +450,10 @@ function ChatAreaContent({
     }
   }, [
     filteredTeams,
+    teams,
     selectedTaskDetail,
     taskIdFromUrl,
+    teamIdFromUrl,
     selectedTeam,
     handleTeamChange,
     findDefaultTeamForMode,
