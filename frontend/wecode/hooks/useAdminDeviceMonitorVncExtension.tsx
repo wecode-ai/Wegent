@@ -64,7 +64,6 @@ export function useAdminDeviceMonitorVncExtension(
 
     if (
       !activeVncDeviceDetails ||
-      activeVncDeviceDetails.status !== 'online' ||
       activeVncDeviceDetails.device_type !== 'cloud' ||
       activeVncDeviceDetails.bind_shell !== 'claudecode'
     ) {
@@ -105,7 +104,7 @@ export function useAdminDeviceMonitorVncExtension(
                 'h-8 w-8',
                 isActive && 'bg-primary/10 text-primary hover:bg-primary/15'
               )}
-              disabled={device.status !== 'online'}
+              disabled={false}
               onClick={() => handleToggleVnc(device)}
               data-testid={`vnc-device-${device.device_id}`}
             >
