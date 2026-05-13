@@ -10,7 +10,8 @@ const mockResetContexts = jest.fn()
 const mockScrollToBottom = jest.fn()
 const mockAddUserMessage = jest.fn()
 
-const selectedTaskDetailMock = {
+let isMachineStreamingMock = true
+let selectedTaskDetailMock = {
   id: 42,
   status: 'RUNNING',
   is_group_chat: false,
@@ -69,7 +70,7 @@ jest.mock('@/hooks/useTraceAction', () => ({
 jest.mock('@/features/tasks/hooks/useTaskStateMachine', () => ({
   useTaskStateMachine: () => ({
     state: { messages: new Map(), isStopping: false },
-    isStreaming: true,
+    isStreaming: isMachineStreamingMock,
   }),
 }))
 
@@ -123,6 +124,13 @@ function renderQueueableHook() {
 describe('useChatStreamHandlers queue integration', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    isMachineStreamingMock = true
+    selectedTaskDetailMock = {
+      id: 42,
+      status: 'RUNNING',
+      is_group_chat: false,
+      subtasks: [],
+    } as unknown as TaskDetail
   })
 
   it('queues a follow-up locally instead of sending immediately while the active task is streaming', async () => {
@@ -146,5 +154,19 @@ describe('useChatStreamHandlers queue integration', () => {
     expect(mockSetTaskInputMessage).toHaveBeenCalledWith('')
     expect(mockResetAttachment).toHaveBeenCalled()
     expect(mockResetContexts).toHaveBeenCalled()
+  })
+
+  it('does not expose queue availability for a pending task unless it is streaming or awaiting response', () => {
+    isMachineStreamingMock = false
+    selectedTaskDetailMock = {
+      id: 42,
+      status: 'PENDING',
+      is_group_chat: false,
+      subtasks: [],
+    } as unknown as TaskDetail
+
+    const { result } = renderQueueableHook()
+
+    expect(result.current.canQueueMessage).toBe(false)
   })
 })

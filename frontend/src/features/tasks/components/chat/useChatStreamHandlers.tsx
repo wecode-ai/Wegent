@@ -760,7 +760,10 @@ export function useChatStreamHandlers({
     isAwaitingResponseStart ||
     selectedTaskDetail?.status === 'RUNNING' ||
     selectedTaskDetail?.status === 'PENDING'
-  const canQueueMessage = Boolean(activeTaskId && isActiveTaskBlocked)
+  const canQueueMessage = Boolean(
+    activeTaskId &&
+    (isStreaming || isAwaitingResponseStart || selectedTaskDetail?.status === 'RUNNING')
+  )
 
   const dispatchQueuedMessage = useCallback(
     async (queuedMessage: QueuedMessage<PreparedChatSend>) => {
