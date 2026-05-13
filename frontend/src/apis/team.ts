@@ -37,6 +37,7 @@ export interface TeamShareInfoResponse {
   user_name: string
   team_id: number
   team_name: string
+  bind_mode?: string[]
 }
 
 // Team Share Join Request Type

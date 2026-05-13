@@ -17,18 +17,24 @@ import Modal from '@/features/common/Modal'
 
 interface TeamShareHandlerProps {
   teams: Team[]
-  onTeamSelected: (team: Team) => void
   onRefreshTeams: () => Promise<Team[]>
+}
+
+/**
+ * Determine the target page based on team's bind_mode.
+ * Mirrors the logic in TeamList.tsx getTargetPage.
+ */
+function getTargetPage(bindMode?: string[]): 'chat' | 'code' {
+  if (bindMode && bindMode.length === 1) {
+    if (bindMode[0] === 'code') return 'code'
+  }
+  return 'chat'
 }
 
 /**
  * Handle team sharing URL parameter detection, join logic, and modal display
  */
-export default function TeamShareHandler({
-  teams,
-  onTeamSelected,
-  onRefreshTeams,
-}: TeamShareHandlerProps) {
+export default function TeamShareHandler({ teams, onRefreshTeams }: TeamShareHandlerProps) {
   const { t } = useTranslation()
   const { toast } = useToast()
   const { user } = useUser()
@@ -49,6 +55,11 @@ export default function TeamShareHandler({
     url.searchParams.delete('teamShare')
     router.replace(url.pathname + url.search)
   }, [router])
+
+  const navigateToTeam = (teamId: number, bindMode?: string[]) => {
+    const targetPage = getTargetPage(bindMode)
+    router.push(`/${targetPage}?teamId=${teamId}`)
+  }
 
   useEffect(() => {
     const teamShareToken = searchParams.get('teamShare')
@@ -87,12 +98,11 @@ export default function TeamShareHandler({
     }
 
     if (isTeamAlreadyJoined) {
-      // Find the existing team and select it
-      const existingTeam = teams.find((team: Team) => team.id === shareInfo?.team_id)
-      if (existingTeam) {
-        onTeamSelected(existingTeam)
-      }
-      handleCloseModal()
+      // Close modal state without URL cleanup - navigating away handles it
+      setIsModalOpen(false)
+      setShareInfo(null)
+      setError(null)
+      navigateToTeam(shareInfo.team_id, shareInfo.bind_mode)
       return
     }
 
@@ -105,16 +115,13 @@ export default function TeamShareHandler({
         title: t('common:teams.share.join_success', { teamName: shareInfo?.team_name || '' }),
       })
 
-      // First refresh team list, wait for refresh to complete and get latest team list
-      const updatedTeams = await onRefreshTeams()
-
-      // Find the newly joined team from the refreshed team list and select it
-      const newTeam = updatedTeams.find(team => team.id === shareInfo.team_id)
-      if (newTeam) {
-        onTeamSelected(newTeam)
-      }
-
-      handleCloseModal()
+      // Refresh team list, then navigate to the joined team
+      await onRefreshTeams()
+      // Close modal state without URL cleanup - navigating away handles it
+      setIsModalOpen(false)
+      setShareInfo(null)
+      setError(null)
+      navigateToTeam(shareInfo.team_id, shareInfo.bind_mode)
     } catch (err) {
       console.error('Failed to join shared team:', err)
       const errorMessage = (err as Error)?.message || t('common:teams.share.join_failed')
@@ -147,12 +154,6 @@ export default function TeamShareHandler({
         <span>
           <span className={highlightClass}> {teamName} </span>
           {t('common:teams.share.self_share_suffix')}
-        </span>
-      ),
-      'teams.share.already_joined_message': () => (
-        <span>
-          <span className={highlightClass}> {teamName} </span>
-          {t('common:teams.share.already_joined_suffix')}
         </span>
       ),
       'teams.share.confirm_message': () =>
@@ -203,14 +204,14 @@ export default function TeamShareHandler({
             </AlertDescription>
           </Alert>
         ) : isTeamAlreadyJoined ? (
-          <Alert variant="warning">
-            <AlertDescription>
-              {renderMessageWithHighlight(
-                'teams.share.already_joined_message',
-                shareInfo.team_name
-              )}
-            </AlertDescription>
-          </Alert>
+          <div className="text-center space-y-2">
+            <p className="text-text-primary text-base font-semibold">
+              {t('common:teams.share.already_joined_title')}
+            </p>
+            <p className="text-text-secondary text-sm">
+              {t('common:teams.share.already_joined_message', { teamName: shareInfo.team_name })}
+            </p>
+          </div>
         ) : (
           <>
             <div className="text-center">
@@ -245,15 +246,27 @@ export default function TeamShareHandler({
         >
           {t('common:actions.cancel')}
         </Button>
-        <Button
-          onClick={handleConfirmJoin}
-          variant="default"
-          size="sm"
-          disabled={!!isSelfShare || isJoining}
-          style={{ flex: 1 }}
-        >
-          {isJoining ? t('common:teams.share.joining') : t('common:teams.share.confirm_join')}
-        </Button>
+        {isTeamAlreadyJoined ? (
+          <Button
+            onClick={handleConfirmJoin}
+            variant="primary"
+            size="sm"
+            style={{ flex: 1 }}
+            data-testid="share-start-chat-button"
+          >
+            {t('common:teams.share.start_chat')}
+          </Button>
+        ) : (
+          <Button
+            onClick={handleConfirmJoin}
+            variant="default"
+            size="sm"
+            disabled={!!isSelfShare || isJoining}
+            style={{ flex: 1 }}
+          >
+            {isJoining ? t('common:teams.share.joining') : t('common:teams.share.confirm_join')}
+          </Button>
+        )}
       </div>
     </Modal>
   )

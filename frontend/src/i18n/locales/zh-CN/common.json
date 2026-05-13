@@ -362,6 +362,8 @@
       "confirm_join": "确认加入",
       "self_share_message": "「{{teamName}}」是您的智能体，无须加入。",
       "already_joined_message": "「{{teamName}}」已在您的智能体列表中，无须重复加入。",
+      "already_joined_title": "智能体已加入",
+      "start_chat": "开始聊天",
       "fetch_info_failed": "获取分享智能体信息失败",
       "join_failed": "加入智能体失败，请重试",
       "join_success": "成功加入智能体「{{teamName}}」",
