@@ -2152,36 +2152,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "preload_skills": sorted(all_preload_skills),
         }
 
-    def _find_available_name(
-        self,
-        db: Session,
-        *,
-        base_name: str,
-        kind: str,
-        user_id: int,
-        namespace: str,
-    ) -> str:
-        """Return the first available name: base_name → base_name (2) → base_name (3) ..."""
-        is_group_namespace = namespace != "default"
-        candidate = base_name
-        counter = 2
-        while True:
-            query = db.query(Kind).filter(
-                Kind.kind == kind,
-                Kind.name == candidate,
-                Kind.namespace == namespace,
-                Kind.is_active == True,
-            )
-            # For personal namespace, scope uniqueness check to the user
-            # For group namespaces, uniqueness is across all users in the namespace
-            if not is_group_namespace:
-                query = query.filter(Kind.user_id == user_id)
-            existing = query.first()
-            if not existing:
-                return candidate
-            candidate = f"{base_name} ({counter})"
-            counter += 1
-
     def copy_team(
         self,
         db: Session,
@@ -2255,9 +2225,10 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 raise HTTPException(status_code=400, detail="Leader bot not found")
 
             # Find available bot name in the destination namespace
-            bot_name = bot_kinds_service.find_available_bot_name(
+            bot_name = bot_kinds_service._find_available_name(
                 db,
                 base_name=f"Copy of {original_bot.name}",
+                kind="Bot",
                 user_id=user_id,
                 namespace=dest_namespace,
             )
@@ -2307,9 +2278,10 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 if bot:
                     if dest_namespace != original.namespace:
                         # Clone the bot into the destination namespace
-                        bot_name = bot_kinds_service.find_available_bot_name(
+                        bot_name = bot_kinds_service._find_available_name(
                             db,
                             base_name=bot.name,
+                            kind="Bot",
                             user_id=user_id,
                             namespace=dest_namespace,
                         )
@@ -2348,7 +2320,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         # Determine group_name for permission check
         group_name = dest_namespace if dest_namespace != "default" else None
 
-        team_name = self._find_available_name(
+        team_name = bot_kinds_service._find_available_name(
             db,
             base_name=f"Copy of {original.name}",
             kind="Team",
