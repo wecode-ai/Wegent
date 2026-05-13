@@ -53,6 +53,8 @@ export interface UseGroupKbsReturn {
   groupKbs: KnowledgeBase[]
   isGroupKbsLoading: boolean
   toKnowledgeBase: typeof toKnowledgeBase
+  /** Trigger a manual reload of group KBs */
+  reload: () => void
 }
 
 export function useGroupKbs({
@@ -63,6 +65,11 @@ export function useGroupKbs({
 }: UseGroupKbsProps): UseGroupKbsReturn {
   const [groupKbs, setGroupKbs] = useState<KnowledgeBase[]>([])
   const [isGroupKbsLoading, setIsGroupKbsLoading] = useState(false)
+  const [reloadCounter, setReloadCounter] = useState(0)
+
+  const reload = useCallback(() => {
+    setReloadCounter(c => c + 1)
+  }, [])
 
   useEffect(() => {
     if (!selectedGroupId) {
@@ -113,7 +120,7 @@ export function useGroupKbs({
     return () => {
       isCancelled = true
     }
-  }, [selectedGroupId, groups, personalCreatedByMe, personalSharedWithMe])
+  }, [selectedGroupId, groups, personalCreatedByMe, personalSharedWithMe, reloadCounter])
 
-  return { groupKbs, isGroupKbsLoading, toKnowledgeBase: useCallback(toKnowledgeBase, []) }
+  return { groupKbs, isGroupKbsLoading, toKnowledgeBase: useCallback(toKnowledgeBase, []), reload }
 }

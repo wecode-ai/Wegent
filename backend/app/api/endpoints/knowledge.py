@@ -32,6 +32,7 @@ from app.schemas.knowledge import (
     DocumentContentUpdate,
     DocumentDetailResponse,
     DocumentMoveRequest,
+    InitialMemberCreate,
     KnowledgeBaseCreate,
     KnowledgeBaseListResponse,
     KnowledgeBaseMigrateRequest,
@@ -298,6 +299,56 @@ def get_organization_namespace(
     }
 
 
+def _add_initial_kb_members(
+    db: Session,
+    kb_id: int,
+    current_user: User,
+    members: list[InitialMemberCreate],
+) -> None:
+    """Add initial members to a knowledge base after creation."""
+    from app.services.share import knowledge_share_service
+
+    members_data: list[tuple[int, BaseRole, str | None, str | None, str | None]] = []
+    for member in members:
+        target_user_id = 0
+        entity_type = member.entity_type if member.entity_type else "user"
+        entity_id = member.entity_id
+        if entity_type == "user":
+            try:
+                target_user_id = int(entity_id)
+            except (ValueError, TypeError):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid user ID: {entity_id}",
+                )
+            entity_id = None
+        members_data.append(
+            (
+                target_user_id,
+                member.role,
+                entity_type,
+                entity_id,
+                member.entity_display_name,
+            )
+        )
+
+    result = knowledge_share_service.batch_add_members(
+        db=db,
+        resource_id=kb_id,
+        current_user_id=current_user.id,
+        members_data=members_data,
+    )
+
+    if result.failed:
+        details = ", ".join(
+            f"{f.entity_id or f.user_id}: {f.error}" for f in result.failed
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to add some members: {details}",
+        )
+
+
 @router.post(
     "",
     response_model=KnowledgeBaseResponse,
@@ -314,6 +365,7 @@ def create_knowledge_base(
 
     - **namespace=default**: Personal knowledge base
     - **namespace=<group_name>**: Team knowledge base (requires Maintainer+ permission)
+    - **members**: Optional initial members to add after creation
     """
     try:
         # Use Orchestrator for unified business logic (REST API and MCP tools share the same logic)
@@ -330,6 +382,11 @@ def create_knowledge_base(
             ),
             summary_model_ref=data.summary_model_ref,
         )
+
+        # Add initial members if provided
+        if data.members:
+            _add_initial_kb_members(db, result.id, current_user, data.members)
+
         add_span_event(
             "knowledge.base.created",
             {

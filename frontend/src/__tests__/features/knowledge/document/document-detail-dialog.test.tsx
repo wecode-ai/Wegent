@@ -179,7 +179,7 @@ describe('DocumentDetailDialog wiki-link routing', () => {
     is_active: true,
     index_status: 'success',
     index_generation: 1,
-  folder_id: 0,
+    folder_id: 0,
     source_type: 'text',
     source_config: {},
     created_at: '2026-04-02T00:00:00Z',

@@ -71,7 +71,8 @@ def _add_member(
     member = ResourceMember(
         resource_type="Namespace",
         resource_id=namespace.id,
-        user_id=user.id,
+        entity_type="user",
+        entity_id=str(user.id),
         role=role.value,
         status=MemberStatus.APPROVED.value,
         invited_by_user_id=invited_by_user_id,
@@ -106,7 +107,8 @@ def _add_kb_member(
     member = ResourceMember(
         resource_type="KnowledgeBase",
         resource_id=knowledge_base_id,
-        user_id=user.id,
+        entity_type="user",
+        entity_id=str(user.id),
         role=role.value,
         status=status,
         invited_by_user_id=invited_by_user_id,
@@ -846,6 +848,278 @@ def test_owner_can_migrate_personal_knowledge_base_to_group(
     assert result["success"] is True
     assert result["new_namespace"] == namespace.name
     assert migrated_kb.namespace == namespace.name
+
+
+@pytest.mark.unit
+def test_namespace_display_name_syncs_after_rename(test_db: Session) -> None:
+    """KB permission tab should show the latest namespace name, not stale snapshot."""
+    from app.schemas.share import MemberRole
+
+    owner = _create_user(test_db, "ns-rename-owner")
+    namespace = _create_namespace(test_db, owner, "ns-rename-group")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+
+    # Use a personal KB (namespace=default) so adding namespace permission
+    # does not trigger the "own group" protection.
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="ns-rename-kb", namespace="default"),
+    )
+
+    # Add namespace permission with an old snapshot
+    knowledge_share_service.add_member(
+        test_db,
+        resource_id=knowledge_base_id,
+        current_user_id=owner.id,
+        target_user_id=0,
+        role=MemberRole.Reporter,
+        entity_type="namespace",
+        entity_id=str(namespace.id),
+        entity_display_name="OldSnapshotName",
+    )
+
+    # Rename the namespace
+    namespace.display_name = "NewRenamedName"
+    test_db.commit()
+
+    # get_members should return the live name, not the snapshot
+    members = knowledge_share_service.get_members(test_db, knowledge_base_id, owner.id)
+    namespace_members = [m for m in members.members if m.entity_type == "namespace"]
+    assert len(namespace_members) == 1
+    assert namespace_members[0].display_name == "NewRenamedName"
+
+
+@pytest.mark.unit
+def test_namespace_snapshot_is_suppressed(test_db: Session) -> None:
+    """add_member should ignore entity_display_name for namespace entries."""
+    from app.schemas.share import MemberRole
+
+    owner = _create_user(test_db, "ns-snapshot-owner")
+    namespace = _create_namespace(test_db, owner, "ns-snapshot-group")
+    _add_member(test_db, namespace, owner, GroupRole.Owner, owner.id)
+
+    # Use a personal KB (namespace=default) so adding namespace permission
+    # does not trigger the "own group" protection.
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="ns-snapshot-kb", namespace="default"),
+    )
+
+    knowledge_share_service.add_member(
+        test_db,
+        resource_id=knowledge_base_id,
+        current_user_id=owner.id,
+        target_user_id=0,
+        role=MemberRole.Reporter,
+        entity_type="namespace",
+        entity_id=str(namespace.id),
+        entity_display_name="ShouldBeIgnored",
+    )
+
+    member = (
+        test_db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == "KnowledgeBase",
+            ResourceMember.resource_id == knowledge_base_id,
+            ResourceMember.entity_type == "namespace",
+            ResourceMember.entity_id == str(namespace.id),
+        )
+        .first()
+    )
+    assert member is not None
+    assert member.entity_display_name is None
+
+
+@pytest.mark.unit
+def test_kb_shown_in_all_target_groups_via_namespace_entity(
+    test_db: Session,
+) -> None:
+    """KB shared to multiple groups via namespace entity should appear in all target groups."""
+    owner = _create_user(test_db, "multi-group-owner")
+    group_a = _create_namespace(test_db, owner, "group-a")
+    group_b = _create_namespace(test_db, owner, "group-b")
+    member = _create_user(test_db, "multi-group-member")
+
+    _add_member(test_db, group_a, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, group_b, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, group_a, member, GroupRole.Developer, owner.id)
+    _add_member(test_db, group_b, member, GroupRole.Developer, owner.id)
+
+    # Create a personal KB and share it to both groups via namespace entity
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="shared-to-both", namespace="default"),
+    )
+
+    from app.schemas.share import MemberRole
+
+    knowledge_share_service.add_member(
+        test_db,
+        resource_id=knowledge_base_id,
+        current_user_id=owner.id,
+        target_user_id=0,
+        role=MemberRole.Reporter,
+        entity_type="namespace",
+        entity_id=str(group_a.id),
+    )
+    knowledge_share_service.add_member(
+        test_db,
+        resource_id=knowledge_base_id,
+        current_user_id=owner.id,
+        target_user_id=0,
+        role=MemberRole.Reporter,
+        entity_type="namespace",
+        entity_id=str(group_b.id),
+    )
+
+    grouped = KnowledgeService.get_all_knowledge_bases_grouped(test_db, member.id)
+
+    group_names_with_kb = {
+        g.group_name
+        for g in grouped.groups
+        if any(kb.id == knowledge_base_id for kb in g.knowledge_bases)
+    }
+    assert "group-a" in group_names_with_kb
+    assert "group-b" in group_names_with_kb
+
+
+@pytest.mark.unit
+def test_get_user_kb_permission_merges_multiple_entity_roles(
+    test_db: Session,
+) -> None:
+    """get_user_kb_permission should return the highest role across all entity sources."""
+    owner = _create_user(test_db, "merge-owner")
+    group_a = _create_namespace(test_db, owner, "merge-group-a")
+    member = _create_user(test_db, "merge-member")
+
+    _add_member(test_db, group_a, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, group_a, member, GroupRole.Developer, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="merge-kb", namespace="default"),
+    )
+
+    from app.schemas.share import MemberRole
+
+    # Share with Reporter role via namespace entity
+    knowledge_share_service.add_member(
+        test_db,
+        resource_id=knowledge_base_id,
+        current_user_id=owner.id,
+        target_user_id=0,
+        role=MemberRole.Reporter,
+        entity_type="namespace",
+        entity_id=str(group_a.id),
+    )
+    # Also share with Maintainer role via direct user entity
+    knowledge_share_service.add_member(
+        test_db,
+        resource_id=knowledge_base_id,
+        current_user_id=owner.id,
+        target_user_id=member.id,
+        role=MemberRole.Maintainer,
+    )
+
+    has_access, role, is_creator = knowledge_share_service.get_user_kb_permission(
+        test_db, knowledge_base_id, member.id
+    )
+
+    assert has_access is True
+    assert role == ResourceRole.Maintainer.value
+    assert is_creator is False
+
+
+@pytest.mark.unit
+def test_permission_sources_consistent_with_user_kb_permission(
+    test_db: Session,
+) -> None:
+    """get_my_permission_sources and get_user_kb_permission should return the same effective_role."""
+    owner = _create_user(test_db, "consistent-owner")
+    group_a = _create_namespace(test_db, owner, "consistent-group-a")
+    member = _create_user(test_db, "consistent-member")
+
+    _add_member(test_db, group_a, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, group_a, member, GroupRole.Developer, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="consistent-kb", namespace="default"),
+    )
+
+    from app.schemas.share import MemberRole
+
+    knowledge_share_service.add_member(
+        test_db,
+        resource_id=knowledge_base_id,
+        current_user_id=owner.id,
+        target_user_id=0,
+        role=MemberRole.Reporter,
+        entity_type="namespace",
+        entity_id=str(group_a.id),
+    )
+
+    _, role_from_permission, _ = knowledge_share_service.get_user_kb_permission(
+        test_db, knowledge_base_id, member.id
+    )
+    sources = knowledge_share_service.get_my_permission_sources(
+        test_db, knowledge_base_id, member.id
+    )
+
+    assert role_from_permission == sources.effective_role
+
+
+@pytest.mark.unit
+def test_get_resource_checks_all_entity_records(
+    test_db: Session,
+) -> None:
+    """_get_resource should check all entity records, not just the first one."""
+    owner = _create_user(test_db, "resource-owner")
+    group_a = _create_namespace(test_db, owner, "resource-group-a")
+    group_b = _create_namespace(test_db, owner, "resource-group-b")
+    member = _create_user(test_db, "resource-member")
+
+    _add_member(test_db, group_a, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, group_b, owner, GroupRole.Owner, owner.id)
+    _add_member(test_db, group_b, member, GroupRole.Developer, owner.id)
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="resource-kb", namespace="default"),
+    )
+
+    from app.schemas.share import MemberRole
+
+    # Member is NOT in group_a, but IS in group_b
+    knowledge_share_service.add_member(
+        test_db,
+        resource_id=knowledge_base_id,
+        current_user_id=owner.id,
+        target_user_id=0,
+        role=MemberRole.Reporter,
+        entity_type="namespace",
+        entity_id=str(group_a.id),
+    )
+    knowledge_share_service.add_member(
+        test_db,
+        resource_id=knowledge_base_id,
+        current_user_id=owner.id,
+        target_user_id=0,
+        role=MemberRole.Reporter,
+        entity_type="namespace",
+        entity_id=str(group_b.id),
+    )
+
+    # _get_resource should find the group_b match even if group_a was queried first
+    kb = knowledge_share_service._get_resource(test_db, knowledge_base_id, member.id)
+    assert kb is not None
+    assert kb.id == knowledge_base_id
 
 
 @pytest.mark.unit

@@ -44,6 +44,12 @@
       "createdDesc": "Click the button above to create your first knowledge base",
       "sharedDesc": "Knowledge bases shared by other users will appear here"
     },
+    "groupSections": {
+      "native": "Created",
+      "shared": "Shared",
+      "noNative": "No group knowledge bases yet",
+      "noShared": "No shared knowledge bases yet"
+    },
     "tree": {
       "title": "Knowledge Base",
       "myKnowledge": "My Knowledge",
@@ -111,6 +117,8 @@
     "table": {
       "name": "Name",
       "group": "Group",
+      "belongsTo": "Belongs To",
+      "from": "From",
       "permission": "Permission",
       "lastAccess": "Last Access",
       "actions": "Actions",
@@ -469,7 +477,17 @@
       "batchAddFailed": "failed to add",
       "invalidShareLink": "Share link is invalid or expired",
       "noLinkToCopy": "No link to copy",
-      "copyFailedManual": "Link selected. Press Ctrl+C to copy."
+      "copyFailedManual": "Link selected. Press Ctrl+C to copy.",
+      "authorization": "Authorization",
+      "individual": "Individual",
+      "selectGroup": "Select group",
+      "selectGroupPlaceholder": "Please select a group",
+      "searchGroupPlaceholder": "Search groups...",
+      "noGroups": "No groups available",
+      "namespaceMembers": "Group Permissions",
+      "addNamespace": "Add group",
+      "noNamespacePermissions": "No group permissions yet",
+      "namespace": "Group"
     },
     "advancedSettings": {
       "title": "Advanced Settings",

@@ -71,11 +71,7 @@ export default function CodePage() {
         <DeviceTaskSync />
       </Suspense>
       <Suspense>
-        <TeamShareHandler
-          teams={teams}
-          onTeamSelected={() => {}}
-          onRefreshTeams={handleRefreshTeams}
-        />
+        <TeamShareHandler teams={teams} onRefreshTeams={handleRefreshTeams} />
       </Suspense>
       {/* Onboarding tour */}
       <OnboardingTour

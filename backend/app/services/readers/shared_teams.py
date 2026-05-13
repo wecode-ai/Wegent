@@ -74,7 +74,8 @@ class SharedTeamReader(ISharedTeamReader):
             .filter(
                 ResourceMember.resource_type == ResourceType.TEAM,
                 ResourceMember.resource_id == team_id,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
                 ResourceMember.status == MemberStatus.APPROVED,
             )
             .first()
@@ -86,7 +87,8 @@ class SharedTeamReader(ISharedTeamReader):
             db.query(ResourceMember.resource_id)
             .filter(
                 ResourceMember.resource_type == ResourceType.TEAM,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
                 ResourceMember.status == MemberStatus.APPROVED,
             )
             .all()
@@ -101,7 +103,8 @@ class SharedTeamReader(ISharedTeamReader):
             .filter(
                 ResourceMember.resource_type == ResourceType.TEAM,
                 ResourceMember.resource_id == team_id,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
                 ResourceMember.status == MemberStatus.APPROVED,
             )
             .first()
