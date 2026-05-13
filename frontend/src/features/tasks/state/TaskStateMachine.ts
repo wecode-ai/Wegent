@@ -53,6 +53,8 @@ export interface UnifiedMessage {
   type: 'user' | 'ai'
   status: MessageStatus
   content: string
+  queued?: boolean
+  queueStatus?: 'queued' | 'sending' | 'failed'
   attachment?: unknown
   attachments?: unknown[]
   contexts?: unknown[]

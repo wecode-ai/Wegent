@@ -124,6 +124,10 @@ export interface Message {
   shouldShowSender?: boolean
   /** Message status: pending, streaming, completed, error */
   status?: 'pending' | 'streaming' | 'completed' | 'error'
+  /** Whether this user message is queued locally before sender dispatch */
+  queued?: boolean
+  /** Queue status for locally queued user messages */
+  queueStatus?: 'queued' | 'sending' | 'failed'
   /** Error message if status is 'error' */
   error?: string
   /** Classified error type from backend (e.g., 'context_length_exceeded') */
@@ -1732,6 +1736,18 @@ const MessageBubble = memo(
                 </div>
               )}
 
+              {isUserTypeMessage && msg.queued && (
+                <div className="mt-2 flex justify-end">
+                  <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
+                    {msg.queueStatus === 'sending'
+                      ? t('messages.status_sending')
+                      : msg.queueStatus === 'failed'
+                        ? t('messages.queue_failed')
+                        : t('messages.status_queued')}
+                  </span>
+                </div>
+              )}
+
               {/* Show copy button for user messages - visible on hover */}
               {isUserTypeMessage && !isEditing && (
                 <div className="absolute -bottom-8 left-2 flex items-center gap-1 z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
@@ -1826,6 +1842,8 @@ const MessageBubble = memo(
       prevBlocksLen === nextBlocksLen &&
       prevBlocksHash === nextBlocksHash && // CRITICAL: Compare block content changes
       prevProps.msg.status === nextProps.msg.status &&
+      prevProps.msg.queued === nextProps.msg.queued &&
+      prevProps.msg.queueStatus === nextProps.msg.queueStatus &&
       prevProps.msg.error === nextProps.msg.error &&
       prevProps.msg.errorType === nextProps.msg.errorType &&
       prevProps.isPendingConfirmation === nextProps.isPendingConfirmation &&
