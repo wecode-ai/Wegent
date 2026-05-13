@@ -6,6 +6,19 @@
 
 Syncs DingTalk workspace nodes from the user's workspace MCP server into the
 local database with source='workspace'.
+
+The 钉钉知识库 MCP (mcpId=9730) uses DIFFERENT tool names from the docs MCP:
+  - list_wikiSpaces  → list accessible knowledge bases
+  - get_wikiSpace    → get a single KB's metadata
+  - search_wikiSpaces → search KBs by keyword
+
+To list DOCUMENTS within a knowledge base we use the docs MCP tool:
+  - list_nodes(workspaceId=<kb_id>) → list files/folders inside a KB
+
+This service therefore performs a two-phase sync:
+  Phase 1: workspace MCP  → list_wikiSpaces  → KB list
+  Phase 2: docs MCP       → list_nodes(workspaceId=) → documents in each KB
+           (falls back to workspace MCP URL if docs MCP is not configured)
 """
 
 from __future__ import annotations
@@ -18,13 +31,23 @@ from sqlalchemy.orm import Session
 
 from app.models.dingtalk_doc import DingtalkSyncedNode
 from app.models.user import User
-from app.services.dingtalk_doc_service import DingTalkDocService, MCP_TOOL_LIST_NODES
+from app.services.dingtalk_doc_service import (
+    MAX_RECURSION_DEPTH,
+    MCP_TOOL_LIST_NODES,
+    DingTalkDocService,
+)
 from app.services.user_mcp_service import UserMCPService
 
 logger = logging.getLogger(__name__)
 
 # Source identifier for workspace nodes
 WORKSPACE_SOURCE = "workspace"
+
+# Tool name on the 知识库 MCP for listing knowledge bases
+MCP_TOOL_LIST_WIKI_SPACES = "list_wikiSpaces"
+
+# wiki space type value for org-level KBs (as opposed to "myWikiSpace")
+WIKI_SPACE_TYPE_ORG = "orgWikiSpace"
 
 
 class DingTalkWorkspaceService:
@@ -52,15 +75,28 @@ class DingTalkWorkspaceService:
     async def sync_workspace_nodes(user: User, db: Session) -> dict[str, Any]:
         """Sync DingTalk workspace nodes from the user's workspace MCP server.
 
-        Returns a dict with sync statistics: added, updated, deleted, total.
+        Uses a two-phase approach:
+          1. workspace MCP  → list_wikiSpaces → knowledge base IDs
+          2. docs MCP       → list_nodes(workspaceId=) → documents in each KB
+
+        Returns a dict with sync statistics: added, updated, deleted, total,
+        mcp_nodes_fetched.
         """
-        mcp_url = DingTalkWorkspaceService.get_user_workspace_mcp_url(user, db)
-        if not mcp_url:
+        workspace_mcp_url = DingTalkWorkspaceService.get_user_workspace_mcp_url(
+            user, db
+        )
+        if not workspace_mcp_url:
             raise ValueError(
                 "DingTalk Workspace MCP URL is not configured or not enabled"
             )
 
-        all_nodes = await DingTalkWorkspaceService._fetch_all_workspace_nodes(mcp_url)
+        # Docs MCP URL is optional; falls back to workspace MCP URL if absent.
+        docs_mcp_url = DingTalkDocService.get_user_dingtalk_mcp_url(user, db)
+
+        all_nodes = await DingTalkWorkspaceService._fetch_all_workspace_nodes(
+            workspace_mcp_url=workspace_mcp_url,
+            docs_mcp_url=docs_mcp_url,
+        )
 
         if len(all_nodes) > 5000:
             logger.warning(
@@ -77,72 +113,16 @@ class DingTalkWorkspaceService:
         stats["mcp_nodes_fetched"] = len(all_nodes)
         return stats
 
-    @staticmethod
-    async def _discover_list_tool(session: Any) -> str:
-        """Discover which list_nodes-like tool the MCP server exposes.
-
-        Returns the tool name to call for listing nodes/documents. Falls back
-        to the default `list_nodes` name if discovery is not available or no
-        better match is found.
-        """
-        try:
-            tools_result = await session.list_tools()
-            tool_names: list[str] = []
-            if hasattr(tools_result, "tools"):
-                tool_names = [
-                    t.name
-                    for t in tools_result.tools
-                    if hasattr(t, "name")
-                ]
-            elif isinstance(tools_result, list):
-                tool_names = [
-                    t.get("name", "")
-                    for t in tools_result
-                    if isinstance(t, dict)
-                ]
-
-            logger.info(
-                "DingTalk workspace MCP exposes %d tools: %s",
-                len(tool_names),
-                tool_names,
-            )
-
-            # Prefer an exact match; fall back to any name containing "list" and
-            # ("node" or "doc" or "file" or "space").
-            if MCP_TOOL_LIST_NODES in tool_names:
-                return MCP_TOOL_LIST_NODES
-
-            for name in tool_names:
-                lower = name.lower()
-                if "list" in lower and any(
-                    kw in lower for kw in ("node", "doc", "file", "space", "item")
-                ):
-                    logger.info(
-                        "Using alternative list tool '%s' instead of '%s'",
-                        name,
-                        MCP_TOOL_LIST_NODES,
-                    )
-                    return name
-        except Exception as exc:
-            logger.warning(
-                "Could not list tools from workspace MCP: %s. "
-                "Falling back to default tool name '%s'.",
-                exc,
-                MCP_TOOL_LIST_NODES,
-            )
-
-        return MCP_TOOL_LIST_NODES
+    # ------------------------------------------------------------------
+    # Phase 1 helpers: list knowledge bases via workspace MCP
+    # ------------------------------------------------------------------
 
     @staticmethod
-    async def _fetch_all_workspace_nodes(mcp_url: str) -> list[dict[str, Any]]:
-        """Fetch all workspace nodes from the DingTalk Workspace MCP server.
+    async def _list_wiki_spaces(workspace_mcp_url: str) -> list[dict[str, Any]]:
+        """Call list_wikiSpaces on the workspace MCP and return all KB entries.
 
-        The workspace MCP's list_nodes without params returns knowledge bases
-        as top-level entries. Each knowledge base must then be explored via
-        list_nodes(workspaceId=<kb_node_id>) to retrieve its documents and
-        folders. This two-level traversal is necessary because knowledge-base
-        root nodes are NOT regular folders — using folderId would return
-        nothing.
+        Paginates automatically. Logs available tools and raw responses to aid
+        debugging in case the MCP server returns unexpected data.
         """
         try:
             from mcp import ClientSession
@@ -151,9 +131,9 @@ class DingTalkWorkspaceService:
             logger.error("mcp package not available for DingTalk workspace sync")
             raise
 
-        all_nodes: list[dict[str, Any]] = []
+        kb_nodes: list[dict[str, Any]] = []
 
-        async with streamablehttp_client(url=mcp_url) as (
+        async with streamablehttp_client(url=workspace_mcp_url) as (
             read_stream,
             write_stream,
             _,
@@ -161,152 +141,265 @@ class DingTalkWorkspaceService:
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
 
-                # Discover the actual tool name for listing nodes.
-                list_tool = await DingTalkWorkspaceService._discover_list_tool(session)
+                # Log all available tools so we know what this server exposes.
+                try:
+                    tools_result = await session.list_tools()
+                    tool_names: list[str] = []
+                    if hasattr(tools_result, "tools"):
+                        tool_names = [
+                            t.name
+                            for t in tools_result.tools
+                            if hasattr(t, "name")
+                        ]
+                    elif isinstance(tools_result, list):
+                        tool_names = [
+                            t.get("name", "")
+                            for t in tools_result
+                            if isinstance(t, dict)
+                        ]
+                    logger.info(
+                        "DingTalk workspace MCP exposes %d tools: %s",
+                        len(tool_names),
+                        tool_names,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Could not list workspace MCP tools: %s",
+                        exc,
+                    )
 
-                # Step 1: List top-level entries from the workspace MCP.
-                # For the 知识库 MCP this returns the knowledge bases themselves.
-                page_token = None
-                kb_nodes: list[dict[str, Any]] = []
+                # Paginate through all org-level knowledge bases.
+                page_token: str | None = None
+                first_call = True
                 while True:
-                    args: dict[str, Any] = {"pageSize": 50}
+                    args: dict[str, Any] = {
+                        "wikiSpaceType": WIKI_SPACE_TYPE_ORG,
+                        "pageSize": 50,
+                    }
                     if page_token:
                         args["pageToken"] = page_token
-                    root_result = await session.call_tool(list_tool, args)
 
-                    # Log a sample of the raw response on first call to aid debugging.
-                    if not kb_nodes:
+                    result = await session.call_tool(MCP_TOOL_LIST_WIKI_SPACES, args)
+
+                    # Log raw response on the first call to enable offline diagnosis.
+                    if first_call:
+                        first_call = False
                         try:
-                            raw_repr = repr(root_result)
+                            raw_repr = repr(result)
                             logger.info(
-                                "Workspace MCP root list_nodes raw response "
-                                "(first 1000 chars): %.1000s",
+                                "list_wikiSpaces raw response "
+                                "(first 2000 chars): %.2000s",
                                 raw_repr,
                             )
                         except Exception:
                             pass
 
                     batch, page_token = DingTalkDocService._parse_list_nodes_result(
-                        root_result
+                        result
                     )
                     kb_nodes.extend(batch)
                     if not page_token:
                         break
 
-                logger.info(
-                    "DingTalk workspace MCP returned %d top-level nodes",
-                    len(kb_nodes),
-                )
+        logger.info(
+            "list_wikiSpaces returned %d knowledge bases",
+            len(kb_nodes),
+        )
+        return kb_nodes
 
-                if not kb_nodes:
-                    logger.warning(
-                        "Workspace MCP returned 0 top-level nodes. "
-                        "Check that the MCP URL is correct and the server is "
-                        "returning data in a recognised format."
-                    )
-
-                # Step 2: For each top-level node (knowledge base), fetch its
-                # documents using workspaceId — NOT folderId. The KB node's
-                # nodeId doubles as the workspaceId needed to list its root.
-                for kb_node in kb_nodes:
-                    kb_id = kb_node.get("nodeId") or kb_node.get("workspaceId")
-                    if not kb_id:
-                        logger.warning(
-                            "Skipping KB node with no nodeId/workspaceId: %s",
-                            kb_node,
-                        )
-                        continue
-
-                    # Include the knowledge-base root as a folder-like entry so
-                    # the front-end can display it as a tree root.
-                    kb_as_folder = {
-                        **kb_node,
-                        "nodeType": "folder",
-                        "workspaceId": kb_id,
-                    }
-                    all_nodes.append(kb_as_folder)
-
-                    logger.info(
-                        "Fetching nodes for knowledge base '%s' (id=%s)",
-                        kb_node.get("name", "?"),
-                        kb_id,
-                    )
-
-                    # Recursively list documents/folders within this KB.
-                    # Pass the discovered tool name via a thin wrapper so that
-                    # _list_nodes_recursive uses the right tool for this server.
-                    await DingTalkWorkspaceService._list_nodes_recursive_with_tool(
-                        session,
-                        list_tool=list_tool,
-                        folder_id=None,      # list the KB root, not a sub-folder
-                        workspace_id=kb_id,  # crucial: use workspaceId, not folderId
-                        all_nodes=all_nodes,
-                        depth=0,
-                    )
-
-        return all_nodes
+    # ------------------------------------------------------------------
+    # Phase 2 helpers: list documents inside each KB via docs MCP
+    # ------------------------------------------------------------------
 
     @staticmethod
-    async def _list_nodes_recursive_with_tool(
-        session: Any,
-        list_tool: str,
-        folder_id: str | None,
-        workspace_id: str | None,
+    async def _list_nodes_in_workspace(
+        docs_mcp_url: str,
+        workspace_id: str,
         all_nodes: list[dict[str, Any]],
-        depth: int,
     ) -> None:
-        """Recursively list nodes using the specified MCP tool name.
+        """Open a docs MCP session and recursively list all nodes in the given KB.
 
-        This is a workspace-specific variant of DingTalkDocService._list_nodes_recursive
-        that allows using a dynamically discovered tool name instead of the
-        hard-coded MCP_TOOL_LIST_NODES constant.
+        Uses list_nodes(workspaceId=workspace_id) which is the correct way to
+        enumerate documents inside a 知识库 knowledge base.
         """
-        from app.services.dingtalk_doc_service import MAX_RECURSION_DEPTH
+        try:
+            from mcp import ClientSession
+            from mcp.client.streamable_http import streamablehttp_client
+        except ImportError:
+            logger.error("mcp package not available for DingTalk workspace sync")
+            raise
 
-        if depth >= MAX_RECURSION_DEPTH:
-            logger.warning(
-                "Max recursion depth %d reached at folder %s",
-                depth,
-                folder_id,
-            )
-            return
+        async with streamablehttp_client(url=docs_mcp_url) as (
+            read_stream,
+            write_stream,
+            _,
+        ):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
 
-        page_token: str | None = None
-        while True:
-            args: dict[str, Any] = {"pageSize": 50}
-            if folder_id:
-                args["folderId"] = folder_id
-            if workspace_id:
-                args["workspaceId"] = workspace_id
-            if page_token:
-                args["pageToken"] = page_token
-
-            result = await session.call_tool(list_tool, args)
-            nodes_data, page_token = DingTalkDocService._parse_list_nodes_result(result)
-
-            # Inject parentId when it is not already present
-            for node in nodes_data:
-                if folder_id and not node.get("parentId"):
-                    node["parentId"] = folder_id
-
-            all_nodes.extend(nodes_data)
-
-            # Recurse into sub-folders
-            for node in nodes_data:
-                if node.get("nodeType") == "folder":
-                    node_id = node.get("nodeId", "")
-                    ws_id = node.get("workspaceId") or workspace_id
-                    await DingTalkWorkspaceService._list_nodes_recursive_with_tool(
-                        session,
-                        list_tool=list_tool,
-                        folder_id=node_id,
-                        workspace_id=ws_id,
-                        all_nodes=all_nodes,
-                        depth=depth + 1,
+                # Log the first response for this KB for debugging.
+                first_args: dict[str, Any] = {
+                    "workspaceId": workspace_id,
+                    "pageSize": 50,
+                }
+                first_result = await session.call_tool(MCP_TOOL_LIST_NODES, first_args)
+                try:
+                    logger.info(
+                        "list_nodes(workspaceId=%s) first response "
+                        "(first 1000 chars): %.1000s",
+                        workspace_id,
+                        repr(first_result),
                     )
+                except Exception:
+                    pass
 
-            if not page_token:
-                break
+                first_batch, first_token = DingTalkDocService._parse_list_nodes_result(
+                    first_result
+                )
+                all_nodes.extend(first_batch)
+
+                # Recurse into sub-folders found in the first batch.
+                for node in first_batch:
+                    if node.get("nodeType") == "folder":
+                        ws_id = node.get("workspaceId") or workspace_id
+                        node_id = node.get("nodeId", "")
+                        await DingTalkDocService._list_nodes_recursive(
+                            session,
+                            folder_id=node_id,
+                            workspace_id=ws_id,
+                            all_nodes=all_nodes,
+                            depth=1,
+                        )
+
+                # Continue paging the root level if there are more pages.
+                page_token = first_token
+                while page_token:
+                    args: dict[str, Any] = {
+                        "workspaceId": workspace_id,
+                        "pageSize": 50,
+                        "pageToken": page_token,
+                    }
+                    result = await session.call_tool(MCP_TOOL_LIST_NODES, args)
+                    batch, page_token = DingTalkDocService._parse_list_nodes_result(
+                        result
+                    )
+                    all_nodes.extend(batch)
+                    for node in batch:
+                        if node.get("nodeType") == "folder":
+                            ws_id = node.get("workspaceId") or workspace_id
+                            node_id = node.get("nodeId", "")
+                            await DingTalkDocService._list_nodes_recursive(
+                                session,
+                                folder_id=node_id,
+                                workspace_id=ws_id,
+                                all_nodes=all_nodes,
+                                depth=1,
+                            )
+
+    # ------------------------------------------------------------------
+    # Main fetch orchestrator
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    async def _fetch_all_workspace_nodes(
+        workspace_mcp_url: str,
+        docs_mcp_url: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Two-phase fetch of all documents across all accessible knowledge bases.
+
+        Phase 1 — workspace MCP (list_wikiSpaces):
+            Connects to the 知识库 MCP server and calls list_wikiSpaces to get
+            the list of knowledge bases the user can access.
+
+        Phase 2 — docs MCP (list_nodes with workspaceId):
+            For each KB found in Phase 1, connects to the docs MCP server and
+            calls list_nodes(workspaceId=<kb_id>) to enumerate all documents
+            and folders.  If the docs MCP URL is not configured the workspace
+            MCP URL is used as a fallback (works if it's a combined server).
+        """
+        all_nodes: list[dict[str, Any]] = []
+
+        # Phase 1: obtain knowledge-base list.
+        kb_nodes = await DingTalkWorkspaceService._list_wiki_spaces(workspace_mcp_url)
+
+        if not kb_nodes:
+            logger.warning(
+                "list_wikiSpaces returned 0 knowledge bases. "
+                "Verify the workspace MCP URL and user permissions."
+            )
+            return all_nodes
+
+        # The URL used for list_nodes (Phase 2).
+        nodes_url = docs_mcp_url or workspace_mcp_url
+        if not docs_mcp_url:
+            logger.info(
+                "Docs MCP not configured — using workspace MCP URL for list_nodes. "
+                "Configure the DingTalk Docs MCP for best results."
+            )
+
+        # Phase 2: list documents for every knowledge base.
+        for kb_node in kb_nodes:
+            # The workspace MCP returns workspaceId as the KB identifier.
+            kb_id = (
+                kb_node.get("workspaceId")
+                or kb_node.get("nodeId")
+                or kb_node.get("id")
+            )
+            if not kb_id:
+                logger.warning(
+                    "Skipping KB node with no workspaceId/nodeId: %s",
+                    kb_node,
+                )
+                continue
+
+            kb_name = kb_node.get("name") or kb_node.get("title") or kb_id
+            kb_url = kb_node.get("url") or (
+                f"https://alidocs.dingtalk.com/i/spaces/{kb_id}/overview"
+            )
+
+            # Represent the KB root as a folder-like node so the UI can render
+            # it as the top of the document tree.
+            kb_as_folder: dict[str, Any] = {
+                **kb_node,
+                "nodeId": kb_id,
+                "nodeType": "folder",
+                "workspaceId": kb_id,
+                "name": kb_name,
+                "url": kb_url,
+            }
+            all_nodes.append(kb_as_folder)
+
+            logger.info(
+                "Fetching documents for knowledge base '%s' (workspaceId=%s)",
+                kb_name,
+                kb_id,
+            )
+
+            try:
+                await DingTalkWorkspaceService._list_nodes_in_workspace(
+                    docs_mcp_url=nodes_url,
+                    workspace_id=kb_id,
+                    all_nodes=all_nodes,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Failed to list nodes in KB '%s' (id=%s): %s",
+                    kb_name,
+                    kb_id,
+                    exc,
+                )
+                # Continue with remaining KBs even if one fails.
+
+        logger.info(
+            "Workspace sync fetched %d total nodes across %d knowledge bases",
+            len(all_nodes),
+            len(kb_nodes),
+        )
+        return all_nodes
+
+    # ------------------------------------------------------------------
+    # Read helpers
+    # ------------------------------------------------------------------
 
     @staticmethod
     def get_workspace_nodes(user_id: int, db: Session) -> list[DingtalkSyncedNode]:

@@ -202,9 +202,14 @@ class DingTalkDocService:
 
     # Candidate keys that may contain a list of nodes in the MCP response dict.
     # Ordered from most specific to least specific so we prefer the right one.
+    # Includes knowledge-base specific keys (wikiSpaces, spaces, spaceList) for
+    # responses from the 知识库 MCP list_wikiSpaces tool.
     _NODE_LIST_KEYS = (
         "items",
         "nodes",
+        "wikiSpaces",
+        "spaces",
+        "spaceList",
         "data",
         "list",
         "records",
