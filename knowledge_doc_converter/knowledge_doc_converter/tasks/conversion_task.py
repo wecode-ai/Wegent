@@ -33,10 +33,11 @@ from knowledge_doc_converter.services.lock_service import lock_service
 logger = logging.getLogger(__name__)
 
 
-def _build_mineru_config():
-    """Build MinerUConfig from service settings."""
-    from knowledge_engine.conversion import MinerUConfig
+from knowledge_engine.conversion import MinerUConfig, S3Config
 
+
+def _build_mineru_config() -> MinerUConfig:
+    """Build MinerUConfig from service settings."""
     return MinerUConfig(
         api_base_url=settings.MINERU_API_BASE_URL,
         backend=settings.MINERU_BACKEND,
@@ -49,10 +50,8 @@ def _build_mineru_config():
     )
 
 
-def _build_s3_config():
+def _build_s3_config() -> S3Config:
     """Build S3Config from service settings."""
-    from knowledge_engine.conversion import S3Config
-
     return S3Config(
         enabled=settings.WORKER_CONVERSION_S3_ENABLED,
         endpoint=settings.WORKER_CONVERSION_S3_ENDPOINT,
@@ -84,7 +83,7 @@ def convert_document_task(
     callback_status_path: str,
     callback_completed_path: str,
     index_dispatch_payload: dict,
-):
+) -> dict:
     """
     Convert a document to Markdown and notify backend via callbacks.
 
@@ -201,7 +200,7 @@ def convert_document_task(
             safe_filename = (
                 filename_without_ext.replace("..", "").replace("\\", "/").strip("/")
             )
-            s3_base_path = f"{safe_kb_name}/{safe_filename}"
+            s3_base_path = f"{safe_kb_name}/{document_id}/{safe_filename}"
 
             result = convert_document(
                 binary_data=binary_data,

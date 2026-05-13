@@ -14,6 +14,7 @@ from app.api.dependencies import get_db
 from app.models.subtask_context import ContextType, SubtaskContext
 from app.services.auth.internal_service_token import verify_internal_service_token
 from app.services.context.context_service import context_service
+from shared.telemetry.decorators import trace_sync
 
 router = APIRouter(
     prefix="/attachments",
@@ -22,8 +23,9 @@ router = APIRouter(
 )
 
 
+@trace_sync("download_attachment", "attachments.internal")
 @router.get("/{attachment_id}/download")
-def download_attachment(attachment_id: int, db: Session = Depends(get_db)):
+def download_attachment(attachment_id: int, db: Session = Depends(get_db)) -> Response:
     """Download attachment binary content for converter service.
 
     Returns raw binary data as application/octet-stream.
