@@ -671,6 +671,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 previous_bot_id=previous_bot_id,
                 skip_status_check=payload.action == "pipeline:confirm",
                 device_id=payload.device_id,
+                project_id=payload.project_id,
                 generate_params=generate_params_dict,
             )
 

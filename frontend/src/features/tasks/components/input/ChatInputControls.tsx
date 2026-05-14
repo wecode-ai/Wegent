@@ -39,6 +39,7 @@ import {
   VideoSettingsPopover,
 } from '../selector'
 import type { GenerateMode } from '../selector'
+import { ProjectSelectorTab } from '@/features/projects/components/ProjectSelectorTab'
 
 export interface ChatInputControlsProps {
   /** Task type to determine which controls to show */
@@ -154,6 +155,9 @@ export interface ChatInputControlsProps {
 
   /** When true, hide all selectors - only show send button + quota */
   hideSelectors?: boolean
+
+  /** Project ID for project selector (workspace projects) */
+  projectId?: number | null
 }
 
 /**
@@ -249,6 +253,8 @@ export function ChatInputControls({
   onGenerateModeChange,
   // Hide all selectors (for OpenClaw devices)
   hideSelectors,
+  // Project context
+  projectId,
 }: ChatInputControlsProps) {
   // Check if we're in video or image mode
   const isVideoMode = taskType === 'video'
@@ -481,13 +487,16 @@ export function ChatInputControls({
               hideSelectors ? 'flex items-center gap-2 opacity-50 pointer-events-none' : 'contents'
             }
           >
+            {/* Project Selector - show when in project context */}
+            {projectId && <ProjectSelectorTab projectId={projectId} disabled={hasMessages} />}
+
             {/* File Upload Button - show for shells that support attachments (Chat, ClaudeCode) */}
             {supportsAttachments(selectedTeam) && (
               <AttachmentButton onFileSelect={onFileSelect} disabled={isLoading || isStreaming} />
             )}
 
             {/* Divider between attachment and other controls */}
-            {supportsAttachments(selectedTeam) && selectedTeam && (
+            {!projectId && supportsAttachments(selectedTeam) && selectedTeam && (
               <div className="w-px h-4 bg-border mx-1 flex-shrink-0" />
             )}
 

@@ -11,6 +11,7 @@ import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { ApiError } from '@/apis/client'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
+import { useUser } from '@/features/common/UserContext'
 
 interface ProjectContextValue {
   // Data
@@ -38,6 +39,9 @@ interface ProjectContextValue {
 
   // Computed set of all task IDs in projects (for filtering in history list)
   projectTaskIds: Set<number>
+
+  // Feature flag: whether workspace projects are enabled for current user
+  isWorkspaceEnabled: boolean
 }
 
 const ProjectContext = createContext<ProjectContextValue | undefined>(undefined)
@@ -45,7 +49,23 @@ const ProjectContext = createContext<ProjectContextValue | undefined>(undefined)
 export function ProjectProvider({ children }: { children: React.ReactNode }) {
   const { t } = useTranslation('projects')
   const { toast } = useToast()
-  const enableProjectWorkspace = getRuntimeConfigSync().enableProjectWorkspace
+  const { user } = useUser()
+  const runtimeConfig = getRuntimeConfigSync()
+  const enableProjectWorkspace = useMemo(() => {
+    if (!runtimeConfig.enableProjectWorkspace) return false
+    const whitelist = runtimeConfig.projectWorkspaceWhitelist
+    if (!whitelist) return true
+    const allowedUsers = whitelist
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean)
+    if (allowedUsers.length === 0) return true
+    return allowedUsers.includes(user?.user_name || '')
+  }, [
+    runtimeConfig.enableProjectWorkspace,
+    runtimeConfig.projectWorkspaceWhitelist,
+    user?.user_name,
+  ])
 
   const [projects, setProjects] = useState<ProjectWithTasks[]>([])
   const [isLoading, setIsLoading] = useState(false)
@@ -324,6 +344,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
     selectedProjectTaskId,
     setSelectedProjectTaskId,
     projectTaskIds,
+    isWorkspaceEnabled: enableProjectWorkspace,
   }
 
   return <ProjectContext.Provider value={value}>{children}</ProjectContext.Provider>

@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -16,12 +16,19 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useProjectContext } from '../contexts/projectContext'
-import { getRuntimeConfigSync } from '@/lib/runtime-config'
-import { ProjectConfig, ProjectWorkspaceSource } from '@/types/api'
+import { projectApis } from '@/apis/projects'
+import { useDevices } from '@/contexts/DeviceContext'
+import type { ProjectConfig } from '@/types/api'
 
-// Predefined colors for projects
 const PROJECT_COLORS = [
   { id: 'red', value: '#EF4444' },
   { id: 'orange', value: '#F97316' },
@@ -33,301 +40,245 @@ const PROJECT_COLORS = [
   { id: 'gray', value: '#6B7280' },
 ]
 
+function getNameFromPath(path: string): string {
+  const trimmed = path.replace(/\/+$/, '')
+  const lastSegment = trimmed.split('/').pop() || ''
+  return lastSegment
+}
+
 interface ProjectCreateDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  mode?: 'group' | 'workspace'
 }
 
-export function ProjectCreateDialog({ open, onOpenChange }: ProjectCreateDialogProps) {
+export function ProjectCreateDialog({
+  open,
+  onOpenChange,
+  mode = 'group',
+}: ProjectCreateDialogProps) {
   const { t } = useTranslation('projects')
-  const { createProject } = useProjectContext()
+  const { createProject, refreshProjects } = useProjectContext()
+  const { devices } = useDevices()
+  const isWorkspaceMode = mode === 'workspace'
 
+  // Online devices only, prefer cloud ClaudeCode devices first
+  const onlineDevices = useMemo(() => {
+    const online = devices.filter(d => d.status === 'online' || d.status === 'busy')
+    return online.sort((a, b) => {
+      const aIsCloudCode = a.device_type === 'cloud' && a.bind_shell === 'claudecode' ? 0 : 1
+      const bIsCloudCode = b.device_type === 'cloud' && b.bind_shell === 'claudecode' ? 0 : 1
+      return aIsCloudCode - bIsCloudCode
+    })
+  }, [devices])
+
+  // Group mode state
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [selectedColor, setSelectedColor] = useState<string | null>(null)
-  const [workspaceEnabled, setWorkspaceEnabled] = useState(false)
-  const [targetType, setTargetType] = useState<'local' | 'cloud'>('local')
-  const [deviceId, setDeviceId] = useState('')
-  const [teamId, setTeamId] = useState('')
-  const [workspaceSource, setWorkspaceSource] = useState<ProjectWorkspaceSource>('git')
-  const [gitUrl, setGitUrl] = useState('')
-  const [gitRepo, setGitRepo] = useState('')
-  const [gitBranch, setGitBranch] = useState('main')
-  const [localPath, setLocalPath] = useState('')
-  const [checkoutPath, setCheckoutPath] = useState('')
-  const [isCreating, setIsCreating] = useState(false)
-  const enableProjectWorkspace = getRuntimeConfigSync().enableProjectWorkspace
 
-  const handleCreate = async () => {
+  // Workspace mode state
+  const [deviceId, setDeviceId] = useState('')
+  const [localPath, setLocalPath] = useState('')
+
+  const [isCreating, setIsCreating] = useState(false)
+
+  // Auto-select first online device when dialog opens
+  useEffect(() => {
+    if (open && isWorkspaceMode && !deviceId && onlineDevices.length > 0) {
+      setDeviceId(onlineDevices[0].device_id)
+    }
+  }, [open, isWorkspaceMode, deviceId, onlineDevices])
+
+  const projectName = localPath.trim() ? getNameFromPath(localPath) : ''
+
+  const handleCreateGroup = async () => {
     if (!name.trim()) return
 
     setIsCreating(true)
     try {
-      const config = buildWorkspaceConfig()
       await createProject({
         name: name.trim(),
         description: description.trim() || undefined,
         color: selectedColor || undefined,
-        config,
       })
-      // Reset form and close dialog
-      setName('')
-      setDescription('')
-      setSelectedColor(null)
-      resetWorkspaceFields()
+      resetForm()
       onOpenChange(false)
     } finally {
       setIsCreating(false)
     }
   }
 
+  const handleCreateWorkspace = async () => {
+    if (!deviceId) return
+
+    setIsCreating(true)
+    try {
+      const config: ProjectConfig = {
+        mode: 'workspace',
+        execution: {
+          targetType: 'local',
+          deviceId,
+        },
+      }
+      if (localPath.trim()) {
+        config.workspace = {
+          source: 'local_path',
+          localPath: localPath.trim(),
+        }
+      }
+      const tempName = projectName || 'project'
+      const created = await projectApis.createProject({
+        name: tempName,
+        config,
+      })
+      // If no path was specified, rename to project{id} based on default folder name
+      if (!localPath.trim() && created.id) {
+        await projectApis.updateProject(created.id, { name: `project${created.id}` })
+      }
+      await refreshProjects()
+      resetForm()
+      onOpenChange(false)
+    } finally {
+      setIsCreating(false)
+    }
+  }
+
+  const handleCreate = isWorkspaceMode ? handleCreateWorkspace : handleCreateGroup
+
   const handleClose = () => {
     if (!isCreating) {
-      setName('')
-      setDescription('')
-      setSelectedColor(null)
-      resetWorkspaceFields()
+      resetForm()
       onOpenChange(false)
     }
   }
 
-  const resetWorkspaceFields = () => {
-    setWorkspaceEnabled(false)
-    setTargetType('local')
+  const resetForm = () => {
+    setName('')
+    setDescription('')
+    setSelectedColor(null)
     setDeviceId('')
-    setTeamId('')
-    setWorkspaceSource('git')
-    setGitUrl('')
-    setGitRepo('')
-    setGitBranch('main')
     setLocalPath('')
-    setCheckoutPath('')
   }
 
-  const buildWorkspaceConfig = (): ProjectConfig | undefined => {
-    if (!enableProjectWorkspace || !workspaceEnabled) return undefined
-
-    const source = targetType === 'cloud' ? 'git' : workspaceSource
-    return {
-      mode: 'workspace',
-      execution: {
-        targetType,
-        deviceId: targetType === 'local' ? deviceId.trim() : null,
-      },
-      team: {
-        id: teamId.trim() ? Number(teamId.trim()) : null,
-        namespace: 'default',
-      },
-      workspace: {
-        source,
-        localPath: source === 'local_path' ? localPath.trim() : null,
-        checkoutPath: source === 'git' && checkoutPath.trim() ? checkoutPath.trim() : null,
-      },
-      git:
-        source === 'git'
-          ? {
-              url: gitUrl.trim(),
-              repo: gitRepo.trim() || null,
-              branch: gitBranch.trim() || 'main',
-            }
-          : null,
-    }
-  }
-
-  const canCreateWorkspace =
-    !workspaceEnabled ||
-    (teamId.trim() &&
-      (targetType === 'cloud' || deviceId.trim()) &&
-      (workspaceSource === 'git' || targetType === 'cloud' ? gitUrl.trim() : localPath.trim()))
+  const canCreate = isWorkspaceMode ? Boolean(deviceId) : Boolean(name.trim())
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
-          <DialogTitle>{t('create.title')}</DialogTitle>
-          <DialogDescription>{t('create.description')}</DialogDescription>
+          <DialogTitle>{t(isWorkspaceMode ? 'workspaceCreate.title' : 'create.title')}</DialogTitle>
+          <DialogDescription>
+            {t(isWorkspaceMode ? 'workspaceCreate.description' : 'create.description')}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-4">
-          {/* Project Name */}
-          <div className="space-y-2">
-            <Label htmlFor="name">{t('create.nameLabel')}</Label>
-            <Input
-              id="name"
-              placeholder={t('create.namePlaceholder')}
-              value={name}
-              onChange={e => setName(e.target.value)}
-              maxLength={100}
-              disabled={isCreating}
-            />
-          </div>
+          {isWorkspaceMode ? (
+            <>
+              <div className="space-y-2">
+                <Label>{t('workspace.device')}</Label>
+                {onlineDevices.length === 0 ? (
+                  <p className="text-sm text-destructive">{t('workspace.noOnlineDevices')}</p>
+                ) : (
+                  <Select value={deviceId} onValueChange={setDeviceId} disabled={isCreating}>
+                    <SelectTrigger data-testid="workspace-device-select">
+                      <SelectValue placeholder={t('workspace.devicePlaceholder')} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {onlineDevices.map(device => (
+                        <SelectItem key={device.device_id} value={device.device_id}>
+                          <span className="flex items-center gap-2">
+                            <span
+                              className={`inline-block w-2 h-2 rounded-full ${
+                                device.status === 'online' ? 'bg-green-500' : 'bg-yellow-500'
+                              }`}
+                            />
+                            {device.name || device.device_id}
+                            {device.device_type === 'cloud' && (
+                              <span className="text-xs text-text-muted ml-1">
+                                ({t('workspace.cloud')})
+                              </span>
+                            )}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
 
-          {/* Description */}
-          <div className="space-y-2">
-            <Label htmlFor="description">{t('create.descriptionLabel')}</Label>
-            <Textarea
-              id="description"
-              placeholder={t('create.descriptionPlaceholder')}
-              value={description}
-              onChange={e => setDescription(e.target.value)}
-              rows={3}
-              disabled={isCreating}
-            />
-          </div>
-
-          {/* Color Selection */}
-          <div className="space-y-2">
-            <Label>{t('create.colorLabel')}</Label>
-            <div className="flex flex-wrap gap-2">
-              {PROJECT_COLORS.map(color => (
-                <button
-                  key={color.id}
-                  type="button"
-                  onClick={() =>
-                    setSelectedColor(selectedColor === color.value ? null : color.value)
-                  }
-                  className={`w-8 h-8 rounded-full border-2 transition-all ${
-                    selectedColor === color.value
-                      ? 'border-text-primary scale-110'
-                      : 'border-transparent hover:scale-105'
-                  }`}
-                  style={{ backgroundColor: color.value }}
-                  title={t(`colors.${color.id}`)}
+              <div className="space-y-2">
+                <Label htmlFor="workspace-local-path">
+                  {t('workspace.directoryPath')}
+                  <span className="text-text-muted font-normal ml-1">({t('common:optional')})</span>
+                </Label>
+                <Input
+                  data-testid="workspace-local-path-input"
+                  id="workspace-local-path"
+                  placeholder={t('workspace.directoryPathPlaceholder')}
+                  value={localPath}
+                  onChange={e => setLocalPath(e.target.value)}
                   disabled={isCreating}
                 />
-              ))}
-            </div>
-          </div>
-
-          {enableProjectWorkspace && (
-            <div className="space-y-3 border-t border-border pt-4">
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  data-testid="workspace-project-toggle"
-                  type="checkbox"
-                  checked={workspaceEnabled}
-                  onChange={e => setWorkspaceEnabled(e.target.checked)}
+                {projectName ? (
+                  <p className="text-xs text-text-secondary">
+                    {t('workspace.projectNamePreview', { name: projectName })}
+                  </p>
+                ) : (
+                  <p className="text-xs text-text-muted">{t('workspace.defaultPathHint')}</p>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="space-y-2">
+                <Label htmlFor="name">{t('create.nameLabel')}</Label>
+                <Input
+                  id="name"
+                  placeholder={t('create.namePlaceholder')}
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  maxLength={100}
                   disabled={isCreating}
                 />
-                {t('workspace.enable')}
-              </label>
+              </div>
 
-              {workspaceEnabled && (
-                <div className="space-y-3">
-                  <div className="grid grid-cols-2 gap-2">
-                    <Button
-                      data-testid="workspace-target-local"
+              <div className="space-y-2">
+                <Label htmlFor="description">{t('create.descriptionLabel')}</Label>
+                <Textarea
+                  id="description"
+                  placeholder={t('create.descriptionPlaceholder')}
+                  value={description}
+                  onChange={e => setDescription(e.target.value)}
+                  rows={3}
+                  disabled={isCreating}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>{t('create.colorLabel')}</Label>
+                <div className="flex flex-wrap gap-2">
+                  {PROJECT_COLORS.map(color => (
+                    <button
+                      key={color.id}
                       type="button"
-                      variant={targetType === 'local' ? 'primary' : 'outline'}
-                      onClick={() => setTargetType('local')}
-                      disabled={isCreating}
-                    >
-                      {t('workspace.local')}
-                    </Button>
-                    <Button
-                      data-testid="workspace-target-cloud"
-                      type="button"
-                      variant={targetType === 'cloud' ? 'primary' : 'outline'}
-                      onClick={() => {
-                        setTargetType('cloud')
-                        setWorkspaceSource('git')
-                      }}
-                      disabled={isCreating}
-                    >
-                      {t('workspace.cloud')}
-                    </Button>
-                  </div>
-
-                  {targetType === 'local' && (
-                    <div className="space-y-2">
-                      <Label htmlFor="workspace-device-id">{t('workspace.deviceId')}</Label>
-                      <Input
-                        data-testid="workspace-device-id-input"
-                        id="workspace-device-id"
-                        value={deviceId}
-                        onChange={e => setDeviceId(e.target.value)}
-                        disabled={isCreating}
-                      />
-                    </div>
-                  )}
-
-                  <div className="space-y-2">
-                    <Label htmlFor="workspace-team-id">{t('workspace.teamId')}</Label>
-                    <Input
-                      data-testid="workspace-team-id-input"
-                      id="workspace-team-id"
-                      value={teamId}
-                      onChange={e => setTeamId(e.target.value)}
+                      onClick={() =>
+                        setSelectedColor(selectedColor === color.value ? null : color.value)
+                      }
+                      className={`w-8 h-8 rounded-full border-2 transition-all ${
+                        selectedColor === color.value
+                          ? 'border-text-primary scale-110'
+                          : 'border-transparent hover:scale-105'
+                      }`}
+                      style={{ backgroundColor: color.value }}
+                      title={t(`colors.${color.id}`)}
                       disabled={isCreating}
                     />
-                  </div>
-
-                  {targetType === 'local' && (
-                    <div className="grid grid-cols-2 gap-2">
-                      <Button
-                        data-testid="workspace-source-git"
-                        type="button"
-                        variant={workspaceSource === 'git' ? 'primary' : 'outline'}
-                        onClick={() => setWorkspaceSource('git')}
-                        disabled={isCreating}
-                      >
-                        {t('workspace.git')}
-                      </Button>
-                      <Button
-                        data-testid="workspace-source-local-path"
-                        type="button"
-                        variant={workspaceSource === 'local_path' ? 'primary' : 'outline'}
-                        onClick={() => setWorkspaceSource('local_path')}
-                        disabled={isCreating}
-                      >
-                        {t('workspace.localPath')}
-                      </Button>
-                    </div>
-                  )}
-
-                  {workspaceSource === 'git' || targetType === 'cloud' ? (
-                    <div className="space-y-2">
-                      <Input
-                        data-testid="workspace-git-url-input"
-                        placeholder={t('workspace.gitUrl')}
-                        value={gitUrl}
-                        onChange={e => setGitUrl(e.target.value)}
-                        disabled={isCreating}
-                      />
-                      <Input
-                        data-testid="workspace-git-repo-input"
-                        placeholder={t('workspace.gitRepo')}
-                        value={gitRepo}
-                        onChange={e => setGitRepo(e.target.value)}
-                        disabled={isCreating}
-                      />
-                      <Input
-                        data-testid="workspace-git-branch-input"
-                        placeholder={t('workspace.gitBranch')}
-                        value={gitBranch}
-                        onChange={e => setGitBranch(e.target.value)}
-                        disabled={isCreating}
-                      />
-                      <Input
-                        data-testid="workspace-checkout-path-input"
-                        placeholder={t('workspace.checkoutPath')}
-                        value={checkoutPath}
-                        onChange={e => setCheckoutPath(e.target.value)}
-                        disabled={isCreating}
-                      />
-                    </div>
-                  ) : (
-                    <Input
-                      data-testid="workspace-local-path-input"
-                      placeholder={t('workspace.localPathPlaceholder')}
-                      value={localPath}
-                      onChange={e => setLocalPath(e.target.value)}
-                      disabled={isCreating}
-                    />
-                  )}
+                  ))}
                 </div>
-              )}
-            </div>
+              </div>
+            </>
           )}
         </div>
 
@@ -335,12 +286,10 @@ export function ProjectCreateDialog({ open, onOpenChange }: ProjectCreateDialogP
           <Button variant="outline" onClick={handleClose} disabled={isCreating}>
             {t('create.cancel')}
           </Button>
-          <Button
-            variant="primary"
-            onClick={handleCreate}
-            disabled={isCreating || !name.trim() || !canCreateWorkspace}
-          >
-            {isCreating ? t('common:actions.creating') : t('create.submit')}
+          <Button variant="primary" onClick={handleCreate} disabled={isCreating || !canCreate}>
+            {isCreating
+              ? t('common:actions.creating')
+              : t(isWorkspaceMode ? 'workspaceCreate.submit' : 'create.submit')}
           </Button>
         </div>
       </DialogContent>

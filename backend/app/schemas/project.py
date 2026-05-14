@@ -135,10 +135,10 @@ class ProjectConfig(BaseModel):
 
         if not self.execution:
             raise ValueError("execution is required for workspace projects")
-        if not self.team:
-            raise ValueError("team is required for workspace projects")
+
+        # workspace config is optional — when absent, the executor uses a default path
         if not self.workspace:
-            raise ValueError("workspace is required for workspace projects")
+            return self
 
         workspace = self.workspace
         if workspace.source == "git":

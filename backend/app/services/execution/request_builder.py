@@ -2296,7 +2296,7 @@ Response template:
             )
             return
 
-        if not config.is_workspace or not config.execution or not config.workspace:
+        if not config.is_workspace or not config.execution:
             return
 
         git = config.git
@@ -2311,16 +2311,29 @@ Response template:
             workspace_data["branch"] = git.branch
 
         workspace = config.workspace
-        project_workspace_path = workspace.localPath or workspace.checkoutPath
-        workspace_data["project"] = {
-            "project_id": project_id,
-            "workspace_source": workspace.source,
-            "project_workspace_path": project_workspace_path,
-            "execution_target_type": config.execution.targetType,
-            "device_id": config.execution.deviceId,
-            "checkout_path": workspace.checkoutPath,
-            "local_path": workspace.localPath,
-        }
+        if workspace:
+            project_workspace_path = workspace.localPath or workspace.checkoutPath
+            workspace_data["project"] = {
+                "project_id": project_id,
+                "workspace_source": workspace.source,
+                "project_workspace_path": project_workspace_path,
+                "execution_target_type": config.execution.targetType,
+                "device_id": config.execution.deviceId,
+                "checkout_path": workspace.checkoutPath,
+                "local_path": workspace.localPath,
+            }
+        else:
+            # Default workspace: use project{id} directory under workspace root
+            default_path = f"project{project_id}"
+            workspace_data["project"] = {
+                "project_id": project_id,
+                "workspace_source": "local_path",
+                "project_workspace_path": default_path,
+                "execution_target_type": config.execution.targetType,
+                "device_id": config.execution.deviceId,
+                "checkout_path": None,
+                "local_path": default_path,
+            }
 
     def _is_group_chat(self, task: TaskResource) -> bool:
         """Determine if task is a group chat.

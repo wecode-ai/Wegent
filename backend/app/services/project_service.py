@@ -508,7 +508,6 @@ def _build_project_task_create(
     team = config.team
     workspace = config.workspace
     git = config.git
-    assert team is not None
     assert workspace is not None
 
     title = conversation_data.title or conversation_data.prompt[:50]
@@ -517,9 +516,9 @@ def _build_project_task_create(
 
     return TaskCreate(
         title=title,
-        team_id=team.id,
-        team_name=team.name,
-        team_namespace=team.namespace,
+        team_id=team.id if team else None,
+        team_name=team.name if team else None,
+        team_namespace=team.namespace if team else "default",
         git_url=git.url if git else "",
         git_repo=git.repo if git and git.repo else "",
         git_repo_id=git.repoId if git and git.repoId else 0,
