@@ -5,7 +5,7 @@
 """add dingtalk node source column
 
 Revision ID: d4e5f6a7b8c9
-Revises: c3d4e5f6a708
+Revises: d1e2f3a4b5c6
 Create Date: 2026-05-12
 
 Add source column to dingtalk_synced_nodes table to distinguish between
@@ -20,7 +20,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "d4e5f6a7b8c9"
-down_revision = "c3d4e5f6a708"
+down_revision = "d1e2f3a4b5c6"
 branch_labels = None
 depends_on = None
 
