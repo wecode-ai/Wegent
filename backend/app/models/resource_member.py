@@ -97,16 +97,20 @@ class ResourceMember(Base):
 
     entity_display_name = Column(
         String(100),
-        nullable=True,
+        nullable=False,
+        default="",
+        server_default="",
         comment="Display name snapshot for entity-type members (group name, department name, etc.)",
     )
 
-    # Backward compatibility: kept as nullable column for old SQL queries
+    # Backward compatibility: kept for old SQL queries
     # For entity_type='user', auto-synced from entity_id via SQLAlchemy events
-    # For other entity types, remains NULL
+    # For other entity types, defaults to 0
     user_id = Column(
         Integer,
-        nullable=True,
+        nullable=False,
+        default=0,
+        server_default="0",
         comment="Member user ID (kept for backward compatibility, use entity_type+entity_id for new code)",
     )
 
@@ -188,7 +192,7 @@ class ResourceMember(Base):
             "resource_id",
             "entity_type",
             "entity_id",
-            name="uq_resource_members_entity",
+            name="uniq_resource_members_entity",
         ),
         Index("idx_resource_members_resource", "resource_type", "resource_id"),
         Index("idx_resource_members_status", "status"),
@@ -315,9 +319,9 @@ def _sync_user_id_from_entity(target: ResourceMember) -> None:
         try:
             target.user_id = int(target.entity_id)
         except (ValueError, TypeError):
-            target.user_id = None
+            target.user_id = 0
     else:
-        target.user_id = None
+        target.user_id = 0
 
 
 @event.listens_for(ResourceMember, "before_insert")

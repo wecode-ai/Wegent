@@ -929,7 +929,7 @@ def test_namespace_snapshot_is_suppressed(test_db: Session) -> None:
         .first()
     )
     assert member is not None
-    assert member.entity_display_name is None
+    assert member.entity_display_name == ""
 
 
 @pytest.mark.unit

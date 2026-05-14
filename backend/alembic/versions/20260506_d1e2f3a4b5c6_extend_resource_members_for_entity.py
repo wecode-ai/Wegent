@@ -8,12 +8,12 @@ Revision ID: d1e2f3a4b5c6
 Revises: c3d4e5f6a708
 Create Date: 2026-05-06
 
-Add entity_type, entity_id columns to resource_members table.
-Change unique constraint from (resource_type, resource_id, user_id)
-to (resource_type, resource_id, entity_type, entity_id).
-Keep user_id column for backward compatibility (nullable, auto-synced from entity_id
-for entity_type='user' via SQLAlchemy events).
-entity_id is backfilled from user_id then set to NOT NULL.
+Add entity_type, entity_id, entity_display_name columns to resource_members table.
+Drop old unique constraint (resource_type, resource_id, user_id) and create new
+unique constraint (resource_type, resource_id, entity_type, entity_id).
+Keep user_id column for backward compatibility (NOT NULL DEFAULT 0, auto-synced
+from entity_id for entity_type='user' via SQLAlchemy events).
+entity_id is backfilled from user_id for existing rows.
 """
 
 import sqlalchemy as sa
@@ -44,75 +44,46 @@ def upgrade() -> None:
             ),
         )
 
-    # Step 2: Add entity_id column
+    # Step 2: Add entity_id column (NOT NULL with empty default, backfilled immediately)
     if "entity_id" not in columns:
         op.add_column(
             "resource_members",
             sa.Column(
                 "entity_id",
                 sa.String(100),
-                nullable=True,
+                nullable=False,
+                server_default="",
                 comment="Entity identifier: user_id for 'user', external ID for others",
             ),
         )
 
-    # Step 3: Backfill existing rows - set entity_id = CAST(user_id AS CHAR), entity_type = 'user'
+    # Step 3: Backfill existing rows
+    # All existing rows have valid user_id (>0), no fallback needed.
     dialect = conn.dialect.name
     if dialect == "mysql":
         op.execute(
             """
             UPDATE resource_members
             SET entity_id = CAST(user_id AS CHAR), entity_type = 'user'
-            WHERE entity_id IS NULL
-        """
+            """
         )
     elif dialect == "sqlite":
         op.execute(
             """
             UPDATE resource_members
             SET entity_id = CAST(user_id AS TEXT), entity_type = 'user'
-            WHERE entity_id IS NULL
-        """
+            """
         )
 
-    # Step 3.5: Make entity_id NOT NULL after backfill
-    if dialect == "mysql":
-        op.alter_column(
-            "resource_members",
-            "entity_id",
-            existing_type=sa.String(100),
-            nullable=False,
-        )
-    elif dialect == "sqlite":
-        with op.batch_alter_table("resource_members") as batch_op:
-            batch_op.alter_column(
-                "entity_id",
-                existing_type=sa.String(100),
-                nullable=False,
-            )
-
-    # Step 4: Make user_id nullable (kept for backward compatibility)
-    # user_id is auto-synced from entity_id for entity_type='user' via SQLAlchemy events
-    if dialect == "mysql":
-        op.execute(
-            "ALTER TABLE resource_members MODIFY user_id INT NULL COMMENT 'Member user ID (kept for backward compatibility, use entity_type+entity_id for new code)'"
-        )
-    elif dialect == "sqlite":
-        with op.batch_alter_table("resource_members") as batch_op:
-            batch_op.alter_column(
-                "user_id",
-                existing_type=sa.Integer(),
-                nullable=True,
-            )
-
-    # Step 6: Add entity_display_name for entity-type member snapshots
+    # Step 4: Add entity_display_name column
     if "entity_display_name" not in columns:
         op.add_column(
             "resource_members",
             sa.Column(
                 "entity_display_name",
                 sa.String(100),
-                nullable=True,
+                nullable=False,
+                server_default="",
                 comment="Display name snapshot for entity-type members",
             ),
         )
@@ -128,25 +99,25 @@ def upgrade() -> None:
             )
         ).fetchone()
         old_uc_name = (
-            old_uc_name_result[0] if old_uc_name_result else "uq_resource_members"
+            old_uc_name_result[0] if old_uc_name_result else "uniq_resource_members"
         )
 
         op.drop_constraint(old_uc_name, "resource_members", type_="unique")
         op.create_unique_constraint(
-            "uq_resource_members_entity",
+            "uniq_resource_members_entity",
             "resource_members",
             ["resource_type", "resource_id", "entity_type", "entity_id"],
         )
     else:
         # SQLite: use batch operations
         with op.batch_alter_table("resource_members") as batch_op:
-            batch_op.drop_constraint("uq_resource_members", type_="unique")
+            batch_op.drop_constraint("uniq_resource_members", type_="unique")
             batch_op.create_unique_constraint(
-                "uq_resource_members_entity",
+                "uniq_resource_members_entity",
                 ["resource_type", "resource_id", "entity_type", "entity_id"],
             )
 
-    # Step 7: Add index for entity-type queries
+    # Step 6: Add index for entity-type queries
     op.create_index(
         "idx_resource_members_entity",
         "resource_members",
@@ -174,20 +145,20 @@ def downgrade() -> None:
         new_uc_name = (
             new_uc_name_result[0]
             if new_uc_name_result
-            else "uq_resource_members_entity"
+            else "uniq_resource_members_entity"
         )
 
         op.drop_constraint(new_uc_name, "resource_members", type_="unique")
         op.create_unique_constraint(
-            "uq_resource_members",
+            "uniq_resource_members",
             "resource_members",
             ["resource_type", "resource_id", "user_id"],
         )
     else:
         with op.batch_alter_table("resource_members") as batch_op:
-            batch_op.drop_constraint("uq_resource_members_entity", type_="unique")
+            batch_op.drop_constraint("uniq_resource_members_entity", type_="unique")
             batch_op.create_unique_constraint(
-                "uq_resource_members",
+                "uniq_resource_members",
                 ["resource_type", "resource_id", "user_id"],
             )
 
