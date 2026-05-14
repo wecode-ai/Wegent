@@ -23,10 +23,11 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
 from app.models.share_link import ResourceType, ShareLink
 from app.models.user import User
-from app.schemas.base_role import BaseRole, has_permission
+from app.schemas.base_role import BaseRole, get_highest_role, has_permission
 from app.schemas.share import (
     BatchResourceMemberResponse,
     FailedMemberResponse,
@@ -35,14 +36,17 @@ from app.schemas.share import (
 )
 from app.schemas.share import MemberStatus as SchemaMemberStatus
 from app.schemas.share import (
+    MyPermissionSourcesResponse,
     PendingRequestListResponse,
     PendingRequestResponse,
+    PermissionSourceInfo,
     ResourceMemberResponse,
     ReviewRequestResponse,
     ShareInfoResponse,
     ShareLinkConfig,
     ShareLinkResponse,
 )
+from app.services.share.external_entity_resolver import get_entity_resolver
 from shared.telemetry.decorators import trace_sync
 
 # SchemaMemberRole is an alias to BaseRole for backward compatibility
@@ -75,6 +79,22 @@ class UnifiedShareService(ABC):
         self.resource_type = resource_type
         self.aes_key = settings.SHARE_TOKEN_AES_KEY.encode("utf-8")
         self.aes_iv = settings.SHARE_TOKEN_AES_IV.encode("utf-8")
+
+    @property
+    def _resource_type_variants(self) -> list[str]:
+        """Return resource_type values to query, handling legacy formats."""
+        variants = [self.resource_type.value]
+        if self.resource_type.value == "KnowledgeBase":
+            variants.append("KNOWLEDGE_BASE")
+        return variants
+
+    @property
+    def _approved_status_variants(self) -> list[str]:
+        """Return approved status values to query, handling legacy case formats."""
+        return [
+            MemberStatus.APPROVED.value,
+            MemberStatus.APPROVED.value.upper(),
+        ]
 
     # =========================================================================
     # Abstract methods (must be implemented by subclasses)
@@ -280,11 +300,9 @@ class UnifiedShareService(ABC):
         # Check for existing active share link
         # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
         # We need to check both formats to handle legacy data
-        resource_type_variants = [self.resource_type.value]
+        resource_type_variants = self._resource_type_variants
 
-        # Add underscore variant for KnowledgeBase -> KNOWLEDGE_BASE
-        if self.resource_type.value == "KnowledgeBase":
-            resource_type_variants.append("KNOWLEDGE_BASE")
+        # _resource_type_variants already handles KnowledgeBase -> KNOWLEDGE_BASE
 
         existing_link = (
             db.query(ShareLink)
@@ -299,8 +317,7 @@ class UnifiedShareService(ABC):
         logger.info(
             f"[create_share_link] Existing link check: "
             f"found={existing_link is not None}, "
-            f"existing_link_id={existing_link.id if existing_link else None}, "
-            f"existing_token={existing_link.share_token[:50] + '...' if existing_link and existing_link.share_token else None}"
+            f"existing_link_id={existing_link.id if existing_link else None}"
         )
 
         if existing_link:
@@ -405,9 +422,7 @@ class UnifiedShareService(ABC):
             raise HTTPException(status_code=404, detail="Resource not found")
 
         # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
-        resource_type_variants = [self.resource_type.value]
-        if self.resource_type.value == "KnowledgeBase":
-            resource_type_variants.append("KNOWLEDGE_BASE")
+        resource_type_variants = self._resource_type_variants
 
         share_link = (
             db.query(ShareLink)
@@ -438,9 +453,7 @@ class UnifiedShareService(ABC):
             )
 
         # Note: Database may store resource_type in different formats
-        resource_type_variants = [self.resource_type.value]
-        if self.resource_type.value == "KnowledgeBase":
-            resource_type_variants.append("KNOWLEDGE_BASE")
+        resource_type_variants = self._resource_type_variants
 
         share_link = (
             db.query(ShareLink)
@@ -502,9 +515,7 @@ class UnifiedShareService(ABC):
 
         # Find share link by resource_id (not by token, since token encoding may vary)
         # Note: Database may store resource_type in different formats
-        resource_type_variants = [self.resource_type.value]
-        if self.resource_type.value == "KnowledgeBase":
-            resource_type_variants.append("KNOWLEDGE_BASE")
+        resource_type_variants = self._resource_type_variants
 
         share_link = (
             db.query(ShareLink)
@@ -583,9 +594,7 @@ class UnifiedShareService(ABC):
 
         # Find share link by resource_id (not by token, since token encoding may vary)
         # Note: Database may store resource_type in different formats
-        resource_type_variants = [self.resource_type.value]
-        if self.resource_type.value == "KnowledgeBase":
-            resource_type_variants.append("KNOWLEDGE_BASE")
+        resource_type_variants = self._resource_type_variants
 
         share_link = (
             db.query(ShareLink)
@@ -618,7 +627,8 @@ class UnifiedShareService(ABC):
             .filter(
                 ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
             )
             .first()
         )
@@ -689,18 +699,18 @@ class UnifiedShareService(ABC):
             # Create member record
             # For PENDING status, use 0 as placeholder for reviewed_by_user_id
             # For APPROVED (auto-approved), use owner_id
-            member = ResourceMember(
+            member = ResourceMember.create(
                 resource_type=self.resource_type.value,
                 resource_id=resource_id,
-                user_id=user_id,
+                entity_type="user",
+                entity_id=str(user_id),
+                role=role,
                 status=initial_status,
                 invited_by_user_id=0,  # Via link
                 share_link_id=share_link.id,
                 reviewed_by_user_id=0 if is_pending else owner_id,
                 reviewed_at=datetime.utcnow(),
-                requested_at=datetime.utcnow(),
             )
-            member.set_role(role)
 
             db.add(member)
 
@@ -743,17 +753,8 @@ class UnifiedShareService(ABC):
 
         # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
         # We need to query both formats to handle legacy data
-        resource_type_variants = [self.resource_type.value]
-
-        # Add underscore variant for KnowledgeBase -> KNOWLEDGE_BASE
-        if self.resource_type.value == "KnowledgeBase":
-            resource_type_variants.append("KNOWLEDGE_BASE")
-
-        # Note: Database may store status in different formats (e.g., "APPROVED" vs "approved")
-        approved_status_variants = [
-            MemberStatus.APPROVED.value,
-            MemberStatus.APPROVED.value.upper(),
-        ]
+        resource_type_variants = self._resource_type_variants
+        approved_status_variants = self._approved_status_variants
 
         all_members = (
             db.query(ResourceMember)
@@ -765,15 +766,21 @@ class UnifiedShareService(ABC):
             .all()
         )
 
-        # Deduplicate members by user_id (keep the first one found for each user)
-        # This handles legacy data where the same user may have multiple records
-        # with different resource_type formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
-        seen_user_ids = set()
-        members = []
+        # Deduplicate members by user_id (for user-type) or (entity_type, entity_id)
+        # This handles legacy data where the same user may have multiple records.
+        # Approved records take precedence over pending ones.
+        member_by_key: dict = {}
         for member in all_members:
-            if member.user_id not in seen_user_ids:
-                seen_user_ids.add(member.user_id)
-                members.append(member)
+            if member.entity_type and member.entity_type != "user" and member.entity_id:
+                key = (member.entity_type, member.entity_id)
+            else:
+                key = member.user_id
+
+            existing = member_by_key.get(key)
+            if not existing or member.status == MemberStatus.APPROVED.value:
+                member_by_key[key] = member
+
+        members = list(member_by_key.values())
 
         # LOGGING: Log query parameters and results to verify resource_type matching
         logger.info(
@@ -789,6 +796,42 @@ class UnifiedShareService(ABC):
                 f"resource_id={member.resource_id}, user_id={member.user_id}"
             )
 
+        # Batch-preload namespace display names for entity-type members
+        namespace_ids = set()
+        # Collect external entity IDs by type for batch resolution
+        external_entity_ids: dict[str, set[str]] = {}
+        for m in members:
+            if m.entity_type and m.entity_type != "user" and m.entity_id:
+                if m.entity_type == "namespace":
+                    try:
+                        namespace_ids.add(int(m.entity_id))
+                    except (ValueError, TypeError):
+                        pass
+                else:
+                    external_entity_ids.setdefault(m.entity_type, set()).add(
+                        m.entity_id
+                    )
+
+        namespace_map = {}
+        if namespace_ids:
+            namespaces = (
+                db.query(Namespace.id, Namespace.display_name, Namespace.name)
+                .filter(Namespace.id.in_(namespace_ids))
+                .all()
+            )
+            namespace_map = {ns.id: (ns.display_name or ns.name) for ns in namespaces}
+
+        # Batch resolve external entity display names
+        external_display_names: dict[str, dict[str, str]] = {}
+        if external_entity_ids:
+            for entity_type, entity_ids in external_entity_ids.items():
+                resolver = get_entity_resolver(entity_type)
+                if not resolver:
+                    continue
+                external_display_names[entity_type] = resolver.batch_get_display_names(
+                    db, list(entity_ids)
+                )
+
         # Populate user names
         user_ids = set()
         for m in members:
@@ -801,7 +844,16 @@ class UnifiedShareService(ABC):
         users = db.query(User).filter(User.id.in_(user_ids)).all()
         user_map = {u.id: u for u in users}
 
-        member_responses = [self._member_to_response(m, user_map) for m in members]
+        member_responses = [
+            self._member_to_response(
+                m,
+                user_map,
+                db=db,
+                namespace_map=namespace_map,
+                external_display_names=external_display_names,
+            )
+            for m in members
+        ]
 
         return MemberListResponse(members=member_responses, total=len(member_responses))
 
@@ -812,6 +864,9 @@ class UnifiedShareService(ABC):
         current_user_id: int,
         target_user_id: int,
         role: SchemaMemberRole,
+        entity_type: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_display_name: Optional[str] = None,
     ) -> ResourceMemberResponse:
         """Directly add a member to a resource."""
         # Validate resource and ownership/manage permission
@@ -828,37 +883,71 @@ class UnifiedShareService(ABC):
             raise HTTPException(status_code=403, detail="No permission to add members")
 
         # Cannot add self
-        if target_user_id == current_user_id:
+        if target_user_id == current_user_id and not entity_type:
             raise HTTPException(status_code=400, detail="Cannot add yourself")
 
-        # Check target user exists
-        target_user = (
-            db.query(User)
-            .filter(User.id == target_user_id, User.is_active.is_(True))
-            .first()
-        )
-        if not target_user:
-            raise HTTPException(status_code=404, detail="Target user not found")
+        # Determine effective entity type
+        eff_entity_type = entity_type if entity_type else "user"
+        eff_entity_id = entity_id if entity_id else str(target_user_id)
+
+        # Validate entity_type if non-user and non-built-in
+        # Built-in types: 'user' (default) and 'namespace' (handled natively)
+        if eff_entity_type not in ("user", "namespace") and not get_entity_resolver(
+            eff_entity_type
+        ):
+            raise HTTPException(
+                status_code=400, detail=f"Unknown entity type: {eff_entity_type}"
+            )
+
+        # Suppress display-name snapshots for reliably resolvable entity types.
+        # User and namespace names can always be resolved from local DB tables;
+        # only external/unreliable types (registered via register_entity_resolver)
+        # need snapshots.
+        needs_snapshot = True
+        if eff_entity_type == "user":
+            needs_snapshot = False
+        else:
+            resolver = get_entity_resolver(eff_entity_type)
+            if resolver and not resolver.requires_display_name_snapshot:
+                needs_snapshot = False
+        if not needs_snapshot:
+            entity_display_name = None
+        elif not entity_display_name:
+            # Auto-fill snapshot for external types that require it
+            resolver = get_entity_resolver(eff_entity_type)
+            if resolver:
+                entity_display_name = resolver.get_display_name(db, eff_entity_id)
+
+        # Check target user exists (only for user-type members)
+        if eff_entity_type == "user":
+            target_user = (
+                db.query(User)
+                .filter(User.id == target_user_id, User.is_active.is_(True))
+                .first()
+            )
+            if not target_user:
+                raise HTTPException(status_code=404, detail="Target user not found")
+        else:
+            target_user = None
 
         # LOGGING: Log user information to verify email is available in User model
-        logger.info(
-            f"[add_member] Target user found: user_id={target_user_id}, "
-            f"user_name={target_user.user_name}, email={target_user.email}"
-        )
+        if target_user:
+            logger.info(
+                f"[add_member] Target user found: user_id={target_user_id}, "
+                f"user_name={target_user.user_name}"
+            )
 
-        # Check for existing member
+        # Check for existing member by entity
         # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
-        # We need to check both formats to handle legacy data and prevent duplicate records
-        resource_type_variants = [self.resource_type.value]
-        if self.resource_type.value == "KnowledgeBase":
-            resource_type_variants.append("KNOWLEDGE_BASE")
+        resource_type_variants = self._resource_type_variants
 
         existing = (
             db.query(ResourceMember)
             .filter(
                 ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
-                ResourceMember.user_id == target_user_id,
+                ResourceMember.entity_type == eff_entity_type,
+                ResourceMember.entity_id == eff_entity_id,
             )
             .first()
         )
@@ -871,9 +960,7 @@ class UnifiedShareService(ABC):
             # Ensure share_link_id is set (required by database)
             if not existing.share_link_id:
                 # Note: Database may store resource_type in different formats
-                resource_type_variants = [self.resource_type.value]
-                if self.resource_type.value == "KnowledgeBase":
-                    resource_type_variants.append("KNOWLEDGE_BASE")
+                resource_type_variants = self._resource_type_variants
 
                 share_link = (
                     db.query(ShareLink)
@@ -909,14 +996,14 @@ class UnifiedShareService(ABC):
             existing.reviewed_by_user_id = current_user_id
             existing.reviewed_at = datetime.utcnow()
             existing.updated_at = datetime.utcnow()
+            if entity_display_name is not None:
+                existing.entity_display_name = entity_display_name
             member = existing
         else:
             # Get or create a share link for direct member addition
             # This is needed because share_link_id may be required in the database
             # Note: Database may store resource_type in different formats
-            resource_type_variants = [self.resource_type.value]
-            if self.resource_type.value == "KnowledgeBase":
-                resource_type_variants.append("KNOWLEDGE_BASE")
+            resource_type_variants = self._resource_type_variants
 
             share_link = (
                 db.query(ShareLink)
@@ -945,18 +1032,19 @@ class UnifiedShareService(ABC):
                 db.flush()  # Get the share_link.id
 
             # Create new member with approved status
-            member = ResourceMember(
+            member = ResourceMember.create(
                 resource_type=self.resource_type.value,
                 resource_id=resource_id,
-                user_id=target_user_id,
+                entity_type=eff_entity_type,
+                entity_id=eff_entity_id,
+                role=role.value,
                 status=MemberStatus.APPROVED.value,
                 invited_by_user_id=current_user_id,
                 share_link_id=share_link.id,
                 reviewed_by_user_id=current_user_id,
                 reviewed_at=datetime.utcnow(),
-                requested_at=datetime.utcnow(),
+                entity_display_name=entity_display_name,
             )
-            member.set_role(role.value)
             db.add(member)
 
         db.commit()
@@ -976,7 +1064,7 @@ class UnifiedShareService(ABC):
         user_map = {u.id: u for u in users}
         logger.info(f"[add_member] User map created with {len(user_map)} users")
 
-        return self._member_to_response(member, user_map)
+        return self._member_to_response(member, user_map, db=db)
 
     @trace_sync(
         span_name="share.batch_add_members",
@@ -992,7 +1080,9 @@ class UnifiedShareService(ABC):
         db: Session,
         resource_id: int,
         current_user_id: int,
-        members_data: List[Tuple[int, SchemaMemberRole]],
+        members_data: List[
+            Tuple[int, SchemaMemberRole, Optional[str], Optional[str], Optional[str]]
+        ],
     ) -> BatchResourceMemberResponse:
         """Batch add multiple members to a resource in a single transaction.
 
@@ -1000,7 +1090,9 @@ class UnifiedShareService(ABC):
             db: Database session
             resource_id: Resource ID
             current_user_id: Current user performing the action
-            members_data: List of (target_user_id, role) tuples
+            members_data: List of (target_user_id, role, entity_type, entity_id, entity_display_name) tuples.
+                For user-type members: (target_user_id, role, None, None, None)
+                For entity-type members: (0, role, entity_type, entity_id, entity_display_name)
         """
         # Validate resource and ownership/manage permission once
         resource = self._get_resource(db, resource_id, current_user_id)
@@ -1015,9 +1107,7 @@ class UnifiedShareService(ABC):
             raise HTTPException(status_code=403, detail="No permission to add members")
 
         # Get or create share link once for all members
-        resource_type_variants = [self.resource_type.value]
-        if self.resource_type.value == "KnowledgeBase":
-            resource_type_variants.append("KNOWLEDGE_BASE")
+        resource_type_variants = self._resource_type_variants
 
         share_link = (
             db.query(ShareLink)
@@ -1043,32 +1133,107 @@ class UnifiedShareService(ABC):
             db.add(share_link)
             db.flush()
 
-        # Batch-query all target users and existing members
-        target_user_ids = [uid for uid, _ in members_data]
+        # Separate user-type and entity-type members
+        user_member_entries: List[Tuple[int, SchemaMemberRole]] = []
+        entity_member_entries: List[
+            Tuple[str, str, SchemaMemberRole, Optional[str]]
+        ] = []
+        for entry in members_data:
+            target_user_id, role, entity_type, entity_id, entity_display_name = entry
+            if entity_type and entity_type != "user":
+                eff_entity_type = entity_type
+                eff_entity_id = entity_id if entity_id else str(target_user_id)
+                # Validate entity_type if non-user and non-built-in
+                resolver = get_entity_resolver(eff_entity_type)
+                if eff_entity_type not in ("user", "namespace") and not resolver:
+                    failed.append(
+                        FailedMemberResponse(
+                            user_id=0,
+                            entity_type=eff_entity_type,
+                            entity_id=eff_entity_id,
+                            error=f"Unknown entity type: {eff_entity_type}",
+                        )
+                    )
+                    continue
+                # Suppress snapshots for reliably resolvable entity types
+                needs_snapshot = True
+                if not resolver.requires_display_name_snapshot:
+                    needs_snapshot = False
+                if not needs_snapshot:
+                    entity_display_name = None
+                elif not entity_display_name:
+                    # Auto-fill snapshot for external types that require it
+                    entity_display_name = resolver.get_display_name(db, eff_entity_id)
+                entity_member_entries.append(
+                    (eff_entity_type, eff_entity_id, role, entity_display_name)
+                )
+            else:
+                user_member_entries.append((target_user_id, role))
+
+        # Batch-query all target users for user-type members
+        target_user_ids = [uid for uid, _ in user_member_entries]
         target_users = (
-            db.query(User)
-            .filter(User.id.in_(target_user_ids), User.is_active.is_(True))
-            .all()
+            (
+                db.query(User)
+                .filter(User.id.in_(target_user_ids), User.is_active.is_(True))
+                .all()
+            )
+            if target_user_ids
+            else []
         )
         valid_user_map = {u.id: u for u in target_users}
 
-        existing_members = (
-            db.query(ResourceMember)
-            .filter(
-                ResourceMember.resource_type.in_(resource_type_variants),
-                ResourceMember.resource_id == resource_id,
-                ResourceMember.user_id.in_(target_user_ids),
+        # Query existing user-type members
+        user_existing_members = (
+            (
+                db.query(ResourceMember)
+                .filter(
+                    ResourceMember.resource_type.in_(resource_type_variants),
+                    ResourceMember.resource_id == resource_id,
+                    ResourceMember.entity_type == "user",
+                    ResourceMember.entity_id.in_([str(uid) for uid in target_user_ids]),
+                )
+                .all()
             )
-            .all()
+            if target_user_ids
+            else []
         )
-        existing_map = {m.user_id: m for m in existing_members}
+        user_existing_map = {m.user_id: m for m in user_existing_members}
+
+        # Query existing entity-type members
+        entity_keys = [(et, eid) for et, eid, _, _ in entity_member_entries]
+        entity_existing_members = []
+        if entity_keys:
+            from sqlalchemy import and_, or_
+
+            entity_filters = [
+                and_(
+                    ResourceMember.entity_type == et,
+                    ResourceMember.entity_id == eid,
+                )
+                for et, eid in entity_keys
+            ]
+            entity_existing_members = (
+                db.query(ResourceMember)
+                .filter(
+                    ResourceMember.resource_type.in_(resource_type_variants),
+                    ResourceMember.resource_id == resource_id,
+                    or_(*entity_filters),
+                )
+                .all()
+            )
+        entity_existing_map = {
+            (m.entity_type, m.entity_id): m for m in entity_existing_members
+        }
 
         succeeded: List[ResourceMember] = []
         failed: List[FailedMemberResponse] = []
-        # Track processed IDs to guard against duplicates within members_data
+        # Track processed entity keys to guard against duplicates within members_data
         processed_user_ids: set = set()
+        processed_entity_keys: set = set()
 
-        for target_user_id, role in members_data:
+        # Process user-type members
+        for target_user_id, role in user_member_entries:
             # Skip self-add
             if target_user_id == current_user_id:
                 failed.append(
@@ -1097,7 +1262,7 @@ class UnifiedShareService(ABC):
                 )
                 continue
 
-            existing = existing_map.get(target_user_id)
+            existing = user_existing_map.get(target_user_id)
             if existing:
                 if existing.status.lower() == MemberStatus.APPROVED.value.lower():
                     failed.append(
@@ -1118,27 +1283,92 @@ class UnifiedShareService(ABC):
                 existing.reviewed_at = datetime.utcnow()
                 existing.updated_at = datetime.utcnow()
                 succeeded.append(existing)
-                # Mark as processed so later duplicates are caught
                 processed_user_ids.add(target_user_id)
             else:
                 # Create new member
-                member = ResourceMember(
+                member = ResourceMember.create(
                     resource_type=self.resource_type.value,
                     resource_id=resource_id,
-                    user_id=target_user_id,
+                    entity_type="user",
+                    entity_id=str(target_user_id),
+                    role=role.value,
                     status=MemberStatus.APPROVED.value,
                     invited_by_user_id=current_user_id,
                     share_link_id=share_link.id,
                     reviewed_by_user_id=current_user_id,
                     reviewed_at=datetime.utcnow(),
-                    requested_at=datetime.utcnow(),
                 )
-                member.set_role(role.value)
                 db.add(member)
                 succeeded.append(member)
-                # Update both maps so subsequent iterations see the new member
-                existing_map[target_user_id] = member
+                user_existing_map[target_user_id] = member
                 processed_user_ids.add(target_user_id)
+
+        # Process entity-type members
+        for (
+            entity_type_str,
+            entity_id_str,
+            role,
+            entity_display_name,
+        ) in entity_member_entries:
+            entity_key = (entity_type_str, entity_id_str)
+
+            # Skip duplicate entries within the same batch request
+            if entity_key in processed_entity_keys:
+                failed.append(
+                    FailedMemberResponse(
+                        user_id=0,
+                        entity_type=entity_type_str,
+                        entity_id=entity_id_str,
+                        error="Duplicate entry in request",
+                    )
+                )
+                continue
+
+            existing = entity_existing_map.get(entity_key)
+            if existing:
+                if existing.status.lower() == MemberStatus.APPROVED.value.lower():
+                    failed.append(
+                        FailedMemberResponse(
+                            user_id=0,
+                            entity_type=entity_type_str,
+                            entity_id=entity_id_str,
+                            error="Entity already has access",
+                        )
+                    )
+                    continue
+
+                # Update existing pending/rejected record
+                if not existing.share_link_id:
+                    existing.share_link_id = share_link.id
+                existing.set_role(role.value)
+                existing.status = MemberStatus.APPROVED.value
+                existing.invited_by_user_id = current_user_id
+                existing.reviewed_by_user_id = current_user_id
+                existing.reviewed_at = datetime.utcnow()
+                existing.updated_at = datetime.utcnow()
+                if entity_display_name is not None:
+                    existing.entity_display_name = entity_display_name
+                succeeded.append(existing)
+                processed_entity_keys.add(entity_key)
+            else:
+                # Create new entity member
+                member = ResourceMember.create(
+                    resource_type=self.resource_type.value,
+                    resource_id=resource_id,
+                    entity_type=entity_type_str,
+                    entity_id=entity_id_str,
+                    role=role.value,
+                    status=MemberStatus.APPROVED.value,
+                    invited_by_user_id=current_user_id,
+                    share_link_id=share_link.id,
+                    reviewed_by_user_id=current_user_id,
+                    reviewed_at=datetime.utcnow(),
+                    entity_display_name=entity_display_name,
+                )
+                db.add(member)
+                succeeded.append(member)
+                entity_existing_map[entity_key] = member
+                processed_entity_keys.add(entity_key)
 
         db.commit()
 
@@ -1154,7 +1384,7 @@ class UnifiedShareService(ABC):
                     member.copied_resource_id = copied_resource_id
             except Exception as exc:
                 logger.error(
-                    "Approval hook failed for member user_id=%s: %s",
+                    "Approval hook failed for member %s: %s",
                     member.user_id,
                     exc,
                 )
@@ -1162,13 +1392,13 @@ class UnifiedShareService(ABC):
         # Persist all copied_resource_id updates in one commit
         db.commit()
 
-        # Build user map for responses
+        # Build user map for responses (only for user-type members)
         all_user_ids = set(target_user_ids) | {current_user_id}
         all_users = db.query(User).filter(User.id.in_(all_user_ids)).all()
         user_map = {u.id: u for u in all_users}
 
         return BatchResourceMemberResponse(
-            succeeded=[self._member_to_response(m, user_map) for m in succeeded],
+            succeeded=[self._member_to_response(m, user_map, db=db) for m in succeeded],
             failed=failed,
         )
 
@@ -1197,9 +1427,7 @@ class UnifiedShareService(ABC):
             )
 
         # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
-        resource_type_variants = [self.resource_type.value]
-        if self.resource_type.value == "KnowledgeBase":
-            resource_type_variants.append("KNOWLEDGE_BASE")
+        resource_type_variants = self._resource_type_variants
 
         # Find member
         member = (
@@ -1231,7 +1459,7 @@ class UnifiedShareService(ABC):
         users = db.query(User).filter(User.id.in_(user_ids)).all()
         user_map = {u.id: u for u in users}
 
-        return self._member_to_response(member, user_map)
+        return self._member_to_response(member, user_map, db=db)
 
     def remove_member(
         self,
@@ -1257,9 +1485,7 @@ class UnifiedShareService(ABC):
             )
 
         # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
-        resource_type_variants = [self.resource_type.value]
-        if self.resource_type.value == "KnowledgeBase":
-            resource_type_variants.append("KNOWLEDGE_BASE")
+        resource_type_variants = self._resource_type_variants
 
         # Find member
         member = (
@@ -1275,20 +1501,217 @@ class UnifiedShareService(ABC):
         if not member:
             raise HTTPException(status_code=404, detail="Member not found")
 
+        # Prevent non-owners from removing the owner
+        if member.get_effective_role() == ResourceRole.Owner.value:
+            if current_user_id != owner_id:
+                raise HTTPException(status_code=403, detail="Cannot remove the owner")
+
+        # Prevent self-removal via this endpoint (should use leave)
+        if member.entity_type == "user" and member.entity_id == str(current_user_id):
+            raise HTTPException(
+                status_code=400, detail="Use leave instead of removing yourself"
+            )
+
+        # Prevent self-demotion: if removing this entity member would cause the
+        # current user to lose their management permission, reject. Owners are
+        # always exempt since their role is not revoked by member deletion.
+        if current_user_id != owner_id and self._remove_would_lose_manage(
+            db, resource_id, current_user_id, member
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Cannot remove this member: you would lose your own "
+                    "management permission"
+                ),
+            )
+
         # Delete member record
         db.delete(member)
         db.commit()
 
         return True
 
+    def _remove_would_lose_manage(
+        self,
+        db: Session,
+        resource_id: int,
+        user_id: int,
+        member_to_remove: ResourceMember,
+    ) -> bool:
+        """Check whether removing a member would drop the given user below Maintainer.
+
+        Looks at all remaining approved member records for the resource (excluding
+        the one being removed) and recomputes the user's effective role: direct
+        user-type record first, then highest entity-type role matched via resolvers.
+        Returns True if none of them grant Maintainer or higher.
+        """
+        resource_type_variants = self._resource_type_variants
+        approved_status_variants = self._approved_status_variants
+
+        # Direct user-type membership still grants manage?
+        direct_member = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type.in_(resource_type_variants),
+                ResourceMember.resource_id == resource_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
+                ResourceMember.status.in_(approved_status_variants),
+                ResourceMember.id != member_to_remove.id,
+            )
+            .first()
+        )
+        if direct_member and has_permission(
+            direct_member.get_effective_role(),
+            SchemaMemberRole.Maintainer.value,
+        ):
+            return False
+
+        # Any remaining entity-type binding that matches the user grants manage?
+        entity_rows = (
+            db.query(
+                ResourceMember.entity_type,
+                ResourceMember.entity_id,
+                ResourceMember.role,
+            )
+            .filter(
+                ResourceMember.resource_type.in_(resource_type_variants),
+                ResourceMember.resource_id == resource_id,
+                ResourceMember.entity_type != "user",
+                ResourceMember.entity_type != "",
+                ResourceMember.entity_id.isnot(None),
+                ResourceMember.status.in_(approved_status_variants),
+                ResourceMember.id != member_to_remove.id,
+            )
+            .all()
+        )
+
+        from collections import defaultdict
+
+        entity_groups: defaultdict[str, list[tuple[str, str]]] = defaultdict(list)
+        for et, eid, role in entity_rows:
+            if et and eid:
+                entity_groups[et].append((eid, role))
+
+        for entity_type_str, entries in entity_groups.items():
+            resolver = get_entity_resolver(entity_type_str)
+            if not resolver:
+                continue
+            eids = [eid for eid, _ in entries]
+            matched = resolver.match_entity_bindings(db, user_id, entity_type_str, eids)
+            if not matched:
+                continue
+            role_by_eid = {eid: role for eid, role in entries}
+            for eid in matched:
+                role = role_by_eid.get(eid)
+                if role and has_permission(role, SchemaMemberRole.Maintainer.value):
+                    return False
+
+        return True
+
+    def _resolve_source_type(self, member: ResourceMember) -> str:
+        """
+        Determine the source type of a member permission.
+
+        Returns:
+            'direct' — user was directly added as a member
+            'entity_permission' — group/entity was authorized
+            'share_link' — user joined via share link
+        """
+        if member.entity_type and member.entity_type != "user":
+            return "entity_permission"
+        if (
+            member.share_link_id
+            and member.share_link_id > 0
+            and member.invited_by_user_id == 0
+        ):
+            return "share_link"
+        return "direct"
+
+    def _get_entity_display_name(
+        self,
+        db: Session,
+        entity_type: str,
+        entity_id: str,
+        namespace_map: Optional[dict[int, str]] = None,
+        external_display_names: Optional[dict[str, dict[str, str]]] = None,
+    ) -> Optional[str]:
+        """
+        Resolve display name for entity-type members.
+
+        Built-in support for 'namespace' (group) entities with optional
+        batch-preloaded namespace_map for performance.
+        Subclasses can override to support additional entity types.
+
+        Args:
+            db: Database session
+            entity_type: Entity type (e.g., 'namespace')
+            entity_id: Entity identifier
+            namespace_map: Optional preloaded dict of namespace_id -> display_name
+            external_display_names: Optional preloaded dict of
+                entity_type -> {entity_id -> display_name}
+
+        Returns:
+            Display name string or None if not resolvable
+        """
+        if entity_type == "namespace":
+            try:
+                ns_id = int(entity_id)
+            except (ValueError, TypeError):
+                return None
+            if namespace_map is not None:
+                return namespace_map.get(ns_id)
+            namespace = db.query(Namespace).filter(Namespace.id == ns_id).first()
+            if namespace:
+                return namespace.display_name or namespace.name
+            return None
+
+        if external_display_names is not None:
+            cached = external_display_names.get(entity_type, {}).get(entity_id)
+            if cached:
+                return cached
+
+        # Try external resolvers for display name
+        resolver = get_entity_resolver(entity_type)
+        if resolver:
+            display_name = resolver.get_display_name(db, entity_id)
+            if display_name:
+                return display_name
+
+        return None
+
     def _member_to_response(
-        self, member: ResourceMember, user_map: Dict[int, User]
+        self,
+        member: ResourceMember,
+        user_map: Dict[int, User],
+        db: Session = None,
+        namespace_map: Optional[dict[int, str]] = None,
+        external_display_names: Optional[dict[str, dict[str, str]]] = None,
     ) -> ResourceMemberResponse:
         """Convert ResourceMember model to response schema."""
         # Get user name and email from map
         user = user_map.get(member.user_id)
-        user_name = user.user_name if user else None
         user_email = user.email if user else None
+
+        # Determine unified display_name based on member type
+        display_name = None
+        if member.entity_type and member.entity_type != "user":
+            # Entity-type member — prefer persisted snapshot for unreliable
+            # types, then live lookup via _get_entity_display_name.
+            if member.entity_display_name:
+                display_name = member.entity_display_name
+            elif member.entity_id and db:
+                display_name = self._get_entity_display_name(
+                    db,
+                    member.entity_type,
+                    member.entity_id,
+                    namespace_map,
+                    external_display_names,
+                )
+        elif user:
+            # User-type member — use user name
+            display_name = user.user_name
 
         # Get invited by user name
         invited_by_user = user_map.get(member.invited_by_user_id)
@@ -1304,16 +1727,21 @@ class UnifiedShareService(ABC):
 
         # Get effective role for response
         effective_role = member.get_effective_role()
+        source_type = self._resolve_source_type(member)
 
         return ResourceMemberResponse(
             id=member.id,
             resource_type=member.resource_type,
             resource_id=member.resource_id,
             user_id=member.user_id,
-            user_name=user_name,
+            display_name=display_name,
             user_email=user_email,
             role=effective_role,
             status=member.status,
+            entity_type=member.entity_type,
+            entity_id=member.entity_id,
+            entity_display_name=member.entity_display_name,
+            source_type=source_type,
             invited_by_user_id=member.invited_by_user_id,
             invited_by_user_name=invited_by_user_name,
             reviewed_by_user_id=member.reviewed_by_user_id,
@@ -1350,9 +1778,7 @@ class UnifiedShareService(ABC):
 
         # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
         # We need to query both formats to handle legacy data
-        resource_type_variants = [self.resource_type.value]
-        if self.resource_type.value == "KnowledgeBase":
-            resource_type_variants.append("KNOWLEDGE_BASE")
+        resource_type_variants = self._resource_type_variants
 
         # Note: Database may store status in different formats (e.g., "PENDING" vs "pending")
         pending_status_variants = [
@@ -1426,9 +1852,7 @@ class UnifiedShareService(ABC):
             )
 
         # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
-        resource_type_variants = [self.resource_type.value]
-        if self.resource_type.value == "KnowledgeBase":
-            resource_type_variants.append("KNOWLEDGE_BASE")
+        resource_type_variants = self._resource_type_variants
 
         # Note: Database may store status in different formats (e.g., "PENDING" vs "pending")
         pending_status_variants = [
@@ -1495,18 +1919,14 @@ class UnifiedShareService(ABC):
         """
         Check if user has required permission role.
 
+        Checks both direct user-type permissions and entity-type memberships.
         Role hierarchy: Owner > Maintainer > Developer > Reporter > RestrictedAnalyst
         """
         # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
-        resource_type_variants = [self.resource_type.value]
-        if self.resource_type.value == "KnowledgeBase":
-            resource_type_variants.append("KNOWLEDGE_BASE")
+        resource_type_variants = self._resource_type_variants
 
         # Note: Database may store status in different formats (e.g., "APPROVED" vs "approved")
-        approved_status_variants = [
-            MemberStatus.APPROVED.value,
-            MemberStatus.APPROVED.value.upper(),
-        ]
+        approved_status_variants = self._approved_status_variants
 
         from sqlalchemy import case
 
@@ -1515,7 +1935,8 @@ class UnifiedShareService(ABC):
             .filter(
                 ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
                 ResourceMember.status.in_(approved_status_variants),
             )
             .order_by(
@@ -1529,27 +1950,23 @@ class UnifiedShareService(ABC):
             .first()
         )
 
-        if not member:
-            return False
+        if member:
+            # Use effective role for permission check
+            effective_role = member.get_effective_role()
+            return has_permission(effective_role, required_role.value)
 
-        # Use effective role for permission check
-        effective_role = member.get_effective_role()
-        return has_permission(effective_role, required_role.value)
+        # Fallback: check entity-type permissions (e.g., namespace)
+        return self.check_entity_permission(db, resource_id, user_id, required_role)
 
     def get_user_role(
         self, db: Session, resource_id: int, user_id: int
     ) -> Optional[str]:
         """Get user's role for a resource."""
         # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
-        resource_type_variants = [self.resource_type.value]
-        if self.resource_type.value == "KnowledgeBase":
-            resource_type_variants.append("KNOWLEDGE_BASE")
+        resource_type_variants = self._resource_type_variants
 
         # Note: Database may store status in different formats (e.g., "APPROVED" vs "approved")
-        approved_status_variants = [
-            MemberStatus.APPROVED.value,
-            MemberStatus.APPROVED.value.upper(),
-        ]
+        approved_status_variants = self._approved_status_variants
 
         from sqlalchemy import case
 
@@ -1558,7 +1975,8 @@ class UnifiedShareService(ABC):
             .filter(
                 ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
                 ResourceMember.status.in_(approved_status_variants),
             )
             .order_by(
@@ -1572,4 +1990,209 @@ class UnifiedShareService(ABC):
             .first()
         )
 
-        return member.get_effective_role() if member else None
+        direct_role = member.get_effective_role() if member else None
+        if direct_role == ResourceRole.Owner.value:
+            return direct_role
+
+        entity_role = self._get_highest_entity_role(db, resource_id, user_id)
+        if direct_role and entity_role:
+            return (
+                direct_role if has_permission(direct_role, entity_role) else entity_role
+            )
+        return direct_role or entity_role
+
+    def _get_highest_entity_role(
+        self,
+        db: Session,
+        resource_id: int,
+        user_id: int,
+    ) -> Optional[str]:
+        """Get the highest role granted via entity-type memberships.
+
+        Queries all entity bindings for the resource, resolves which entities
+        match the user via registered resolvers, and returns the highest
+        privilege role among matched bindings.
+        """
+        resource_type_variants = self._resource_type_variants
+        approved_status_variants = self._approved_status_variants
+
+        entity_rows = (
+            db.query(
+                ResourceMember.entity_type,
+                ResourceMember.entity_id,
+                ResourceMember.role,
+            )
+            .filter(
+                ResourceMember.resource_type.in_(resource_type_variants),
+                ResourceMember.resource_id == resource_id,
+                ResourceMember.entity_type != "user",
+                ResourceMember.entity_type != "",
+                ResourceMember.entity_id.isnot(None),
+                ResourceMember.status.in_(approved_status_variants),
+            )
+            .all()
+        )
+
+        if not entity_rows:
+            return None
+
+        from collections import defaultdict
+
+        entity_groups: defaultdict[str, list[tuple[str, str]]] = defaultdict(list)
+        for et, eid, role in entity_rows:
+            if et and eid:
+                entity_groups[et].append((eid, role))
+
+        highest: Optional[str] = None
+        for entity_type_str, entries in entity_groups.items():
+            resolver = get_entity_resolver(entity_type_str)
+            if not resolver:
+                continue
+            eids = [eid for eid, _ in entries]
+            matched = resolver.match_entity_bindings(db, user_id, entity_type_str, eids)
+            if not matched:
+                continue
+            role_by_eid = {eid: role for eid, role in entries}
+            for eid in matched:
+                role = role_by_eid.get(eid)
+                if role and (highest is None or has_permission(role, highest)):
+                    highest = role
+        return highest
+
+    def check_entity_permission(
+        self,
+        db: Session,
+        resource_id: int,
+        user_id: int,
+        required_role: SchemaMemberRole,
+    ) -> bool:
+        """
+        Check if user has required permission via entity-type memberships.
+
+        Base implementation only checks entity_type != 'user' ResourceMember records
+        that match via external resolvers. Subclasses (e.g., KnowledgeShareService)
+        should override this with resource-specific logic.
+
+        Args:
+            db: Database session
+            resource_id: Resource ID
+            user_id: User ID
+            required_role: Required role level
+
+        Returns:
+            True if user has sufficient permission via entity membership
+        """
+        resource_type_variants = self._resource_type_variants
+
+        approved_status_variants = self._approved_status_variants
+
+        # Query entity bindings with their stored roles for precise checks
+        entity_rows = (
+            db.query(
+                ResourceMember.entity_type,
+                ResourceMember.entity_id,
+                ResourceMember.role,
+            )
+            .filter(
+                ResourceMember.resource_type.in_(resource_type_variants),
+                ResourceMember.resource_id == resource_id,
+                ResourceMember.entity_type != "user",
+                ResourceMember.entity_type != "",
+                ResourceMember.entity_id.isnot(None),
+                ResourceMember.status.in_(approved_status_variants),
+            )
+            .all()
+        )
+
+        if not entity_rows:
+            return False
+
+        from collections import defaultdict
+
+        entity_groups: defaultdict[str, list[tuple[str, str]]] = defaultdict(list)
+        for et, eid, role in entity_rows:
+            if et and eid:
+                entity_groups[et].append((eid, role))
+
+        for entity_type_str, entries in entity_groups.items():
+            resolver = get_entity_resolver(entity_type_str)
+            if not resolver:
+                continue
+            eids = [eid for eid, _ in entries]
+            matched = resolver.match_entity_bindings(db, user_id, entity_type_str, eids)
+            if not matched:
+                continue
+            # Build eid -> role lookup to avoid iterating all entries
+            role_by_eid = {eid: role for eid, role in entries}
+            for eid in matched:
+                role = role_by_eid.get(eid)
+                if role and has_permission(role, required_role):
+                    return True
+
+        return False
+
+    def get_my_permission_sources(
+        self,
+        db: Session,
+        resource_id: int,
+        user_id: int,
+    ) -> MyPermissionSourcesResponse:
+        """
+        Get all permission sources for the current user on a resource.
+
+        Base implementation returns direct ResourceMember permissions.
+        Subclasses should override to include resource-specific sources
+        (e.g., group membership, entity-type permissions).
+
+        Args:
+            db: Database session
+            resource_id: Resource ID
+            user_id: User ID
+
+        Returns:
+            MyPermissionSourcesResponse with all sources
+        """
+        resource_type_variants = self._resource_type_variants
+
+        approved_status_variants = self._approved_status_variants
+
+        # Get user-type direct permission
+        user_member = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type.in_(resource_type_variants),
+                ResourceMember.resource_id == resource_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
+                ResourceMember.status.in_(approved_status_variants),
+            )
+            .first()
+        )
+
+        sources: list[PermissionSourceInfo] = []
+        roles: list[str] = []
+
+        if user_member:
+            effective_role = user_member.get_effective_role()
+            source_type = self._resolve_source_type(user_member)
+            user = db.query(User).filter(User.id == user_id).first()
+            source_name = user.user_name if user else None
+            sources.append(
+                PermissionSourceInfo(
+                    source_type=source_type,
+                    display_name=source_name,
+                    role=effective_role,
+                    entity_type="user",
+                    entity_id=str(user_id),
+                )
+            )
+            roles.append(effective_role)
+
+        effective_role = get_highest_role(roles) if roles else None
+
+        return MyPermissionSourcesResponse(
+            has_access=len(sources) > 0,
+            effective_role=effective_role,
+            is_creator=False,
+            sources=sources,
+        )

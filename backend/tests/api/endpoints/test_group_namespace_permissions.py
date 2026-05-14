@@ -54,7 +54,8 @@ def _add_member(
     member = ResourceMember(
         resource_type="Namespace",
         resource_id=group.id,
-        user_id=user.id,
+        entity_type="user",
+        entity_id=str(user.id),
         role=role,
         status=MemberStatus.APPROVED.value,
         invited_by_user_id=group.owner_user_id,
@@ -182,7 +183,8 @@ def test_admin_transfer_ownership_demotes_previous_owner(
         .filter(
             ResourceMember.resource_type == "Namespace",
             ResourceMember.resource_id == group.id,
-            ResourceMember.user_id == owner.id,
+            ResourceMember.entity_type == "user",
+            ResourceMember.entity_id == str(owner.id),
             ResourceMember.status == MemberStatus.APPROVED.value,
         )
         .first()
@@ -195,7 +197,8 @@ def test_admin_transfer_ownership_demotes_previous_owner(
         .filter(
             ResourceMember.resource_type == "Namespace",
             ResourceMember.resource_id == group.id,
-            ResourceMember.user_id == maintainer.id,
+            ResourceMember.entity_type == "user",
+            ResourceMember.entity_id == str(maintainer.id),
             ResourceMember.status == MemberStatus.APPROVED.value,
         )
         .first()

@@ -202,6 +202,61 @@ Sources:
 
 ---
 
+## 🔐 Permission Management
+
+Knowledge bases support fine-grained access control through the Share Service architecture. You can manage members, assign roles, and authorize external entities (e.g., groups) to access your knowledge bases.
+
+### Member Roles
+
+| Role | Permissions |
+|------|-------------|
+| **Owner** | Full control, can transfer ownership and manage all members |
+| **Maintainer** | Can manage documents, settings, and invite members |
+| **Developer** | Can read and contribute documents |
+| **Reporter** | Read-only access |
+
+### Managing Members
+
+1. Open a knowledge base and click **Permission Management**
+2. Under the **Personal** tab, invite users by username or email
+3. Assign a role from the dropdown (Owner, Maintainer, Developer, Reporter)
+4. Click **Add** to send the invitation
+
+### Entity-Level Authorization
+
+In addition to individual users, you can authorize entire groups or namespaces:
+
+1. Switch to the **Group** tab in the permission dialog
+2. Search for a group or namespace
+3. Select the desired group and assign a role
+4. All members of that group inherit the assigned permissions
+
+**Note:** Entity-authorized knowledge bases appear in the members' **Shared with Me** section rather than under the group's native knowledge bases.
+
+### Permission Source Visualization
+
+When viewing members, the system displays how each member gained access:
+
+- **Direct** — Added directly as a member
+- **Entity** — Access granted through a group or namespace
+- **Link** — Access obtained via a share link
+
+### Role Conflict Resolution
+
+When a user has multiple access paths to the same knowledge base (e.g., direct membership and group membership), the system automatically resolves conflicts by selecting the highest-privilege role.
+
+### Ownership Transfer
+
+Owners can transfer ownership to another member:
+
+1. In **Permission Management**, locate the target member
+2. Click **Transfer Ownership** next to their name
+3. Confirm the transfer in the dialog
+
+The previous owner is downgraded to Maintainer, and the new owner gains full control.
+
+---
+
 ## ❓ Troubleshooting
 
 ### Upload Issues
@@ -247,3 +302,4 @@ Sources:
 - [Document Management](./document-management.md) - Adding and managing documents
 - [Chunking Strategies](./chunking-strategies.md) - Document chunking options
 - [Configuring Retrievers](./configuring-retrievers.md) - Retrieval configuration
+- [Permission Management](#-permission-management) - Member roles and access control

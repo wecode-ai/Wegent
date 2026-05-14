@@ -10,10 +10,66 @@ import { EditorState, Extension } from '@codemirror/state'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
 import { json } from '@codemirror/lang-json'
+import { javascript } from '@codemirror/lang-javascript'
+import { python } from '@codemirror/lang-python'
+import { html } from '@codemirror/lang-html'
+import { css } from '@codemirror/lang-css'
+import { yaml } from '@codemirror/lang-yaml'
+import { sql } from '@codemirror/lang-sql'
+import { xml } from '@codemirror/lang-xml'
+import { cpp } from '@codemirror/lang-cpp'
+import { go } from '@codemirror/lang-go'
+import { java } from '@codemirror/lang-java'
+import { rust } from '@codemirror/lang-rust'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { vim, Vim, getCM } from '@replit/codemirror-vim'
 import { cn } from '@/lib/utils'
 import type { ThemeMode } from '@/features/theme/ThemeProvider'
+import { LanguageSupport } from '@codemirror/language'
+import type { EditorLanguage } from '@/types/editor'
+
+/**
+ * Get the appropriate CodeMirror language extension based on language name
+ */
+function getLanguageExtension(language: EditorLanguage): LanguageSupport {
+  switch (language) {
+    case 'json':
+      return json()
+    case 'javascript':
+      return javascript({ jsx: false, typescript: false })
+    case 'typescript':
+      return javascript({ jsx: false, typescript: true })
+    case 'jsx':
+      return javascript({ jsx: true, typescript: false })
+    case 'tsx':
+      return javascript({ jsx: true, typescript: true })
+    case 'python':
+      return python()
+    case 'html':
+      return html()
+    case 'css':
+      return css()
+    case 'yaml':
+      return yaml()
+    case 'sql':
+      return sql()
+    case 'xml':
+      return xml()
+    case 'cpp':
+    case 'c':
+      return cpp()
+    case 'go':
+      return go()
+    case 'java':
+      return java()
+    case 'rust':
+      return rust()
+    case 'text':
+    case 'markdown':
+    default:
+      return markdown()
+  }
+}
 
 /**
  * Safely define a Vim Ex command, ignoring errors if the command already exists.
@@ -58,7 +114,7 @@ interface CodeMirrorEditorProps {
   /** Callback when Vim mode changes */
   onVimModeChange?: (mode: VimMode) => void
   /** Language mode for syntax highlighting */
-  language?: 'markdown' | 'json'
+  language?: EditorLanguage
 }
 
 /**
@@ -287,7 +343,7 @@ export function CodeMirrorEditor({
       history(),
       keymap.of([...defaultKeymap, ...historyKeymap]),
       // Language support
-      language === 'json' ? json() : markdown(),
+      getLanguageExtension(language),
       // Change listener
       EditorView.updateListener.of(handleChange),
       // Theme
@@ -400,7 +456,7 @@ export function CodeMirrorEditor({
       view.destroy()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vimEnabled, theme, readOnly, handleChange])
+  }, [vimEnabled, theme, readOnly, handleChange, language])
 
   // Update content when value prop changes
   useEffect(() => {

@@ -10,20 +10,28 @@ Includes permission check methods previously in KnowledgePermissionService.
 """
 
 import logging
-from typing import Optional, Tuple
+from datetime import datetime
+from typing import List, Optional, Tuple
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.kind import Kind
+from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
 from app.models.share_link import ResourceType, ShareLink
 from app.models.user import User
-from app.schemas.base_role import BaseRole, has_permission
+from app.schemas.base_role import BaseRole, get_highest_role, has_permission
 from app.schemas.share import (
+    BatchResourceMemberResponse,
+    FailedMemberResponse,
     KBShareInfoResponse,
     MyKBPermissionResponse,
+    MyPermissionSourcesResponse,
     PendingRequestInfo,
+    PermissionSourceInfo,
+    ResourceMemberResponse,
 )
 
 # SchemaMemberRole is an alias to BaseRole for backward compatibility
@@ -69,7 +77,8 @@ def get_knowledge_base_tool_access_mode_by_ids(
         .filter(
             ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
             ResourceMember.resource_id.in_([kb.id for kb in kbs]),
-            ResourceMember.user_id == user_id,
+            ResourceMember.entity_type == "user",
+            ResourceMember.entity_id == str(user_id),
             ResourceMember.status == MemberStatus.APPROVED.value,
             ResourceMember.role == ResourceRole.RestrictedAnalyst.value,
         )
@@ -167,18 +176,22 @@ class KnowledgeShareService(UnifiedShareService):
             )
             return kb
 
-        logger.warning(
+        logger.info(
             f"[_get_resource] User is NOT creator: user_id={user_id} != kb.user_id={kb.user_id}"
         )
 
         # Check if user has explicit shared access
+        resource_type_variants = self._resource_type_variants
+        approved_status_variants = self._approved_status_variants
+
         member = (
             db.query(ResourceMember)
             .filter(
-                ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                ResourceMember.resource_type.in_(resource_type_variants),
                 ResourceMember.resource_id == resource_id,
-                ResourceMember.user_id == user_id,
-                ResourceMember.status == MemberStatus.APPROVED.value,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
+                ResourceMember.status.in_(approved_status_variants),
             )
             .first()
         )
@@ -194,7 +207,46 @@ class KnowledgeShareService(UnifiedShareService):
             )
             return kb
 
-        logger.warning(f"[_get_resource] User has NO explicit shared access")
+        logger.info("[_get_resource] User has NO explicit shared access")
+
+        # Check entity-type memberships (e.g., namespace)
+        entity_members = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type.in_(resource_type_variants),
+                ResourceMember.resource_id == resource_id,
+                ResourceMember.entity_type != "user",
+                ResourceMember.entity_type != "",
+                ResourceMember.entity_id.isnot(None),
+                ResourceMember.status.in_(approved_status_variants),
+            )
+            .all()
+        )
+        if entity_members:
+            from app.services.share.external_entity_resolver import (
+                get_entity_resolver,
+            )
+
+            entity_groups: dict[str, list[str]] = {}
+            for em in entity_members:
+                if em.entity_type and em.entity_id:
+                    entity_groups.setdefault(em.entity_type, []).append(em.entity_id)
+
+            for entity_type_str, entity_ids in entity_groups.items():
+                resolver = get_entity_resolver(entity_type_str)
+                if resolver:
+                    matched = resolver.match_entity_bindings(
+                        db,
+                        user_id,
+                        entity_type_str,
+                        entity_ids,
+                    )
+                    if matched:
+                        logger.info(
+                            f"[_get_resource] User {user_id} matched entity "
+                            f"type='{entity_type_str}' via resolver"
+                        )
+                        return kb
 
         # For organization knowledge bases, all authenticated users have access
         if is_organization_namespace(db, kb.namespace):
@@ -218,7 +270,7 @@ class KnowledgeShareService(UnifiedShareService):
                     return None
                 logger.info(f"[_get_resource] User has team role: role={role}")
                 return kb
-            logger.warning(
+            logger.info(
                 f"[_get_resource] User has NO team role in namespace={kb.namespace}"
             )
         else:
@@ -278,8 +330,432 @@ class KnowledgeShareService(UnifiedShareService):
         return None
 
     # =========================================================================
+    # Member addition overrides with KB-specific validation
+    # =========================================================================
+
+    def add_member(
+        self,
+        db: Session,
+        resource_id: int,
+        current_user_id: int,
+        target_user_id: int,
+        role: SchemaMemberRole,
+        entity_type: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_display_name: Optional[str] = None,
+    ) -> ResourceMemberResponse:
+        """Add a member to a KnowledgeBase with group-native KB protection.
+
+        Prevents sharing a group-native KB back to its own group via
+        entity-type membership, which would create a redundant record.
+        """
+        if entity_type == "namespace" and entity_id:
+            kb = (
+                db.query(Kind)
+                .filter(
+                    Kind.id == resource_id,
+                    Kind.kind == "KnowledgeBase",
+                    Kind.is_active.is_(True),
+                )
+                .first()
+            )
+            if kb:
+                try:
+                    ns_id = int(entity_id)
+                    from app.models.namespace import Namespace
+
+                    target_ns = (
+                        db.query(Namespace).filter(Namespace.id == ns_id).first()
+                    )
+                    if target_ns and kb.namespace == target_ns.name:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Cannot share a knowledge base to its own group",
+                        )
+                except (ValueError, TypeError):
+                    pass
+
+        return super().add_member(
+            db=db,
+            resource_id=resource_id,
+            current_user_id=current_user_id,
+            target_user_id=target_user_id,
+            role=role,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            entity_display_name=entity_display_name,
+        )
+
+    def batch_add_members(
+        self,
+        db: Session,
+        resource_id: int,
+        current_user_id: int,
+        members_data: List[
+            Tuple[int, SchemaMemberRole, Optional[str], Optional[str], Optional[str]]
+        ],
+    ) -> BatchResourceMemberResponse:
+        """Batch add members to a KnowledgeBase with group-native KB protection.
+
+        Filters out entries that would share a group-native KB back to its
+        own group; those entries are returned in the failed list.
+        """
+        kb = (
+            db.query(Kind)
+            .filter(
+                Kind.id == resource_id,
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active.is_(True),
+            )
+            .first()
+        )
+
+        filtered_members = []
+        failed: List[FailedMemberResponse] = []
+        for entry in members_data:
+            _target_user_id, _role, ent_type, ent_id, _ent_display_name = entry
+            if ent_type == "namespace" and ent_id and kb:
+                try:
+                    ns_id = int(ent_id)
+                    from app.models.namespace import Namespace
+
+                    target_ns = (
+                        db.query(Namespace).filter(Namespace.id == ns_id).first()
+                    )
+                    if target_ns and kb.namespace == target_ns.name:
+                        failed.append(
+                            FailedMemberResponse(
+                                user_id=0,
+                                entity_type=ent_type,
+                                entity_id=ent_id,
+                                error="Cannot share a knowledge base to its own group",
+                            )
+                        )
+                        continue
+                except (ValueError, TypeError):
+                    pass
+            filtered_members.append(entry)
+
+        result = super().batch_add_members(
+            db=db,
+            resource_id=resource_id,
+            current_user_id=current_user_id,
+            members_data=filtered_members,
+        )
+
+        result.failed.extend(failed)
+        return result
+
+    # =========================================================================
     # Permission Check Methods (integrated from KnowledgePermissionService)
     # =========================================================================
+
+    # =====================================================================
+    # Permission source helpers — each returns (roles, sources) and may
+    # signal an early-return condition for Restricted Analyst.
+    # =====================================================================
+
+    def _source_creator(
+        self,
+        db: Session,
+        kb: Kind,
+        user_id: int,
+        user: Optional[User],
+        include_sources: bool,
+    ) -> tuple[list[str], list[PermissionSourceInfo]]:
+        """Creator permission source."""
+        roles: list[str] = []
+        sources: list[PermissionSourceInfo] = []
+        if kb.user_id == user_id:
+            if include_sources:
+                sources.append(
+                    PermissionSourceInfo(
+                        source_type="creator",
+                        display_name=user.user_name if user else None,
+                        role=BaseRole.Owner.value,
+                        entity_type="user",
+                        entity_id=str(user_id),
+                    )
+                )
+            roles.append(BaseRole.Owner.value)
+        return roles, sources
+
+    def _source_direct_member(
+        self,
+        db: Session,
+        kb: Kind,
+        user_id: int,
+        user: Optional[User],
+        include_sources: bool,
+    ) -> tuple[list[str], list[PermissionSourceInfo], bool]:
+        """Direct user-type ResourceMember permission source.
+
+        Returns:
+            (roles, sources, is_restricted_analyst)
+        """
+        roles: list[str] = []
+        sources: list[PermissionSourceInfo] = []
+        user_member = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type.in_(self._resource_type_variants),
+                ResourceMember.resource_id == kb.id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
+                ResourceMember.status.in_(self._approved_status_variants),
+            )
+            .first()
+        )
+        if user_member:
+            effective_role = user_member.get_effective_role()
+            if effective_role == ResourceRole.RestrictedAnalyst.value:
+                return [], [], True
+            if include_sources:
+                source_type = self._resolve_source_type(user_member)
+                sources.append(
+                    PermissionSourceInfo(
+                        source_type=source_type,
+                        display_name=user.user_name if user else None,
+                        role=effective_role,
+                        entity_type="user",
+                        entity_id=str(user_id),
+                    )
+                )
+            roles.append(effective_role)
+        return roles, sources, False
+
+    def _source_organization(
+        self,
+        db: Session,
+        kb: Kind,
+        user: Optional[User],
+        include_sources: bool,
+    ) -> tuple[list[str], list[PermissionSourceInfo]]:
+        """Organization knowledge base permission source."""
+        roles: list[str] = []
+        sources: list[PermissionSourceInfo] = []
+        if is_organization_namespace(db, kb.namespace):
+            org_role = (
+                ResourceRole.Owner.value
+                if user and user.role == "admin"
+                else ResourceRole.Reporter.value
+            )
+            if include_sources:
+                sources.append(
+                    PermissionSourceInfo(
+                        source_type="organization",
+                        display_name="Organization",
+                        role=org_role,
+                    )
+                )
+            roles.append(org_role)
+        return roles, sources
+
+    def _source_group_membership(
+        self,
+        db: Session,
+        kb: Kind,
+        user_id: int,
+        include_sources: bool,
+    ) -> tuple[list[str], list[PermissionSourceInfo], bool]:
+        """Group membership permission source for team knowledge bases.
+
+        Returns:
+            (roles, sources, is_restricted_analyst)
+        """
+        roles: list[str] = []
+        sources: list[PermissionSourceInfo] = []
+        if kb.namespace == "default" or is_organization_namespace(db, kb.namespace):
+            return roles, sources, False
+
+        group_role = get_effective_role_in_group(db, user_id, kb.namespace)
+        if group_role is None:
+            return roles, sources, False
+
+        if group_role == GroupRole.RestrictedAnalyst:
+            return [], [], True
+
+        role_mapping = {
+            GroupRole.Owner: BaseRole.Owner.value,
+            GroupRole.Maintainer: BaseRole.Maintainer.value,
+            GroupRole.Developer: BaseRole.Developer.value,
+            GroupRole.Reporter: BaseRole.Reporter.value,
+        }
+        mapped_role = role_mapping.get(group_role, BaseRole.Reporter.value)
+        if include_sources:
+            group = db.query(Namespace).filter(Namespace.name == kb.namespace).first()
+            sources.append(
+                PermissionSourceInfo(
+                    source_type="group_membership",
+                    display_name=(
+                        group.display_name or group.name if group else kb.namespace
+                    ),
+                    role=mapped_role,
+                )
+            )
+        roles.append(mapped_role)
+        return roles, sources, False
+
+    def _source_entity_permission(
+        self,
+        db: Session,
+        kb: Kind,
+        user_id: int,
+        include_sources: bool,
+    ) -> tuple[list[str], list[PermissionSourceInfo]]:
+        """Entity-type ResourceMember permission source."""
+        roles: list[str] = []
+        sources: list[PermissionSourceInfo] = []
+        entity_rows = (
+            db.query(
+                ResourceMember.entity_type,
+                ResourceMember.entity_id,
+                ResourceMember.role,
+            )
+            .filter(
+                ResourceMember.resource_type.in_(self._resource_type_variants),
+                ResourceMember.resource_id == kb.id,
+                ResourceMember.entity_type != "user",
+                ResourceMember.entity_type != "",
+                ResourceMember.entity_id.isnot(None),
+                ResourceMember.status.in_(self._approved_status_variants),
+            )
+            .all()
+        )
+        if not entity_rows:
+            return roles, sources
+
+        from app.services.share.external_entity_resolver import get_entity_resolver
+
+        entity_groups: dict[str, list[str]] = {}
+        entity_role_map: dict[str, str] = {}
+        for et, eid, role_str in entity_rows:
+            if et and eid:
+                entity_groups.setdefault(et, []).append(eid)
+                entity_role_map[f"{et}:{eid}"] = role_str
+
+        for entity_type_str, entity_ids in entity_groups.items():
+            resolver = get_entity_resolver(entity_type_str)
+            if not resolver:
+                continue
+            matched = resolver.match_entity_bindings(
+                db, user_id, entity_type_str, entity_ids
+            )
+            if not matched:
+                continue
+            if include_sources:
+                display_names = resolver.batch_get_display_names(db, list(matched))
+            for eid in matched:
+                key = f"{entity_type_str}:{eid}"
+                role_str = entity_role_map.get(key)
+                if not role_str:
+                    continue
+                if include_sources:
+                    sources.append(
+                        PermissionSourceInfo(
+                            source_type="entity_permission",
+                            display_name=display_names.get(eid),
+                            role=role_str,
+                            entity_type=entity_type_str,
+                            entity_id=eid,
+                        )
+                    )
+                roles.append(role_str)
+        return roles, sources
+
+    def _source_group_chat_binding(
+        self,
+        db: Session,
+        kb: Kind,
+        user_id: int,
+        include_sources: bool,
+    ) -> tuple[list[str], list[PermissionSourceInfo]]:
+        """Group chat binding permission source for personal KBs."""
+        roles: list[str] = []
+        sources: list[PermissionSourceInfo] = []
+        if kb.namespace == "default" and self._is_kb_bound_to_user_group_chat(
+            db, kb.id, user_id
+        ):
+            if include_sources:
+                sources.append(
+                    PermissionSourceInfo(
+                        source_type="group_chat_binding",
+                        display_name="Group Chat",
+                        role=ResourceRole.Reporter.value,
+                    )
+                )
+            roles.append(ResourceRole.Reporter.value)
+        return roles, sources
+
+    def _compute_kb_access_core(
+        self,
+        db: Session,
+        kb: Kind,
+        user_id: int,
+        include_sources: bool = True,
+    ) -> tuple[bool, bool, Optional[str], list[PermissionSourceInfo]]:
+        """
+        Core permission computation shared by get_user_kb_permission and
+        get_my_permission_sources. Collects ALL permission sources and computes
+        the highest effective role via get_highest_role.
+
+        Returns:
+            Tuple of (has_access, is_creator, effective_role, sources)
+        """
+        sources: list[PermissionSourceInfo] = []
+        roles: list[str] = []
+
+        # Pre-fetch user once to avoid repeated queries
+        user = db.query(User).filter(User.id == user_id).first()
+
+        # 1. Creator
+        is_creator = kb.user_id == user_id
+        r, s = self._source_creator(db, kb, user_id, user, include_sources)
+        roles.extend(r)
+        sources.extend(s)
+
+        # Creator bypasses Restricted Analyst check
+        if not is_creator and kb.namespace != "default":
+            if not is_organization_namespace(db, kb.namespace):
+                if is_restricted_analyst(db, user_id, kb.namespace):
+                    return False, is_creator, None, sources
+
+        # 2. Direct user-type member
+        r, s, restricted = self._source_direct_member(
+            db, kb, user_id, user, include_sources
+        )
+        if restricted:
+            return False, is_creator, None, sources
+        roles.extend(r)
+        sources.extend(s)
+
+        # 3. Organization
+        r, s = self._source_organization(db, kb, user, include_sources)
+        roles.extend(r)
+        sources.extend(s)
+
+        # 4. Group membership
+        r, s, restricted = self._source_group_membership(
+            db, kb, user_id, include_sources
+        )
+        if restricted:
+            return False, is_creator, None, sources
+        roles.extend(r)
+        sources.extend(s)
+
+        # 5. Entity permission
+        r, s = self._source_entity_permission(db, kb, user_id, include_sources)
+        roles.extend(r)
+        sources.extend(s)
+
+        # 6. Group chat binding
+        r, s = self._source_group_chat_binding(db, kb, user_id, include_sources)
+        roles.extend(r)
+        sources.extend(s)
+
+        effective_role = get_highest_role(roles) if roles else None
+        has_access = len(roles) > 0 or is_creator
+        return has_access, is_creator, effective_role, sources
 
     def get_user_kb_permission(
         self,
@@ -290,12 +766,9 @@ class KnowledgeShareService(UnifiedShareService):
         """
         Get user's permission for a knowledge base.
 
-        Priority: creator > explicit permission (ResourceMember) > group permission > task binding
-
         Returns:
             Tuple of (has_access, role, is_creator)
         """
-        # Get the knowledge base
         kb = (
             db.query(Kind)
             .filter(
@@ -309,72 +782,10 @@ class KnowledgeShareService(UnifiedShareService):
         if not kb:
             return False, None, False
 
-        # For group knowledge bases, check Restricted Analyst status FIRST
-        # This check must run before creator/explicit-share checks to prevent bypass
-        if kb.namespace != "default" and not is_organization_namespace(
-            db, kb.namespace
-        ):
-            if is_restricted_analyst(db, user_id, kb.namespace):
-                logger.warning(
-                    f"[get_user_kb_permission] User {user_id} is Restricted Analyst in group "
-                    f"'{kb.namespace}', denying access to KB {knowledge_base_id}"
-                )
-                return False, None, False
-
-        # Check if user is creator
-        if kb.user_id == user_id:
-            return True, ResourceRole.Owner.value, True
-
-        # Check explicit permission in resource_members table
-        explicit_perm = (
-            db.query(ResourceMember)
-            .filter(
-                ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
-                ResourceMember.resource_id == knowledge_base_id,
-                ResourceMember.user_id == user_id,
-                ResourceMember.status == MemberStatus.APPROVED.value,
-            )
-            .first()
+        has_access, is_creator, effective_role, _ = self._compute_kb_access_core(
+            db, kb, user_id, include_sources=False
         )
-
-        if explicit_perm:
-            effective_role = explicit_perm.get_effective_role()
-            # RestrictedAnalyst is not allowed to access knowledge base details
-            if effective_role == ResourceRole.RestrictedAnalyst.value:
-                return False, None, False
-            return True, effective_role, False
-
-        # For organization knowledge bases, all authenticated users have VIEW access
-        if is_organization_namespace(db, kb.namespace):
-            user = db.query(User).filter(User.id == user_id).first()
-            if user and user.role == "admin":
-                return True, ResourceRole.Owner.value, False
-            return True, ResourceRole.Reporter.value, False
-
-        # For team knowledge bases, check group permission
-        if kb.namespace != "default":
-            group_role = get_effective_role_in_group(db, user_id, kb.namespace)
-            if group_role is not None:
-                # RestrictedAnalyst is not allowed to access knowledge base details
-                if group_role == GroupRole.RestrictedAnalyst:
-                    return False, None, False
-                # Map group role to resource role
-                role_mapping = {
-                    GroupRole.Owner: ResourceRole.Owner.value,
-                    GroupRole.Maintainer: ResourceRole.Maintainer.value,
-                    GroupRole.Developer: ResourceRole.Developer.value,
-                    GroupRole.Reporter: ResourceRole.Reporter.value,
-                }
-                role = role_mapping.get(group_role, ResourceRole.Reporter.value)
-                return True, role, False
-
-        # For personal knowledge bases (namespace == "default"), check if bound to group chat
-        if kb.namespace == "default":
-            if self._is_kb_bound_to_user_group_chat(db, knowledge_base_id, user_id):
-                # User is member of a group chat that has this KB bound
-                return True, ResourceRole.Reporter.value, False
-
-        return False, None, False
+        return has_access, effective_role, is_creator
 
     def check_permission(
         self,
@@ -439,7 +850,8 @@ class KnowledgeShareService(UnifiedShareService):
                 TaskResource.kind == "Task",
                 TaskResource.is_active == TaskResource.STATE_ACTIVE,
                 ResourceMember.resource_type == ResourceType.TASK,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
                 ResourceMember.status == MemberStatus.APPROVED,
             )
             .all()
@@ -475,9 +887,10 @@ class KnowledgeShareService(UnifiedShareService):
         )
         if is_creator:
             return True
-        return has_access and role in (
-            ResourceRole.Owner,
-            ResourceRole.Maintainer,
+        return (
+            has_access
+            and role is not None
+            and has_permission(role, BaseRole.Maintainer)
         )
 
     def get_my_permission(
@@ -544,7 +957,8 @@ class KnowledgeShareService(UnifiedShareService):
             .filter(
                 ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
                 ResourceMember.resource_id == knowledge_base_id,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
             )
             .first()
         )
@@ -565,6 +979,18 @@ class KnowledgeShareService(UnifiedShareService):
         has_access, merged_role, is_creator = KnowledgeService._get_user_kb_permission(
             db, knowledge_base_id, user_id, kb=kb
         )
+
+        # If user already has access and the pending role is not higher than
+        # the current effective role, suppress the pending request to avoid
+        # UX confusion (user already has access via entity permission, etc.)
+        if pending_request and has_access and merged_role:
+            pending_role = (
+                pending_request.role.value
+                if hasattr(pending_request.role, "value")
+                else str(pending_request.role)
+            )
+            if has_permission(merged_role, pending_role):
+                pending_request = None
 
         return MyKBPermissionResponse(
             has_access=has_access,
@@ -680,9 +1106,7 @@ class KnowledgeShareService(UnifiedShareService):
         # Find share link by resource_id (more reliable than token matching)
         # The token in DB is URL-encoded, but FastAPI may have decoded the input
         # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
-        resource_type_variants = [self.resource_type.value]
-        if self.resource_type.value == "KnowledgeBase":
-            resource_type_variants.append("KNOWLEDGE_BASE")
+        resource_type_variants = self._resource_type_variants
 
         share_link = (
             db.query(ShareLink)
@@ -759,9 +1183,7 @@ class KnowledgeShareService(UnifiedShareService):
             Share token if found, None otherwise
         """
         # Note: Database may store resource_type in different formats (e.g., "KNOWLEDGE_BASE" vs "KnowledgeBase")
-        resource_type_variants = [self.resource_type.value]
-        if self.resource_type.value == "KnowledgeBase":
-            resource_type_variants.append("KNOWLEDGE_BASE")
+        resource_type_variants = self._resource_type_variants
 
         share_link = (
             db.query(ShareLink)
@@ -774,6 +1196,48 @@ class KnowledgeShareService(UnifiedShareService):
         )
 
         return share_link.share_token if share_link else None
+
+    # =========================================================================
+    # Permission Sources
+    # =========================================================================
+
+    def get_my_permission_sources(
+        self,
+        db: Session,
+        resource_id: int,
+        user_id: int,
+    ) -> MyPermissionSourcesResponse:
+        """
+        Get all permission sources for the current user on a knowledge base.
+
+        Delegates to _compute_kb_access_core for consistent permission logic.
+        """
+        kb = (
+            db.query(Kind)
+            .filter(
+                Kind.id == resource_id,
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active,
+            )
+            .first()
+        )
+        if not kb:
+            return MyPermissionSourcesResponse(
+                has_access=False,
+                is_creator=False,
+                sources=[],
+            )
+
+        has_access, is_creator, effective_role, sources = self._compute_kb_access_core(
+            db, kb, user_id, include_sources=True
+        )
+
+        return MyPermissionSourcesResponse(
+            has_access=has_access,
+            is_creator=is_creator,
+            effective_role=effective_role,
+            sources=sources,
+        )
 
     # =========================================================================
     # Cleanup Methods
@@ -824,7 +1288,8 @@ class KnowledgeShareService(UnifiedShareService):
             db.query(ResourceMember)
             .filter(
                 ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
             )
             .delete()
         )

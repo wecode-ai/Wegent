@@ -12,7 +12,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Search, BookOpen, Database, Users } from 'lucide-react'
-import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -152,6 +152,9 @@ export function CommandPalette({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg p-0 gap-0 overflow-hidden" data-testid="command-palette">
+        <DialogTitle className="sr-only">
+          {t('document.sidebar.searchPlaceholder', '搜索知识库...')}
+        </DialogTitle>
         {/* Search input */}
         <div className="flex items-center gap-2 px-3 border-b border-border">
           <Search className="w-4 h-4 text-text-muted flex-shrink-0" />

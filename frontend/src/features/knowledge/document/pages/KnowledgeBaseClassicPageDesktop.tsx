@@ -261,7 +261,10 @@ export function KnowledgeBaseClassicPageDesktop({ knowledgeBaseId, initialDocPat
                 />
               </TabsContent>
               <TabsContent value="permissions" className="flex-1 mt-0">
-                <PermissionManagementTab kbId={knowledgeBase.id} />
+                <PermissionManagementTab
+                  kbId={knowledgeBase.id}
+                  kbNamespace={knowledgeBase.namespace}
+                />
               </TabsContent>
             </Tabs>
           ) : (

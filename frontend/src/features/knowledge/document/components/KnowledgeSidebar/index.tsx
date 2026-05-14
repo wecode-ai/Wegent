@@ -64,12 +64,21 @@ export interface KnowledgeSidebarProps {
   onSelectGroups: () => void
   /** Select "DingTalk" docs */
   onSelectDingtalk: () => void
+  /** All knowledge bases for search */
+  allKnowledgeBases?: KnowledgeBase[]
   /** Callback to collapse the sidebar */
   onCollapse?: () => void
   /** DingTalk synced doc count */
   dingtalkDocCount: number
   /** Whether DingTalk MCP is configured */
   isDingtalkConfigured: boolean
+  /** Summary counts from backend */
+  summary?: {
+    total_count: number
+    personal_count: number
+    group_count: number
+    organization_count: number
+  }
 }
 
 export function KnowledgeSidebar({
@@ -90,9 +99,11 @@ export function KnowledgeSidebar({
   onSelectAll,
   onSelectGroups,
   onSelectDingtalk,
+  allKnowledgeBases,
   onCollapse,
   dingtalkDocCount,
   isDingtalkConfigured,
+  summary,
 }: KnowledgeSidebarProps) {
   const { t } = useTranslation('knowledge')
   const [isSearchOpen, setIsSearchOpen] = useState(false)
@@ -205,9 +216,10 @@ export function KnowledgeSidebar({
           onSelectGroup={onSelectGroup}
           onSelectGroups={onSelectGroups}
           onSelectDingtalk={onSelectDingtalk}
-          totalKbCount={groups.reduce((sum, g) => sum + g.kbCount, 0)}
+          totalKbCount={summary?.total_count ?? groups.reduce((sum, g) => sum + g.kbCount, 0)}
           dingtalkDocCount={dingtalkDocCount}
           isDingtalkConfigured={isDingtalkConfigured}
+          summary={summary}
         />
       </div>
 
@@ -217,6 +229,8 @@ export function KnowledgeSidebar({
         onOpenChange={setIsSearchOpen}
         onSelectKb={handleSearchSelectKb}
         onSelectGroup={handleSearchSelectGroup}
+        allKnowledgeBases={allKnowledgeBases}
+        allGroups={groups}
       />
     </div>
   )

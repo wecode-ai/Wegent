@@ -12,6 +12,8 @@ from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.schemas.base_role import BaseRole
+
 # Import shared types from kind.py to avoid duplication
 from app.schemas.kind import (
     EmbeddingModelRef,
@@ -67,6 +69,28 @@ class ResourceScope(str, Enum):
 # are imported from app.schemas.kind to maintain single source of truth
 
 
+class InitialMemberCreate(BaseModel):
+    """Schema for an initial member when creating a knowledge base."""
+
+    entity_type: str = Field(
+        default="user",
+        description="Entity type: 'user', 'namespace', or other registered types",
+    )
+    entity_id: str = Field(
+        ...,
+        min_length=1,
+        description="Entity identifier (user ID or namespace ID)",
+    )
+    role: BaseRole = Field(
+        default=BaseRole.Reporter,
+        description="Member role: Maintainer, Developer, Reporter, RestrictedAnalyst",
+    )
+    entity_display_name: Optional[str] = Field(
+        default=None,
+        description="Display name snapshot for the entity (e.g., department name, group display name)",
+    )
+
+
 class KnowledgeBaseCreate(BaseModel):
     """Schema for creating a knowledge base."""
 
@@ -92,6 +116,10 @@ class KnowledgeBaseCreate(BaseModel):
         None,
         max_length=3,
         description="Guided questions list (max 3) to show in notebook mode for quick user interaction",
+    )
+    members: Optional[List[InitialMemberCreate]] = Field(
+        None,
+        description="Initial members to add to the knowledge base after creation",
     )
 
     @field_validator("guided_questions")
@@ -548,6 +576,31 @@ class KnowledgeBaseWithGroupInfo(BaseModel):
     my_role: Optional[str] = Field(
         None,
         description="Current user's role for this KB: 'Owner' | 'Maintainer' | 'Developer' | 'Reporter' | 'RestrictedAnalyst' | None",
+    )
+    # Source group for entity-authorized shared KBs
+    source_group: Optional[str] = Field(
+        None,
+        description="Source group name for entity-authorized shared KBs, e.g., '来自 XX 群组'",
+    )
+    # Share source user name for shared KBs
+    shared_from: Optional[str] = Field(
+        None,
+        description="Share source user name for shared KBs",
+    )
+    # Multiple share source user names for multi-source shared KBs in All mode
+    shared_from_users: Optional[list[str]] = Field(
+        None,
+        description="Multiple share source user names for multi-source shared KBs in All mode",
+    )
+    # Share via entity type: 'user', 'namespace', or other registered entity types
+    shared_via: Optional[str] = Field(
+        None,
+        description="Share via entity type: 'user', 'namespace', or other registered entity types",
+    )
+    # Knowledge base creator name for display fallback
+    owner_name: Optional[str] = Field(
+        None,
+        description="Knowledge base creator's user name",
     )
 
 
