@@ -117,8 +117,11 @@ class TestListWikiSpaces:
         assert result[0]["workspaceId"] == "WS001"
         assert result[1]["name"] == "KB Two"
 
-    @pytest.mark.asyncio
-    async def test_returns_knowledge_bases_from_wikiSpaces_key(self) -> None:
+
+class TestParseListNodesResult:
+    """Tests for DingTalkDocService._parse_list_nodes_result."""
+
+    def test_returns_knowledge_bases_from_wiki_spaces_key(self) -> None:
         """Returns KB nodes when list_wikiSpaces responds with a 'wikiSpaces' key."""
         kb_data = [{"workspaceId": "WS100", "name": "Org KB"}]
         result, token = DingTalkDocService._parse_list_nodes_result(
@@ -128,8 +131,7 @@ class TestListWikiSpaces:
         assert result[0]["workspaceId"] == "WS100"
         assert token is None
 
-    @pytest.mark.asyncio
-    async def test_returns_empty_list_when_no_content(self) -> None:
+    def test_returns_empty_list_when_no_content(self) -> None:
         """Returns empty list when the MCP result has no content."""
         empty_result = MagicMock()
         empty_result.content = []
@@ -137,8 +139,7 @@ class TestListWikiSpaces:
         assert result == []
         assert token is None
 
-    @pytest.mark.asyncio
-    async def test_pagination_token_extracted(self) -> None:
+    def test_pagination_token_extracted(self) -> None:
         """nextPageToken is extracted from the response envelope."""
         data = {
             "items": [{"workspaceId": "WS1", "name": "KB 1"}],
