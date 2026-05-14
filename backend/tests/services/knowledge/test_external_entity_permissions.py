@@ -412,7 +412,7 @@ def test_resource_member_factory_method_sets_user_id() -> None:
 
 @pytest.mark.unit
 def test_resource_member_factory_method_clears_user_id_for_entity() -> None:
-    """ResourceMember.create should set user_id=None for non-user entity types."""
+    """ResourceMember.create should set user_id=0 for non-user entity types."""
     member = ResourceMember.create(
         resource_type="KnowledgeBase",
         resource_id=1,
@@ -422,7 +422,7 @@ def test_resource_member_factory_method_clears_user_id_for_entity() -> None:
     )
     assert member.entity_type == "namespace"
     assert member.entity_id == "99"
-    assert member.user_id is None
+    assert member.user_id == 0
 
 
 @pytest.mark.unit
@@ -480,7 +480,7 @@ def test_event_listener_handles_non_numeric_entity_id(test_db: Session) -> None:
     test_db.commit()
     test_db.refresh(member)
 
-    assert member.user_id is None
+    assert member.user_id == 0
 
 
 @pytest.mark.unit
