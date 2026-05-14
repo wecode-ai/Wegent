@@ -206,6 +206,18 @@ class ResponsesAPIEventParser:
                 message_id=message_id,
             )
 
+        elif event_type == ResponsesAPIStreamEvents.BLOCK_CREATED.value:
+            block = data.get("block")
+            if not isinstance(block, dict):
+                return None
+            return ExecutionEvent(
+                type=EventType.BLOCK_CREATED,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                data={"block": block},
+                message_id=message_id,
+            )
+
         elif event_type == ResponsesAPIStreamEvents.ERROR.value:
             # error -> ERROR
             self._clear_task_contexts(task_id, subtask_id)

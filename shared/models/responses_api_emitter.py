@@ -446,6 +446,11 @@ class ResponsesAPIEmitter:
             ResponsesAPIStreamEvents.RESPONSE_PART_ADDED.value, data
         )
 
+    async def block_created(self, block: dict[str, Any]) -> Any:
+        """Emit a non-text block creation event."""
+        data = self.builder.block_created(block)
+        return await self._emit(ResponsesAPIStreamEvents.BLOCK_CREATED.value, data)
+
     # ============================================================
     # Buffer Management
     # ============================================================

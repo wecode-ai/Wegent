@@ -25,6 +25,7 @@ import {
   type QueuedMessage,
   type QueuedMessageStatus,
 } from './useMessageSendQueue'
+import { useGuidanceQueue, type GuidanceQueueItem } from './useGuidanceQueue'
 import type { Model } from '../selector/ModelSelector'
 import type { UnifiedModel } from '@/apis/models'
 import type {
@@ -134,6 +135,13 @@ export interface ChatStreamHandlers {
   queuedMessageCount: number
   queuedMessages: QueuedChatMessagePreview[]
   cancelQueuedMessage: (id: string) => void
+  sendQueuedAsGuidance: (id: string) => Promise<void>
+  canSendGuidance: boolean
+  guidanceMessages: GuidanceMessagePreview[]
+  expiredGuidanceMessages: GuidanceMessagePreview[]
+  cancelGuidance: (id: string) => void
+  handleSendGuidance: (overrideMessage?: string) => Promise<void>
+  sendExpiredGuidanceAsMessage: (id: string) => Promise<void>
 
   // Actions
   handleSendMessage: (overrideMessage?: string) => Promise<void>
@@ -171,6 +179,13 @@ export interface QueuedChatMessagePreview {
   id: string
   displayMessage: string
   status: QueuedMessageStatus
+  error?: string
+}
+
+export interface GuidanceMessagePreview {
+  id: string
+  displayMessage: string
+  status: GuidanceQueueItem['status']
   error?: string
 }
 
@@ -246,7 +261,7 @@ export function useChatStreamHandlers({
     options: ContextSendOptions
   }
 
-  const { retryMessage } = useSocket()
+  const { retryMessage, sendChatGuidance, registerChatHandlers } = useSocket()
 
   // Get selected device ID for executor-based tasks
   const { selectedDeviceId } = useDevices()
@@ -779,6 +794,64 @@ export function useChatStreamHandlers({
     activeTaskId &&
     (isStreaming || isAwaitingResponseStart || selectedTaskDetail?.status === 'RUNNING')
   )
+  const canSendGuidance = Boolean(activeTaskId && isChatShell(selectedTeam) && isStreaming)
+
+  const getActiveSubtaskId = useCallback(() => {
+    const streamingSubtaskId = taskState?.streamingInfo?.subtask_id
+    if (typeof streamingSubtaskId === 'number') return streamingSubtaskId
+
+    const taskWithSubtasks = selectedTaskDetail as
+      | (typeof selectedTaskDetail & { subtasks?: unknown[] })
+      | null
+    const subtasks = taskWithSubtasks?.subtasks
+    if (!Array.isArray(subtasks) || subtasks.length === 0) return null
+
+    const lastSubtask = subtasks[subtasks.length - 1] as { id?: unknown; subtask_id?: unknown }
+    const rawId = lastSubtask.subtask_id ?? lastSubtask.id
+    return typeof rawId === 'number' ? rawId : null
+  }, [selectedTaskDetail, taskState?.streamingInfo?.subtask_id])
+
+  const {
+    activeGuidanceQueue,
+    expiredGuidance,
+    enqueueGuidance,
+    markGuidanceSending,
+    markGuidanceQueued,
+    markGuidanceFailed,
+    markGuidanceApplied,
+    markGuidanceExpired,
+    cancelGuidance,
+    removeExpiredGuidance,
+  } = useGuidanceQueue({ taskId: activeTaskId })
+
+  useEffect(() => {
+    if (canSendGuidance) return
+
+    activeGuidanceQueue.forEach(item => {
+      if (item.status === 'queued' || item.status === 'sending') {
+        markGuidanceExpired(item.guidanceId, t('chat:guidance.expired'))
+      }
+    })
+  }, [activeGuidanceQueue, canSendGuidance, markGuidanceExpired, t])
+
+  // Register WebSocket handlers for guidance lifecycle events
+  useEffect(() => {
+    if (!activeTaskId) return
+    return registerChatHandlers({
+      onGuidanceApplied: payload => {
+        console.log('[guidance] WS guidance_applied received:', payload)
+        if (payload.task_id === activeTaskId) {
+          markGuidanceApplied(payload.guidance_id)
+        }
+      },
+      onGuidanceExpired: payload => {
+        console.log('[guidance] WS guidance_expired received:', payload)
+        if (payload.task_id === activeTaskId) {
+          payload.guidance_ids.forEach(id => markGuidanceExpired(id, t('chat:guidance.expired')))
+        }
+      },
+    })
+  }, [activeTaskId, markGuidanceApplied, markGuidanceExpired, registerChatHandlers, t])
 
   const dispatchQueuedMessage = useCallback(
     async (queuedMessage: QueuedMessage<PreparedChatSend>) => {
@@ -855,6 +928,30 @@ export function useChatStreamHandlers({
         error: message.error,
       })),
     [activeTaskQueue]
+  )
+
+  const guidanceMessages = useMemo<GuidanceMessagePreview[]>(
+    () =>
+      activeGuidanceQueue
+        .filter(message => message.status !== 'expired')
+        .map(message => ({
+          id: message.guidanceId,
+          displayMessage: message.content,
+          status: message.status,
+          error: message.error,
+        })),
+    [activeGuidanceQueue]
+  )
+
+  const expiredGuidanceMessages = useMemo<GuidanceMessagePreview[]>(
+    () =>
+      expiredGuidance.map(message => ({
+        id: message.guidanceId,
+        displayMessage: message.content,
+        status: message.status,
+        error: message.error,
+      })),
+    [expiredGuidance]
   )
 
   const mergePreparedChatSend = useCallback(
@@ -1013,6 +1110,100 @@ export function useChatStreamHandlers({
       sendPreparedChatMessage,
       handleSendError,
     ]
+  )
+
+  const handleSendGuidance = useCallback(
+    async (overrideMessage?: string) => {
+      const message = overrideMessage?.trim() || taskInputMessage.trim()
+      if (!message || !activeTaskId || !selectedTeam?.id || !canSendGuidance) return
+
+      const subtaskId = getActiveSubtaskId()
+      if (!subtaskId) {
+        toast({
+          variant: 'destructive',
+          title: t('chat:guidance.no_active_stream'),
+        })
+        return
+      }
+
+      const guidanceId = `guidance-${activeTaskId}-${Date.now()}`
+      console.log('[guidance] sending:', {
+        guidanceId,
+        activeTaskId,
+        subtaskId,
+        teamId: selectedTeam.id,
+        message,
+      })
+      enqueueGuidance({
+        taskId: activeTaskId,
+        guidanceId,
+        content: message,
+      })
+      markGuidanceSending(guidanceId)
+      setTaskInputMessage('')
+
+      try {
+        const response = await sendChatGuidance({
+          task_id: activeTaskId,
+          subtask_id: subtaskId,
+          team_id: selectedTeam.id,
+          message,
+          guidance: message,
+          client_guidance_id: guidanceId,
+        })
+
+        if (response.error || response.success === false) {
+          console.log('[guidance] ACK error:', response)
+          markGuidanceFailed(guidanceId, response.error || t('chat:guidance.send_failed'))
+          return
+        }
+
+        console.log('[guidance] ACK ok, queued:', { guidanceId, response })
+        markGuidanceQueued(guidanceId)
+        return
+      } catch (error) {
+        console.log('[guidance] send exception:', error)
+        const normalizedError = error instanceof Error ? error : new Error(String(error))
+        markGuidanceFailed(guidanceId, normalizedError.message)
+      }
+    },
+    [
+      taskInputMessage,
+      activeTaskId,
+      selectedTeam?.id,
+      canSendGuidance,
+      getActiveSubtaskId,
+      enqueueGuidance,
+      markGuidanceSending,
+      markGuidanceQueued,
+      setTaskInputMessage,
+      sendChatGuidance,
+      markGuidanceFailed,
+      t,
+      toast,
+    ]
+  )
+
+  const sendQueuedAsGuidance = useCallback(
+    async (id: string) => {
+      const queuedMessage = activeTaskQueue.find(message => message.id === id)
+      if (!queuedMessage || queuedMessage.status === 'sending') return
+      const text = queuedMessage.snapshot.sourceMessage || queuedMessage.displayMessage
+      cancelMessage(id)
+      await handleSendGuidance(text)
+    },
+    [activeTaskQueue, cancelMessage, handleSendGuidance]
+  )
+
+  const sendExpiredGuidanceAsMessage = useCallback(
+    async (id: string) => {
+      const guidance = expiredGuidance.find(item => item.guidanceId === id)
+      if (!guidance) return
+
+      removeExpiredGuidance(id)
+      await handleSendMessage(guidance.content)
+    },
+    [expiredGuidance, handleSendMessage, removeExpiredGuidance]
   )
   /**
    * Send a message with a temporary model override.
@@ -1455,6 +1646,13 @@ export function useChatStreamHandlers({
     queuedMessageCount: activeTaskQueue.length,
     queuedMessages,
     cancelQueuedMessage,
+    sendQueuedAsGuidance,
+    canSendGuidance,
+    guidanceMessages,
+    expiredGuidanceMessages,
+    cancelGuidance,
+    handleSendGuidance,
+    sendExpiredGuidanceAsMessage,
 
     // Actions
     handleSendMessage,

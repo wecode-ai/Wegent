@@ -45,6 +45,19 @@
     "quoted_text": "Quoted text",
     "remove_quote": "Remove quote"
   },
+  "guidance": {
+    "send": "Send guidance",
+    "applied": "Guidance applied",
+    "cancel": "Cancel guidance",
+    "send_as_message": "Send as message",
+    "status_queued": "Guidance queued",
+    "status_sending": "Sending guidance",
+    "status_failed": "Guidance failed",
+    "status_expired": "Guidance expired",
+    "expired": "The current response ended before this guidance was applied",
+    "send_failed": "Failed to send guidance",
+    "no_active_stream": "No active response can receive guidance"
+  },
   "status": {
     "typing": "AI is typing...",
     "thinking": "AI is thinking...",

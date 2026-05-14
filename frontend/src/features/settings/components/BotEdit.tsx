@@ -193,6 +193,17 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const [loadingSkills, setLoadingSkills] = useState(false)
   const [_agentConfigError, setAgentConfigError] = useState(false)
 
+  const resetAgentDependentConfig = useCallback(() => {
+    setIsCustomModel(false)
+    setSelectedModel('')
+    setSelectedModelType(undefined)
+    setSelectedModelNamespace(undefined)
+    setAgentConfig('')
+    setAgentConfigError(false)
+    setModels([])
+    setSelectedProtocol('')
+  }, [])
+
   const [skillManagementModalOpen, setSkillManagementModalOpen] = useState(false)
   const [promptFineTuneOpen, setPromptFineTuneOpen] = useState(false)
 
@@ -201,6 +212,31 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const mcpAgentType = useMemo(
     () => (isValidAgentType(agentName) ? agentName : undefined),
     [agentName]
+  )
+
+  const updateAgentName = useCallback(
+    (value: string) => {
+      if (value !== agentName) {
+        resetAgentDependentConfig()
+
+        // Adapt MCP config when switching agent type.
+        if (mcpConfig.trim()) {
+          try {
+            const currentMcpConfig = JSON.parse(mcpConfig)
+            if (isValidAgentType(value)) {
+              const adaptedConfig = adaptMcpConfigForAgent(currentMcpConfig, value)
+              setMcpConfig(JSON.stringify(adaptedConfig, null, 2))
+            } else {
+              console.warn(`Unknown agent type "${value}", skipping MCP config adaptation`)
+            }
+          } catch (error) {
+            console.warn('Failed to adapt MCP config on agent change:', error)
+          }
+        }
+      }
+      setAgentName(value)
+    },
+    [agentName, mcpConfig, resetAgentDependentConfig]
   )
 
   // Documentation handlers
@@ -258,6 +294,15 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
     fetchShells()
   }, [toast, t, allowedAgents, scope, groupName])
+
+  useEffect(() => {
+    if (!allowedAgents || allowedAgents.length === 0 || shells.length === 0) return
+
+    const selectedShell = shells.find(shell => shell.name === agentName)
+    if (selectedShell) return
+
+    updateAgentName(shells[0].name)
+  }, [allowedAgents, agentName, shells, updateAgentName])
 
   // Check if current agent supports skills (ClaudeCode and Chat shell types)
   const supportsSkills = useMemo(() => {
@@ -516,6 +561,14 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       return { isValid: false, error: t('common:bot.errors.required') }
     }
 
+    if (allowedAgents && allowedAgents.length > 0) {
+      const selectedShell = shells.find(shell => shell.name === agentName)
+      const shellType = selectedShell?.shellType || agentName
+      if (!allowedAgents.includes(shellType as AgentType)) {
+        return { isValid: false, error: t('common:bot.errors.required') }
+      }
+    }
+
     // For Dify agent, validate config
     if (isDifyAgent) {
       const trimmedConfig = agentConfig.trim()
@@ -585,6 +638,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     restrictModels,
     allowedModels,
     selectedModel,
+    allowedAgents,
+    shells,
   ])
 
   // Get bot form data for external use
@@ -1014,34 +1069,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                 value={agentName}
                 onValueChange={value => {
                   if (readOnly) return
-                  if (value !== agentName) {
-                    setIsCustomModel(false)
-                    setSelectedModel('')
-                    setAgentConfig('')
-                    setAgentConfigError(false)
-                    setModels([])
-                    // Clear protocol when switching agent type since protocols are filtered by agent
-                    setSelectedProtocol('')
-
-                    // Adapt MCP config when switching agent type
-                    if (mcpConfig.trim()) {
-                      try {
-                        const currentMcpConfig = JSON.parse(mcpConfig)
-                        if (isValidAgentType(value)) {
-                          const adaptedConfig = adaptMcpConfigForAgent(currentMcpConfig, value)
-                          setMcpConfig(JSON.stringify(adaptedConfig, null, 2))
-                        } else {
-                          console.warn(
-                            `Unknown agent type "${value}", skipping MCP config adaptation`
-                          )
-                        }
-                      } catch (error) {
-                        // If parsing fails, keep the original config
-                        console.warn('Failed to adapt MCP config on agent change:', error)
-                      }
-                    }
-                  }
-                  setAgentName(value)
+                  updateAgentName(value)
                 }}
                 disabled={loadingShells || readOnly}
               >
