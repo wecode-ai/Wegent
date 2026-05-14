@@ -2,11 +2,11 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
 import orjson
-from redis import Redis as SyncRedis
 from redis.asyncio import Redis
 
 from app.core.config import settings
@@ -115,6 +115,23 @@ class RedisCache:
         except Exception as e:
             logger.error(f"Error getting cache key {key} (sync): {str(e)}")
             return None
+
+    def set_from_sync(
+        self,
+        key: str,
+        value: Any,
+        expire: int | None = settings.REPO_CACHE_EXPIRED_TIME,
+    ) -> bool:
+        """Set value to cache synchronously (for background threads).
+
+        Uses asyncio.run() to execute the async set() method. This avoids
+        duplicating Redis connection logic and follows the pattern from PR #1011.
+        """
+        try:
+            return asyncio.run(self.set(key, value, expire=expire))
+        except Exception as e:
+            logger.error(f"Error setting cache key {key} (sync): {str(e)}")
+            return False
 
     def get_user_repositories_sync(
         self, user_id: int, git_domain: str

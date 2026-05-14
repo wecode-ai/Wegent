@@ -1,7 +1,7 @@
 import * as React from 'react'
 import * as ToastPrimitives from '@radix-ui/react-toast'
 import { cva, type VariantProps } from 'class-variance-authority'
-import { X, CheckCircle2, XCircle, AlertCircle } from 'lucide-react'
+import { X, CheckCircle2, XCircle, AlertCircle, AlertTriangle } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
 
@@ -31,6 +31,7 @@ const toastVariants = cva(
         success: 'border-emerald-300 !bg-emerald-50 !text-gray-700',
         destructive: 'border-red-300 !bg-red-50 !text-gray-700',
         info: 'border-sky-300 !bg-sky-50 !text-gray-700',
+        warning: 'border-amber-300 !bg-amber-50 !text-gray-700',
       },
     },
     defaultVariants: {
@@ -43,7 +44,7 @@ const toastVariants = cva(
 const ToastIcon = ({
   variant,
 }: {
-  variant?: 'default' | 'success' | 'destructive' | 'info' | null
+  variant?: 'default' | 'success' | 'destructive' | 'info' | 'warning' | null
 }) => {
   switch (variant) {
     case 'success':
@@ -53,11 +54,12 @@ const ToastIcon = ({
       return <XCircle className="h-5 w-5 text-red-500 shrink-0" />
     case 'info':
       return <AlertCircle className="h-5 w-5 text-sky-500 shrink-0" />
+    case 'warning':
+      return <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0" />
     default:
       return <CheckCircle2 className="h-5 w-5 text-emerald-500 shrink-0" />
   }
 }
-
 const Toast = React.forwardRef<
   React.ElementRef<typeof ToastPrimitives.Root>,
   React.ComponentPropsWithoutRef<typeof ToastPrimitives.Root> & VariantProps<typeof toastVariants>

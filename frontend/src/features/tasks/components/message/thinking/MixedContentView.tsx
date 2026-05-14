@@ -8,6 +8,7 @@ import { memo, useMemo } from 'react'
 import type { ThinkingStep, MessageBlock, ToolPair } from './types'
 import { useToolExtraction } from './hooks/useToolExtraction'
 import { ToolBlock } from './components/ToolBlock'
+import { GuidanceBlock } from './components/GuidanceBlock'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import { normalizeToolName } from './utils/toolExtractor'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -167,6 +168,12 @@ const MixedContentView = memo(function MixedContentView({
               data: block as unknown as SubscriptionPreviewBlock,
               blockId: block.id,
               status: block.status,
+            }
+          } else if (block.type === 'guidance') {
+            return {
+              type: 'guidance' as const,
+              data: block,
+              blockId: block.id,
             }
           } else if (block.type === 'tool') {
             const input =
@@ -581,6 +588,8 @@ const MixedContentView = memo(function MixedContentView({
               <SubscriptionPreviewCard data={item.data} />
             </div>
           )
+        } else if (item.type === 'guidance') {
+          return <GuidanceBlock key={item.blockId} block={item.data} />
         } else if (item.type === 'tool') {
           const key = 'blockId' in item ? item.blockId : `tool-${item.tool.toolUseId}`
           const count = 'count' in item ? item.count : 1

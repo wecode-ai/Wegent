@@ -195,6 +195,7 @@ if [ ! -f ".env.local" ]; then
 
 # Runtime API Configuration (can be changed without rebuilding)
 # RUNTIME_INTERNAL_API_URL is set via environment variable by this script
+# RUNTIME_PUBLIC_API_URL is set via environment variable by this script
 # RUNTIME_SOCKET_DIRECT_URL is set via environment variable by this script
 
 # Legacy: NEXT_PUBLIC_API_URL is deprecated, use RUNTIME_INTERNAL_API_URL instead
@@ -214,8 +215,9 @@ fi
 
 # Export runtime environment variables (will be read by Next.js at startup)
 export RUNTIME_INTERNAL_API_URL=$API_URL
+export RUNTIME_PUBLIC_API_URL=$API_URL
 export RUNTIME_SOCKET_DIRECT_URL=$API_URL
-echo -e "${GREEN}✓ Using API URL: $API_URL (via RUNTIME_INTERNAL_API_URL)${NC}"
+echo -e "${GREEN}✓ Using API URL: $API_URL (via RUNTIME_INTERNAL_API_URL and RUNTIME_PUBLIC_API_URL)${NC}"
 echo -e "${YELLOW}Note: Using runtime environment variables (no rebuild required)${NC}"
 echo ""
 

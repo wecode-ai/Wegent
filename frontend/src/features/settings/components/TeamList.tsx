@@ -34,6 +34,7 @@ import { ForceDeleteTaskSummary } from './ForceDeleteTaskSummary'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 import TeamShareModal from './TeamShareModal'
 import TeamCreationWizard from './wizard/TeamCreationWizard'
+import { TeamApiCallButton } from './TeamApiCallButton'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useToast } from '@/hooks/use-toast'
 import { sortTeamsByUpdatedAt } from '@/utils/team'
@@ -653,6 +654,7 @@ export default function TeamList({
                               <ChatBubbleLeftEllipsisIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                             )}
                           </Button>
+                          <TeamApiCallButton team={team} />
                           {shouldShowEdit(team) && (
                             <Button
                               variant="ghost"
