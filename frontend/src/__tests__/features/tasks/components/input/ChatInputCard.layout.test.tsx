@@ -186,12 +186,22 @@ describe('ChatInputCard layout', () => {
   })
 
   it('forwards queued and awaiting send state to input controls', () => {
-    render(<ChatInputCard {...buildProps()} canQueueMessage isAwaitingResponseStart />)
+    render(
+      <ChatInputCard
+        {...buildProps()}
+        canQueueMessage
+        canSendGuidance
+        isAwaitingResponseStart
+        onSendGuidance={jest.fn()}
+      />
+    )
 
     expect(mockChatInputControls).toHaveBeenCalledWith(
       expect.objectContaining({
         canQueueMessage: true,
+        canSendGuidance: true,
         isAwaitingResponseStart: true,
+        onSendGuidance: expect.any(Function),
       })
     )
   })
@@ -262,5 +272,41 @@ describe('ChatInputCard layout', () => {
 
     expect(screen.getByTestId('queued-message-list')).toHaveTextContent('messages.status_sending')
     expect(screen.queryByTestId('cancel-queued-message-button')).not.toBeInTheDocument()
+  })
+
+  it('renders pending and expired guidance cards', () => {
+    const onCancelGuidance = jest.fn()
+    const onSendExpiredGuidanceAsMessage = jest.fn()
+
+    render(
+      <ChatInputCard
+        {...buildProps()}
+        guidanceMessages={[
+          {
+            id: 'guidance-1',
+            displayMessage: 'focus on risks',
+            status: 'pending',
+          },
+        ]}
+        expiredGuidanceMessages={[
+          {
+            id: 'guidance-2',
+            displayMessage: 'add details',
+            status: 'expired',
+          },
+        ]}
+        onCancelGuidance={onCancelGuidance}
+        onSendExpiredGuidanceAsMessage={onSendExpiredGuidanceAsMessage}
+      />
+    )
+
+    expect(screen.getByTestId('pending-guidance-card')).toHaveTextContent('focus on risks')
+    expect(screen.getByTestId('expired-guidance-card')).toHaveTextContent('add details')
+
+    fireEvent.click(screen.getByTestId('cancel-guidance-button'))
+    fireEvent.click(screen.getByTestId('send-expired-guidance-as-message-button'))
+
+    expect(onCancelGuidance).toHaveBeenCalledWith('guidance-1')
+    expect(onSendExpiredGuidanceAsMessage).toHaveBeenCalledWith('guidance-2')
   })
 })

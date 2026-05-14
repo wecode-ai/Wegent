@@ -15,6 +15,7 @@ Authentication:
 
 import json
 import logging
+from datetime import datetime
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -32,6 +33,8 @@ from app.models.subtask_context import (
     SubtaskContext,
 )
 from app.models.user import User
+from app.services.chat.guidance_queue import guidance_queue
+from app.services.chat.webpage_ws_chat_emitter import get_webpage_ws_emitter
 from shared.prompts.constants import parse_prompt_blocks
 from shared.telemetry.decorators import trace_sync
 
@@ -154,6 +157,18 @@ class HealthResponse(BaseModel):
 
     status: str
     service: str = "internal-chat-storage"
+
+
+class GuidanceConsumeResponse(BaseModel):
+    """Response for guidance consume endpoint."""
+
+    item: Optional[dict] = None
+
+
+class GuidanceExpireResponse(BaseModel):
+    """Response for guidance expire endpoint."""
+
+    expired_ids: list[str] = Field(default_factory=list)
 
 
 # ==================== Helper Functions ====================
@@ -740,6 +755,68 @@ def _fetch_kb_head_documents_content(
 async def health_check():
     """Health check endpoint for internal chat storage API."""
     return HealthResponse(status="ok")
+
+
+@router.post(
+    "/guidance/{task_id}/{subtask_id}/consume",
+    response_model=GuidanceConsumeResponse,
+)
+async def consume_guidance(task_id: int, subtask_id: int):
+    """Consume the next queued Chat Shell guidance item."""
+    logger.info(
+        "[guidance] consume request: task_id=%s subtask_id=%s", task_id, subtask_id
+    )
+    item = await guidance_queue.consume(task_id=task_id, subtask_id=subtask_id)
+    if item is None:
+        logger.info(
+            "[guidance] consume: no item in queue task_id=%s subtask_id=%s",
+            task_id,
+            subtask_id,
+        )
+        return GuidanceConsumeResponse(item=None)
+
+    item_data = item.to_dict()
+    applied_at = datetime.now().isoformat()
+    ws_emitter = get_webpage_ws_emitter()
+    logger.info(
+        "[guidance] consumed item: task_id=%s subtask_id=%s guidance_id=%s ws_emitter=%s",
+        task_id,
+        subtask_id,
+        item.guidance_id,
+        ws_emitter is not None,
+    )
+    if ws_emitter:
+        await ws_emitter.emit_guidance_applied(
+            task_id=task_id,
+            subtask_id=subtask_id,
+            guidance_id=item.guidance_id,
+            applied_at=applied_at,
+        )
+    return GuidanceConsumeResponse(item=item_data)
+
+
+@router.post(
+    "/guidance/{task_id}/{subtask_id}/expire",
+    response_model=GuidanceExpireResponse,
+)
+async def expire_guidance(task_id: int, subtask_id: int):
+    """Expire all queued Chat Shell guidance items."""
+    expired_ids = await guidance_queue.expire(task_id=task_id, subtask_id=subtask_id)
+    logger.info(
+        "[guidance] expire: task_id=%s subtask_id=%s expired_ids=%s",
+        task_id,
+        subtask_id,
+        expired_ids,
+    )
+    if expired_ids:
+        ws_emitter = get_webpage_ws_emitter()
+        if ws_emitter:
+            await ws_emitter.emit_guidance_expired(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                guidance_ids=expired_ids,
+            )
+    return GuidanceExpireResponse(expired_ids=expired_ids)
 
 
 @router.get("/history/{session_id}", response_model=HistoryResponse)

@@ -28,6 +28,8 @@ from app.api.ws.decorators import trace_websocket_event
 from app.api.ws.events import (
     ChatCancelPayload,
     ChatErrorPayload,
+    ChatGuideAck,
+    ChatGuidePayload,
     ChatResumePayload,
     ChatRetryPayload,
     ChatSendAck,
@@ -55,6 +57,8 @@ from app.services.chat.access import (
     get_token_expiry,
     verify_jwt_token,
 )
+from app.services.chat.config import get_team_first_bot_shell_type
+from app.services.chat.guidance_queue import guidance_queue
 from app.services.chat.operations import (
     call_executor_cancel,
     extract_model_override_info,
@@ -101,6 +105,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             "chat:cancel": "on_chat_cancel",
             "chat:resume": "on_chat_resume",
             "chat:retry": "on_chat_retry",
+            "chat:guide": "on_chat_guide",
             "task:join": "on_task_join",
             "task:leave": "on_task_leave",
             "task:close-session": "on_task_close_session",
@@ -145,6 +150,87 @@ class ChatNamespace(socketio.AsyncNamespace):
         )
         await self.disconnect(sid)
         return {"error": "Token expired"}
+
+    @auto_task_context(
+        ChatGuidePayload, task_id_field="task_id", subtask_id_field="subtask_id"
+    )
+    async def on_chat_guide(self, sid: str, data: ChatGuidePayload) -> dict:
+        """Handle chat:guide for Chat Shell-only runtime guidance."""
+        logger.info(
+            "[guidance] on_chat_guide received: sid=%s task_id=%s subtask_id=%s team_id=%s",
+            sid,
+            getattr(data, "task_id", None),
+            getattr(data, "subtask_id", None),
+            getattr(data, "team_id", None),
+        )
+        if await self._check_token_expiry(sid):
+            return await self._handle_token_expired(sid)
+
+        session = await self.get_session(sid)
+        user_id = session.get("user_id")
+        if not user_id:
+            return ChatGuideAck(error="Not authenticated").model_dump()
+
+        payload = data
+        if not await can_access_task(user_id, payload.task_id):
+            return ChatGuideAck(error="Task not found or access denied").model_dump()
+
+        db = SessionLocal()
+        try:
+            team = (
+                db.query(Kind)
+                .filter(
+                    Kind.id == payload.team_id,
+                    Kind.kind == "Team",
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if not team:
+                return ChatGuideAck(error="Team not found").model_dump()
+
+            shell_type = get_team_first_bot_shell_type(db, team)
+            logger.info("[guidance] team=%s shell_type=%s", payload.team_id, shell_type)
+            if shell_type != "Chat":
+                return ChatGuideAck(
+                    error="Guidance is only supported for Chat Shell tasks"
+                ).model_dump()
+
+            subtask = (
+                db.query(Subtask)
+                .filter(
+                    Subtask.id == payload.subtask_id,
+                    Subtask.task_id == payload.task_id,
+                    Subtask.team_id == payload.team_id,
+                )
+                .first()
+            )
+            if not subtask:
+                return ChatGuideAck(error="Subtask not found").model_dump()
+
+            item = await guidance_queue.enqueue(
+                task_id=payload.task_id,
+                subtask_id=payload.subtask_id,
+                team_id=payload.team_id,
+                user_id=user_id,
+                message=payload.message,
+                guidance_id=payload.client_guidance_id,
+            )
+            logger.info(
+                "[guidance] enqueued: task_id=%s subtask_id=%s guidance_id=%s",
+                payload.task_id,
+                payload.subtask_id,
+                item.guidance_id,
+            )
+            item_data = item.to_dict()
+            await self.emit(
+                ServerEvents.CHAT_GUIDANCE_QUEUED,
+                item_data,
+                room=f"task:{payload.task_id}",
+            )
+            return ChatGuideAck(guidance_id=item.guidance_id).model_dump()
+        finally:
+            db.close()
 
     @trace_websocket_event(
         exclude_events={"connect"},  # connect is handled separately in on_connect

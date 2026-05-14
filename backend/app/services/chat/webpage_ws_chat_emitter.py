@@ -435,6 +435,44 @@ class WebPageSocketEmitter:
         )
         logger.debug(f"[WS] emit chat:system task={task_id} type={msg_type}")
 
+    async def emit_guidance_applied(
+        self,
+        task_id: int,
+        subtask_id: int,
+        guidance_id: str,
+        applied_at: str,
+    ) -> None:
+        """Emit chat:guidance_applied event to task room."""
+        await self.sio.emit(
+            ServerEvents.CHAT_GUIDANCE_APPLIED,
+            {
+                "task_id": task_id,
+                "subtask_id": subtask_id,
+                "guidance_id": guidance_id,
+                "applied_at": applied_at,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+
+    async def emit_guidance_expired(
+        self,
+        task_id: int,
+        subtask_id: int,
+        guidance_ids: list[str],
+    ) -> None:
+        """Emit chat:guidance_expired event to task room."""
+        await self.sio.emit(
+            ServerEvents.CHAT_GUIDANCE_EXPIRED,
+            {
+                "task_id": task_id,
+                "subtask_id": subtask_id,
+                "guidance_ids": guidance_ids,
+            },
+            room=f"task:{task_id}",
+            namespace=self.namespace,
+        )
+
     # ============================================================
     # Task List Events (to user room)
     # ============================================================
