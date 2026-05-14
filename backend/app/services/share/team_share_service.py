@@ -64,7 +64,8 @@ class TeamShareService(UnifiedShareService):
                 .filter(
                     ResourceMember.resource_type == ResourceType.TEAM.value,
                     ResourceMember.resource_id == resource_id,
-                    ResourceMember.user_id == user_id,
+                    ResourceMember.entity_type == "user",
+                    ResourceMember.entity_id == str(user_id),
                     ResourceMember.status == MemberStatus.APPROVED.value,
                 )
                 .first()

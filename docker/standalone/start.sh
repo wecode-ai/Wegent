@@ -124,6 +124,8 @@ cd /app/frontend
 # Set runtime environment variables for Frontend
 # RUNTIME_INTERNAL_API_URL is always localhost (internal container communication)
 export RUNTIME_INTERNAL_API_URL=http://localhost:${BACKEND_PORT}
+# RUNTIME_PUBLIC_API_URL is used in generated external API examples
+export RUNTIME_PUBLIC_API_URL=${RUNTIME_PUBLIC_API_URL:-http://localhost:${BACKEND_PORT}}
 # RUNTIME_SOCKET_DIRECT_URL can be overridden via docker-compose for remote access
 # Only set default if not already provided
 export RUNTIME_SOCKET_DIRECT_URL=${RUNTIME_SOCKET_DIRECT_URL:-http://localhost:${BACKEND_PORT}}

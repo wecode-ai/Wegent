@@ -97,6 +97,8 @@ class TestTaskMemberServiceGroupChatDetection:
         mock_member.id = 1
         mock_member.resource_type = ResourceType.TASK
         mock_member.resource_id = 100
+        mock_member.entity_type = "user"
+        mock_member.entity_id = "2"
         mock_member.user_id = 2
         mock_member.status = MemberStatus.APPROVED
         mock_member.copied_resource_id = 0  # Real group chat member
@@ -168,6 +170,8 @@ class TestTaskMemberServiceGroupChatDetection:
         # Mock a real group chat member (not a share record)
         mock_member = Mock(spec=ResourceMember)
         mock_member.id = 1
+        mock_member.entity_type = "user"
+        mock_member.entity_id = "2"
         mock_member.user_id = 2
         mock_member.invited_by_user_id = 1
         mock_member.requested_at = "2025-01-02"

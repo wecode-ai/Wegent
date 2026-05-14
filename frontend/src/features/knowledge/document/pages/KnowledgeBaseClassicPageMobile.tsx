@@ -12,6 +12,7 @@ import { TaskSidebar, SearchDialog } from '@/features/tasks/components/sidebar'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { saveLastTab } from '@/utils/userPreferences'
 import { useUser } from '@/features/common/UserContext'
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
@@ -20,9 +21,11 @@ import { useKnowledgeBaseDetail } from '@/features/knowledge/document/hooks'
 import { useNamespaceRoleMap } from '@/features/knowledge/document/hooks/useNamespaceRoleMap'
 import { useKnowledgePermissions } from '@/features/knowledge/permission/hooks/useKnowledgePermissions'
 import { DocumentList } from '@/features/knowledge/document/components'
+import { PermissionManagementTab } from '@/features/knowledge/permission/components/PermissionManagementTab'
 import {
   canManageKnowledgeBase,
   canManageKnowledgeBaseDocuments,
+  canManageKnowledgeBasePermissions,
 } from '@/utils/namespace-permissions'
 /**
  * Mobile-specific implementation of Knowledge Base Classic Page
@@ -71,6 +74,9 @@ export function KnowledgeBaseClassicPageMobile({ knowledgeBaseId, initialDocPath
   // Search dialog state
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
 
+  // Tab state for permission management
+  const [activeTab, setActiveTab] = useState<'documents' | 'permissions'>('documents')
+
   const namespaceRoleMap = useNamespaceRoleMap()
 
   // Toggle search dialog
@@ -107,6 +113,17 @@ export function KnowledgeBaseClassicPageMobile({ knowledgeBaseId, initialDocPath
   const canUploadDocuments = useMemo(() => {
     if (!knowledgeBase || !user) return false
     return canManageKnowledgeBaseDocuments({
+      currentUserId: user.id,
+      knowledgeBase,
+      knowledgeRole: myPermission?.role,
+      namespaceRole: namespaceRoleMap.get(knowledgeBase.namespace),
+    })
+  }, [knowledgeBase, user, myPermission?.role, namespaceRoleMap])
+
+  // Check if user can manage permissions (creator, namespace manager, or KB manager)
+  const canManagePermissions = useMemo(() => {
+    if (!knowledgeBase || !user) return false
+    return canManageKnowledgeBasePermissions({
       currentUserId: user.id,
       knowledgeBase,
       knowledgeRole: myPermission?.role,
@@ -174,14 +191,44 @@ export function KnowledgeBaseClassicPageMobile({ knowledgeBaseId, initialDocPath
           <ThemeToggle />
         </TopNavigation>
 
-        {/* Document List */}
+        {/* Document List / Permission Management */}
         <div className="flex-1 overflow-auto p-4">
-          <DocumentList
-            knowledgeBase={knowledgeBase}
-            canUpload={canUploadDocuments}
-            canManageAllDocuments={canManageKb}
-            initialDocPath={initialDocPath}
-          />
+          {canManagePermissions ? (
+            <Tabs
+              value={activeTab}
+              onValueChange={v => setActiveTab(v as 'documents' | 'permissions')}
+            >
+              <TabsList className="w-full mb-4">
+                <TabsTrigger value="documents" className="flex-1 gap-1.5">
+                  {t('knowledge:document.documents')}
+                </TabsTrigger>
+                <TabsTrigger value="permissions" className="flex-1 gap-1.5">
+                  {t('knowledge:document.permissions')}
+                </TabsTrigger>
+              </TabsList>
+              <TabsContent value="documents" className="mt-0">
+                <DocumentList
+                  knowledgeBase={knowledgeBase}
+                  canUpload={canUploadDocuments}
+                  canManageAllDocuments={canManageKb}
+                  initialDocPath={initialDocPath}
+                />
+              </TabsContent>
+              <TabsContent value="permissions" className="mt-0">
+                <PermissionManagementTab
+                  kbId={knowledgeBase.id}
+                  kbNamespace={knowledgeBase.namespace}
+                />
+              </TabsContent>
+            </Tabs>
+          ) : (
+            <DocumentList
+              knowledgeBase={knowledgeBase}
+              canUpload={canUploadDocuments}
+              canManageAllDocuments={canManageKb}
+              initialDocPath={initialDocPath}
+            />
+          )}
         </div>
       </div>
 

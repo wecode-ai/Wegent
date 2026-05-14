@@ -174,7 +174,8 @@ class TaskKnowledgeBaseService:
                 TaskResource.kind == "Task",
                 TaskResource.is_active == TaskResource.STATE_ACTIVE,
                 ResourceMember.resource_type == ResourceType.TASK,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
                 ResourceMember.status == MemberStatus.APPROVED,
             )
             .all()

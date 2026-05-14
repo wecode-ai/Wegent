@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useState, type ReactNode } from 'react'
 import { ComputerDesktopIcon } from '@heroicons/react/24/outline'
 
 import type { AdminDeviceInfo } from '@/apis/admin'
@@ -13,11 +13,6 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 
 import { DeviceVncPanel } from '@wecode/components/cloud-device'
-
-interface ActiveVncDevice {
-  deviceId: string
-  userId: number
-}
 
 export interface AdminDeviceMonitorVncExtension {
   renderAction: (device: AdminDeviceInfo) => ReactNode
@@ -30,58 +25,25 @@ export interface AdminDeviceMonitorVncExtension {
  * The open-source panel only knows how to call this extension. All VNC-specific
  * state, layout, and rendering stay within the wecode namespace.
  */
-export function useAdminDeviceMonitorVncExtension(
-  devices: AdminDeviceInfo[]
-): AdminDeviceMonitorVncExtension {
+export function useAdminDeviceMonitorVncExtension(): AdminDeviceMonitorVncExtension {
   const { t } = useTranslation('devices')
   const isMobile = useIsMobile()
-  const [activeVncDevice, setActiveVncDevice] = useState<ActiveVncDevice | null>(null)
+  const [activeVncDeviceDetails, setActiveVncDeviceDetails] = useState<AdminDeviceInfo | null>(null)
   const [isVncFullscreen, setIsVncFullscreen] = useState(false)
 
   const closeVncPanel = useCallback(() => {
-    setActiveVncDevice(null)
+    setActiveVncDeviceDetails(null)
     setIsVncFullscreen(false)
   }, [])
 
-  const activeVncDeviceDetails = useMemo(() => {
-    if (!activeVncDevice) {
-      return null
-    }
-
-    return (
-      devices.find(
-        device =>
-          device.device_id === activeVncDevice.deviceId && device.user_id === activeVncDevice.userId
-      ) ?? null
-    )
-  }, [activeVncDevice, devices])
-
-  useEffect(() => {
-    if (!activeVncDevice) {
-      setIsVncFullscreen(false)
-      return
-    }
-
-    if (
-      !activeVncDeviceDetails ||
-      activeVncDeviceDetails.device_type !== 'cloud' ||
-      activeVncDeviceDetails.bind_shell !== 'claudecode'
-    ) {
-      closeVncPanel()
-    }
-  }, [activeVncDevice, activeVncDeviceDetails, closeVncPanel])
-
   const handleToggleVnc = useCallback((device: AdminDeviceInfo) => {
     setIsVncFullscreen(false)
-    setActiveVncDevice(current => {
-      if (current?.deviceId === device.device_id && current.userId === device.user_id) {
+    setActiveVncDeviceDetails(current => {
+      if (current?.device_id === device.device_id && current.user_id === device.user_id) {
         return null
       }
 
-      return {
-        deviceId: device.device_id,
-        userId: device.user_id,
-      }
+      return device
     })
   }, [])
 
@@ -92,7 +54,7 @@ export function useAdminDeviceMonitorVncExtension(
       }
 
       const isActive =
-        activeVncDevice?.deviceId === device.device_id && activeVncDevice.userId === device.user_id
+        activeVncDeviceDetails?.device_id === device.device_id && activeVncDeviceDetails.user_id === device.user_id
 
       return (
         <Tooltip key={`${device.device_id}-vnc`}>
@@ -115,7 +77,7 @@ export function useAdminDeviceMonitorVncExtension(
         </Tooltip>
       )
     },
-    [activeVncDevice, handleToggleVnc, t]
+    [activeVncDeviceDetails, handleToggleVnc, t]
   )
 
   const renderPanel = useCallback(() => {
@@ -134,9 +96,7 @@ export function useAdminDeviceMonitorVncExtension(
             isFullscreen={isVncFullscreen}
             onToggleFullscreen={() => setIsVncFullscreen(prev => !prev)}
             containerClassName={
-              isVncFullscreen
-                ? 'w-full h-[70vh] min-h-[70vh]'
-                : 'w-full h-[60vh] min-h-[60vh]'
+              isVncFullscreen ? 'w-full h-[70vh] min-h-[70vh]' : 'w-full h-[60vh] min-h-[60vh]'
             }
             borderPosition={isMobile ? 'top' : 'left'}
           />

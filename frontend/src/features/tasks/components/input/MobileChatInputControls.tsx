@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useMemo, useState, useEffect } from 'react'
-import { CircleStop, Plus } from 'lucide-react'
+import { CircleStop, Hand, Plus } from 'lucide-react'
 import MobileModelSelector from '../selector/MobileModelSelector'
 import type { Model } from '../selector/ModelSelector'
 import MobileTeamSelector from '../selector/MobileTeamSelector'
@@ -36,7 +36,9 @@ import {
 } from '../../service/messageService'
 import { supportsAttachments } from '../../service/attachmentService'
 import SkillSelectorPopover from '../selector/SkillSelectorPopover'
+import { getChatSendState } from './chatSendState'
 import { isDingTalkAudioSupported } from '@/dingtalk/lib/dingtalk-sdk'
+import { useTranslation } from '@/hooks/useTranslation'
 
 export interface MobileChatInputControlsProps {
   taskType?: TaskType
@@ -93,10 +95,13 @@ export interface MobileChatInputControlsProps {
   isAttachmentReadyToSend: boolean
   taskInputMessage: string
   isSubtaskStreaming: boolean
+  canQueueMessage?: boolean
+  canSendGuidance?: boolean
 
   // Actions
   onStopStream: () => void
   onSendMessage: () => void
+  onSendGuidance?: () => void
 
   // Whether there are no available teams (shows disabled state)
   hasNoTeams?: boolean
@@ -162,8 +167,11 @@ export function MobileChatInputControls({
   isAttachmentReadyToSend,
   taskInputMessage,
   isSubtaskStreaming,
+  canQueueMessage = false,
+  canSendGuidance = false,
   onStopStream,
   onSendMessage,
+  onSendGuidance,
   hasNoTeams = false,
   availableSkills = [],
   teamSkillNames = [],
@@ -173,6 +181,7 @@ export function MobileChatInputControls({
   hideSelectors,
   onVoiceTextResult,
 }: MobileChatInputControlsProps) {
+  const { t } = useTranslation('chat')
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
   const [dingTalkAudioSupported, setDingTalkAudioSupported] = useState(false)
   const [isVoiceMode, setIsVoiceMode] = useState(false)
@@ -198,6 +207,7 @@ export function MobileChatInputControls({
     taskType !== 'video'
   const showClarificationAction = isChatShell(selectedTeam)
   const showCorrectionAction = isChatShell(selectedTeam) && Boolean(onCorrectionModeToggle)
+  const showGuidanceAction = isChatShell(selectedTeam) && Boolean(onSendGuidance)
   const showRepositoryAction =
     showRepositorySelector &&
     teamRequiresWorkspace(selectedTeam) &&
@@ -214,68 +224,81 @@ export function MobileChatInputControls({
 
   // Render send button based on state
   const renderSendButton = () => {
-    const isDisabled =
-      isLoading ||
-      isStreaming ||
-      isModelSelectionRequired ||
-      !isAttachmentReadyToSend ||
-      hasNoTeams ||
-      (shouldHideChatInput ? false : !taskInputMessage.trim())
+    const sendState = getChatSendState({
+      isLoading,
+      isStreaming,
+      isAwaitingResponseStart,
+      isStopping,
+      isModelSelectionRequired,
+      isAttachmentReadyToSend,
+      hasNoTeams,
+      shouldHideChatInput,
+      taskInputMessage,
+      selectedTaskStatus: selectedTaskDetail?.status,
+      isSubtaskStreaming,
+      isGroupChat: selectedTaskDetail?.is_group_chat,
+      canQueueMessage,
+    })
 
-    if (isStreaming || isAwaitingResponseStart || isStopping) {
-      if (isStopping) {
-        return (
-          <ActionButton
-            variant="loading"
-            icon={
-              <>
-                <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
-                <CircleStop className="h-4 w-4 text-orange-500" />
-              </>
-            }
-          />
-        )
+    const renderStopAction = () => (
+      <ActionButton
+        onClick={onStopStream}
+        title="Stop generating"
+        icon={<CircleStop className="h-4 w-4 text-orange-500" />}
+        className="hover:bg-orange-100"
+      />
+    )
+
+    const renderStoppingAction = () => (
+      <ActionButton
+        variant="loading"
+        icon={
+          <>
+            <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
+            <CircleStop className="h-4 w-4 text-orange-500" />
+          </>
+        }
+      />
+    )
+
+    if (sendState.primaryAction === 'loading') {
+      if (sendState.showStopAction) {
+        return renderStoppingAction()
       }
-      return (
-        <ActionButton
-          onClick={onStopStream}
-          title="Stop generating"
-          icon={<CircleStop className="h-4 w-4 text-orange-500" />}
-          className="hover:bg-orange-100"
-        />
-      )
-    }
 
-    if (
-      selectedTaskDetail?.status === 'PENDING' &&
-      !isSubtaskStreaming &&
-      selectedTaskDetail?.is_group_chat
-    ) {
-      return (
-        <SendButton onClick={onSendMessage} disabled={isDisabled} isLoading={isLoading} compact />
-      )
-    }
+      if (sendState.showPendingAction) {
+        return <ActionButton disabled variant="loading" icon={<LoadingDots />} />
+      }
 
-    if (selectedTaskDetail?.status === 'PENDING') {
       return <ActionButton disabled variant="loading" icon={<LoadingDots />} />
     }
 
-    if (selectedTaskDetail?.status === 'CANCELLING') {
+    if (sendState.primaryAction === 'stop') {
+      return renderStopAction()
+    }
+
+    if (sendState.primaryAction === 'queue') {
       return (
-        <ActionButton
-          variant="loading"
-          icon={
-            <>
-              <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
-              <CircleStop className="h-4 w-4 text-orange-500" />
-            </>
-          }
-        />
+        <div className="flex items-center gap-2">
+          {renderStopAction()}
+          <SendButton
+            onClick={onSendMessage}
+            disabled={sendState.isPrimaryDisabled}
+            isLoading={isLoading}
+            ariaLabel="Queue message"
+            compact
+          />
+        </div>
       )
     }
 
     return (
-      <SendButton onClick={onSendMessage} disabled={isDisabled} isLoading={isLoading} compact />
+      <SendButton
+        onClick={onSendMessage}
+        disabled={sendState.isPrimaryDisabled}
+        isLoading={isLoading}
+        compact
+      />
     )
   }
 
@@ -365,7 +388,21 @@ export function MobileChatInputControls({
                 />
               )}
 
-              {/* Repository Selector - full row clickable, only show if team requires workspace */}
+              {showGuidanceAction && onSendGuidance && (
+              <Button
+                type="button"
+                variant="ghost"
+                data-testid="send-guidance-button"
+                onClick={onSendGuidance}
+                disabled={!canSendGuidance || !taskInputMessage.trim()}
+                className="flex h-11 w-full items-center justify-start gap-3 px-3 text-sm"
+              >
+                <Hand className="h-4 w-4 text-primary" />
+                <span>{t('guidance.send')}</span>
+              </Button>
+            )}
+
+            {/* Repository Selector - full row clickable, only show if team requires workspace */}
               {showRepositoryAction && (
                 <MobileRepositorySelector
                   selectedRepo={selectedRepo}

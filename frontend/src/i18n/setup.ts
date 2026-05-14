@@ -70,7 +70,7 @@ async function loadTranslations() {
       try {
         // Dynamically import JSON file with error handling
         const translationModule = await loadTranslationModule(lng, ns)
-        resources[lng][ns] = translationModule.default
+        resources[lng][ns] = translationModule.default ?? translationModule
       } catch (error) {
         // If file doesn't exist, use empty object
         console.warn(`Translation file not found: ./locales/${lng}/${ns}.json`, error)

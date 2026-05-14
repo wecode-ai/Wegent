@@ -288,7 +288,8 @@ class TestBatchAddMembers:
         reporter_member = ResourceMember(
             resource_type="KnowledgeBase",
             resource_id=knowledge_base.id,
-            user_id=test_user.id,
+            entity_type="user",
+            entity_id=str(test_user.id),
             role="Reporter",
             status=MemberStatus.APPROVED.value,
             invited_by_user_id=knowledge_base.user_id,
@@ -342,6 +343,96 @@ class TestBatchAddMembers:
             headers={"Authorization": f"Bearer {kb_owner_token}"},
         )
         assert response.status_code == 404
+
+    def test_batch_add_namespace_entity_member(
+        self,
+        test_client: TestClient,
+        kb_owner_token: str,
+        knowledge_base: Kind,
+    ):
+        """Batch add a namespace entity-type member should succeed."""
+        response = test_client.post(
+            f"/api/share/KnowledgeBase/{knowledge_base.id}/members/batch",
+            json={
+                "members": [
+                    {
+                        "user_id": 0,
+                        "role": "Reporter",
+                        "entity_type": "namespace",
+                        "entity_id": "42",
+                    },
+                ]
+            },
+            headers={"Authorization": f"Bearer {kb_owner_token}"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["succeeded"]) == 1
+        assert len(data["failed"]) == 0
+        member = data["succeeded"][0]
+        assert member["entity_type"] == "namespace"
+        assert member["entity_id"] == "42"
+        assert member["role"] == "Reporter"
+
+    def test_batch_add_namespace_to_own_group_fails(
+        self,
+        test_client: TestClient,
+        test_db: Session,
+        kb_owner_token: str,
+        kb_owner: User,
+    ):
+        """Sharing a group-native KB back to its own group should fail."""
+        from app.models.namespace import Namespace
+
+        ns = Namespace(
+            name="test-group",
+            display_name="Test Group",
+            owner_user_id=kb_owner.id,
+            visibility="internal",
+            description="test",
+            level="group",
+            is_active=True,
+        )
+        test_db.add(ns)
+        test_db.commit()
+        test_db.refresh(ns)
+
+        group_kb = Kind(
+            user_id=kb_owner.id,
+            kind="KnowledgeBase",
+            name="group-kb",
+            namespace=ns.name,
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "KnowledgeBase",
+                "metadata": {"name": "group-kb", "namespace": ns.name},
+                "spec": {"description": "Group KB"},
+            },
+            is_active=True,
+        )
+        test_db.add(group_kb)
+        test_db.commit()
+        test_db.refresh(group_kb)
+
+        response = test_client.post(
+            f"/api/share/KnowledgeBase/{group_kb.id}/members/batch",
+            json={
+                "members": [
+                    {
+                        "user_id": 0,
+                        "role": "Reporter",
+                        "entity_type": "namespace",
+                        "entity_id": str(ns.id),
+                    },
+                ]
+            },
+            headers={"Authorization": f"Bearer {kb_owner_token}"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["succeeded"]) == 0
+        assert len(data["failed"]) == 1
+        assert "own group" in data["failed"][0]["error"].lower()
 
 
 @pytest.mark.api

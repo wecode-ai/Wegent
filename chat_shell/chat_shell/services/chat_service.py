@@ -24,6 +24,7 @@ from typing import Any, AsyncIterator
 
 from chat_shell.core.config import settings
 from chat_shell.services.context import ChatContext
+from chat_shell.services.guidance import GuidanceConsumer, create_guidance_queue_client
 from chat_shell.services.storage.session import session_manager
 from chat_shell.services.streaming.core import (
     StreamingConfig,
@@ -208,6 +209,7 @@ class ChatService(ChatInterface):
 
         # Create chat context for resource management
         context = ChatContext(request)
+        guidance_consumer: GuidanceConsumer | None = None
 
         try:
             logger.debug(
@@ -254,6 +256,14 @@ class ChatService(ChatInterface):
                     [t.name for t in ctx_result.extra_tools],
                 )
 
+            guidance_consumer = GuidanceConsumer(
+                task_id=request.task_id,
+                subtask_id=request.subtask_id,
+                queue=create_guidance_queue_client(),
+                emitter=emitter,
+                is_cancelled=core.is_cancelled,
+            )
+
             add_span_event("building_agent_config")
             agent_config = AgentConfig(
                 model_config=request.model_config or {"model": "gpt-4"},
@@ -264,6 +274,7 @@ class ChatService(ChatInterface):
                 enable_clarification=request.enable_clarification,
                 enable_deep_thinking=request.enable_deep_thinking,
                 skills=request.skills,
+                pre_model_hook=guidance_consumer.create_pre_model_hook(),
             )
 
             # Build messages for the agent
@@ -368,6 +379,7 @@ class ChatService(ChatInterface):
                 state.messages_chain = messages_chain
 
             # Finalize if not cancelled
+            await guidance_consumer.expire_pending()
             if not core.is_cancelled():
                 add_span_event("finalizing", {"total_tokens": token_count})
                 await core.finalize()
@@ -379,6 +391,8 @@ class ChatService(ChatInterface):
             logger.exception("[CHAT_SERVICE] Error processing chat: %s", e)
             raise
         finally:
+            if guidance_consumer is not None:
+                await guidance_consumer.expire_pending()
             add_span_event("cleaning_up_context")
             await context.cleanup()
             add_span_event("context_cleaned_up")

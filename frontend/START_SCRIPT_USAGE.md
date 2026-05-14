@@ -115,6 +115,7 @@ The script automatically manages runtime environment variables (not `.env.local`
 ```env
 # Runtime variables (set via environment, can be changed without rebuilding)
 RUNTIME_INTERNAL_API_URL=http://localhost:8000  # Server-side proxy URL
+RUNTIME_PUBLIC_API_URL=http://localhost:8000    # Public API URL for copied curl examples
 RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 # WebSocket connection URL
 ```
 
@@ -124,7 +125,7 @@ The script sets these environment variables at runtime, which means:
 - Configuration can be changed without rebuilding the app
 - Uses Next.js proxy mode for API requests
 
-> **Note**: The frontend uses `RUNTIME_INTERNAL_API_URL` and `RUNTIME_SOCKET_DIRECT_URL` instead of the deprecated `NEXT_PUBLIC_API_URL`. These runtime variables can be changed without rebuilding the application.
+> **Note**: The frontend uses `RUNTIME_INTERNAL_API_URL`, `RUNTIME_PUBLIC_API_URL`, and `RUNTIME_SOCKET_DIRECT_URL` instead of the deprecated `NEXT_PUBLIC_API_URL`. These runtime variables can be changed without rebuilding the application.
 
 ## FAQ
 

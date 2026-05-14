@@ -97,7 +97,8 @@ class GroupMemberReader(IGroupMemberReader):
             db.query(ResourceMember)
             .filter(
                 ResourceMember.resource_type == NAMESPACE_RESOURCE_TYPE,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
                 ResourceMember.status == MemberStatus.APPROVED.value,
             )
             .all()

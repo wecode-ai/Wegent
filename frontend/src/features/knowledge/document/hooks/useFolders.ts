@@ -105,19 +105,16 @@ export function useFolders(options: UseFoldersOptions) {
     [knowledgeBaseId, fetchFolders]
   )
 
-  const move = useCallback(
-    async (documentId: number, folderId: number): Promise<boolean> => {
-      try {
-        await moveDocument(documentId, folderId)
-        return true
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : t('document.folder.moveDocumentFailed')
-        toast({ description: msg, variant: 'destructive' })
-        return false
-      }
-    },
-    []
-  )
+  const move = useCallback(async (documentId: number, folderId: number): Promise<boolean> => {
+    try {
+      await moveDocument(documentId, folderId)
+      return true
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : t('document.folder.moveDocumentFailed')
+      toast({ description: msg, variant: 'destructive' })
+      return false
+    }
+  }, [])
 
   return {
     folders,

@@ -12,7 +12,7 @@ from datetime import datetime
 from enum import Enum
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.models.share_link import ResourceType
 
@@ -137,12 +137,33 @@ class ShareLinkInDB(BaseModel):
 
 
 class ResourceMemberCreate(BaseModel):
-    """Request body for adding a member directly."""
+    """Request body for adding a member directly.
 
-    user_id: int = Field(description="User ID to add as member")
+    Supports both user and entity-type members:
+    - For user members: provide user_id, entity_type defaults to 'user'
+    - For entity members: provide entity_type, entity_id (user_id=0)
+    """
+
+    user_id: int = Field(
+        default=0, description="User ID to add as member (0 for entity members)"
+    )
     role: MemberRole = Field(
         default=MemberRole.Reporter,
         description="Member role (Owner not allowed)",
+    )
+    entity_type: Optional[str] = Field(
+        default=None,
+        description="Entity type: 'user' (default), 'namespace'. "
+        "When set to non-user type, user_id can be 0.",
+    )
+    entity_id: Optional[str] = Field(
+        default=None,
+        description="Entity identifier (required when entity_type is set and not 'user')",
+    )
+    entity_display_name: Optional[str] = Field(
+        default=None,
+        description="Display name for entity-type members (e.g., group name, department name). "
+        "Optional; used as a snapshot when creating the member record.",
     )
 
     @field_validator("role")
@@ -152,6 +173,24 @@ class ResourceMemberCreate(BaseModel):
         if v == MemberRole.Owner:
             raise ValueError("Owner role cannot be assigned via API")
         return v
+
+    @field_validator("entity_type")
+    @classmethod
+    def validate_entity_type(cls, v: Optional[str]) -> Optional[str]:
+        """Normalize entity_type to lowercase."""
+        if v is not None:
+            return v.lower()
+        return v
+
+    @model_validator(mode="after")
+    def validate_member_identity(self) -> "ResourceMemberCreate":
+        """Ensure valid member identity combinations."""
+        entity_type = self.entity_type or "user"
+        if entity_type != "user" and not self.entity_id:
+            raise ValueError("entity_id is required for non-user entity members")
+        if entity_type != "user" and self.user_id != 0:
+            raise ValueError("user_id must be 0 for non-user entity members")
+        return self
 
 
 class BatchResourceMemberCreate(BaseModel):
@@ -186,11 +225,19 @@ class ResourceMemberResponse(BaseModel):
     id: int
     resource_type: str
     resource_id: int
-    user_id: int
-    user_name: Optional[str] = None  # Populated from user lookup
+    user_id: Optional[int] = (
+        None  # Null for entity-type members (namespace, department, etc.)
+    )
+    display_name: Optional[str] = None  # Unified display name for all member types
     user_email: Optional[str] = None  # Populated from user lookup
     role: str = Field(description="Member role: Owner, Maintainer, Developer, Reporter")
     status: str
+    entity_type: Optional[str] = None
+    entity_id: Optional[str] = None
+    source_type: str = Field(
+        default="direct",
+        description="Permission source: 'direct', 'entity_permission', 'share_link', 'group_membership'",
+    )
     invited_by_user_id: int
     invited_by_user_name: Optional[str] = None  # Populated from user lookup
     reviewed_by_user_id: Optional[int] = None
@@ -207,6 +254,8 @@ class FailedMemberResponse(BaseModel):
 
     user_id: int
     error: str
+    entity_type: Optional[str] = None
+    entity_id: Optional[str] = None
 
 
 class BatchResourceMemberResponse(BaseModel):
@@ -229,9 +278,14 @@ class ResourceMemberInDB(BaseModel):
     id: int
     resource_type: str
     resource_id: int
-    user_id: int
+    user_id: Optional[int] = (
+        None  # Null for entity-type members (namespace, department, etc.)
+    )
     role: str = Field(description="Member role: Owner, Maintainer, Developer, Reporter")
     status: str
+    entity_type: Optional[str] = None
+    entity_id: Optional[str] = None
+    entity_display_name: Optional[str] = None
     invited_by_user_id: int
     share_link_id: Optional[int] = None
     reviewed_by_user_id: Optional[int] = None
@@ -398,6 +452,38 @@ class MyKBPermissionResponse(BaseModel):
     pending_request: Optional[PendingRequestInfo] = Field(
         None,
         description="Pending permission request info if exists",
+    )
+
+
+class PermissionSourceInfo(BaseModel):
+    """Schema describing a single permission source."""
+
+    source_type: str = Field(
+        ...,
+        description="Source type: 'direct', 'entity_permission', 'group_membership', 'share_link', 'creator'",
+    )
+    display_name: Optional[str] = Field(
+        None, description="Display name of the source (e.g., group name)"
+    )
+    role: str = Field(..., description="Role granted by this source")
+    entity_type: Optional[str] = Field(
+        None, description="Entity type if source is entity_permission"
+    )
+    entity_id: Optional[str] = Field(
+        None, description="Entity ID if source is entity_permission"
+    )
+
+
+class MyPermissionSourcesResponse(BaseModel):
+    """Schema for current user's permission sources on a knowledge base."""
+
+    has_access: bool = Field(..., description="Whether user has access to the KB")
+    effective_role: Optional[str] = Field(
+        None, description="Highest role across all sources"
+    )
+    is_creator: bool = Field(..., description="Whether user is the KB creator")
+    sources: List[PermissionSourceInfo] = Field(
+        default_factory=list, description="All permission sources"
     )
 
 

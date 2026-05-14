@@ -109,6 +109,14 @@ export interface UseKnowledgeSidebarReturn {
   isDingtalkConfigured: boolean
   isDingtalkLoading: boolean
 
+  // Summary counts from backend
+  summary?: {
+    total_count: number
+    personal_count: number
+    group_count: number
+    organization_count: number
+  }
+
   // Refresh
   refreshAll: () => Promise<void>
 }
@@ -239,18 +247,27 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
       ...allGroupedData.organization.knowledge_bases,
     ]
 
-    // Remove duplicates by ID
-    const seen = new Set<number>()
+    // Remove duplicates by (id, group_id) so the same KB can appear in different groups
+    const seen = new Set<string>()
     return all.filter(kb => {
-      if (seen.has(kb.id)) return false
-      seen.add(kb.id)
+      const key = `${kb.id}-${kb.group_id}`
+      if (seen.has(key)) return false
+      seen.add(key)
       return true
     })
   }, [allGroupedData])
 
   // Build all knowledge bases list for search (without group info)
   const allKnowledgeBases = useMemo((): KnowledgeBase[] => {
-    return allKnowledgeBasesWithGroupInfo.map(toKnowledgeBase)
+    // Dedupe by id for search/recent items
+    const seen = new Set<number>()
+    return allKnowledgeBasesWithGroupInfo
+      .filter(kb => {
+        if (seen.has(kb.id)) return false
+        seen.add(kb.id)
+        return true
+      })
+      .map(toKnowledgeBase)
   }, [allKnowledgeBasesWithGroupInfo])
 
   // Build a map from KB ID to group info for quick lookup
@@ -269,6 +286,15 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
   // Get group info for a KB (accepts both KnowledgeBase and KnowledgeBaseWithGroupInfo)
   const getKbGroupInfo = useCallback(
     (kb: KbDataItem): KbGroupInfo => {
+      // If kb has source_group (entity-authorized shared KB), show the source group
+      if ('source_group' in kb && kb.source_group) {
+        return {
+          groupId: 'shared',
+          groupName: kb.source_group,
+          groupType: 'personal-shared',
+        }
+      }
+
       // If kb already has group info (KnowledgeBaseWithGroupInfo), use it directly
       if ('group_id' in kb && 'group_name' in kb && 'group_type' in kb) {
         return {
@@ -307,6 +333,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
 
     // Personal group
     const personalKbCount =
+      allGroupedData.summary?.personal_count ??
       allGroupedData.personal.created_by_me.length + allGroupedData.personal.shared_with_me.length
     result.push({
       id: 'personal',
@@ -333,7 +360,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
       type: 'organization',
       name: allGroupedData.organization.namespace || 'organization',
       displayName: allGroupedData.organization.display_name || '公司',
-      kbCount: allGroupedData.organization.kb_count,
+      kbCount: allGroupedData.summary?.organization_count ?? allGroupedData.organization.kb_count,
     })
 
     return result
@@ -553,6 +580,9 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     dingtalkDocCount,
     isDingtalkConfigured,
     isDingtalkLoading,
+
+    // Summary from backend
+    summary: allGroupedData?.summary,
 
     // Refresh
     refreshAll,

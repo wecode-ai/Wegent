@@ -53,6 +53,8 @@ interface KnowledgeBaseFormProps {
   retrievalGroupName?: string
   retrievalReadOnly?: boolean
   retrievalPartialReadOnly?: boolean
+  /** Content to render before the auto-summary section */
+  beforeSummarySection?: React.ReactNode
   /** Whether to show guided questions section (only for notebook type) */
   showGuidedQuestions?: boolean
   /** Guided questions list (max 3) */
@@ -87,6 +89,7 @@ export function KnowledgeBaseForm({
   retrievalGroupName,
   retrievalReadOnly,
   retrievalPartialReadOnly,
+  beforeSummarySection,
   showGuidedQuestions = false,
   guidedQuestions = [],
   onGuidedQuestionsChange,
@@ -222,6 +225,8 @@ export function KnowledgeBaseForm({
           data-testid="kb-description-input"
         />
       </div>
+
+      {beforeSummarySection}
 
       <div className="space-y-3 border-b border-border pb-4">
         <div className="flex items-center justify-between">

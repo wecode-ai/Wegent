@@ -82,6 +82,13 @@ export interface NavigationSectionProps {
   dingtalkDocCount: number
   /** Whether DingTalk MCP is configured */
   isDingtalkConfigured: boolean
+  /** Summary counts from backend */
+  summary?: {
+    total_count: number
+    personal_count: number
+    group_count: number
+    organization_count: number
+  }
 }
 
 /**
@@ -333,6 +340,7 @@ export function NavigationSection({
   totalKbCount,
   dingtalkDocCount,
   isDingtalkConfigured: _isDingtalkConfigured,
+  summary,
 }: NavigationSectionProps) {
   const { t } = useTranslation('knowledge')
   const router = useRouter()
@@ -375,7 +383,8 @@ export function NavigationSection({
   }, [])
 
   // Calculate total count for team groups
-  const teamGroupsTotalCount = teamGroups.reduce((sum, g) => sum + g.kbCount, 0)
+  const teamGroupsTotalCount =
+    summary?.group_count ?? teamGroups.reduce((sum, g) => sum + g.kbCount, 0)
 
   // Handle settings click for groups
   const handleGroupsSettingsClick = useCallback(() => {

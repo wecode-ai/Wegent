@@ -181,6 +181,7 @@ export function KnowledgeDocumentPageMobile({
           guided_questions: data.guided_questions,
           max_calls_per_conversation: data.max_calls_per_conversation,
           exempt_calls_before_check: data.exempt_calls_before_check,
+          members: data.members,
         })
 
         // Save model preference when summary is enabled and model is selected

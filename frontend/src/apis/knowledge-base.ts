@@ -58,6 +58,7 @@ export const knowledgeBaseApi = {
 
   /**
    * Get document detail including content and summary
+   * Supports pagination with offset/limit for large documents
    */
   getDocumentDetail: async (
     kbId: number,
@@ -65,6 +66,8 @@ export const knowledgeBaseApi = {
     options?: {
       includeContent?: boolean
       includeSummary?: boolean
+      offset?: number
+      limit?: number
     }
   ): Promise<DocumentDetailResponse> => {
     const queryParams = new URLSearchParams()
@@ -73,6 +76,12 @@ export const knowledgeBaseApi = {
     }
     if (options?.includeSummary !== undefined) {
       queryParams.append('include_summary', String(options.includeSummary))
+    }
+    if (options?.offset !== undefined) {
+      queryParams.append('offset', String(options.offset))
+    }
+    if (options?.limit !== undefined) {
+      queryParams.append('limit', String(options.limit))
     }
 
     const queryString = queryParams.toString()

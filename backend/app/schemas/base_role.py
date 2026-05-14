@@ -76,6 +76,35 @@ def has_permission(user_role: str | BaseRole, required_role: str | BaseRole) -> 
     return user_level <= required_level
 
 
+def get_highest_role(roles: list[str | BaseRole]) -> str | None:
+    """
+    Resolve the highest (most privileged) role from a list of roles.
+
+    When a user has multiple permission sources, the highest role wins.
+    This matches the DingTalk Docs permission model behavior.
+
+    Args:
+        roles: List of role values (strings or BaseRole enums)
+
+    Returns:
+        The highest role string value, or None if the list is empty
+    """
+    if not roles:
+        return None
+
+    best_role = None
+    best_level = 999
+
+    for role in roles:
+        role_str = role.value if isinstance(role, BaseRole) else role
+        level = ROLE_HIERARCHY.get(role_str, 999)
+        if level < best_level:  # Lower number = higher privilege
+            best_level = level
+            best_role = role_str
+
+    return best_role
+
+
 # Backward compatibility aliases
 # These allow existing code to continue using their preferred names
 GroupRole = BaseRole

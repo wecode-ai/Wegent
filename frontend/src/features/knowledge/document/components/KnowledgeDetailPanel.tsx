@@ -261,7 +261,7 @@ export function KnowledgeDetailPanel({
                 </div>
                 {headerActions}
               </div>
-              <PermissionManagementTab kbId={selectedKb.id} />
+              <PermissionManagementTab kbId={selectedKb.id} kbNamespace={selectedKb.namespace} />
             </>
           )}
         </div>

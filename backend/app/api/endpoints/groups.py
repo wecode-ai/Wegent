@@ -69,6 +69,37 @@ def list_groups(
     return GroupListResponse(total=total, items=groups)
 
 
+@router.get("/search", response_model=GroupListResponse)
+def search_groups_endpoint(
+    q: str = Query(
+        "",
+        min_length=0,
+        max_length=100,
+        description="Search query for group name or display_name",
+    ),
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(20, ge=1, le=100, description="Items per page"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Search groups by name or display_name.
+    Only returns groups with level='group' (filters out organization-level groups).
+    Results are limited to groups where the current user is a member.
+    Returns paginated results.
+    """
+    skip = (page - 1) * limit
+    groups, total = group_service.search_groups(
+        db=db,
+        q=q,
+        skip=skip,
+        limit=limit,
+        user_id=current_user.id,
+        user_role=current_user.role,
+    )
+    return GroupListResponse(total=total, items=groups)
+
+
 @router.post("", response_model=GroupResponse, status_code=status.HTTP_201_CREATED)
 def create_group_endpoint(
     group_create: GroupCreate,

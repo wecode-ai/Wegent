@@ -29,12 +29,13 @@ def _get_candidate_task_user_ids(db: Session, team: Kind) -> Optional[Set[int]]:
     """Return candidate task owners for a team, or None when narrowing is unsafe."""
     if team.namespace == "default":
         shared_user_ids = {
-            row[0]
+            int(row[0])
             for row in (
-                db.query(ResourceMember.user_id)
+                db.query(ResourceMember.entity_id)
                 .filter(
                     ResourceMember.resource_type == ResourceType.TEAM,
                     ResourceMember.resource_id == team.id,
+                    ResourceMember.entity_type == "user",
                     ResourceMember.status == MemberStatus.APPROVED,
                 )
                 .all()

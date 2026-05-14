@@ -399,18 +399,26 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                     name: ref.model_dump() for name, ref in preload_skill_refs.items()
                 }
 
+        ghost_name = self._find_available_name(
+            db,
+            base_name=f"{obj_in.name}-ghost",
+            kind="Ghost",
+            user_id=user_id,
+            namespace=namespace,
+        )
+
         ghost_json = {
             "kind": "Ghost",
             "spec": ghost_spec,
             "status": {"state": "Available"},
-            "metadata": {"name": f"{obj_in.name}-ghost", "namespace": namespace},
+            "metadata": {"name": ghost_name, "namespace": namespace},
             "apiVersion": "agent.wecode.io/v1",
         }
 
         ghost = Kind(
             user_id=user_id,
             kind="Ghost",
-            name=f"{obj_in.name}-ghost",
+            name=ghost_name,
             namespace=namespace,
             json=ghost_json,
             is_active=True,
@@ -499,7 +507,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         bot_json = {
             "kind": "Bot",
             "spec": {
-                "ghostRef": {"name": f"{obj_in.name}-ghost", "namespace": namespace},
+                "ghostRef": {"name": ghost_name, "namespace": namespace},
                 "shellRef": {"name": shell_ref_name, "namespace": shell_ref_namespace},
                 "modelRef": {"name": model_ref_name, "namespace": model_ref_namespace},
             },
@@ -2058,21 +2066,22 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
         return resolved
 
-    def find_available_bot_name(
+    def _find_available_name(
         self,
         db: Session,
         *,
         base_name: str,
+        kind: str,
         user_id: int,
         namespace: str = "default",
     ) -> str:
-        """Find an available bot name by appending (2), (3), etc. if needed."""
+        """Find an available name by appending (2), (3), etc. if needed."""
         is_group_namespace = namespace != "default"
         candidate = base_name
         counter = 2
         while True:
             query = db.query(Kind).filter(
-                Kind.kind == "Bot",
+                Kind.kind == kind,
                 Kind.name == candidate,
                 Kind.namespace == namespace,
                 Kind.is_active == True,

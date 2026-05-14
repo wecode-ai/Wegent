@@ -147,6 +147,7 @@ services:
       - NODE_ENV=${NODE_ENV:-production}
       # API Configuration
       - RUNTIME_INTERNAL_API_URL=${RUNTIME_INTERNAL_API_URL:-http://backend:8000}
+      - RUNTIME_PUBLIC_API_URL=${RUNTIME_PUBLIC_API_URL:-${WEGENT_SOCKET_URL:-http://localhost:8000}}
       - RUNTIME_SOCKET_DIRECT_URL=${WEGENT_SOCKET_URL:-http://localhost:8000}
       # Feature Flags
       # - RUNTIME_ENABLE_CHAT_CONTEXT=false

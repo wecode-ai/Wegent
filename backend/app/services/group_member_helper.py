@@ -61,7 +61,8 @@ def get_group_member(
         .filter(
             ResourceMember.resource_type == NAMESPACE_RESOURCE_TYPE,
             ResourceMember.resource_id == namespace_id,
-            ResourceMember.user_id == user_id,
+            ResourceMember.entity_type == "user",
+            ResourceMember.entity_id == str(user_id),
             ResourceMember.status == MemberStatus.APPROVED.value,
         )
         .first()
@@ -174,7 +175,8 @@ def get_user_groups_with_roles(db: Session, user_id: int) -> list[tuple[str, str
         db.query(ResourceMember)
         .filter(
             ResourceMember.resource_type == NAMESPACE_RESOURCE_TYPE,
-            ResourceMember.user_id == user_id,
+            ResourceMember.entity_type == "user",
+            ResourceMember.entity_id == str(user_id),
             ResourceMember.status == MemberStatus.APPROVED.value,
         )
         .all()
@@ -226,7 +228,8 @@ def create_group_member(
     member = ResourceMember(
         resource_type=NAMESPACE_RESOURCE_TYPE,
         resource_id=namespace_id,
-        user_id=user_id,
+        entity_type="user",
+        entity_id=str(user_id),
         role=role,
         status=MemberStatus.APPROVED.value,
         invited_by_user_id=invited_by_user_id,
