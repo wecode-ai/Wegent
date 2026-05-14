@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core.security import get_current_user
 from app.models.user import User
+from wecode.service.dept_visibility import filter_hidden_for_user
 from wecode.service.erp_client import erp_client
 
 logger = logging.getLogger(__name__)
@@ -40,4 +41,5 @@ def search_departments(
         List of matching departments with id, name, label
     """
     results = erp_client.search_departments(q)
+    results = filter_hidden_for_user(current_user.user_name, results)
     return {"departments": results}

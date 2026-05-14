@@ -47,6 +47,7 @@ from wecode.api.apikey import router as apikey_router
 from wecode.api.auth import router as auth_router
 from wecode.api.cloud_devices import router as cloud_devices_router
 from wecode.api.department_search import router as department_search_router
+from wecode.api.dept_visibility_admin import router as dept_visibility_admin_router
 from wecode.api.device_monitor_patch import (
     apply_patch_to_api_router as _apply_device_monitor_patch,
 )
@@ -62,6 +63,11 @@ api_router.include_router(
     department_search_router,
     prefix="/internal/departments",
     tags=["internal"],
+)
+api_router.include_router(
+    dept_visibility_admin_router,
+    prefix="/internal/admin/dept-visibility",
+    tags=["internal-admin"],
 )
 api_router.include_router(
     cloud_devices_router, prefix="/cloud-devices", tags=["cloud-devices"]
