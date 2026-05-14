@@ -178,7 +178,7 @@ describe('TeamEditDialog display name', () => {
     })
   })
 
-  it('restricts the executor to ClaudeCode when code and task modes are selected', async () => {
+  it('restricts the executor to ClaudeCode when code or task mode is selected', async () => {
     const team = makeTeam()
     team.bind_mode = ['code']
 
@@ -195,13 +195,15 @@ describe('TeamEditDialog display name', () => {
       />
     )
 
+    // 'code' alone is enough to restrict to ClaudeCode
     await screen.findByRole('button', { name: 'Task' })
     expect(mockTeamModeEditor).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        allowedAgentsForMode: ['ClaudeCode', 'Agno'],
+        allowedAgentsForMode: ['ClaudeCode'],
       })
     )
 
+    // Adding 'task' keeps the ClaudeCode restriction
     fireEvent.click(screen.getByRole('button', { name: 'Task' }))
 
     await waitFor(() => {

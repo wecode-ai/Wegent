@@ -9,7 +9,7 @@ export type TeamExecutorAgent = 'ClaudeCode' | 'Agno' | 'Dify'
 const CLAUDE_CODE_AGENT: TeamExecutorAgent = 'ClaudeCode'
 
 export function requiresClaudeCodeForBindMode(bindMode: TaskType[]): boolean {
-  return bindMode.includes('code') && bindMode.includes('task')
+  return bindMode.includes('code') || bindMode.includes('task')
 }
 
 export function getAllowedAgentsForBindMode(
