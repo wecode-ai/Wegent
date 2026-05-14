@@ -191,6 +191,52 @@ async def _patched_oidc_callback(
                 # Do not interrupt login flow, log error
                 logger.error(f"OIDC git_info initialization failed: {str(e)}")
 
+        # Sync ERP profile from OpenSearch API using username (email prefix)
+        try:
+            from datetime import datetime
+
+            from wecode.models.erp_user import WecodeErpUser
+            from wecode.service.erp_client import erp_client
+
+            erp_employee = erp_client.search_employee(user_name)
+            if erp_employee:
+                db_profile = (
+                    db.query(WecodeErpUser)
+                    .filter(WecodeErpUser.user_id == user.id)
+                    .first()
+                )
+                if db_profile:
+                    if erp_employee.get("ssn"):
+                        db_profile.employee_id = erp_employee["ssn"]
+                    if erp_employee.get("department"):
+                        db_profile.department_name = erp_employee["department"]
+                    if erp_employee.get("name"):
+                        db_profile.erp_name = erp_employee["name"]
+                    if erp_employee.get("email"):
+                        db_profile.email = erp_employee["email"]
+                    db_profile.last_synced_at = datetime.utcnow()
+                else:
+                    db_profile = WecodeErpUser(
+                        user_id=user.id,
+                        employee_id=erp_employee.get("ssn"),
+                        department_name=erp_employee.get("department"),
+                        erp_name=erp_employee.get("name"),
+                        email=erp_employee.get("email"),
+                        last_synced_at=datetime.utcnow(),
+                    )
+                    db.add(db_profile)
+                db.commit()
+                logger.info(
+                    f"Synced ERP profile for OIDC user {user.id}: "
+                    f"emp={erp_employee.get('ssn')}, dept={erp_employee.get('department')}"
+                )
+            else:
+                logger.info(
+                    f"No ERP employee found for OIDC user {user.id} with username={user_name}"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to sync ERP profile for OIDC user {user.id}: {e}")
+
         jwt_token = create_access_token(
             data={"sub": user.user_name, "user_id": user.id}
         )

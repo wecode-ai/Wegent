@@ -1,0 +1,14 @@
+{
+  "document": {
+    "permission": {
+      "orgDepartment": "Department",
+      "searchDepartmentPlaceholder": "Search departments...",
+      "supervisor": "Supervisor",
+      "members": " members",
+      "addDepartment": "Add Department Permission",
+      "selectDepartment": "Select Department",
+      "selectDepartmentRequired": "Please select a department",
+      "addDepartmentButton": "Add Department"
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "document": {
+    "permission": {
+      "orgDepartment": "部门",
+      "searchDepartmentPlaceholder": "搜索部门...",
+      "supervisor": "负责人",
+      "members": "人",
+      "addDepartment": "添加部门权限",
+      "selectDepartment": "选择部门",
+      "selectDepartmentRequired": "请选择部门",
+      "addDepartmentButton": "添加部门"
+    }
+  }
+}

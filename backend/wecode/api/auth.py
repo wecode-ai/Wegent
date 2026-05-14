@@ -6,6 +6,7 @@ import json
 import logging
 import uuid
 import xml.etree.ElementTree as ET
+from datetime import datetime
 from urllib.parse import quote
 
 import httpx
@@ -22,6 +23,7 @@ from app.schemas.user import LoginResponse, Token, UserUpdate
 from app.services.k_batch import apply_default_resources_sync
 from app.services.user import user_service
 from wecode.config.aidesk_config import aidesk_config
+from wecode.models.erp_user import WecodeErpUser
 from wecode.service.aidesk_auth_service import aidesk_auth_service
 from wecode.service.get_user_gitinfo import get_user_gitinfo
 
@@ -179,6 +181,46 @@ async def cas_login(
         except Exception as e:
             logger.error(f"Failed to get git token: {str(e)}")
             # Continue login flow, don't interrupt
+
+        # Write ERP profile directly from CAS XML for org_department resolution
+        try:
+            employee_id = info_node.findtext("username")
+            department_name = info_node.findtext("organization")
+            erp_name = info_node.findtext("erpname")
+            erp_email = info_node.findtext("fullemail")
+
+            if employee_id:
+                db_profile = (
+                    db.query(WecodeErpUser)
+                    .filter(WecodeErpUser.user_id == user.id)
+                    .first()
+                )
+                if db_profile:
+                    db_profile.employee_id = employee_id
+                    if department_name:
+                        db_profile.department_name = department_name
+                    if erp_name:
+                        db_profile.erp_name = erp_name
+                    if erp_email:
+                        db_profile.email = erp_email
+                    db_profile.last_synced_at = datetime.utcnow()
+                else:
+                    db_profile = WecodeErpUser(
+                        user_id=user.id,
+                        employee_id=employee_id,
+                        department_name=department_name,
+                        erp_name=erp_name,
+                        email=erp_email,
+                        last_synced_at=datetime.utcnow(),
+                    )
+                    db.add(db_profile)
+                db.commit()
+                logger.info(
+                    f"Updated ERP profile for CAS user {user.id}: "
+                    f"emp={employee_id}, dept={department_name}"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to write ERP profile for CAS user {user.id}: {e}")
 
         # Create access token
         access_token = create_access_token(data={"sub": user.user_name})
