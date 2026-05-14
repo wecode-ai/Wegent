@@ -48,6 +48,11 @@ export function VncViewer({ deviceId, ownerUserId, className = '' }: VncViewerPr
       // Use require-style import to handle CommonJS/ESM interop
       const RFB = await loadRFB()
 
+      // Re-check container after async load in case component unmounted
+      if (!containerRef.current) {
+        return
+      }
+
       const token = getToken()
       if (!token) {
         setStatus('error')
