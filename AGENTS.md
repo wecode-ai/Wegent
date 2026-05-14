@@ -571,6 +571,7 @@ t('actions.save')             // Ambiguous - which namespace?
 - Backend encrypts Git tokens and API keys (AES-256-CBC)
 - OIDC support for enterprise SSO
 - Role-based access control for admin operations
+- Entity-based permission extension for internal org integration: [`docs/en/developer-guide/entity-permission-extension.md`](docs/en/developer-guide/entity-permission-extension.md)
 
 ---
 

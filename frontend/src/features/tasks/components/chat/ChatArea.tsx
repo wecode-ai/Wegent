@@ -697,7 +697,7 @@ function ChatAreaContent({
     return (
       !disabledReason &&
       !chatState.isLoading &&
-      !streamHandlers.isStreaming &&
+      (!streamHandlers.isStreaming || streamHandlers.canQueueMessage) &&
       !isModelSelectionRequired &&
       chatState.isAttachmentReadyToSend
     )
@@ -705,6 +705,7 @@ function ChatAreaContent({
     disabledReason,
     chatState.isLoading,
     streamHandlers.isStreaming,
+    streamHandlers.canQueueMessage,
     isModelSelectionRequired,
     chatState.isAttachmentReadyToSend,
   ])
@@ -1152,6 +1153,9 @@ function ChatAreaContent({
     onDragOver: handleDragOver,
     onDrop: handleDrop,
     canSubmit,
+    canQueueMessage: streamHandlers.canQueueMessage,
+    queuedMessages: streamHandlers.queuedMessages,
+    onCancelQueuedMessage: streamHandlers.cancelQueuedMessage,
     handleSendMessage: async (overrideMessage?: string) => {
       // Format message with quote if present, then clear quote
       const baseMessage = overrideMessage?.trim() || chatState.taskInputMessage.trim()

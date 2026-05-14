@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useRef, useState, useCallback } from 'react'
-import { Upload, Sparkles } from 'lucide-react'
+import { Upload, Sparkles, X } from 'lucide-react'
 import ChatInput from './ChatInput'
 import InputBadgeDisplay from './InputBadgeDisplay'
 import ExternalApiParamsInput from '../params/ExternalApiParamsInput'
@@ -17,6 +17,13 @@ import { ConnectionStatusBanner } from './ConnectionStatusBanner'
 import type { Team, ChatTipItem, TaskType } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { SkillSelectorPopoverRef } from '../selector/SkillSelectorPopover'
+
+export interface QueuedInputMessage {
+  id: string
+  displayMessage: string
+  status: 'queued' | 'sending' | 'failed'
+  error?: string
+}
 
 export interface ChatInputCardProps extends Omit<
   ChatInputControlsProps,
@@ -65,6 +72,9 @@ export interface ChatInputCardProps extends Omit<
 
   // Submit
   canSubmit: boolean
+  canQueueMessage?: boolean
+  queuedMessages?: QueuedInputMessage[]
+  onCancelQueuedMessage?: (id: string) => void
   handleSendMessage: (message?: string) => Promise<void>
 
   // Ref for container width measurement
@@ -119,6 +129,9 @@ export function ChatInputCard({
   onDragOver,
   onDrop,
   canSubmit,
+  canQueueMessage = false,
+  queuedMessages = [],
+  onCancelQueuedMessage,
   handleSendMessage,
   onPasteFile,
   inputControlsRef,
@@ -155,6 +168,7 @@ export function ChatInputCard({
   onAttachmentRemove,
   isLoading,
   isStreaming,
+  isAwaitingResponseStart,
   isStopping,
   hasMessages,
   shouldCollapseSelectors,
@@ -212,6 +226,12 @@ export function ChatInputCard({
     !taskInputMessage.trim() &&
     selectedContexts.some(context => context.type === 'queue_message')
 
+  const getQueuedMessageStatusLabel = (status: QueuedInputMessage['status']) => {
+    if (status === 'sending') return t('messages.status_sending')
+    if (status === 'failed') return t('messages.queue_failed')
+    return t('messages.status_queued')
+  }
+
   // Get skill button element for fly animation
   const getSkillButtonElement = () => {
     return skillSelectorRef.current?.getButtonElement() ?? null
@@ -237,8 +257,55 @@ export function ChatInputCard({
         </div>
       )}
 
+      {queuedMessages.length > 0 && !shouldHideChatInput && (
+        <div className="mx-auto mb-9 w-full max-w-[820px] px-1">
+          <div
+            data-testid="queued-message-list"
+            className="space-y-2 rounded-xl border border-border bg-surface/90 px-3 py-2 shadow-sm"
+          >
+            {queuedMessages.map(message => (
+              <div
+                key={message.id}
+                data-testid="queued-message-item"
+                className="flex min-w-0 items-start gap-2"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="mb-1 flex items-center gap-2">
+                    <span
+                      className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs ${
+                        message.status === 'failed'
+                          ? 'bg-destructive/10 text-destructive'
+                          : 'bg-primary/10 text-primary'
+                      }`}
+                    >
+                      {getQueuedMessageStatusLabel(message.status)}
+                    </span>
+                  </div>
+                  <p className="line-clamp-2 whitespace-pre-wrap break-words text-sm text-text-secondary">
+                    {message.displayMessage}
+                  </p>
+                </div>
+                {message.status !== 'sending' && onCancelQueuedMessage && (
+                  <button
+                    type="button"
+                    data-testid="cancel-queued-message-button"
+                    aria-label={t('messages.cancel_queued')}
+                    title={t('messages.cancel_queued')}
+                    onClick={() => onCancelQueuedMessage(message.id)}
+                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-base hover:text-text-primary md:h-8 md:w-8"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Chat Input Card */}
       <div
+        data-testid="chat-input-card"
         className={`relative w-full max-w-[820px] mx-auto rounded-3xl border bg-base shadow-card-hover transition-colors flex flex-col justify-start ${isDragging ? 'border-primary ring-2 ring-primary/20' : 'border-primary/40'}`}
         onDragEnter={onDragEnter}
         onDragLeave={onDragLeave}
@@ -265,7 +332,9 @@ export function ChatInputCard({
               <Upload className="h-8 w-8 text-primary" />
             </div>
             <p className="text-lg font-medium text-primary">释放以上传文件</p>
-            <p className="text-sm text-text-muted mt-1">支持 PDF, Word, XMind, TXT, Markdown 等格式</p>
+            <p className="text-sm text-text-muted mt-1">
+              支持 PDF, Word, XMind, TXT, Markdown 等格式
+            </p>
           </div>
         )}
 
@@ -382,6 +451,7 @@ export function ChatInputCard({
             onAttachmentRemove={onAttachmentRemove}
             isLoading={isLoading}
             isStreaming={isStreaming}
+            isAwaitingResponseStart={isAwaitingResponseStart}
             isStopping={isStopping}
             hasMessages={hasMessages}
             shouldCollapseSelectors={shouldCollapseSelectors}
@@ -391,6 +461,7 @@ export function ChatInputCard({
             isAttachmentReadyToSend={isAttachmentReadyToSend}
             taskInputMessage={taskInputMessage}
             isSubtaskStreaming={isSubtaskStreaming}
+            canQueueMessage={canQueueMessage}
             onStopStream={onStopStream}
             onSendMessage={onSendMessage}
             hasNoTeams={hasNoTeams}

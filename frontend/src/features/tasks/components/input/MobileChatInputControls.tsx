@@ -35,6 +35,7 @@ import {
 } from '../../service/messageService'
 import { supportsAttachments } from '../../service/attachmentService'
 import SkillSelectorPopover from '../selector/SkillSelectorPopover'
+import { getChatSendState } from './chatSendState'
 
 export interface MobileChatInputControlsProps {
   taskType?: TaskType
@@ -91,6 +92,7 @@ export interface MobileChatInputControlsProps {
   isAttachmentReadyToSend: boolean
   taskInputMessage: string
   isSubtaskStreaming: boolean
+  canQueueMessage?: boolean
 
   // Actions
   onStopStream: () => void
@@ -153,6 +155,7 @@ export function MobileChatInputControls({
   isAttachmentReadyToSend,
   taskInputMessage,
   isSubtaskStreaming,
+  canQueueMessage = false,
   onStopStream,
   onSendMessage,
   hasNoTeams = false,
@@ -195,68 +198,81 @@ export function MobileChatInputControls({
 
   // Render send button based on state
   const renderSendButton = () => {
-    const isDisabled =
-      isLoading ||
-      isStreaming ||
-      isModelSelectionRequired ||
-      !isAttachmentReadyToSend ||
-      hasNoTeams ||
-      (shouldHideChatInput ? false : !taskInputMessage.trim())
+    const sendState = getChatSendState({
+      isLoading,
+      isStreaming,
+      isAwaitingResponseStart,
+      isStopping,
+      isModelSelectionRequired,
+      isAttachmentReadyToSend,
+      hasNoTeams,
+      shouldHideChatInput,
+      taskInputMessage,
+      selectedTaskStatus: selectedTaskDetail?.status,
+      isSubtaskStreaming,
+      isGroupChat: selectedTaskDetail?.is_group_chat,
+      canQueueMessage,
+    })
 
-    if (isStreaming || isAwaitingResponseStart || isStopping) {
-      if (isStopping) {
-        return (
-          <ActionButton
-            variant="loading"
-            icon={
-              <>
-                <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
-                <CircleStop className="h-4 w-4 text-orange-500" />
-              </>
-            }
-          />
-        )
+    const renderStopAction = () => (
+      <ActionButton
+        onClick={onStopStream}
+        title="Stop generating"
+        icon={<CircleStop className="h-4 w-4 text-orange-500" />}
+        className="hover:bg-orange-100"
+      />
+    )
+
+    const renderStoppingAction = () => (
+      <ActionButton
+        variant="loading"
+        icon={
+          <>
+            <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
+            <CircleStop className="h-4 w-4 text-orange-500" />
+          </>
+        }
+      />
+    )
+
+    if (sendState.primaryAction === 'loading') {
+      if (sendState.showStopAction) {
+        return renderStoppingAction()
       }
-      return (
-        <ActionButton
-          onClick={onStopStream}
-          title="Stop generating"
-          icon={<CircleStop className="h-4 w-4 text-orange-500" />}
-          className="hover:bg-orange-100"
-        />
-      )
-    }
 
-    if (
-      selectedTaskDetail?.status === 'PENDING' &&
-      !isSubtaskStreaming &&
-      selectedTaskDetail?.is_group_chat
-    ) {
-      return (
-        <SendButton onClick={onSendMessage} disabled={isDisabled} isLoading={isLoading} compact />
-      )
-    }
+      if (sendState.showPendingAction) {
+        return <ActionButton disabled variant="loading" icon={<LoadingDots />} />
+      }
 
-    if (selectedTaskDetail?.status === 'PENDING') {
       return <ActionButton disabled variant="loading" icon={<LoadingDots />} />
     }
 
-    if (selectedTaskDetail?.status === 'CANCELLING') {
+    if (sendState.primaryAction === 'stop') {
+      return renderStopAction()
+    }
+
+    if (sendState.primaryAction === 'queue') {
       return (
-        <ActionButton
-          variant="loading"
-          icon={
-            <>
-              <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
-              <CircleStop className="h-4 w-4 text-orange-500" />
-            </>
-          }
-        />
+        <div className="flex items-center gap-2">
+          {renderStopAction()}
+          <SendButton
+            onClick={onSendMessage}
+            disabled={sendState.isPrimaryDisabled}
+            isLoading={isLoading}
+            ariaLabel="Queue message"
+            compact
+          />
+        </div>
       )
     }
 
     return (
-      <SendButton onClick={onSendMessage} disabled={isDisabled} isLoading={isLoading} compact />
+      <SendButton
+        onClick={onSendMessage}
+        disabled={sendState.isPrimaryDisabled}
+        isLoading={isLoading}
+        compact
+      />
     )
   }
 
