@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 import json
+import unittest.mock as mock
 from datetime import datetime
+from typing import Tuple
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -44,7 +46,7 @@ def _make_mcp_result(data: object) -> MagicMock:
 # ---------------------------------------------------------------------------
 
 
-def _build_mcp_http_patches(mock_session: AsyncMock):
+def _build_mcp_http_patches(mock_session: AsyncMock) -> Tuple[mock._patch, mock._patch]:
     """Return a context that patches the MCP transport and session for _list_wiki_spaces."""
     import contextlib
 
@@ -107,16 +109,13 @@ class TestListWikiSpaces:
                         create=True,
                     ),
                 ):
-                    pass  # patches applied below
+                    result = await DingTalkWikiSpaceService._list_wiki_spaces(
+                        "https://ws.mcp.example.com"
+                    )
 
-        # Simpler approach: directly test via _parse_list_nodes_result
-        result, token = DingTalkDocService._parse_list_nodes_result(
-            _make_mcp_result({"items": kb_data})
-        )
         assert len(result) == 2
         assert result[0]["workspaceId"] == "WS001"
         assert result[1]["name"] == "KB Two"
-        assert token is None
 
     @pytest.mark.asyncio
     async def test_returns_knowledge_bases_from_wikiSpaces_key(self) -> None:

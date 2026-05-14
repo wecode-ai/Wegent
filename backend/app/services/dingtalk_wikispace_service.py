@@ -32,18 +32,24 @@ from sqlalchemy.orm import Session
 from app.models.dingtalk_doc import DingtalkSyncedNode
 from app.models.user import User
 from app.services.dingtalk_doc_service import (
+    MAX_NODES_PER_SYNC,
     MAX_RECURSION_DEPTH,
     MCP_TOOL_LIST_NODES,
     DingTalkDocService,
 )
 from app.services.user_mcp_service import UserMCPService
+from shared.telemetry.decorators import (
+    add_span_event,
+    trace_async,
+    trace_sync,
+)
 
 logger = logging.getLogger(__name__)
 
 # Source identifier for wikispace nodes
 WIKISPACE_SOURCE = "wikispace"
 
-# Tool name on the 知识库 MCP for listing knowledge bases
+# Tool name on the knowledge base MCP for listing knowledge bases
 MCP_TOOL_LIST_WIKI_SPACES = "list_wikiSpaces"
 
 # wiki space type value for org-level KBs (as opposed to "myWikiSpace")
@@ -54,6 +60,7 @@ class DingTalkWikiSpaceService:
     """Service for syncing and querying DingTalk knowledge base (wikispace) nodes."""
 
     @staticmethod
+    @trace_sync()
     def get_user_wikispace_mcp_url(user: User, db: Session) -> str | None:
         """Read and decrypt the user's DingTalk WikiSpace MCP URL from preferences."""
         config = UserMCPService.get_provider_service_config(
@@ -67,11 +74,13 @@ class DingTalkWikiSpaceService:
         return url if url else None
 
     @staticmethod
+    @trace_sync()
     def is_configured(user: User, db: Session) -> bool:
         """Check if the user has DingTalk WikiSpace MCP configured and enabled."""
         return DingTalkWikiSpaceService.get_user_wikispace_mcp_url(user, db) is not None
 
     @staticmethod
+    @trace_async()
     async def sync_wikispace_nodes(user: User, db: Session) -> dict[str, Any]:
         """Sync DingTalk wikispace nodes from the user's wikispace MCP server.
 
@@ -98,19 +107,27 @@ class DingTalkWikiSpaceService:
             docs_mcp_url=docs_mcp_url,
         )
 
-        if len(all_nodes) > 5000:
+        if len(all_nodes) > MAX_NODES_PER_SYNC:
             logger.warning(
-                "User %s has %d DingTalk wikispace nodes, truncating to 5000",
+                "User %s has %d DingTalk wikispace nodes, truncating to %d",
                 user.id,
                 len(all_nodes),
+                MAX_NODES_PER_SYNC,
             )
-            all_nodes = all_nodes[:5000]
+            all_nodes = all_nodes[:MAX_NODES_PER_SYNC]
 
         now = datetime.now()
         stats = DingTalkDocService._sync_nodes_to_db(
             user.id, all_nodes, now, db, source=WIKISPACE_SOURCE
         )
         stats["mcp_nodes_fetched"] = len(all_nodes)
+        add_span_event(
+            "dingtalk.wikispace.sync.completed",
+            {
+                "wikispace_mcp_url": wikispace_mcp_url,
+                "mcp_nodes_fetched": stats["mcp_nodes_fetched"],
+            },
+        )
         return stats
 
     # ------------------------------------------------------------------
@@ -218,7 +235,7 @@ class DingTalkWikiSpaceService:
         """Open a docs MCP session and recursively list all nodes in the given KB.
 
         Uses list_nodes(workspaceId=wikispace_id) which is the correct way to
-        enumerate documents inside a 知识库 knowledge base.
+        enumerate documents inside a knowledge base.
         """
         try:
             from mcp import ClientSession
@@ -302,7 +319,7 @@ class DingTalkWikiSpaceService:
         """Two-phase fetch of all documents across all accessible knowledge bases.
 
         Phase 1 - wikispace MCP (list_wikiSpaces):
-            Connects to the 知识库 MCP server and calls list_wikiSpaces to get
+            Connects to the knowledge base MCP server and calls list_wikiSpaces to get
             the list of knowledge bases the user can access.
 
         Phase 2 - docs MCP (list_nodes with workspaceId):
@@ -382,18 +399,47 @@ class DingTalkWikiSpaceService:
                 )
                 # Continue with remaining KBs even if one fails.
 
+        unique_nodes = DingTalkWikiSpaceService._dedupe_nodes_by_id(all_nodes)
+
         logger.info(
             "WikiSpace sync fetched %d total nodes across %d knowledge bases",
-            len(all_nodes),
+            len(unique_nodes),
             len(kb_nodes),
         )
-        return all_nodes
+        return unique_nodes
+
+    @staticmethod
+    def _dedupe_nodes_by_id(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """De-duplicate nodes by nodeId while keeping the most complete entry."""
+        seen: dict[str, dict[str, Any]] = {}
+        order: list[str] = []
+        for node in nodes:
+            node_id = (
+                node.get("nodeId")
+                or node.get("workspaceId")
+                or node.get("id")
+                or node.get("dingtalk_node_id")
+            )
+            if not node_id:
+                continue
+
+            if node_id not in seen:
+                seen[node_id] = node
+                order.append(node_id)
+                continue
+
+            existing = seen[node_id]
+            if len(node) > len(existing):
+                seen[node_id] = node
+
+        return [seen[node_id] for node_id in order]
 
     # ------------------------------------------------------------------
     # Read helpers
     # ------------------------------------------------------------------
 
     @staticmethod
+    @trace_sync()
     def get_wikispace_nodes(user_id: int, db: Session) -> list[DingtalkSyncedNode]:
         """Get all active DingTalk wikispace nodes for a user."""
         return (
@@ -408,6 +454,7 @@ class DingTalkWikiSpaceService:
         )
 
     @staticmethod
+    @trace_sync()
     def get_sync_status(user: User, db: Session) -> dict[str, Any]:
         """Get sync status for a user's DingTalk wikispace nodes."""
         is_configured = DingTalkWikiSpaceService.is_configured(user, db)

@@ -350,7 +350,6 @@ export function DingTalkDocContextSelector({
     }
   }, [])
 
-  /** Handle toggle for a single node (folder = select/deselect all descendants). */
   const handleToggle = useCallback(
     (node: DingtalkDocNode) => {
       if (node.node_type === 'folder') {
@@ -386,7 +385,7 @@ export function DingTalkDocContextSelector({
         }
       }
     },
-    [selectedContexts, buildContext, onSelect, onDeselect, onSelectMultiple]
+    [selectedContexts, buildContext, onSelect, onDeselect, onSelectMultiple, onDeselectMultiple]
   )
 
   // Count of selected doc/file nodes across both sections

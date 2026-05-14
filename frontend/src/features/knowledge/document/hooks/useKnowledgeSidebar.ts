@@ -216,33 +216,25 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     }
   }, [user, loadInitialData])
 
-  // Load DingTalk docs sync status
   const loadDingtalkStatus = useCallback(async () => {
     setIsDingtalkLoading(true)
-    try {
-      const [docsResult, wsResult] = await Promise.allSettled([
-        dingtalkDocApi.getSyncStatus(),
-        dingtalkDocApi.getWikispaceSyncStatus(),
-      ])
-      if (docsResult.status === 'fulfilled') {
-        setDingtalkDocCount(docsResult.value.total_nodes)
-        setIsDingtalkConfigured(docsResult.value.is_configured)
-      } else {
-        setIsDingtalkConfigured(false)
-        setDingtalkDocCount(0)
-      }
-      if (wsResult.status === 'fulfilled') {
-        setIsWikispaceConfigured(wsResult.value.is_configured)
-      } else {
-        setIsWikispaceConfigured(false)
-      }
-    } catch {
+    const [docsResult, wsResult] = await Promise.allSettled([
+      dingtalkDocApi.getSyncStatus(),
+      dingtalkDocApi.getWikispaceSyncStatus(),
+    ])
+    if (docsResult.status === 'fulfilled') {
+      setDingtalkDocCount(docsResult.value.total_nodes)
+      setIsDingtalkConfigured(docsResult.value.is_configured)
+    } else {
       setIsDingtalkConfigured(false)
       setDingtalkDocCount(0)
-      setIsWikispaceConfigured(false)
-    } finally {
-      setIsDingtalkLoading(false)
     }
+    if (wsResult.status === 'fulfilled') {
+      setIsWikispaceConfigured(wsResult.value.is_configured)
+    } else {
+      setIsWikispaceConfigured(false)
+    }
+    setIsDingtalkLoading(false)
   }, [])
 
   useEffect(() => {
