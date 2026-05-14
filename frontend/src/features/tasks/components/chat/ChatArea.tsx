@@ -340,7 +340,7 @@ function ChatAreaContent({
     const project = projects.find(p => p.id === Number(projectIdFromUrl))
     if (!project) return null
     const explicitPath = project.config?.workspace?.localPath
-    const defaultPath = `~/.wegent-executor/workspace/${project.name}`
+    const defaultPath = `~/.wegent-executor/workspace/project${project.id}`
     return {
       name: project.name,
       path: explicitPath || defaultPath,
