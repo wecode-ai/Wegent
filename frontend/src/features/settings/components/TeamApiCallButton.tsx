@@ -5,7 +5,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { Code2, Copy, ExternalLink, KeyRound } from 'lucide-react'
+import { Copy, ExternalLink, KeyRound, Plug } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 
 import { Button } from '@/components/ui/button'
@@ -19,10 +19,11 @@ import {
 } from '@/components/ui/dialog'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
+import { getPublicApiBaseUrl } from '@/lib/runtime-config'
 import type { Team } from '@/types/api'
 
 const API_KEYS_PATH = '/settings?section=api-keys&tab=api-keys'
-const RESPONSES_ENDPOINT = '/api/v1/responses'
+const RESPONSES_PATH = '/v1/responses'
 const DEFAULT_INPUT = '帮我总结今天的待办'
 
 export function buildTeamApiModel(team: Team): string {
@@ -30,11 +31,39 @@ export function buildTeamApiModel(team: Team): string {
   return `${namespace}#${team.name}`
 }
 
-export function buildTeamApiCurl(team: Team, input: string = DEFAULT_INPUT): string {
+export function buildTeamApiResponsesEndpoint(
+  apiBaseUrl: string,
+  origin: string = typeof window !== 'undefined' ? window.location.origin : ''
+): string {
+  const effectiveApiBaseUrl = apiBaseUrl.trim() || '/api'
+  const responsePath = RESPONSES_PATH.replace(/^\/+/, '')
+
+  if (effectiveApiBaseUrl.startsWith('http://') || effectiveApiBaseUrl.startsWith('https://')) {
+    return new URL(responsePath, `${effectiveApiBaseUrl.replace(/\/+$/, '')}/`).toString()
+  }
+
+  if (!origin) {
+    return `${effectiveApiBaseUrl.replace(/\/+$/, '')}${RESPONSES_PATH}`
+  }
+
+  const relativeApiBaseUrl = effectiveApiBaseUrl.startsWith('/')
+    ? effectiveApiBaseUrl
+    : `/${effectiveApiBaseUrl}`
+  return new URL(
+    responsePath,
+    new URL(`${relativeApiBaseUrl.replace(/\/+$/, '')}/`, origin)
+  ).toString()
+}
+
+export function buildTeamApiCurl(
+  team: Team,
+  input: string = DEFAULT_INPUT,
+  responsesEndpoint: string = buildTeamApiResponsesEndpoint(getPublicApiBaseUrl())
+): string {
   const model = buildTeamApiModel(team)
 
   return [
-    'curl -X POST "$WEGENT_API_BASE/api/v1/responses" \\',
+    `curl -X POST ${JSON.stringify(responsesEndpoint)} \\`,
     '  -H "Content-Type: application/json" \\',
     '  -H "X-API-Key: <your-api-key>" \\',
     "  -d '{",
@@ -58,7 +87,11 @@ export function TeamApiCallButton({ team }: TeamApiCallButtonProps) {
 
   const teamDisplayName = team.displayName?.trim() || team.name
   const model = useMemo(() => buildTeamApiModel(team), [team])
-  const curl = useMemo(() => buildTeamApiCurl(team), [team])
+  const responsesEndpoint = useMemo(() => buildTeamApiResponsesEndpoint(getPublicApiBaseUrl()), [])
+  const curl = useMemo(
+    () => buildTeamApiCurl(team, DEFAULT_INPUT, responsesEndpoint),
+    [team, responsesEndpoint]
+  )
   const docsLanguage = i18n.language?.startsWith('zh') ? 'zh' : 'en'
   const docsUrl = `https://github.com/wecode-ai/wegent/blob/main/docs/${docsLanguage}/reference/openapi-responses-api.md`
 
@@ -94,7 +127,7 @@ export function TeamApiCallButton({ team }: TeamApiCallButtonProps) {
         className="h-7 w-7 sm:h-8 sm:w-8"
         data-testid={`team-api-call-button-${team.id}`}
       >
-        <Code2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+        <Plug className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>
@@ -111,7 +144,7 @@ export function TeamApiCallButton({ team }: TeamApiCallButtonProps) {
                   {t('teams.api_call.endpoint')}
                 </div>
                 <code className="mt-1 block break-all text-sm text-text-primary">
-                  {RESPONSES_ENDPOINT}
+                  {responsesEndpoint}
                 </code>
               </div>
               <div className="rounded-md border border-border bg-surface p-3">

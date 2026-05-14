@@ -50,6 +50,10 @@ jest.mock('@/hooks/useTranslation', () => ({
   }),
 }))
 
+jest.mock('@/lib/runtime-config', () => ({
+  getPublicApiBaseUrl: jest.fn(() => 'http://1.1.1.1:8000/api'),
+}))
+
 jest.mock('@/components/ui/dialog', () => ({
   Dialog: ({ open, children }: { open: boolean; children: React.ReactNode }) =>
     open ? <div>{children}</div> : null,
@@ -97,9 +101,14 @@ describe('TeamApiCallButton', () => {
   })
 
   it('builds a curl command for the Responses API', () => {
-    const curl = buildTeamApiCurl(makeTeam({ namespace: 'dev-group', name: 'code-agent' }))
+    const curl = buildTeamApiCurl(
+      makeTeam({ namespace: 'dev-group', name: 'code-agent' }),
+      '帮我总结今天的待办',
+      // The dialog should pass the resolved deployment endpoint into the curl builder.
+      'https://wegent.example.com/api/v1/responses'
+    )
 
-    expect(curl).toContain('$WEGENT_API_BASE/api/v1/responses')
+    expect(curl).toContain('https://wegent.example.com/api/v1/responses')
     expect(curl).toContain('X-API-Key: <your-api-key>')
     expect(curl).toContain('"model": "dev-group#code-agent"')
     expect(curl).toContain('"tools": [{"type": "wegent_chat_bot"}]')
@@ -115,6 +124,15 @@ describe('TeamApiCallButton', () => {
     expect(screen.getByText('default#support-agent')).toBeInTheDocument()
   })
 
+  it('uses a distinct connection icon for the API call action', () => {
+    render(<TeamApiCallButton team={makeTeam()} />)
+
+    const apiCallButton = screen.getByTestId('team-api-call-button-17')
+
+    expect(apiCallButton.querySelector('.lucide-plug')).toBeInTheDocument()
+    expect(apiCallButton.querySelector('.lucide-code-xml')).not.toBeInTheDocument()
+  })
+
   it('copies the generated curl command', async () => {
     render(<TeamApiCallButton team={makeTeam({ namespace: 'group-a' })} />)
 
@@ -123,9 +141,12 @@ describe('TeamApiCallButton', () => {
 
     await waitFor(() => {
       expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-        expect.stringContaining('"model": "group-a#support-agent"')
+        expect.stringContaining('http://1.1.1.1:8000/api/v1/responses')
       )
     })
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      expect.stringContaining('"model": "group-a#support-agent"')
+    )
     expect(mockToast).toHaveBeenCalledWith({ title: 'curl copied' })
   })
 
