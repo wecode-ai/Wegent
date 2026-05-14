@@ -12,6 +12,7 @@ const mockScrollToBottom = jest.fn()
 const mockAddUserMessage = jest.fn()
 const mockUpdateUserMessage = jest.fn()
 const mockToast = jest.fn()
+const mockSendChatGuidance = jest.fn().mockResolvedValue({ success: true })
 
 let isMachineStreamingMock = true
 let taskInputMessageMock = 'next question'
@@ -46,7 +47,11 @@ jest.mock('@/features/tasks/contexts/chatStreamContext', () => ({
 }))
 
 jest.mock('@/contexts/SocketContext', () => ({
-  useSocket: () => ({ retryMessage: jest.fn() }),
+  useSocket: () => ({
+    retryMessage: jest.fn(),
+    sendChatGuidance: mockSendChatGuidance,
+    registerChatHandlers: jest.fn(() => jest.fn()),
+  }),
 }))
 
 jest.mock('@/contexts/DeviceContext', () => ({
@@ -73,7 +78,7 @@ jest.mock('@/hooks/useTraceAction', () => ({
 
 jest.mock('@/features/tasks/hooks/useTaskStateMachine', () => ({
   useTaskStateMachine: () => ({
-    state: { messages: new Map(), isStopping: false },
+    state: { messages: new Map(), isStopping: false, streamingInfo: { subtask_id: 77 } },
     isStreaming: isMachineStreamingMock,
   }),
 }))
@@ -91,7 +96,7 @@ jest.mock('@/features/tasks/state', () => ({
 function renderQueueableHook() {
   return renderHook(() =>
     useChatStreamHandlers({
-      selectedTeam: { id: 5, name: 'Team' } as never,
+      selectedTeam: { id: 5, name: 'Team', agent_type: 'chat' } as never,
       selectedModel: null,
       forceOverride: false,
       setSelectedModel: jest.fn(),
@@ -136,6 +141,7 @@ describe('useChatStreamHandlers queue integration', () => {
       is_group_chat: false,
       subtasks: [],
     } as unknown as TaskDetail
+    mockSendChatGuidance.mockResolvedValue({ success: true })
   })
 
   it('queues a follow-up outside the chat message stream while the active task is streaming', async () => {
@@ -294,5 +300,35 @@ describe('useChatStreamHandlers queue integration', () => {
       expect(mockContextSendMessage).toHaveBeenCalledTimes(2)
     })
     expect(mockUpdateUserMessage).not.toHaveBeenCalled()
+  })
+
+  it('sends Chat Shell guidance during an active stream', async () => {
+    taskInputMessageMock = 'steer the current answer'
+    const { result } = renderQueueableHook()
+
+    expect(result.current.canSendGuidance).toBe(true)
+
+    await act(async () => {
+      await result.current.handleSendGuidance()
+    })
+
+    expect(mockSendChatGuidance).toHaveBeenCalledWith(
+      expect.objectContaining({
+        task_id: 42,
+        subtask_id: 77,
+        team_id: 5,
+        message: 'steer the current answer',
+        guidance: 'steer the current answer',
+        client_guidance_id: expect.stringMatching(/^guidance-42-/),
+      })
+    )
+    expect(mockSetTaskInputMessage).toHaveBeenCalledWith('')
+    expect(result.current.guidanceMessages).toEqual([
+      expect.objectContaining({
+        id: expect.stringMatching(/^guidance-42-/),
+        displayMessage: 'steer the current answer',
+        status: 'queued',
+      }),
+    ])
   })
 })

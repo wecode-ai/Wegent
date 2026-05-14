@@ -92,7 +92,16 @@ export type ToolStatus = 'pending' | 'streaming' | 'invoking' | 'done' | 'error'
  */
 interface BaseBlock {
   id: string // Unique block identifier
-  status?: 'pending' | 'streaming' | 'done' | 'error' // Block status
+  status?:
+    | 'pending'
+    | 'streaming'
+    | 'done'
+    | 'error'
+    | 'queued'
+    | 'sending'
+    | 'failed'
+    | 'applied'
+    | 'expired' // Block status
   timestamp?: number // Block creation timestamp
 }
 
@@ -123,6 +132,18 @@ export interface ToolBlock extends BaseBlock {
 export interface ThinkingBlock extends BaseBlock {
   type: 'thinking'
   content: string // Thinking content
+}
+
+/**
+ * Applied guidance block
+ */
+export interface GuidanceBlock extends BaseBlock {
+  type: 'guidance'
+  guidance_id: string
+  content: string
+  status: NonNullable<BaseBlock['status']>
+  loop_index?: number
+  applied_at?: string
 }
 
 /**
@@ -237,6 +258,7 @@ export type MessageBlock =
   | TextBlock
   | ToolBlock
   | ThinkingBlock
+  | GuidanceBlock
   | ErrorBlock
   | VideoBlock
   | ImageBlock
@@ -269,6 +291,13 @@ export function isVideoBlock(block: MessageBlock): block is VideoBlock {
  */
 export function isImageBlock(block: MessageBlock): block is ImageBlock {
   return block.type === 'image'
+}
+
+/**
+ * Type guard for GuidanceBlock
+ */
+export function isGuidanceBlock(block: MessageBlock): block is GuidanceBlock {
+  return block.type === 'guidance'
 }
 
 /**

@@ -363,6 +363,19 @@
     "public": "公共",
     "icon": "图标",
     "selectIcon": "选择图标",
+    "api_call": {
+      "action": "API 调用",
+      "title": "API 调用：{{name}}",
+      "description": "使用 Responses API 从外部应用调用这个智能体。",
+      "endpoint": "Endpoint",
+      "model": "Model",
+      "curl_example": "curl 示例",
+      "copy_curl": "复制 curl",
+      "manage_api_keys": "管理 API Key",
+      "view_docs": "查看文档",
+      "copy_success": "curl 已复制",
+      "copy_failed": "复制 curl 失败"
+    },
     "share": {
       "title": "智能体分享",
       "confirm_message": "确定要使用 {{userName}} 分享的智能体「{{teamName}}」执行任务吗？",

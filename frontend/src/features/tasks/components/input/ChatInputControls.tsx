@@ -110,10 +110,12 @@ export interface ChatInputControlsProps {
   taskInputMessage: string
   isSubtaskStreaming: boolean
   canQueueMessage?: boolean
+  canSendGuidance?: boolean
 
   // Actions
   onStopStream: () => void
   onSendMessage: () => void
+  onSendGuidance?: () => void
 
   // Whether there are no available teams (shows disabled state)
   hasNoTeams?: boolean
@@ -219,8 +221,10 @@ export function ChatInputControls({
   taskInputMessage,
   isSubtaskStreaming,
   canQueueMessage = false,
+  canSendGuidance = false,
   onStopStream,
   onSendMessage,
+  onSendGuidance,
   hasNoTeams = false,
   availableSkills = [],
   teamSkillNames = [],
@@ -384,8 +388,10 @@ export function ChatInputControls({
         taskInputMessage={taskInputMessage}
         isSubtaskStreaming={isSubtaskStreaming}
         canQueueMessage={canQueueMessage}
+        canSendGuidance={canSendGuidance}
         onStopStream={onStopStream}
         onSendMessage={onSendMessage}
+        onSendGuidance={onSendGuidance}
         hasNoTeams={hasNoTeams}
         availableSkills={availableSkills}
         teamSkillNames={teamSkillNames}

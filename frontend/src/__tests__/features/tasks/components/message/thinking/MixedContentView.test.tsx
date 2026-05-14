@@ -16,6 +16,12 @@ jest.mock('@/features/tasks/components/message/thinking/components/ToolBlock', (
   ToolBlock: () => <div data-testid="tool-block" />,
 }))
 
+jest.mock('@/features/tasks/components/message/thinking/components/GuidanceBlock', () => ({
+  GuidanceBlock: ({ block }: { block: { content: string } }) => (
+    <div data-testid="guidance-block">{block.content}</div>
+  ),
+}))
+
 jest.mock('@/components/common/EnhancedMarkdown', () => ({
   __esModule: true,
   default: ({ source }: { source: string }) => <div>{source}</div>,
@@ -187,5 +193,26 @@ describe('MixedContentView', () => {
     expect(screen.getAllByText('thinking.processing')).toHaveLength(2)
     expect(screen.getByTestId('streaming-wait-runner-dot')).toBeInTheDocument()
     expect(indicator.querySelectorAll('.animate-pulse')).toHaveLength(0)
+  })
+
+  it('renders guidance blocks in mixed content', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        theme="light"
+        blocks={[
+          {
+            id: 'guidance-1',
+            type: 'guidance',
+            guidance_id: 'guidance-1',
+            content: 'Keep it concise',
+            status: 'applied',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('guidance-block')).toHaveTextContent('Keep it concise')
   })
 })

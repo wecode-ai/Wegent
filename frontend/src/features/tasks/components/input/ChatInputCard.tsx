@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useRef, useState, useCallback } from 'react'
-import { Upload, Sparkles, X } from 'lucide-react'
+import { Upload, Sparkles, X, Hand } from 'lucide-react'
 import ChatInput from './ChatInput'
 import InputBadgeDisplay from './InputBadgeDisplay'
 import ExternalApiParamsInput from '../params/ExternalApiParamsInput'
@@ -22,6 +22,13 @@ export interface QueuedInputMessage {
   id: string
   displayMessage: string
   status: 'queued' | 'sending' | 'failed'
+  error?: string
+}
+
+export interface GuidanceInputMessage {
+  id: string
+  displayMessage: string
+  status: 'pending' | 'queued' | 'sending' | 'failed' | 'applied' | 'expired'
   error?: string
 }
 
@@ -75,6 +82,11 @@ export interface ChatInputCardProps extends Omit<
   canQueueMessage?: boolean
   queuedMessages?: QueuedInputMessage[]
   onCancelQueuedMessage?: (id: string) => void
+  onSendQueuedAsGuidance?: (id: string) => void
+  guidanceMessages?: GuidanceInputMessage[]
+  expiredGuidanceMessages?: GuidanceInputMessage[]
+  onCancelGuidance?: (id: string) => void
+  onSendExpiredGuidanceAsMessage?: (id: string) => void
   handleSendMessage: (message?: string) => Promise<void>
 
   // Ref for container width measurement
@@ -132,6 +144,11 @@ export function ChatInputCard({
   canQueueMessage = false,
   queuedMessages = [],
   onCancelQueuedMessage,
+  onSendQueuedAsGuidance,
+  guidanceMessages = [],
+  expiredGuidanceMessages = [],
+  onCancelGuidance,
+  onSendExpiredGuidanceAsMessage,
   handleSendMessage,
   onPasteFile,
   inputControlsRef,
@@ -177,8 +194,10 @@ export function ChatInputCard({
   isModelSelectionRequired,
   isAttachmentReadyToSend,
   isSubtaskStreaming,
+  canSendGuidance,
   onStopStream,
   onSendMessage,
+  onSendGuidance,
   // Skill selector props
   availableSkills,
   teamSkillNames,
@@ -232,6 +251,13 @@ export function ChatInputCard({
     return t('messages.status_queued')
   }
 
+  const getGuidanceStatusLabel = (status: GuidanceInputMessage['status']) => {
+    if (status === 'sending') return t('guidance.status_sending')
+    if (status === 'failed') return t('guidance.status_failed')
+    if (status === 'expired') return t('guidance.status_expired')
+    return t('guidance.status_queued')
+  }
+
   // Get skill button element for fly animation
   const getSkillButtonElement = () => {
     return skillSelectorRef.current?.getButtonElement() ?? null
@@ -257,51 +283,165 @@ export function ChatInputCard({
         </div>
       )}
 
-      {queuedMessages.length > 0 && !shouldHideChatInput && (
-        <div className="mx-auto mb-9 w-full max-w-[820px] px-1">
-          <div
-            data-testid="queued-message-list"
-            className="space-y-2 rounded-xl border border-border bg-surface/90 px-3 py-2 shadow-sm"
-          >
-            {queuedMessages.map(message => (
-              <div
-                key={message.id}
-                data-testid="queued-message-item"
-                className="flex min-w-0 items-start gap-2"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="mb-1 flex items-center gap-2">
-                    <span
-                      className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs ${
-                        message.status === 'failed'
-                          ? 'bg-destructive/10 text-destructive'
-                          : 'bg-primary/10 text-primary'
-                      }`}
-                    >
-                      {getQueuedMessageStatusLabel(message.status)}
-                    </span>
+      {(queuedMessages.length > 0 ||
+        guidanceMessages.length > 0 ||
+        expiredGuidanceMessages.length > 0) &&
+        !shouldHideChatInput && (
+          <div className="mx-auto mb-9 w-full max-w-[820px] px-1">
+            <div
+              data-testid="queued-message-list"
+              className="space-y-0 rounded-xl border border-border bg-surface/90 px-3 py-2 shadow-sm"
+            >
+              {/* Queue items */}
+              {queuedMessages.map((message, index) => (
+                <div
+                  key={message.id}
+                  data-testid="queued-message-item"
+                  className={`flex min-w-0 items-start gap-2 py-2 ${
+                    index < queuedMessages.length - 1 ||
+                    guidanceMessages.length > 0 ||
+                    expiredGuidanceMessages.length > 0
+                      ? 'border-b border-border/60'
+                      : ''
+                  }`}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="mb-1 flex items-center gap-2">
+                      <span
+                        className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs ${
+                          message.status === 'failed'
+                            ? 'bg-destructive/10 text-destructive'
+                            : 'bg-primary/10 text-primary'
+                        }`}
+                      >
+                        {getQueuedMessageStatusLabel(message.status)}
+                      </span>
+                    </div>
+                    <p className="line-clamp-2 whitespace-pre-wrap break-words text-sm text-text-secondary">
+                      {message.displayMessage}
+                    </p>
                   </div>
-                  <p className="line-clamp-2 whitespace-pre-wrap break-words text-sm text-text-secondary">
-                    {message.displayMessage}
-                  </p>
+                  {message.status !== 'sending' && (
+                    <div className="flex shrink-0 items-center gap-1">
+                      {canSendGuidance && onSendQueuedAsGuidance && (
+                        <button
+                          type="button"
+                          data-testid="send-queued-as-guidance-button"
+                          title={t('guidance.send')}
+                          onClick={() => onSendQueuedAsGuidance(message.id)}
+                          className="inline-flex h-7 items-center gap-1 rounded-lg border border-primary/30 bg-primary/8 px-2.5 text-xs font-medium text-primary transition-colors hover:bg-primary/15"
+                        >
+                          <Hand className="h-3 w-3" />
+                          {t('guidance.send')}
+                        </button>
+                      )}
+                      {onCancelQueuedMessage && (
+                        <button
+                          type="button"
+                          data-testid="cancel-queued-message-button"
+                          aria-label={t('messages.cancel_queued')}
+                          title={t('messages.cancel_queued')}
+                          onClick={() => onCancelQueuedMessage(message.id)}
+                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-base hover:text-text-primary"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
-                {message.status !== 'sending' && onCancelQueuedMessage && (
-                  <button
-                    type="button"
-                    data-testid="cancel-queued-message-button"
-                    aria-label={t('messages.cancel_queued')}
-                    title={t('messages.cancel_queued')}
-                    onClick={() => onCancelQueuedMessage(message.id)}
-                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-base hover:text-text-primary md:h-8 md:w-8"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                )}
-              </div>
-            ))}
+              ))}
+
+              {/* Guidance items */}
+              {guidanceMessages.map((message, index) => (
+                <div
+                  key={message.id}
+                  data-testid="pending-guidance-card"
+                  className={`flex min-w-0 items-start gap-2 py-2 ${
+                    index < guidanceMessages.length - 1 || expiredGuidanceMessages.length > 0
+                      ? 'border-b border-border/60'
+                      : ''
+                  }`}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="mb-1 flex items-center gap-2">
+                      <span
+                        className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs ${
+                          message.status === 'failed'
+                            ? 'bg-destructive/10 text-destructive'
+                            : 'bg-primary/10 text-primary'
+                        }`}
+                      >
+                        {getGuidanceStatusLabel(message.status)}
+                      </span>
+                    </div>
+                    <p className="line-clamp-2 whitespace-pre-wrap break-words text-sm text-text-secondary">
+                      {message.displayMessage}
+                    </p>
+                  </div>
+                  {message.status !== 'sending' && onCancelGuidance && (
+                    <button
+                      type="button"
+                      data-testid="cancel-guidance-button"
+                      aria-label={t('guidance.cancel')}
+                      title={t('guidance.cancel')}
+                      onClick={() => onCancelGuidance(message.id)}
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-base hover:text-text-primary"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              ))}
+
+              {/* Expired guidance items */}
+              {expiredGuidanceMessages.map((message, index) => (
+                <div
+                  key={message.id}
+                  data-testid="expired-guidance-card"
+                  className={`flex min-w-0 items-start gap-2 py-2 ${
+                    index < expiredGuidanceMessages.length - 1 ? 'border-b border-border/60' : ''
+                  }`}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="mb-1 flex items-center gap-2">
+                      <span className="inline-flex shrink-0 items-center rounded-full bg-surface px-2 py-0.5 text-xs text-text-muted">
+                        {getGuidanceStatusLabel(message.status)}
+                      </span>
+                    </div>
+                    <p className="line-clamp-2 whitespace-pre-wrap break-words text-sm text-text-secondary">
+                      {message.displayMessage}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    {onSendExpiredGuidanceAsMessage && (
+                      <button
+                        type="button"
+                        data-testid="send-expired-guidance-as-message-button"
+                        onClick={() => onSendExpiredGuidanceAsMessage(message.id)}
+                        className="h-8 shrink-0 rounded-lg px-3 text-xs font-medium text-primary transition-colors hover:bg-base"
+                      >
+                        {t('guidance.send_as_message')}
+                      </button>
+                    )}
+                    {onCancelGuidance && (
+                      <button
+                        type="button"
+                        data-testid="cancel-expired-guidance-button"
+                        aria-label={t('guidance.cancel')}
+                        title={t('guidance.cancel')}
+                        onClick={() => onCancelGuidance(message.id)}
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-base hover:text-text-primary"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
       {/* Chat Input Card */}
       <div
@@ -462,8 +602,10 @@ export function ChatInputCard({
             taskInputMessage={taskInputMessage}
             isSubtaskStreaming={isSubtaskStreaming}
             canQueueMessage={canQueueMessage}
+            canSendGuidance={canSendGuidance}
             onStopStream={onStopStream}
             onSendMessage={onSendMessage}
+            onSendGuidance={onSendGuidance}
             hasNoTeams={hasNoTeams}
             knowledgeBaseId={knowledgeBaseId}
             availableSkills={availableSkills}

@@ -11,10 +11,12 @@
  *
  * Architecture:
  * - RUNTIME_INTERNAL_API_URL: Used by Next.js server-side rewrites (next.config.js) to proxy to backend
+ * - RUNTIME_PUBLIC_API_URL: Public backend URL for generated examples such as curl commands
  * - NEXT_PUBLIC_API_URL: Used by browser for direct API calls (empty = use '/api' proxy mode)
  *
  * Recommended setup (browser uses proxy):
  * - Set RUNTIME_INTERNAL_API_URL=http://backend:8000 (for Next.js server to reach backend)
+ * - Set RUNTIME_PUBLIC_API_URL=https://your-public-backend-domain (for copied API examples)
  * - Leave NEXT_PUBLIC_API_URL empty or unset (browser uses '/api' which is proxied)
  *
  * Direct mode setup (browser calls backend directly):
@@ -38,6 +40,14 @@ export async function GET() {
       // Empty string = use '/api' proxy mode (recommended)
       // Full URL = browser calls backend directly (not recommended for same-network deployments)
       apiUrl: process.env.NEXT_PUBLIC_API_URL || '',
+
+      // Public backend API URL for generated examples (curl, external integrations)
+      // Priority: explicit public URL > socket direct URL > legacy browser API URL
+      publicApiUrl:
+        process.env.RUNTIME_PUBLIC_API_URL ||
+        process.env.RUNTIME_SOCKET_DIRECT_URL ||
+        process.env.NEXT_PUBLIC_API_URL ||
+        '',
 
       // Socket.IO direct URL - can be changed at runtime
       // Priority: RUNTIME_SOCKET_DIRECT_URL > NEXT_PUBLIC_SOCKET_DIRECT_URL > empty
@@ -128,10 +138,7 @@ export async function GET() {
 
       // Application version (injected at Docker build time)
       // Priority: RUNTIME_APP_VERSION > NEXT_PUBLIC_APP_VERSION > 'dev'
-      appVersion:
-        process.env.RUNTIME_APP_VERSION ||
-        process.env.NEXT_PUBLIC_APP_VERSION ||
-        'dev',
+      appVersion: process.env.RUNTIME_APP_VERSION || process.env.NEXT_PUBLIC_APP_VERSION || 'dev',
     },
     {
       headers: {

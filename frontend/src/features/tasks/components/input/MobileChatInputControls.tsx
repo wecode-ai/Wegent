@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useMemo, useState } from 'react'
-import { CircleStop, Plus } from 'lucide-react'
+import { CircleStop, Hand, Plus } from 'lucide-react'
 import MobileModelSelector from '../selector/MobileModelSelector'
 import type { Model } from '../selector/ModelSelector'
 import MobileTeamSelector from '../selector/MobileTeamSelector'
@@ -36,6 +36,7 @@ import {
 import { supportsAttachments } from '../../service/attachmentService'
 import SkillSelectorPopover from '../selector/SkillSelectorPopover'
 import { getChatSendState } from './chatSendState'
+import { useTranslation } from '@/hooks/useTranslation'
 
 export interface MobileChatInputControlsProps {
   taskType?: TaskType
@@ -93,10 +94,12 @@ export interface MobileChatInputControlsProps {
   taskInputMessage: string
   isSubtaskStreaming: boolean
   canQueueMessage?: boolean
+  canSendGuidance?: boolean
 
   // Actions
   onStopStream: () => void
   onSendMessage: () => void
+  onSendGuidance?: () => void
 
   // Whether there are no available teams (shows disabled state)
   hasNoTeams?: boolean
@@ -156,8 +159,10 @@ export function MobileChatInputControls({
   taskInputMessage,
   isSubtaskStreaming,
   canQueueMessage = false,
+  canSendGuidance = false,
   onStopStream,
   onSendMessage,
+  onSendGuidance,
   hasNoTeams = false,
   availableSkills = [],
   teamSkillNames = [],
@@ -166,6 +171,7 @@ export function MobileChatInputControls({
   onToggleSkill,
   hideSelectors,
 }: MobileChatInputControlsProps) {
+  const { t } = useTranslation('chat')
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
   const showChatContexts = canUseChatContexts(taskType, selectedTeam)
   const showAttachmentAction = supportsAttachments(selectedTeam)
@@ -189,6 +195,7 @@ export function MobileChatInputControls({
     taskType !== 'video'
   const showClarificationAction = isChatShell(selectedTeam)
   const showCorrectionAction = isChatShell(selectedTeam) && Boolean(onCorrectionModeToggle)
+  const showGuidanceAction = isChatShell(selectedTeam) && Boolean(onSendGuidance)
   const showRepositoryAction =
     showRepositorySelector &&
     teamRequiresWorkspace(selectedTeam) &&
@@ -356,6 +363,20 @@ export function MobileChatInputControls({
                 correctionModelName={correctionModelName}
                 taskId={selectedTaskDetail?.id ?? null}
               />
+            )}
+
+            {showGuidanceAction && onSendGuidance && (
+              <Button
+                type="button"
+                variant="ghost"
+                data-testid="send-guidance-button"
+                onClick={onSendGuidance}
+                disabled={!canSendGuidance || !taskInputMessage.trim()}
+                className="flex h-11 w-full items-center justify-start gap-3 px-3 text-sm"
+              >
+                <Hand className="h-4 w-4 text-primary" />
+                <span>{t('guidance.send')}</span>
+              </Button>
             )}
 
             {/* Repository Selector - full row clickable, only show if team requires workspace */}

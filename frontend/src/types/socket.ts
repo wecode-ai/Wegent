@@ -14,6 +14,7 @@ import type { TaskType } from './api'
 
 export const ClientEvents = {
   CHAT_SEND: 'chat:send',
+  CHAT_GUIDE: 'chat:guide',
   CHAT_CANCEL: 'chat:cancel',
   CHAT_RESUME: 'chat:resume',
   CHAT_RETRY: 'chat:retry',
@@ -35,6 +36,9 @@ export const ServerEvents = {
   CHAT_DONE: 'chat:done',
   CHAT_ERROR: 'chat:error',
   CHAT_CANCELLED: 'chat:cancelled',
+  CHAT_GUIDANCE_QUEUED: 'chat:guidance_queued',
+  CHAT_GUIDANCE_APPLIED: 'chat:guidance_applied',
+  CHAT_GUIDANCE_EXPIRED: 'chat:guidance_expired',
 
   // Block events for mixed content rendering (to task room)
   CHAT_BLOCK_CREATED: 'chat:block_created',
@@ -152,6 +156,16 @@ export interface ChatCancelPayload {
   partial_content?: string
 }
 
+export interface ChatGuidePayload {
+  task_id: number
+  team_id?: number
+  message?: string
+  guidance: string
+  client_guidance_id: string
+  guidance_id?: string
+  subtask_id?: number
+}
+
 export interface ChatResumePayload {
   task_id: number
   subtask_id: number
@@ -206,6 +220,23 @@ export interface GeminiAnnotation {
   source: string
 }
 
+export type ChatBlockType = 'text' | 'tool' | 'thinking' | 'error' | 'guidance'
+
+export interface ChatBlock {
+  id: string
+  type: ChatBlockType
+  content?: string
+  tool_use_id?: string
+  tool_name?: string
+  tool_input?: Record<string, unknown>
+  tool_output?: unknown
+  guidance_id?: string
+  loop_index?: number
+  applied_at?: string
+  status?: 'pending' | 'streaming' | 'done' | 'error'
+  timestamp?: number
+}
+
 export interface ChatStartPayload {
   task_id: number
   subtask_id: number
@@ -238,17 +269,7 @@ export interface ChatChunkPayload {
     /** Incremental reasoning chunk for streaming */
     reasoning_chunk?: string
     /** Message blocks for mixed rendering (new format) */
-    blocks?: Array<{
-      id: string
-      type: 'text' | 'tool' | 'thinking' | 'error'
-      content?: string
-      tool_use_id?: string
-      tool_name?: string
-      tool_input?: Record<string, unknown>
-      tool_output?: unknown
-      status?: 'pending' | 'streaming' | 'done' | 'error'
-      timestamp?: number
-    }>
+    blocks?: ChatBlock[]
     /** Gemini Deep Research grounding annotations */
     annotations?: GeminiAnnotation[]
   }
@@ -268,17 +289,7 @@ export interface ChatDonePayload {
     shell_type?: string
     reasoning_content?: string
     /** Message blocks for mixed rendering (new format) */
-    blocks?: Array<{
-      id: string
-      type: 'text' | 'tool' | 'thinking' | 'error'
-      content?: string
-      tool_use_id?: string
-      tool_name?: string
-      tool_input?: Record<string, unknown>
-      tool_output?: unknown
-      status?: 'pending' | 'streaming' | 'done' | 'error'
-      timestamp?: number
-    }>
+    blocks?: ChatBlock[]
     error?: string // Error message if result represents error completion
     /** Gemini Deep Research grounding annotations */
     annotations?: GeminiAnnotation[]
@@ -310,16 +321,7 @@ export interface ChatCancelledPayload {
 export interface ChatBlockCreatedPayload {
   task_id: number
   subtask_id: number
-  block: {
-    id: string
-    type: 'text' | 'tool' | 'thinking' | 'error'
-    content?: string
-    tool_use_id?: string
-    tool_name?: string
-    tool_input?: Record<string, unknown>
-    status?: 'pending' | 'streaming' | 'done' | 'error'
-    timestamp?: number
-  }
+  block: ChatBlock
 }
 
 export interface ChatBlockUpdatedPayload {
@@ -329,7 +331,35 @@ export interface ChatBlockUpdatedPayload {
   content?: string
   tool_output?: unknown
   tool_input?: Record<string, unknown>
-  status?: 'pending' | 'streaming' | 'running' | 'done' | 'error'
+  guidance_id?: string
+  loop_index?: number
+  applied_at?: string
+  status?: ChatBlock['status'] | 'running'
+}
+
+export interface ChatGuidanceQueuedPayload {
+  task_id: number
+  guidance_id: string
+  client_guidance_id?: string
+  subtask_id?: number
+  content?: string
+  loop_index?: number
+  created_at?: string
+}
+
+export interface ChatGuidanceAppliedPayload {
+  task_id: number
+  guidance_id: string
+  client_guidance_id?: string
+  subtask_id?: number
+  loop_index?: number
+  applied_at: string
+}
+
+export interface ChatGuidanceExpiredPayload {
+  task_id: number
+  subtask_id?: number
+  guidance_ids: string[]
 }
 export interface ChatMessageAttachment {
   id: number
@@ -560,6 +590,15 @@ export interface ChatSendAck {
   total_stages?: number
   /** Name of the next stage (null if pipeline completed) */
   next_stage_name?: string | null
+}
+
+export interface ChatGuideAck {
+  success?: boolean
+  task_id?: number
+  subtask_id?: number
+  guidance_id?: string
+  client_guidance_id?: string
+  error?: string
 }
 
 export interface TaskJoinAck {
