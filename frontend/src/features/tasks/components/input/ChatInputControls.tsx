@@ -39,6 +39,7 @@ import {
   VideoSettingsPopover,
 } from '../selector'
 import type { GenerateMode } from '../selector'
+import { getChatSendState } from './chatSendState'
 
 export interface ChatInputControlsProps {
   /** Task type to determine which controls to show */
@@ -108,6 +109,7 @@ export interface ChatInputControlsProps {
   isAttachmentReadyToSend: boolean
   taskInputMessage: string
   isSubtaskStreaming: boolean
+  canQueueMessage?: boolean
 
   // Actions
   onStopStream: () => void
@@ -216,6 +218,7 @@ export function ChatInputControls({
   isAttachmentReadyToSend,
   taskInputMessage,
   isSubtaskStreaming,
+  canQueueMessage = false,
   onStopStream,
   onSendMessage,
   hasNoTeams = false,
@@ -262,70 +265,80 @@ export function ChatInputControls({
 
   // Determine the send button state
   const renderSendButton = () => {
-    const isDisabled =
-      isLoading ||
-      isStreaming ||
-      isModelSelectionRequired ||
-      !isAttachmentReadyToSend ||
-      hasNoTeams ||
-      (shouldHideChatInput ? false : !taskInputMessage.trim())
+    const sendState = getChatSendState({
+      isLoading,
+      isStreaming,
+      isAwaitingResponseStart,
+      isStopping,
+      isModelSelectionRequired,
+      isAttachmentReadyToSend,
+      hasNoTeams,
+      shouldHideChatInput,
+      taskInputMessage,
+      selectedTaskStatus: selectedTaskDetail?.status,
+      isSubtaskStreaming,
+      isGroupChat: selectedTaskDetail?.is_group_chat,
+      canQueueMessage,
+    })
 
-    if (isStreaming || isAwaitingResponseStart || isStopping) {
-      if (isStopping) {
-        return (
-          <ActionButton
-            variant="loading"
-            icon={
-              <>
-                <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
-                <CircleStop className="h-4 w-4 text-orange-500" />
-              </>
-            }
-          />
-        )
+    const renderStopAction = () => (
+      <ActionButton
+        onClick={onStopStream}
+        title="Stop generating"
+        icon={<CircleStop className="h-4 w-4 text-orange-500" />}
+        className="hover:bg-orange-100"
+      />
+    )
+
+    const renderStoppingAction = () => (
+      <ActionButton
+        variant="loading"
+        icon={
+          <>
+            <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
+            <CircleStop className="h-4 w-4 text-orange-500" />
+          </>
+        }
+      />
+    )
+
+    if (sendState.primaryAction === 'loading') {
+      if (sendState.showStopAction) {
+        return renderStoppingAction()
       }
-      return (
-        <ActionButton
-          onClick={onStopStream}
-          title="Stop generating"
-          icon={<CircleStop className="h-4 w-4 text-orange-500" />}
-          className="hover:bg-orange-100"
-        />
-      )
-    }
 
-    // For group chat: if task status is PENDING but no AI subtask is running,
-    // show normal send button instead of loading animation.
-    if (
-      selectedTaskDetail?.status === 'PENDING' &&
-      !isSubtaskStreaming &&
-      selectedTaskDetail?.is_group_chat
-    ) {
-      return <SendButton onClick={onSendMessage} disabled={isDisabled} isLoading={isLoading} />
-    }
+      if (sendState.showPendingAction) {
+        return <ActionButton disabled variant="loading" icon={<LoadingDots />} />
+      }
 
-    // For non-group-chat tasks with PENDING status, show loading animation
-    if (selectedTaskDetail?.status === 'PENDING') {
       return <ActionButton disabled variant="loading" icon={<LoadingDots />} />
     }
 
-    // CANCELLING status
-    if (selectedTaskDetail?.status === 'CANCELLING') {
+    if (sendState.primaryAction === 'stop') {
+      return renderStopAction()
+    }
+
+    if (sendState.primaryAction === 'queue') {
       return (
-        <ActionButton
-          variant="loading"
-          icon={
-            <>
-              <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
-              <CircleStop className="h-4 w-4 text-orange-500" />
-            </>
-          }
-        />
+        <div className="flex items-center gap-2">
+          {renderStopAction()}
+          <SendButton
+            onClick={onSendMessage}
+            disabled={sendState.isPrimaryDisabled}
+            isLoading={isLoading}
+            ariaLabel="Queue message"
+          />
+        </div>
       )
     }
 
-    // Default send button
-    return <SendButton onClick={onSendMessage} disabled={isDisabled} isLoading={isLoading} />
+    return (
+      <SendButton
+        onClick={onSendMessage}
+        disabled={sendState.isPrimaryDisabled}
+        isLoading={isLoading}
+      />
+    )
   }
 
   // Mobile: delegate to MobileChatInputControls
@@ -362,6 +375,7 @@ export function ChatInputControls({
         onFileSelect={onFileSelect}
         isLoading={isLoading}
         isStreaming={isStreaming}
+        isAwaitingResponseStart={isAwaitingResponseStart}
         isStopping={isStopping}
         hasMessages={hasMessages}
         shouldHideChatInput={shouldHideChatInput}
@@ -369,6 +383,7 @@ export function ChatInputControls({
         isAttachmentReadyToSend={isAttachmentReadyToSend}
         taskInputMessage={taskInputMessage}
         isSubtaskStreaming={isSubtaskStreaming}
+        canQueueMessage={canQueueMessage}
         onStopStream={onStopStream}
         onSendMessage={onSendMessage}
         hasNoTeams={hasNoTeams}

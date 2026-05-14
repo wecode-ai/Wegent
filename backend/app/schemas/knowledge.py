@@ -12,6 +12,8 @@ from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.schemas.base_role import BaseRole
+
 # Import shared types from kind.py to avoid duplication
 from app.schemas.kind import (
     EmbeddingModelRef,
@@ -67,6 +69,28 @@ class ResourceScope(str, Enum):
 # are imported from app.schemas.kind to maintain single source of truth
 
 
+class InitialMemberCreate(BaseModel):
+    """Schema for an initial member when creating a knowledge base."""
+
+    entity_type: str = Field(
+        default="user",
+        description="Entity type: 'user', 'namespace', or other registered types",
+    )
+    entity_id: str = Field(
+        ...,
+        min_length=1,
+        description="Entity identifier (user ID or namespace ID)",
+    )
+    role: BaseRole = Field(
+        default=BaseRole.Reporter,
+        description="Member role: Maintainer, Developer, Reporter, RestrictedAnalyst",
+    )
+    entity_display_name: Optional[str] = Field(
+        default=None,
+        description="Display name snapshot for the entity (e.g., department name, group display name)",
+    )
+
+
 class KnowledgeBaseCreate(BaseModel):
     """Schema for creating a knowledge base."""
 
@@ -92,6 +116,10 @@ class KnowledgeBaseCreate(BaseModel):
         None,
         max_length=3,
         description="Guided questions list (max 3) to show in notebook mode for quick user interaction",
+    )
+    members: Optional[List[InitialMemberCreate]] = Field(
+        None,
+        description="Initial members to add to the knowledge base after creation",
     )
 
     @field_validator("guided_questions")
@@ -324,6 +352,11 @@ class KnowledgeDocumentCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     file_extension: str = Field(..., max_length=50)
     file_size: int = Field(default=0, ge=0)
+    folder_id: int = Field(
+        default=0,
+        ge=0,
+        description="Target folder ID (0 = root level)",
+    )
     splitter_config: Optional[SplitterConfig] = None
     source_type: DocumentSourceType = Field(default=DocumentSourceType.FILE)
     source_config: dict = Field(
@@ -360,6 +393,7 @@ class KnowledgeDocumentResponse(BaseModel):
     splitter_config: Optional[SplitterConfig] = None
     source_type: DocumentSourceType = DocumentSourceType.FILE
     source_config: Optional[dict] = None
+    folder_id: int = Field(default=0, ge=0, description="Folder ID (0 = root level)")
     doc_ref: Optional[str] = Field(
         None, description="RAG storage document reference ID"
     )
@@ -402,6 +436,69 @@ class KnowledgeDocumentListResponse(BaseModel):
 
     total: int
     items: list[KnowledgeDocumentResponse]
+
+
+# ============== Knowledge Folder Schemas ==============
+
+
+class KnowledgeFolderCreate(BaseModel):
+    """Schema for creating a knowledge folder."""
+
+    name: str = Field(..., min_length=1, max_length=255)
+    parent_id: int = Field(
+        default=0, ge=0, description="Parent folder ID (0 = root level)"
+    )
+
+    @field_validator("name")
+    @classmethod
+    def validate_name_not_whitespace(cls, v: str) -> str:
+        """Reject names that are empty or consist only of whitespace."""
+        if not v.strip():
+            raise ValueError("Folder name must not be empty or whitespace-only")
+        return v.strip()
+
+
+class KnowledgeFolderUpdate(BaseModel):
+    """Schema for updating a knowledge folder."""
+
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    parent_id: Optional[int] = Field(
+        None,
+        ge=0,
+        description="New parent folder ID (0 = root level, None = no change)",
+    )
+
+    @field_validator("name")
+    @classmethod
+    def validate_name_not_whitespace(cls, v: Optional[str]) -> Optional[str]:
+        """Reject names that are empty or consist only of whitespace."""
+        if v is not None and not v.strip():
+            raise ValueError("Folder name must not be empty or whitespace-only")
+        return v.strip() if v is not None else v
+
+
+class KnowledgeFolderResponse(BaseModel):
+    """Schema for knowledge folder response with nested children."""
+
+    id: int
+    kind_id: int
+    parent_id: int = Field(..., description="Parent folder ID (0 = root level)")
+    name: str
+    children: list["KnowledgeFolderResponse"] = Field(default_factory=list)
+    document_count: int = Field(
+        default=0, description="Number of documents in this folder"
+    )
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class DocumentMoveRequest(BaseModel):
+    """Schema for moving a document to a different folder."""
+
+    folder_id: int = Field(..., ge=0, description="Target folder ID (0 = root level)")
 
 
 # ============== Batch Operation Schemas ==============
@@ -479,6 +576,31 @@ class KnowledgeBaseWithGroupInfo(BaseModel):
     my_role: Optional[str] = Field(
         None,
         description="Current user's role for this KB: 'Owner' | 'Maintainer' | 'Developer' | 'Reporter' | 'RestrictedAnalyst' | None",
+    )
+    # Source group for entity-authorized shared KBs
+    source_group: Optional[str] = Field(
+        None,
+        description="Source group name for entity-authorized shared KBs, e.g., '来自 XX 群组'",
+    )
+    # Share source user name for shared KBs
+    shared_from: Optional[str] = Field(
+        None,
+        description="Share source user name for shared KBs",
+    )
+    # Multiple share source user names for multi-source shared KBs in All mode
+    shared_from_users: Optional[list[str]] = Field(
+        None,
+        description="Multiple share source user names for multi-source shared KBs in All mode",
+    )
+    # Share via entity type: 'user', 'namespace', or other registered entity types
+    shared_via: Optional[str] = Field(
+        None,
+        description="Share via entity type: 'user', 'namespace', or other registered entity types",
+    )
+    # Knowledge base creator name for display fallback
+    owner_name: Optional[str] = Field(
+        None,
+        description="Knowledge base creator's user name",
     )
 
 
@@ -798,6 +920,7 @@ class KnowledgeDocumentCreateV1(BaseModel):
         description="Attachment context ID (required for source_type='attachment')",
     )
     # common optional
+    folder_id: int = Field(0, ge=0, description="Target folder ID (0 = root level)")
     splitter_config: Optional[SplitterConfig] = Field(
         None,
         description="Custom text splitter configuration",

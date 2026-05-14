@@ -74,3 +74,25 @@ class MCPProviderKeysResponse(BaseModel):
 
     success: bool
     message: str
+
+
+class MCPToolInfo(BaseModel):
+    """Information about a single MCP tool"""
+
+    name: str
+    description: str
+
+
+class MCPTestRequest(BaseModel):
+    """Request to test an MCP server connection"""
+
+    server_name: str
+    server_config: Dict[str, Any]  # Raw server config: type/url/headers/command/args
+
+
+class MCPTestResponse(BaseModel):
+    """Response for MCP server connection test"""
+
+    success: bool
+    error: Optional[str] = None
+    tools: List[MCPToolInfo] = []

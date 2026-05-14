@@ -21,6 +21,13 @@ import type {
   AddMemberResult,
 } from '@/types/group'
 
+function buildQueryString(params: Record<string, string | number | undefined>): string {
+  const entries = Object.entries(params)
+    .filter(([, v]) => v !== undefined)
+    .map(([k, v]) => [k, String(v)] as [string, string])
+  return `?${new URLSearchParams(entries).toString()}`
+}
+
 /**
  * List user's groups (created + joined)
  */
@@ -28,10 +35,20 @@ export const listGroups = async (params?: {
   page?: number
   limit?: number
 }): Promise<GroupListResponse> => {
-  const queryString = params
-    ? `?${new URLSearchParams(params as Record<string, string>).toString()}`
-    : ''
+  const queryString = params ? buildQueryString(params) : ''
   return await apiClient.get<GroupListResponse>(`/groups${queryString}`)
+}
+
+/**
+ * Search groups by name or display_name (level=group only)
+ */
+export const searchGroups = async (params: {
+  q: string
+  page?: number
+  limit?: number
+}): Promise<GroupListResponse> => {
+  const queryString = buildQueryString(params)
+  return await apiClient.get<GroupListResponse>(`/groups/search${queryString}`)
 }
 
 /**

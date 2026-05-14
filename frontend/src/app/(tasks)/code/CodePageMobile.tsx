@@ -17,6 +17,7 @@ import { saveLastTab } from '@/utils/userPreferences'
 import { useUser } from '@/features/common/UserContext'
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
 import { ChatArea } from '@/features/tasks/components/chat'
+import { RemoteWorkspaceEntry } from '@/features/tasks/components/remote-workspace'
 
 /**
  * Mobile-specific implementation of Code Page
@@ -40,8 +41,13 @@ export function CodePageMobile() {
   const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
 
   // Task context for workbench data
-  const { selectedTaskDetail, setSelectedTask, refreshTasks, refreshSelectedTaskDetail } =
-    useTaskContext()
+  const {
+    selectedTask,
+    selectedTaskDetail,
+    setSelectedTask,
+    refreshTasks,
+    refreshSelectedTaskDetail,
+  } = useTaskContext()
 
   // Get current task title for top navigation
   const currentTaskTitle = selectedTaskDetail?.title
@@ -132,6 +138,14 @@ export function CodePageMobile() {
           onMembersChanged={handleMembersChanged}
           isSidebarCollapsed={false}
         >
+          {(selectedTask?.id || selectedTaskDetail?.id) && (
+            <RemoteWorkspaceEntry
+              taskId={selectedTask?.id || selectedTaskDetail?.id}
+              taskStatus={selectedTaskDetail?.status}
+              refreshKey={selectedTaskDetail?.updated_at}
+              display="icon"
+            />
+          )}
           {shareButton}
           <ThemeToggle />
           {/* Note: Open menu and workbench toggle are hidden on mobile for simplicity */}

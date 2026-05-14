@@ -9,10 +9,15 @@ Provides base share service and resource-specific implementations.
 """
 
 from app.services.share.base_service import UnifiedShareService
+from app.services.share.external_entity_resolver import register_entity_resolver
 from app.services.share.knowledge_share_service import (
     KnowledgeShareService,
     get_knowledge_base_tool_access_mode_by_ids,
     knowledge_share_service,
+)
+from app.services.share.namespace_entity_resolver import (
+    NamespaceEntityResolver,
+    namespace_entity_resolver,
 )
 from app.services.share.share_webhook import (
     send_share_request_notification,
@@ -20,6 +25,9 @@ from app.services.share.share_webhook import (
 )
 from app.services.share.task_share_service import TaskShareService, task_share_service
 from app.services.share.team_share_service import TeamShareService, team_share_service
+
+# Register the namespace entity resolver for open-source group-level permissions
+register_entity_resolver("namespace", NamespaceEntityResolver)
 
 __all__ = [
     "UnifiedShareService",

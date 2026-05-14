@@ -34,9 +34,6 @@ function TasksPageContent() {
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
 
-  // Selected team state for sharing
-  const [selectedTeamForNewTask, setSelectedTeamForNewTask] = useState<Team | null>(null)
-
   const handleRefreshTeams = async (): Promise<Team[]> => {
     return await refreshTeams()
   }
@@ -50,11 +47,7 @@ function TasksPageContent() {
         <DeviceTaskSync />
       </Suspense>
       <Suspense>
-        <TeamShareHandler
-          teams={teams}
-          onTeamSelected={setSelectedTeamForNewTask}
-          onRefreshTeams={handleRefreshTeams}
-        />
+        <TeamShareHandler teams={teams} onRefreshTeams={handleRefreshTeams} />
       </Suspense>
       <div className="flex smart-h-screen bg-base text-text-primary box-border">
         {/* Responsive sidebar */}
@@ -77,7 +70,7 @@ function TasksPageContent() {
           <ChatArea
             teams={teams}
             isTeamsLoading={isTeamsLoading}
-            selectedTeamForNewTask={selectedTeamForNewTask}
+            selectedTeamForNewTask={null}
             taskType="code"
           />
         </div>

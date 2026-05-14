@@ -5,9 +5,15 @@
 'use client'
 
 import React, { useEffect, useState } from 'react'
-import { Download, X, Code, Eye } from 'lucide-react'
+import { Download, X, Code, Eye, Maximize2, Minimize2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { FilePreview } from './FilePreview'
 import { getPreviewType, formatFileSize } from './utils'
 import { downloadAttachment } from '@/apis/attachments'
@@ -51,18 +57,30 @@ export function FilePreviewDialog({
   const isHtml = previewType === 'html'
   const { t } = useTranslation('common')
   const [htmlIsSourceMode, setHtmlIsSourceMode] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
 
-  // Handle keyboard shortcut (Escape to close)
+  // Handle keyboard shortcut (Escape exits fullscreen before closing)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && open) {
+        if (isFullscreen) {
+          setIsFullscreen(false)
+          return
+        }
+
         onClose()
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [open, onClose])
+  }, [isFullscreen, open, onClose])
+
+  useEffect(() => {
+    if (!open) {
+      setIsFullscreen(false)
+    }
+  }, [open])
 
   const handleDownload = async () => {
     try {
@@ -97,8 +115,13 @@ export function FilePreviewDialog({
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent
-        className="max-w-5xl w-[90vw] h-[80vh] p-0 flex flex-col gap-0"
+        className={
+          isFullscreen
+            ? 'max-w-none !max-w-none w-screen !w-screen h-dvh !h-dvh p-0 flex flex-col gap-0 !left-0 !top-0 !translate-x-0 !translate-y-0 !rounded-none sm:!rounded-none !border-0'
+            : 'max-w-5xl w-[90vw] h-[80vh] p-0 flex flex-col gap-0'
+        }
         hideCloseButton
+        preventEscapeClose={isFullscreen}
       >
         <DialogHeader className="px-4 py-3 border-b border-border flex flex-col-reverse sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
@@ -112,6 +135,9 @@ export function FilePreviewDialog({
               )}
             </div>
           </div>
+          <DialogDescription className="sr-only">
+            {t('attachment.preview.dialog_description', { filename })}
+          </DialogDescription>
           <div className="flex items-center justify-end sm:justify-start gap-2 flex-shrink-0 overflow-x-auto pb-1 sm:pb-0">
             {/* HTML Preview Controls - only show for HTML files */}
             {isHtml && (
@@ -155,6 +181,17 @@ export function FilePreviewDialog({
                 size="sm"
               />
             )}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setIsFullscreen(current => !current)}
+              className="h-11 w-11 sm:h-9 sm:w-9"
+              aria-label={isFullscreen ? t('actions.exit_fullscreen') : t('actions.fullscreen')}
+              data-testid="file-preview-fullscreen-button"
+              title={isFullscreen ? t('actions.exit_fullscreen') : t('actions.fullscreen')}
+            >
+              {isFullscreen ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
+            </Button>
             <Button
               variant="primary"
               size="sm"

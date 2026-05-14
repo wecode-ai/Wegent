@@ -44,6 +44,12 @@
       "createdDesc": "点击上方按钮创建您的第一个知识库",
       "sharedDesc": "当其他用户分享知识库给您时，将显示在这里"
     },
+    "groupSections": {
+      "native": "创建",
+      "shared": "分享",
+      "noNative": "暂无群组知识库",
+      "noShared": "暂无分享的知识库"
+    },
     "tree": {
       "title": "知识库",
       "myKnowledge": "我的知识",
@@ -110,7 +116,9 @@
     },
     "table": {
       "name": "名称",
-      "group": "归属小组",
+      "group": "归属",
+      "belongsTo": "归属",
+      "from": "来自",
       "permission": "权限",
       "lastAccess": "最近访问",
       "actions": "操作",
@@ -185,11 +193,32 @@
       "convertToNotebookConfirm": "转换为笔记本后，可直接在知识库内上传文件并开启对话，但文档数量将限制为最多 50 个。确定转换吗？",
       "convertSuccess": "知识库类型转换成功",
       "convertFailed": "知识库类型转换失败",
-      "targetGroup": "归属分组",
+      "targetGroup": "归属",
       "selectGroup": "选择分组"
     },
     "folder": {
-      "docCount": "{{count}} 个文档"
+      "docCount": "{{count}} 个文档",
+      "create": "新建文件夹",
+      "createTitle": "新建文件夹",
+      "createPlaceholder": "输入文件夹名称",
+      "delete": "删除文件夹",
+      "deleteTitle": "删除文件夹",
+      "deleteConfirm": "确定要删除 \"{{name}}\" 及其所有子文件夹吗？其中的文档将移至根目录。",
+      "rename": "重命名文件夹",
+      "renameTitle": "重命名文件夹",
+      "renamePlaceholder": "输入新文件夹名称",
+      "moveDocument": "移动到文件夹",
+      "selectFolder": "选择目标文件夹",
+      "rootLevel": "根目录",
+      "createdToast": "文件夹 \"{{name}}\" 已创建",
+      "updatedToast": "文件夹 \"{{name}}\" 已更新",
+      "deletedToast": "文件夹已删除，{{count}} 个文档已移至根目录",
+      "createFailed": "创建文件夹失败",
+      "updateFailed": "更新文件夹失败",
+      "deleteFailed": "删除文件夹失败",
+      "moveDocumentFailed": "移动文档失败",
+      "moveDocumentHint": "将文档 \"{{name}}\" 移动到：",
+      "current": "当前"
     },
     "document": {
       "title": "文档",
@@ -448,7 +477,17 @@
       "batchAddFailed": "添加失败",
       "invalidShareLink": "分享链接无效或已过期",
       "noLinkToCopy": "没有可复制的链接",
-      "copyFailedManual": "链接已选中，请按 Ctrl+C 复制"
+      "copyFailedManual": "链接已选中，请按 Ctrl+C 复制",
+      "authorization": "授权",
+      "individual": "个人",
+      "selectGroup": "选择群组",
+      "selectGroupPlaceholder": "请选择群组",
+      "searchGroupPlaceholder": "搜索群组...",
+      "noGroups": "暂无可用群组",
+      "namespaceMembers": "群组权限",
+      "addNamespace": "添加群组",
+      "noNamespacePermissions": "暂无群组权限",
+      "namespace": "群组"
     },
     "advancedSettings": {
       "title": "高级设置",

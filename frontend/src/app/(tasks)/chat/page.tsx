@@ -107,11 +107,7 @@ export default function ChatPage() {
         <DeviceParamSync />
       </Suspense>
       <Suspense>
-        <TeamShareHandler
-          teams={teams}
-          onTeamSelected={() => {}}
-          onRefreshTeams={handleRefreshTeams}
-        />
+        <TeamShareHandler teams={teams} onRefreshTeams={handleRefreshTeams} />
       </Suspense>
       <Suspense>
         <TaskShareHandler onTaskCopied={refreshTasks} />
