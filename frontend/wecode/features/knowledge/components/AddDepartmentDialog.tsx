@@ -146,17 +146,47 @@ export function AddDepartmentDialog({
 
     setLoading(true)
     try {
-      for (const dept of selectedDepartments) {
-        await knowledgePermissionExtensionApi.addDepartmentPermission(
-          kbId,
-          dept.id,
-          role,
-          dept.name || dept.label
-        )
+      const result = await knowledgePermissionExtensionApi.batchAddDepartmentPermission(
+        kbId,
+        selectedDepartments.map(d => ({ id: d.id, displayName: d.name || d.label })),
+        role
+      )
+
+      if (result.failed.length === 0) {
+        resetForm()
+        onSuccess?.()
+        onOpenChange(false)
+        return
       }
-      resetForm()
+
+      // Refresh the parent list because some adds did succeed.
       onSuccess?.()
-      onOpenChange(false)
+
+      // Keep only failed departments selected so the user can retry directly.
+      // Match by entity_id when the backend provides it; otherwise fall back
+      // to keeping the whole selection (rare — only if backend omits entity_id).
+      const failedIds = new Set(
+        result.failed.map(f => f.entity_id).filter((v): v is string => Boolean(v))
+      )
+      const remaining =
+        failedIds.size > 0
+          ? selectedDepartments.filter(d => failedIds.has(d.id))
+          : selectedDepartments
+      setSelectedDepartments(remaining)
+
+      const failedNames = result.failed
+        .map(f => {
+          const dept = selectedDepartments.find(d => d.id === f.entity_id)
+          const name = dept?.name || dept?.label || f.entity_id || ''
+          return name ? `${name}（${f.error}）` : f.error
+        })
+        .join('；')
+      setError(
+        loc(
+          'document.permission.partialFailure',
+          `${result.failed.length} 个部门添加失败：${failedNames}`
+        )
+      )
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to add department permission'
       setError(message)
@@ -227,7 +257,7 @@ export function AddDepartmentDialog({
                   ) : departments.length === 0 ? (
                     <div className="p-3 text-sm text-text-muted text-center">
                       {searchQuery.trim()
-                        ? loc('document.permission.noGroupResults', '没有匹配的组')
+                        ? loc('document.permission.noDepartmentResults', '没有匹配的部门')
                         : loc('document.permission.searchDepartmentPlaceholder', '搜索部门...')}
                     </div>
                   ) : (

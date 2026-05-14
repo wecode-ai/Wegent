@@ -19,7 +19,7 @@ import logging
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 
-from app.core.security import get_current_user
+from app.core.security import get_admin_user
 from app.models.user import User
 from wecode.service.dept_visibility import (
     FIELD_HIDDEN,
@@ -31,18 +31,10 @@ from wecode.service.dept_visibility import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-ADMIN_USERNAMES = {"admin"}
-
-
-def _ensure_admin(current_user: User) -> None:
-    if current_user is None or current_user.user_name not in ADMIN_USERNAMES:
-        raise HTTPException(status_code=403, detail="Admin privileges required")
-
 
 @router.get("")
-def read_config(current_user: User = Depends(get_current_user)):
+def read_config(current_user: User = Depends(get_admin_user)):
     """Return the current hidden list and whitelist (sorted)."""
-    _ensure_admin(current_user)
     cfg = get_visibility_config()
     return {
         "hidden_items": sorted(cfg.hidden_items),
@@ -53,10 +45,9 @@ def read_config(current_user: User = Depends(get_current_user)):
 @router.put("/hidden")
 def update_hidden(
     items: list[str] = Body(..., embed=True),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_admin_user),
 ):
     """Replace the hidden department list with the provided items."""
-    _ensure_admin(current_user)
     try:
         stored = write_field(FIELD_HIDDEN, items)
     except RuntimeError as e:
@@ -71,10 +62,9 @@ def update_hidden(
 @router.put("/whitelist")
 def update_whitelist(
     user_names: list[str] = Body(..., embed=True),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_admin_user),
 ):
     """Replace the whitelist with the provided user_name list."""
-    _ensure_admin(current_user)
     try:
         stored = write_field(FIELD_WHITELIST, user_names)
     except RuntimeError as e:

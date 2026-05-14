@@ -8,7 +8,8 @@
       "addDepartment": "Add Department Permission",
       "selectDepartment": "Select Department",
       "selectDepartmentRequired": "Please select a department",
-      "addDepartmentButton": "Add Department"
+      "addDepartmentButton": "Add Department",
+      "noDepartmentResults": "No matching departments"
     }
   }
 }

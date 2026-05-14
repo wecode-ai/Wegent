@@ -146,7 +146,7 @@ export function DepartmentAuthSearch({ role, onSelect }: DepartmentAuthSearchPro
           ) : departments.length === 0 ? (
             <div className="p-3 text-sm text-text-muted text-center">
               {searchQuery.trim()
-                ? t('common:userSearch.noResults') || '未找到结果'
+                ? loc('document.permission.noDepartmentResults', '没有匹配的部门')
                 : loc('document.permission.searchDepartmentPlaceholder', '搜索部门...')}
             </div>
           ) : (
