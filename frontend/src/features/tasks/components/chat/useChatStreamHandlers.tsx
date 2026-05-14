@@ -451,7 +451,7 @@ export function useChatStreamHandlers({
     lastJoinWarningRef.current = dedupeKey
     toast({
       title: t(warningKey),
-      variant: 'destructive',
+      variant: 'warning',
     })
   }, [pendingTaskId, selectedTaskDetail?.id, t, taskState?.status, taskState?.streamingInfo, toast])
 
