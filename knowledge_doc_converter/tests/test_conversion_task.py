@@ -261,6 +261,11 @@ class TestConvertDocumentTask:
         )
         mock_callback.notify_started.assert_called_once()
         mock_callback.notify_completed.assert_called_once()
+        call_kwargs = mock_callback.notify_completed.call_args[1]
+        # TASK_KWARGS: original_filename="test.pdf", file_extension="pdf"
+        # expected: filename_without_ext="test", md_filename="test.pdf.md"
+        assert call_kwargs["converted_name"] == "test.pdf.md"
+        assert call_kwargs["converted_extension"] == "md"
 
     @patch("knowledge_doc_converter.tasks.conversion_task.lock_service")
     @patch("knowledge_doc_converter.tasks.conversion_task.callback_client")

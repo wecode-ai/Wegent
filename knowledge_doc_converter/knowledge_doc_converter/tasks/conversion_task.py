@@ -218,7 +218,7 @@ def convert_document_task(
 
             # Step 4: Notify conversion completed (backend handles
             # state transition, attachment overwrite, and index dispatch atomically)
-            md_filename = f"{filename_without_ext}.md"
+            md_filename = f"{filename_without_ext}.{file_extension}.md"
             resp = callback_client.notify_completed(
                 path=callback_completed_path,
                 document_id=document_id,

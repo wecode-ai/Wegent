@@ -79,7 +79,7 @@ class TestCallbackClient:
                 path="/internal/conversion/callback/completed",
                 document_id=1,
                 generation=3,
-                converted_name="report.md",
+                converted_name="report.pdf.md",
                 converted_extension="md",
                 file_size=100,
                 markdown_bytes=b"# Hello",
@@ -88,7 +88,7 @@ class TestCallbackClient:
             call_args = mock_call.call_args
             payload = call_args[0][1]
             assert payload["document_id"] == 1
-            assert payload["converted_name"] == "report.md"
+            assert payload["converted_name"] == "report.pdf.md"
             assert payload["converted_extension"] == "md"
             assert payload["file_size"] == 100
             # Verify base64 encoding
