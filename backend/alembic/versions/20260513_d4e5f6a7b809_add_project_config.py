@@ -21,6 +21,7 @@ depends_on = None
 
 
 def upgrade() -> None:
+    """Add config JSON column to projects table."""
     op.add_column(
         "projects",
         sa.Column(
@@ -33,4 +34,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Remove config column from projects table."""
     op.drop_column("projects", "config")

@@ -91,6 +91,7 @@ class ClaudeCodeAgent(Agent):
     """
 
     def get_name(self) -> str:
+        """Return the agent type name."""
         return "ClaudeCode"
 
     def _get_claude_config_dir(self) -> str:
@@ -560,6 +561,7 @@ class ClaudeCodeAgent(Agent):
                     import concurrent.futures
 
                     def run_async_task():
+                        """Run async cleanup in a new event loop."""
                         new_loop = asyncio.new_event_loop()
                         asyncio.set_event_loop(new_loop)
                         try:

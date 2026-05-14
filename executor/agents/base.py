@@ -196,6 +196,7 @@ class Agent:
             is_failed = status == TaskStatus.FAILED.value if status else False
 
             async def _send_progress():
+                """Send progress callback to backend."""
                 if is_failed:
                     # Send error event for FAILED status so frontend receives the error
                     error_message = message or "Task execution failed"
@@ -206,6 +207,7 @@ class Agent:
                     await self.get_emitter().in_progress()
 
             async def _send_progress_with_timeout():
+                """Send progress with timeout guard."""
                 await asyncio.wait_for(
                     _send_progress(),
                     timeout=self.PROGRESS_CALLBACK_TIMEOUT_SECONDS,
@@ -236,6 +238,7 @@ class Agent:
                 self._inflight_progress_task = task
 
             def _log_task_error(done_task: asyncio.Task) -> None:
+                """Log errors from completed progress tasks."""
                 with self._progress_task_lock:
                     if self._inflight_progress_task is done_task:
                         self._inflight_progress_task = None
@@ -295,6 +298,7 @@ class Agent:
         raise NotImplementedError("Subclasses must implement execute()")
 
     async def download_code(self):
+        """Clone the git repository into the working directory."""
         # Check if git clone should be skipped (e.g., for workspace recovery from archive)
         skip_git_clone = getattr(self.task_data, "skip_git_clone", False)
         if skip_git_clone:

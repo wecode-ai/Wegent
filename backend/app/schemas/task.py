@@ -34,6 +34,8 @@ class TaskApp(BaseModel):
 
 
 class TaskStatus(str, Enum):
+    """Enum for task execution status."""
+
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     COMPLETED = "COMPLETED"
@@ -138,6 +140,8 @@ class TaskInDB(TaskBase):
     )
 
     class Config:
+        """Pydantic config."""
+
         from_attributes = True
 
 
@@ -179,6 +183,8 @@ class TaskDetail(BaseModel):
     )
 
     class Config:
+        """Pydantic config."""
+
         from_attributes = True
 
 
@@ -208,6 +214,8 @@ class TaskLite(BaseModel):
     )
 
     class Config:
+        """Pydantic config."""
+
         from_attributes = True
 
 
