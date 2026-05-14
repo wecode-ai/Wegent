@@ -42,6 +42,8 @@ class ProjectTaskResponse(BaseModel):
     )
 
     class Config:
+        """Pydantic config."""
+
         from_attributes = True
 
 
@@ -55,6 +57,7 @@ class ProjectExecutionConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_device(self) -> "ProjectExecutionConfig":
+        """Ensure deviceId is present for local and absent for cloud."""
         if self.targetType == "local" and not self.deviceId:
             raise ValueError("deviceId is required when targetType is local")
         if self.targetType == "cloud" and self.deviceId:
@@ -73,6 +76,7 @@ class ProjectTeamConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_team_ref(self) -> "ProjectTeamConfig":
+        """Require at least one of team.id or team.name."""
         if self.id is None and not self.name:
             raise ValueError("Either team.id or team.name is required")
         return self
@@ -130,6 +134,7 @@ class ProjectConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_workspace_project(self) -> "ProjectConfig":
+        """Validate workspace project constraints (execution, git, paths)."""
         if self.mode != "workspace":
             return self
 
@@ -221,6 +226,8 @@ class ProjectResponse(ProjectBase):
     updated_at: datetime = Field(..., description="Last update timestamp")
 
     class Config:
+        """Pydantic config."""
+
         from_attributes = True
 
 
