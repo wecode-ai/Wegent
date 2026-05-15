@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { ComputerDesktopIcon } from '@heroicons/react/24/outline'
 
 import type { AdminDeviceInfo } from '@/apis/admin'
@@ -25,7 +25,17 @@ export interface AdminDeviceMonitorVncExtension {
  * The open-source panel only knows how to call this extension. All VNC-specific
  * state, layout, and rendering stay within the wecode namespace.
  */
-export function useAdminDeviceMonitorVncExtension(): AdminDeviceMonitorVncExtension {
+function isVncSupportedDevice(device: AdminDeviceInfo) {
+  return (
+    device.device_type === 'cloud' &&
+    device.bind_shell === 'claudecode' &&
+    device.status === 'online'
+  )
+}
+
+export function useAdminDeviceMonitorVncExtension(
+  devices: AdminDeviceInfo[] = []
+): AdminDeviceMonitorVncExtension {
   const { t } = useTranslation('devices')
   const isMobile = useIsMobile()
   const [activeVncDeviceDetails, setActiveVncDeviceDetails] = useState<AdminDeviceInfo | null>(null)
@@ -47,14 +57,31 @@ export function useAdminDeviceMonitorVncExtension(): AdminDeviceMonitorVncExtens
     })
   }, [])
 
+  useEffect(() => {
+    if (!activeVncDeviceDetails || devices.length === 0) {
+      return
+    }
+
+    const activeDevice = devices.find(
+      device =>
+        device.device_id === activeVncDeviceDetails.device_id &&
+        device.user_id === activeVncDeviceDetails.user_id
+    )
+
+    if (!activeDevice || !isVncSupportedDevice(activeDevice)) {
+      closeVncPanel()
+    }
+  }, [activeVncDeviceDetails, closeVncPanel, devices])
+
   const renderAction = useCallback(
     (device: AdminDeviceInfo) => {
-      if (device.device_type !== 'cloud' || device.bind_shell !== 'claudecode') {
+      if (!isVncSupportedDevice(device)) {
         return null
       }
 
       const isActive =
-        activeVncDeviceDetails?.device_id === device.device_id && activeVncDeviceDetails.user_id === device.user_id
+        activeVncDeviceDetails?.device_id === device.device_id &&
+        activeVncDeviceDetails.user_id === device.user_id
 
       return (
         <Tooltip key={`${device.device_id}-vnc`}>
