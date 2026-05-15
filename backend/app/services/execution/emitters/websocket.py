@@ -115,6 +115,12 @@ class WebSocketResultEmitter(BaseResultEmitter):
             # Emit chat:block_created event for tool start
             await self._emit_block_created(event, webpage_ws_emitter)
 
+        elif event.type == EventType.TOOL_ARGUMENT_DELTA.value:
+            await self._emit_tool_argument_delta(event, webpage_ws_emitter)
+
+        elif event.type == EventType.TOOL_ARGUMENT_DONE.value:
+            await self._emit_tool_argument_done(event, webpage_ws_emitter)
+
         elif event.type == EventType.TOOL_RESULT.value:
             # Emit chat:block_updated event for tool result
             await self._emit_block_updated(event, webpage_ws_emitter)
@@ -243,6 +249,9 @@ class WebSocketResultEmitter(BaseResultEmitter):
             tool_input=event.tool_input or {},
             display_name=display_name,
         )
+        if event.data and event.data.get("argument_status") == "streaming":
+            block["status"] = "generating_arguments"
+            block["argument_status"] = "streaming"
 
         await ws_emitter.emit_block_created(
             task_id=event.task_id,
@@ -252,6 +261,28 @@ class WebSocketResultEmitter(BaseResultEmitter):
         logger.debug(
             f"[WebSocketResultEmitter] chat:block_created emitted: "
             f"task_id={event.task_id}, tool_name={event.tool_name}"
+        )
+
+    async def _emit_tool_argument_delta(
+        self, event: ExecutionEvent, ws_emitter
+    ) -> None:
+        """Emit a partial tool argument update."""
+        await ws_emitter.emit_block_updated(
+            task_id=event.task_id,
+            subtask_id=event.subtask_id,
+            block_id=event.tool_use_id or "",
+            tool_input=event.tool_input,
+            status="generating_arguments",
+        )
+
+    async def _emit_tool_argument_done(self, event: ExecutionEvent, ws_emitter) -> None:
+        """Emit completion of tool argument generation."""
+        await ws_emitter.emit_block_updated(
+            task_id=event.task_id,
+            subtask_id=event.subtask_id,
+            block_id=event.tool_use_id or "",
+            tool_input=event.tool_input,
+            status=BlockStatus.PENDING.value,
         )
 
     async def _emit_direct_block_created(

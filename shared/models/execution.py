@@ -37,6 +37,8 @@ class EventType(str, Enum):
     THINKING = "thinking"
     TOOL = "tool"  # Generic tool event (for tool callbacks)
     TOOL_START = "tool_start"
+    TOOL_ARGUMENT_DELTA = "tool_argument_delta"
+    TOOL_ARGUMENT_DONE = "tool_argument_done"
     TOOL_RESULT = "tool_result"
     BLOCK_CREATED = "block_created"
     PROGRESS = "progress"

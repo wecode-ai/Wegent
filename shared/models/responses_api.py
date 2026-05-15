@@ -813,7 +813,8 @@ class ResponsesAPIEventBuilder:
     def function_call_arguments_delta(
         self,
         call_id: str,
-        arguments: Optional[dict] = None,
+        arguments: Optional[Any] = None,
+        arguments_summary: Optional[dict] = None,
     ) -> dict:
         """Create response.function_call_arguments.delta event.
 
@@ -824,20 +825,26 @@ class ResponsesAPIEventBuilder:
         Returns:
             Event data dictionary
         """
-        delta = self._json_arguments(arguments)
-        return {
+        delta = (
+            arguments if isinstance(arguments, str) else self._json_arguments(arguments)
+        )
+        data = {
             "type": ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DELTA.value,
             "response_id": self.response_id,
             "item_id": call_id,
             "output_index": self._tool_output_index,
             "delta": delta,
         }
+        if arguments_summary is not None:
+            data["arguments_summary"] = arguments_summary
+        return data
 
     def function_call_arguments_done(
         self,
         call_id: str,
         arguments: Optional[dict] = None,
         output: Optional[str] = None,
+        arguments_summary: Optional[dict] = None,
     ) -> dict:
         """Create response.function_call_arguments.done event.
 
@@ -860,6 +867,8 @@ class ResponsesAPIEventBuilder:
         # Add output as Wegent extension for tool result
         if output is not None:
             data["output"] = output
+        if arguments_summary is not None:
+            data["arguments_summary"] = arguments_summary
         return data
 
     def function_call_done(
@@ -867,6 +876,8 @@ class ResponsesAPIEventBuilder:
         call_id: str,
         name: str,
         arguments: Optional[dict] = None,
+        output: Optional[str] = None,
+        status: str = "completed",
     ) -> dict:
         """Create response.output_item.done event for function call.
 
@@ -881,7 +892,7 @@ class ResponsesAPIEventBuilder:
         args_str = self._json_arguments(arguments)
         output_index = self._tool_output_index
         self._tool_output_index += 1  # Increment for next tool call
-        return {
+        data = {
             "type": ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value,
             "response_id": self.response_id,
             "output_index": output_index,
@@ -891,8 +902,12 @@ class ResponsesAPIEventBuilder:
                 "call_id": call_id,
                 "name": name,
                 "arguments": args_str,
+                "status": status,
             },
         }
+        if output is not None:
+            data["item"]["output"] = output
+        return data
 
     # ============================================================
     # MCP Call Events

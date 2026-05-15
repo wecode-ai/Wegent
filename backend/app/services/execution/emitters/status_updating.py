@@ -99,6 +99,8 @@ class StatusUpdatingEmitter(ResultEmitter):
         elif event.type in (
             EventType.CHUNK.value,
             EventType.TOOL_START.value,
+            EventType.TOOL_ARGUMENT_DELTA.value,
+            EventType.TOOL_ARGUMENT_DONE.value,
             EventType.TOOL_RESULT.value,
         ):
             await session_manager.touch_task_streaming_activity(self._task_id)
@@ -118,6 +120,29 @@ class StatusUpdatingEmitter(ResultEmitter):
                 tool_protocol=tool_protocol,
                 server_label=server_label,
             )
+            if event.data and event.data.get("argument_status") == "streaming":
+                await session_manager.update_tool_block_status(
+                    subtask_id=self._subtask_id,
+                    tool_use_id=event.tool_use_id or "",
+                    status="generating_arguments",
+                    tool_input=event.tool_input,
+                )
+        elif event.type == EventType.TOOL_ARGUMENT_DELTA.value:
+            if event.tool_use_id:
+                await session_manager.update_tool_block_status(
+                    subtask_id=self._subtask_id,
+                    tool_use_id=event.tool_use_id,
+                    status="generating_arguments",
+                    tool_input=event.tool_input,
+                )
+        elif event.type == EventType.TOOL_ARGUMENT_DONE.value:
+            if event.tool_use_id:
+                await session_manager.update_tool_block_status(
+                    subtask_id=self._subtask_id,
+                    tool_use_id=event.tool_use_id,
+                    status="pending",
+                    tool_input=event.tool_input,
+                )
         elif event.type == EventType.TOOL_RESULT.value:
             # Update tool block status when result arrives
             if event.tool_use_id:
