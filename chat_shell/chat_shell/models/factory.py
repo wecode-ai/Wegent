@@ -91,6 +91,60 @@ def _mask_api_key(api_key: str) -> str:
     return "***" if api_key else "EMPTY"
 
 
+def _inject_http_error_hook(model: BaseChatModel, provider: str, model_id: str) -> None:
+    """Inject an httpx response hook that logs HTTP error details.
+
+    Only logs when response status >= 400, capturing headers, status,
+    body snippet, and request duration for quick diagnosis.
+    """
+    import time
+
+    import httpx
+
+    async def _on_error_response(response: httpx.Response) -> None:
+        if response.status_code < 400:
+            return
+        elapsed = response.elapsed.total_seconds() if response.elapsed else None
+        # Read body for error diagnosis (httpx streams must be read explicitly)
+        try:
+            await response.aread()
+            body_text = response.text[:500]
+        except Exception:
+            body_text = "<unable to read body>"
+        logger.error(
+            "[LLM_HTTP_ERROR] provider=%s model=%s status=%d elapsed=%.3fs "
+            "url=%s headers=%s body=%s",
+            provider,
+            model_id,
+            response.status_code,
+            elapsed or -1,
+            str(response.url),
+            dict(response.headers),
+            body_text,
+        )
+
+    # Locate the httpx async client and append the hook.
+    # Anthropic: model._async_client._client
+    # OpenAI:    model.root_async_client._client
+    # Google:    not httpx-based, skip
+    httpx_client: httpx.AsyncClient | None = None
+    try:
+        if provider == "anthropic":
+            httpx_client = getattr(
+                getattr(model, "_async_client", None), "_client", None
+            )
+        elif provider == "openai":
+            httpx_client = getattr(
+                getattr(model, "root_async_client", None), "_client", None
+            )
+    except Exception:
+        pass
+
+    if httpx_client is not None and hasattr(httpx_client, "_event_hooks"):
+        httpx_client._event_hooks.setdefault("response", []).append(_on_error_response)
+        logger.debug("Injected HTTP error hook for %s/%s", provider, model_id)
+
+
 class LangChainModelFactory:
     """Factory for creating LangChain chat model instances from model config.
 
@@ -297,6 +351,9 @@ class LangChainModelFactory:
         add_span_event("instantiating_model_class", {"class": model_class.__name__})
         model = model_class(**params)
         add_span_event("model_instance_created")
+
+        # Inject HTTP error logging hook into the underlying httpx client
+        _inject_http_error_hook(model, provider, cfg["model_id"])
 
         # Attach provider metadata for downstream think-block normalization.
         # These are read by LangGraphAgentBuilder to tag serialized messages

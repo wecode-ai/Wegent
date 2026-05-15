@@ -127,6 +127,10 @@ class ExecutionRequest:
 
     # === Workspace Configuration ===
     workspace: dict = field(default_factory=dict)
+    project_id: Optional[int] = None
+    workspace_source: Optional[str] = None
+    project_workspace_path: Optional[str] = None
+    execution_target_type: Optional[str] = None
 
     # === Git Configuration (from Task) ===
     git_domain: Optional[str] = None

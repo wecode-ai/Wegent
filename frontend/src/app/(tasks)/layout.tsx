@@ -10,6 +10,7 @@ import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext'
 import { SocketProvider } from '@/contexts/SocketContext'
 import { DeviceProvider } from '@/contexts/DeviceContext'
 import { TeamProvider } from '@/contexts/TeamContext'
+import { ProjectProvider } from '@/features/projects/contexts/projectContext'
 import { PetProvider, PetWidget, PetStreamingBridge } from '@/features/pet'
 import { SetupWizardProvider } from '@/features/admin/contexts/SetupWizardContext'
 import GlobalAdminSetupWizard from '@/features/admin/components/GlobalAdminSetupWizard'
@@ -33,18 +34,20 @@ export default function TasksLayout({ children }: { children: React.ReactNode })
       <SocketProvider>
         <DeviceProvider>
           <TeamProvider>
-            <PetProvider>
-              <SetupWizardProvider>
-                <TaskContextProvider>
-                  <ChatStreamProvider>
-                    {children}
-                    <PetStreamingBridge />
-                    <PetWidget />
-                    <GlobalAdminSetupWizard />
-                  </ChatStreamProvider>
-                </TaskContextProvider>
-              </SetupWizardProvider>
-            </PetProvider>
+            <ProjectProvider>
+              <PetProvider>
+                <SetupWizardProvider>
+                  <TaskContextProvider>
+                    <ChatStreamProvider>
+                      {children}
+                      <PetStreamingBridge />
+                      <PetWidget />
+                      <GlobalAdminSetupWizard />
+                    </ChatStreamProvider>
+                  </TaskContextProvider>
+                </SetupWizardProvider>
+              </PetProvider>
+            </ProjectProvider>
           </TeamProvider>
         </DeviceProvider>
       </SocketProvider>

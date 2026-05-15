@@ -88,6 +88,20 @@ export async function GET() {
         process.env.RUNTIME_ENABLE_CODE_KNOWLEDGE_ADD_REPO !== 'false' &&
         process.env.NEXT_PUBLIC_ENABLE_CODE_KNOWLEDGE_ADD_REPO !== 'false',
 
+      // Enable workspace project UI
+      // Priority: RUNTIME_ENABLE_PROJECT_WORKSPACE > NEXT_PUBLIC_ENABLE_PROJECT_WORKSPACE > false
+      enableProjectWorkspace:
+        process.env.RUNTIME_ENABLE_PROJECT_WORKSPACE === 'true' ||
+        process.env.NEXT_PUBLIC_ENABLE_PROJECT_WORKSPACE === 'true',
+
+      // Workspace project user whitelist (comma-separated user_names)
+      // Empty means all users can access when enabled
+      // Priority: RUNTIME_PROJECT_WORKSPACE_WHITELIST > NEXT_PUBLIC_PROJECT_WORKSPACE_WHITELIST > ''
+      projectWorkspaceWhitelist:
+        process.env.RUNTIME_PROJECT_WORKSPACE_WHITELIST ||
+        process.env.NEXT_PUBLIC_PROJECT_WORKSPACE_WHITELIST ||
+        '',
+
       // VSCode link template for deep linking
       // Priority: RUNTIME_VSCODE_LINK_TEMPLATE > NEXT_PUBLIC_VSCODE_LINK_TEMPLATE > empty
       vscodeLinkTemplate:

@@ -368,6 +368,7 @@ EXECUTOR_IMAGE: wegent-executor:latest # 执行器镜像
 - 📝 实时日志输出
 - 🛠️ MCP 工具支持
 - 📚 技能动态加载
+- 🪝 [预执行钩子](./pre-execute-hooks.md) 支持任务启动前自定义初始化
 
 **生命周期**：
 ```mermaid
@@ -862,6 +863,7 @@ logger.info("task.created",
 - [CRD 架构](./crd-architecture.md) - CRD 设计详情
 - [技能系统](../concepts/skill-system.md) - 技能开发和集成
 - [本地设备架构](./local-device-architecture.md) - 本地设备支持
+- [预执行钩子](./pre-execute-hooks.md) - Executor 任务启动前自定义初始化
 
 ---
 
