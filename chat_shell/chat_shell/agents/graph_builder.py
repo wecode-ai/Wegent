@@ -41,6 +41,7 @@ from ..llm_logging import log_direct_llm_request as _log_direct_llm_request
 from ..llm_logging import log_direct_llm_response as _log_direct_llm_response
 from ..llm_logging import log_llm_request_event as _log_llm_request_event
 from ..llm_logging import log_llm_response_event as _log_llm_response_event
+from ..tools.argument_stream import ToolCallStreamTracker
 from ..tools.base import ToolRegistry
 from ..tools.builtin.silent_exit import SilentExitException
 
@@ -1067,6 +1068,11 @@ class LangGraphAgentBuilder:
         first_token_received = False
         llm_request_start_time: float | None = None
         ttft_ms: float | None = None  # Time to first token in milliseconds
+        tool_argument_tracker = (
+            ToolCallStreamTracker(on_tool_event=on_tool_event)
+            if on_tool_event
+            else None
+        )
 
         # Get tracer for LLM request span
         tracer = otel_trace.get_tracer("chat_shell.agents")
@@ -1178,6 +1184,11 @@ class LangGraphAgentBuilder:
                                 else "N/A"
                             ),
                         )
+                        tool_call_chunks = getattr(chunk, "tool_call_chunks", None)
+                        if tool_argument_tracker and tool_call_chunks:
+                            await tool_argument_tracker.process_tool_call_chunks(
+                                tool_call_chunks
+                            )
 
                     # Check for reasoning_content (DeepSeek R1 and similar reasoning models)
                     # reasoning_content may be in additional_kwargs or as a direct attribute
@@ -1459,16 +1470,32 @@ class LangGraphAgentBuilder:
                     run_id = event.get("run_id", "")
                     # Get tool input data from event
                     tool_input_data = event.get("data", {})
+                    tool_use_id = event.get("tool_use_id")
+                    tool_arguments_streamed = False
+                    if tool_argument_tracker:
+                        finalize_result = await tool_argument_tracker.finalize(
+                            call_id=tool_use_id or run_id,
+                            tool_name=tool_name,
+                            arguments=(
+                                tool_input_data.get("input", {})
+                                if isinstance(tool_input_data, dict)
+                                else {}
+                            ),
+                        )
+                        if finalize_result.was_streamed:
+                            tool_use_id = finalize_result.tool_use_id
+                            tool_arguments_streamed = True
                     # Notify callback if provided
                     if on_tool_event:
-                        on_tool_event(
-                            "tool_start",
-                            {
-                                "name": tool_name,
-                                "run_id": run_id,
-                                "data": tool_input_data,
-                            },
-                        )
+                        payload = {
+                            "name": tool_name,
+                            "run_id": run_id,
+                            "data": tool_input_data,
+                            "tool_arguments_streamed": tool_arguments_streamed,
+                        }
+                        if tool_use_id:
+                            payload["tool_use_id"] = tool_use_id
+                        on_tool_event("tool_start", payload)
                         # Yield empty string to trigger _emit_pending_events() in chat_service
                         # This ensures tool events are sent immediately instead of being buffered
                         yield ""

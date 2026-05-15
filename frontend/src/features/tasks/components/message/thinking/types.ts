@@ -84,7 +84,13 @@ export interface ThinkingStep {
 /**
  * Tool execution status
  */
-export type ToolStatus = 'pending' | 'streaming' | 'invoking' | 'done' | 'error'
+export type ToolStatus =
+  | 'generating_arguments'
+  | 'pending'
+  | 'streaming'
+  | 'invoking'
+  | 'done'
+  | 'error'
 
 /**
  * Base interface for all message blocks.
@@ -94,6 +100,7 @@ interface BaseBlock {
   id: string // Unique block identifier
   status?:
     | 'pending'
+    | 'generating_arguments'
     | 'streaming'
     | 'done'
     | 'error'
@@ -123,6 +130,7 @@ export interface ToolBlock extends BaseBlock {
   display_name?: string // Display name for tool (optional)
   tool_input?: Record<string, unknown> // Tool input parameters
   tool_output?: unknown // Tool execution result
+  argument_status?: 'streaming' | 'done'
   metadata?: Record<string, unknown> // Additional metadata
 }
 

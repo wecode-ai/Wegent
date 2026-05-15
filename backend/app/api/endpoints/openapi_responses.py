@@ -850,7 +850,9 @@ async def _create_streaming_response_unified(
                             event.tool_name,
                         )
                         tool_name = event.tool_name or ""
-                        tool_input = event.tool_input or {}
+                        tool_input = (
+                            event.tool_input if event.tool_input is not None else {}
+                        )
                         tool_state = {
                             "protocol": tool_protocol,
                             "name": tool_name,
@@ -889,7 +891,7 @@ async def _create_streaming_response_unified(
                                     "name": tool_name,
                                     "arguments": (
                                         json.dumps(tool_input, ensure_ascii=False)
-                                        if tool_input
+                                        if tool_input is not None
                                         else ""
                                     ),
                                     "output_index": tool_state["output_index"],
@@ -903,7 +905,9 @@ async def _create_streaming_response_unified(
                         if not tool_state:
                             continue
                         if tool_state.get("protocol") == "mcp_call":
-                            tool_state["arguments"] = event.tool_input or {}
+                            tool_state["arguments"] = (
+                                event.tool_input if event.tool_input is not None else {}
+                            )
                     elif event.type == EventType.ERROR.value:
                         error_msg = event.error or "Unknown error"
                         logger.error(f"[OPENAPI] Error from execution: {error_msg}")
@@ -924,7 +928,11 @@ async def _create_streaming_response_unified(
                                     event.tool_name,
                                 ),
                                 "name": event.tool_name or "",
-                                "arguments": event.tool_input or {},
+                                "arguments": (
+                                    event.tool_input
+                                    if event.tool_input is not None
+                                    else {}
+                                ),
                                 "output_index": allocate_output_index(),
                             }
                             if event.data and event.data.get("server_label"):
@@ -938,7 +946,9 @@ async def _create_streaming_response_unified(
                         )
                         tool_name = tool_state.get("name") or event.tool_name or ""
                         arguments = (
-                            event.tool_input or tool_state.get("arguments") or {}
+                            event.tool_input
+                            if event.tool_input is not None
+                            else tool_state.get("arguments") or {}
                         )
                         output_index = tool_state["output_index"]
 

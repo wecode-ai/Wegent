@@ -181,7 +181,10 @@ export const ToolBlock = memo(function ToolBlock({
   // For merged tools, check if any of them is still running
   const isRunning = useMemo(() => {
     const checkRunning = (status: string | undefined) =>
-      status === 'invoking' || status === 'streaming' || status === 'pending'
+      status === 'generating_arguments' ||
+      status === 'invoking' ||
+      status === 'streaming' ||
+      status === 'pending'
 
     if (count > 1 && mergedTools.length > 0) {
       return mergedTools.some(item => checkRunning(item.status))

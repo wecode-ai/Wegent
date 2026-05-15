@@ -37,6 +37,8 @@ class EventType(str, Enum):
     THINKING = "thinking"
     TOOL = "tool"  # Generic tool event (for tool callbacks)
     TOOL_START = "tool_start"
+    TOOL_ARGUMENT_DELTA = "tool_argument_delta"
+    TOOL_ARGUMENT_DONE = "tool_argument_done"
     TOOL_RESULT = "tool_result"
     BLOCK_CREATED = "block_created"
     PROGRESS = "progress"
@@ -318,6 +320,8 @@ class ExecutionEvent:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ExecutionEvent":
         """Create from dict - automatically deserializes."""
+        import json as _json
+
         # Handle EventType enum conversion
         if "type" in data:
             type_value = data.get("type", "chunk")
@@ -329,6 +333,19 @@ class ExecutionEvent:
                     EventType(type_value)
                 except ValueError:
                     data = {**data, "type": "chunk"}
+
+        # Handle tool_input type coercion: Redis pub/sub roundtrip may
+        # serialize dict as JSON string; dacite rejects str for Optional[dict].
+        tool_input = data.get("tool_input")
+        if isinstance(tool_input, str):
+            try:
+                parsed = _json.loads(tool_input)
+                data = {
+                    **data,
+                    "tool_input": parsed if isinstance(parsed, dict) else None,
+                }
+            except (ValueError, TypeError):
+                data = {**data, "tool_input": None}
 
         return from_dict(
             data_class=cls,

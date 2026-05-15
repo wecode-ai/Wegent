@@ -18,6 +18,7 @@ from chat_shell.services.streaming.core import should_display_tool_details
 from shared.models import ResponsesAPIEmitter
 from shared.telemetry.context.large_data import log_large_attribute
 from shared.telemetry.decorators import add_span_event
+from shared.utils.tool_arguments import sanitize_tool_arguments
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,12 @@ def create_tool_event_handler(
             _handle_tool_end(
                 state, emitter, agent_builder, tool_name, run_id, event_data
             )
+        elif kind == "tool_argument_start":
+            _handle_tool_argument_start(emitter, event_data)
+        elif kind == "tool_argument_delta":
+            _handle_tool_argument_delta(emitter, event_data)
+        elif kind == "tool_argument_done":
+            _handle_tool_argument_done(emitter, event_data)
 
     return handle_tool_event
 
@@ -178,16 +185,56 @@ def _handle_tool_start(
 
     # Emit tool_start event via ResponsesAPIEmitter
     # Only include arguments if tool is in whitelist
-    arguments = serializable_input if should_display_tool_details(tool_name) else None
+    arguments = (
+        sanitize_tool_arguments(tool_name, serializable_input)
+        if should_display_tool_details(tool_name)
+        else None
+    )
 
+    if not event_data.get("tool_arguments_streamed"):
+        _run_async(
+            emitter.tool_start(
+                call_id=tool_use_id,
+                name=tool_name,
+                arguments=arguments,
+                display_name=display_name,
+                tool_protocol=tool_protocol,
+                server_label=server_label,
+            )
+        )
+
+
+def _handle_tool_argument_start(
+    emitter: ResponsesAPIEmitter, event_data: dict[str, Any]
+) -> None:
     _run_async(
-        emitter.tool_start(
-            call_id=tool_use_id,
-            name=tool_name,
-            arguments=arguments,
-            display_name=display_name,
-            tool_protocol=tool_protocol,
-            server_label=server_label,
+        emitter.tool_argument_start(
+            call_id=event_data["call_id"],
+            name=event_data.get("name", "unknown"),
+            arguments_summary=event_data.get("arguments_summary"),
+        )
+    )
+
+
+def _handle_tool_argument_delta(
+    emitter: ResponsesAPIEmitter, event_data: dict[str, Any]
+) -> None:
+    _run_async(
+        emitter.tool_argument_delta(
+            call_id=event_data["call_id"],
+            arguments_delta=event_data.get("arguments_delta", ""),
+            arguments_summary=event_data.get("arguments_summary"),
+        )
+    )
+
+
+def _handle_tool_argument_done(
+    emitter: ResponsesAPIEmitter, event_data: dict[str, Any]
+) -> None:
+    _run_async(
+        emitter.tool_argument_done(
+            call_id=event_data["call_id"],
+            arguments_summary=event_data.get("arguments_summary"),
         )
     )
 
@@ -269,7 +316,11 @@ def _handle_tool_end(
 
     # Emit tool_done event via ResponsesAPIEmitter
     # Only include arguments if tool is in whitelist
-    arguments = tool_input if should_display_tool_details(tool_name) else None
+    arguments = (
+        sanitize_tool_arguments(tool_name, tool_input)
+        if should_display_tool_details(tool_name)
+        else None
+    )
     tool_instance = _get_tool_instance(agent_builder, tool_name)
     tool_protocol = (
         _normalize_protocol_type(
