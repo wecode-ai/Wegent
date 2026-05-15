@@ -33,6 +33,7 @@ import { TaskContextProvider } from '@/features/tasks/contexts/taskContext'
 import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext'
 import { SocketProvider } from '@/contexts/SocketContext'
 import { DeviceProvider } from '@/contexts/DeviceContext'
+import { ProjectProvider } from '@/features/projects/contexts/projectContext'
 import { useTranslation } from '@/hooks/useTranslation'
 import { GithubStarButton } from '@/features/layout/GithubStarButton'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
@@ -255,13 +256,15 @@ export default function AdminPage() {
     <UserProvider>
       <SocketProvider>
         <DeviceProvider>
-          <TaskContextProvider>
-            <ChatStreamProvider>
-              <Suspense fallback={<div>Loading...</div>}>
-                <AdminContent />
-              </Suspense>
-            </ChatStreamProvider>
-          </TaskContextProvider>
+          <ProjectProvider>
+            <TaskContextProvider>
+              <ChatStreamProvider>
+                <Suspense fallback={<div>Loading...</div>}>
+                  <AdminContent />
+                </Suspense>
+              </ChatStreamProvider>
+            </TaskContextProvider>
+          </ProjectProvider>
         </DeviceProvider>
       </SocketProvider>
     </UserProvider>
