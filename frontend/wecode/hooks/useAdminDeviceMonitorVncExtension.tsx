@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useState, type ReactNode } from 'react'
 import { ComputerDesktopIcon } from '@heroicons/react/24/outline'
 
 import type { AdminDeviceInfo } from '@/apis/admin'
@@ -25,17 +25,7 @@ export interface AdminDeviceMonitorVncExtension {
  * The open-source panel only knows how to call this extension. All VNC-specific
  * state, layout, and rendering stay within the wecode namespace.
  */
-function isVncSupportedDevice(device: AdminDeviceInfo) {
-  return (
-    device.device_type === 'cloud' &&
-    device.bind_shell === 'claudecode' &&
-    device.status === 'online'
-  )
-}
-
-export function useAdminDeviceMonitorVncExtension(
-  devices: AdminDeviceInfo[] = []
-): AdminDeviceMonitorVncExtension {
+export function useAdminDeviceMonitorVncExtension(): AdminDeviceMonitorVncExtension {
   const { t } = useTranslation('devices')
   const isMobile = useIsMobile()
   const [activeVncDeviceDetails, setActiveVncDeviceDetails] = useState<AdminDeviceInfo | null>(null)
@@ -57,25 +47,9 @@ export function useAdminDeviceMonitorVncExtension(
     })
   }, [])
 
-  useEffect(() => {
-    if (!activeVncDeviceDetails || devices.length === 0) {
-      return
-    }
-
-    const activeDevice = devices.find(
-      device =>
-        device.device_id === activeVncDeviceDetails.device_id &&
-        device.user_id === activeVncDeviceDetails.user_id
-    )
-
-    if (!activeDevice || !isVncSupportedDevice(activeDevice)) {
-      closeVncPanel()
-    }
-  }, [activeVncDeviceDetails, closeVncPanel, devices])
-
   const renderAction = useCallback(
     (device: AdminDeviceInfo) => {
-      if (!isVncSupportedDevice(device)) {
+      if (device.device_type !== 'cloud' || device.bind_shell !== 'claudecode') {
         return null
       }
 

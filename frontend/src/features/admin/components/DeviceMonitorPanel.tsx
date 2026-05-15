@@ -170,7 +170,7 @@ export function DeviceMonitorPanel() {
   const [appliedVersionFilter, setAppliedVersionFilter] = useState('')
   const [page, setPage] = useState(1)
   const limit = 20
-  const deviceMonitorVncExtension = useAdminDeviceMonitorVncExtension(devices)
+  const deviceMonitorVncExtension = useAdminDeviceMonitorVncExtension()
 
   useEffect(() => {
     if (statusFilter === 'offline' && versionFilter) {
