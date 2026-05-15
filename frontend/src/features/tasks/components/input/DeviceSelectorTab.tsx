@@ -525,7 +525,7 @@ export function DeviceSelectorTab({
         ref={containerRef}
         className={cn(
           'flex items-center overflow-hidden',
-          disabled && 'opacity-50 cursor-not-allowed',
+          disabled && 'opacity-80 cursor-not-allowed',
           className
         )}
         onMouseEnter={handleMouseEnter}

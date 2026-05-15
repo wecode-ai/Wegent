@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Union
 from executor.agents.claude_code.multimodal_prompt import is_vision_prompt
 from shared.logger import setup_logger
 from shared.models.execution import ExecutionRequest
+from shared.utils import git_util
 
 logger = setup_logger("claude_code_attachment_handler")
 
@@ -80,14 +81,33 @@ def download_attachments(
             AttachmentPromptProcessor,
         )
 
-        # Determine workspace path for attachments
-        workspace = os.path.join(config.get_workspace_root(), str(task_id))
+        # Determine workspace path for attachments. Project workspace mode keeps
+        # attachments under the shared project directory but still scoped by
+        # task_id/subtask_id.
+        project_workspace = task_data.project_workspace_path
+        if not project_workspace and task_data.project_id and task_data.git_url:
+            repo_name = git_util.get_repo_name_from_url(task_data.git_url)
+            safe_repo_name = repo_name.replace("/", "_").replace("\\", "_")
+            project_workspace = os.path.join(
+                "projects", str(task_data.project_id), safe_repo_name
+            )
+        project_layout = bool(task_data.project_id and project_workspace)
+        if project_layout:
+            project_workspace = os.path.expanduser(str(project_workspace))
+            if not os.path.isabs(project_workspace):
+                project_workspace = os.path.join(
+                    config.get_workspace_root(), project_workspace
+                )
+            workspace = os.path.join(project_workspace, ".wegent", "attachments")
+        else:
+            workspace = os.path.join(config.get_workspace_root(), str(task_id))
 
         downloader = AttachmentDownloader(
             workspace=workspace,
             task_id=str(task_id),
             subtask_id=str(subtask_id),
             auth_token=auth_token,
+            project_layout=project_layout,
         )
 
         result = downloader.download_all(attachments)

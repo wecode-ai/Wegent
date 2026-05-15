@@ -12,6 +12,7 @@ their tasks. Each task can belong to one project (one-to-many relationship).
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Column,
     DateTime,
@@ -56,6 +57,12 @@ class Project(Base):
         String(20),
         nullable=True,
         comment="Project color identifier (e.g., #FF5733)",
+    )
+    config = Column(
+        JSON,
+        nullable=True,
+        default=None,
+        comment="Workspace project configuration. Empty means legacy task group.",
     )
     sort_order = Column(
         Integer,

@@ -5,28 +5,47 @@
 'use client'
 
 import React from 'react'
+import { FolderOpen } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ChatSloganItem } from '@/types/api'
 
-interface SloganDisplayProps {
-  slogan: ChatSloganItem | null
+interface ProjectInfo {
+  name: string
+  path?: string | null
 }
 
-/**
- * SloganDisplay Component
- *
- * Displays a slogan/welcome message above the chat input when no messages exist.
- * Always renders a container with fixed height to prevent layout shift when switching tabs.
- *
- * @param slogan - The slogan item containing translations for different languages
- */
-export function SloganDisplay({ slogan }: SloganDisplayProps) {
-  const { i18n } = useTranslation()
+interface SloganDisplayProps {
+  slogan: ChatSloganItem | null
+  project?: ProjectInfo | null
+}
+
+export function SloganDisplay({ slogan, project }: SloganDisplayProps) {
+  const { t, i18n } = useTranslation('projects')
   const currentLang = i18n.language?.startsWith('zh') ? 'zh' : 'en'
+
+  if (project) {
+    const greeting = t('workspace.greeting', { name: '__PROJECT_NAME__' })
+    const parts = greeting.split('__PROJECT_NAME__')
+
+    return (
+      <div className="text-center mb-8 min-h-[2.5rem] sm:min-h-[3rem]">
+        <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-text-primary tracking-tight">
+          {parts[0]}
+          <span className="text-primary">{project.name}</span>
+          {parts[1]}
+        </h1>
+        {project.path && (
+          <div className="mt-3 flex items-center justify-center gap-1.5 text-sm text-text-secondary">
+            <FolderOpen className="h-4 w-4" />
+            <span className="font-mono">{project.path}</span>
+          </div>
+        )}
+      </div>
+    )
+  }
+
   const sloganText = slogan ? (currentLang === 'zh' ? slogan.zh : slogan.en) : ''
 
-  // Always render the container to maintain consistent layout height
-  // This prevents the chat input from "jumping" when switching between /chat and /code tabs
   return (
     <div className="text-center mb-8 min-h-[2.5rem] sm:min-h-[3rem]">
       {sloganText && (

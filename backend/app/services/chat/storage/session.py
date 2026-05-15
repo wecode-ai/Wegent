@@ -36,6 +36,8 @@ STREAMING_KEY_PREFIX = "chat:streaming:"
 STREAMING_CHANNEL_PREFIX = "chat:stream_channel:"
 # Redis key prefix for task-level streaming status (for group chat)
 TASK_STREAMING_KEY_PREFIX = "chat:task_streaming:"
+# Redis Pub/Sub channel prefix for callback-based SSE streaming (ClaudeCode/Agno/Dify)
+CALLBACK_CHANNEL_PREFIX = "callback:channel:"
 # Unified TTL for all streaming-related data (1 hour)
 STREAMING_TTL = 3600
 
@@ -524,6 +526,64 @@ class SessionManager:
         except Exception as e:
             logger.error(
                 f"Error subscribing to streaming channel for subtask {subtask_id}: {e}"
+            )
+            return None, None
+
+    # ==================== Callback Event Pub/Sub (ClaudeCode/Agno streaming) ====================
+
+    def _get_callback_channel_key(self, subtask_id: int) -> str:
+        """Generate Redis Pub/Sub channel key for callback-based streaming."""
+        return f"{CALLBACK_CHANNEL_PREFIX}{subtask_id}"
+
+    async def publish_callback_event(self, subtask_id: int, event: Any) -> bool:
+        """Publish an execution event to the callback stream channel.
+
+        Used by the /internal/callback handler to forward executor events to
+        any SSE consumers that are streaming a ClaudeCode/Agno/Dify task.
+
+        Args:
+            subtask_id: Subtask ID
+            event: ExecutionEvent instance with to_dict() method
+
+        Returns:
+            bool: True if publish was successful
+        """
+        try:
+            channel = self._get_callback_channel_key(subtask_id)
+            event_json = json.dumps(event.to_dict())
+            redis_client = await self._cache._get_client()
+            try:
+                await redis_client.publish(channel, event_json)
+                return True
+            finally:
+                await redis_client.aclose()
+        except Exception as e:
+            logger.error(
+                f"[SessionManager] publish_callback_event failed for subtask {subtask_id}: {e}"
+            )
+            return False
+
+    async def subscribe_callback_channel(self, subtask_id: int):
+        """Subscribe to the callback event channel for a subtask.
+
+        Returns (redis_client, pubsub) so the caller can poll with
+        pubsub.get_message() and close the client when done.
+
+        Args:
+            subtask_id: Subtask ID
+
+        Returns:
+            Tuple of (redis_client, pubsub) or (None, None) on failure.
+        """
+        try:
+            channel = self._get_callback_channel_key(subtask_id)
+            redis_client = await self._cache._get_client()
+            pubsub = redis_client.pubsub()
+            await pubsub.subscribe(channel)
+            return redis_client, pubsub
+        except Exception as e:
+            logger.error(
+                f"[SessionManager] subscribe_callback_channel failed for subtask {subtask_id}: {e}"
             )
             return None, None
 
