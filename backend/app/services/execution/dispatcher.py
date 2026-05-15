@@ -276,7 +276,11 @@ class ResponsesAPIEventParser:
                 subtask_id=subtask_id,
                 tool_name=tool_context.get("name"),
                 tool_use_id=tool_use_id,
-                tool_input=tool_input or tool_context.get("arguments"),
+                tool_input=(
+                    tool_input
+                    if tool_input is not None
+                    else tool_context.get("arguments")
+                ),
                 tool_output=data.get("output"),
                 data={
                     "blocks": data.get("blocks", []),
@@ -486,8 +490,9 @@ class ResponsesAPIEventParser:
                     tool_key,
                 )
                 tool_context = {}
-            tool_input = _extract_shell_call_input(item) or tool_context.get(
-                "arguments"
+            extracted = _extract_shell_call_input(item)
+            tool_input = (
+                extracted if extracted is not None else tool_context.get("arguments")
             )
             return ExecutionEvent(
                 type=EventType.TOOL_RESULT,

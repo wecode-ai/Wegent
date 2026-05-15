@@ -454,7 +454,7 @@ class ResponsesAPIEventBuilder:
 
     @staticmethod
     def _json_arguments(arguments: Optional[dict]) -> str:
-        return json.dumps(arguments) if arguments else ""
+        return json.dumps(arguments) if arguments is not None else ""
 
     @staticmethod
     def _shell_action(arguments: Optional[dict]) -> ShellCallAction:
