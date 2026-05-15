@@ -36,7 +36,6 @@ import { UserFloatingMenu } from '@/features/layout/components/UserFloatingMenu'
 import HistoryManageDialog from './HistoryManageDialog'
 import {
   ProjectSection,
-  ProjectProvider,
   TaskDndProvider,
   useProjectContext,
   DroppableHistory,
@@ -453,162 +452,160 @@ export default function TaskSidebar({
           )}
 
           {/* Tasks Section - matches Figma: left-[20px] top-[198px] with border */}
-          <ProjectProvider>
-            <TaskDndProvider>
-              <div
-                className={`${isCollapsed ? 'px-0' : 'px-2.5'} pt-4 border-t border-border-light mt-3`}
-              >
-                {/* Auto-refresh indicator - shows when refreshing after page visibility or reconnect */}
-                {isRefreshing && !isCollapsed && (
-                  <div className="px-1 pb-2">
-                    <div className="flex items-center gap-2 text-xs text-primary">
-                      <div className="h-1 w-full bg-surface rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-primary/60 rounded-full animate-pulse"
-                          style={{ width: '100%' }}
-                        />
-                      </div>
-                      <span className="text-text-muted whitespace-nowrap">
-                        {t('common:tasks.refreshing')}
-                      </span>
+          <TaskDndProvider>
+            <div
+              className={`${isCollapsed ? 'px-0' : 'px-2.5'} pt-4 border-t border-border-light mt-3`}
+            >
+              {/* Auto-refresh indicator - shows when refreshing after page visibility or reconnect */}
+              {isRefreshing && !isCollapsed && (
+                <div className="px-1 pb-2">
+                  <div className="flex items-center gap-2 text-xs text-primary">
+                    <div className="h-1 w-full bg-surface rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-primary/60 rounded-full animate-pulse"
+                        style={{ width: '100%' }}
+                      />
                     </div>
-                  </div>
-                )}
-                {/* Collapsed mode refresh indicator */}
-                {isRefreshing && isCollapsed && (
-                  <div className="flex justify-center pb-2">
-                    <div className="h-1 w-6 bg-primary/60 rounded-full animate-pulse" />
-                  </div>
-                )}
-                {/* Search Result Header */}
-                {!isCollapsed && isSearchResult && (
-                  <div className="px-1 pb-2 flex items-center justify-between">
-                    <span className="text-xs font-medium text-text-muted">
-                      {t('common:tasks.search_results')}
+                    <span className="text-text-muted whitespace-nowrap">
+                      {t('common:tasks.refreshing')}
                     </span>
-                    <button
-                      onClick={handleClearSearch}
-                      className="flex items-center gap-1 text-xs text-text-muted hover:text-text-primary transition-colors"
-                    >
-                      <X className="h-3 w-3" />
-                      {t('common:tasks.clear_search')}
-                    </button>
                   </div>
-                )}
-                {/* Search Button for collapsed mode - removed, search is now in the combined top button */}
-                {isSearching ? (
+                </div>
+              )}
+              {/* Collapsed mode refresh indicator */}
+              {isRefreshing && isCollapsed && (
+                <div className="flex justify-center pb-2">
+                  <div className="h-1 w-6 bg-primary/60 rounded-full animate-pulse" />
+                </div>
+              )}
+              {/* Search Result Header */}
+              {!isCollapsed && isSearchResult && (
+                <div className="px-1 pb-2 flex items-center justify-between">
+                  <span className="text-xs font-medium text-text-muted">
+                    {t('common:tasks.search_results')}
+                  </span>
+                  <button
+                    onClick={handleClearSearch}
+                    className="flex items-center gap-1 text-xs text-text-muted hover:text-text-primary transition-colors"
+                  >
+                    <X className="h-3 w-3" />
+                    {t('common:tasks.clear_search')}
+                  </button>
+                </div>
+              )}
+              {/* Search Button for collapsed mode - removed, search is now in the combined top button */}
+              {isSearching ? (
+                <div className="text-center py-8 text-xs text-text-muted">
+                  {t('common:tasks.searching')}
+                </div>
+              ) : isSearchResult ? (
+                // Search results mode - show mixed results from legacy tasks list
+                tasks.length === 0 ? (
                   <div className="text-center py-8 text-xs text-text-muted">
-                    {t('common:tasks.searching')}
+                    {t('common:tasks.no_search_results')}
                   </div>
-                ) : isSearchResult ? (
-                  // Search results mode - show mixed results from legacy tasks list
-                  tasks.length === 0 ? (
-                    <div className="text-center py-8 text-xs text-text-muted">
-                      {t('common:tasks.no_search_results')}
-                    </div>
-                  ) : (
-                    (() => {
-                      // Separate group chats and regular tasks from search results
-                      const allGroupChats = tasks
-                        .filter(task => task.is_group_chat)
-                        .sort(
-                          (a, b) =>
-                            new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-                        )
-                      const regularTasks = tasks
-                        .filter(task => !task.is_group_chat)
-                        .sort(
-                          (a, b) =>
-                            new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-                        )
-
-                      return (
-                        <>
-                          {/* Group Chats from search results */}
-                          {allGroupChats.length > 0 && (
-                            <>
-                              {!isCollapsed && (
-                                <div className="px-1 pb-1 text-xs font-medium text-text-muted">
-                                  {t('common:tasks.group_chats')}
-                                </div>
-                              )}
-                              <TaskListSection
-                                tasks={allGroupChats}
-                                title=""
-                                unreadCount={getUnreadCount(allGroupChats)}
-                                onTaskClick={() => setIsMobileSidebarOpen(false)}
-                                isCollapsed={isCollapsed}
-                                showTitle={false}
-                                enableDrag={true}
-                                key={`search-group-chats-${viewStatusVersion}`}
-                              />
-                            </>
-                          )}
-                          {/* Personal tasks from search results */}
-                          {regularTasks.length > 0 && (
-                            <>
-                              {!isCollapsed && (
-                                <div
-                                  className={`px-1 pb-1 text-xs font-medium text-text-muted flex items-center justify-between ${allGroupChats.length > 0 ? 'pt-3 mt-2 border-t border-border-light' : ''}`}
-                                >
-                                  <span>{t('common:tasks.history_title')}</span>
-                                </div>
-                              )}
-                              {isCollapsed && allGroupChats.length > 0 && (
-                                <div className="border-t border-border-light my-2" />
-                              )}
-                              <TaskListSection
-                                tasks={regularTasks}
-                                title=""
-                                unreadCount={getUnreadCount(regularTasks)}
-                                onTaskClick={() => setIsMobileSidebarOpen(false)}
-                                isCollapsed={isCollapsed}
-                                showTitle={false}
-                                enableDrag={true}
-                                key={`search-regular-tasks-${viewStatusVersion}`}
-                              />
-                            </>
-                          )}
-                        </>
-                      )
-                    })()
-                  )
                 ) : (
-                  <TaskHistorySection
-                    groupTasks={groupTasks}
-                    personalTasks={personalTasks}
-                    isCollapsed={isCollapsed}
-                    isGroupChatsExpanded={isGroupChatsExpanded}
-                    setIsGroupChatsExpanded={setIsGroupChatsExpanded}
-                    maxVisibleGroupChats={maxVisibleGroupChats}
-                    hasMoreGroupTasks={hasMoreGroupTasks}
-                    hasMorePersonalTasks={hasMorePersonalTasks}
-                    loadMoreGroupTasks={loadMoreGroupTasks}
-                    loadMorePersonalTasks={loadMorePersonalTasks}
-                    loadingMoreGroupTasks={loadingMoreGroupTasks}
-                    loadingMorePersonalTasks={loadingMorePersonalTasks}
-                    viewStatusVersion={viewStatusVersion}
-                    getUnreadCount={getUnreadCount}
-                    totalUnreadCount={totalUnreadCount}
-                    handleMarkAllAsViewed={handleMarkAllAsViewed}
-                    handleOpenSearchDialog={handleOpenSearchDialog}
-                    shortcutDisplayText={shortcutDisplayText}
-                    setIsMobileSidebarOpen={setIsMobileSidebarOpen}
-                    t={t}
-                    isSearchResult={isSearchResult}
-                    onTaskSelect={() => setIsMobileSidebarOpen(false)}
-                    isHistoryManageDialogOpen={isHistoryManageDialogOpen}
-                    setIsHistoryManageDialogOpen={setIsHistoryManageDialogOpen}
-                  />
-                )}
-                {loadingMore && isSearchResult && (
-                  <div className="text-center py-2 text-xs text-text-muted">
-                    {t('common:tasks.loading')}
-                  </div>
-                )}
-              </div>
-            </TaskDndProvider>
-          </ProjectProvider>
+                  (() => {
+                    // Separate group chats and regular tasks from search results
+                    const allGroupChats = tasks
+                      .filter(task => task.is_group_chat)
+                      .sort(
+                        (a, b) =>
+                          new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+                      )
+                    const regularTasks = tasks
+                      .filter(task => !task.is_group_chat)
+                      .sort(
+                        (a, b) =>
+                          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+                      )
+
+                    return (
+                      <>
+                        {/* Group Chats from search results */}
+                        {allGroupChats.length > 0 && (
+                          <>
+                            {!isCollapsed && (
+                              <div className="px-1 pb-1 text-xs font-medium text-text-muted">
+                                {t('common:tasks.group_chats')}
+                              </div>
+                            )}
+                            <TaskListSection
+                              tasks={allGroupChats}
+                              title=""
+                              unreadCount={getUnreadCount(allGroupChats)}
+                              onTaskClick={() => setIsMobileSidebarOpen(false)}
+                              isCollapsed={isCollapsed}
+                              showTitle={false}
+                              enableDrag={true}
+                              key={`search-group-chats-${viewStatusVersion}`}
+                            />
+                          </>
+                        )}
+                        {/* Personal tasks from search results */}
+                        {regularTasks.length > 0 && (
+                          <>
+                            {!isCollapsed && (
+                              <div
+                                className={`px-1 pb-1 text-xs font-medium text-text-muted flex items-center justify-between ${allGroupChats.length > 0 ? 'pt-3 mt-2 border-t border-border-light' : ''}`}
+                              >
+                                <span>{t('common:tasks.history_title')}</span>
+                              </div>
+                            )}
+                            {isCollapsed && allGroupChats.length > 0 && (
+                              <div className="border-t border-border-light my-2" />
+                            )}
+                            <TaskListSection
+                              tasks={regularTasks}
+                              title=""
+                              unreadCount={getUnreadCount(regularTasks)}
+                              onTaskClick={() => setIsMobileSidebarOpen(false)}
+                              isCollapsed={isCollapsed}
+                              showTitle={false}
+                              enableDrag={true}
+                              key={`search-regular-tasks-${viewStatusVersion}`}
+                            />
+                          </>
+                        )}
+                      </>
+                    )
+                  })()
+                )
+              ) : (
+                <TaskHistorySection
+                  groupTasks={groupTasks}
+                  personalTasks={personalTasks}
+                  isCollapsed={isCollapsed}
+                  isGroupChatsExpanded={isGroupChatsExpanded}
+                  setIsGroupChatsExpanded={setIsGroupChatsExpanded}
+                  maxVisibleGroupChats={maxVisibleGroupChats}
+                  hasMoreGroupTasks={hasMoreGroupTasks}
+                  hasMorePersonalTasks={hasMorePersonalTasks}
+                  loadMoreGroupTasks={loadMoreGroupTasks}
+                  loadMorePersonalTasks={loadMorePersonalTasks}
+                  loadingMoreGroupTasks={loadingMoreGroupTasks}
+                  loadingMorePersonalTasks={loadingMorePersonalTasks}
+                  viewStatusVersion={viewStatusVersion}
+                  getUnreadCount={getUnreadCount}
+                  totalUnreadCount={totalUnreadCount}
+                  handleMarkAllAsViewed={handleMarkAllAsViewed}
+                  handleOpenSearchDialog={handleOpenSearchDialog}
+                  shortcutDisplayText={shortcutDisplayText}
+                  setIsMobileSidebarOpen={setIsMobileSidebarOpen}
+                  t={t}
+                  isSearchResult={isSearchResult}
+                  onTaskSelect={() => setIsMobileSidebarOpen(false)}
+                  isHistoryManageDialogOpen={isHistoryManageDialogOpen}
+                  setIsHistoryManageDialogOpen={setIsHistoryManageDialogOpen}
+                />
+              )}
+              {loadingMore && isSearchResult && (
+                <div className="text-center py-2 text-xs text-text-muted">
+                  {t('common:tasks.loading')}
+                </div>
+              )}
+            </div>
+          </TaskDndProvider>
         </div>
       </div>
 
@@ -710,7 +707,7 @@ function TaskHistorySection({
   isHistoryManageDialogOpen: _isHistoryManageDialogOpen,
   setIsHistoryManageDialogOpen,
 }: TaskHistorySectionProps) {
-  const { projectTaskIds, projects } = useProjectContext()
+  const { projectTaskIds, projects, isWorkspaceEnabled } = useProjectContext()
 
   // Filter out tasks that are already in projects from history lists
   const filteredPersonalTasks = React.useMemo(
@@ -856,6 +853,11 @@ function TaskHistorySection({
           className={filteredGroupTasks.length > 0 ? 'pt-3 mt-2 border-t border-border-light' : ''}
         >
           <ProjectSection onTaskSelect={onTaskSelect} />
+          {isWorkspaceEnabled && (
+            <div className="pt-3 mt-2 border-t border-border-light">
+              <ProjectSection onTaskSelect={onTaskSelect} variant="workspace" />
+            </div>
+          )}
         </div>
       )}
 

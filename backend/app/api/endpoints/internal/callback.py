@@ -32,6 +32,7 @@ from app.models.task import TaskResource
 # the registry may be empty when /callback is handled by a different worker
 # than the one that processed the original IM message.
 from app.services.channels.dingtalk import callback as _dingtalk_cb  # noqa: F401
+from app.services.chat.storage import session_manager
 from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 from app.services.execution.emitters.websocket import WebSocketResultEmitter
@@ -179,6 +180,10 @@ async def handle_callback(
         )
         await emitter.emit(event)
         await emitter.close()
+
+        # Publish to callback stream channel for any active SSE consumers
+        # (e.g., v1/responses with stream=True for ClaudeCode/Agno/Dify tasks)
+        await session_manager.publish_callback_event(request.subtask_id, event)
 
         logger.info(
             f"[Callback] Event emitted: type={event.type}, "

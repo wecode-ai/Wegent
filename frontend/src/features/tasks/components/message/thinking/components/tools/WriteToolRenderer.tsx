@@ -19,7 +19,17 @@ export function WriteToolRenderer({ tool }: ToolRendererProps) {
 
   const input = tool.toolUse.details?.input as Record<string, unknown> | undefined
   let filePath = input?.file_path as string | undefined
-  const content = input?.content as string | undefined
+  const rawContent = input?.content
+  const content = typeof rawContent === 'string' ? rawContent : undefined
+  const contentSummary =
+    rawContent && typeof rawContent === 'object'
+      ? (rawContent as {
+          omitted?: boolean
+          length?: number
+          preview?: string
+          sha256?: string
+        })
+      : undefined
 
   const outputRaw = (tool.toolResult?.details?.content || tool.toolResult?.details?.output) as
     | string
@@ -64,7 +74,16 @@ export function WriteToolRenderer({ tool }: ToolRendererProps) {
       )}
 
       {/* Content to Write */}
-      {content && (
+      {contentSummary?.omitted && (
+        <div>
+          <div className="text-xs font-medium text-text-secondary mb-1">Content</div>
+          <div className="text-xs text-text-tertiary bg-fill-tert p-2 rounded font-mono">
+            {contentSummary.length ?? 0} bytes generated
+          </div>
+        </div>
+      )}
+
+      {content && !contentSummary?.omitted && (
         <div>
           <div className="flex items-center justify-between mb-1">
             <div className="text-xs font-medium text-text-secondary">Content</div>
@@ -117,6 +136,11 @@ export function WriteToolRenderer({ tool }: ToolRendererProps) {
       {!output && tool.status === 'invoking' && (
         <div className="text-xs text-text-muted italic">
           {t('thinking.tool_executing') || 'Writing file...'}
+        </div>
+      )}
+      {!output && tool.status === 'generating_arguments' && (
+        <div className="text-xs text-text-muted italic">
+          {t('thinking.tool_generating_arguments') || 'Preparing file content...'}
         </div>
       )}
     </div>

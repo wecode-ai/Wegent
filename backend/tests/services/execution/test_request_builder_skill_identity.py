@@ -14,7 +14,7 @@ def test_build_generates_skill_identity_token(test_db, mocker):
     """Builder should attach skill identity token to the execution request."""
     builder = TaskRequestBuilder(test_db)
     subtask = SimpleNamespace(id=2, message_id=33, executor_name="executor-1")
-    task = SimpleNamespace(id=1, json={"spec": {}})
+    task = SimpleNamespace(id=1, json={"spec": {}}, project_id=None)
     user = SimpleNamespace(id=7, user_name="alice")
     team = SimpleNamespace(id=5, name="team-a", namespace="default", json={})
     bot = SimpleNamespace(id=9)

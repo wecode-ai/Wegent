@@ -104,6 +104,8 @@ export interface ChatMessageRequest {
   knowledge_base_id?: number
   // Local device ID for task execution (optional, when undefined use cloud executor)
   device_id?: string
+  // Project ID to associate this task with
+  project_id?: number
 
   // Skill selection
   /** Skill names to preload (for Chat Shell - prompts injected into system message) */
@@ -446,7 +448,16 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    * Uses task_id from event payload directly
    */
   const handleBlockUpdated = useCallback((data: ChatBlockUpdatedPayload) => {
-    const { task_id: taskId, subtask_id, block_id, content, tool_output, tool_input, status } = data
+    const {
+      task_id: taskId,
+      subtask_id,
+      block_id,
+      content,
+      tool_output,
+      tool_input,
+      argument_status,
+      status,
+    } = data
 
     if (!taskId) {
       console.warn('[ChatStreamContext][block_updated] Missing task_id for subtask:', subtask_id)
@@ -463,6 +474,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       ...(content !== undefined && { content }),
       ...(tool_output !== undefined && { tool_output }),
       ...(tool_input !== undefined && { tool_input }),
+      ...(argument_status !== undefined && { argument_status }),
       ...(mappedStatus !== undefined && { status: mappedStatus }),
     }
 
@@ -736,6 +748,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         task_type: request.task_type,
         knowledge_base_id: request.knowledge_base_id,
         device_id: request.device_id,
+        project_id: request.project_id,
         additional_skills: request.additional_skills,
         action: request.action,
         generate_params: request.generate_params,

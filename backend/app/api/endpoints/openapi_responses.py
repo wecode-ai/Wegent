@@ -722,6 +722,7 @@ async def _create_streaming_response_unified(
 
         from app.services.execution.emitters import SSEResultEmitter
         from app.services.openapi.streaming import StreamingChunk
+        from shared.models import ExecutionEvent
 
         accumulated_content = ""
         accumulated_reasoning = ""
@@ -747,33 +748,73 @@ async def _create_streaming_response_unified(
                 return "shell_call"
             return "function_call"
 
-        try:
-            if not execution_dispatcher.supports_streaming(execution_request):
-                error_message = "Streaming not supported for this shell type"
-                await _persist_terminal_failure(
-                    subtask_id=assistant_subtask_id,
-                    task_id=task_kind_id,
-                    error_message=error_message,
-                    error_code="not_implemented",
-                )
-                raise NotImplementedError(error_message)
+        emitter = None
+        dispatch_task = None
+        pubsub_redis_client = None
+        pubsub_obj = None
 
+        try:
             cancel_event = await session_manager.register_stream(assistant_subtask_id)
 
-            # Create SSEResultEmitter for streaming
-            emitter = SSEResultEmitter(
-                task_id=execution_request.task_id,
-                subtask_id=execution_request.subtask_id,
-            )
+            is_sse = execution_dispatcher.supports_streaming(execution_request)
 
-            # Start dispatch task (runs concurrently)
-            dispatch_task = asyncio.create_task(
-                execution_dispatcher.dispatch(execution_request, emitter=emitter)
-            )
+            if is_sse:
+                # SSE mode (Chat shell): stream directly via OpenAI client
+                emitter = SSEResultEmitter(
+                    task_id=execution_request.task_id,
+                    subtask_id=execution_request.subtask_id,
+                )
+                dispatch_task = asyncio.create_task(
+                    execution_dispatcher.dispatch(execution_request, emitter=emitter)
+                )
+            else:
+                # HTTP+Callback mode (ClaudeCode/Agno/Dify): subscribe to Redis
+                # pub/sub channel; the /internal/callback handler publishes events
+                pubsub_redis_client, pubsub_obj = (
+                    await session_manager.subscribe_callback_channel(
+                        assistant_subtask_id
+                    )
+                )
+                if pubsub_redis_client is None:
+                    raise RuntimeError("Failed to subscribe to callback stream channel")
+                # Fire-and-forget; executor sends events back via /internal/callback
+                asyncio.create_task(
+                    execution_dispatcher.dispatch(execution_request, emitter=None)
+                )
 
-            # Stream events from emitter
+            async def _iter_events():
+                """Yield ExecutionEvents from either SSE emitter or callback pub/sub."""
+                if is_sse:
+                    async for ev in emitter.stream():
+                        yield ev
+                else:
+                    # Poll the pub/sub channel; 1s timeout keeps cancellation responsive
+                    max_wait_until = asyncio.get_event_loop().time() + 600
+                    while asyncio.get_event_loop().time() < max_wait_until:
+                        if cancel_event.is_set():
+                            return
+                        message = await pubsub_obj.get_message(
+                            ignore_subscribe_messages=True, timeout=1.0
+                        )
+                        if message is None:
+                            continue
+                        if message.get("type") != "message":
+                            continue
+                        data = message["data"]
+                        if isinstance(data, bytes):
+                            data = data.decode("utf-8")
+                        event = ExecutionEvent.from_dict(json.loads(data))
+                        yield event
+                        if event.type in (
+                            EventType.DONE.value,
+                            EventType.ERROR.value,
+                            EventType.CANCELLED.value,
+                        ):
+                            return
+
+            # Stream events from the unified source
             try:
-                async for event in emitter.stream():
+                async for event in _iter_events():
                     if cancel_event.is_set() or await session_manager.is_cancelled(
                         assistant_subtask_id
                     ):
@@ -809,7 +850,9 @@ async def _create_streaming_response_unified(
                             event.tool_name,
                         )
                         tool_name = event.tool_name or ""
-                        tool_input = event.tool_input or {}
+                        tool_input = (
+                            event.tool_input if event.tool_input is not None else {}
+                        )
                         tool_state = {
                             "protocol": tool_protocol,
                             "name": tool_name,
@@ -848,7 +891,7 @@ async def _create_streaming_response_unified(
                                     "name": tool_name,
                                     "arguments": (
                                         json.dumps(tool_input, ensure_ascii=False)
-                                        if tool_input
+                                        if tool_input is not None
                                         else ""
                                     ),
                                     "output_index": tool_state["output_index"],
@@ -862,7 +905,9 @@ async def _create_streaming_response_unified(
                         if not tool_state:
                             continue
                         if tool_state.get("protocol") == "mcp_call":
-                            tool_state["arguments"] = event.tool_input or {}
+                            tool_state["arguments"] = (
+                                event.tool_input if event.tool_input is not None else {}
+                            )
                     elif event.type == EventType.ERROR.value:
                         error_msg = event.error or "Unknown error"
                         logger.error(f"[OPENAPI] Error from execution: {error_msg}")
@@ -883,7 +928,11 @@ async def _create_streaming_response_unified(
                                     event.tool_name,
                                 ),
                                 "name": event.tool_name or "",
-                                "arguments": event.tool_input or {},
+                                "arguments": (
+                                    event.tool_input
+                                    if event.tool_input is not None
+                                    else {}
+                                ),
                                 "output_index": allocate_output_index(),
                             }
                             if event.data and event.data.get("server_label"):
@@ -897,7 +946,9 @@ async def _create_streaming_response_unified(
                         )
                         tool_name = tool_state.get("name") or event.tool_name or ""
                         arguments = (
-                            event.tool_input or tool_state.get("arguments") or {}
+                            event.tool_input
+                            if event.tool_input is not None
+                            else tool_state.get("arguments") or {}
                         )
                         output_index = tool_state["output_index"]
 
@@ -961,11 +1012,12 @@ async def _create_streaming_response_unified(
                             f"[OPENAPI] Stream completed for subtask {assistant_subtask_id}"
                         )
             finally:
-                # Wait for dispatch task to complete
-                try:
-                    await dispatch_task
-                except Exception:
-                    pass  # Error already handled via emitter
+                # Wait for SSE dispatch task to complete
+                if dispatch_task is not None:
+                    try:
+                        await dispatch_task
+                    except Exception:
+                        pass  # Error already handled via emitter
 
         except NotImplementedError as e:
             # Streaming not supported for this shell type
@@ -975,6 +1027,16 @@ async def _create_streaming_response_unified(
             logger.exception(f"Error in streaming: {e}")
             raise
         finally:
+            if pubsub_obj is not None:
+                try:
+                    await pubsub_obj.unsubscribe()
+                except Exception:
+                    pass
+            if pubsub_redis_client is not None:
+                try:
+                    await pubsub_redis_client.aclose()
+                except Exception:
+                    pass
             await session_manager.unregister_stream(assistant_subtask_id)
             await session_manager.delete_streaming_content(assistant_subtask_id)
 

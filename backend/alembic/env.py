@@ -249,6 +249,10 @@ def run_migrations_online() -> None:
         with context.begin_transaction():
             context.run_migrations()
 
+        # MySQL uses non-transactional DDL, so Alembic's transaction context may
+        # not commit alembic_version updates on SQLAlchemy 2 connections.
+        connection.commit()
+
 
 if context.is_offline_mode():
     run_migrations_offline()

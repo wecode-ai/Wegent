@@ -127,6 +127,8 @@ export interface ChatSendPayload {
   knowledge_base_id?: number
   // Local device execution
   device_id?: string // Local device ID for task execution (if undefined, use cloud executor)
+  // Project association
+  project_id?: number // Project ID to associate this task with
   // Skill selection
   /** Skill names to preload (for Chat Shell - prompts injected into system message) */
   preload_skill_names?: string[]
@@ -233,7 +235,8 @@ export interface ChatBlock {
   guidance_id?: string
   loop_index?: number
   applied_at?: string
-  status?: 'pending' | 'streaming' | 'done' | 'error'
+  argument_status?: 'streaming' | 'done'
+  status?: 'generating_arguments' | 'pending' | 'streaming' | 'done' | 'error'
   timestamp?: number
 }
 
@@ -331,6 +334,7 @@ export interface ChatBlockUpdatedPayload {
   content?: string
   tool_output?: unknown
   tool_input?: Record<string, unknown>
+  argument_status?: 'streaming' | 'done'
   guidance_id?: string
   loop_index?: number
   applied_at?: string

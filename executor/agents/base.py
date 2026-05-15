@@ -196,6 +196,7 @@ class Agent:
             is_failed = status == TaskStatus.FAILED.value if status else False
 
             async def _send_progress():
+                """Send progress callback to backend."""
                 if is_failed:
                     # Send error event for FAILED status so frontend receives the error
                     error_message = message or "Task execution failed"
@@ -206,6 +207,7 @@ class Agent:
                     await self.get_emitter().in_progress()
 
             async def _send_progress_with_timeout():
+                """Send progress with timeout guard."""
                 await asyncio.wait_for(
                     _send_progress(),
                     timeout=self.PROGRESS_CALLBACK_TIMEOUT_SECONDS,
@@ -236,6 +238,7 @@ class Agent:
                 self._inflight_progress_task = task
 
             def _log_task_error(done_task: asyncio.Task) -> None:
+                """Log errors from completed progress tasks."""
                 with self._progress_task_lock:
                     if self._inflight_progress_task is done_task:
                         self._inflight_progress_task = None
@@ -295,6 +298,7 @@ class Agent:
         raise NotImplementedError("Subclasses must implement execute()")
 
     async def download_code(self):
+        """Clone the git repository into the working directory."""
         # Check if git clone should be skipped (e.g., for workspace recovery from archive)
         skip_git_clone = getattr(self.task_data, "skip_git_clone", False)
         if skip_git_clone:
@@ -306,9 +310,7 @@ class Agent:
             git_url = self.task_data.git_url or ""
             if git_url:
                 repo_name = git_util.get_repo_name_from_url(git_url)
-                project_path = os.path.join(
-                    config.get_workspace_root(), str(self.task_id), repo_name
-                )
+                project_path = self._resolve_git_project_path(repo_name)
                 if self.project_path is None:
                     self.project_path = project_path
             return
@@ -336,9 +338,7 @@ class Agent:
 
         logger.info(user_config)
 
-        project_path = os.path.join(
-            config.get_workspace_root(), str(self.task_id), repo_name
-        )
+        project_path = self._resolve_git_project_path(repo_name)
         if self.project_path is None:
             self.project_path = project_path
 
@@ -368,6 +368,28 @@ class Agent:
             logger.info(
                 f"Agent[{self.get_name()}][{self.task_id}] Project already exists at {project_path}, skip cloning"
             )
+
+    def _resolve_git_project_path(self, repo_name: str) -> str:
+        """Resolve the checkout path for git-backed tasks."""
+
+        project_workspace_path = getattr(self.task_data, "project_workspace_path", None)
+        if project_workspace_path:
+            expanded_path = os.path.expanduser(project_workspace_path)
+            if not os.path.isabs(expanded_path):
+                expanded_path = os.path.join(config.get_workspace_root(), expanded_path)
+            return expanded_path
+
+        project_id = getattr(self.task_data, "project_id", None)
+        if project_id:
+            safe_repo_name = repo_name.replace("/", "_").replace("\\", "_")
+            return os.path.join(
+                config.get_workspace_root(),
+                "projects",
+                str(project_id),
+                safe_repo_name,
+            )
+
+        return os.path.join(config.get_workspace_root(), str(self.task_id), repo_name)
 
     def initialize(self) -> TaskStatus:
         """

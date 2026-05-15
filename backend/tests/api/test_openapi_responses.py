@@ -6,6 +6,7 @@
 API integration tests for OpenAPI v1/responses endpoints.
 """
 
+import asyncio
 import json
 from datetime import datetime
 from types import SimpleNamespace
@@ -472,7 +473,8 @@ class TestOpenAPIResponsesCreate:
         test_user: User,
         test_team: Kind,
     ):
-        """Unsupported shells should fail inside SSE generation, not via HTTP error."""
+        """Non-SSE shells use callback streaming via Redis. When Redis subscribe
+        fails, the stream should return a response.failed event."""
         from app.api.endpoints.openapi_responses import (
             _create_streaming_response_unified,
         )
@@ -500,13 +502,29 @@ class TestOpenAPIResponsesCreate:
                 return_value=False,
             ),
             patch(
+                "app.services.chat.storage.session_manager.register_stream",
+                new=AsyncMock(return_value=asyncio.Event()),
+            ),
+            patch(
+                "app.services.chat.storage.session_manager.subscribe_callback_channel",
+                new=AsyncMock(return_value=(None, None)),
+            ),
+            patch(
+                "app.services.chat.storage.session_manager.unregister_stream",
+                new=AsyncMock(),
+            ),
+            patch(
+                "app.services.chat.storage.session_manager.delete_streaming_content",
+                new=AsyncMock(),
+            ),
+            patch(
                 "app.api.endpoints.openapi_responses.collect_completed_result",
                 new=AsyncMock(return_value={"value": ""}),
-            ) as mock_collect_result,
+            ),
             patch(
                 "app.api.endpoints.openapi_responses.persist_completed_result",
                 new=AsyncMock(),
-            ) as mock_persist_result,
+            ),
         ):
             response = await _create_streaming_response_unified(
                 db=test_db,
@@ -537,20 +555,7 @@ class TestOpenAPIResponsesCreate:
             event for event in events if event["type"] == "response.failed"
         )
         assert failed_event["response"]["status"] == "failed"
-        assert failed_event["response"]["error"]["code"] == "not_implemented"
-        mock_collect_result.assert_awaited_once_with(
-            654,
-            status="FAILED",
-            error_message="Streaming not supported for this shell type",
-            error_code="not_implemented",
-        )
-        mock_persist_result.assert_awaited_once_with(
-            subtask_id=654,
-            task_id=101,
-            status="FAILED",
-            result={"value": ""},
-            error="Streaming not supported for this shell type",
-        )
+        assert failed_event["response"]["error"]["code"] == "stream_error"
 
     def test_create_response_with_wegent_tools(
         self, test_client: TestClient, test_api_key

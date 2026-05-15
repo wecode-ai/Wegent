@@ -757,6 +757,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 previous_bot_id=previous_bot_id,
                 skip_status_check=payload.action == "pipeline:confirm",
                 device_id=payload.device_id,
+                project_id=payload.project_id,
                 generate_params=generate_params_dict,
             )
 
@@ -907,6 +908,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 # Create async task for AI response - don't await it
                 # This ensures the ACK is returned before chat:start is sent
                 async def _trigger_ai():
+                    """Trigger AI response after message persistence."""
                     try:
                         await trigger_ai_response_unified(
                             task=task,
@@ -1682,6 +1684,7 @@ def register_chat_namespace(sio: socketio.AsyncServer):
 
 
 def get_device_id(task):
+    """Extract device_id from a task's CRD spec."""
     task_crd = Task.model_validate(task.json)
     return task_crd.spec.device_id if task_crd.spec else None
 

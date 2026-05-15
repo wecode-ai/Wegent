@@ -8,6 +8,7 @@ import { useTaskContext } from '../../contexts/taskContext'
 import { useChatStreamContext } from '../../contexts/chatStreamContext'
 import { useSocket } from '@/contexts/SocketContext'
 import { useDevices } from '@/contexts/DeviceContext'
+import { useProjectContext } from '@/features/projects/contexts/projectContext'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
@@ -265,17 +266,32 @@ export function useChatStreamHandlers({
 
   // Get selected device ID for executor-based tasks
   const { selectedDeviceId } = useDevices()
+  const { projects, refreshProjects } = useProjectContext()
+
+  // Project context - for workspace project conversations
+  const projectId = searchParams?.get('projectId')
+    ? Number(searchParams.get('projectId'))
+    : undefined
+  const projectConfig = useMemo(() => {
+    if (!projectId) return null
+    const project = projects.find(p => p.id === projectId)
+    return project?.config ?? null
+  }, [projectId, projects])
+  const projectDeviceId = projectConfig?.execution?.deviceId ?? undefined
 
   // Determine if we're in device mode - devices page or chat page with device selected
   // This prevents coding tasks from accidentally inheriting a device_id
   const isDevicesPage = pathname?.startsWith('/devices')
-  const isDeviceMode = isDevicesPage || taskType === 'task'
+  const isDeviceMode = isDevicesPage || taskType === 'task' || !!projectId
 
   // Determine effective device_id to send:
   // - Send device_id when in device mode (devices page or chat page with device selected) AND team is not Chat Shell
+  // - For project conversations, use the project's configured device
   // - This ensures coding tasks don't get routed to devices
   const effectiveDeviceId =
-    isDeviceMode && !isChatShell(selectedTeam) ? selectedDeviceId || undefined : undefined
+    isDeviceMode && !isChatShell(selectedTeam)
+      ? projectDeviceId || selectedDeviceId || undefined
+      : undefined
 
   // Local state
   const [pendingTaskId, setPendingTaskId] = useState<number | null>(null)
@@ -673,6 +689,8 @@ export function useChatStreamHandlers({
         knowledge_base_id: taskType === 'knowledge' ? knowledgeBaseId : undefined,
         contexts: contextItems.length > 0 ? contextItems : undefined,
         device_id: effectiveDeviceId,
+        // Project association for workspace project conversations
+        project_id: selectedTaskDetail?.id ? undefined : projectId,
         additional_skills:
           snapshotAdditionalSkills && snapshotAdditionalSkills.length > 0
             ? snapshotAdditionalSkills
@@ -704,6 +722,9 @@ export function useChatStreamHandlers({
               if (effectiveDeviceId) {
                 params.set('deviceId', effectiveDeviceId)
               }
+              if (projectId) {
+                params.set('projectId', String(projectId))
+              }
               router.push(`/devices/chat?${params.toString()}`)
             } else {
               const params = new URLSearchParams(Array.from(searchParams.entries()))
@@ -711,6 +732,9 @@ export function useChatStreamHandlers({
               router.push(`?${params.toString()}`)
             }
             refreshTasks()
+            if (projectId) {
+              refreshProjects()
+            }
           }
 
           if (selectedTaskDetail?.is_group_chat && completedTaskId) {
@@ -756,6 +780,8 @@ export function useChatStreamHandlers({
       router,
       searchParams,
       refreshTasks,
+      projectId,
+      refreshProjects,
       markTaskAsViewed,
       handleSendError,
     ]
@@ -1389,6 +1415,9 @@ export function useChatStreamHandlers({
                 params.set('taskId', String(completedTaskId))
                 router.push(`?${params.toString()}`)
                 refreshTasks()
+                if (projectId) {
+                  refreshProjects()
+                }
               }
 
               if (selectedTaskDetail?.is_group_chat && completedTaskId) {
@@ -1448,6 +1477,8 @@ export function useChatStreamHandlers({
       onTaskCreated,
       t,
       effectiveRequiresWorkspace,
+      projectId,
+      refreshProjects,
     ]
   )
 

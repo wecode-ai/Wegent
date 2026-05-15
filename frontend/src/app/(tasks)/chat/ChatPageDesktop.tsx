@@ -117,9 +117,13 @@ export function ChatPageDesktop() {
       if (selectedTaskDetail.device_id) {
         params.set('deviceId', selectedTaskDetail.device_id)
       }
+      const projectIdParam = searchParams.get('projectId')
+      if (projectIdParam) {
+        params.set('projectId', projectIdParam)
+      }
       router.replace(`/devices/chat?${params.toString()}`)
     }
-  }, [selectedTaskDetail?.task_type, selectedTaskDetail?.device_id, taskId, router])
+  }, [selectedTaskDetail?.task_type, selectedTaskDetail?.device_id, taskId, router, searchParams])
 
   // Collapsed sidebar state
   const [isCollapsed, setIsCollapsed] = useState(false)

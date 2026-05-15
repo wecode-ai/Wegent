@@ -46,6 +46,7 @@ import { useSkillSelector } from '../../hooks/useSkillSelector'
 import { useModelSelection } from '../../hooks/useModelSelection'
 import { QueueMessageHandler } from '@/features/inbox'
 import type { ChatAreaExtension } from './types'
+import { useProjectContext } from '@/features/projects/contexts/projectContext'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -331,6 +332,20 @@ function ChatAreaContent({
     searchParams.get('taskId') || searchParams.get('task_id') || searchParams.get('taskid')
   // Get teamId from URL for auto-selecting a specific team (e.g. after accepting a share invite)
   const teamIdFromUrl = searchParams.get('teamId')
+  // Get project info when in project context
+  const projectIdFromUrl = searchParams.get('projectId')
+  const { projects } = useProjectContext()
+  const activeProject = useMemo(() => {
+    if (!projectIdFromUrl) return null
+    const project = projects.find(p => p.id === Number(projectIdFromUrl))
+    if (!project) return null
+    const explicitPath = project.config?.workspace?.localPath
+    const defaultPath = `~/.wegent-executor/workspace/project${project.id}`
+    return {
+      name: project.name,
+      path: explicitPath || defaultPath,
+    }
+  }, [projectIdFromUrl, projects])
 
   // Track initialization and last synced task for team selection
   const hasInitializedTeamRef = useRef(false)
@@ -1235,6 +1250,8 @@ function ChatAreaContent({
     knowledgeBaseId,
     // Reason why input is disabled (shown as placeholder)
     disabledReason,
+    // Project context
+    projectId: projectIdFromUrl ? Number(projectIdFromUrl) : null,
     // Skill selector props
     availableSkills: skillSelector.availableSkills,
     teamSkillNames: skillSelector.teamSkillNames,
@@ -1380,7 +1397,9 @@ function ChatAreaContent({
             style={{ marginBottom: '12vh' }}
           >
             <div ref={floatingInputRef} className="w-full max-w-4xl mx-auto px-4 sm:px-6">
-              {taskType !== 'knowledge' && <SloganDisplay slogan={chatState.randomSlogan} />}
+              {taskType !== 'knowledge' && (
+                <SloganDisplay slogan={chatState.randomSlogan} project={activeProject} />
+              )}
               {taskType === 'knowledge' && guidedQuestions && guidedQuestions.length > 0 && (
                 <GuidedQuestions
                   questions={guidedQuestions}
@@ -1392,7 +1411,7 @@ function ChatAreaContent({
                 autoFocus={!hasMessages}
                 inputControlsRef={inputControlsRef}
               />
-              {taskType !== 'knowledge' && !hideSelectors && (
+              {taskType !== 'knowledge' && !hideSelectors && !activeProject && (
                 <QuickAccessCards
                   teams={teams}
                   selectedTeam={chatState.selectedTeam}

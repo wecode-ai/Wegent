@@ -193,6 +193,11 @@ class ChatSendPayload(BaseModel):
         None,
         description="Local device ID for task execution (if None, use cloud executor)",
     )
+    # Project association
+    project_id: Optional[int] = Field(
+        None,
+        description="Project ID to associate this task with",
+    )
     # Video generation parameters (user-selected at generation time)
     generate_params: Optional[GenerateParams] = Field(
         None, description="Video generation params from user selection"

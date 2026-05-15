@@ -320,6 +320,83 @@ class ResponsesAPIEmitter:
             ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DELTA.value, delta_data
         )
 
+    async def tool_argument_start(
+        self,
+        call_id: str,
+        name: str,
+        arguments_summary: Optional[dict] = None,
+        display_name: Optional[str] = None,
+        tool_protocol: str = "function_call",
+        server_label: Optional[str] = None,
+    ) -> Any:
+        """Emit the start of streamed tool argument generation."""
+        if hasattr(self.transport, "start_collecting"):
+            self.transport.start_collecting()
+
+        protocol_type = self._normalize_protocol_type(name, tool_protocol)
+        self._tool_contexts[call_id] = {
+            "protocol_type": protocol_type,
+            "name": name,
+            "arguments": arguments_summary,
+            "server_label": server_label,
+            "arguments_emitted": False,
+        }
+
+        if protocol_type != "function_call":
+            return await self.tool_start(
+                call_id=call_id,
+                name=name,
+                arguments=arguments_summary,
+                display_name=display_name,
+                tool_protocol=tool_protocol,
+                server_label=server_label,
+            )
+
+        added_data = self.builder.function_call_added(call_id, name, display_name)
+        added_data["argument_status"] = "streaming"
+        if arguments_summary is not None:
+            added_data["arguments_summary"] = arguments_summary
+        return await self._emit(
+            ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value, added_data
+        )
+
+    async def tool_argument_delta(
+        self,
+        call_id: str,
+        arguments_delta: str,
+        arguments_summary: Optional[dict] = None,
+    ) -> Any:
+        """Emit an incremental tool argument delta."""
+        delta_data = self.builder.function_call_arguments_delta(
+            call_id,
+            arguments_delta,
+            arguments_summary=arguments_summary,
+        )
+        return await self._emit(
+            ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DELTA.value, delta_data
+        )
+
+    async def tool_argument_done(
+        self,
+        call_id: str,
+        arguments: Optional[dict] = None,
+        arguments_summary: Optional[dict] = None,
+    ) -> Any:
+        """Emit completion of streamed tool arguments without tool output."""
+        tool_context = self._tool_contexts.get(call_id)
+        if tool_context is not None:
+            tool_context["arguments"] = arguments_summary or arguments
+            tool_context["arguments_emitted"] = True
+
+        done_data = self.builder.function_call_arguments_done(
+            call_id,
+            arguments,
+            arguments_summary=arguments_summary,
+        )
+        return await self._emit(
+            ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DONE.value, done_data
+        )
+
     async def tool_done(
         self,
         call_id: str,
@@ -412,9 +489,10 @@ class ResponsesAPIEmitter:
                 ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value, item_done_data
             )
 
-        # Send arguments done (with output for tool result)
+        # Send arguments done. Tool output is carried by output_item.done so the
+        # argument lifecycle stays distinct from the execution result lifecycle.
         done_data = self.builder.function_call_arguments_done(
-            call_id, resolved_arguments, output
+            call_id, resolved_arguments
         )
         await self._emit(
             ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DONE.value, done_data
@@ -422,7 +500,11 @@ class ResponsesAPIEmitter:
 
         # Send function call done
         item_done_data = self.builder.function_call_done(
-            call_id, resolved_name, resolved_arguments
+            call_id,
+            resolved_name,
+            resolved_arguments,
+            output=output,
+            status=status,
         )
         return await self._emit(
             ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value, item_done_data

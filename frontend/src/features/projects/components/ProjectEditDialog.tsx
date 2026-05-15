@@ -20,7 +20,6 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useProjectContext } from '../contexts/projectContext'
 import { ProjectWithTasks } from '@/types/api'
 
-// Predefined colors for projects
 const PROJECT_COLORS = [
   { id: 'red', value: '#EF4444' },
   { id: 'orange', value: '#F97316' },
@@ -47,7 +46,8 @@ export function ProjectEditDialog({ open, onOpenChange, project }: ProjectEditDi
   const [selectedColor, setSelectedColor] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
 
-  // Initialize form when project changes
+  const isWorkspace = project?.config?.mode === 'workspace'
+
   useEffect(() => {
     if (project) {
       setName(project.name)
@@ -64,7 +64,7 @@ export function ProjectEditDialog({ open, onOpenChange, project }: ProjectEditDi
       await updateProject(project.id, {
         name: name.trim(),
         description: description.trim() || undefined,
-        color: selectedColor || undefined,
+        color: isWorkspace ? undefined : selectedColor || undefined,
       })
       onOpenChange(false)
     } finally {
@@ -87,7 +87,6 @@ export function ProjectEditDialog({ open, onOpenChange, project }: ProjectEditDi
         </DialogHeader>
 
         <div className="space-y-4 py-4">
-          {/* Project Name */}
           <div className="space-y-2">
             <Label htmlFor="edit-name">{t('create.nameLabel')}</Label>
             <Input
@@ -100,7 +99,6 @@ export function ProjectEditDialog({ open, onOpenChange, project }: ProjectEditDi
             />
           </div>
 
-          {/* Description */}
           <div className="space-y-2">
             <Label htmlFor="edit-description">{t('create.descriptionLabel')}</Label>
             <Textarea
@@ -113,36 +111,37 @@ export function ProjectEditDialog({ open, onOpenChange, project }: ProjectEditDi
             />
           </div>
 
-          {/* Color Selection */}
-          <div className="space-y-2">
-            <Label>{t('create.colorLabel')}</Label>
-            <div className="flex flex-wrap gap-2">
-              {PROJECT_COLORS.map(color => (
-                <button
-                  key={color.id}
-                  type="button"
-                  onClick={() =>
-                    setSelectedColor(selectedColor === color.value ? null : color.value)
-                  }
-                  className={`w-8 h-8 rounded-full border-2 transition-all ${
-                    selectedColor === color.value
-                      ? 'border-text-primary scale-110'
-                      : 'border-transparent hover:scale-105'
-                  }`}
-                  style={{ backgroundColor: color.value }}
-                  title={t(`colors.${color.id}`)}
-                  disabled={isSaving}
-                />
-              ))}
+          {!isWorkspace && (
+            <div className="space-y-2">
+              <Label>{t('create.colorLabel')}</Label>
+              <div className="flex flex-wrap gap-2">
+                {PROJECT_COLORS.map(color => (
+                  <button
+                    key={color.id}
+                    type="button"
+                    onClick={() =>
+                      setSelectedColor(selectedColor === color.value ? null : color.value)
+                    }
+                    className={`w-8 h-8 rounded-full border-2 transition-all ${
+                      selectedColor === color.value
+                        ? 'border-text-primary scale-110'
+                        : 'border-transparent hover:scale-105'
+                    }`}
+                    style={{ backgroundColor: color.value }}
+                    title={t(`colors.${color.id}`)}
+                    disabled={isSaving}
+                  />
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={handleClose} disabled={isSaving}>
             {t('edit.cancel')}
           </Button>
-          <Button onClick={handleSave} disabled={isSaving || !name.trim()}>
+          <Button variant="primary" onClick={handleSave} disabled={isSaving || !name.trim()}>
             {isSaving ? t('common:actions.saving') : t('edit.submit')}
           </Button>
         </div>

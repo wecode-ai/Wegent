@@ -12,6 +12,10 @@
     "empty": "暂无分组，点击 + 创建",
     "noTasks": "暂无对话"
   },
+  "workspaceSection": {
+    "title": "项目",
+    "empty": "暂无项目，点击 + 创建"
+  },
   "actions": {
     "edit": "编辑",
     "delete": "删除"
@@ -26,6 +30,40 @@
     "colorLabel": "颜色",
     "submit": "创建",
     "cancel": "取消"
+  },
+  "workspaceCreate": {
+    "title": "新建项目",
+    "description": "创建一个项目工作区，用于在同一项目下发起多次对话",
+    "nameLabel": "项目名称",
+    "namePlaceholder": "输入项目名称",
+    "submit": "创建项目",
+    "defaultName": "新项目"
+  },
+  "workspace": {
+    "enable": "创建为项目工作区",
+    "device": "设备",
+    "devicePlaceholder": "选择设备",
+    "directoryPath": "目录地址",
+    "directoryPathPlaceholder": "输入本地目录路径",
+    "projectNamePreview": "项目名称：{{name}}",
+    "newConversation": "新建对话",
+    "greeting": "要在{{name}}中构建什么？",
+    "pathLabel": "项目目录",
+    "switchProject": "切换项目",
+    "currentProject": "当前项目",
+    "noOnlineDevices": "没有在线设备，请先启动设备",
+    "defaultPathHint": "不填则默认使用 ~/.wegent-executor/workspace/project{id}",
+    "local": "本地设备",
+    "cloud": "云端设备",
+    "deviceId": "本地设备 ID",
+    "teamId": "智能体 ID",
+    "git": "从 Git 拉取",
+    "localPath": "指定目录",
+    "gitUrl": "Git URL",
+    "gitRepo": "仓库名称（可选）",
+    "gitBranch": "分支，默认 main",
+    "checkoutPath": "目标目录（可选）",
+    "localPathPlaceholder": "目录地址"
   },
   "edit": {
     "title": "编辑分组",

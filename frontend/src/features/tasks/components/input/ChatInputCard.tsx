@@ -103,6 +103,9 @@ export interface ChatInputCardProps extends Omit<
 
   // Callback to open team edit dialog (shown as pencil icon on badge)
   onEditTeam?: () => void
+
+  // Project context (for project selector in controls)
+  projectId?: number | null
 }
 
 /**
@@ -156,6 +159,7 @@ export function ChatInputCard({
   disabledReason,
   hideSelectors,
   onEditTeam,
+  projectId,
   // ChatInputControls props
   selectedModel,
   setSelectedModel,
@@ -457,7 +461,7 @@ export function ChatInputCard({
         {!shouldHideChatInput && (
           <div className="absolute -top-[29px] left-4 z-10">
             <DeviceSelectorTab
-              disabled={isLoading || isStreaming}
+              disabled={isLoading || isStreaming || !!projectId}
               hasMessages={hasMessages}
               taskDeviceId={selectedTaskDetail?.device_id}
               className="rounded-t-lg"
@@ -639,6 +643,8 @@ export function ChatInputCard({
             onGenerateModeChange={onGenerateModeChange}
             // Hide all selectors (for OpenClaw devices)
             hideSelectors={hideSelectors}
+            // Project context
+            projectId={projectId}
           />
         </div>
       </div>

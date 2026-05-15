@@ -302,7 +302,13 @@ const MixedContentView = memo(function MixedContentView({
               toolName: normalizedToolName,
               displayName: block.display_name, // Pass display_name from block
               status:
-                (block.status as 'pending' | 'streaming' | 'invoking' | 'done' | 'error') || 'done',
+                (block.status as
+                  | 'generating_arguments'
+                  | 'pending'
+                  | 'streaming'
+                  | 'invoking'
+                  | 'done'
+                  | 'error') || 'done',
               toolUse: {
                 title: `Using ${normalizedToolName}`,
                 next_action: 'continue',
