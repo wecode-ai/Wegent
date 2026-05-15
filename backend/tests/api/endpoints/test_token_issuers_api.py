@@ -78,6 +78,7 @@ def test_admin_cannot_create_enabled_issuer_with_disabled_signing_key(
         headers=admin_headers,
         json={"name": "disabled-signing-key"},
     )
+    assert create_key_response.status_code == 201
     signing_key = create_key_response.json()
 
     disable_key_response = test_client.post(
@@ -120,6 +121,7 @@ def test_admin_cannot_disable_signing_key_referenced_by_active_issuer(
         headers=admin_headers,
         json={"name": "shared-signing-key"},
     )
+    assert create_key_response.status_code == 201
     signing_key = create_key_response.json()
 
     create_issuer_response = test_client.post(
@@ -147,3 +149,15 @@ def test_admin_cannot_disable_signing_key_referenced_by_active_issuer(
         disable_key_response.json()["error_code"]
         == "SIGNING_KEY_DISABLE_BLOCKED_BY_ACTIVE_ISSUER"
     )
+
+
+def test_issue_endpoint_openapi_declares_oauth2_and_api_key_security(
+    test_client: TestClient,
+):
+    openapi_schema = test_client.app.openapi()
+    operation = openapi_schema["paths"]["/api/v1/token-issuers/{issuer_id}/issue"][
+        "post"
+    ]
+
+    assert {"OAuth2PasswordBearer": []} in operation["security"]
+    assert {"APIKeyHeader": []} in operation["security"]

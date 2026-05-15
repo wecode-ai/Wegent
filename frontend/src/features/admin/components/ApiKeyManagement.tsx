@@ -51,6 +51,7 @@ const ApiKeyManagement: React.FC = () => {
           size="sm"
           onClick={() => setActiveKeyType('outbound')}
           className="gap-2"
+          data-testid="outbound-tab-button"
         >
           <ShieldCheck className="w-4 h-4" />
           {t('api_keys.outbound_tokens')}

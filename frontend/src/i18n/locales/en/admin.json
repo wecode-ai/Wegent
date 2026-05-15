@@ -478,6 +478,8 @@
         "create_failed": "Failed to create SigningKey",
         "delete_failed": "Failed to delete SigningKey",
         "toggle_failed": "Failed to toggle SigningKey status",
+        "disable_blocked_by_active_issuers": "This SigningKey is still referenced by {{count}} active TokenIssuer entries: {{names}}. Disable those issuers before disabling the key.",
+        "delete_blocked_by_active_issuers": "This SigningKey is still referenced by {{count}} active TokenIssuer entries: {{names}}. Disable or unbind them before deleting the key.",
         "disable_blocked_by_issuer": "This SigningKey is still referenced by an active TokenIssuer. Disable the related TokenIssuer first.",
         "delete_blocked_by_issuer": "This SigningKey is still referenced by a TokenIssuer. Remove the related binding before deleting it."
       }

@@ -25,6 +25,7 @@ from app.schemas.token_issuer import (
     TokenIssueResponse,
     TokenIssuerKind,
     TokenIssuerResponse,
+    TokenIssuerStatus,
     TokenIssuerUpdateRequest,
 )
 from shared.utils.crypto import decrypt_sensitive_data, encrypt_sensitive_data
@@ -284,11 +285,9 @@ class OutboundTokenService:
                 )
             resource.spec.enabled = payload.enabled
             row.is_active = payload.enabled
-            self._set_resource_state(
-                row,
-                "Available" if payload.enabled else "Disabled",
-                mutate_json=False,
-            )
+            if resource.status is None:
+                resource.status = TokenIssuerStatus()
+            resource.status.state = "Available" if payload.enabled else "Disabled"
 
         row.json = resource.model_dump()
         if payload.enabled is not None:
@@ -318,12 +317,10 @@ class OutboundTokenService:
                 )
         resource.spec.enabled = not resource.spec.enabled
         row.is_active = resource.spec.enabled
+        if resource.status is None:
+            resource.status = TokenIssuerStatus()
+        resource.status.state = "Available" if row.is_active else "Disabled"
         row.json = resource.model_dump()
-        self._set_resource_state(
-            row,
-            "Available" if row.is_active else "Disabled",
-            mutate_json=False,
-        )
         db.commit()
         db.refresh(row)
         return self._to_token_issuer_response(db, row)
