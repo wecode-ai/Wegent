@@ -9,8 +9,12 @@
   "dropHere": "Drop to this project",
   "section": {
     "title": "Chat Groups",
-    "empty": "No projects, click + to create",
+    "empty": "No groups, click + to create",
     "noTasks": "No tasks"
+  },
+  "workspaceSection": {
+    "title": "Projects",
+    "empty": "No projects, click + to create"
   },
   "actions": {
     "edit": "Edit",
@@ -26,6 +30,40 @@
     "colorLabel": "Color",
     "submit": "Create",
     "cancel": "Cancel"
+  },
+  "workspaceCreate": {
+    "title": "New Project",
+    "description": "Create a project workspace for multiple conversations under the same project",
+    "nameLabel": "Project Name",
+    "namePlaceholder": "Enter project name",
+    "submit": "Create Project",
+    "defaultName": "New Project"
+  },
+  "workspace": {
+    "enable": "Create as workspace project",
+    "device": "Device",
+    "devicePlaceholder": "Select a device",
+    "directoryPath": "Directory Path",
+    "directoryPathPlaceholder": "Enter local directory path",
+    "projectNamePreview": "Project name: {{name}}",
+    "newConversation": "New Conversation",
+    "greeting": "What do you want to build in {{name}}?",
+    "pathLabel": "Project directory",
+    "switchProject": "Switch Project",
+    "currentProject": "Current Project",
+    "noOnlineDevices": "No online devices. Please start a device first.",
+    "defaultPathHint": "If empty, defaults to ~/.wegent-executor/workspace/project{id}",
+    "local": "Local device",
+    "cloud": "Cloud device",
+    "deviceId": "Local device ID",
+    "teamId": "Agent ID",
+    "git": "Clone from Git",
+    "localPath": "Local path",
+    "gitUrl": "Git URL",
+    "gitRepo": "Repository name (optional)",
+    "gitBranch": "Branch, default main",
+    "checkoutPath": "Checkout path (optional)",
+    "localPathPlaceholder": "Directory path"
   },
   "edit": {
     "title": "Edit Project",

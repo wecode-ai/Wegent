@@ -16,6 +16,8 @@ from app.core.security import get_current_user
 from app.models.user import User
 from app.schemas.project import (
     AddTaskToProjectResponse,
+    ProjectConversationCreate,
+    ProjectConversationResponse,
     ProjectCreate,
     ProjectListResponse,
     ProjectResponse,
@@ -138,6 +140,38 @@ def delete_project_endpoint(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete project: {str(e)}",
+        )
+
+
+@router.post(
+    "/{project_id}/conversations",
+    response_model=ProjectConversationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_project_conversation_endpoint(
+    project_id: int = Path(..., description="Project ID"),
+    conversation_data: ProjectConversationCreate = Body(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Create a new Task conversation under a workspace project.
+
+    Project configuration supplies team, workspace, Git, and execution defaults.
+    """
+    try:
+        return project_service.create_project_conversation(
+            db=db,
+            project_id=project_id,
+            conversation_data=conversation_data,
+            user=current_user,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create project conversation: {str(e)}",
         )
 
 

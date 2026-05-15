@@ -716,6 +716,48 @@ export type {
 } from './knowledge'
 
 // Project Types
+export type ProjectExecutionTargetType = 'local' | 'cloud'
+export type ProjectWorkspaceSource = 'git' | 'local_path'
+
+export interface ProjectWorkspaceRef {
+  name: string
+  namespace: string
+}
+
+export interface ProjectExecutionConfig {
+  targetType: ProjectExecutionTargetType
+  deviceId?: string | null
+}
+
+export interface ProjectTeamConfig {
+  id?: number | null
+  name?: string | null
+  namespace: string
+}
+
+export interface ProjectWorkspaceConfig {
+  source: ProjectWorkspaceSource
+  localPath?: string | null
+  checkoutPath?: string | null
+  workspaceRef?: ProjectWorkspaceRef | null
+}
+
+export interface ProjectGitConfig {
+  url: string
+  repo?: string | null
+  repoId?: number | null
+  domain?: string | null
+  branch?: string | null
+}
+
+export interface ProjectConfig {
+  mode?: 'workspace' | null
+  execution?: ProjectExecutionConfig | null
+  team?: ProjectTeamConfig | null
+  workspace?: ProjectWorkspaceConfig | null
+  git?: ProjectGitConfig | null
+}
+
 /** Task within a project */
 export interface ProjectTask {
   task_id: number
@@ -723,6 +765,7 @@ export interface ProjectTask {
   task_status: TaskStatus
   is_group_chat: boolean
   project_id: number
+  updated_at?: string | null
 }
 
 /** Project for organizing tasks */
@@ -735,6 +778,7 @@ export interface Project {
   sort_order: number
   is_expanded: boolean
   task_count: number
+  config?: ProjectConfig | null
   created_at: string
   updated_at: string
 }

@@ -38,6 +38,27 @@ class SessionManager:
     instance and destroys it after completion.
     """
 
+    _task_session_roots: dict[int, str] = {}
+
+    @classmethod
+    def set_task_session_root(cls, task_id: int, session_root: Optional[str]) -> None:
+        """Set task-specific session root for project workspace mode."""
+
+        if session_root:
+            cls._task_session_roots[task_id] = session_root
+        else:
+            cls._task_session_roots.pop(task_id, None)
+
+    @classmethod
+    def _get_task_dir(cls, task_id: int) -> str:
+        """Return session directory for a task."""
+
+        session_root = cls._task_session_roots.get(task_id)
+        if session_root:
+            return os.path.join(session_root, ".wegent", "sessions", str(task_id))
+        workspace_root = config.get_workspace_root()
+        return os.path.join(workspace_root, str(task_id))
+
     @staticmethod
     def get_session_id_file_path(task_id: int, bot_id: Optional[int] = None) -> str:
         """Get the path to the session ID file for a task and bot.
@@ -54,8 +75,7 @@ class SessionManager:
         Returns:
             Path to the session ID file
         """
-        workspace_root = config.get_workspace_root()
-        task_dir = os.path.join(workspace_root, str(task_id))
+        task_dir = SessionManager._get_task_dir(task_id)
         if bot_id:
             return os.path.join(task_dir, f".claude_session_id_{bot_id}")
         return os.path.join(task_dir, ".claude_session_id")
@@ -63,8 +83,7 @@ class SessionManager:
     @staticmethod
     def get_process_info_file_path(task_id: int, bot_id: Optional[int] = None) -> str:
         """Get the path to tracked resume process info file."""
-        workspace_root = config.get_workspace_root()
-        task_dir = os.path.join(workspace_root, str(task_id))
+        task_dir = SessionManager._get_task_dir(task_id)
         if bot_id:
             return os.path.join(task_dir, f".claude_resume_process_{bot_id}.json")
         return os.path.join(task_dir, ".claude_resume_process.json")

@@ -165,6 +165,14 @@ jest.mock('@/features/tasks/contexts/taskContext', () => ({
   }),
 }))
 
+jest.mock('@/features/projects/contexts/projectContext', () => ({
+  useProjectContext: () => ({
+    projects: [],
+    projectTaskIds: new Set(),
+    isWorkspaceEnabled: false,
+  }),
+}))
+
 jest.mock('@/features/tasks/contexts/chatStreamContext', () => ({
   useOptionalChatStreamContext: () => ({
     sendMessage: mockSendMessage,

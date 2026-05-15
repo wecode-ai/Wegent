@@ -62,6 +62,7 @@ class AttachmentDownloader:
         task_id: str,
         subtask_id: str,
         auth_token: str,
+        project_layout: bool = False,
     ):
         """
         Initialize attachment downloader.
@@ -76,6 +77,7 @@ class AttachmentDownloader:
         self.task_id = task_id
         self.subtask_id = subtask_id
         self.auth_token = auth_token
+        self.project_layout = project_layout
         self.headers = {"Authorization": f"Bearer {auth_token}"}
         # Get API base URL based on executor mode
         self.api_base_url = get_api_base_url()
@@ -88,6 +90,8 @@ class AttachmentDownloader:
             Path in format: {workspace}/{task_id}_executor_attachments/{subtask_id}/ (Windows)
             or {workspace}/{task_id}:executor:attachments/{subtask_id}/ (Unix)
         """
+        if self.project_layout:
+            return os.path.join(self.workspace, str(self.task_id), str(self.subtask_id))
         return os.path.join(
             self.workspace,
             get_attachments_subdir_name(self.task_id),

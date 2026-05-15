@@ -37,9 +37,15 @@ interface ProjectTaskMenuProps {
   taskId: number
   projectId: number
   onRename?: () => void
+  isWorkspace?: boolean
 }
 
-export function ProjectTaskMenu({ taskId, projectId, onRename }: ProjectTaskMenuProps) {
+export function ProjectTaskMenu({
+  taskId,
+  projectId,
+  onRename,
+  isWorkspace,
+}: ProjectTaskMenuProps) {
   const { t } = useTranslation()
   const { t: tProjects } = useTranslation('projects')
   const router = useRouter()
@@ -124,53 +130,57 @@ export function ProjectTaskMenu({ taskId, projectId, onRename }: ProjectTaskMenu
             {t('common:tasks.copy_task_id')}
           </DropdownMenuItem>
 
-          {/* Move to Group */}
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger onClick={e => e.stopPropagation()}>
-              <FolderPlusIcon className="h-3.5 w-3.5 mr-2" />
-              {tProjects('menu.moveToGroup')}
-            </DropdownMenuSubTrigger>
-            <DropdownMenuPortal>
-              <DropdownMenuSubContent className="min-w-[140px]">
-                <DropdownMenuItem
-                  onClick={e => {
-                    e.stopPropagation()
-                    setCreateDialogOpen(true)
-                  }}
-                >
-                  <PlusIcon className="h-3.5 w-3.5 mr-2" />
-                  {tProjects('menu.createGroup')}
-                </DropdownMenuItem>
-                {otherProjects.length > 0 && <DropdownMenuSeparator />}
-                {otherProjects.map(project => (
+          {/* Move to Group - only for regular groups, not workspace projects */}
+          {!isWorkspace && (
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger onClick={e => e.stopPropagation()}>
+                <FolderPlusIcon className="h-3.5 w-3.5 mr-2" />
+                {tProjects('menu.moveToGroup')}
+              </DropdownMenuSubTrigger>
+              <DropdownMenuPortal>
+                <DropdownMenuSubContent className="min-w-[140px]">
                   <DropdownMenuItem
-                    key={project.id}
                     onClick={e => {
                       e.stopPropagation()
-                      handleMoveToGroup(project.id)
+                      setCreateDialogOpen(true)
                     }}
                   >
-                    <FolderIcon
-                      className="h-3.5 w-3.5 mr-2"
-                      style={{ color: project.color || 'currentColor' }}
-                    />
-                    <span className="truncate">{project.name}</span>
+                    <PlusIcon className="h-3.5 w-3.5 mr-2" />
+                    {tProjects('menu.createGroup')}
                   </DropdownMenuItem>
-                ))}
-              </DropdownMenuSubContent>
-            </DropdownMenuPortal>
-          </DropdownMenuSub>
+                  {otherProjects.length > 0 && <DropdownMenuSeparator />}
+                  {otherProjects.map(project => (
+                    <DropdownMenuItem
+                      key={project.id}
+                      onClick={e => {
+                        e.stopPropagation()
+                        handleMoveToGroup(project.id)
+                      }}
+                    >
+                      <FolderIcon
+                        className="h-3.5 w-3.5 mr-2"
+                        style={{ color: project.color || 'currentColor' }}
+                      />
+                      <span className="truncate">{project.name}</span>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuSubContent>
+              </DropdownMenuPortal>
+            </DropdownMenuSub>
+          )}
 
-          {/* Remove from Group */}
-          <DropdownMenuItem
-            onClick={e => {
-              e.stopPropagation()
-              handleRemoveFromGroup()
-            }}
-          >
-            <FolderMinusIcon className="h-3.5 w-3.5 mr-2" />
-            {tProjects('menu.removeFromGroup')}
-          </DropdownMenuItem>
+          {/* Remove from Group - only for regular groups */}
+          {!isWorkspace && (
+            <DropdownMenuItem
+              onClick={e => {
+                e.stopPropagation()
+                handleRemoveFromGroup()
+              }}
+            >
+              <FolderMinusIcon className="h-3.5 w-3.5 mr-2" />
+              {tProjects('menu.removeFromGroup')}
+            </DropdownMenuItem>
+          )}
 
           {/* Rename Task */}
           {onRename && (

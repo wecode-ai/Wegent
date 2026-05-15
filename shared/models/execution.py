@@ -127,6 +127,10 @@ class ExecutionRequest:
 
     # === Workspace Configuration ===
     workspace: dict = field(default_factory=dict)
+    project_id: Optional[int] = None
+    workspace_source: Optional[str] = None
+    project_workspace_path: Optional[str] = None
+    execution_target_type: Optional[str] = None
 
     # === Git Configuration (from Task) ===
     git_domain: Optional[str] = None
@@ -314,6 +318,8 @@ class ExecutionEvent:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ExecutionEvent":
         """Create from dict - automatically deserializes."""
+        import json as _json
+
         # Handle EventType enum conversion
         if "type" in data:
             type_value = data.get("type", "chunk")
@@ -325,6 +331,19 @@ class ExecutionEvent:
                     EventType(type_value)
                 except ValueError:
                     data = {**data, "type": "chunk"}
+
+        # Handle tool_input type coercion: Redis pub/sub roundtrip may
+        # serialize dict as JSON string; dacite rejects str for Optional[dict].
+        tool_input = data.get("tool_input")
+        if isinstance(tool_input, str):
+            try:
+                parsed = _json.loads(tool_input)
+                data = {
+                    **data,
+                    "tool_input": parsed if isinstance(parsed, dict) else None,
+                }
+            except (ValueError, TypeError):
+                data = {**data, "tool_input": None}
 
         return from_dict(
             data_class=cls,

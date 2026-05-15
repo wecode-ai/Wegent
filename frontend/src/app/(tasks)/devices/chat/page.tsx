@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
@@ -31,6 +31,7 @@ import { isOpenClawDevice } from '@/features/devices/utils/device-status'
 import { CloudDeviceVncPanel, DeviceVncPanel } from '@wecode/components/cloud-device'
 import { useDeviceVncState } from '@wecode/hooks'
 import { getPreferredExecutionDevice } from '@/features/devices/utils/execution-target'
+import { useProjectContext } from '@/features/projects/contexts/projectContext'
 
 export default function DeviceChatPage() {
   const { t } = useTranslation('devices')
@@ -52,6 +53,16 @@ export default function DeviceChatPage() {
 
   // Get selected device info
   const selectedDevice = devices.find(d => d.device_id === selectedDeviceId)
+
+  // Project context — when projectId is in URL, device is locked to project config
+  const projectIdParam = searchParams.get('projectId')
+  const projectId = projectIdParam ? Number(projectIdParam) : null
+  const { projects } = useProjectContext()
+  const activeProject = useMemo(() => {
+    if (!projectId) return null
+    return projects.find(p => p.id === projectId) ?? null
+  }, [projectId, projects])
+  const isProjectContext = !!activeProject
 
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
@@ -185,7 +196,8 @@ export default function DeviceChatPage() {
             <select
               value={selectedDeviceId || ''}
               onChange={e => handleDeviceSelect(e.target.value)}
-              className="bg-surface border border-border rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+              disabled={isProjectContext}
+              className="bg-surface border border-border rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-60 disabled:cursor-not-allowed"
             >
               <option value="" disabled>
                 {t('select_device')}

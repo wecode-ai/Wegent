@@ -17,11 +17,13 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.models.project import Project
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.schemas.kind import Bot, Ghost, Shell
 from app.schemas.kind import Skill as SkillCRD
 from app.schemas.kind import Team
+from app.schemas.project import ProjectConfig
 from app.services.auth import create_skill_identity_token
 from app.services.mcp_provider_registry import (
     get_mcp_service_by_skill_name,
@@ -163,6 +165,8 @@ class TaskRequestBuilder:
             git_repo = repo.get("gitRepo")
             git_repo_id = repo.get("gitRepoId")
             branch_name = repo.get("branchName") or workspace.get("branch")
+
+        project_workspace = workspace.get("project") or {}
 
         # Build user info with git_domain to match correct git account
         user_info = self._build_user_info(user, git_domain)
@@ -336,6 +340,10 @@ class TaskRequestBuilder:
             table_contexts=[],
             is_user_selected_kb=is_user_selected_kb,
             workspace=workspace,
+            project_id=project_workspace.get("project_id") or task.project_id or None,
+            workspace_source=project_workspace.get("workspace_source"),
+            project_workspace_path=project_workspace.get("project_workspace_path"),
+            execution_target_type=project_workspace.get("execution_target_type"),
             # Git fields extracted from workspace for executor compatibility
             git_url=git_url,
             git_domain=git_domain,
@@ -2206,10 +2214,10 @@ Response template:
         try:
             task_crd = TaskCRD.model_validate(task_json)
 
-            if not task_crd.spec.workspaceRef:
-                return workspace_data
-
             workspace_ref = task_crd.spec.workspaceRef
+            if not workspace_ref:
+                self._merge_project_workspace(task, workspace_data)
+                return workspace_data
 
             # Query the actual Workspace resource to get repository info
             workspace = (
@@ -2249,7 +2257,83 @@ Response template:
         except Exception as e:
             logger.warning("[TaskRequestBuilder] Failed to build workspace: %s", str(e))
 
+        self._merge_project_workspace(task, workspace_data)
         return workspace_data
+
+    def _merge_project_workspace(
+        self, task: TaskResource, workspace_data: dict
+    ) -> None:
+        """Merge workspace project config into execution workspace metadata."""
+
+        project_id = task.project_id or 0
+        if not project_id:
+            labels = (task.json or {}).get("metadata", {}).get("labels", {})
+            label_project_id = labels.get("projectId")
+            project_id = int(label_project_id) if str(label_project_id).isdigit() else 0
+
+        if not project_id:
+            return
+
+        project = (
+            self.db.query(Project)
+            .filter(
+                Project.id == project_id,
+                Project.user_id == task.user_id,
+                Project.is_active == True,
+            )
+            .first()
+        )
+        if not project or not project.config:
+            return
+
+        try:
+            config = ProjectConfig.model_validate(project.config)
+        except Exception as e:
+            logger.warning(
+                "[TaskRequestBuilder] Invalid project config for project %s: %s",
+                project_id,
+                e,
+            )
+            return
+
+        if not config.is_workspace or not config.execution:
+            return
+
+        git = config.git
+        if git:
+            workspace_data["repository"] = {
+                "gitUrl": git.url,
+                "gitRepo": git.repo,
+                "gitRepoId": git.repoId,
+                "gitDomain": git.domain,
+                "branchName": git.branch,
+            }
+            workspace_data["branch"] = git.branch
+
+        workspace = config.workspace
+        if workspace:
+            project_workspace_path = workspace.localPath or workspace.checkoutPath
+            workspace_data["project"] = {
+                "project_id": project_id,
+                "workspace_source": workspace.source,
+                "project_workspace_path": project_workspace_path,
+                "execution_target_type": config.execution.targetType,
+                "device_id": config.execution.deviceId,
+                "checkout_path": workspace.checkoutPath,
+                "local_path": workspace.localPath,
+            }
+        else:
+            # Default workspace: use project{id} directory under workspace root
+            default_path = f"project{project_id}"
+            workspace_data["project"] = {
+                "project_id": project_id,
+                "workspace_source": "local_path",
+                "project_workspace_path": default_path,
+                "execution_target_type": config.execution.targetType,
+                "device_id": config.execution.deviceId,
+                "checkout_path": None,
+                "local_path": default_path,
+            }
 
     def _is_group_chat(self, task: TaskResource) -> bool:
         """Determine if task is a group chat.
