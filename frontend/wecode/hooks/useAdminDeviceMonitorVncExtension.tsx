@@ -54,8 +54,7 @@ export function useAdminDeviceMonitorVncExtension(): AdminDeviceMonitorVncExtens
       }
 
       const isActive =
-        activeVncDeviceDetails?.device_id === device.device_id &&
-        activeVncDeviceDetails.user_id === device.user_id
+        activeVncDeviceDetails?.device_id === device.device_id && activeVncDeviceDetails.user_id === device.user_id
 
       return (
         <Tooltip key={`${device.device_id}-vnc`}>
