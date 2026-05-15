@@ -241,20 +241,47 @@ class ResponsesAPIEventParser:
             )
 
         elif event_type == ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DELTA.value:
-            # function_call_arguments.delta -> incremental arguments update
-            # Standard OpenAI protocol: this event only contains delta, no status field
-            # Tool start is signaled by response.output_item.added with type=function_call
-            # We skip this event as it's just incremental argument streaming
-            return None
+            tool_use_id = _require_non_empty_tool_use_id(
+                data.get("call_id") or data.get("item_id"),
+                context="function_call_arguments.delta",
+            )
+            tool_key = self._tool_key(task_id, subtask_id, tool_use_id)
+            tool_context = self._tool_contexts.get(tool_key)
+            if tool_context is None:
+                logger.warning(
+                    "[ResponsesAPIEventParser] Missing function_call context for %s during arguments.delta",
+                    tool_key,
+                )
+                tool_context = {}
+            arguments_summary = data.get("arguments_summary")
+            if isinstance(arguments_summary, dict):
+                tool_context["arguments"] = arguments_summary
+            return ExecutionEvent(
+                type=EventType.TOOL_ARGUMENT_DELTA,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                tool_name=tool_context.get("name"),
+                tool_use_id=tool_use_id,
+                tool_input=(
+                    arguments_summary if isinstance(arguments_summary, dict) else None
+                ),
+                data={
+                    "tool_protocol": "function_call",
+                    "argument_status": "streaming",
+                    "delta": data.get("delta", ""),
+                },
+                message_id=message_id,
+            )
 
         elif event_type == ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DONE.value:
-            # function_call_arguments.done -> TOOL_RESULT
+            # function_call_arguments.done marks argument generation complete.
+            # The execution result is emitted by response.output_item.done.
             tool_use_id = _require_non_empty_tool_use_id(
                 data.get("call_id") or data.get("item_id"),
                 context="function_call_arguments.done",
             )
             tool_key = self._tool_key(task_id, subtask_id, tool_use_id)
-            tool_context = self._tool_contexts.pop(tool_key, None)
+            tool_context = self._tool_contexts.get(tool_key)
             if tool_context is None:
                 logger.warning(
                     "[ResponsesAPIEventParser] Missing function_call context for %s; "
@@ -264,14 +291,16 @@ class ResponsesAPIEventParser:
                 tool_context = {}
             # Parse arguments from the event data to get tool_input
             arguments_str = data.get("arguments", "")
-            tool_input = None
-            if arguments_str:
+            tool_input = data.get("arguments_summary")
+            if not isinstance(tool_input, dict) and arguments_str:
                 try:
                     tool_input = json.loads(arguments_str)
                 except (json.JSONDecodeError, TypeError):
                     pass
+            if isinstance(tool_input, dict):
+                tool_context["arguments"] = tool_input
             return ExecutionEvent(
-                type=EventType.TOOL_RESULT,
+                type=EventType.TOOL_ARGUMENT_DONE,
                 task_id=task_id,
                 subtask_id=subtask_id,
                 tool_name=tool_context.get("name"),
@@ -281,10 +310,10 @@ class ResponsesAPIEventParser:
                     if tool_input is not None
                     else tool_context.get("arguments")
                 ),
-                tool_output=data.get("output"),
                 data={
                     "blocks": data.get("blocks", []),
                     "tool_protocol": "function_call",
+                    "argument_status": "done",
                 },
                 message_id=message_id,
             )
@@ -322,10 +351,15 @@ class ResponsesAPIEventParser:
                     except (json.JSONDecodeError, TypeError):
                         pass
                 tool_key = self._tool_key(task_id, subtask_id, call_id)
+                arguments_summary = data.get("arguments_summary")
                 self._tool_contexts[tool_key] = {
                     "protocol": "function_call",
                     "name": name,
-                    "arguments": arguments,
+                    "arguments": (
+                        arguments_summary
+                        if isinstance(arguments_summary, dict)
+                        else arguments
+                    ),
                 }
 
                 return ExecutionEvent(
@@ -334,11 +368,16 @@ class ResponsesAPIEventParser:
                     subtask_id=subtask_id,
                     tool_use_id=call_id,
                     tool_name=name,
-                    tool_input=arguments,
+                    tool_input=(
+                        arguments_summary
+                        if isinstance(arguments_summary, dict)
+                        else arguments
+                    ),
                     data={
                         "blocks": data.get("blocks", []),
                         "display_name": data.get("display_name"),
                         "tool_protocol": "function_call",
+                        "argument_status": data.get("argument_status"),
                     },
                     message_id=message_id,
                 )
@@ -475,6 +514,43 @@ class ResponsesAPIEventParser:
 
         elif event_type == ResponsesAPIStreamEvents.OUTPUT_ITEM_DONE.value:
             item = data.get("item", {})
+            if item.get("type") == "function_call":
+                call_id = _require_non_empty_tool_use_id(
+                    item.get("call_id") or item.get("id"),
+                    context="response.output_item.done(function_call)",
+                )
+                tool_key = self._tool_key(task_id, subtask_id, call_id)
+                tool_context = self._tool_contexts.pop(tool_key, None)
+                if tool_context is None:
+                    logger.warning(
+                        "[ResponsesAPIEventParser] Missing function_call completion context for %s; "
+                        "continuing with self-contained completion payload",
+                        tool_key,
+                    )
+                    tool_context = {}
+                arguments_str = item.get("arguments", "")
+                tool_input = tool_context.get("arguments")
+                if not isinstance(tool_input, dict) and arguments_str:
+                    try:
+                        tool_input = json.loads(arguments_str)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                status = item.get("status", "completed")
+                return ExecutionEvent(
+                    type=EventType.TOOL_RESULT,
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    tool_name=tool_context.get("name") or item.get("name"),
+                    tool_use_id=call_id,
+                    tool_input=tool_input,
+                    tool_output=item.get("output"),
+                    data={
+                        "tool_protocol": "function_call",
+                        "status": status,
+                        "error": item.get("error"),
+                    },
+                    message_id=message_id,
+                )
             if item.get("type") != "shell_call":
                 return None
             call_id = _require_non_empty_tool_use_id(

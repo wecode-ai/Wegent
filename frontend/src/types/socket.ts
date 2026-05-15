@@ -235,7 +235,8 @@ export interface ChatBlock {
   guidance_id?: string
   loop_index?: number
   applied_at?: string
-  status?: 'pending' | 'streaming' | 'done' | 'error'
+  argument_status?: 'streaming' | 'done'
+  status?: 'generating_arguments' | 'pending' | 'streaming' | 'done' | 'error'
   timestamp?: number
 }
 
@@ -333,6 +334,7 @@ export interface ChatBlockUpdatedPayload {
   content?: string
   tool_output?: unknown
   tool_input?: Record<string, unknown>
+  argument_status?: 'streaming' | 'done'
   guidance_id?: string
   loop_index?: number
   applied_at?: string
