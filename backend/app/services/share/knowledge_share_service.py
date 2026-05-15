@@ -748,10 +748,13 @@ class KnowledgeShareService(UnifiedShareService):
         roles.extend(r)
         sources.extend(s)
 
-        # 6. Group chat binding
-        r, s = self._source_group_chat_binding(db, kb, user_id, include_sources)
-        roles.extend(r)
-        sources.extend(s)
+        # 6. Group chat binding — only check if no other permission sources found.
+        # When the user already has access via creator/member/entity/org/group,
+        # group_chat_binding (fixed Reporter role) cannot be the decisive source.
+        if kb.namespace == "default" and not roles:
+            r, s = self._source_group_chat_binding(db, kb, user_id, include_sources)
+            roles.extend(r)
+            sources.extend(s)
 
         effective_role = get_highest_role(roles) if roles else None
         has_access = len(roles) > 0 or is_creator
