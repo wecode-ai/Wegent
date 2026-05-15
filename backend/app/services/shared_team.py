@@ -190,7 +190,8 @@ class SharedTeamService:
             .filter(
                 ResourceMember.resource_type == ResourceType.TEAM,
                 ResourceMember.resource_id == team_id,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
                 ResourceMember.status == MemberStatus.APPROVED,
             )
             .first()
@@ -207,7 +208,8 @@ class SharedTeamService:
             .filter(
                 ResourceMember.resource_type == ResourceType.TEAM,
                 ResourceMember.resource_id == team_id,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
             )
             .first()
         )
@@ -235,7 +237,8 @@ class SharedTeamService:
         resource_member = ResourceMember(
             resource_type=ResourceType.TEAM,
             resource_id=team_id,
-            user_id=user_id,
+            entity_type="user",
+            entity_id=str(user_id),
             role=ResourceRole.Maintainer.value,
             status=MemberStatus.APPROVED,
             invited_by_user_id=original_user_id,
@@ -266,7 +269,8 @@ class SharedTeamService:
             db.query(ResourceMember)
             .filter(
                 ResourceMember.resource_type == ResourceType.TEAM,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
                 ResourceMember.status == MemberStatus.APPROVED,
             )
             .all()
@@ -317,7 +321,8 @@ class SharedTeamService:
             .filter(
                 ResourceMember.resource_type == ResourceType.TEAM,
                 ResourceMember.resource_id == team_id,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
                 ResourceMember.status == MemberStatus.APPROVED,
             )
             .first()

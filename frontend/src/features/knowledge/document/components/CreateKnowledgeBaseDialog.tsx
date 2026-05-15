@@ -23,8 +23,15 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { SummaryModelRef, KnowledgeBaseType, RetrievalConfig } from '@/types/knowledge'
+import type {
+  SummaryModelRef,
+  KnowledgeBaseType,
+  RetrievalConfig,
+  InitialMember,
+  MemberRole,
+} from '@/types/knowledge'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
+import { KnowledgeBaseAuthSection } from './KnowledgeBaseAuthSection'
 
 /** Available group for selection */
 export interface AvailableGroup {
@@ -51,6 +58,8 @@ interface CreateKnowledgeBaseDialogProps {
     selectedGroupId?: string
     /** Knowledge base type selected by user */
     kb_type: KnowledgeBaseType
+    /** Initial members (users/groups) to add after creation */
+    members?: InitialMember[]
   }) => Promise<void>
   loading?: boolean
   scope?: 'personal' | 'group' | 'organization' | 'all'
@@ -123,6 +132,16 @@ export function CreateKnowledgeBaseDialog({
   const [exemptCalls, setExemptCalls] = useState(5)
   // Selected group for creating KB (used when showGroupSelector is true)
   const [selectedGroupId, setSelectedGroupId] = useState<string>(defaultGroupId || 'personal')
+  // Auth section: initial members to add
+  const [authEntries, setAuthEntries] = useState<
+    Array<{
+      id: string
+      label: string
+      entityType: string
+      entityId: string
+      role: MemberRole
+    }>
+  >([])
 
   // Reset selectedKbType and selectedGroupId when dialog opens
   useEffect(() => {
@@ -172,6 +191,13 @@ export function CreateKnowledgeBaseDialog({
     try {
       // Filter out empty guided questions
       const validGuidedQuestions = guidedQuestions.filter(q => q.trim().length > 0)
+      const members = authEntries.map(e => ({
+        entity_type: e.entityType,
+        entity_id: e.entityId,
+        role: e.role,
+        entity_display_name: e.label,
+      })) as InitialMember[]
+
       await onSubmit({
         name: name.trim(),
         description: description.trim() || undefined,
@@ -186,6 +212,7 @@ export function CreateKnowledgeBaseDialog({
         exempt_calls_before_check: exemptCalls,
         selectedGroupId: showGroupSelector ? selectedGroupId : undefined,
         kb_type: selectedKbType,
+        members: members.length > 0 ? members : undefined,
       })
       setName('')
       setDescription('')
@@ -205,6 +232,7 @@ export function CreateKnowledgeBaseDialog({
       })
       setMaxCalls(10)
       setExemptCalls(5)
+      setAuthEntries([])
     } catch (err) {
       setError(err instanceof Error ? err.message : t('common:error'))
     }
@@ -234,6 +262,7 @@ export function CreateKnowledgeBaseDialog({
       setError('')
       setAccordionValue('')
       setSelectedGroupId(defaultGroupId || 'personal')
+      setAuthEntries([])
     }
     onOpenChange(newOpen)
   }
@@ -317,7 +346,7 @@ export function CreateKnowledgeBaseDialog({
                 {/* Group selector - only show when showGroupSelector is true */}
                 {showGroupSelector && availableGroups && availableGroups.length > 0 && (
                   <div className="space-y-2 mt-4">
-                    <Label>{t('knowledge:document.knowledgeBase.targetGroup', '归属分组')} *</Label>
+                    <Label>{t('knowledge:document.knowledgeBase.targetGroup', '归属')} *</Label>
                     <Select value={selectedGroupId} onValueChange={setSelectedGroupId}>
                       <SelectTrigger data-testid="group-selector">
                         <SelectValue
@@ -381,6 +410,19 @@ export function CreateKnowledgeBaseDialog({
             showGuidedQuestions={isNotebook}
             guidedQuestions={guidedQuestions}
             onGuidedQuestionsChange={setGuidedQuestions}
+            beforeSummarySection={
+              <KnowledgeBaseAuthSection
+                value={authEntries}
+                onChange={setAuthEntries}
+                excludedNamespaceId={
+                  showGroupSelector && selectedGroup && selectedGroup.type !== 'personal'
+                    ? selectedGroup.name
+                    : scope === 'group' && groupName
+                      ? groupName
+                      : undefined
+                }
+              />
+            }
           />
 
           {error && <p className="text-sm text-error">{error}</p>}

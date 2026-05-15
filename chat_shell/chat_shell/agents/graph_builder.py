@@ -443,6 +443,7 @@ class LangGraphAgentBuilder:
         max_iterations: int = 10,
         enable_checkpointing: bool = False,
         max_truncation_retries: int | None = None,
+        pre_model_hook: Callable | None = None,
     ):
         """Initialize agent builder.
 
@@ -453,11 +454,13 @@ class LangGraphAgentBuilder:
             enable_checkpointing: Enable state checkpointing for resumability
             max_truncation_retries: Maximum retry attempts when tool calls are truncated.
                 If None, uses settings.MAX_TRUNCATION_RETRIES
+            pre_model_hook: Optional LangGraph hook called before each model call
         """
         self.llm = llm
         self.tool_registry = tool_registry
         self.max_iterations = max_iterations
         self.enable_checkpointing = enable_checkpointing
+        self.pre_model_hook = pre_model_hook
         self.max_truncation_retries = (
             max_truncation_retries
             if max_truncation_retries is not None
@@ -922,6 +925,7 @@ class LangGraphAgentBuilder:
                 tools=all_tools,
                 checkpointer=checkpointer,
                 prompt=prompt_modifier,
+                pre_model_hook=self.pre_model_hook,
             )
         else:
             self._agent = create_react_agent(
@@ -929,6 +933,7 @@ class LangGraphAgentBuilder:
                 tools=all_tools,
                 checkpointer=checkpointer,
                 prompt=prompt_modifier,
+                pre_model_hook=self.pre_model_hook,
             )
         add_span_event("react_agent_created")
 

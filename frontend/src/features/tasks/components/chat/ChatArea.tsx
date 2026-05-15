@@ -697,7 +697,7 @@ function ChatAreaContent({
     return (
       !disabledReason &&
       !chatState.isLoading &&
-      !streamHandlers.isStreaming &&
+      (!streamHandlers.isStreaming || streamHandlers.canQueueMessage) &&
       !isModelSelectionRequired &&
       chatState.isAttachmentReadyToSend
     )
@@ -705,6 +705,7 @@ function ChatAreaContent({
     disabledReason,
     chatState.isLoading,
     streamHandlers.isStreaming,
+    streamHandlers.canQueueMessage,
     isModelSelectionRequired,
     chatState.isAttachmentReadyToSend,
   ])
@@ -1152,6 +1153,15 @@ function ChatAreaContent({
     onDragOver: handleDragOver,
     onDrop: handleDrop,
     canSubmit,
+    canQueueMessage: streamHandlers.canQueueMessage,
+    queuedMessages: streamHandlers.queuedMessages,
+    onCancelQueuedMessage: streamHandlers.cancelQueuedMessage,
+    onSendQueuedAsGuidance: streamHandlers.sendQueuedAsGuidance,
+    canSendGuidance: streamHandlers.canSendGuidance,
+    guidanceMessages: streamHandlers.guidanceMessages,
+    expiredGuidanceMessages: streamHandlers.expiredGuidanceMessages,
+    onCancelGuidance: streamHandlers.cancelGuidance,
+    onSendExpiredGuidanceAsMessage: streamHandlers.sendExpiredGuidanceAsMessage,
     handleSendMessage: async (overrideMessage?: string) => {
       // Format message with quote if present, then clear quote
       const baseMessage = overrideMessage?.trim() || chatState.taskInputMessage.trim()
@@ -1160,6 +1170,14 @@ function ChatAreaContent({
         clearQuote()
       }
       await streamHandlers.handleSendMessage(message)
+    },
+    onSendGuidance: async () => {
+      const baseMessage = chatState.taskInputMessage.trim()
+      const message = formatQuoteForMessage(baseMessage)
+      if (quote) {
+        clearQuote()
+      }
+      await streamHandlers.handleSendGuidance(message)
     },
     onPasteFile: handlePasteFile,
     // ChatInputControls props

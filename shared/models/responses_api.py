@@ -263,6 +263,15 @@ class ResponsePartAddedEvent(TypedDict):
     part: ReasoningContent
 
 
+class BlockCreatedEvent(TypedDict):
+    """response.block.created event."""
+
+    type: Literal["response.block.created"]
+    response_id: str
+    item_id: str
+    block: dict[str, Any]
+
+
 class ErrorEvent(TypedDict):
     """error event."""
 
@@ -287,6 +296,7 @@ ResponsesAPIStreamingResponse = Union[
     FunctionCallArgumentsDeltaEvent,
     FunctionCallArgumentsDoneEvent,
     ResponsePartAddedEvent,
+    BlockCreatedEvent,
     ErrorEvent,
 ]
 
@@ -358,6 +368,9 @@ class ResponsesAPIStreamEvents(str, Enum):
     # Image generation events
     IMAGE_GENERATION_PARTIAL_IMAGE = "image_generation.partial_image"
 
+    # Wegent block events
+    BLOCK_CREATED = "response.block.created"
+
     # Error event
     ERROR = "error"
 
@@ -392,6 +405,7 @@ __all__ = [
     "FunctionCallArgumentsDeltaEvent",
     "FunctionCallArgumentsDoneEvent",
     "ResponsePartAddedEvent",
+    "BlockCreatedEvent",
     "ErrorEvent",
     # Event builder
     "ResponsesAPIEventBuilder",
@@ -616,6 +630,15 @@ class ResponsesAPIEventBuilder:
             "type": ResponsesAPIStreamEvents.ERROR.value,
             "code": code,
             "message": message,
+        }
+
+    def block_created(self, block: dict[str, Any]) -> dict:
+        """Create a block-created event for non-text blocks."""
+        return {
+            "type": ResponsesAPIStreamEvents.BLOCK_CREATED.value,
+            "response_id": self.response_id,
+            "item_id": self.item_id,
+            "block": block,
         }
 
     # ============================================================

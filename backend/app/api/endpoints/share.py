@@ -26,6 +26,7 @@ from app.schemas.share import (
     KBShareInfoResponse,
     MemberListResponse,
     MyKBPermissionResponse,
+    MyPermissionSourcesResponse,
     PendingRequestListResponse,
     PublicKnowledgeBaseResponse,
     ResourceMemberCreate,
@@ -351,6 +352,9 @@ def add_member(
         current_user_id=current_user.id,
         target_user_id=body.user_id,
         role=body.role,
+        entity_type=body.entity_type,
+        entity_id=body.entity_id,
+        entity_display_name=body.entity_display_name,
     )
 
 
@@ -378,7 +382,10 @@ def batch_add_members(
     - **body**: List of members (user_id, role)
     """
     service = _get_share_service(resource_type)
-    members_data = [(m.user_id, m.role) for m in body.members]
+    members_data = [
+        (m.user_id, m.role, m.entity_type, m.entity_id, m.entity_display_name)
+        for m in body.members
+    ]
     return service.batch_add_members(
         db=db,
         resource_id=resource_id,
@@ -574,3 +581,32 @@ def get_kb_share_info(
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@router.get(
+    "/KnowledgeBase/{resource_id}/my-permission-sources",
+    response_model=MyPermissionSourcesResponse,
+    summary="Get my KnowledgeBase permission sources",
+)
+def get_my_kb_permission_sources(
+    resource_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> MyPermissionSourcesResponse:
+    """
+    Get all permission sources for the current user on a knowledge base.
+
+    Returns detailed information about how the current user has access:
+    - Creator
+    - Direct user-type permissions (via share link or direct add)
+    - Entity-type permissions (via external resolvers)
+    - Group membership (namespace)
+    - Group chat binding (for personal KBs)
+
+    - **resource_id**: Knowledge base ID
+    """
+    return knowledge_share_service.get_my_permission_sources(
+        db=db,
+        resource_id=resource_id,
+        user_id=current_user.id,
+    )

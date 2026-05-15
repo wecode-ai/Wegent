@@ -51,7 +51,8 @@ def _add_member(
     member = ResourceMember(
         resource_type="Namespace",
         resource_id=group.id,
-        user_id=user.id,
+        entity_type="user",
+        entity_id=str(user.id),
         role=role,
         status=MemberStatus.APPROVED.value,
         invited_by_user_id=group.owner_user_id,
@@ -95,17 +96,23 @@ def test_batch_update_group_member_roles_success(
         "Developer",
     ]
 
-    refreshed_developer = test_db.get(User, developer.id)
-    refreshed_reporter = test_db.get(User, reporter.id)
-    developer_member = next(
-        member
-        for member in refreshed_developer.resource_members
-        if member.resource_id == group.id
+    developer_member = (
+        test_db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == "Namespace",
+            ResourceMember.resource_id == group.id,
+            ResourceMember.entity_id == str(developer.id),
+        )
+        .first()
     )
-    reporter_member = next(
-        member
-        for member in refreshed_reporter.resource_members
-        if member.resource_id == group.id
+    reporter_member = (
+        test_db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == "Namespace",
+            ResourceMember.resource_id == group.id,
+            ResourceMember.entity_id == str(reporter.id),
+        )
+        .first()
     )
     assert developer_member.role == "Maintainer"
     assert reporter_member.role == "Developer"

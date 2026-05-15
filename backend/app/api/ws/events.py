@@ -26,6 +26,7 @@ class ClientEvents:
     CHAT_CANCEL = "chat:cancel"
     CHAT_RESUME = "chat:resume"
     CHAT_RETRY = "chat:retry"
+    CHAT_GUIDE = "chat:guide"
 
     # Task room events
     TASK_JOIN = "task:join"
@@ -55,6 +56,9 @@ class ServerEvents:
     # Block events for mixed content rendering (to task room)
     CHAT_BLOCK_CREATED = "chat:block_created"
     CHAT_BLOCK_UPDATED = "chat:block_updated"
+    CHAT_GUIDANCE_QUEUED = "chat:guidance_queued"
+    CHAT_GUIDANCE_APPLIED = "chat:guidance_applied"
+    CHAT_GUIDANCE_EXPIRED = "chat:guidance_expired"
 
     # Non-streaming messages (to task room, exclude sender)
     CHAT_MESSAGE = "chat:message"
@@ -235,6 +239,18 @@ class ChatRetryPayload(BaseModel):
     )
 
 
+class ChatGuidePayload(BaseModel):
+    """Payload for chat:guide event."""
+
+    task_id: int = Field(..., description="Task ID")
+    subtask_id: int = Field(..., description="Active assistant subtask ID")
+    team_id: int = Field(..., description="Team ID")
+    message: str = Field(..., min_length=1, description="Guidance message")
+    client_guidance_id: Optional[str] = Field(
+        None, description="Client-generated guidance ID for correlation"
+    )
+
+
 class TaskJoinPayload(BaseModel):
     """Payload for task:join event."""
 
@@ -363,6 +379,35 @@ class ChatSystemPayload(BaseModel):
     type: str
     content: str
     data: Optional[Dict[str, Any]] = None
+
+
+class ChatGuidanceQueuedPayload(BaseModel):
+    """Payload for chat:guidance_queued event."""
+
+    task_id: int
+    subtask_id: int
+    team_id: int
+    user_id: int
+    guidance_id: str
+    message: str
+    created_at: str
+
+
+class ChatGuidanceAppliedPayload(BaseModel):
+    """Payload for chat:guidance_applied event."""
+
+    task_id: int
+    subtask_id: int
+    guidance_id: str
+    applied_at: str
+
+
+class ChatGuidanceExpiredPayload(BaseModel):
+    """Payload for chat:guidance_expired event."""
+
+    task_id: int
+    subtask_id: int
+    guidance_ids: List[str]
 
 
 class TaskCreatedPayload(BaseModel):
@@ -623,6 +668,13 @@ class ChatSendAck(BaseModel):
     next_stage_name: Optional[str] = Field(
         None, description="Name of the next stage (for pipeline:confirm action)"
     )
+
+
+class ChatGuideAck(BaseModel):
+    """ACK response for chat:guide event."""
+
+    guidance_id: Optional[str] = None
+    error: Optional[str] = None
 
 
 class TaskJoinAck(BaseModel):

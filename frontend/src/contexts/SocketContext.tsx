@@ -24,6 +24,7 @@ import React, {
 import { io, Socket } from 'socket.io-client'
 import { getToken, removeToken } from '@/apis/user'
 import {
+  ClientEvents,
   ServerEvents,
   ClientSkillEvents,
   ChatStartPayload,
@@ -36,6 +37,11 @@ import {
   ChatBlockUpdatedPayload,
   ChatSendPayload,
   ChatSendAck,
+  ChatGuidePayload,
+  ChatGuideAck,
+  ChatGuidanceQueuedPayload,
+  ChatGuidanceAppliedPayload,
+  ChatGuidanceExpiredPayload,
   TaskCreatedPayload,
   TaskStatusPayload,
   TaskInvitedPayload,
@@ -103,6 +109,8 @@ interface SocketContextType {
   leaveTask: (taskId: number) => void
   /** Send a chat message via WebSocket */
   sendChatMessage: (payload: ChatSendPayload) => Promise<ChatSendAck>
+  /** Send Chat Shell guidance via WebSocket */
+  sendChatGuidance: (payload: ChatGuidePayload) => Promise<ChatGuideAck>
   /** Cancel a chat stream via WebSocket */
   cancelChatStream: (
     subtaskId: number,
@@ -148,6 +156,12 @@ export interface ChatEventHandlers {
   onBlockCreated?: (data: ChatBlockCreatedPayload) => void
   /** Handler for chat:block_updated event (block content/status updated) */
   onBlockUpdated?: (data: ChatBlockUpdatedPayload) => void
+  /** Handler for chat:guidance_queued event */
+  onGuidanceQueued?: (data: ChatGuidanceQueuedPayload) => void
+  /** Handler for chat:guidance_applied event */
+  onGuidanceApplied?: (data: ChatGuidanceAppliedPayload) => void
+  /** Handler for chat:guidance_expired event */
+  onGuidanceExpired?: (data: ChatGuidanceExpiredPayload) => void
 }
 
 /** Task event handlers for task list updates */
@@ -499,13 +513,34 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       }
 
       return new Promise(resolve => {
-        currentSocket.emit('chat:send', payload, (response: ChatSendAck) => {
+        currentSocket.emit(ClientEvents.CHAT_SEND, payload, (response: ChatSendAck) => {
           resolve(response)
         })
       })
     },
     [] // No dependencies - use socketRef
   )
+
+  /**
+   * Send Chat Shell guidance via WebSocket
+   */
+  const sendChatGuidance = useCallback(async (payload: ChatGuidePayload): Promise<ChatGuideAck> => {
+    const currentSocket = socketRef.current
+
+    if (!currentSocket?.connected) {
+      console.error('[Socket.IO] sendChatGuidance failed: not connected', {
+        hasSocket: !!currentSocket,
+        isConnected: currentSocket?.connected,
+      })
+      return { success: false, error: 'Not connected to server' }
+    }
+
+    return new Promise(resolve => {
+      currentSocket.emit(ClientEvents.CHAT_GUIDE, payload, (response: ChatGuideAck) => {
+        resolve(response)
+      })
+    })
+  }, [])
 
   /**
    * Cancel a chat stream via WebSocket
@@ -630,6 +665,9 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         onChatMessage,
         onBlockCreated,
         onBlockUpdated,
+        onGuidanceQueued,
+        onGuidanceApplied,
+        onGuidanceExpired,
       } = handlers
 
       if (onChatStart) socket.on(ServerEvents.CHAT_START, onChatStart)
@@ -640,6 +678,9 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       if (onChatMessage) socket.on(ServerEvents.CHAT_MESSAGE, onChatMessage)
       if (onBlockCreated) socket.on(ServerEvents.CHAT_BLOCK_CREATED, onBlockCreated)
       if (onBlockUpdated) socket.on(ServerEvents.CHAT_BLOCK_UPDATED, onBlockUpdated)
+      if (onGuidanceQueued) socket.on(ServerEvents.CHAT_GUIDANCE_QUEUED, onGuidanceQueued)
+      if (onGuidanceApplied) socket.on(ServerEvents.CHAT_GUIDANCE_APPLIED, onGuidanceApplied)
+      if (onGuidanceExpired) socket.on(ServerEvents.CHAT_GUIDANCE_EXPIRED, onGuidanceExpired)
 
       // Return cleanup function
       return () => {
@@ -651,6 +692,9 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         if (onChatMessage) socket.off(ServerEvents.CHAT_MESSAGE, onChatMessage)
         if (onBlockCreated) socket.off(ServerEvents.CHAT_BLOCK_CREATED, onBlockCreated)
         if (onBlockUpdated) socket.off(ServerEvents.CHAT_BLOCK_UPDATED, onBlockUpdated)
+        if (onGuidanceQueued) socket.off(ServerEvents.CHAT_GUIDANCE_QUEUED, onGuidanceQueued)
+        if (onGuidanceApplied) socket.off(ServerEvents.CHAT_GUIDANCE_APPLIED, onGuidanceApplied)
+        if (onGuidanceExpired) socket.off(ServerEvents.CHAT_GUIDANCE_EXPIRED, onGuidanceExpired)
       }
     },
     [socket]
@@ -857,6 +901,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         joinTask,
         leaveTask,
         sendChatMessage,
+        sendChatGuidance,
         cancelChatStream,
         closeTaskSession,
         retryMessage,

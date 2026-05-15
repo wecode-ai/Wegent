@@ -45,6 +45,19 @@
     "quoted_text": "引用内容",
     "remove_quote": "移除引用"
   },
+  "guidance": {
+    "send": "发送引导",
+    "applied": "引导已生效",
+    "cancel": "取消引导",
+    "send_as_message": "作为消息发送",
+    "status_queued": "引导待发送",
+    "status_sending": "引导发送中",
+    "status_failed": "引导发送失败",
+    "status_expired": "引导已过期",
+    "expired": "当前回复已结束，引导未生效",
+    "send_failed": "引导发送失败",
+    "no_active_stream": "当前没有可接收引导的回复"
+  },
   "status": {
     "typing": "AI 正在输入...",
     "thinking": "AI 正在思考...",
@@ -80,6 +93,10 @@
     "status_failed": "已失败",
     "status_cancelled": "已取消",
     "status_cancelling": "取消中",
+    "status_queued": "已排队",
+    "status_sending": "发送中",
+    "cancel_queued": "取消排队消息",
+    "queue_failed": "排队消息发送失败",
     "recovered": "已恢复",
     "content_recovered": "已恢复内容",
     "content_recovered_desc": "页面刷新后已恢复之前的内容",
