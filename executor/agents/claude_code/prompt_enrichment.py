@@ -4,7 +4,6 @@
 
 """Prompt enrichment helpers for Claude Code requests."""
 
-import os
 from typing import Any, Union
 
 from executor.agents.claude_code.multimodal_prompt import append_text_to_vision_prompt
@@ -62,7 +61,7 @@ def inject_duckdb_instructions(
     The instructions include:
     - Local paths to downloaded .duckdb files
     - Python connection pattern (duckdb + VSS extension)
-    - How to call the knowledge_runtime embedding API for semantic search
+    - How to use fastembed for local embedding generation
     - Reference to schema info already in kb_meta_prompt
 
     Args:
@@ -97,13 +96,6 @@ def inject_duckdb_instructions(
     first = duckdb_local_files[0]
     sample_path = first.get("local_path", "/tmp/kb_doc.duckdb")
     embedding_dim = first.get("embedding_dim", 512)
-    embedding_model = first.get("embedding_model", "")
-
-    # Read environment variables that will be injected into the container
-    knowledge_runtime_url = os.environ.get(
-        "KNOWLEDGE_RUNTIME_URL", "http://knowledge-runtime:8200"
-    )
-    internal_token_placeholder = "${INTERNAL_SERVICE_TOKEN}"
 
     instructions = (
         "\n<knowledge_base_duckdb>\n"
@@ -121,17 +113,10 @@ def inject_duckdb_instructions(
         "# Pure SQL query:\n"
         'result = con.execute("SELECT * FROM raw_data WHERE ... LIMIT 10").fetchdf()\n'
         "\n"
-        "# Semantic (vector) search — generate embedding first:\n"
-        "import os, requests as _req\n"
-        f"KNOWLEDGE_RUNTIME_URL = os.environ.get('KNOWLEDGE_RUNTIME_URL', '{knowledge_runtime_url}')\n"
-        "INTERNAL_SERVICE_TOKEN = os.environ.get('INTERNAL_SERVICE_TOKEN', '')\n"
-        "emb_resp = _req.post(\n"
-        "    KNOWLEDGE_RUNTIME_URL + '/internal/embed',\n"
-        f"    json={{'text': '<your query text>', 'model': '{embedding_model}'}},\n"
-        "    headers={'Authorization': 'Bearer ' + INTERNAL_SERVICE_TOKEN},\n"
-        "    timeout=30,\n"
-        ").json()\n"
-        "emb = emb_resp['embedding']\n"
+        "# Semantic (vector) search — generate embedding locally:\n"
+        "from fastembed import TextEmbedding\n"
+        'embed_model = TextEmbedding("BAAI/bge-small-zh-v1.5")\n'
+        'emb = list(embed_model.embed(["<your query text>"]))[0].tolist()\n'
         'result = con.execute(f"""\n'
         "    SELECT *, array_cosine_similarity(embedding, {{emb}}::FLOAT"
         f"[{embedding_dim}])"

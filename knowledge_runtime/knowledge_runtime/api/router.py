@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from knowledge_runtime.api.endpoints import admin, embed, health, index, query
+from knowledge_runtime.api.endpoints import admin, health, index, query
 from knowledge_runtime.middleware.auth import verify_internal_token
 
 router = APIRouter()
@@ -33,13 +33,5 @@ router.include_router(
     admin.router,
     prefix="/internal/rag",
     tags=["admin"],
-    dependencies=[Depends(verify_internal_token)],
-)
-
-# Embedding generation endpoint for executor-side DuckDB semantic search (auth required)
-router.include_router(
-    embed.router,
-    prefix="/internal",
-    tags=["embed"],
     dependencies=[Depends(verify_internal_token)],
 )

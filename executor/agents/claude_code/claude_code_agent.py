@@ -714,6 +714,8 @@ class ClaudeCodeAgent(Agent):
             # Run in thread pool to avoid blocking the async event loop for large files.
             duckdb_local_files: List[dict] = []
             if self.task_data.duckdb_files:
+                # On-demand install fastembed and pre-download embedding model
+                await asyncio.to_thread(self._prepare_duckdb_embedding)
                 duckdb_local_files = await asyncio.to_thread(
                     self._download_duckdb_files, self.task_id
                 )
@@ -1466,6 +1468,33 @@ class ClaudeCodeAgent(Agent):
                 report_immediately=False,
                 details=details,
             )
+
+    def _prepare_duckdb_embedding(self) -> None:
+        """On-demand install fastembed and pre-download bge-small-zh-v1.5 model.
+
+        Only called when task_data.duckdb_files is non-empty. Installs fastembed
+        via pip if not already available, then initializes TextEmbedding to trigger
+        model download and caching.
+        """
+        try:
+            from fastembed import TextEmbedding  # noqa: F401
+        except ImportError:
+            import subprocess
+            import sys
+
+            logger.info("Installing fastembed for DuckDB semantic search...")
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", "fastembed"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            logger.info("fastembed installed successfully")
+
+        # Pre-download model to avoid latency during Agent execution
+        from fastembed import TextEmbedding
+
+        TextEmbedding("BAAI/bge-small-zh-v1.5")
+        logger.info("DuckDB embedding model (bge-small-zh-v1.5) ready")
 
     def _download_duckdb_files(self, task_id: int) -> List[dict]:
         """Download DuckDB files from presigned URLs to local task workspace.

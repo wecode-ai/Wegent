@@ -984,9 +984,6 @@ class DockerExecutor(Executor):
         # Add TASK_API_DOMAIN environment variable for executor to access backend API
         self._add_task_api_domain(cmd)
 
-        # Add KNOWLEDGE_RUNTIME_URL and INTERNAL_SERVICE_TOKEN for DuckDB semantic search
-        self._add_knowledge_runtime_env_vars(cmd)
-
         # Add workspace mount
         self._add_workspace_mount(cmd)
 
@@ -1022,28 +1019,7 @@ class DockerExecutor(Executor):
                 f"Added TASK_API_DOMAIN environment variable: {task_api_domain}"
             )
 
-    def _add_knowledge_runtime_env_vars(self, cmd: List[str]) -> None:
-        """Add KNOWLEDGE_RUNTIME_URL and INTERNAL_SERVICE_TOKEN for DuckDB embedding.
-
-        These variables allow executor containers to call the knowledge_runtime
-        embedding API for semantic search against DuckDB files.
-
-        KNOWLEDGE_RUNTIME_URL: URL of the knowledge_runtime service.
-        INTERNAL_SERVICE_TOKEN: Shared token for authenticating internal service calls.
-        """
-        knowledge_runtime_url = os.getenv("KNOWLEDGE_RUNTIME_URL", "")
-        if knowledge_runtime_url:
-            cmd.extend(["-e", f"KNOWLEDGE_RUNTIME_URL={knowledge_runtime_url}"])
-            logger.debug(
-                "Added KNOWLEDGE_RUNTIME_URL environment variable: %s",
-                knowledge_runtime_url,
-            )
-
-        internal_service_token = os.getenv("INTERNAL_SERVICE_TOKEN", "")
-        if internal_service_token:
-            cmd.extend(["-e", f"INTERNAL_SERVICE_TOKEN={internal_service_token}"])
-            logger.debug("Added INTERNAL_SERVICE_TOKEN environment variable")
-
+    def _add_workspace_mount(self, cmd: List[str]) -> None:
         """Add workspace mount configuration"""
         executor_workspace = os.getenv("EXECUTOR_WORKSPACE", "")  # Fix spelling error
         if executor_workspace:
