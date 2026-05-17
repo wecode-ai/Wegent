@@ -213,12 +213,12 @@ class ExecutionRequest:
     trace_context: Optional[dict] = None
 
     # === DuckDB Configuration ===
-    # Pre-signed download URLs and metadata for DuckDB files associated with KBs.
+    # Download URLs and metadata for DuckDB files associated with KBs.
     # Only populated for ClaudeCode Shell tasks when the KB contains DuckDB files.
     # Format: [{
     #   "doc_id": 500,
     #   "kb_id": 100,
-    #   "download_url": "https://s3.xxx/duckdb/100/500.duckdb?X-Amz-...",  # presigned URL
+    #   "download_url": "https://...",  # pre-configured URL from source_config
     #   "table_name": "raw_data",
     #   "embedding_model": "BAAI/bge-small-zh",
     #   "embedding_dim": 512,

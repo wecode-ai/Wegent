@@ -150,13 +150,12 @@ flowchart LR
 
 ### 数据来源
 
-`KnowledgeDocument.source_config` 中嵌套 `duckdb` 子键：
+`KnowledgeDocument.source_config` 中嵌套 `duckdb` 子键，`download_url` 在文件上传时直接配置，无需运行时生成预签名 URL：
 
 ```
 KnowledgeDocument.source_config
 └── duckdb
-    ├── s3_bucket      → 用于生成预签名 URL
-    ├── s3_key         → 用于生成预签名 URL
+    ├── download_url   → 映射到 duckdb_files.download_url（上传时配置）
     ├── table_name     → 映射到 duckdb_files.table_name
     ├── embedding_model → 映射到 duckdb_files.embedding_model
     ├── embedding_dim  → 映射到 duckdb_files.embedding_dim
@@ -179,18 +178,14 @@ flowchart TD
     Query --> Loop[遍历文档]
     Loop --> CheckDuckDB{source_config\n含 duckdb 子键?}
     CheckDuckDB -- 否 --> Loop
-    CheckDuckDB -- 是 --> CheckS3{s3_bucket 和\ns3_key 存在?}
-    CheckS3 -- 否 --> Loop
-    CheckS3 -- 是 --> Presign[生成 S3 预签名 URL\n有效期 3600s]
-    Presign --> PresignOK{生成成功?}
-    PresignOK -- 否 --> LogWarn[记录 warning\n跳过该文档]
-    PresignOK -- 是 --> Build[构建 duckdb_file 条目]
+    CheckDuckDB -- 是 --> CheckURL{download_url\n存在?}
+    CheckURL -- 否 --> Loop
+    CheckURL -- 是 --> Build[构建 duckdb_file 条目]
     Build --> Loop
-    LogWarn --> Loop
     Loop --> Done[返回结果列表]
 ```
 
-关键容错设计：预签名 URL 生成失败时 warning 并跳过，不阻塞其他文档和整体聊天流程。整个调用方（`_prepare_kb_tools_from_contexts`）也包裹在 `try/except` 中，DuckDB 元数据获取完全 best-effort。
+Backend 直接读取 `source_config.duckdb.download_url`，无需运行时生成预签名 URL，消除了 S3 客户端依赖和 URL 过期风险。整个调用方（`_prepare_kb_tools_from_contexts`）仍包裹在 `try/except` 中，DuckDB 元数据获取完全 best-effort。
 
 ### 2. Backend: Prompt Schema 注入
 
@@ -372,7 +367,7 @@ stateDiagram-v2
 
 | 措施 | 实现 |
 |------|------|
-| 预签名 URL 有效期 | 1 小时，任务启动后立即下载 |
+| 下载 URL 来源 | source_config.duckdb.download_url，上传时配置，无过期问题 |
 | 文件只读 | prompt 指令中 `duckdb.connect(path, read_only=True)` |
 | 容器隔离 | DuckDB 文件仅存在于 Executor 容器 `/tmp/{task_id}/` |
 | 原子写入 | `.downloading` → rename，防止不完整文件被误用 |
