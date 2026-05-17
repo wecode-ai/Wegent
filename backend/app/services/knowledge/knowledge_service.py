@@ -951,6 +951,78 @@ class KnowledgeService:
         }
 
     @staticmethod
+    def get_duckdb_files_for_kb_ids(
+        db: Session,
+        knowledge_base_ids: list[int],
+    ) -> list[dict]:
+        """Get DuckDB file metadata for given KB IDs.
+
+        Queries KnowledgeDocument records where source_config contains a 'duckdb'
+        sub-key with a download_url. The URL is pre-configured at upload time,
+        no runtime presigned URL generation needed.
+
+        Args:
+            db: Database session
+            knowledge_base_ids: List of knowledge base IDs to query
+
+        Returns:
+            List of duckdb file info dicts, each containing:
+            - doc_id: document ID
+            - kb_id: knowledge base ID
+            - download_url: pre-configured download URL
+            - table_name: main DuckDB table name
+            - embedding_model: embedding model name
+            - embedding_dim: embedding vector dimension
+            - label_column: optional domain filter column name
+        """
+        if not knowledge_base_ids:
+            return []
+
+        # Query active documents that have duckdb source_config
+        documents = (
+            db.query(KnowledgeDocument)
+            .filter(
+                KnowledgeDocument.kind_id.in_(knowledge_base_ids),
+                KnowledgeDocument.is_active == True,
+            )
+            .all()
+        )
+
+        result = []
+        for doc in documents:
+            source_config = doc.source_config or {}
+            duckdb_info = source_config.get("duckdb")
+            if not duckdb_info or not isinstance(duckdb_info, dict):
+                continue
+
+            download_url = duckdb_info.get("download_url")
+            if not download_url:
+                continue
+
+            entry = {
+                "doc_id": doc.id,
+                "kb_id": doc.kind_id,
+                "download_url": download_url,
+                "table_name": duckdb_info.get("table_name", "raw_data"),
+                "embedding_model": duckdb_info.get("embedding_model", ""),
+                "embedding_dim": int(duckdb_info.get("embedding_dim", 0) or 0),
+            }
+            # Optional schema detail fields for prompt enrichment
+            for field in (
+                "row_count",
+                "schema_description",
+                "label_column",
+                "label_distribution",
+            ):
+                value = duckdb_info.get(field)
+                if value:
+                    entry[field] = value
+
+            result.append(entry)
+
+        return result
+
+    @staticmethod
     def resolve_document_ids_by_names(
         db: Session,
         knowledge_base_ids: list[int],

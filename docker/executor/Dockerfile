@@ -53,7 +53,7 @@ RUN claude plugin marketplace add anthropics/skills \
 RUN pip install python-pptx openpyxl python-docx reportlab Pillow pandas \
     pypdf pdfplumber pytesseract \
     "markitdown[pptx]" defusedxml weasyprint \
-    pyyaml \
+    pyyaml duckdb \
     && pip cache purge || true
 
 # Download Chinese fonts for document generation
