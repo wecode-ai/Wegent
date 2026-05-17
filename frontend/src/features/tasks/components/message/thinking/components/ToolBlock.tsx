@@ -121,7 +121,8 @@ function hasMeaningfulToolInput(input: Record<string, unknown> | string | undefi
 /**
  * Truncate text to a maximum length, adding ellipsis if needed
  */
-function truncateText(text: string, maxLength: number): string {
+function truncateText(text: string | undefined | null, maxLength: number): string {
+  if (!text) return ''
   // Remove newlines and extra whitespace for inline display
   const cleaned = text.replace(/\s+/g, ' ').trim()
   if (cleaned.length <= maxLength) {
