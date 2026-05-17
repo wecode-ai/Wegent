@@ -60,7 +60,7 @@ function resolveInputFields(
  * This is the single place where Claude Code's large-content truncation is handled,
  * so individual renderers never need to deal with non-string values.
  */
-function normalizeStepDetails(step: ThinkingStep): ThinkingStep {
+export function normalizeStepDetails(step: ThinkingStep): ThinkingStep {
   if (!step.details) return step
   const d = step.details
 
@@ -74,10 +74,38 @@ function normalizeStepDetails(step: ThinkingStep): ThinkingStep {
     d.content !== undefined ? (resolveTruncated(d.content) as string | undefined) : d.content
   const normalizedOutput = d.output !== undefined ? resolveTruncated(d.output) : d.output
 
+  // Normalize message.content array items (text/tool_use/tool_result content fields)
+  let normalizedMessageContent = d.message?.content
+  if (Array.isArray(d.message?.content)) {
+    const resolved = d.message!.content.map(item => {
+      const changes: Record<string, unknown> = {}
+      if (item.text !== undefined) {
+        const r = resolveTruncated(item.text)
+        if (r !== item.text) changes.text = r
+      }
+      if (item.content !== undefined) {
+        const r = resolveTruncated(item.content)
+        if (r !== item.content) changes.content = r
+      }
+      if (item.input !== undefined) {
+        const r = resolveInputFields(item.input as string | Record<string, unknown> | undefined)
+        if (r !== item.input) changes.input = r
+      }
+      return Object.keys(changes).length > 0 ? { ...item, ...changes } : item
+    })
+    // Only replace if something actually changed
+    if (resolved.some((item, i) => item !== d.message!.content![i])) {
+      normalizedMessageContent = resolved
+    }
+  }
+
+  const messageChanged = normalizedMessageContent !== d.message?.content
+
   if (
     normalizedInput === d.input &&
     normalizedContent === d.content &&
-    normalizedOutput === d.output
+    normalizedOutput === d.output &&
+    !messageChanged
   ) {
     return step
   }
@@ -89,8 +117,17 @@ function normalizeStepDetails(step: ThinkingStep): ThinkingStep {
       ...(normalizedInput !== d.input ? { input: normalizedInput } : {}),
       ...(normalizedContent !== d.content ? { content: normalizedContent as string } : {}),
       ...(normalizedOutput !== d.output ? { output: normalizedOutput } : {}),
+      ...(messageChanged ? { message: { ...d.message, content: normalizedMessageContent } } : {}),
     },
   }
+}
+
+/**
+ * Normalize an entire thinking array, resolving all truncated content objects.
+ * Call this once at the data entry point so all downstream components receive clean strings.
+ */
+export function normalizeThinkingSteps(thinking: ThinkingStep[]): ThinkingStep[] {
+  return thinking.map(normalizeStepDetails)
 }
 
 /**
@@ -163,9 +200,7 @@ export function extractToolPairs(thinking: ThinkingStep[]): ToolPair[] {
   const pairs: ToolPair[] = []
   const toolUseMap = new Map<string, { step: ThinkingStep; index: number }>()
 
-  thinking.forEach((rawStep, index) => {
-    // Normalize truncated content objects to strings before any rendering logic
-    const step = normalizeStepDetails(rawStep)
+  thinking.forEach((step, index) => {
     const details = step.details
     if (!details) return
 

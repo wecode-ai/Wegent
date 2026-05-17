@@ -5,6 +5,7 @@
 import { useState, useEffect, useRef, useLayoutEffect, useMemo } from 'react'
 import type { ThinkingStep, ScrollState } from '../types'
 import { extractToolCalls, isTerminalStatus, isRunningStatus } from '../utils/thinkingUtils'
+import { normalizeThinkingSteps } from '../utils/toolExtractor'
 import { SCROLL_THRESHOLD } from '../utils/constants'
 
 interface UseThinkingStateOptions {
@@ -58,12 +59,16 @@ export function useThinkingState({
   const items = useMemo(() => {
     if (!thinking) return []
 
-    const filtered = thinking.filter((step, index) => {
+    // Normalize all truncated content objects to plain strings once, at the data entry point.
+    // This covers both DetailedThinkingView's direct rendering and extractToolPairs downstream.
+    const normalized = normalizeThinkingSteps(thinking)
+
+    const filtered = normalized.filter((step, index) => {
       // Check if this is a reasoning type step
       const isReasoningStep = step.details?.type === 'reasoning'
       if (isReasoningStep && index > 0) {
         // Check if previous step was also a reasoning step - if so, skip this one
-        const prevStep = thinking[index - 1]
+        const prevStep = normalized[index - 1]
         if (prevStep?.details?.type === 'reasoning') {
           return false
         }
