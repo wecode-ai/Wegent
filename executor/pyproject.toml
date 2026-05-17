@@ -57,6 +57,9 @@ dependencies = [
     # Windows platform dependencies (ConPTY and Win32 API)
     "pywinpty>=2.0.0; sys_platform == 'win32'",
     "pywin32>=306; sys_platform == 'win32'",
+
+    # DuckDB for local SQL + vector search against KB CSV files
+    "duckdb>=1.0.0",
 ]
 
 [dependency-groups]

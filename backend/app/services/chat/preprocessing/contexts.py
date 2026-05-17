@@ -1125,6 +1125,7 @@ async def prepare_contexts_for_chat(
         is_user_selected_kb=kb_result.is_user_selected_kb,
         document_ids=kb_result.document_ids,
         kb_tool_access_mode=kb_result.kb_tool_access_mode,
+        duckdb_files=kb_result.duckdb_files,
     )
     return ChatContextsResult(
         final_message=final_message,
@@ -1364,6 +1365,40 @@ def _prepare_kb_tools_from_contexts(
 
     enhanced_system_prompt = f"{base_system_prompt}{kb_instruction}"
 
+    # Fetch DuckDB file metadata for ClaudeCode Shell tasks.
+    # This is best-effort — failures are logged and don't block chat functionality.
+    duckdb_files: List[dict] = []
+    try:
+        from app.services.knowledge import KnowledgeService
+
+        duckdb_files = KnowledgeService.get_duckdb_files_for_kb_ids(
+            db, knowledge_base_ids
+        )
+        if duckdb_files:
+            logger.info(
+                "[_prepare_kb_tools_from_contexts] Found %d DuckDB file(s) for "
+                "knowledge_base_ids=%s",
+                len(duckdb_files),
+                knowledge_base_ids,
+            )
+    except Exception as e:
+        logger.warning(
+            "[_prepare_kb_tools_from_contexts] Failed to fetch DuckDB files for "
+            "knowledge_base_ids=%s: %s",
+            knowledge_base_ids,
+            e,
+        )
+
+    # Re-build kb_meta_prompt with DuckDB schema info if available.
+    # This enriches the prompt with per-file schema, row count, and filter hints.
+    if duckdb_files:
+        kb_meta_prompt = _build_kb_meta_prompt(
+            db,
+            knowledge_base_ids,
+            restricted=is_restricted_search_only,
+            duckdb_files=duckdb_files,
+        )
+
     return KnowledgeBaseToolsResult(
         extra_tools=extra_tools,
         enhanced_system_prompt=enhanced_system_prompt,
@@ -1372,6 +1407,7 @@ def _prepare_kb_tools_from_contexts(
         is_user_selected_kb=is_user_selected_kb,
         document_ids=document_ids,
         kb_tool_access_mode=kb_tool_access_mode,
+        duckdb_files=duckdb_files,
     )
 
 
@@ -1417,6 +1453,7 @@ def _build_kb_meta_prompt(
     db: Session,
     knowledge_base_ids: List[int],
     restricted: bool = False,
+    duckdb_files: Optional[List[dict]] = None,
 ) -> str:
     """Build KB meta prompt for dynamic_context injection.
 
@@ -1427,6 +1464,8 @@ def _build_kb_meta_prompt(
     Args:
         db: Database session
         knowledge_base_ids: Resolved KB IDs for the current request
+        restricted: Whether to use restricted KB meta format
+        duckdb_files: Optional DuckDB file metadata to include in schema section
 
     Returns:
         Formatted prompt string, or empty string.
@@ -1520,7 +1559,7 @@ def _build_kb_meta_prompt(
 
         if restricted:
             return format_restricted_kb_meta_prompt(kb_meta_list)
-        return format_kb_meta_prompt(kb_meta_list)
+        return format_kb_meta_prompt(kb_meta_list, duckdb_files=duckdb_files)
     except Exception as e:
         logger.warning(
             "Failed to build KB meta prompt for knowledge_base_ids=%s: %s",

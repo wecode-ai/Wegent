@@ -951,6 +951,89 @@ class KnowledgeService:
         }
 
     @staticmethod
+    def get_duckdb_files_for_kb_ids(
+        db: Session,
+        knowledge_base_ids: list[int],
+    ) -> list[dict]:
+        """Get DuckDB file metadata with presigned download URLs for given KB IDs.
+
+        Queries KnowledgeDocument records where source_config contains a 'duckdb'
+        sub-key. Generates presigned S3 download URLs for each file.
+
+        Args:
+            db: Database session
+            knowledge_base_ids: List of knowledge base IDs to query
+
+        Returns:
+            List of duckdb file info dicts, each containing:
+            - doc_id: document ID
+            - kb_id: knowledge base ID
+            - download_url: presigned S3 URL (valid 1 hour)
+            - table_name: main DuckDB table name
+            - embedding_model: embedding model name
+            - embedding_dim: embedding vector dimension
+            - label_column: optional domain filter column name
+        """
+        if not knowledge_base_ids:
+            return []
+
+        from app.services.object_storage.presign_service import (
+            object_storage_presign_service,
+        )
+
+        # Query active documents that have duckdb source_config
+        documents = (
+            db.query(KnowledgeDocument)
+            .filter(
+                KnowledgeDocument.kind_id.in_(knowledge_base_ids),
+                KnowledgeDocument.is_active == True,
+            )
+            .all()
+        )
+
+        result = []
+        for doc in documents:
+            source_config = doc.source_config or {}
+            duckdb_info = source_config.get("duckdb")
+            if not duckdb_info or not isinstance(duckdb_info, dict):
+                continue
+
+            s3_bucket = duckdb_info.get("s3_bucket")
+            s3_key = duckdb_info.get("s3_key")
+            if not s3_bucket or not s3_key:
+                continue
+
+            try:
+                download_url, _ = object_storage_presign_service.generate_download_url(
+                    bucket=s3_bucket,
+                    object_key=s3_key,
+                    expires_seconds=3600,
+                )
+            except Exception as e:
+                import logging as _logging
+
+                _logging.getLogger(__name__).warning(
+                    "Failed to generate presigned URL for doc %s: %s", doc.id, e
+                )
+                continue
+
+            entry = {
+                "doc_id": doc.id,
+                "kb_id": doc.kind_id,
+                "download_url": download_url,
+                "table_name": duckdb_info.get("table_name", "raw_data"),
+                "embedding_model": duckdb_info.get("embedding_model", ""),
+                "embedding_dim": int(duckdb_info.get("embedding_dim", 0) or 0),
+            }
+            label_column = duckdb_info.get("label_column")
+            if label_column:
+                entry["label_column"] = label_column
+
+            result.append(entry)
+
+        return result
+
+    @staticmethod
     def resolve_document_ids_by_names(
         db: Session,
         knowledge_base_ids: list[int],

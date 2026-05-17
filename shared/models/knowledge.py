@@ -37,6 +37,10 @@ class KnowledgeBaseToolsResult:
     is_user_selected_kb: bool = False
     document_ids: list[int] = None  # type: ignore[assignment]
     kb_tool_access_mode: str = KnowledgeBaseToolAccessMode.FULL
+    # DuckDB file metadata for ClaudeCode Shell tasks.
+    # Each entry: {doc_id, kb_id, download_url, table_name, embedding_model,
+    #              embedding_dim, label_column (optional)}
+    duckdb_files: list[dict] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         # Use object.__setattr__ because the dataclass is frozen.
@@ -44,6 +48,8 @@ class KnowledgeBaseToolsResult:
             object.__setattr__(self, "knowledge_base_ids", [])
         if self.document_ids is None:
             object.__setattr__(self, "document_ids", [])
+        if self.duckdb_files is None:
+            object.__setattr__(self, "duckdb_files", [])
 
 
 @dataclass(frozen=True)

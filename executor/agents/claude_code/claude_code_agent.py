@@ -8,6 +8,7 @@
 
 import asyncio
 import os
+import shutil
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -709,6 +710,20 @@ class ClaudeCodeAgent(Agent):
             # there's no need to check for cached clients
             await self._create_and_connect_client()
 
+            # Download DuckDB files (if any) before building the prompt.
+            # Run in thread pool to avoid blocking the async event loop for large files.
+            duckdb_local_files: List[dict] = []
+            if self.task_data.duckdb_files:
+                duckdb_local_files = await asyncio.to_thread(
+                    self._download_duckdb_files, self.task_id
+                )
+                if duckdb_local_files:
+                    logger.info(
+                        "Downloaded %d DuckDB file(s) for task %s",
+                        len(duckdb_local_files),
+                        self.task_id,
+                    )
+
             # Check cancellation again before proceeding
             if self.task_state_manager.is_cancelled(self.task_id):
                 logger.info(f"Task {self.task_id} cancelled during client setup")
@@ -819,6 +834,19 @@ class ClaudeCodeAgent(Agent):
             # Update current progress
             self._update_progress(progress)
 
+            # Inject DuckDB query instructions if DuckDB files were downloaded.
+            # This adds the local file paths and query template for ClaudeCode Agent.
+            if duckdb_local_files:
+                from executor.agents.claude_code.prompt_enrichment import (
+                    inject_duckdb_instructions,
+                )
+
+                prompt = inject_duckdb_instructions(prompt, duckdb_local_files)
+                logger.info(
+                    "Injected DuckDB instructions for %d file(s)",
+                    len(duckdb_local_files),
+                )
+
             # Check cancellation before sending query
             if self.task_state_manager.is_cancelled(self.task_id):
                 logger.info(f"Task {self.task_id} cancelled before sending query")
@@ -897,6 +925,11 @@ class ClaudeCodeAgent(Agent):
             # Skip for CANCELLED — cancel/interrupt flow has its own cleanup.
             if result in (TaskStatus.COMPLETED, TaskStatus.FAILED):
                 await self._auto_close_session()
+                # Clean up task-level DuckDB temp directory to avoid accumulation.
+                if duckdb_local_files:
+                    task_tmp_dir = f"/tmp/{self.task_id}"
+                    await asyncio.to_thread(shutil.rmtree, task_tmp_dir, True)
+                    logger.info("Cleaned up DuckDB temp dir: %s", task_tmp_dir)
 
             return result
 
@@ -1433,6 +1466,73 @@ class ClaudeCodeAgent(Agent):
                 report_immediately=False,
                 details=details,
             )
+
+    def _download_duckdb_files(self, task_id: int) -> List[dict]:
+        """Download DuckDB files from presigned URLs to local task workspace.
+
+        Downloads each DuckDB file to /tmp/{task_id}/ directory using presigned
+        S3 URLs from task_data.duckdb_files. Uses atomic rename to prevent
+        incomplete files from being used.
+
+        Args:
+            task_id: Task ID used to create an isolated local directory.
+
+        Returns:
+            List of file info dicts with 'local_path' added to each entry.
+        """
+        import requests as _requests
+
+        duckdb_files = self.task_data.duckdb_files
+        if not duckdb_files:
+            return []
+
+        base_dir = f"/tmp/{task_id}"
+        os.makedirs(base_dir, exist_ok=True)
+
+        results = []
+        for f in duckdb_files:
+            doc_id = f.get("doc_id")
+            download_url = f.get("download_url")
+            if not doc_id or not download_url:
+                logger.warning("DuckDB entry missing doc_id or download_url, skipping")
+                continue
+
+            local_path = os.path.join(base_dir, f"kb_doc_{doc_id}.duckdb")
+
+            # Skip if already downloaded (complete file, size > 0)
+            if os.path.exists(local_path) and os.path.getsize(local_path) > 0:
+                logger.info("DuckDB file already exists: %s", local_path)
+                results.append({**f, "local_path": local_path})
+                continue
+
+            # Download to temp file then atomic rename to avoid partial files
+            tmp_path = f"{local_path}.downloading"
+            try:
+                response = _requests.get(download_url, stream=True, timeout=300)
+                if response.status_code == 200:
+                    with open(tmp_path, "wb") as out:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            out.write(chunk)
+                    os.rename(tmp_path, local_path)
+                    logger.info("Downloaded DuckDB file: %s", local_path)
+                    results.append({**f, "local_path": local_path})
+                else:
+                    logger.error(
+                        "Failed to download DuckDB doc_id=%s: HTTP %s",
+                        doc_id,
+                        response.status_code,
+                    )
+            except Exception as e:
+                logger.error("Failed to download DuckDB doc_id=%s: %s", doc_id, e)
+            finally:
+                # Clean up temp file if it exists (failed download)
+                if os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except OSError:
+                        pass
+
+        return results
 
     def _build_skill_emphasis_prompt(self, user_selected_skills: List[str]) -> str:
         """Build skill emphasis prompt for user-selected skills.

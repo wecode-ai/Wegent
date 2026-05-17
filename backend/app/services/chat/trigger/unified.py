@@ -469,6 +469,8 @@ async def _process_contexts(
         request.kb_tool_access_mode = ctx.kb.kb_tool_access_mode
         if ctx.kb.document_ids:
             request.document_ids = ctx.kb.document_ids
+        if ctx.kb.duckdb_files:
+            request.duckdb_files = ctx.kb.duckdb_files
         _ensure_selected_kb_skill_priority(request)
 
     logger.info(
