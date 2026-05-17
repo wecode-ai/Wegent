@@ -347,6 +347,20 @@ docker compose up -d     # 启动
     </td></tr>
 <tr>
     <td align="center">
+        <a href="https://github.com/RockysGit">
+            <img src="https://avatars.githubusercontent.com/u/61232321?v=4" width="80;" alt="RockysGit"/>
+            <br />
+            <sub><b>RockysGit</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/cocowh">
+            <img src="https://avatars.githubusercontent.com/u/17496282?v=4" width="80;" alt="cocowh"/>
+            <br />
+            <sub><b>Birch</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/maquan0927">
             <img src="https://avatars.githubusercontent.com/u/40860588?v=4" width="80;" alt="maquan0927"/>
             <br />
@@ -365,20 +379,6 @@ docker compose up -d     # 启动
             <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
             <br />
             <sub><b>Fingki</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/cocowh">
-            <img src="https://avatars.githubusercontent.com/u/17496282?v=4" width="80;" alt="cocowh"/>
-            <br />
-            <sub><b>Birch</b></sub>
-        </a>
-    </td>
-    <td align="center">
-        <a href="https://github.com/RockysGit">
-            <img src="https://avatars.githubusercontent.com/u/61232321?v=4" width="80;" alt="RockysGit"/>
-            <br />
-            <sub><b>RockysGit</b></sub>
         </a>
     </td>
     <td align="center">
@@ -464,7 +464,14 @@ docker compose up -d     # 启动
         <a href="https://github.com/ch15084">
             <img src="https://avatars.githubusercontent.com/u/2509224?v=4" width="80;" alt="ch15084"/>
             <br />
-            <sub><b>ch15084</b></sub>
+            <sub><b>Ch15084</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/gdouyang">
+            <img src="https://avatars.githubusercontent.com/u/13996763?v=4" width="80;" alt="gdouyang"/>
+            <br />
+            <sub><b>gdouyang</b></sub>
         </a>
     </td>
     <td align="center">
