@@ -97,7 +97,8 @@
     "addTaskFailed": "添加对话失败",
     "removeTaskSuccess": "对话已从分组移除",
     "removeTaskFailed": "移除对话失败",
-    "groupChatNotSupported": "对话分组功能暂时不支持群聊加入"
+    "groupChatNotSupported": "对话分组功能暂时不支持群聊加入",
+    "taskImportPathlessOnly": "普通任务只能导入到不带路径的项目"
   },
   "colors": {
     "red": "红色",

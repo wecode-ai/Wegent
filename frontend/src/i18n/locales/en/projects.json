@@ -97,7 +97,8 @@
     "addTaskFailed": "Failed to add task",
     "removeTaskSuccess": "Task removed from project",
     "removeTaskFailed": "Failed to remove task",
-    "groupChatNotSupported": "Group chats cannot be added to chat groups"
+    "groupChatNotSupported": "Group chats cannot be added to chat groups",
+    "taskImportPathlessOnly": "Ordinary tasks can only be imported into pathless projects"
   },
   "colors": {
     "red": "Red",
