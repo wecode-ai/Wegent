@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument, KnowledgeFolder
 from app.schemas.knowledge import (
+    BatchOperationResult,
     KnowledgeFolderCreate,
     KnowledgeFolderResponse,
     KnowledgeFolderUpdate,
