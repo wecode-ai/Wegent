@@ -58,6 +58,7 @@ from executor.agents.claude_code.skill_deployer import (
     setup_coordinate_mode,
 )
 from executor.config import config
+from executor.hooks.pre_execute_hook import get_pre_execute_hook
 from executor.services.task_identity import build_task_identity_context
 from executor.tasks.resource_manager import ResourceManager
 from executor.tasks.task_state_manager import TaskState, TaskStateManager
@@ -67,6 +68,7 @@ from shared.models.responses_api_emitter import ResponsesAPIEmitter
 from shared.models.task import ExecutionResult, ThinkingStep
 from shared.status import TaskStatus
 from shared.telemetry.decorators import add_span_event, trace_async
+from shared.utils import git_util
 
 logger = setup_logger("claude_code_agent")
 
@@ -90,6 +92,7 @@ class ClaudeCodeAgent(Agent):
     """
 
     def get_name(self) -> str:
+        """Return the agent type name."""
         return "ClaudeCode"
 
     def _get_claude_config_dir(self) -> str:
@@ -417,6 +420,7 @@ class ClaudeCodeAgent(Agent):
                 - Optional[str]: Error message if failed, None if successful
         """
         try:
+            self._prepare_project_workspace()
             git_url = self.task_data.git_url
             # Download code if git_url is provided
             if git_url and git_url != "":
@@ -459,6 +463,21 @@ class ClaudeCodeAgent(Agent):
             # Download attachments for this task
             self._download_attachments()
 
+            # Execute pre-execute hook if configured
+            hook = get_pre_execute_hook()
+            logger.info(
+                f"Pre-execute hook check: enabled={hook.enabled}, command={hook.command}"
+            )
+            if hook.enabled:
+                task_dir = os.path.join(config.get_workspace_root(), str(self.task_id))
+                exit_code = hook.execute(
+                    task_dir=task_dir,
+                    task_id=self.task_id,
+                    git_url=git_url,
+                )
+                if exit_code != 0:
+                    logger.warning(f"Pre-execute hook returned non-zero: {exit_code}")
+
             return TaskStatus.SUCCESS, None
         except Exception as e:
             error_msg = f"Pre-execution failed: {str(e)}"
@@ -470,6 +489,46 @@ class ClaudeCodeAgent(Agent):
                 details={"error": str(e)},
             )
             return TaskStatus.FAILED, error_msg
+
+    def _prepare_project_workspace(self) -> None:
+        """Resolve project workspace paths before Claude Code starts."""
+
+        project_id = getattr(self.task_data, "project_id", None)
+        workspace_source = getattr(self.task_data, "workspace_source", None)
+        if not project_id or not workspace_source:
+            return
+
+        project_path = getattr(self.task_data, "project_workspace_path", None)
+        if project_path:
+            project_path = os.path.expanduser(str(project_path))
+            if not os.path.isabs(project_path):
+                project_path = os.path.join(config.get_workspace_root(), project_path)
+        elif workspace_source == "git" and self.task_data.git_url:
+            repo_name = git_util.get_repo_name_from_url(self.task_data.git_url)
+            safe_repo_name = repo_name.replace("/", "_").replace("\\", "_")
+            project_path = os.path.join(
+                config.get_workspace_root(),
+                "projects",
+                str(project_id),
+                safe_repo_name,
+            )
+
+        if not project_path:
+            return
+
+        if workspace_source == "local_path":
+            os.makedirs(project_path, exist_ok=True)
+        else:
+            parent_dir = os.path.dirname(project_path)
+            if parent_dir:
+                os.makedirs(parent_dir, exist_ok=True)
+
+        self.project_path = project_path
+        self.options["cwd"] = project_path
+        SessionManager.set_task_session_root(self.task_id, project_path)
+        logger.info(
+            "Using project workspace path for task %s: %s", self.task_id, project_path
+        )
 
     def execute(self) -> TaskStatus:
         """
@@ -518,6 +577,7 @@ class ClaudeCodeAgent(Agent):
                     import concurrent.futures
 
                     def run_async_task():
+                        """Run async cleanup in a new event loop."""
                         new_loop = asyncio.new_event_loop()
                         asyncio.set_event_loop(new_loop)
                         try:

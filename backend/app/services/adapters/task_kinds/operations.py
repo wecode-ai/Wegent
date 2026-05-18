@@ -22,6 +22,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.config import settings
 from app.models.kind import Kind
+from app.models.project import Project
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
@@ -210,6 +211,19 @@ class TaskOperationsMixin:
                 detail="Team not found, it may be deleted or not shared",
             )
 
+        if obj_in.project_id:
+            project_exists = (
+                db.query(Project.id)
+                .filter(
+                    Project.id == obj_in.project_id,
+                    Project.user_id == user.id,
+                    Project.is_active == True,
+                )
+                .first()
+            )
+            if not project_exists:
+                raise HTTPException(status_code=404, detail="Project not found")
+
         # Validate prompt length
         if obj_in.prompt and len(obj_in.prompt.encode("utf-8")) > 60000:
             raise HTTPException(
@@ -282,6 +296,11 @@ class TaskOperationsMixin:
                     "taskType": obj_in.task_type,
                     "autoDeleteExecutor": obj_in.auto_delete_executor,
                     "source": obj_in.source,
+                    **(
+                        {"projectId": str(obj_in.project_id)}
+                        if obj_in.project_id
+                        else {}
+                    ),
                     **({"is_api_call": "true"} if obj_in.source == "api" else {}),
                     **({"modelId": obj_in.model_id} if obj_in.model_id else {}),
                     **(
@@ -326,6 +345,7 @@ class TaskOperationsMixin:
             existing_placeholder.namespace = "default"
             existing_placeholder.json = task_json
             existing_placeholder.is_active = True
+            existing_placeholder.project_id = obj_in.project_id or 0
             existing_placeholder.updated_at = datetime.now()
             task = existing_placeholder
         else:
@@ -338,6 +358,7 @@ class TaskOperationsMixin:
                 namespace="default",
                 json=task_json,
                 is_active=True,
+                project_id=obj_in.project_id or 0,
             )
             db.add(task)
 
@@ -675,7 +696,8 @@ class TaskOperationsMixin:
             .filter(
                 ResourceMember.resource_type == ResourceType.TASK,
                 ResourceMember.resource_id == task_id,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
                 ResourceMember.status == MemberStatus.APPROVED,
             )
             .first()

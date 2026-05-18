@@ -13,6 +13,7 @@ interface SendButtonProps {
   disabled?: boolean
   isLoading?: boolean
   className?: string
+  ariaLabel?: string
   /** @deprecated No longer used, kept for API compatibility */
   compact?: boolean
 }
@@ -22,6 +23,7 @@ export default function SendButton({
   disabled = false,
   isLoading = false,
   className = '',
+  ariaLabel = 'Send message',
 }: SendButtonProps) {
   const buttonRef = useRef<HTMLButtonElement>(null)
 
@@ -45,6 +47,8 @@ export default function SendButton({
         type="button"
         onClick={handleMainClick}
         disabled={disabled || isLoading}
+        aria-label={ariaLabel}
+        title={ariaLabel}
         data-tour="send-button"
         data-testid="send-button"
         className={`

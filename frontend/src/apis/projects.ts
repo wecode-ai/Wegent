@@ -5,6 +5,7 @@
 import { apiClient } from './client'
 import {
   Project,
+  ProjectConfig,
   ProjectListResponse,
   ProjectTask,
   ProjectWithTasks,
@@ -16,6 +17,7 @@ export interface CreateProjectRequest {
   name: string
   description?: string
   color?: string
+  config?: ProjectConfig | null
 }
 
 export interface UpdateProjectRequest {
@@ -24,6 +26,7 @@ export interface UpdateProjectRequest {
   color?: string
   sort_order?: number
   is_expanded?: boolean
+  config?: ProjectConfig | null
 }
 
 export interface AddTaskToProjectRequest {
@@ -37,6 +40,18 @@ export interface AddTaskToProjectResponse {
 
 export interface RemoveTaskFromProjectResponse {
   message: string
+}
+
+export interface CreateProjectConversationRequest {
+  prompt: string
+  title?: string
+  new_session?: boolean
+}
+
+export interface CreateProjectConversationResponse {
+  task_id: number
+  project_id: number
+  task: unknown
 }
 
 // Project API Services
@@ -106,5 +121,15 @@ export const projectApis = {
     taskId: number
   ): Promise<RemoveTaskFromProjectResponse> => {
     return apiClient.delete(`/projects/${projectId}/tasks/${taskId}`)
+  },
+
+  /**
+   * Create a new conversation under a workspace project.
+   */
+  createConversation: async (
+    projectId: number,
+    data: CreateProjectConversationRequest
+  ): Promise<CreateProjectConversationResponse> => {
+    return apiClient.post(`/projects/${projectId}/conversations`, data)
   },
 }

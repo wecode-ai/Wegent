@@ -46,6 +46,7 @@ import { useSkillSelector } from '../../hooks/useSkillSelector'
 import { useModelSelection } from '../../hooks/useModelSelection'
 import { QueueMessageHandler } from '@/features/inbox'
 import type { ChatAreaExtension } from './types'
+import { useProjectContext } from '@/features/projects/contexts/projectContext'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -329,6 +330,22 @@ function ChatAreaContent({
   const searchParams = useSearchParams()
   const taskIdFromUrl =
     searchParams.get('taskId') || searchParams.get('task_id') || searchParams.get('taskid')
+  // Get teamId from URL for auto-selecting a specific team (e.g. after accepting a share invite)
+  const teamIdFromUrl = searchParams.get('teamId')
+  // Get project info when in project context
+  const projectIdFromUrl = searchParams.get('projectId')
+  const { projects } = useProjectContext()
+  const activeProject = useMemo(() => {
+    if (!projectIdFromUrl) return null
+    const project = projects.find(p => p.id === Number(projectIdFromUrl))
+    if (!project) return null
+    const explicitPath = project.config?.workspace?.localPath
+    const defaultPath = `~/.wegent-executor/workspace/project${project.id}`
+    return {
+      name: project.name,
+      path: explicitPath || defaultPath,
+    }
+  }, [projectIdFromUrl, projects])
 
   // Track initialization and last synced task for team selection
   const hasInitializedTeamRef = useRef(false)
@@ -401,6 +418,20 @@ function ChatAreaContent({
       }
     }
 
+    // Case 2a: teamId URL param present - select specific team regardless of initialization state
+    // This handles navigation after accepting a share invite (/chat?teamId=xxx)
+    if (!taskIdFromUrl && teamIdFromUrl) {
+      const targetTeamId = Number(teamIdFromUrl)
+      const teamFromUrl =
+        filteredTeams.find(t => t.id === targetTeamId) || teams.find(t => t.id === targetTeamId)
+      if (teamFromUrl) {
+        handleTeamChange(teamFromUrl)
+        hasInitializedTeamRef.current = true
+        lastSyncedTaskIdRef.current = null
+        return
+      }
+    }
+
     // Case 2: New chat (no taskId in URL) - use default team from server config
     if (!taskIdFromUrl && !hasInitializedTeamRef.current) {
       // Use the default team computed from server config
@@ -434,8 +465,10 @@ function ChatAreaContent({
     }
   }, [
     filteredTeams,
+    teams,
     selectedTaskDetail,
     taskIdFromUrl,
+    teamIdFromUrl,
     selectedTeam,
     handleTeamChange,
     findDefaultTeamForMode,
@@ -679,7 +712,7 @@ function ChatAreaContent({
     return (
       !disabledReason &&
       !chatState.isLoading &&
-      !streamHandlers.isStreaming &&
+      (!streamHandlers.isStreaming || streamHandlers.canQueueMessage) &&
       !isModelSelectionRequired &&
       chatState.isAttachmentReadyToSend
     )
@@ -687,6 +720,7 @@ function ChatAreaContent({
     disabledReason,
     chatState.isLoading,
     streamHandlers.isStreaming,
+    streamHandlers.canQueueMessage,
     isModelSelectionRequired,
     chatState.isAttachmentReadyToSend,
   ])
@@ -1134,6 +1168,15 @@ function ChatAreaContent({
     onDragOver: handleDragOver,
     onDrop: handleDrop,
     canSubmit,
+    canQueueMessage: streamHandlers.canQueueMessage,
+    queuedMessages: streamHandlers.queuedMessages,
+    onCancelQueuedMessage: streamHandlers.cancelQueuedMessage,
+    onSendQueuedAsGuidance: streamHandlers.sendQueuedAsGuidance,
+    canSendGuidance: streamHandlers.canSendGuidance,
+    guidanceMessages: streamHandlers.guidanceMessages,
+    expiredGuidanceMessages: streamHandlers.expiredGuidanceMessages,
+    onCancelGuidance: streamHandlers.cancelGuidance,
+    onSendExpiredGuidanceAsMessage: streamHandlers.sendExpiredGuidanceAsMessage,
     handleSendMessage: async (overrideMessage?: string) => {
       // Format message with quote if present, then clear quote
       const baseMessage = overrideMessage?.trim() || chatState.taskInputMessage.trim()
@@ -1142,6 +1185,14 @@ function ChatAreaContent({
         clearQuote()
       }
       await streamHandlers.handleSendMessage(message)
+    },
+    onSendGuidance: async () => {
+      const baseMessage = chatState.taskInputMessage.trim()
+      const message = formatQuoteForMessage(baseMessage)
+      if (quote) {
+        clearQuote()
+      }
+      await streamHandlers.handleSendGuidance(message)
     },
     onPasteFile: handlePasteFile,
     // ChatInputControls props
@@ -1199,6 +1250,8 @@ function ChatAreaContent({
     knowledgeBaseId,
     // Reason why input is disabled (shown as placeholder)
     disabledReason,
+    // Project context
+    projectId: projectIdFromUrl ? Number(projectIdFromUrl) : null,
     // Skill selector props
     availableSkills: skillSelector.availableSkills,
     teamSkillNames: skillSelector.teamSkillNames,
@@ -1344,7 +1397,9 @@ function ChatAreaContent({
             style={{ marginBottom: '12vh' }}
           >
             <div ref={floatingInputRef} className="w-full max-w-4xl mx-auto px-4 sm:px-6">
-              {taskType !== 'knowledge' && <SloganDisplay slogan={chatState.randomSlogan} />}
+              {taskType !== 'knowledge' && (
+                <SloganDisplay slogan={chatState.randomSlogan} project={activeProject} />
+              )}
               {taskType === 'knowledge' && guidedQuestions && guidedQuestions.length > 0 && (
                 <GuidedQuestions
                   questions={guidedQuestions}
@@ -1356,7 +1411,7 @@ function ChatAreaContent({
                 autoFocus={!hasMessages}
                 inputControlsRef={inputControlsRef}
               />
-              {taskType !== 'knowledge' && !hideSelectors && (
+              {taskType !== 'knowledge' && !hideSelectors && !activeProject && (
                 <QuickAccessCards
                   teams={teams}
                   selectedTeam={chatState.selectedTeam}

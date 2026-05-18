@@ -79,7 +79,8 @@ class TaskMemberService:
             .filter(
                 ResourceMember.resource_type == ResourceType.TASK,
                 ResourceMember.resource_id == task_id,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
                 ResourceMember.status == MemberStatus.APPROVED,
                 ResourceMember.copied_resource_id == 0,
             )
@@ -246,7 +247,8 @@ class TaskMemberService:
             .filter(
                 ResourceMember.resource_type == ResourceType.TASK,
                 ResourceMember.resource_id == task_id,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
             )
             .first()
         )
@@ -288,7 +290,8 @@ class TaskMemberService:
         new_member = ResourceMember(
             resource_type=ResourceType.TASK,
             resource_id=task_id,
-            user_id=user_id,
+            entity_type="user",
+            entity_id=str(user_id),
             role=ResourceRole.Maintainer.value,  # Group chat members get maintainer role
             status=MemberStatus.APPROVED,
             invited_by_user_id=invited_by,
@@ -320,7 +323,8 @@ class TaskMemberService:
             .filter(
                 ResourceMember.resource_type == ResourceType.TASK,
                 ResourceMember.resource_id == task_id,
-                ResourceMember.user_id == user_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
                 ResourceMember.status == MemberStatus.APPROVED,
             )
             .first()

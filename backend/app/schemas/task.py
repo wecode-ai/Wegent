@@ -34,6 +34,8 @@ class TaskApp(BaseModel):
 
 
 class TaskStatus(str, Enum):
+    """Enum for task execution status."""
+
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     COMPLETED = "COMPLETED"
@@ -80,6 +82,7 @@ class TaskCreate(BaseModel):
     task_type: Optional[str] = "chat"  # chat、code
     auto_delete_executor: Optional[str] = "false"  # true、fasle
     source: Optional[str] = "web"
+    project_id: Optional[int] = 0
     # Model selection fields
     model_id: Optional[str] = None  # Model name (not database ID)
     force_override_bot_model: Optional[bool] = False
@@ -137,6 +140,8 @@ class TaskInDB(TaskBase):
     )
 
     class Config:
+        """Pydantic config."""
+
         from_attributes = True
 
 
@@ -178,6 +183,8 @@ class TaskDetail(BaseModel):
     )
 
     class Config:
+        """Pydantic config."""
+
         from_attributes = True
 
 
@@ -207,6 +214,8 @@ class TaskLite(BaseModel):
     )
 
     class Config:
+        """Pydantic config."""
+
         from_attributes = True
 
 

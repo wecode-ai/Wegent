@@ -312,6 +312,14 @@ export interface KnowledgeBase {
   updated_at: string
 }
 
+/** Initial member to add when creating a knowledge base */
+export interface InitialMember {
+  entity_type: string
+  entity_id: string
+  role: MemberRole
+  entity_display_name?: string
+}
+
 export interface KnowledgeBaseCreate {
   name: string
   description?: string
@@ -327,6 +335,8 @@ export interface KnowledgeBaseCreate {
   max_calls_per_conversation?: number
   /** Number of calls exempt from token checking (must be < max_calls_per_conversation) */
   exempt_calls_before_check?: number
+  /** Initial members (users and groups) to add after creation */
+  members?: InitialMember[]
 }
 
 export interface RetrievalConfigUpdate {
@@ -375,7 +385,7 @@ export interface KnowledgeDocument {
   splitter_config?: SplitterConfig
   source_type: DocumentSourceType
   source_config: Record<string, unknown>
-  folder_id: number  // 0 = root level
+  folder_id: number // 0 = root level
   created_at: string
   updated_at: string
 }
@@ -385,7 +395,7 @@ export interface KnowledgeDocumentCreate {
   name: string
   file_extension: string
   file_size: number
-  folder_id?: number  // 0 = root level
+  folder_id?: number // 0 = root level
   splitter_config?: Partial<SplitterConfig>
   source_type?: DocumentSourceType
   source_config?: Record<string, unknown>
@@ -589,8 +599,16 @@ export interface PermissionUpdateRequest {
 }
 
 // Batch permission add types
+export interface BatchPermissionMember {
+  user_id: number
+  role: MemberRole
+  entity_type?: string
+  entity_id?: string
+  entity_display_name?: string
+}
+
 export interface BatchPermissionAddRequest {
-  members: { user_id: number; role: MemberRole }[]
+  members: BatchPermissionMember[]
 }
 
 export interface BatchPermissionAddResponse {
@@ -601,13 +619,19 @@ export interface BatchPermissionAddResponse {
 // Permission User Info types
 export interface PermissionUserInfo {
   id: number
-  user_id: number
-  username: string
+  user_id?: number | null
+  display_name: string
   email?: string
   role: MemberRole
   requested_at: string
   reviewed_at?: string
   reviewed_by?: number
+  /** Entity type: 'user' (default), 'namespace' */
+  entity_type?: string
+  /** Entity identifier */
+  entity_id?: string
+  /** Permission source: 'direct', 'entity_permission', 'share_link' */
+  source_type?: string
 }
 
 export interface PendingPermissionInfo {
@@ -753,6 +777,16 @@ export interface KnowledgeBaseWithGroupInfo {
   group_type: KnowledgeGroupType
   /** Current user's role for this KB: 'Owner' | 'Maintainer' | 'Developer' | 'Reporter' | 'RestrictedAnalyst' | null */
   my_role?: MemberRole | null
+  /** Source group name for entity-authorized shared KBs */
+  source_group?: string | null
+  /** Share source user name for shared KBs */
+  shared_from?: string | null
+  /** Multiple share source user names for multi-source shared KBs in All mode */
+  shared_from_users?: string[]
+  /** Share via entity type: 'user', 'namespace', or other registered types */
+  shared_via?: string
+  /** Knowledge base creator's user name for display fallback */
+  owner_name?: string
 }
 
 /** Personal knowledge bases in all-grouped response */
@@ -803,7 +837,7 @@ export interface AllGroupedKnowledgeResponse {
 export interface KnowledgeFolder {
   id: number
   kind_id: number
-  parent_id: number  // 0 = root level
+  parent_id: number // 0 = root level
   name: string
   children: KnowledgeFolder[]
   document_count: number
@@ -814,16 +848,16 @@ export interface KnowledgeFolder {
 /** Request to create a new folder */
 export interface KnowledgeFolderCreate {
   name: string
-  parent_id?: number  // 0 = root level
+  parent_id?: number // 0 = root level
 }
 
 /** Request to update a folder */
 export interface KnowledgeFolderUpdate {
   name?: string
-  parent_id?: number  // 0 = root level, undefined = no change
+  parent_id?: number // 0 = root level, undefined = no change
 }
 
 /** Request to move a document to a folder */
 export interface DocumentMoveRequest {
-  folder_id: number  // 0 = root level
+  folder_id: number // 0 = root level
 }

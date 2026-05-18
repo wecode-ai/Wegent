@@ -228,7 +228,8 @@ async def correct_response(
             .filter(
                 ResourceMember.resource_type == ResourceType.TASK,
                 ResourceMember.resource_id == request.task_id,
-                ResourceMember.user_id == current_user.id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(current_user.id),
                 ResourceMember.status == MemberStatus.APPROVED,
             )
             .first()
@@ -428,7 +429,8 @@ async def delete_correction(
             .filter(
                 ResourceMember.resource_type == ResourceType.TASK,
                 ResourceMember.resource_id == subtask.task_id,
-                ResourceMember.user_id == current_user.id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(current_user.id),
                 ResourceMember.status == MemberStatus.APPROVED,
             )
             .first()
@@ -502,7 +504,8 @@ async def apply_correction(
             .filter(
                 ResourceMember.resource_type == ResourceType.TASK,
                 ResourceMember.resource_id == subtask.task_id,
-                ResourceMember.user_id == current_user.id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(current_user.id),
                 ResourceMember.status == MemberStatus.APPROVED,
             )
             .first()

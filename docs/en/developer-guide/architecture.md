@@ -370,6 +370,7 @@ EXECUTOR_IMAGE: wegent-executor:latest # Executor image
 - 📝 Real-time log output
 - 🛠️ MCP tool support
 - 📚 Dynamic skill loading
+- 🪝 [Pre-execute hooks](./pre-execute-hooks.md) for custom task initialization before execution
 
 **Lifecycle**:
 ```mermaid
@@ -925,6 +926,7 @@ logger.info("task.created",
 - [CRD Architecture](./crd-architecture.md) - CRD design details
 - [Skill System](../concepts/skill-system.md) - Skill development and integration
 - [Local Device Architecture](./local-device-architecture.md) - Local device support
+- [Pre-execute Hooks](./pre-execute-hooks.md) - Custom Executor initialization before task execution
 
 ---
 

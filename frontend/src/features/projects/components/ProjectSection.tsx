@@ -15,6 +15,7 @@ import {
   Trash2,
   FolderOpen,
   Folder,
+  SquarePen,
 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useProjectContext } from '../contexts/projectContext'
@@ -41,9 +42,10 @@ import { taskApis } from '@/apis/tasks'
 
 interface ProjectSectionProps {
   onTaskSelect?: () => void
+  variant?: 'group' | 'workspace'
 }
 
-export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
+export function ProjectSection({ onTaskSelect, variant = 'group' }: ProjectSectionProps) {
   const { t } = useTranslation('projects')
   const router = useRouter()
   const {
@@ -57,6 +59,28 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
   } = useProjectContext()
   const { clearAllStreams } = useChatStreamContext()
   const { setSelectedTask } = useTaskContext()
+  const isWorkspaceSection = variant === 'workspace'
+
+  const handleNewConversation = useCallback(
+    (project: ProjectWithTasks) => {
+      clearAllStreams()
+      setSelectedProjectTaskId(null)
+      setSelectedTask(null as unknown as Task)
+
+      const params = new URLSearchParams()
+      params.set('projectId', String(project.id))
+      const deviceId = project.config?.execution?.deviceId
+      if (deviceId) {
+        params.set('deviceId', deviceId)
+      }
+      router.push(`/devices/chat?${params.toString()}`)
+      onTaskSelect?.()
+    },
+    [clearAllStreams, setSelectedProjectTaskId, setSelectedTask, router, onTaskSelect]
+  )
+  const visibleProjects = projects.filter(project =>
+    isWorkspaceSection ? project.config?.mode === 'workspace' : project.config?.mode !== 'workspace'
+  )
 
   // Dialog states
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
@@ -78,7 +102,7 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
   }
 
   // Handle task click - navigate to the task
-  const handleTaskClick = (projectTask: ProjectTask) => {
+  const handleTaskClick = (projectTask: ProjectTask, project: ProjectWithTasks) => {
     // Clear all stream states when switching tasks
     clearAllStreams()
 
@@ -86,9 +110,6 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
     setSelectedProjectTaskId(projectTask.task_id)
 
     // IMPORTANT: Set selected task with minimal data to prevent "New Conversation" flash
-    // This ensures TaskContext has a task ID immediately, so ChatArea doesn't show
-    // the empty state while waiting for URL params to sync and task details to load.
-    // The full task details will be fetched by TaskContext via refreshSelectedTaskDetail().
     setSelectedTask({
       id: projectTask.task_id,
       title: projectTask.task_title || '',
@@ -96,17 +117,21 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
       is_group_chat: projectTask.is_group_chat,
     } as Task)
 
-    // Navigate to the appropriate page based on task type
     const params = new URLSearchParams()
     params.set('taskId', String(projectTask.task_id))
 
-    // Determine target path based on is_group_chat flag
-    // Group chats and regular chats go to chat page
-    const targetPath = paths.chat.getHref()
+    if (isWorkspaceSection) {
+      // Workspace tasks go directly to /devices/chat with projectId + deviceId
+      params.set('projectId', String(project.id))
+      const deviceId = project.config?.execution?.deviceId
+      if (deviceId) {
+        params.set('deviceId', deviceId)
+      }
+      router.push(`/devices/chat?${params.toString()}`)
+    } else {
+      router.push(`${paths.chat.getHref()}?${params.toString()}`)
+    }
 
-    router.push(`${targetPath}?${params.toString()}`)
-
-    // Call the onTaskSelect callback if provided (to close mobile sidebar)
     onTaskSelect?.()
   }
 
@@ -123,15 +148,18 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
           ) : (
             <ChevronDown className="w-3.5 h-3.5" />
           )}
-          <span>{t('section.title')}</span>
-          <span className="text-text-muted ml-1">({projects.length})</span>
+          <span>{t(isWorkspaceSection ? 'workspaceSection.title' : 'section.title')}</span>
+          <span className="text-text-muted ml-1">({visibleProjects.length})</span>
         </button>
         <Button
+          data-testid={
+            isWorkspaceSection ? 'create-workspace-project-button' : 'create-group-button'
+          }
           variant="ghost"
           size="sm"
           className="p-0.5 text-text-muted hover:text-text-primary transition-colors rounded"
           onClick={() => setCreateDialogOpen(true)}
-          title={t('create.title')}
+          title={t(isWorkspaceSection ? 'workspaceCreate.title' : 'create.title')}
         >
           <FolderPlus className="w-3.5 h-3.5" />
         </Button>
@@ -142,10 +170,12 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
         <div className="space-y-0.5">
           {isLoading ? (
             <div className="px-4 py-2 text-xs text-text-muted">{t('common:loading')}</div>
-          ) : projects.length === 0 ? (
-            <div className="px-4 py-2 text-xs text-text-muted">{t('section.empty')}</div>
+          ) : visibleProjects.length === 0 ? (
+            <div className="px-4 py-2 text-xs text-text-muted">
+              {t(isWorkspaceSection ? 'workspaceSection.empty' : 'section.empty')}
+            </div>
           ) : (
-            projects.map(project => (
+            visibleProjects.map(project => (
               <DroppableProject key={project.id} projectId={project.id}>
                 <ProjectItem
                   project={project}
@@ -156,6 +186,8 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
                   onTaskClick={handleTaskClick}
                   selectedProjectTaskId={selectedProjectTaskId}
                   onRefreshProjects={refreshProjects}
+                  isWorkspace={isWorkspaceSection}
+                  onNewConversation={isWorkspaceSection ? handleNewConversation : undefined}
                 />
               </DroppableProject>
             ))
@@ -164,7 +196,11 @@ export function ProjectSection({ onTaskSelect }: ProjectSectionProps) {
       )}
 
       {/* Dialogs */}
-      <ProjectCreateDialog open={createDialogOpen} onOpenChange={setCreateDialogOpen} />
+      <ProjectCreateDialog
+        open={createDialogOpen}
+        onOpenChange={setCreateDialogOpen}
+        mode={isWorkspaceSection ? 'workspace' : 'group'}
+      />
       <ProjectEditDialog
         open={editDialogOpen}
         onOpenChange={setEditDialogOpen}
@@ -185,9 +221,11 @@ interface ProjectItemProps {
   onToggleExpand: () => void
   onEdit: () => void
   onDelete: () => void
-  onTaskClick: (projectTask: ProjectTask) => void
+  onTaskClick: (projectTask: ProjectTask, project: ProjectWithTasks) => void
   selectedProjectTaskId: number | null
   onRefreshProjects: () => Promise<void>
+  isWorkspace?: boolean
+  onNewConversation?: (project: ProjectWithTasks) => void
 }
 
 function ProjectItem({
@@ -199,6 +237,8 @@ function ProjectItem({
   onTaskClick,
   selectedProjectTaskId,
   onRefreshProjects,
+  isWorkspace,
+  onNewConversation,
 }: ProjectItemProps) {
   const { t } = useTranslation('projects')
   const taskCount = project.tasks?.length || 0
@@ -257,16 +297,13 @@ function ProjectItem({
           {project.name}
         </span>
 
-        {/* Task Count */}
-        <span className="text-xs text-text-muted mr-1">{taskCount}</span>
-
         {/* Actions Menu */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
               size="sm"
-              className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+              className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-text-muted hover:text-text-primary"
             >
               <MoreHorizontal className="w-3.5 h-3.5" />
             </Button>
@@ -282,6 +319,23 @@ function ProjectItem({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+
+        {/* New conversation button (workspace projects only, on hover) */}
+        {onNewConversation && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-text-muted hover:text-text-primary"
+            onClick={e => {
+              e.stopPropagation()
+              onNewConversation(project)
+            }}
+            title={t('workspace.newConversation')}
+            data-testid="project-new-conversation-btn"
+          >
+            <SquarePen className="w-3.5 h-3.5" />
+          </Button>
+        )}
       </div>
 
       {/* Task List (when expanded) */}
@@ -300,7 +354,7 @@ function ProjectItem({
                   onClick={() => {
                     // Don't navigate when editing
                     if (!isEditing) {
-                      onTaskClick(projectTask)
+                      onTaskClick(projectTask, project)
                     }
                   }}
                   className={cn(
@@ -334,6 +388,7 @@ function ProjectItem({
                       taskId={projectTask.task_id}
                       projectId={project.id}
                       onRename={() => setEditingTaskId(projectTask.task_id)}
+                      isWorkspace={isWorkspace}
                     />
                   </div>
                 </div>
@@ -345,7 +400,9 @@ function ProjectItem({
 
       {/* Empty State (when expanded but no tasks) */}
       {isExpanded && taskCount === 0 && (
-        <div className="ml-6 px-2 py-1 text-xs text-text-muted">{t('section.noTasks')}</div>
+        <div className="ml-6 px-2 py-1">
+          <span className="text-xs text-text-muted">{t('section.noTasks')}</span>
+        </div>
       )}
     </div>
   )

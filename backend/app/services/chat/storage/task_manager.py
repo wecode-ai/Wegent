@@ -79,6 +79,8 @@ class TaskCreationParams:
     skip_status_check: bool = False
     # Device ID for local device execution (saved at task creation to avoid race condition)
     device_id: Optional[str] = None
+    # Project ID to associate task with
+    project_id: Optional[int] = None
     # Task source label (e.g. chat_shell, responses_api)
     source: str = "chat_shell"
     # Whether the task originates from API-compatible surfaces
@@ -164,7 +166,8 @@ def get_task_with_access_check(
         .filter(
             ResourceMember.resource_type == ResourceType.TASK,
             ResourceMember.resource_id == task_id,
-            ResourceMember.user_id == user_id,
+            ResourceMember.entity_type == "user",
+            ResourceMember.entity_id == str(user_id),
             ResourceMember.status == MemberStatus.APPROVED,
         )
         .first()
@@ -371,6 +374,8 @@ def create_new_task(
         existing_placeholder.is_group_chat = (
             params.is_group_chat
         )  # Sync to physical column
+        if params.project_id:
+            existing_placeholder.project_id = params.project_id
         task = existing_placeholder
     else:
         # No placeholder exists, create a new Task record
@@ -383,6 +388,7 @@ def create_new_task(
             json=task_json,
             is_active=True,
             is_group_chat=params.is_group_chat,  # Sync to physical column
+            **({"project_id": params.project_id} if params.project_id else {}),
         )
         db.add(task)
 

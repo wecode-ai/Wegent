@@ -17,6 +17,8 @@
 export interface RuntimeConfig {
   /** Backend API URL. Empty string means use '/api' proxy */
   apiUrl: string
+  /** Public backend API URL used for generated examples such as curl commands */
+  publicApiUrl: string
   /** Socket.IO direct URL. Empty string means use proxy */
   socketDirectUrl: string
   /** Enable chat context feature (knowledge base background) */
@@ -31,6 +33,10 @@ export interface RuntimeConfig {
   enableWiki: boolean
   /** Enable Code Knowledge add repository feature */
   enableCodeKnowledgeAddRepo: boolean
+  /** Enable workspace project UI. Disabled by default for dark launch. */
+  enableProjectWorkspace: boolean
+  /** Comma-separated user_name whitelist for workspace projects. Empty means all users (when enabled). */
+  projectWorkspaceWhitelist: string
   /** VSCode link template for deep linking */
   vscodeLinkTemplate: string
   /** Feedback URL for issue reporting */
@@ -102,6 +108,7 @@ export const fetchRuntimeConfig = async (): Promise<RuntimeConfig> => {
       // Fallback to build-time env vars
       const fallback: RuntimeConfig = {
         apiUrl: process.env.NEXT_PUBLIC_API_URL || '',
+        publicApiUrl: process.env.NEXT_PUBLIC_API_URL || '',
         socketDirectUrl: process.env.NEXT_PUBLIC_SOCKET_DIRECT_URL || '',
         enableChatContext: process.env.NEXT_PUBLIC_ENABLE_CHAT_CONTEXT === 'true',
         loginMode: process.env.NEXT_PUBLIC_LOGIN_MODE || 'all',
@@ -110,6 +117,8 @@ export const fetchRuntimeConfig = async (): Promise<RuntimeConfig> => {
         enableWiki: process.env.NEXT_PUBLIC_ENABLE_WIKI !== 'false',
         enableCodeKnowledgeAddRepo:
           process.env.NEXT_PUBLIC_ENABLE_CODE_KNOWLEDGE_ADD_REPO !== 'false',
+        enableProjectWorkspace: process.env.NEXT_PUBLIC_ENABLE_PROJECT_WORKSPACE === 'true',
+        projectWorkspaceWhitelist: process.env.NEXT_PUBLIC_PROJECT_WORKSPACE_WHITELIST || '',
         vscodeLinkTemplate: process.env.NEXT_PUBLIC_VSCODE_LINK_TEMPLATE || '',
         feedbackUrl:
           process.env.NEXT_PUBLIC_FEEDBACK_URL || 'https://github.com/wecode-ai/wegent/issues/new',
@@ -143,6 +152,7 @@ export const getRuntimeConfigSync = (): RuntimeConfig => {
   // Fallback to build-time env vars
   return {
     apiUrl: process.env.NEXT_PUBLIC_API_URL || '',
+    publicApiUrl: process.env.NEXT_PUBLIC_API_URL || '',
     socketDirectUrl: process.env.NEXT_PUBLIC_SOCKET_DIRECT_URL || '',
     enableChatContext: process.env.NEXT_PUBLIC_ENABLE_CHAT_CONTEXT === 'true',
     loginMode: process.env.NEXT_PUBLIC_LOGIN_MODE || 'all',
@@ -150,6 +160,8 @@ export const getRuntimeConfigSync = (): RuntimeConfig => {
     enableDisplayQuotas: process.env.NEXT_PUBLIC_FRONTEND_ENABLE_DISPLAY_QUOTAS === 'enable',
     enableWiki: process.env.NEXT_PUBLIC_ENABLE_WIKI !== 'false',
     enableCodeKnowledgeAddRepo: process.env.NEXT_PUBLIC_ENABLE_CODE_KNOWLEDGE_ADD_REPO !== 'false',
+    enableProjectWorkspace: process.env.NEXT_PUBLIC_ENABLE_PROJECT_WORKSPACE === 'true',
+    projectWorkspaceWhitelist: process.env.NEXT_PUBLIC_PROJECT_WORKSPACE_WHITELIST || '',
     vscodeLinkTemplate: process.env.NEXT_PUBLIC_VSCODE_LINK_TEMPLATE || '',
     feedbackUrl:
       process.env.NEXT_PUBLIC_FEEDBACK_URL || 'https://github.com/wecode-ai/wegent/issues/new',
@@ -174,29 +186,43 @@ export const getRuntimeConfigSync = (): RuntimeConfig => {
  * - 'http://localhost:8000/api' -> 'http://localhost:8000/api' (unchanged)
  * - '/api' -> '/api' (unchanged)
  */
+function normalizeApiBaseUrl(apiUrl: string, fallback: string): string {
+  if (!apiUrl || apiUrl.trim() === '') {
+    return fallback
+  }
+
+  const trimmedApiUrl = apiUrl.trim()
+
+  if (trimmedApiUrl === '/api' || trimmedApiUrl.endsWith('/api')) {
+    return trimmedApiUrl
+  }
+
+  if (trimmedApiUrl.startsWith('http://') || trimmedApiUrl.startsWith('https://')) {
+    return trimmedApiUrl.replace(/\/+$/, '') + '/api'
+  }
+
+  return trimmedApiUrl
+}
+
 export const getApiBaseUrl = (): string => {
   const config = getRuntimeConfigSync()
 
   // If apiUrl is not set or empty, use '/api' proxy mode
-  if (!config.apiUrl || config.apiUrl.trim() === '') {
-    return '/api'
+  return normalizeApiBaseUrl(config.apiUrl, '/api')
+}
+
+/**
+ * Get the public API base URL for generated examples.
+ * Falls back to regular browser API base URL when no public URL is configured.
+ */
+export const getPublicApiBaseUrl = (): string => {
+  const config = getRuntimeConfigSync()
+
+  if (!config.publicApiUrl || config.publicApiUrl.trim() === '') {
+    return getApiBaseUrl()
   }
 
-  const apiUrl = config.apiUrl.trim()
-
-  // If it's already '/api' or ends with '/api', return as-is
-  if (apiUrl === '/api' || apiUrl.endsWith('/api')) {
-    return apiUrl
-  }
-
-  // If it's a full URL (http:// or https://), append /api
-  if (apiUrl.startsWith('http://') || apiUrl.startsWith('https://')) {
-    // Remove trailing slash if present, then append /api
-    return apiUrl.replace(/\/+$/, '') + '/api'
-  }
-
-  // For other cases (relative paths), return as-is
-  return apiUrl
+  return normalizeApiBaseUrl(config.publicApiUrl, '/api')
 }
 
 /**

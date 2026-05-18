@@ -8,13 +8,15 @@ import { memo, useMemo } from 'react'
 import type { ThinkingStep, MessageBlock, ToolPair } from './types'
 import { useToolExtraction } from './hooks/useToolExtraction'
 import { ToolBlock } from './components/ToolBlock'
+import { GuidanceBlock } from './components/GuidanceBlock'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
-import { normalizeToolName } from './utils/toolExtractor'
+import { normalizeToolName, normalizeStepDetails } from './utils/toolExtractor'
 import { useTranslation } from '@/hooks/useTranslation'
 import { processCitePatterns } from '../../../utils/processCitePatterns'
 import type { GeminiAnnotation } from '@/types/socket'
 import VideoPlayer from '../VideoPlayer'
 import { ImageGallery } from '../ImageGallery'
+import StreamingWaitIndicator from '../StreamingWaitIndicator'
 import { AskUserForm } from '../../clarification'
 import type { AskUserFormData } from '@/types/api'
 import { blockRendererRegistry } from '../block-registry'
@@ -167,6 +169,12 @@ const MixedContentView = memo(function MixedContentView({
               blockId: block.id,
               status: block.status,
             }
+          } else if (block.type === 'guidance') {
+            return {
+              type: 'guidance' as const,
+              data: block,
+              blockId: block.id,
+            }
           } else if (block.type === 'tool') {
             const input =
               block.tool_input && typeof block.tool_input === 'object'
@@ -289,43 +297,51 @@ const MixedContentView = memo(function MixedContentView({
             }
             // Normalize tool name to match preset components (e.g., sandbox_write_file -> Write)
             const normalizedToolName = normalizeToolName(block.tool_name || 'unknown')
+            const rawToolUseStep = {
+              title: `Using ${normalizedToolName}`,
+              next_action: 'continue',
+              tool_use_id: block.tool_use_id,
+              details: {
+                type: 'tool_use',
+                tool_name: normalizedToolName,
+                status: 'started',
+                input: block.tool_input,
+              },
+            }
+            const rawToolResultStep =
+              block.tool_output != null || block.status === 'error'
+                ? {
+                    title: `Result from ${normalizedToolName}`,
+                    next_action: 'continue',
+                    tool_use_id: block.tool_use_id,
+                    details: {
+                      type: 'tool_result',
+                      tool_name: normalizedToolName,
+                      status: block.status === 'error' ? 'failed' : 'completed',
+                      is_error: block.status === 'error',
+                      content: block.tool_output
+                        ? typeof block.tool_output === 'string'
+                          ? block.tool_output
+                          : JSON.stringify(block.tool_output)
+                        : undefined,
+                      output: block.tool_output,
+                    },
+                  }
+                : undefined
             const toolPair = {
               toolUseId: block.tool_use_id || block.id,
               toolName: normalizedToolName,
               displayName: block.display_name, // Pass display_name from block
               status:
-                (block.status as 'pending' | 'streaming' | 'invoking' | 'done' | 'error') || 'done',
-              toolUse: {
-                title: `Using ${normalizedToolName}`,
-                next_action: 'continue',
-                tool_use_id: block.tool_use_id,
-                details: {
-                  type: 'tool_use',
-                  tool_name: normalizedToolName,
-                  status: 'started',
-                  input: block.tool_input,
-                },
-              },
-              toolResult:
-                block.tool_output != null || block.status === 'error'
-                  ? {
-                      title: `Result from ${normalizedToolName}`,
-                      next_action: 'continue',
-                      tool_use_id: block.tool_use_id,
-                      details: {
-                        type: 'tool_result',
-                        tool_name: normalizedToolName,
-                        status: block.status === 'error' ? 'failed' : 'completed',
-                        is_error: block.status === 'error',
-                        content: block.tool_output
-                          ? typeof block.tool_output === 'string'
-                            ? block.tool_output
-                            : JSON.stringify(block.tool_output)
-                          : undefined,
-                        output: block.tool_output,
-                      },
-                    }
-                  : undefined,
+                (block.status as
+                  | 'generating_arguments'
+                  | 'pending'
+                  | 'streaming'
+                  | 'invoking'
+                  | 'done'
+                  | 'error') || 'done',
+              toolUse: normalizeStepDetails(rawToolUseStep),
+              toolResult: rawToolResultStep ? normalizeStepDetails(rawToolResultStep) : undefined,
             }
             return {
               type: 'tool' as const,
@@ -580,6 +596,8 @@ const MixedContentView = memo(function MixedContentView({
               <SubscriptionPreviewCard data={item.data} />
             </div>
           )
+        } else if (item.type === 'guidance') {
+          return <GuidanceBlock key={item.blockId} block={item.data} />
         } else if (item.type === 'tool') {
           const key = 'blockId' in item ? item.blockId : `tool-${item.tool.toolUseId}`
           const count = 'count' in item ? item.count : 1
@@ -599,9 +617,11 @@ const MixedContentView = memo(function MixedContentView({
 
       {/* Show "Processing..." indicator when task is running and last block is complete */}
       {shouldShowProcessing && (
-        <div className="flex items-center gap-2 text-xs text-text-muted italic px-2 py-1">
-          <div className="h-2 w-2 rounded-full bg-primary animate-pulse" />
-          <span>{t('thinking.processing') || 'Processing...'}</span>
+        <div className="px-2 py-1">
+          <StreamingWaitIndicator
+            isWaiting={true}
+            message={t('thinking.processing') || 'Processing...'}
+          />
         </div>
       )}
     </div>

@@ -95,8 +95,10 @@ coverage/
 !.claude/settings.json
 .history
 .wegentrc
+.wegent/
 .worktrees/
 .superpowers/
+.playwright-mcp/
 
 # PyInstaller
 *.spec

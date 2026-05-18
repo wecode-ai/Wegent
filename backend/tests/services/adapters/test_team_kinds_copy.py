@@ -49,7 +49,8 @@ def _add_group_member(
     member = ResourceMember(
         resource_type="Namespace",
         resource_id=group.id,
-        user_id=user.id,
+        entity_type="user",
+        entity_id=str(user.id),
         role=role,
         status=MemberStatus.APPROVED.value,
         invited_by_user_id=group.owner_user_id,

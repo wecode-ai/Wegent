@@ -55,7 +55,7 @@ class TestResponsesAPIEventParserToolIds:
             )
 
     def test_tool_result_parses_arguments_as_tool_input(self):
-        """Test that function_call_arguments.done event parses arguments as tool_input."""
+        """Test that function_call_arguments.done emits argument completion, not tool result."""
         parser = ResponsesAPIEventParser()
 
         parser.parse(
@@ -86,10 +86,56 @@ class TestResponsesAPIEventParserToolIds:
         )
 
         assert result is not None
+        assert result.type == "tool_argument_done"
         assert result.tool_use_id == "tool_123"
-        assert result.tool_output == "File created successfully"
+        assert result.tool_output is None
         assert result.tool_input == {"path": "/test/file.py", "content": "hello"}
         assert result.tool_name == "write_file"
+        assert result.data["argument_status"] == "done"
+
+    def test_tool_argument_delta_updates_sanitized_summary(self):
+        parser = ResponsesAPIEventParser()
+
+        parser.parse(
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+            event_type=ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value,
+            data={
+                "item": {
+                    "type": "function_call",
+                    "id": "tool_delta",
+                    "name": "write_file",
+                    "arguments": "",
+                },
+                "arguments_summary": {"file_path": "/tmp/out.txt"},
+            },
+        )
+
+        result = parser.parse(
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+            event_type=ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DELTA.value,
+            data={
+                "item_id": "tool_delta",
+                "delta": '{"content":"hello',
+                "arguments_summary": {
+                    "file_path": "/tmp/out.txt",
+                    "content": {"omitted": True, "length": 5},
+                },
+            },
+        )
+
+        assert result is not None
+        assert result.type == "tool_argument_delta"
+        assert result.tool_use_id == "tool_delta"
+        assert result.tool_name == "write_file"
+        assert result.tool_input == {
+            "file_path": "/tmp/out.txt",
+            "content": {"omitted": True, "length": 5},
+        }
+        assert result.data["argument_status"] == "streaming"
 
     def test_tool_result_with_empty_arguments(self):
         """Test that function_call_arguments.done event handles empty arguments."""
@@ -123,8 +169,9 @@ class TestResponsesAPIEventParserToolIds:
         )
 
         assert result is not None
+        assert result.type == "tool_argument_done"
         assert result.tool_use_id == "tool_456"
-        assert result.tool_output == "Success"
+        assert result.tool_output is None
         assert result.tool_input == {}
 
     def test_tool_result_without_arguments(self):
@@ -158,8 +205,9 @@ class TestResponsesAPIEventParserToolIds:
         )
 
         assert result is not None
+        assert result.type == "tool_argument_done"
         assert result.tool_use_id == "tool_789"
-        assert result.tool_output == "Done"
+        assert result.tool_output is None
         assert result.tool_input == {}
 
     def test_mcp_tool_start_and_completion(self):
@@ -369,11 +417,11 @@ class TestResponsesAPIEventParserToolIds:
         )
 
         assert result is not None
-        assert result.type == "tool_result"
+        assert result.type == "tool_argument_done"
         assert result.tool_use_id == "missing_tool"
         assert result.tool_name is None
         assert result.tool_input == {"path": "/tmp/test.py"}
-        assert result.tool_output == "done"
+        assert result.tool_output is None
         assert result.data["tool_protocol"] == "function_call"
 
     def test_mcp_tool_completion_without_context_still_updates_block(self):

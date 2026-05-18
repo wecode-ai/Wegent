@@ -208,6 +208,8 @@ cp .env.local.example .env.local
 # Main configuration items (runtime variables, can be changed without rebuilding):
 # RUNTIME_INTERNAL_API_URL=http://localhost:8000  # Server-side proxy URL
 # RUNTIME_SOCKET_DIRECT_URL=http://localhost:8000 # WebSocket connection URL
+# RUNTIME_ENABLE_PROJECT_WORKSPACE=false          # Enable project workspace UI
+# RUNTIME_PROJECT_WORKSPACE_WHITELIST=admin       # Allowed user_names, empty means all users
 # Legacy (deprecated): NEXT_PUBLIC_API_URL=http://localhost:8000
 # NEXT_PUBLIC_USE_MOCK_API=false
 # NEXT_PUBLIC_LOGIN_MODE=all

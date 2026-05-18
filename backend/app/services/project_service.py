@@ -13,10 +13,14 @@ from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.project import Project
 from app.models.task import TaskResource
 from app.schemas.project import (
+    ProjectConfig,
+    ProjectConversationCreate,
+    ProjectConversationResponse,
     ProjectCreate,
     ProjectListResponse,
     ProjectResponse,
@@ -24,6 +28,8 @@ from app.schemas.project import (
     ProjectUpdate,
     ProjectWithTasksResponse,
 )
+from app.schemas.task import TaskCreate
+from app.services.adapters.task_kinds import task_kinds_service
 
 
 def create_project(
@@ -48,13 +54,14 @@ def create_project(
     )
     next_sort_order = (max_sort_order or 0) + 1
 
-    # Create project
-    # Use empty string for color if not provided, since DB column is NOT NULL DEFAULT ''
+    config = _dump_config(project_data.config)
+
     new_project = Project(
         user_id=user_id,
         name=project_data.name,
         description=project_data.description,
         color=project_data.color or "",
+        config=config,
         sort_order=next_sort_order,
         is_expanded=True,
         is_active=True,
@@ -106,6 +113,7 @@ def get_project(
         name=project.name,
         description=project.description or "",
         color=project.color,
+        config=project.config,
         sort_order=project.sort_order,
         is_expanded=project.is_expanded,
         task_count=len(tasks),
@@ -166,6 +174,7 @@ def list_projects(
             name=project.name,
             description=project.description or "",
             color=project.color,
+            config=project.config,
             sort_order=project.sort_order,
             is_expanded=project.is_expanded,
             task_count=task_count,
@@ -213,7 +222,11 @@ def update_project(
     update_dict = update_data.model_dump(exclude_unset=True)
     for field, value in update_dict.items():
         if hasattr(project, field):
+            if field == "config":
+                value = _dump_config(update_data.config)
             setattr(project, field, value)
+            if field == "config":
+                flag_modified(project, "config")
 
     db.commit()
     db.refresh(project)
@@ -228,6 +241,42 @@ def update_project(
         .count()
     )
     return response
+
+
+def create_project_conversation(
+    db: Session,
+    project_id: int,
+    conversation_data: ProjectConversationCreate,
+    user,
+) -> ProjectConversationResponse:
+    """Create a new Task conversation under a workspace project."""
+
+    project = _get_active_project(db, project_id, user.id)
+    config = ProjectConfig.model_validate(project.config or {})
+    if not config.is_workspace:
+        raise HTTPException(
+            status_code=400,
+            detail="Project conversations are only supported for workspace projects",
+        )
+
+    task_create = _build_project_task_create(
+        project=project,
+        config=config,
+        conversation_data=conversation_data,
+    )
+    task_result = task_kinds_service.create_task_or_append(
+        db=db,
+        obj_in=task_create,
+        user=user,
+        task_id=None,
+    )
+
+    task_id = int(task_result["id"])
+    return ProjectConversationResponse(
+        task_id=task_id,
+        project_id=project_id,
+        task=task_result,
+    )
 
 
 def delete_project(db: Session, project_id: int, user_id: int) -> None:
@@ -285,19 +334,7 @@ def add_task_to_project(
     Raises:
         HTTPException: If project or task not found, or task already in a project
     """
-    # Verify project ownership
-    project = (
-        db.query(Project)
-        .filter(
-            Project.id == project_id,
-            Project.user_id == user_id,
-            Project.is_active == True,
-        )
-        .first()
-    )
-
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    _get_active_project(db, project_id, user_id)
 
     # Verify task exists and belongs to user
     task = (
@@ -316,6 +353,7 @@ def add_task_to_project(
 
     # Update task's project_id
     task.project_id = project_id
+    _set_task_project_label(task, project_id)
     db.commit()
     db.refresh(task)
 
@@ -333,6 +371,7 @@ def add_task_to_project(
         task_status=task_status,
         is_group_chat=is_group_chat,
         project_id=project_id,
+        updated_at=task.updated_at,
     )
 
 
@@ -351,19 +390,7 @@ def remove_task_from_project(
     Raises:
         HTTPException: If project or task not found
     """
-    # Verify project ownership
-    project = (
-        db.query(Project)
-        .filter(
-            Project.id == project_id,
-            Project.user_id == user_id,
-            Project.is_active == True,
-        )
-        .first()
-    )
-
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    _get_active_project(db, project_id, user_id)
 
     # Find task and verify it belongs to this project
     task = (
@@ -381,6 +408,7 @@ def remove_task_from_project(
 
     # Remove task from project by setting project_id to 0 (default value for no project)
     task.project_id = 0
+    _set_task_project_label(task, None)
     db.commit()
 
 
@@ -402,7 +430,7 @@ def _get_project_tasks(db: Session, project_id: int) -> list[ProjectTaskResponse
             TaskResource.kind == "Task",
             TaskResource.is_active == TaskResource.STATE_ACTIVE,
         )
-        .order_by(TaskResource.created_at.desc())
+        .order_by(TaskResource.updated_at.desc())
         .all()
     )
 
@@ -422,7 +450,84 @@ def _get_project_tasks(db: Session, project_id: int) -> list[ProjectTaskResponse
                 task_status=task_status,
                 is_group_chat=is_group_chat,
                 project_id=project_id,
+                updated_at=task.updated_at,
             )
         )
 
     return result
+
+
+def _get_active_project(db: Session, project_id: int, user_id: int) -> Project:
+    """Return an active project owned by a user."""
+
+    project = (
+        db.query(Project)
+        .filter(
+            Project.id == project_id,
+            Project.user_id == user_id,
+            Project.is_active == True,
+        )
+        .first()
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return project
+
+
+def _dump_config(config: Optional[ProjectConfig]) -> Optional[dict]:
+    """Convert project config to JSON-ready dict."""
+
+    if config is None:
+        return None
+    return config.model_dump(mode="json", exclude_none=True)
+
+
+def _set_task_project_label(task: TaskResource, project_id: Optional[int]) -> None:
+    """Set or clear the projectId task metadata label."""
+
+    task_json = dict(task.json or {})
+    metadata = dict(task_json.get("metadata") or {})
+    labels = dict(metadata.get("labels") or {})
+    if project_id:
+        labels["projectId"] = str(project_id)
+    else:
+        labels.pop("projectId", None)
+    metadata["labels"] = labels
+    task_json["metadata"] = metadata
+    task.json = task_json
+    flag_modified(task, "json")
+
+
+def _build_project_task_create(
+    project: Project,
+    config: ProjectConfig,
+    conversation_data: ProjectConversationCreate,
+) -> TaskCreate:
+    """Build TaskCreate from a workspace project config."""
+
+    team = config.team
+    workspace = config.workspace
+    git = config.git
+    assert workspace is not None
+
+    title = conversation_data.title or conversation_data.prompt[:50]
+    if not conversation_data.title and len(conversation_data.prompt) > 50:
+        title += "..."
+
+    return TaskCreate(
+        title=title,
+        team_id=team.id if team else None,
+        team_name=team.name if team else None,
+        team_namespace=team.namespace if team else "default",
+        git_url=git.url if git else "",
+        git_repo=git.repo if git and git.repo else "",
+        git_repo_id=git.repoId if git and git.repoId else 0,
+        git_domain=git.domain if git and git.domain else "",
+        branch_name=git.branch if git and git.branch else "",
+        prompt=conversation_data.prompt,
+        type="offline",
+        task_type="code",
+        auto_delete_executor="false",
+        source="project",
+        project_id=project.id,
+    )

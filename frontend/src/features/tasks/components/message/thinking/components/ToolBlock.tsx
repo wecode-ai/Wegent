@@ -121,7 +121,8 @@ function hasMeaningfulToolInput(input: Record<string, unknown> | string | undefi
 /**
  * Truncate text to a maximum length, adding ellipsis if needed
  */
-function truncateText(text: string, maxLength: number): string {
+function truncateText(text: string | undefined | null, maxLength: number): string {
+  if (!text) return ''
   // Remove newlines and extra whitespace for inline display
   const cleaned = text.replace(/\s+/g, ' ').trim()
   if (cleaned.length <= maxLength) {
@@ -181,7 +182,10 @@ export const ToolBlock = memo(function ToolBlock({
   // For merged tools, check if any of them is still running
   const isRunning = useMemo(() => {
     const checkRunning = (status: string | undefined) =>
-      status === 'invoking' || status === 'streaming' || status === 'pending'
+      status === 'generating_arguments' ||
+      status === 'invoking' ||
+      status === 'streaming' ||
+      status === 'pending'
 
     if (count > 1 && mergedTools.length > 0) {
       return mergedTools.some(item => checkRunning(item.status))
