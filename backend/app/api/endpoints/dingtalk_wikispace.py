@@ -122,7 +122,9 @@ def delete_synced_wikispace_node(
     current_user: User = Depends(get_current_user),
 ) -> dict[str, str]:
     """Delete a synced wikispace node from local cache (does not delete from DingTalk)."""
-    success = DingTalkDocService.delete_synced_node(node_id, current_user.id, db)
+    success = DingTalkDocService.delete_synced_node(
+        node_id, current_user.id, db, source="wikispace"
+    )
     if not success:
         raise HTTPException(status_code=404, detail="Node not found")
     return {"status": "ok"}

@@ -43,6 +43,18 @@ def downgrade() -> None:
     op.drop_index(
         "ix_dingtalk_nodes_user_node_source", table_name="dingtalk_synced_nodes"
     )
+    # Deduplicate: keep only the row with lowest id for each (user_id, dingtalk_node_id)
+    # This is needed because after dropping source column, duplicates would violate the unique index
+    op.execute(
+        """
+        DELETE FROM dingtalk_synced_nodes
+        WHERE id NOT IN (
+            SELECT MIN(id)
+            FROM dingtalk_synced_nodes
+            GROUP BY user_id, dingtalk_node_id
+        )
+        """
+    )
     op.create_index(
         "ix_dingtalk_nodes_user_node",
         "dingtalk_synced_nodes",

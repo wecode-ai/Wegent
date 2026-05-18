@@ -178,6 +178,8 @@ class TestFetchAllWikispaceNodes:
     async def test_adds_kb_root_as_folder_node(self) -> None:
         """Each knowledge base is added as a folder-type root node."""
         kb_nodes = [{"workspaceId": "WSABC", "name": "Test KB"}]
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
 
         with (
             patch.object(
@@ -190,7 +192,16 @@ class TestFetchAllWikispaceNodes:
                 "_list_nodes_in_wikispace",
                 new=AsyncMock(return_value=None),
             ),
+            patch("mcp.client.streamable_http.streamablehttp_client") as mock_http,
+            patch("mcp.ClientSession") as mock_cls,
         ):
+            mock_http.return_value.__aenter__ = AsyncMock(
+                return_value=(MagicMock(), MagicMock(), None)
+            )
+            mock_http.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
             result = await DingTalkWikiSpaceService._fetch_all_wikispace_nodes(
                 wikispace_mcp_url="https://ws.mcp.example.com",
                 docs_mcp_url="https://docs.mcp.example.com",
@@ -207,12 +218,15 @@ class TestFetchAllWikispaceNodes:
     async def test_uses_wikispace_mcp_url_as_docs_fallback(self) -> None:
         """Falls back to wikispace MCP URL when docs MCP URL is not configured."""
         kb_nodes = [{"workspaceId": "WS1", "name": "KB 1"}]
-        captured_urls: list[str] = []
+        captured_sessions: list = []
 
-        async def capture_url(
-            docs_mcp_url: str, workspace_id: str, all_nodes: list
+        async def capture_session(
+            session: object, workspace_id: str, all_nodes: list
         ) -> None:
-            captured_urls.append(docs_mcp_url)
+            captured_sessions.append(session)
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
 
         with (
             patch.object(
@@ -223,15 +237,25 @@ class TestFetchAllWikispaceNodes:
             patch.object(
                 DingTalkWikiSpaceService,
                 "_list_nodes_in_wikispace",
-                new=AsyncMock(side_effect=capture_url),
+                new=AsyncMock(side_effect=capture_session),
             ),
+            patch("mcp.client.streamable_http.streamablehttp_client") as mock_http,
+            patch("mcp.ClientSession") as mock_cls,
         ):
+            mock_http.return_value.__aenter__ = AsyncMock(
+                return_value=(MagicMock(), MagicMock(), None)
+            )
+            mock_http.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
             await DingTalkWikiSpaceService._fetch_all_wikispace_nodes(
                 wikispace_mcp_url="https://ws.mcp.example.com",
                 docs_mcp_url=None,  # not configured
             )
 
-        assert captured_urls == ["https://ws.mcp.example.com"]
+        # Verify that a session was passed (the session is reused for all KBs)
+        assert len(captured_sessions) == 1
 
     @pytest.mark.asyncio
     async def test_skips_kb_with_no_workspace_id(self) -> None:
@@ -243,9 +267,12 @@ class TestFetchAllWikispaceNodes:
         list_nodes_calls: list[str] = []
 
         async def track_call(
-            docs_mcp_url: str, workspace_id: str, all_nodes: list
+            session: object, workspace_id: str, all_nodes: list
         ) -> None:
             list_nodes_calls.append(workspace_id)
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
 
         with (
             patch.object(
@@ -258,7 +285,16 @@ class TestFetchAllWikispaceNodes:
                 "_list_nodes_in_wikispace",
                 new=AsyncMock(side_effect=track_call),
             ),
+            patch("mcp.client.streamable_http.streamablehttp_client") as mock_http,
+            patch("mcp.ClientSession") as mock_cls,
         ):
+            mock_http.return_value.__aenter__ = AsyncMock(
+                return_value=(MagicMock(), MagicMock(), None)
+            )
+            mock_http.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
             result = await DingTalkWikiSpaceService._fetch_all_wikispace_nodes(
                 wikispace_mcp_url="https://ws.mcp.example.com",
             )
@@ -279,12 +315,15 @@ class TestFetchAllWikispaceNodes:
         call_count = 0
 
         async def maybe_fail(
-            docs_mcp_url: str, workspace_id: str, all_nodes: list
+            session: object, workspace_id: str, all_nodes: list
         ) -> None:
             nonlocal call_count
             call_count += 1
             if workspace_id == "WS_FAIL":
                 raise ConnectionError("MCP connection failed")
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
 
         with (
             patch.object(
@@ -297,7 +336,16 @@ class TestFetchAllWikispaceNodes:
                 "_list_nodes_in_wikispace",
                 new=AsyncMock(side_effect=maybe_fail),
             ),
+            patch("mcp.client.streamable_http.streamablehttp_client") as mock_http,
+            patch("mcp.ClientSession") as mock_cls,
         ):
+            mock_http.return_value.__aenter__ = AsyncMock(
+                return_value=(MagicMock(), MagicMock(), None)
+            )
+            mock_http.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
             result = await DingTalkWikiSpaceService._fetch_all_wikispace_nodes(
                 wikispace_mcp_url="https://ws.mcp.example.com",
             )

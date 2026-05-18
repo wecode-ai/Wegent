@@ -547,16 +547,32 @@ class DingTalkDocService:
         }
 
     @staticmethod
-    def delete_synced_node(node_id: int, user_id: int, db: Session) -> bool:
-        """Delete a synced document node (local cache only)."""
-        node = (
-            db.query(DingtalkSyncedNode)
-            .filter(
-                DingtalkSyncedNode.id == node_id,
-                DingtalkSyncedNode.user_id == user_id,
-            )
-            .first()
-        )
+    def delete_synced_node(
+        node_id: int,
+        user_id: int,
+        db: Session,
+        source: str | None = None,
+    ) -> bool:
+        """Delete a synced document node (local cache only).
+
+        Args:
+            node_id: The database ID of the node to delete.
+            user_id: The user ID who owns the node.
+            db: Database session.
+            source: Optional source filter (e.g., "docs", "wikispace").
+                    If provided, only deletes if the node matches this source.
+
+        Returns:
+            True if the node was found and deleted, False otherwise.
+        """
+        filters = [
+            DingtalkSyncedNode.id == node_id,
+            DingtalkSyncedNode.user_id == user_id,
+        ]
+        if source is not None:
+            filters.append(DingtalkSyncedNode.source == source)
+
+        node = db.query(DingtalkSyncedNode).filter(*filters).first()
         if not node:
             return False
 
