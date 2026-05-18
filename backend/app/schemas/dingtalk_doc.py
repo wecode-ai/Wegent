@@ -22,7 +22,9 @@ class DingtalkDocNodeBase(BaseModel):
     node_type: str  # folder, doc, file
     workspace_id: str = ""
     content_type: str = ""
-    source: str = "docs"  # Source: "docs" (personal documents) or "wikispace" (knowledge base)
+    source: str = (
+        "docs"  # Source: "docs" (personal documents) or "wikispace" (knowledge base)
+    )
     content_updated_at: datetime
 
 
