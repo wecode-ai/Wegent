@@ -3,7 +3,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
-from app.services.openapi.output_builder import build_response_output
+from app.services.openapi.output_builder import (
+    build_response_output,
+    extract_pending_user_input_state,
+)
 
 
 def _assistant_subtask(*, subtask_id: int, result: dict) -> Subtask:
@@ -276,3 +279,109 @@ def test_build_response_output_restores_mcp_call_by_unique_name_fallback():
     assert len(output) == 1
     assert output[0].type == "mcp_call"
     assert output[0].server_label == "wegent-knowledge"
+
+
+def test_build_response_output_restores_mcp_call_output_from_blocks():
+    subtask = _assistant_subtask(
+        subtask_id=108,
+        result={
+            "blocks": [
+                {
+                    "id": "call_mcp_2",
+                    "type": "tool",
+                    "tool_use_id": "call_mcp_2",
+                    "tool_name": "interactive_form_question",
+                    "tool_input": {"ask_id": "ask_108"},
+                    "tool_output": (
+                        '{"pending_user_input": true, '
+                        '"pending_user_input_payload": {'
+                        '"type": "interactive_form_question", '
+                        '"ask_id": "ask_108", '
+                        '"submit_mode": "new_response", '
+                        '"submit_format": "markdown_message"}}'
+                    ),
+                    "tool_protocol": "mcp_call",
+                    "server_label": "interactive-form",
+                    "status": "done",
+                }
+            ]
+        },
+    )
+
+    output = build_response_output([subtask])
+
+    assert len(output) == 1
+    assert output[0].type == "mcp_call"
+    assert output[0].output["pending_user_input"] is True
+    assert output[0].output["pending_user_input_payload"]["ask_id"] == "ask_108"
+
+
+def test_extract_pending_user_input_state_from_tool_blocks():
+    subtask = _assistant_subtask(
+        subtask_id=109,
+        result={
+            "blocks": [
+                {
+                    "id": "call_mcp_3",
+                    "type": "tool",
+                    "tool_use_id": "call_mcp_3",
+                    "tool_name": "interactive_form_question",
+                    "tool_input": {"ask_id": "ask_109"},
+                    "tool_output": {
+                        "pending_user_input": True,
+                        "pending_user_input_payload": {
+                            "type": "interactive_form_question",
+                            "ask_id": "ask_109",
+                        },
+                    },
+                    "tool_protocol": "mcp_call",
+                    "server_label": "interactive-form",
+                    "status": "done",
+                }
+            ]
+        },
+    )
+
+    pending_user_input, payload = extract_pending_user_input_state([subtask])
+
+    assert pending_user_input is True
+    assert payload == {
+        "type": "interactive_form_question",
+        "ask_id": "ask_109",
+    }
+
+
+def test_extract_pending_user_input_state_rebuilds_minimal_payload_from_fallback():
+    subtask = _assistant_subtask(
+        subtask_id=110,
+        result={
+            "blocks": [
+                {
+                    "id": "call_mcp_4",
+                    "type": "tool",
+                    "tool_use_id": "call_mcp_4",
+                    "tool_name": "interactive_form_question",
+                    "tool_input": {
+                        "ask_id": "ask_110",
+                        "questions": [{"id": "exp_id", "question": "Enter exp id"}],
+                    },
+                    "tool_output": {
+                        "pending_user_input": True,
+                        "ask_id": "ask_110",
+                    },
+                    "tool_protocol": "mcp_call",
+                    "server_label": "interactive-form",
+                    "status": "done",
+                }
+            ]
+        },
+    )
+
+    pending_user_input, payload = extract_pending_user_input_state([subtask])
+
+    assert pending_user_input is True
+    assert payload == {
+        "ask_id": "ask_110",
+        "questions": [{"id": "exp_id", "question": "Enter exp id"}],
+        "type": "interactive_form_question",
+    }

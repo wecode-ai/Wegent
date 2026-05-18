@@ -59,6 +59,27 @@ class TestInteractiveFormTool:
         assert "reason" in result
 
     @pytest.mark.asyncio
+    async def test_returns_pending_user_input_payload(self):
+        """interactive_form_question exposes pending user input compatibility fields."""
+        token = self._make_token(subtask_id=2)
+        with patch(
+            "app.mcp_server.tools.interactive_form_question._notify_frontend",
+            new_callable=AsyncMock,
+        ):
+            result = await interactive_form_question(
+                token_info=token,
+                questions=[{"id": "q1", "question": "Any question?"}],
+            )
+
+        assert result["__silent_exit__"] is True
+        assert result["pending_user_input"] is True
+        payload = result["pending_user_input_payload"]
+        assert payload["type"] == "interactive_form_question"
+        assert payload["ask_id"] == "ask_2"
+        assert payload["submit_mode"] == "new_response"
+        assert payload["submit_format"] == "markdown_message"
+
+    @pytest.mark.asyncio
     async def test_single_question_choice_mode(self):
         """A single-item questions list keeps input_type='choice' when options exist."""
         token = self._make_token()

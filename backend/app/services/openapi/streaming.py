@@ -17,11 +17,15 @@ from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 from app.schemas.openapi_response import (
+    FunctionCallOutputItem,
+    MCPCallOutputItem,
     OutputMessage,
     OutputTextContent,
     ResponseError,
     ResponseObject,
+    ShellCallOutputItem,
 )
+from app.services.openapi.output_builder import normalize_tool_output
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +85,53 @@ def _build_shell_call_item(
     }
 
 
+def _parse_mcp_arguments(arguments: Any) -> Dict[str, Any]:
+    if isinstance(arguments, dict):
+        return arguments
+    if not isinstance(arguments, str) or not arguments:
+        return {}
+    try:
+        parsed = json.loads(arguments)
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _extract_pending_user_input_state(
+    *,
+    tool_name: str,
+    arguments: Any,
+    tool_output: Any,
+) -> tuple[bool, Optional[Dict[str, Any]]]:
+    if (
+        not isinstance(tool_output, dict)
+        or tool_output.get("pending_user_input") is not True
+    ):
+        return False, None
+
+    payload = tool_output.get("pending_user_input_payload")
+    if isinstance(payload, dict):
+        return True, payload
+
+    fallback_payload: Dict[str, Any] = {}
+    ask_id = tool_output.get("ask_id")
+    if isinstance(ask_id, str) and ask_id:
+        fallback_payload["ask_id"] = ask_id
+
+    parsed_arguments = _parse_mcp_arguments(arguments)
+    questions = parsed_arguments.get("questions")
+    if isinstance(questions, list) and questions:
+        fallback_payload["questions"] = questions
+
+    if fallback_payload:
+        fallback_payload["type"] = (
+            str(tool_output.get("type") or tool_name) or "interactive_form_question"
+        )
+        return True, fallback_payload
+
+    return True, None
+
+
 @dataclass
 class StreamingChunk:
     """A chunk of streaming data for Responses API streaming."""
@@ -136,10 +187,14 @@ class OpenAPIStreamingService:
         sequence_number = 0
         reasoning_started = False
         reasoning_complete = False
-        output_index = 0
         next_output_index = 0
         message_started = False
+        reasoning_output_index: Optional[int] = None
+        message_output_index: Optional[int] = None
         tool_output_indexes: Dict[str, int] = {}
+        completed_output_items: Dict[int, Any] = {}
+        pending_user_input = False
+        pending_user_input_payload: Optional[Dict[str, Any]] = None
 
         def allocate_output_index() -> int:
             nonlocal next_output_index
@@ -209,7 +264,7 @@ class OpenAPIStreamingService:
                         # Start reasoning output if not started
                         if not reasoning_started:
                             reasoning_started = True
-                            output_index = allocate_output_index()
+                            reasoning_output_index = allocate_output_index()
                             # Official OpenAI event: response.reasoning_summary_part.added
                             yield _format_sse_event(
                                 {
@@ -220,7 +275,7 @@ class OpenAPIStreamingService:
                                         "summary": [],
                                         "type": "reasoning",
                                     },
-                                    "output_index": output_index,
+                                    "output_index": reasoning_output_index,
                                     "sequence_number": sequence_number,
                                     "type": "response.reasoning_summary_part.added",
                                 }
@@ -236,7 +291,7 @@ class OpenAPIStreamingService:
                                     "content_index": 0,
                                     "delta": chunk.content,
                                     "item_id": message_id,
-                                    "output_index": output_index,
+                                    "output_index": reasoning_output_index,
                                     "sequence_number": sequence_number,
                                     "type": "response.reasoning_summary_text.delta",
                                 }
@@ -257,7 +312,7 @@ class OpenAPIStreamingService:
                             # Start text output if this is the first text chunk
                             if not message_started:
                                 message_started = True
-                                output_index = allocate_output_index()
+                                message_output_index = allocate_output_index()
                                 # Official OpenAI event: response.output_item.added
                                 yield _format_sse_event(
                                     {
@@ -268,7 +323,7 @@ class OpenAPIStreamingService:
                                             "status": "in_progress",
                                             "type": "message",
                                         },
-                                        "output_index": output_index,
+                                        "output_index": message_output_index,
                                         "sequence_number": sequence_number,
                                         "type": "response.output_item.added",
                                     }
@@ -280,7 +335,7 @@ class OpenAPIStreamingService:
                                     {
                                         "content_index": 0,
                                         "item_id": message_id,
-                                        "output_index": output_index,
+                                        "output_index": message_output_index,
                                         "part": {
                                             "annotations": [],
                                             "text": "",
@@ -298,7 +353,7 @@ class OpenAPIStreamingService:
                                     "content_index": 0,
                                     "delta": chunk.content,
                                     "item_id": message_id,
-                                    "output_index": output_index,
+                                    "output_index": message_output_index,
                                     "sequence_number": sequence_number,
                                     "type": "response.output_text.delta",
                                 }
@@ -330,6 +385,14 @@ class OpenAPIStreamingService:
                         name = chunk.data["name"]
                         arguments = chunk.data.get("arguments") or ""
                         tool_output_index = pop_tool_output_index(f"function:{call_id}")
+                        completed_output_items[tool_output_index] = (
+                            FunctionCallOutputItem(
+                                id=call_id,
+                                call_id=call_id,
+                                name=name,
+                                arguments=arguments,
+                            )
+                        )
                         yield _format_sse_event(
                             {
                                 "type": "response.function_call_arguments.done",
@@ -383,6 +446,16 @@ class OpenAPIStreamingService:
                         name = chunk.data["name"]
                         arguments = chunk.data.get("arguments") or {}
                         tool_output_index = pop_tool_output_index(f"shell:{call_id}")
+                        completed_output_items[tool_output_index] = (
+                            ShellCallOutputItem.model_validate(
+                                _build_shell_call_item(
+                                    call_id,
+                                    name,
+                                    arguments,
+                                    status=chunk.data.get("status", "completed"),
+                                )
+                            )
+                        )
                         yield _format_sse_event(
                             {
                                 "type": "response.output_item.done",
@@ -434,7 +507,37 @@ class OpenAPIStreamingService:
                         name = chunk.data["name"]
                         server_label = chunk.data["server_label"]
                         arguments = chunk.data.get("arguments") or ""
+                        tool_output = normalize_tool_output(chunk.data.get("output"))
                         tool_output_index = pop_tool_output_index(f"mcp:{item_id}")
+                        completed_output_items[tool_output_index] = MCPCallOutputItem(
+                            id=item_id,
+                            name=name,
+                            server_label=server_label,
+                            arguments=arguments,
+                            status=(
+                                "failed"
+                                if chunk.data.get("status") == "failed"
+                                else "completed"
+                            ),
+                            output=tool_output,
+                        )
+                        (
+                            chunk_pending_user_input,
+                            chunk_pending_user_input_payload,
+                        ) = _extract_pending_user_input_state(
+                            tool_name=name,
+                            arguments=arguments,
+                            tool_output=tool_output,
+                        )
+                        if chunk_pending_user_input:
+                            pending_user_input = True
+                            if (
+                                pending_user_input_payload is None
+                                and chunk_pending_user_input_payload is not None
+                            ):
+                                pending_user_input_payload = (
+                                    chunk_pending_user_input_payload
+                                )
                         yield _format_sse_event(
                             {
                                 "type": "response.mcp_call_arguments.done",
@@ -462,26 +565,31 @@ class OpenAPIStreamingService:
                             "error"
                         ):
                             terminal_payload["failure_reason"] = chunk.data["error"]
+                        if tool_output is not None:
+                            terminal_payload["output"] = tool_output
                         yield _format_sse_event(terminal_payload)
                         sequence_number += 1
+                        item_payload = {
+                            "type": "mcp_call",
+                            "id": item_id,
+                            "name": name,
+                            "server_label": server_label,
+                            "arguments": arguments,
+                            "status": (
+                                "failed"
+                                if chunk.data.get("status") == "failed"
+                                else "completed"
+                            ),
+                        }
+                        if tool_output is not None:
+                            item_payload["output"] = tool_output
                         yield _format_sse_event(
                             {
                                 "type": "response.output_item.done",
                                 "response_id": response_id,
                                 "output_index": tool_output_index,
                                 "sequence_number": sequence_number,
-                                "item": {
-                                    "type": "mcp_call",
-                                    "id": item_id,
-                                    "name": name,
-                                    "server_label": server_label,
-                                    "arguments": arguments,
-                                    "status": (
-                                        "failed"
-                                        if chunk.data.get("status") == "failed"
-                                        else "completed"
-                                    ),
-                                },
+                                "item": item_payload,
                             }
                         )
                         sequence_number += 1
@@ -493,7 +601,7 @@ class OpenAPIStreamingService:
                     {
                         "content_index": 0,
                         "item_id": message_id,
-                        "output_index": output_index,
+                        "output_index": message_output_index,
                         "sequence_number": sequence_number,
                         "text": accumulated_text,
                         "type": "response.output_text.done",
@@ -506,7 +614,7 @@ class OpenAPIStreamingService:
                     {
                         "content_index": 0,
                         "item_id": message_id,
-                        "output_index": output_index,
+                        "output_index": message_output_index,
                         "part": {
                             "annotations": [],
                             "text": accumulated_text,
@@ -534,7 +642,7 @@ class OpenAPIStreamingService:
                             "status": "completed",
                             "type": "message",
                         },
-                        "output_index": output_index,
+                        "output_index": message_output_index,
                         "sequence_number": sequence_number,
                         "type": "response.output_item.done",
                     }
@@ -542,25 +650,24 @@ class OpenAPIStreamingService:
                 sequence_number += 1
 
             # Build final output items
-            output_items = []
-            if accumulated_reasoning:
-                output_items.append(
-                    OutputMessage(
-                        id=_generate_message_id(),
-                        status="completed",
-                        role="assistant",
-                        content=[{"type": "reasoning", "text": accumulated_reasoning}],
-                    )
+            if accumulated_reasoning and reasoning_output_index is not None:
+                completed_output_items[reasoning_output_index] = OutputMessage(
+                    id=_generate_message_id(),
+                    status="completed",
+                    role="assistant",
+                    content=[{"type": "reasoning", "text": accumulated_reasoning}],
                 )
-            if accumulated_text:
-                output_items.append(
-                    OutputMessage(
-                        id=message_id,
-                        status="completed",
-                        role="assistant",
-                        content=[OutputTextContent(text=accumulated_text)],
-                    )
+            if accumulated_text and message_output_index is not None:
+                completed_output_items[message_output_index] = OutputMessage(
+                    id=message_id,
+                    status="completed",
+                    role="assistant",
+                    content=[OutputTextContent(text=accumulated_text)],
                 )
+            output_items = [
+                completed_output_items[index]
+                for index in sorted(completed_output_items.keys())
+            ]
 
             # Official OpenAI event: response.completed
             final_response = ResponseObject(
@@ -569,6 +676,8 @@ class OpenAPIStreamingService:
                 status="completed",
                 model=model_string,
                 output=output_items,
+                pending_user_input=pending_user_input or None,
+                pending_user_input_payload=pending_user_input_payload,
                 previous_response_id=previous_response_id,
             )
             yield _format_sse_event(
