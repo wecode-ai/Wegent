@@ -472,14 +472,14 @@
       "delete_success": "签名密钥（SigningKey）删除成功",
       "enabled_success": "签名密钥（SigningKey）已启用",
       "disabled_success": "签名密钥（SigningKey）已禁用",
-      "delete_confirm_message": "确定要删除签名密钥（SigningKey）\"{{name}}\" 吗？如果仍被启用中的签发器引用，删除会失败。",
+      "delete_confirm_message": "确定要删除签名密钥（SigningKey）\"{{name}}\" 吗？如果仍被任何签发器引用，删除会失败。",
       "errors": {
         "load_failed": "加载签名密钥（SigningKey）失败",
         "create_failed": "创建签名密钥（SigningKey）失败",
         "delete_failed": "删除签名密钥（SigningKey）失败",
         "toggle_failed": "切换签名密钥（SigningKey）状态失败",
         "disable_blocked_by_active_issuers": "该签名密钥仍被 {{count}} 个已启用签发器引用：{{names}}。请先停用这些签发器后再禁用此密钥。",
-        "delete_blocked_by_active_issuers": "该签名密钥仍被 {{count}} 个已启用签发器引用：{{names}}。请先停用或解绑这些签发器后再删除。",
+        "delete_blocked_by_issuers": "该签名密钥仍被 {{count}} 个签发器引用：{{names}}。请先解除这些引用后再删除。",
         "disable_blocked_by_issuer": "该签名密钥仍被已启用的签发器引用，请先停用相关签发器再禁用此密钥。",
         "delete_blocked_by_issuer": "该签名密钥仍被签发器引用，请先解除相关引用后再删除。"
       }

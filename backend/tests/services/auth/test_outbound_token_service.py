@@ -114,3 +114,96 @@ def test_cannot_disable_signing_key_while_enabled_issuer_references_it(
         outbound_token_service.toggle_signing_key_status(test_db, signing_key.id)
 
     assert "Disable dependent token issuers" in str(exc_info.value)
+
+
+def test_cannot_delete_signing_key_while_disabled_issuer_references_it(
+    test_db: Session,
+):
+    signing_key = outbound_token_service.create_signing_key(
+        test_db,
+        SigningKeyCreateRequest(name="delete-guard-key"),
+    )
+    outbound_token_service.create_token_issuer(
+        test_db,
+        TokenIssuerCreateRequest(
+            name="disabled-issuer",
+            signing_key_id=signing_key.id,
+            issuer="wegent",
+            audience="vip_sql_platform",
+            default_ttl_seconds=600,
+            max_ttl_seconds=900,
+            enabled=False,
+        ),
+    )
+
+    with pytest.raises(OutboundTokenValidationError) as exc_info:
+        outbound_token_service.delete_signing_key(test_db, signing_key.id)
+
+    assert "still referenced" in str(exc_info.value)
+    assert exc_info.value.error_code == "SIGNING_KEY_DELETE_BLOCKED_BY_ISSUER"
+
+
+def test_issue_outbound_token_uses_default_ttl_when_expires_in_is_none(
+    test_db: Session,
+    test_user,
+):
+    signing_key = outbound_token_service.create_signing_key(
+        test_db,
+        SigningKeyCreateRequest(name="default-ttl-key"),
+    )
+    issuer = outbound_token_service.create_token_issuer(
+        test_db,
+        TokenIssuerCreateRequest(
+            name="default-ttl-issuer",
+            signing_key_id=signing_key.id,
+            issuer="wegent",
+            audience="vip_sql_platform",
+            default_ttl_seconds=600,
+            max_ttl_seconds=900,
+            enabled=True,
+        ),
+    )
+
+    issued = outbound_token_service.issue_token(
+        test_db,
+        issuer_id=issuer.id,
+        user=test_user,
+        expires_in=None,
+    )
+
+    assert issued.expires_in == 600
+    assert issued.expires_at - issued.issued_at == 600
+
+
+@pytest.mark.parametrize("expires_in", [0, -1])
+def test_issue_outbound_token_rejects_non_positive_ttl(
+    test_db: Session,
+    test_user,
+    expires_in: int,
+):
+    signing_key = outbound_token_service.create_signing_key(
+        test_db,
+        SigningKeyCreateRequest(name=f"invalid-ttl-key-{expires_in}"),
+    )
+    issuer = outbound_token_service.create_token_issuer(
+        test_db,
+        TokenIssuerCreateRequest(
+            name=f"invalid-ttl-issuer-{expires_in}",
+            signing_key_id=signing_key.id,
+            issuer="wegent",
+            audience="vip_sql_platform",
+            default_ttl_seconds=600,
+            max_ttl_seconds=900,
+            enabled=True,
+        ),
+    )
+
+    with pytest.raises(OutboundTokenValidationError) as exc_info:
+        outbound_token_service.issue_token(
+            test_db,
+            issuer_id=issuer.id,
+            user=test_user,
+            expires_in=expires_in,
+        )
+
+    assert "must be positive" in str(exc_info.value)

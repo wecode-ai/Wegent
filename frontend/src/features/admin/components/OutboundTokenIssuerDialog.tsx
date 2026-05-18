@@ -120,6 +120,7 @@ const OutboundTokenIssuerDialog: React.FC<OutboundTokenIssuerDialogProps> = ({
                 size="sm"
                 className="px-2"
                 onClick={onToggleInlineKeyForm}
+                data-testid="toggle-inline-key-form"
               >
                 {showInlineKeyForm
                   ? t('outbound_tokens.signing_keys.cancel_inline_create')
@@ -182,6 +183,7 @@ const OutboundTokenIssuerDialog: React.FC<OutboundTokenIssuerDialogProps> = ({
                     size="sm"
                     onClick={onCreateInlineSigningKey}
                     disabled={isCreatingInlineKey}
+                    data-testid="create-inline-signing-key"
                   >
                     {isCreatingInlineKey && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                     {t('outbound_tokens.signing_keys.create')}

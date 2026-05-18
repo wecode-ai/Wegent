@@ -151,22 +151,21 @@ class OutboundTokenService:
         row = self._get_kind_or_raise(
             db, SIGNING_KEY_KIND, key_id, SigningKeyNotFoundError
         )
-        in_use = (
+        referenced_issuers = (
             db.query(Kind)
             .filter(
                 Kind.kind == TOKEN_ISSUER_KIND,
                 Kind.user_id == SYSTEM_USER_ID,
                 Kind.namespace == SYSTEM_NAMESPACE,
-                Kind.is_active == True,  # noqa: E712
             )
             .all()
         )
-        for issuer in in_use:
+        for issuer in referenced_issuers:
             issuer_resource = TokenIssuerKind.model_validate(issuer.json)
             if issuer_resource.spec.signingKeyRef.kindId == key_id:
                 raise OutboundTokenValidationError(
                     f"Signing key '{row.name}' is still referenced by token issuer '{issuer.name}'",
-                    error_code="SIGNING_KEY_DELETE_BLOCKED_BY_ACTIVE_ISSUER",
+                    error_code="SIGNING_KEY_DELETE_BLOCKED_BY_ISSUER",
                 )
         db.delete(row)
         db.commit()
@@ -243,7 +242,10 @@ class OutboundTokenService:
             signing_key = self._get_kind_or_raise(
                 db, SIGNING_KEY_KIND, payload.signing_key_id, SigningKeyNotFoundError
             )
-            if (payload.enabled is True or row.is_active) and not signing_key.is_active:
+            effective_enabled = (
+                payload.enabled if payload.enabled is not None else row.is_active
+            )
+            if effective_enabled and not signing_key.is_active:
                 raise OutboundTokenValidationError(
                     "Cannot use a disabled signing key for an enabled token issuer",
                     error_code="TOKEN_ISSUER_REQUIRES_ACTIVE_SIGNING_KEY",
@@ -346,7 +348,9 @@ class OutboundTokenService:
         if not issuer.spec.enabled or not issuer_row.is_active:
             raise OutboundTokenValidationError("Token issuer is disabled")
 
-        ttl = expires_in or issuer.spec.defaultTtlSeconds
+        ttl = issuer.spec.defaultTtlSeconds if expires_in is None else expires_in
+        if ttl <= 0:
+            raise OutboundTokenValidationError("Requested TTL must be positive")
         if ttl > issuer.spec.maxTtlSeconds:
             raise OutboundTokenValidationError("Requested TTL exceeds issuer policy")
 

@@ -51,7 +51,7 @@ const DEFAULT_INLINE_KEY_FORM: InlineKeyFormState = {
 const OUTBOUND_TOKEN_ERROR_MESSAGE_KEYS: Record<string, string> = {
   SIGNING_KEY_DISABLE_BLOCKED_BY_ACTIVE_ISSUER:
     'outbound_tokens.signing_keys.errors.disable_blocked_by_issuer',
-  SIGNING_KEY_DELETE_BLOCKED_BY_ACTIVE_ISSUER:
+  SIGNING_KEY_DELETE_BLOCKED_BY_ISSUER:
     'outbound_tokens.signing_keys.errors.delete_blocked_by_issuer',
   TOKEN_ISSUER_REQUIRES_ACTIVE_SIGNING_KEY:
     'outbound_tokens.issuers.errors.requires_active_signing_key',
@@ -95,6 +95,14 @@ const OutboundTokenIssuerList: React.FC<{ showHeader?: boolean }> = ({ showHeade
       if (!issuer.is_active) {
         return
       }
+      names.set(issuer.signing_key_id, [...(names.get(issuer.signing_key_id) ?? []), issuer.name])
+    })
+    return names
+  }, [issuers])
+
+  const issuerNamesByKeyId = useMemo(() => {
+    const names = new Map<number, string[]>()
+    issuers.forEach(issuer => {
       names.set(issuer.signing_key_id, [...(names.get(issuer.signing_key_id) ?? []), issuer.name])
     })
     return names
@@ -326,7 +334,13 @@ const OutboundTokenIssuerList: React.FC<{ showHeader?: boolean }> = ({ showHeade
     const defaultTtlSeconds = Number(issuerForm.defaultTtlSeconds)
     const maxTtlSeconds = Number(issuerForm.maxTtlSeconds)
 
-    if (!Number.isFinite(defaultTtlSeconds) || !Number.isFinite(maxTtlSeconds)) {
+    if (
+      !Number.isFinite(defaultTtlSeconds) ||
+      !Number.isFinite(maxTtlSeconds) ||
+      defaultTtlSeconds < 60 ||
+      maxTtlSeconds < 60 ||
+      defaultTtlSeconds > maxTtlSeconds
+    ) {
       toast({
         variant: 'destructive',
         title: t('outbound_tokens.errors.invalid_ttl'),
@@ -446,14 +460,14 @@ const OutboundTokenIssuerList: React.FC<{ showHeader?: boolean }> = ({ showHeade
   }
 
   const handleRequestDeleteSigningKey = (key: SigningKey) => {
-    const activeIssuerNames = activeIssuerNamesByKeyId.get(key.id) ?? []
-    if (activeIssuerNames.length > 0) {
+    const issuerNames = issuerNamesByKeyId.get(key.id) ?? []
+    if (issuerNames.length > 0) {
       toast({
         variant: 'destructive',
         title: t('outbound_tokens.signing_keys.errors.delete_failed'),
-        description: t('outbound_tokens.signing_keys.errors.delete_blocked_by_active_issuers', {
-          count: activeIssuerNames.length,
-          names: activeIssuerNames.join('、'),
+        description: t('outbound_tokens.signing_keys.errors.delete_blocked_by_issuers', {
+          count: issuerNames.length,
+          names: issuerNames.join('、'),
         }),
       })
       return

@@ -124,6 +124,7 @@ const OutboundTokenSigningKeysPanel: React.FC<OutboundTokenSigningKeysPanelProps
                       className="h-11 min-w-[44px]"
                       onClick={() => onViewPem(key)}
                       title={t('outbound_tokens.actions.view_pem')}
+                      data-testid={`signing-key-view-${key.id}`}
                     >
                       <EyeIcon className="w-4 h-4" />
                     </Button>
@@ -136,6 +137,7 @@ const OutboundTokenSigningKeysPanel: React.FC<OutboundTokenSigningKeysPanelProps
                           ? t('outbound_tokens.actions.disable')
                           : t('outbound_tokens.actions.enable')
                       }
+                      data-testid={`signing-key-toggle-${key.id}`}
                     />
                     <Button
                       variant="ghost"
@@ -143,6 +145,7 @@ const OutboundTokenSigningKeysPanel: React.FC<OutboundTokenSigningKeysPanelProps
                       className="h-11 min-w-[44px] hover:text-error"
                       onClick={() => onDelete(key)}
                       title={t('common:actions.delete')}
+                      data-testid={`signing-key-delete-${key.id}`}
                     >
                       <TrashIcon className="w-4 h-4" />
                     </Button>
