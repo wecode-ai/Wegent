@@ -1083,7 +1083,6 @@ def batch_move_documents(
 
     Moves all specified documents that the user has permission to move.
     Returns a summary of successful and failed operations.
-    Raises 403 if all operations fail due to permission issues.
     """
     result = KnowledgeFolderService.batch_move_documents(
         db=db,

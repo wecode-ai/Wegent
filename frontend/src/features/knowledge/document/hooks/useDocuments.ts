@@ -148,7 +148,10 @@ export function useDocuments(options: UseDocumentsOptions) {
         await fetchDocuments()
         return result
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Transfer failed'
+        const message =
+          err instanceof Error
+            ? err.message
+            : t('document.document.batch.transferFailed')
         toast({ title: message, variant: 'destructive' })
         return null
       } finally {
