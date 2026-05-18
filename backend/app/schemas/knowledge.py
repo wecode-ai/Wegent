@@ -503,6 +503,15 @@ class DocumentMoveRequest(BaseModel):
     folder_id: int = Field(..., ge=0, description="Target folder ID (0 = root level)")
 
 
+class BatchDocumentMoveRequest(BaseModel):
+    """Schema for moving multiple documents to a folder."""
+
+    document_ids: list[int] = Field(
+        ..., min_length=1, description="List of document IDs to move"
+    )
+    folder_id: int = Field(..., ge=0, description="Target folder ID (0 = root level)")
+
+
 # ============== Batch Operation Schemas ==============
 
 
@@ -868,6 +877,36 @@ class KnowledgeBaseMigrateResponse(BaseModel):
     knowledge_base_id: int = Field(..., description="Knowledge base ID")
     old_namespace: str = Field(..., description="Original namespace")
     new_namespace: str = Field(..., description="New namespace after migration")
+
+
+# ============== Document Transfer Schemas ==============
+
+
+class TransferDocumentsRequest(BaseModel):
+    """Schema for transferring documents/folders to another knowledge base."""
+
+    document_ids: list[int] = Field(
+        default_factory=list, description="List of document IDs to transfer"
+    )
+    folder_ids: list[int] = Field(
+        default_factory=list, description="List of folder IDs to transfer with their contents"
+    )
+    target_kb_id: int = Field(..., description="Target knowledge base ID")
+
+
+class TransferDocumentsResponse(BaseModel):
+    """Schema for document transfer response."""
+
+    success: bool = Field(..., description="Whether transfer succeeded")
+    message: str = Field(..., description="Transfer result message")
+    transferred_document_count: int = Field(
+        ..., description="Number of documents transferred"
+    )
+    transferred_folder_count: int = Field(
+        ..., description="Number of folders transferred"
+    )
+    source_kb_id: int = Field(..., description="Source knowledge base ID")
+    target_kb_id: int = Field(..., description="Target knowledge base ID")
 
 
 # ============== v1 API Schemas ==============
