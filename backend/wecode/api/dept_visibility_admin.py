@@ -17,7 +17,8 @@ Routes (registered at /internal/admin/dept-visibility):
 
 import logging
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 
 from app.core.security import get_admin_user
 from app.models.user import User
@@ -30,6 +31,16 @@ from wecode.service.dept_visibility import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+_MAX_LIST_LEN = 1000
+
+
+class HiddenUpdate(BaseModel):
+    items: list[str] = Field(..., max_length=_MAX_LIST_LEN)
+
+
+class WhitelistUpdate(BaseModel):
+    user_names: list[str] = Field(..., max_length=_MAX_LIST_LEN)
 
 
 @router.get("")
@@ -44,12 +55,12 @@ def read_config(current_user: User = Depends(get_admin_user)):
 
 @router.put("/hidden")
 def update_hidden(
-    items: list[str] = Body(..., embed=True),
+    body: HiddenUpdate,
     current_user: User = Depends(get_admin_user),
 ):
     """Replace the hidden department list with the provided items."""
     try:
-        stored = write_field(FIELD_HIDDEN, items)
+        stored = write_field(FIELD_HIDDEN, body.items)
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
     logger.info(
@@ -61,12 +72,12 @@ def update_hidden(
 
 @router.put("/whitelist")
 def update_whitelist(
-    user_names: list[str] = Body(..., embed=True),
+    body: WhitelistUpdate,
     current_user: User = Depends(get_admin_user),
 ):
     """Replace the whitelist with the provided user_name list."""
     try:
-        stored = write_field(FIELD_WHITELIST, user_names)
+        stored = write_field(FIELD_WHITELIST, body.user_names)
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
     logger.info(

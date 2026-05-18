@@ -9,7 +9,10 @@
       "selectDepartment": "Select Department",
       "selectDepartmentRequired": "Please select a department",
       "addDepartmentButton": "Add Department",
-      "noDepartmentResults": "No matching departments"
+      "noDepartmentResults": "No matching departments",
+      "add": "Add",
+      "searchFailed": "Search failed",
+      "partialFailure": "Failed to add {{count}} department(s): {{names}}"
     }
   }
 }

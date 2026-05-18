@@ -26,6 +26,8 @@ CREATE TABLE `wecode_erp_user` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Wecode user profile cache table';
 """
 
+from datetime import datetime
+
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped
 from sqlalchemy.sql import func
@@ -45,6 +47,9 @@ class WecodeErpUser(Base):
     )
 
     id: Mapped[int] = Column(Integer, primary_key=True, autoincrement=True)
+    # `default=0` is retained to satisfy the internal DB convention that
+    # every column declares a default value; in practice every code path
+    # writing this row sets a real user_id, so the 0 default is never used.
     user_id: Mapped[int] = Column(
         Integer,
         ForeignKey("users.id"),
@@ -76,16 +81,16 @@ class WecodeErpUser(Base):
         server_default="",
         comment="Work email from CAS fullemail",
     )
-    last_synced_at: Mapped[DateTime] = Column(
+    last_synced_at: Mapped[datetime] = Column(
         DateTime,
         nullable=False,
         server_default=func.now(),
         comment="Last profile update timestamp (login time)",
     )
-    created_at: Mapped[DateTime] = Column(
+    created_at: Mapped[datetime] = Column(
         DateTime, nullable=False, server_default=func.now()
     )
-    updated_at: Mapped[DateTime] = Column(
+    updated_at: Mapped[datetime] = Column(
         DateTime, nullable=False, server_default=func.now(), onupdate=func.now()
     )
 

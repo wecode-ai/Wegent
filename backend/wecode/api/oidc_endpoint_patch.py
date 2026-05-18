@@ -193,42 +193,22 @@ async def _patched_oidc_callback(
 
         # Sync ERP profile from OpenSearch API using username (email prefix)
         try:
-            from datetime import datetime
-
-            from wecode.models.erp_user import WecodeErpUser
             from wecode.service.erp_client import erp_client
+            from wecode.service.erp_user_service import ErpUserService
 
             erp_employee = erp_client.search_employee(user_name)
             if erp_employee:
-                db_profile = (
-                    db.query(WecodeErpUser)
-                    .filter(WecodeErpUser.user_id == user.id)
-                    .first()
+                ErpUserService.upsert_profile(
+                    db=db,
+                    user_id=user.id,
+                    employee_id=erp_employee.ssn,
+                    department_name=erp_employee.department,
+                    erp_name=erp_employee.name,
+                    email=erp_employee.email,
                 )
-                if db_profile:
-                    if erp_employee.get("ssn"):
-                        db_profile.employee_id = erp_employee["ssn"]
-                    if erp_employee.get("department"):
-                        db_profile.department_name = erp_employee["department"]
-                    if erp_employee.get("name"):
-                        db_profile.erp_name = erp_employee["name"]
-                    if erp_employee.get("email"):
-                        db_profile.email = erp_employee["email"]
-                    db_profile.last_synced_at = datetime.utcnow()
-                else:
-                    db_profile = WecodeErpUser(
-                        user_id=user.id,
-                        employee_id=erp_employee.get("ssn"),
-                        department_name=erp_employee.get("department"),
-                        erp_name=erp_employee.get("name"),
-                        email=erp_employee.get("email"),
-                        last_synced_at=datetime.utcnow(),
-                    )
-                    db.add(db_profile)
-                db.commit()
                 logger.info(
                     f"Synced ERP profile for OIDC user {user.id}: "
-                    f"emp={erp_employee.get('ssn')}, dept={erp_employee.get('department')}"
+                    f"emp={erp_employee.ssn}, dept={erp_employee.department}"
                 )
             else:
                 logger.info(
@@ -262,12 +242,15 @@ def apply_patch() -> None:
     Patch the OIDC router: replace GET /callback endpoint implementation.
     """
     if oidc_module is None:
+        logger.error("OIDC patch FAILED: oidc_module import failed")
         return
 
     target_router = getattr(oidc_module, "router", None)
     if target_router is None or not hasattr(target_router, "routes"):
+        logger.error("OIDC patch FAILED: target router not found")
         return
 
+    patched = False
     for route in target_router.routes:
         path = getattr(route, "path", None)
         methods = getattr(route, "methods", set())
@@ -281,6 +264,14 @@ def apply_patch() -> None:
             # Replace route endpoint
             setattr(_patched_oidc_callback, "_wecode_patched", True)
             route.endpoint = _patched_oidc_callback
+            patched = True
+
+    if not patched:
+        logger.error(
+            "OIDC patch FAILED: /callback GET route not found or already patched"
+        )
+    else:
+        logger.info("OIDC patch applied successfully")
 
 
 # Auto-apply on import

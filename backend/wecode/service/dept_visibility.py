@@ -15,8 +15,10 @@ Redis layout:
         hidden_items     JSON list[str]  Department IDs or names to hide
         whitelist_users  JSON list[str]  user_name values exempt from filter
 
-Hidden list items match against DepartmentInfo.id, .name, or .label
-(any one is enough to hide the department).
+Hidden list items are matched against either DepartmentInfo.id (numeric/string
+ID match) or DepartmentInfo.name/label (string-name match). Items are stored
+as a single list; matching is type-aware so a department name that happens
+to equal another department's id will not cause cross-type collisions.
 
 On Redis failure the filter is fail-open: searches return the full ERP
 result. The visibility rule is a soft HR policy, not an auth boundary,
@@ -108,8 +110,8 @@ def get_visibility_config() -> VisibilityConfig:
 def write_field(field_name: str, items: list[str]) -> list[str]:
     """Replace one config field. Returns the normalized list actually stored.
 
-    Raises RuntimeError if Redis is unavailable so the admin caller gets a
-    clear error instead of a silent no-op.
+    Raises RuntimeError if Redis is unavailable or the write itself fails so
+    the admin caller sees a clear error instead of a silent no-op.
     """
     if field_name not in _VALID_FIELDS:
         raise ValueError(f"Unknown field: {field_name}")
@@ -119,20 +121,57 @@ def write_field(field_name: str, items: list[str]) -> list[str]:
         raise RuntimeError("Redis is not available")
 
     normalized = _normalize_list(items)
-    client.hset(REDIS_KEY, field_name, json.dumps(normalized, ensure_ascii=False))
+    try:
+        client.hset(REDIS_KEY, field_name, json.dumps(normalized, ensure_ascii=False))
+    except Exception as e:
+        logger.error(f"dept_visibility: failed to write field {field_name!r}: {e}")
+        raise RuntimeError(f"Failed to write visibility config: {e}") from e
     return normalized
 
 
-def is_hidden(dept: DepartmentInfo, hidden_set: set[str]) -> bool:
-    """A department is hidden if its id, name, or label is in hidden_set."""
-    candidates: list[str] = []
-    if dept.id is not None:
-        candidates.append(str(dept.id))
-    if dept.name:
-        candidates.append(dept.name)
-    if dept.label:
-        candidates.append(dept.label)
-    return any(c in hidden_set for c in candidates)
+def _split_hidden_items(hidden_items: set[str]) -> tuple[set[str], set[str]]:
+    """Split mixed hidden list into id-like and name-like buckets.
+
+    A purely numeric token is treated as a department ID; everything else
+    is treated as a department name/label. Departments are then matched
+    by-type so a department name that happens to equal another department's
+    numeric id does not cause cross-type false hides.
+    """
+    ids: set[str] = set()
+    names: set[str] = set()
+    for item in hidden_items:
+        if item.isdigit():
+            ids.add(item)
+        else:
+            names.add(item)
+    return ids, names
+
+
+def is_hidden(
+    dept: DepartmentInfo,
+    hidden_items: set[str],
+    hidden_ids: Optional[set[str]] = None,
+    hidden_names: Optional[set[str]] = None,
+) -> bool:
+    """Return True if the department should be hidden.
+
+    Matching is type-aware: numeric tokens in the hidden list match
+    against DepartmentInfo.id only, and non-numeric tokens match against
+    DepartmentInfo.name/label only.
+
+    Callers may pre-split the hidden list and pass `hidden_ids` /
+    `hidden_names` to avoid repeated splitting in tight loops.
+    """
+    if hidden_ids is None or hidden_names is None:
+        hidden_ids, hidden_names = _split_hidden_items(hidden_items)
+
+    if dept.id is not None and str(dept.id) in hidden_ids:
+        return True
+    if dept.name and dept.name in hidden_names:
+        return True
+    if dept.label and dept.label in hidden_names:
+        return True
+    return False
 
 
 def filter_hidden_for_user(
@@ -144,4 +183,9 @@ def filter_hidden_for_user(
         return departments
     if user_name and user_name in config.whitelist_users:
         return departments
-    return [d for d in departments if not is_hidden(d, config.hidden_items)]
+    hidden_ids, hidden_names = _split_hidden_items(config.hidden_items)
+    return [
+        d
+        for d in departments
+        if not is_hidden(d, config.hidden_items, hidden_ids, hidden_names)
+    ]

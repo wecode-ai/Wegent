@@ -6,7 +6,6 @@ import json
 import logging
 import uuid
 import xml.etree.ElementTree as ET
-from datetime import datetime
 from urllib.parse import quote
 
 import httpx
@@ -23,8 +22,8 @@ from app.schemas.user import LoginResponse, Token, UserUpdate
 from app.services.k_batch import apply_default_resources_sync
 from app.services.user import user_service
 from wecode.config.aidesk_config import aidesk_config
-from wecode.models.erp_user import WecodeErpUser
 from wecode.service.aidesk_auth_service import aidesk_auth_service
+from wecode.service.erp_user_service import ErpUserService
 from wecode.service.get_user_gitinfo import get_user_gitinfo
 
 router = APIRouter()
@@ -190,31 +189,14 @@ async def cas_login(
             erp_email = info_node.findtext("fullemail")
 
             if employee_id:
-                db_profile = (
-                    db.query(WecodeErpUser)
-                    .filter(WecodeErpUser.user_id == user.id)
-                    .first()
+                ErpUserService.upsert_profile(
+                    db=db,
+                    user_id=user.id,
+                    employee_id=employee_id,
+                    department_name=department_name,
+                    erp_name=erp_name,
+                    email=erp_email,
                 )
-                if db_profile:
-                    db_profile.employee_id = employee_id
-                    if department_name:
-                        db_profile.department_name = department_name
-                    if erp_name:
-                        db_profile.erp_name = erp_name
-                    if erp_email:
-                        db_profile.email = erp_email
-                    db_profile.last_synced_at = datetime.utcnow()
-                else:
-                    db_profile = WecodeErpUser(
-                        user_id=user.id,
-                        employee_id=employee_id,
-                        department_name=department_name,
-                        erp_name=erp_name,
-                        email=erp_email,
-                        last_synced_at=datetime.utcnow(),
-                    )
-                    db.add(db_profile)
-                db.commit()
                 logger.info(
                     f"Updated ERP profile for CAS user {user.id}: "
                     f"emp={employee_id}, dept={department_name}"

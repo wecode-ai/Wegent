@@ -4,25 +4,14 @@
 
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
 import { Search, X } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import { useTranslation } from '@/hooks/useTranslation'
-import client from '@/apis/client'
 import type { AuthEntry } from '@/features/knowledge/document/auth-section-registry'
 import type { MemberRole } from '@/types/knowledge'
-
-interface Department {
-  id: string
-  name: string
-  label?: string
-  oid?: string
-  parent_oid?: string
-  supervisor?: string
-  supervisor_name?: string
-  employee_count?: number
-}
+import { useDepartmentSearch } from '@wecode/hooks/useDepartmentSearch'
+import type { Department } from '@wecode/types/department'
 
 interface DepartmentAuthSearchProps {
   role: MemberRole
@@ -31,59 +20,17 @@ interface DepartmentAuthSearchProps {
 
 export function DepartmentAuthSearch({ role, onSelect }: DepartmentAuthSearchProps) {
   const { t } = useTranslation('knowledge')
-  const [departments, setDepartments] = useState<Department[]>([])
-  const [searching, setSearching] = useState(false)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [showDropdown, setShowDropdown] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
-  const dropdownRef = useRef<HTMLDivElement>(null)
-
-  const loc = (key: string, fallback: string) => {
-    const v = t(key)
-    return v && v !== key ? v : fallback
-  }
-
-  // Debounced search when query changes
-  useEffect(() => {
-    if (!searchQuery.trim()) {
-      setDepartments([])
-      return
-    }
-    const timer = setTimeout(() => {
-      performSearch(searchQuery)
-    }, 300)
-    return () => clearTimeout(timer)
-  }, [searchQuery])
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        dropdownRef.current &&
-        !dropdownRef.current.contains(event.target as Node) &&
-        inputRef.current &&
-        !inputRef.current.contains(event.target as Node)
-      ) {
-        setShowDropdown(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
-
-  const performSearch = async (query: string) => {
-    setSearching(true)
-    try {
-      const result = await client.get<{ departments: Department[] }>(
-        `/internal/departments/search?q=${encodeURIComponent(query)}`
-      )
-      setDepartments(result.departments || [])
-      setShowDropdown(true)
-    } catch (_err) {
-      setDepartments([])
-    } finally {
-      setSearching(false)
-    }
-  }
+  const {
+    departments,
+    searching,
+    errorKind,
+    searchQuery,
+    setSearchQuery,
+    showDropdown,
+    setShowDropdown,
+    inputRef,
+    dropdownRef,
+  } = useDepartmentSearch()
 
   const handleSelect = (dept: Department) => {
     onSelect({
@@ -95,7 +42,6 @@ export function DepartmentAuthSearch({ role, onSelect }: DepartmentAuthSearchPro
     })
     setSearchQuery('')
     setShowDropdown(false)
-    setDepartments([])
   }
 
   return (
@@ -116,7 +62,7 @@ export function DepartmentAuthSearch({ role, onSelect }: DepartmentAuthSearchPro
               setShowDropdown(true)
             }
           }}
-          placeholder={loc('document.permission.searchDepartmentPlaceholder', '搜索部门...')}
+          placeholder={t('document.permission.searchDepartmentPlaceholder')}
           className="pl-9"
           data-testid="department-search-input"
         />
@@ -125,10 +71,10 @@ export function DepartmentAuthSearch({ role, onSelect }: DepartmentAuthSearchPro
             type="button"
             onClick={() => {
               setSearchQuery('')
-              setDepartments([])
               setShowDropdown(false)
             }}
             className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary"
+            data-testid="department-search-clear"
           >
             <X className="w-4 h-4" />
           </button>
@@ -143,11 +89,18 @@ export function DepartmentAuthSearch({ role, onSelect }: DepartmentAuthSearchPro
             <div className="flex items-center justify-center p-3">
               <Spinner className="w-4 h-4" />
             </div>
+          ) : errorKind ? (
+            <div
+              className="p-3 text-sm text-error text-center"
+              data-testid="department-search-error"
+            >
+              {t('document.permission.searchFailed')}
+            </div>
           ) : departments.length === 0 ? (
             <div className="p-3 text-sm text-text-muted text-center">
               {searchQuery.trim()
-                ? loc('document.permission.noDepartmentResults', '没有匹配的部门')
-                : loc('document.permission.searchDepartmentPlaceholder', '搜索部门...')}
+                ? t('document.permission.noDepartmentResults')
+                : t('document.permission.searchDepartmentPlaceholder')}
             </div>
           ) : (
             departments.map(dept => (
@@ -164,14 +117,14 @@ export function DepartmentAuthSearch({ role, onSelect }: DepartmentAuthSearchPro
                   </span>
                   {dept.supervisor_name && (
                     <span className="text-xs text-text-muted truncate">
-                      {loc('document.permission.supervisor', '负责人')}: {dept.supervisor_name}
+                      {t('document.permission.supervisor')}: {dept.supervisor_name}
                     </span>
                   )}
                 </div>
                 {typeof dept.employee_count === 'number' && (
                   <span className="flex-shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] leading-tight font-medium bg-muted text-text-muted border border-border">
                     {dept.employee_count}
-                    {loc('document.permission.members', '人')}
+                    {t('document.permission.members')}
                   </span>
                 )}
               </button>
