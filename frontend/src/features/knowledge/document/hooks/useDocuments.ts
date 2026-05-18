@@ -24,6 +24,7 @@ import type {
   KnowledgeDocumentUpdate,
 } from '@/types/knowledge'
 import { toast } from '@/hooks/use-toast'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface UseDocumentsOptions {
   knowledgeBaseId: number | null
@@ -32,6 +33,7 @@ interface UseDocumentsOptions {
 
 export function useDocuments(options: UseDocumentsOptions) {
   const { knowledgeBaseId, autoLoad = true } = options
+  const { t } = useTranslation('knowledge')
 
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([])
   const [loading, setLoading] = useState(false)
@@ -138,7 +140,10 @@ export function useDocuments(options: UseDocumentsOptions) {
       try {
         const result = await transferDocuments(knowledgeBaseId, data)
         toast({
-          description: `Transferred ${result.transferred_document_count} document(s) and ${result.transferred_folder_count} folder(s)`,
+          description: t('document.document.batch.transferSuccess', {
+            docCount: result.transferred_document_count,
+            folderCount: result.transferred_folder_count,
+          }),
         })
         await fetchDocuments()
         return result

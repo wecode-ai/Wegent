@@ -483,9 +483,6 @@ class KnowledgeFolderService:
             except ValueError:
                 failed_ids.append(doc_id)
                 db.rollback()
-            except Exception:
-                failed_ids.append(doc_id)
-                db.rollback()
 
         return BatchOperationResult(
             success_count=success_count,

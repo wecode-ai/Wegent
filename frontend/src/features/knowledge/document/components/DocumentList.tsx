@@ -614,14 +614,16 @@ export function DocumentList({
       try {
         const selectedDocs = documents.filter(d => selectedIds.has(d.id))
         const folderIds = [...new Set(selectedDocs.map(d => d.folder_id).filter(id => id > 0))]
-        await transfer({
+        const result = await transfer({
           document_ids: Array.from(selectedIds),
           folder_ids: folderIds,
           target_kb_id: targetKbId,
         })
-        setSelectedIds(new Set())
-        refresh()
-        fetchFolders()
+        if (result !== null) {
+          setSelectedIds(new Set())
+          refresh()
+          fetchFolders()
+        }
       } finally {
         setIsTransferring(false)
         setShowTransfer(false)
