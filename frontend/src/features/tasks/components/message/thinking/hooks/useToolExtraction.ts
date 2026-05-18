@@ -10,7 +10,12 @@
 
 import { useMemo } from 'react'
 import type { ThinkingStep, ToolGroup } from '../types'
-import { extractToolPairs, groupConsecutiveTools, filterNonToolSteps } from '../utils/toolExtractor'
+import {
+  extractToolPairs,
+  groupConsecutiveTools,
+  filterNonToolSteps,
+  normalizeThinkingSteps,
+} from '../utils/toolExtractor'
 
 interface UseToolExtractionResult {
   toolGroups: ToolGroup[]
@@ -28,9 +33,10 @@ export function useToolExtraction(thinking: ThinkingStep[] | null): UseToolExtra
       }
     }
 
-    const pairs = extractToolPairs(thinking)
+    const normalized = normalizeThinkingSteps(thinking)
+    const pairs = extractToolPairs(normalized)
     const toolGroups = groupConsecutiveTools(pairs)
-    const nonToolSteps = filterNonToolSteps(thinking)
+    const nonToolSteps = filterNonToolSteps(normalized)
 
     return {
       toolGroups,

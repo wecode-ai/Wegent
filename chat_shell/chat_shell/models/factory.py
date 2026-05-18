@@ -97,30 +97,50 @@ def _inject_http_error_hook(model: BaseChatModel, provider: str, model_id: str) 
     Only logs when response status >= 400, capturing headers, status,
     body snippet, and request duration for quick diagnosis.
     """
-    import time
-
     import httpx
+
+    _SENSITIVE_HEADERS = frozenset(
+        ["authorization", "x-api-key", "anthropic-api-key", "api-key"]
+    )
 
     async def _on_error_response(response: httpx.Response) -> None:
         if response.status_code < 400:
             return
-        elapsed = response.elapsed.total_seconds() if response.elapsed else None
-        # Read body for error diagnosis (httpx streams must be read explicitly)
+        # Read body first so response.elapsed becomes accessible
         try:
             await response.aread()
             body_text = response.text[:500]
         except Exception:
             body_text = "<unable to read body>"
+        try:
+            elapsed = response.elapsed.total_seconds() if response.elapsed else None
+        except RuntimeError:
+            elapsed = None
+        safe_headers = {
+            k: "***" if k.lower() in _SENSITIVE_HEADERS else v
+            for k, v in response.headers.items()
+        }
         logger.error(
             "[LLM_HTTP_ERROR] provider=%s model=%s status=%d elapsed=%.3fs "
             "url=%s headers=%s body=%s",
             provider,
             model_id,
             response.status_code,
-            elapsed or -1,
+            elapsed if elapsed is not None else -1,
             str(response.url),
-            dict(response.headers),
+            safe_headers,
             body_text,
+        )
+        add_span_event(
+            "llm.http_error",
+            {
+                "provider": provider,
+                "model_id": model_id,
+                "http.status_code": response.status_code,
+                "http.url": str(response.url),
+                "http.elapsed_ms": int(elapsed * 1000) if elapsed is not None else -1,
+                "http.response_body": body_text,
+            },
         )
 
     # Locate the httpx async client and append the hook.
@@ -140,8 +160,8 @@ def _inject_http_error_hook(model: BaseChatModel, provider: str, model_id: str) 
     except Exception:
         pass
 
-    if httpx_client is not None and hasattr(httpx_client, "_event_hooks"):
-        httpx_client._event_hooks.setdefault("response", []).append(_on_error_response)
+    if httpx_client is not None and hasattr(httpx_client, "event_hooks"):
+        httpx_client.event_hooks.setdefault("response", []).append(_on_error_response)
         logger.debug("Injected HTTP error hook for %s/%s", provider, model_id)
 
 

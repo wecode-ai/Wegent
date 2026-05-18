@@ -11,6 +11,126 @@
 import type { ThinkingStep, ToolPair, ToolGroup, ToolStatus } from '../types'
 
 /**
+ * Claude Code truncated content object.
+ * When a field value is too large, Claude Code replaces it with this object.
+ */
+interface TruncatedContent {
+  length: number
+  omitted: boolean
+  preview: string
+  sha256: string
+}
+
+function isTruncatedContent(value: unknown): value is TruncatedContent {
+  if (!value || typeof value !== 'object') return false
+  const obj = value as Record<string, unknown>
+  return typeof obj.preview === 'string' && typeof obj.omitted === 'boolean'
+}
+
+/**
+ * Convert a value that may be a truncated content object into a plain string.
+ * Returns undefined for null/undefined inputs.
+ */
+function resolveTruncated(value: unknown): unknown {
+  if (value === null || value === undefined) return value
+  if (!isTruncatedContent(value)) return value
+  const suffix = value.omitted ? ` ... [${value.length} chars total, content truncated]` : ''
+  return value.preview + suffix
+}
+
+/**
+ * Recursively walk an input object and resolve any truncated content values.
+ */
+function resolveInputFields(
+  input: string | Record<string, unknown> | undefined
+): string | Record<string, unknown> | undefined {
+  if (!input) return input
+  if (typeof input === 'string') return input
+  const result: Record<string, unknown> = {}
+  for (const [key, val] of Object.entries(input)) {
+    result[key] = resolveTruncated(val)
+  }
+  return result
+}
+
+/**
+ * Normalize a ThinkingStep so that any truncated content objects inside
+ * `details` are converted to plain strings before the step is used for rendering.
+ *
+ * This is the single place where Claude Code's large-content truncation is handled,
+ * so individual renderers never need to deal with non-string values.
+ */
+export function normalizeStepDetails(step: ThinkingStep): ThinkingStep {
+  if (!step.details) return step
+  const d = step.details
+
+  // Normalize tool input fields
+  const normalizedInput = resolveInputFields(
+    d.input as string | Record<string, unknown> | undefined
+  )
+
+  // Normalize tool result output/content fields
+  const normalizedContent =
+    d.content !== undefined ? (resolveTruncated(d.content) as string | undefined) : d.content
+  const normalizedOutput = d.output !== undefined ? resolveTruncated(d.output) : d.output
+
+  // Normalize message.content array items (text/tool_use/tool_result content fields)
+  let normalizedMessageContent = d.message?.content
+  if (Array.isArray(d.message?.content)) {
+    const resolved = d.message!.content.map(item => {
+      const changes: Record<string, unknown> = {}
+      if (item.text !== undefined) {
+        const r = resolveTruncated(item.text)
+        if (r !== item.text) changes.text = r
+      }
+      if (item.content !== undefined) {
+        const r = resolveTruncated(item.content)
+        if (r !== item.content) changes.content = r
+      }
+      if (item.input !== undefined) {
+        const r = resolveInputFields(item.input as string | Record<string, unknown> | undefined)
+        if (r !== item.input) changes.input = r
+      }
+      return Object.keys(changes).length > 0 ? { ...item, ...changes } : item
+    })
+    // Only replace if something actually changed
+    if (resolved.some((item, i) => item !== d.message!.content![i])) {
+      normalizedMessageContent = resolved
+    }
+  }
+
+  const messageChanged = normalizedMessageContent !== d.message?.content
+
+  if (
+    normalizedInput === d.input &&
+    normalizedContent === d.content &&
+    normalizedOutput === d.output &&
+    !messageChanged
+  ) {
+    return step
+  }
+
+  return {
+    ...step,
+    details: {
+      ...d,
+      ...(normalizedInput !== d.input ? { input: normalizedInput } : {}),
+      ...(normalizedContent !== d.content ? { content: normalizedContent as string } : {}),
+      ...(normalizedOutput !== d.output ? { output: normalizedOutput } : {}),
+      ...(messageChanged ? { message: { ...d.message, content: normalizedMessageContent } } : {}),
+    },
+  }
+}
+
+/**
+ * Normalize an entire thinking array, resolving all truncated content objects.
+ * Call this once at the data entry point so all downstream components receive clean strings.
+ */
+export function normalizeThinkingSteps(thinking: ThinkingStep[]): ThinkingStep[] {
+  return thinking.map(normalizeStepDetails)
+}
+
+/**
  * Normalize tool names from Chat shell (Chinese) to standard English names
  * This ensures specialized renderers are invoked correctly
  */
