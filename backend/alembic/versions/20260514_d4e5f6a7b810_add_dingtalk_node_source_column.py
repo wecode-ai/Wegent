@@ -4,9 +4,9 @@
 
 """add dingtalk node source column
 
-Revision ID: d4e5f6a7b8c9
-Revises: d1e2f3a4b5c6
-Create Date: 2026-05-12
+Revision ID: d4e5f6a7b810
+Revises: d4e5f6a7b809
+Create Date: 2026-05-14
 
 Add source column to dingtalk_synced_nodes table to distinguish between
 'docs' (personal documents) and 'wikispace' (knowledge base) nodes.
@@ -19,8 +19,8 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "d4e5f6a7b8c9"
-down_revision = "d1e2f3a4b5c6"
+revision = "d4e5f6a7b810"
+down_revision = "d4e5f6a7b809"
 branch_labels = None
 depends_on = None
 
