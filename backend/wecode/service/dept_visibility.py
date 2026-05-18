@@ -141,7 +141,9 @@ def _split_hidden_items(hidden_items: set[str]) -> tuple[set[str], set[str]]:
     names: set[str] = set()
     for item in hidden_items:
         if item.isdigit():
-            ids.add(item)
+            # Normalize to strip leading zeros so "001" matches dept.id
+            # after Pydantic serializes a numeric JSON value as "1".
+            ids.add(str(int(item)))
         else:
             names.add(item)
     return ids, names

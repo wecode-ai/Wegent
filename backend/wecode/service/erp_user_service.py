@@ -26,8 +26,16 @@ class ErpUserService:
         erp_name: Optional[str] = None,
         email: Optional[str] = None,
     ) -> Optional[WecodeErpUser]:
-        """Find or create a WecodeErpUser and update the provided fields."""
+        """Find or create a WecodeErpUser and update the provided fields.
+
+        Empty-string employee_id is rejected to avoid polluting the table
+        with rows that can never match (employee_id is the lookup key).
+        """
         if not any([employee_id, department_name, erp_name, email]):
+            return None
+        # Guard: empty-string employee_id creates a row that lazy-sync
+        # will never match, causing infinite re-sync loops.
+        if employee_id is not None and not employee_id.strip():
             return None
 
         profile = (

@@ -198,7 +198,7 @@ async def _patched_oidc_callback(
             from wecode.service.erp_user_service import ErpUserService
 
             erp_employee = erp_client.search_employee(user_name)
-            if erp_employee:
+            if erp_employee and erp_employee.ssn:
                 ErpUserService.upsert_profile(
                     db=db,
                     user_id=user.id,

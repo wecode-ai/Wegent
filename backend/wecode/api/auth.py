@@ -23,6 +23,7 @@ from app.services.k_batch import apply_default_resources_sync
 from app.services.user import user_service
 from wecode.config.aidesk_config import aidesk_config
 from wecode.service.aidesk_auth_service import aidesk_auth_service
+from wecode.service.erp_entity_resolver import ErpEntityResolver
 from wecode.service.erp_user_service import ErpUserService
 from wecode.service.get_user_gitinfo import get_user_gitinfo
 
@@ -199,7 +200,8 @@ async def cas_login(
                 )
                 logger.info(
                     f"Updated ERP profile for CAS user {user.id}: "
-                    f"emp={employee_id}, dept={department_name}"
+                    f"emp={ErpEntityResolver._mask_ssn(employee_id)}, "
+                    f"dept={department_name}"
                 )
         except Exception as e:
             logger.warning(f"Failed to write ERP profile for CAS user {user.id}: {e}")
