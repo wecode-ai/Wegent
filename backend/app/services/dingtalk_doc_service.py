@@ -37,7 +37,7 @@ class DingTalkDocService:
     """Service for syncing and querying DingTalk document nodes."""
 
     @staticmethod
-    def get_user_dingtalk_mcp_url(user: User, db: Session) -> str | None:
+    def get_user_dingtalk_mcp_url(user: User) -> str | None:
         """Read and decrypt the user's DingTalk Docs MCP URL from preferences.
 
         Returns the decrypted URL if configured and enabled, None otherwise.
@@ -53,9 +53,9 @@ class DingTalkDocService:
         return url if url else None
 
     @staticmethod
-    def is_configured(user: User, db: Session) -> bool:
+    def is_configured(user: User) -> bool:
         """Check if the user has DingTalk Docs MCP configured and enabled."""
-        return DingTalkDocService.get_user_dingtalk_mcp_url(user, db) is not None
+        return DingTalkDocService.get_user_dingtalk_mcp_url(user) is not None
 
     @staticmethod
     async def sync_dingtalk_docs(user: User, db: Session) -> dict[str, Any]:
@@ -66,7 +66,7 @@ class DingTalkDocService:
 
         Returns a dict with sync statistics: added, updated, deleted, total.
         """
-        mcp_url = DingTalkDocService.get_user_dingtalk_mcp_url(user, db)
+        mcp_url = DingTalkDocService.get_user_dingtalk_mcp_url(user)
         if not mcp_url:
             raise ValueError("DingTalk Docs MCP URL is not configured or not enabled")
 
@@ -200,23 +200,21 @@ class DingTalkDocService:
             if not page_token:
                 break
 
-    # Candidate keys that may contain a list of nodes in the MCP response dict.
-    # Ordered from most specific to least specific so we prefer the right one.
-    # Includes knowledge-base specific keys (wikiSpaces, spaces, spaceList) for
-    # responses from the Dingtalk knowledge-base MCP list_wikiSpaces tool.
+    # Known list keys in DingTalk MCP responses.
+    # "items" / "nodes":     common node-list keys from docs MCP
+    # "wikiSpaces":          wikiSpace MCP list_wikiSpaces response
+    # "spaces":              alternative knowledge-base list key
+    # "spaceList":           another alternative KB list key
+    # "documents":           search_documents response
+    # "files":               list_nodes variant
     _NODE_LIST_KEYS = (
         "items",
         "nodes",
         "wikiSpaces",
         "spaces",
         "spaceList",
-        "data",
-        "list",
-        "records",
         "documents",
         "files",
-        "children",
-        "result",
     )
 
     @staticmethod
@@ -301,7 +299,7 @@ class DingTalkDocService:
         nodes: list[dict[str, Any]],
         sync_time: datetime,
         db: Session,
-        source: str = "docs",
+        source: str = "docs",  # Should be DingTalkNodeSource enum value
     ) -> dict[str, Any]:
         """Sync fetched nodes to the database.
 
@@ -443,7 +441,16 @@ class DingTalkDocService:
                 db.add(new_node)
                 added += 1
 
-        db.commit()
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception(
+                "Failed to commit synced nodes for user %s (source=%s)",
+                user_id,
+                source,
+            )
+            raise
 
         total = (
             db.query(DingtalkSyncedNode)
@@ -512,7 +519,7 @@ class DingTalkDocService:
     @staticmethod
     def get_sync_status(user: User, db: Session) -> dict[str, Any]:
         """Get sync status for a user's DingTalk documents."""
-        is_configured = DingTalkDocService.is_configured(user, db)
+        is_configured = DingTalkDocService.is_configured(user)
 
         last_synced = (
             db.query(DingtalkSyncedNode.last_synced_at)

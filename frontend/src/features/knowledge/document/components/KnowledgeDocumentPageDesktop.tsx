@@ -581,7 +581,7 @@ export function KnowledgeDocumentPageDesktop({
             onSelectAll={handleSelectAll}
             onSelectGroups={handleSelectGroups}
             onSelectDingtalk={handleSelectDingtalk}
-            dingtalkDocCount={sidebar.dingtalkDocCount}
+            dingtalkDocCount={sidebar.dingtalkDocCount + sidebar.wikispaceDocCount}
             isDingtalkConfigured={sidebar.isDingtalkConfigured}
             summary={sidebar.summary}
             allKnowledgeBases={sidebar.allKnowledgeBases}

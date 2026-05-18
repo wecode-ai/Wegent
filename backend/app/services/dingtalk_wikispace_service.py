@@ -61,7 +61,7 @@ class DingTalkWikiSpaceService:
 
     @staticmethod
     @trace_sync()
-    def get_user_wikispace_mcp_url(user: User, db: Session) -> str | None:
+    def get_user_wikispace_mcp_url(user: User) -> str | None:
         """Read and decrypt the user's DingTalk WikiSpace MCP URL from preferences."""
         config = UserMCPService.get_provider_service_config(
             user.preferences,
@@ -75,9 +75,9 @@ class DingTalkWikiSpaceService:
 
     @staticmethod
     @trace_sync()
-    def is_configured(user: User, db: Session) -> bool:
+    def is_configured(user: User) -> bool:
         """Check if the user has DingTalk WikiSpace MCP configured and enabled."""
-        return DingTalkWikiSpaceService.get_user_wikispace_mcp_url(user, db) is not None
+        return DingTalkWikiSpaceService.get_user_wikispace_mcp_url(user) is not None
 
     @staticmethod
     @trace_async()
@@ -92,7 +92,7 @@ class DingTalkWikiSpaceService:
         mcp_nodes_fetched.
         """
         wikispace_mcp_url = DingTalkWikiSpaceService.get_user_wikispace_mcp_url(
-            user, db
+            user
         )
         if not wikispace_mcp_url:
             raise ValueError(
@@ -100,7 +100,7 @@ class DingTalkWikiSpaceService:
             )
 
         # Docs MCP URL is optional; falls back to wikispace MCP URL if absent.
-        docs_mcp_url = DingTalkDocService.get_user_dingtalk_mcp_url(user, db)
+        docs_mcp_url = DingTalkDocService.get_user_dingtalk_mcp_url(user)
 
         all_nodes = await DingTalkWikiSpaceService._fetch_all_wikispace_nodes(
             wikispace_mcp_url=wikispace_mcp_url,
@@ -376,8 +376,6 @@ class DingTalkWikiSpaceService:
                 "name": kb_name,
                 "url": kb_url,
             }
-            all_nodes.append(kb_as_folder)
-
             logger.info(
                 "Fetching documents for knowledge base '%s' (workspace_id=%s)",
                 kb_name,
@@ -390,6 +388,8 @@ class DingTalkWikiSpaceService:
                     workspace_id=kb_id,
                     all_nodes=all_nodes,
                 )
+                # Only add the KB root folder AFTER successfully listing its contents.
+                all_nodes.append(kb_as_folder)
             except Exception as exc:
                 logger.error(
                     "Failed to list nodes in KB '%s' (id=%s): %s",
@@ -410,7 +410,14 @@ class DingTalkWikiSpaceService:
 
     @staticmethod
     def _dedupe_nodes_by_id(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """De-duplicate nodes by nodeId while keeping the most complete entry."""
+        """De-duplicate nodes by nodeId while keeping the most complete entry.
+
+        Completeness is determined by counting the number of fields with
+        meaningful (non-None, non-empty-string) values.
+        """
+        def _completeness(node: dict[str, Any]) -> int:
+            return sum(1 for v in node.values() if v is not None and v != "")
+
         seen: dict[str, dict[str, Any]] = {}
         order: list[str] = []
         for node in nodes:
@@ -429,7 +436,7 @@ class DingTalkWikiSpaceService:
                 continue
 
             existing = seen[node_id]
-            if len(node) > len(existing):
+            if _completeness(node) > _completeness(existing):
                 seen[node_id] = node
 
         return [seen[node_id] for node_id in order]
@@ -457,7 +464,7 @@ class DingTalkWikiSpaceService:
     @trace_sync()
     def get_sync_status(user: User, db: Session) -> dict[str, Any]:
         """Get sync status for a user's DingTalk wikispace nodes."""
-        is_configured = DingTalkWikiSpaceService.is_configured(user, db)
+        is_configured = DingTalkWikiSpaceService.is_configured(user)
 
         last_synced = (
             db.query(DingtalkSyncedNode.last_synced_at)

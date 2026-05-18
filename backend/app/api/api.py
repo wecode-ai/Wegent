@@ -35,9 +35,7 @@ from app.api.endpoints import (
     wizard,
     work_queue,
 )
-from app.api.endpoints.dingtalk_docs import (
-    wikispace_router as dingtalk_wikispace_router,
-)
+from app.api.endpoints.dingtalk_wikispace import router as dingtalk_wikispace_router
 from app.core.config import settings
 
 # RAG module is heavy (llama_index, scipy, pandas, grpc) - skip in standalone mode

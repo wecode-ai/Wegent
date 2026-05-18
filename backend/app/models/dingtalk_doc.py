@@ -4,12 +4,19 @@
 
 """DingTalk synced document node model for storing synced DingTalk docs."""
 
+import enum
 from datetime import datetime
 
 from sqlalchemy import Boolean, Column, DateTime, Index, Integer, String
 from sqlalchemy.sql import func
 
 from app.db.base import Base
+
+
+class DingTalkNodeSource(str, enum.Enum):
+    """Source of a synced DingTalk node."""
+    DOCS = "docs"
+    WIKISPACE = "wikispace"
 
 
 class DingtalkSyncedNode(Base):
@@ -38,7 +45,7 @@ class DingtalkSyncedNode(Base):
     # DingTalk workspace (knowledge base) ID
     workspace_id = Column(String(64), nullable=False, default="")
     # Source of the node: 'docs' (personal documents) or 'wikispace' (knowledge base)
-    source = Column(String(16), nullable=False, default="docs")
+    source = Column(String(16), nullable=False, default=DingTalkNodeSource.DOCS.value)
     # Content type (e.g., ALIDOC)
     content_type = Column(String(32), nullable=False, default="")
     # Document content last updated time from list_nodes updateTime field

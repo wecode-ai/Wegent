@@ -106,6 +106,7 @@ export interface UseKnowledgeSidebarReturn {
 
   // DingTalk docs
   dingtalkDocCount: number
+  wikispaceDocCount: number
   isDingtalkConfigured: boolean
   isDingtalkLoading: boolean
   isWikispaceConfigured: boolean
@@ -193,6 +194,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
 
   // DingTalk docs state
   const [dingtalkDocCount, setDingtalkDocCount] = useState(0)
+  const [wikispaceDocCount, setWikispaceDocCount] = useState(0)
   const [isDingtalkConfigured, setIsDingtalkConfigured] = useState(false)
   const [isDingtalkLoading, setIsDingtalkLoading] = useState(true)
   const [isWikispaceConfigured, setIsWikispaceConfigured] = useState(false)
@@ -231,8 +233,10 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     }
     if (wsResult.status === 'fulfilled') {
       setIsWikispaceConfigured(wsResult.value.is_configured)
+      setWikispaceDocCount(wsResult.value.total_nodes)
     } else {
       setIsWikispaceConfigured(false)
+      setWikispaceDocCount(0)
     }
     setIsDingtalkLoading(false)
   }, [])
@@ -585,6 +589,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
 
     // DingTalk docs
     dingtalkDocCount,
+    wikispaceDocCount,
     isDingtalkConfigured,
     isDingtalkLoading,
     isWikispaceConfigured,

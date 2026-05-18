@@ -302,9 +302,9 @@ class TestFetchAllWikispaceNodes:
                 wikispace_mcp_url="https://ws.mcp.example.com",
             )
 
-        # Both KBs attempted; both root nodes added
+        # Both KBs attempted; only the successful KB's root node is added
         assert call_count == 2
-        assert len(result) == 2
+        assert len(result) == 1
 
 
 # ---------------------------------------------------------------------------
