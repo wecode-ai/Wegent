@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 from sqlalchemy.orm import Session
 
@@ -53,6 +54,38 @@ MCP_TOOL_LIST_WIKI_SPACES = "list_wikiSpaces"
 
 # wiki space type value for org-level KBs (as opposed to "myWikiSpace")
 WIKI_SPACE_TYPE_ORG = "orgWikiSpace"
+
+
+def _sanitize_url_for_telemetry(url: str) -> str:
+    """Sanitize a URL by removing userinfo and query string for safe telemetry logging.
+
+    This prevents credentials or sensitive query parameters from being exposed
+    in telemetry spans and logs.
+
+    Args:
+        url: The URL to sanitize.
+
+    Returns:
+        A sanitized URL containing only scheme, host, port, and path.
+    """
+    try:
+        parsed = urlparse(url)
+        # Reconstruct URL with only safe components: scheme, host, port, path
+        # Strip userinfo (username/password) and query string
+        sanitized = urlunparse(
+            (
+                parsed.scheme,
+                parsed.hostname or "",
+                parsed.path,
+                "",  # params (deprecated, always empty)
+                "",  # query - removed for security
+                "",  # fragment - removed for security
+            )
+        )
+        return sanitized
+    except Exception:
+        # If URL parsing fails, return a placeholder to avoid exposing raw URL
+        return "<invalid-url>"
 
 
 class DingTalkWikiSpaceService:
@@ -118,10 +151,11 @@ class DingTalkWikiSpaceService:
             user.id, all_nodes, now, db, source=WIKISPACE_SOURCE
         )
         stats["mcp_nodes_fetched"] = len(all_nodes)
+        sanitized_wikispace_mcp_url = _sanitize_url_for_telemetry(wikispace_mcp_url)
         add_span_event(
             "dingtalk.wikispace.sync.completed",
             {
-                "wikispace_mcp_url": wikispace_mcp_url,
+                "wikispace_mcp_url": sanitized_wikispace_mcp_url,
                 "mcp_nodes_fetched": stats["mcp_nodes_fetched"],
             },
         )

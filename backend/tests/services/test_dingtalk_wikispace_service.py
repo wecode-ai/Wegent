@@ -256,6 +256,12 @@ class TestFetchAllWikispaceNodes:
 
         # Verify that a session was passed (the session is reused for all KBs)
         assert len(captured_sessions) == 1
+        # Verify that the wikispace MCP URL was used as the fallback endpoint
+        mock_http.assert_called_once()
+        call_args = mock_http.call_args
+        assert call_args is not None
+        # The URL should be passed as the 'url' keyword argument
+        assert call_args.kwargs.get("url") == "https://ws.mcp.example.com"
 
     @pytest.mark.asyncio
     async def test_skips_kb_with_no_workspace_id(self) -> None:
@@ -353,6 +359,10 @@ class TestFetchAllWikispaceNodes:
         # Both KBs attempted; only the successful KB's root node is added
         assert call_count == 2
         assert len(result) == 1
+        # Verify the surviving node belongs to the successful workspace (WS_OK)
+        assert result[0]["workspaceId"] == "WS_OK"
+        # Ensure no node from the failed workspace (WS_FAIL) is present
+        assert all(node.get("workspaceId") != "WS_FAIL" for node in result)
 
 
 # ---------------------------------------------------------------------------
