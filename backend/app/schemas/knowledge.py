@@ -889,7 +889,8 @@ class TransferDocumentsRequest(BaseModel):
         default_factory=list, description="List of document IDs to transfer"
     )
     folder_ids: list[int] = Field(
-        default_factory=list, description="List of folder IDs to transfer with their contents"
+        default_factory=list,
+        description="List of folder IDs to transfer with their contents",
     )
     target_kb_id: int = Field(..., description="Target knowledge base ID")
 

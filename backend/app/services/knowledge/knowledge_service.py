@@ -3325,7 +3325,8 @@ class KnowledgeService:
 
             # Sort by parent_id so parents are created before children
             sorted_folders = sorted(
-                source_folders, key=lambda f: (f.parent_id in descendant_folder_ids, f.parent_id)
+                source_folders,
+                key=lambda f: (f.parent_id in descendant_folder_ids, f.parent_id),
             )
 
             for sf in sorted_folders:
