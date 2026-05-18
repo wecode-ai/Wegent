@@ -43,6 +43,7 @@ celery_app = Celery(
     include=[
         "app.tasks.subscription_tasks",
         "app.tasks.knowledge_tasks",
+        "app.tasks.data_analysis_tasks",
     ],
 )
 

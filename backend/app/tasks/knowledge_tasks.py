@@ -290,6 +290,65 @@ def index_document_task(
                         exc_info=True,
                     )
 
+            # After successful indexing, enqueue DuckDB generation for Excel/CSV files
+            if settings.DUCKDB_DATA_ANALYSIS_ENABLED:
+                try:
+                    from app.models.duckdb_cache import DuckDBCache
+                    from app.models.subtask_context import SubtaskContext
+
+                    with SessionLocal() as duckdb_db:
+                        ctx = (
+                            duckdb_db.query(SubtaskContext)
+                            .filter(SubtaskContext.id == attachment_id)
+                            .first()
+                        )
+                        if ctx:
+                            ext = ctx.file_extension
+                            if ext:
+                                if not ext.startswith("."):
+                                    ext = f".{ext}"
+                                ext = ext.lower()
+                            if ext in (".xlsx", ".xls", ".csv"):
+                                # Reset any existing cache record so re-indexing
+                                # can trigger a fresh DuckDB generation.
+                                # Preserve source_file_hash so the generation
+                                # task can detect if the source file is unchanged.
+                                existing_cache = (
+                                    duckdb_db.query(DuckDBCache)
+                                    .filter(DuckDBCache.attachment_id == attachment_id)
+                                    .first()
+                                )
+                                if existing_cache:
+                                    existing_cache.status = "generating"
+                                    existing_cache.duckdb_attachment_id = None
+                                    duckdb_db.commit()
+                                    logger.info(
+                                        f"[Celery RAG Indexing] Reset DuckDB cache "
+                                        f"for attachment {attachment_id} "
+                                        f"(was {existing_cache.status})"
+                                    )
+
+                                from app.tasks.data_analysis_tasks import (
+                                    generate_duckdb_task,
+                                )
+
+                                generate_duckdb_task.delay(
+                                    attachment_id=attachment_id,
+                                    user_id=user_id,
+                                    source_file=ctx.name or "",
+                                    file_extension=ext or "",
+                                )
+                                logger.info(
+                                    f"[Celery RAG Indexing] Enqueued DuckDB generation "
+                                    f"for attachment {attachment_id}"
+                                )
+                except Exception as duckdb_error:
+                    logger.warning(
+                        f"[Celery RAG Indexing] Failed to enqueue DuckDB generation "
+                        f"for attachment {attachment_id}: {duckdb_error}",
+                        exc_info=True,
+                    )
+
             logger.info(
                 f"[Celery RAG Indexing] Completed: task_id={task_id}, "
                 f"document_id={document_id}, attachment_id={attachment_id}, "

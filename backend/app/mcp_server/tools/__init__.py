@@ -19,7 +19,7 @@ Tools are declared using @mcp_tool decorator which provides:
 - Parameter filtering (token_info is hidden from MCP schema)
 """
 
-from . import prompt_optimization, subscription
+from . import data_analysis, prompt_optimization, subscription
 from .decorator import (
     build_mcp_tools_dict,
     clear_tools_registry,

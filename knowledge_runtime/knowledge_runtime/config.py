@@ -57,6 +57,42 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("KNOWLEDGE_RUNTIME_DATABASE_URL", "DATABASE_URL"),
     )
 
+    # DuckDB data analysis configuration (generation only, not query/cache)
+    duckdb_max_file_size_mb: int = Field(
+        default=500,
+        validation_alias=AliasChoices(
+            "KNOWLEDGE_RUNTIME_DUCKDB_MAX_FILE_SIZE_MB",
+            "DUCKDB_MAX_FILE_SIZE_MB",
+        ),
+    )
+    duckdb_summary_sample_rows: int = Field(
+        default=50,
+        validation_alias=AliasChoices(
+            "KNOWLEDGE_RUNTIME_DUCKDB_SUMMARY_SAMPLE_ROWS",
+            "DUCKDB_SUMMARY_SAMPLE_ROWS",
+        ),
+    )
+    duckdb_memory_limit: str = Field(
+        default="4GB",
+        validation_alias=AliasChoices(
+            "KNOWLEDGE_RUNTIME_DUCKDB_MEMORY_LIMIT",
+            "DUCKDB_MEMORY_LIMIT",
+        ),
+    )
+    duckdb_min_free_memory_mb: int = Field(
+        default=1024,
+        validation_alias=AliasChoices(
+            "KNOWLEDGE_RUNTIME_DUCKDB_MIN_FREE_MEMORY_MB",
+            "DUCKDB_MIN_FREE_MEMORY_MB",
+        ),
+    )
+    duckdb_temp_dir: str = Field(
+        default="/tmp/duckdb_spill",
+        validation_alias=AliasChoices(
+            "KNOWLEDGE_RUNTIME_DUCKDB_TEMP_DIR", "DUCKDB_TEMP_DIR"
+        ),
+    )
+
 
 # Global settings instance
 _settings: Settings | None = None

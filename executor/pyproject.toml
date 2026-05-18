@@ -30,6 +30,7 @@ dependencies = [
     "chardet>=5.0.0,<7.0.0",
     "sqlalchemy==2.0.43",
     "uvicorn==0.25.0",
+    "duckdb>=1.1.0",
     "pyyaml>=6.0.0",
 
     # envd Connect RPC dependencies
