@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect } from 'react'
 import { ArrowRightLeft } from 'lucide-react'
 import {
   Dialog,
@@ -84,8 +84,6 @@ export function TransferToKbDialog({
     if (!targetKbId) return
     await onConfirm(Number(targetKbId))
   }
-
-  const totalCount = selectedDocumentCount + selectedFolderCount
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
