@@ -17,13 +17,6 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from shared.telemetry.decorators import (
-    add_span_event,
-    set_span_attribute,
-    trace_async,
-    trace_async_generator,
-)
-
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from slowapi import Limiter
@@ -60,6 +53,12 @@ from app.services.openapi.output_builder import (
     extract_pending_user_input_state,
 )
 from app.services.readers.kinds import KindType, kindReader
+from shared.telemetry.decorators import (
+    add_span_event,
+    set_span_attribute,
+    trace_async,
+    trace_async_generator,
+)
 
 logger = logging.getLogger(__name__)
 
