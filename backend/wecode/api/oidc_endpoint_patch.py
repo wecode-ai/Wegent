@@ -194,6 +194,7 @@ async def _patched_oidc_callback(
         # Sync ERP profile from OpenSearch API using username (email prefix)
         try:
             from wecode.service.erp_client import erp_client
+            from wecode.service.erp_entity_resolver import ErpEntityResolver
             from wecode.service.erp_user_service import ErpUserService
 
             erp_employee = erp_client.search_employee(user_name)
@@ -208,7 +209,8 @@ async def _patched_oidc_callback(
                 )
                 logger.info(
                     f"Synced ERP profile for OIDC user {user.id}: "
-                    f"emp={erp_employee.ssn}, dept={erp_employee.department}"
+                    f"emp={ErpEntityResolver._mask_ssn(erp_employee.ssn or '')}, "
+                    f"dept={erp_employee.department}"
                 )
             else:
                 logger.info(

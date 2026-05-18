@@ -198,7 +198,9 @@ export function AddDepartmentDialog({
                     setShowDropdown(true)
                   }}
                   onFocus={() => {
-                    if (searchQuery.trim()) setShowDropdown(true)
+                    if (searchQuery.trim() && departments.length > 0) {
+                      setShowDropdown(true)
+                    }
                   }}
                   placeholder={t('document.permission.searchDepartmentPlaceholder')}
                   className="pl-9"

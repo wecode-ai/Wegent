@@ -38,6 +38,8 @@ class DepartmentInfo(BaseModel):
     id: Optional[str] = None
     name: Optional[str] = None
     label: Optional[str] = None
+    supervisor_name: Optional[str] = None
+    employee_count: Optional[int] = None
 
 
 class ErpClient:
