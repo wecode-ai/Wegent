@@ -5,7 +5,7 @@
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 from fastapi import HTTPException
 from sqlalchemy import select, update
@@ -82,6 +82,97 @@ class JobService(BaseService[Kind, None, None]):
             task=task,
             subtasks=subtasks,
         )
+
+    async def cleanup_stale_task_executors(
+        self,
+        db: AsyncSession,
+        *,
+        inactive_hours: int = 24,
+        dry_run: bool = False,
+    ) -> Dict[str, Any]:
+        """Clean up task executor Pods that have been inactive long enough."""
+        now = datetime.now()
+        cutoff = now - timedelta(hours=inactive_hours)
+        subtasks = await self._list_runtime_cleanup_subtasks(db)
+        task_ids = sorted({subtask.task_id for subtask in subtasks})
+        task_map = await self._load_tasks_for_cleanup(db, task_ids=task_ids)
+
+        result: Dict[str, Any] = {
+            "target": "task_executors",
+            "inactive_hours": inactive_hours,
+            "dry_run": dry_run,
+            "deleted": [],
+            "skipped": [],
+            "failed": [],
+        }
+
+        executor_groups: Dict[Tuple[str, str], List[Subtask]] = {}
+        for subtask in subtasks:
+            if not subtask.executor_name:
+                continue
+            key = (subtask.executor_namespace or "", subtask.executor_name)
+            executor_groups.setdefault(key, []).append(subtask)
+
+        for (namespace, name), group_subtasks in executor_groups.items():
+            task_id = group_subtasks[0].task_id
+            subtask_ids = [subtask.id for subtask in group_subtasks]
+
+            skip_reason = self._get_runtime_cleanup_skip_reason(
+                task_map=task_map,
+                subtasks=group_subtasks,
+                cutoff=cutoff,
+                inactive_hours=inactive_hours,
+            )
+            if skip_reason:
+                result["skipped"].append(
+                    {
+                        "task_id": task_id,
+                        "executor_name": name,
+                        "executor_namespace": namespace,
+                        **skip_reason,
+                    }
+                )
+                continue
+
+            if dry_run:
+                result["skipped"].append(
+                    {
+                        "task_id": task_id,
+                        "executor_name": name,
+                        "executor_namespace": namespace,
+                        "reason": "dry_run",
+                    }
+                )
+                continue
+
+            try:
+                await self._archive_code_workspace_before_cleanup(
+                    task_map=task_map,
+                    subtasks=group_subtasks,
+                    executor_name=name,
+                    executor_namespace=namespace,
+                )
+                await executor_kinds_service.delete_executor_task_async(name, namespace)
+                await self._mark_executor_deleted(subtask_ids)
+                result["deleted"].append(
+                    {
+                        "task_id": task_id,
+                        "executor_name": name,
+                        "executor_namespace": namespace,
+                    }
+                )
+            except Exception as exc:
+                result["failed"].append(
+                    {
+                        "task_id": task_id,
+                        "executor_name": name,
+                        "executor_namespace": namespace,
+                        "reason": "delete_failed",
+                        "error": str(exc),
+                    }
+                )
+
+        return result
 
     async def cleanup_stale_executors(self, db: AsyncSession) -> None:
         """
@@ -226,6 +317,92 @@ class JobService(BaseService[Kind, None, None]):
             )
         except Exception as e:
             logger.error(f"[executor_job] cleanup_stale_executors error: {e}")
+
+    async def _list_runtime_cleanup_subtasks(self, db: AsyncSession) -> List[Subtask]:
+        """List executor-backed subtasks that have not already been cleaned up."""
+        result = await db.execute(
+            select(Subtask)
+            .filter(
+                Subtask.executor_name.isnot(None),
+                Subtask.executor_name != "",
+                Subtask.executor_deleted_at == False,
+            )
+            .order_by(Subtask.updated_at.asc(), Subtask.id.asc())
+        )
+        return list(result.scalars().all())
+
+    def _get_runtime_cleanup_skip_reason(
+        self,
+        *,
+        task_map: Dict[int, TaskResource],
+        subtasks: List[Subtask],
+        cutoff: datetime,
+        inactive_hours: int,
+    ) -> Dict[str, Any] | None:
+        """Return why an executor group cannot be deleted, or None if eligible."""
+        executor_name = subtasks[0].executor_name
+        if self._is_device_executor_name(executor_name):
+            return {"reason": "device_executor"}
+
+        latest_update: datetime | None = None
+        for subtask in subtasks:
+            task = task_map.get(subtask.task_id)
+            if not task:
+                return {"reason": "task_not_found"}
+
+            try:
+                task_crd = Task.model_validate(task.json)
+            except Exception as exc:
+                return {"reason": "invalid_task_payload", "error": str(exc)}
+
+            if self._preserve_executor_enabled(task_crd):
+                return {"reason": "preserve_executor"}
+
+            latest_update = self._latest_datetime(
+                latest_update,
+                subtask.updated_at,
+                task.updated_at,
+            )
+
+        if latest_update and latest_update > cutoff:
+            eligible_after = latest_update + timedelta(hours=inactive_hours)
+            return {
+                "reason": "not_stale",
+                "last_updated_at": latest_update.isoformat(),
+                "eligible_after": eligible_after.isoformat(),
+            }
+
+        return None
+
+    def _latest_datetime(self, *values: datetime | None) -> datetime | None:
+        """Return the latest datetime from nullable values."""
+        datetimes = [value for value in values if isinstance(value, datetime)]
+        if not datetimes:
+            return None
+        return max(datetimes)
+
+    async def _archive_code_workspace_before_cleanup(
+        self,
+        *,
+        task_map: Dict[int, TaskResource],
+        subtasks: List[Subtask],
+        executor_name: str,
+        executor_namespace: str,
+    ) -> None:
+        """Archive workspaces for stale code task executors before deletion."""
+        for subtask in subtasks:
+            task = task_map.get(subtask.task_id)
+            if not task:
+                continue
+            task_crd = Task.model_validate(task.json)
+            if self._get_task_type(task_crd) == "code":
+                await self._archive_workspace(
+                    subtask=subtask,
+                    task=task,
+                    executor_name=executor_name,
+                    executor_namespace=executor_namespace,
+                )
+                return
 
     async def _scan_candidate_subtasks_batch(
         self,
