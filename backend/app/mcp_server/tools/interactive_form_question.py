@@ -265,7 +265,21 @@ async def interactive_form_question(
 
     # Return immediately - the user will answer via a new conversation message.
     # The __silent_exit__ marker causes the current task to end silently.
+    pending_user_input_payload = {
+        "type": "interactive_form_question",
+        "interaction_type": "interactive_form",
+        "tool_name": "interactive_form_question",
+        "ask_id": ask_id,
+        "task_id": token_info.task_id,
+        "subtask_id": token_info.subtask_id,
+        "questions": normalized_questions,
+        "submit_mode": "new_response",
+        "submit_format": "markdown_message",
+    }
+
     return {
         "__silent_exit__": True,
         "reason": "interactive_form_question form displayed; waiting for user response via new conversation",
+        "pending_user_input": True,
+        "pending_user_input_payload": pending_user_input_payload,
     }
