@@ -33,9 +33,9 @@ class ErpUserService:
         """
         if not any([employee_id, department_name, erp_name, email]):
             return None
-        # Guard: empty-string employee_id creates a row that lazy-sync
-        # will never match, causing infinite re-sync loops.
-        if employee_id is not None and not employee_id.strip():
+        # Guard: None or empty-string employee_id creates a row that
+        # lazy-sync will never match, causing infinite re-sync loops.
+        if not employee_id or not employee_id.strip():
             return None
 
         profile = (
