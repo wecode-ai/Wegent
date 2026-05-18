@@ -26,6 +26,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { listKnowledgeBases } from '@/apis/knowledge'
 import type { KnowledgeBase } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
+import { toast } from '@/hooks/use-toast'
 
 interface TransferToKbDialogProps {
   open: boolean
@@ -68,6 +69,10 @@ export function TransferToKbDialog({
         })
         .catch(() => {
           setPersonalKbs([])
+          toast({
+            title: t('document.document.batch.transferFailed'),
+            variant: 'destructive',
+          })
         })
         .finally(() => setLoadingKbs(false))
     }
@@ -152,7 +157,7 @@ export function TransferToKbDialog({
           >
             {isSubmitting
               ? t('document.document.batch.transferring')
-              : t('common:actions.move')}
+              : t('document.document.batch.transfer')}
           </Button>
         </DialogFooter>
       </DialogContent>

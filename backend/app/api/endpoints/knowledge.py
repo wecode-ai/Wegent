@@ -680,9 +680,15 @@ def transfer_documents_to_kb(
             )
         return result
     except ValueError as e:
+        error_msg = str(e)
+        status_code = (
+            status.HTTP_404_NOT_FOUND
+            if "not found" in error_msg.lower()
+            else status.HTTP_400_BAD_REQUEST
+        )
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
+            status_code=status_code,
+            detail=error_msg,
         )
     except SQLAlchemyError as e:
         db.rollback()
@@ -1093,11 +1099,6 @@ def batch_move_documents(
             "user_id": str(current_user.id),
         },
     )
-    if result.success_count == 0 and result.failed_count > 0:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only Owner or Maintainer can move documents in this knowledge base",
-        )
     return result
 
 

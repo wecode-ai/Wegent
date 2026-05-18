@@ -3240,7 +3240,21 @@ class KnowledgeService:
         KnowledgeFolderService._check_kb_write_access(db, source_kb_id, user_id)
         KnowledgeFolderService._check_kb_write_access(db, target_kb_id, user_id)
 
-        # Target must be a personal KB
+        # Prevent self-transfer
+        if source_kb_id == target_kb_id:
+            raise ValueError("Source and target knowledge bases must be different")
+
+        # Both source and target must be personal KBs (namespace="default")
+        source_kb = (
+            db.query(Kind)
+            .filter(Kind.id == source_kb_id, Kind.kind == "KnowledgeBase")
+            .first()
+        )
+        if not source_kb:
+            raise ValueError("Source knowledge base not found")
+        if source_kb.namespace != "default":
+            raise ValueError("Source knowledge base must be a personal knowledge base")
+
         target_kb = (
             db.query(Kind)
             .filter(Kind.id == target_kb_id, Kind.kind == "KnowledgeBase")
@@ -3250,13 +3264,6 @@ class KnowledgeService:
             raise ValueError("Target knowledge base not found")
         if target_kb.namespace != "default":
             raise ValueError("Target knowledge base must be a personal knowledge base")
-
-        # Source KB for RAG cleanup later
-        source_kb = (
-            db.query(Kind)
-            .filter(Kind.id == source_kb_id, Kind.kind == "KnowledgeBase")
-            .first()
-        )
 
         # --- Collect all documents to transfer ---
         # 1. Explicit document IDs
@@ -3316,7 +3323,10 @@ class KnowledgeService:
             # Load folder records from source KB
             source_folders = (
                 db.query(KnowledgeFolder)
-                .filter(KnowledgeFolder.id.in_(descendant_folder_ids))
+                .filter(
+                    KnowledgeFolder.id.in_(descendant_folder_ids),
+                    KnowledgeFolder.kind_id == source_kb_id,
+                )
                 .all()
             )
             source_folder_map: dict[int, KnowledgeFolder] = {
@@ -3347,7 +3357,10 @@ class KnowledgeService:
         # --- Transfer documents ---
         docs = (
             db.query(KnowledgeDocument)
-            .filter(KnowledgeDocument.id.in_(all_doc_ids))
+            .filter(
+                KnowledgeDocument.id.in_(all_doc_ids),
+                KnowledgeDocument.kind_id == source_kb_id,
+            )
             .all()
         )
 
