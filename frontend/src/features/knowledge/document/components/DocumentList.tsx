@@ -23,6 +23,8 @@ import {
   Square,
   AlertTriangle,
   FolderPlus,
+  FolderInput,
+  ArrowRightLeft,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -39,6 +41,7 @@ import { FolderTree, type SortField, type SortOrder } from './FolderTree'
 import { CreateFolderDialog } from './CreateFolderDialog'
 import { DeleteFolderDialog } from './DeleteFolderDialog'
 import { MoveDocumentDialog } from './MoveDocumentDialog'
+import { TransferToKbDialog } from './TransferToKbDialog'
 import { useColumnResize } from '../hooks/useColumnResize'
 import { refreshKnowledgeBaseSummary } from '@/apis/knowledge'
 import { toast } from '@/hooks/use-toast'
@@ -149,12 +152,12 @@ export function DocumentList({
 }: DocumentListProps) {
   const { t } = useTranslation('knowledge')
   const { user } = useUser()
-  const { documents, loading, error, create, remove, refresh, batchDelete } = useDocuments({
+  const { documents, loading, error, create, remove, refresh, batchDelete, transfer } = useDocuments({
     knowledgeBaseId: knowledgeBase.id,
   })
 
   // Folder state
-  const { folders, fetchFolders, createFolder, updateFolder, deleteFolder, moveDocument } =
+  const { folders, fetchFolders, createFolder, updateFolder, deleteFolder, moveDocument, batchMove } =
     useFolders({ knowledgeBaseId: knowledgeBase.id })
 
   const [showCreateFolder, setShowCreateFolder] = useState(false)
@@ -203,6 +206,12 @@ export function DocumentList({
   // Track document being moved
   const [movingDoc, setMovingDoc] = useState<KnowledgeDocument | null>(null)
   const [isMovingDoc, setIsMovingDoc] = useState(false)
+  // Batch move state
+  const [showBatchMove, setShowBatchMove] = useState(false)
+  const [isBatchMoving, setIsBatchMoving] = useState(false)
+  // Transfer state
+  const [showTransfer, setShowTransfer] = useState(false)
+  const [isTransferring, setIsTransferring] = useState(false)
 
   // Resizable name column width (normal table mode only)
   const {
@@ -579,6 +588,48 @@ export function DocumentList({
     [movingDoc, moveDocument, refresh, fetchFolders]
   )
 
+  // Batch move handler
+  const handleBatchMoveConfirm = useCallback(
+    async (targetFolderId: number) => {
+      setIsBatchMoving(true)
+      try {
+        const result = await batchMove(Array.from(selectedIds), targetFolderId)
+        if (result.success_count > 0) {
+          setSelectedIds(new Set())
+          refresh()
+          fetchFolders()
+        }
+      } finally {
+        setIsBatchMoving(false)
+        setShowBatchMove(false)
+      }
+    },
+    [selectedIds, batchMove, refresh, fetchFolders]
+  )
+
+  // Transfer handler
+  const handleTransferConfirm = useCallback(
+    async (targetKbId: number) => {
+      setIsTransferring(true)
+      try {
+        const selectedDocs = documents.filter(d => selectedIds.has(d.id))
+        const folderIds = [...new Set(selectedDocs.map(d => d.folder_id).filter(id => id > 0))]
+        await transfer({
+          document_ids: Array.from(selectedIds),
+          folder_ids: folderIds,
+          target_kb_id: targetKbId,
+        })
+        setSelectedIds(new Set())
+        refresh()
+        fetchFolders()
+      } finally {
+        setIsTransferring(false)
+        setShowTransfer(false)
+      }
+    },
+    [selectedIds, documents, transfer, refresh, fetchFolders]
+  )
+
   // Knowledge base type info
   const isNotebook = (knowledgeBase.kb_type || 'notebook') === 'notebook'
   // Check if RAG is configured (has retriever and embedding model)
@@ -804,6 +855,26 @@ export function DocumentList({
                 {t('document.document.batch.selected', { count: selectedIds.size })}
               </span>
               <div className="flex-1" />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowBatchMove(true)}
+                disabled={batchLoading || isBatchMoving || isTransferring}
+                data-testid="batch-move-button"
+              >
+                <FolderInput className="w-4 h-4 mr-1" />
+                {compact ? '' : t('document.document.batch.move')}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowTransfer(true)}
+                disabled={batchLoading || isBatchMoving || isTransferring}
+                data-testid="batch-transfer-button"
+              >
+                <ArrowRightLeft className="w-4 h-4 mr-1" />
+                {compact ? '' : t('document.document.batch.transfer')}
+              </Button>
               <Button
                 variant="destructive"
                 size="sm"
@@ -1084,6 +1155,27 @@ export function DocumentList({
         currentFolderId={movingDoc?.folder_id ?? 0}
         onConfirm={handleMoveConfirm}
         isSubmitting={isMovingDoc}
+      />
+
+      <MoveDocumentDialog
+        open={showBatchMove}
+        onOpenChange={setShowBatchMove}
+        documentName=""
+        folders={folderOptions}
+        onConfirm={handleBatchMoveConfirm}
+        isSubmitting={isBatchMoving}
+        batchMode={true}
+        selectedCount={selectedIds.size}
+      />
+
+      <TransferToKbDialog
+        open={showTransfer}
+        onOpenChange={setShowTransfer}
+        selectedDocumentCount={selectedIds.size}
+        selectedFolderCount={0}
+        currentKnowledgeBaseId={knowledgeBase.id}
+        onConfirm={handleTransferConfirm}
+        isSubmitting={isTransferring}
       />
     </div>
   )

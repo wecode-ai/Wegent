@@ -13,7 +13,10 @@ import {
   updateDocument,
   deleteDocument,
   batchDeleteDocuments,
+  transferDocuments,
   type BatchOperationResult,
+  type TransferDocumentsRequest,
+  type TransferDocumentsResponse,
 } from '@/apis/knowledge'
 import type {
   KnowledgeDocument,
@@ -126,6 +129,30 @@ export function useDocuments(options: UseDocumentsOptions) {
     }
   }, [])
 
+  // Transfer documents to another KB
+  const transfer = useCallback(
+    async (data: TransferDocumentsRequest): Promise<TransferDocumentsResponse | null> => {
+      if (!knowledgeBaseId) return null
+      setLoading(true)
+      setError(null)
+      try {
+        const result = await transferDocuments(knowledgeBaseId, data)
+        toast({
+          description: `Transferred ${result.transferred_document_count} document(s) and ${result.transferred_folder_count} folder(s)`,
+        })
+        await fetchDocuments()
+        return result
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Transfer failed'
+        toast({ title: message, variant: 'destructive' })
+        return null
+      } finally {
+        setLoading(false)
+      }
+    },
+    [knowledgeBaseId, fetchDocuments]
+  )
+
   useEffect(() => {
     if (autoLoad && knowledgeBaseId) {
       fetchDocuments()
@@ -141,5 +168,6 @@ export function useDocuments(options: UseDocumentsOptions) {
     update,
     remove,
     batchDelete,
+    transfer,
   }
 }

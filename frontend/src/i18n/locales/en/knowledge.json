@@ -227,7 +227,12 @@
       "depthExceeded": "Folder hierarchy cannot exceed 4 levels",
       "documentPlacementDepthExceeded": "Documents can only be placed in the 4th folder level or above",
       "moveDocumentHint": "Move \"{{name}}\" to:",
-      "current": "current"
+      "current": "current",
+      "batchMoveDocument": "Move Documents",
+      "batchMoveDocumentHint": "Move {{count}} selected documents to:",
+      "batchMoveSuccess": "{{count}} document(s) moved successfully",
+      "batchMoveFailed": "Failed to move documents",
+      "batchMovePartial": "{{success}} moved, {{failed}} failed"
     },
     "document": {
       "title": "Documents",
@@ -298,7 +303,17 @@
         "selectAll": "Select All",
         "enable": "Enable",
         "disable": "Disable",
-        "delete": "Delete"
+        "delete": "Delete",
+        "move": "Move",
+        "transfer": "Transfer to KB",
+        "transferTitle": "Transfer to Knowledge Base",
+        "transferHint": "Transfer {{docCount}} document(s) and {{folderCount}} folder(s) to another personal knowledge base. The folder structure will be preserved.",
+        "selectTargetKb": "Select target knowledge base",
+        "targetKbRequired": "Please select a target knowledge base",
+        "transferring": "Transferring...",
+        "transferSuccess": "Transferred {{docCount}} document(s) and {{folderCount}} folder(s) successfully",
+        "transferFailed": "Transfer failed",
+        "noOtherKbs": "No other personal knowledge bases available"
       },
       "detail": {
         "title": "Document Detail",

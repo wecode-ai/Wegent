@@ -29,6 +29,7 @@ from app.schemas.knowledge import (
     AccessibleKnowledgeResponse,
     AllGroupedKnowledgeResponse,
     BatchDocumentIds,
+    BatchDocumentMoveRequest,
     BatchOperationResult,
     DocumentContentUpdate,
     DocumentDetailResponse,
@@ -50,6 +51,8 @@ from app.schemas.knowledge import (
     KnowledgeFolderUpdate,
     PersonalKnowledgeBaseGroup,
     ResourceScope,
+    TransferDocumentsRequest,
+    TransferDocumentsResponse,
 )
 from app.schemas.knowledge_qa_history import QAHistoryResponse
 from app.services.knowledge import (
@@ -618,6 +621,77 @@ def migrate_knowledge_base_to_group(
         ) from e
 
 
+@router.post(
+    "/{knowledge_base_id}/transfer-documents",
+    response_model=TransferDocumentsResponse,
+)
+@trace_sync("transfer_documents_to_kb", "knowledge.api")
+def transfer_documents_to_kb(
+    knowledge_base_id: int,
+    data: TransferDocumentsRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Transfer documents and/or folders to another personal knowledge base.
+
+    - Only personal KBs (namespace='default') can be the target
+    - User must have write access to both source and target KBs
+    - Folder structure is preserved in the target KB
+    - Documents' index_status is reset to 'not_indexed'
+    - RAG index is cleaned up from the source KB
+    """
+    try:
+        result = KnowledgeService.transfer_documents_to_kb(
+            db=db,
+            source_kb_id=knowledge_base_id,
+            target_kb_id=data.target_kb_id,
+            document_ids=data.document_ids,
+            folder_ids=data.folder_ids,
+            user_id=current_user.id,
+        )
+        add_span_event(
+            "knowledge.transfer.completed",
+            {
+                "source_kb_id": str(knowledge_base_id),
+                "target_kb_id": str(data.target_kb_id),
+                "document_count": str(result.transferred_document_count),
+                "folder_count": str(result.transferred_folder_count),
+                "user_id": str(current_user.id),
+            },
+        )
+        # Trigger KB summary updates in background for both KBs
+        if result.transferred_document_count > 0:
+            trace_ctx = capture_trace_context()
+            background_tasks.add_task(
+                _update_kb_summary_after_deletion,
+                kb_id=knowledge_base_id,
+                user_id=current_user.id,
+                user_name=current_user.user_name,
+                trace_context=trace_ctx,
+            )
+            background_tasks.add_task(
+                _update_kb_summary_after_deletion,
+                kb_id=data.target_kb_id,
+                user_id=current_user.id,
+                user_name=current_user.user_name,
+                trace_context=trace_ctx,
+            )
+        return result
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Database error during transfer: {str(e)}",
+        )
+
+
 # ============== Knowledge Document Endpoints ==============
 
 
@@ -988,6 +1062,42 @@ def batch_delete_documents(
                 trace_context=trace_ctx,
             )
 
+    return result
+
+
+@document_router.post("/batch/move", response_model=BatchOperationResult)
+@trace_sync("batch_move_documents", "knowledge.api")
+def batch_move_documents(
+    data: BatchDocumentMoveRequest,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Batch move multiple documents to a target folder.
+
+    Moves all specified documents that the user has permission to move.
+    Returns a summary of successful and failed operations.
+    Raises 403 if all operations fail due to permission issues.
+    """
+    result = KnowledgeFolderService.batch_move_documents(
+        db=db,
+        document_ids=data.document_ids,
+        folder_id=data.folder_id,
+        user_id=current_user.id,
+    )
+    add_span_event(
+        "knowledge.documents.batch_moved",
+        {
+            "success_count": str(result.success_count),
+            "failed_count": str(result.failed_count),
+            "user_id": str(current_user.id),
+        },
+    )
+    if result.success_count == 0 and result.failed_count > 0:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only Owner or Maintainer can move documents in this knowledge base",
+        )
     return result
 
 
