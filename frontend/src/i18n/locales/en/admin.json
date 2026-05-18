@@ -337,9 +337,10 @@
   },
   "api_keys": {
     "title": "API Key Management",
-    "description": "Manage service keys and personal API keys",
+    "description": "Manage service keys, personal API keys, and outbound token issuance",
     "service_keys": "Service Keys",
-    "personal_keys": "Personal Keys"
+    "personal_keys": "Personal Keys",
+    "outbound_tokens": "Outbound Issuance"
   },
   "service_keys": {
     "title": "Service Key Management",
@@ -397,6 +398,105 @@
       "load_failed": "Failed to load personal keys",
       "delete_failed": "Failed to delete personal key",
       "toggle_failed": "Failed to toggle personal key status"
+    }
+  },
+  "outbound_tokens": {
+    "title": "Outbound Token Issuance",
+    "description": "Manage signing keys and token issuers used when skills call external services.",
+    "summary": "Callers request issuance with issuer_id. The outbound token audience is determined by the issuer configuration.",
+    "empty_hint": "Create a TokenIssuer first. If you do not have a SigningKey yet, generate one inside the create flow.",
+    "common": {
+      "name": "Name",
+      "description": "Description",
+      "description_placeholder": "Enter a description (optional)",
+      "enabled": "Status",
+      "status_active": "Active",
+      "status_disabled": "Disabled",
+      "created_at": "Created At",
+      "delete_confirm_title": "Confirm Deletion"
+    },
+    "actions": {
+      "view_pem": "View PEM",
+      "copy_pem": "Copy PEM",
+      "edit": "Edit",
+      "enable": "Enable",
+      "disable": "Disable"
+    },
+    "issuers": {
+      "create": "Create TokenIssuer",
+      "create_dialog_title": "Create TokenIssuer",
+      "edit_dialog_title": "Edit TokenIssuer",
+      "dialog_description": "Outbound integrations are configured around TokenIssuer. issuer_id comes from the resource id and audience/signing key are applied internally during issuance.",
+      "no_issuers": "No TokenIssuer found",
+      "name_placeholder": "For example vip-sql-platform",
+      "audience": "Audience",
+      "audience_placeholder": "For example vip_sql_platform",
+      "jwt_issuer": "JWT Issuer",
+      "signing_key": "SigningKey",
+      "current_signing_key": "Current Signing Key",
+      "signing_key_hint": "This issuer always signs with this key",
+      "signing_key_placeholder": "Select an active SigningKey",
+      "no_signing_keys_title": "No available SigningKey",
+      "no_signing_keys_description": "Create a SigningKey first, then continue creating or editing this TokenIssuer.",
+      "default_ttl": "Default TTL",
+      "max_ttl": "Max TTL",
+      "create_success": "TokenIssuer created successfully",
+      "update_success": "TokenIssuer updated successfully",
+      "delete_success": "TokenIssuer deleted successfully",
+      "enabled_success": "TokenIssuer enabled",
+      "disabled_success": "TokenIssuer disabled",
+      "delete_confirm_message": "Are you sure you want to delete TokenIssuer \"{{name}}\"? This issuer_id will no longer be able to issue outbound tokens.",
+      "errors": {
+        "create_failed": "Failed to create TokenIssuer",
+        "update_failed": "Failed to update TokenIssuer",
+        "delete_failed": "Failed to delete TokenIssuer",
+        "toggle_failed": "Failed to toggle TokenIssuer status",
+        "requires_active_signing_key": "TokenIssuer can only bind to an active SigningKey. Enable the target SigningKey first."
+      }
+    },
+    "signing_keys": {
+      "section_title": "Low-Level SigningKey Management",
+      "section_description": "Use this section to maintain the underlying signing keys. For normal setup, prefer creating and binding keys from the TokenIssuer flow.",
+      "create": "Create SigningKey",
+      "inline_create": "Generate SigningKey",
+      "cancel_inline_create": "Collapse",
+      "inline_create_title": "Create SigningKey Inline",
+      "name_placeholder": "For example vip-signing-key",
+      "description_placeholder": "Enter the key usage description (optional)",
+      "loading": "Loading SigningKey...",
+      "kid": "KID",
+      "algorithm": "Algorithm",
+      "usage_count": "Issuer Usage",
+      "no_keys": "No SigningKey found",
+      "create_success": "SigningKey created successfully",
+      "delete_success": "SigningKey deleted successfully",
+      "enabled_success": "SigningKey enabled",
+      "disabled_success": "SigningKey disabled",
+      "delete_confirm_message": "Are you sure you want to delete SigningKey \"{{name}}\"? The deletion will fail if any TokenIssuer still references it.",
+      "errors": {
+        "load_failed": "Failed to load SigningKey",
+        "create_failed": "Failed to create SigningKey",
+        "delete_failed": "Failed to delete SigningKey",
+        "toggle_failed": "Failed to toggle SigningKey status",
+        "disable_blocked_by_active_issuers": "This SigningKey is still referenced by {{count}} active TokenIssuer entries: {{names}}. Disable those issuers before disabling the key.",
+        "delete_blocked_by_issuers": "This SigningKey is still referenced by {{count}} TokenIssuer entries: {{names}}. Remove those bindings before deleting the key.",
+        "disable_blocked_by_issuer": "This SigningKey is still referenced by an active TokenIssuer. Disable the related TokenIssuer first.",
+        "delete_blocked_by_issuer": "This SigningKey is still referenced by a TokenIssuer. Remove the related binding before deleting it."
+      }
+    },
+    "pem_dialog": {
+      "issuer_title": "TokenIssuer Public Key",
+      "key_title": "SigningKey Public Key",
+      "description": "This is the PEM public key for {{name}} with kid {{kid}}. Share this public key with the external service for local JWT verification."
+    },
+    "errors": {
+      "load_failed": "Failed to load outbound token configuration",
+      "copy_failed": "Failed to copy PEM",
+      "issuer_name_required": "TokenIssuer name is required",
+      "signing_key_required": "Please select a SigningKey",
+      "signing_key_name_required": "SigningKey name is required",
+      "audience_required": "Audience is required",
+      "invalid_ttl": "TTL configuration is invalid"
     }
   },
   "monitor": {
