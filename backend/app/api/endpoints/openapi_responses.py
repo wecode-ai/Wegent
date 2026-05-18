@@ -704,11 +704,14 @@ async def _create_streaming_response_unified(
     )
 
     # Add trace events for session setup
-    add_span_event("streaming.session_setup", {
-        "task_id": str(setup.task_id),
-        "assistant_subtask_id": str(setup.assistant_subtask.id),
-        "user_subtask_id": str(setup.user_subtask.id),
-    })
+    add_span_event(
+        "streaming.session_setup",
+        {
+            "task_id": str(setup.task_id),
+            "assistant_subtask_id": str(setup.assistant_subtask.id),
+            "user_subtask_id": str(setup.user_subtask.id),
+        },
+    )
     set_span_attribute("task.id", setup.task_id)
     set_span_attribute("subtask.id", setup.assistant_subtask.id)
     set_span_attribute("user.id", str(user.id))
@@ -832,16 +835,26 @@ async def _create_streaming_response_unified(
 
         try:
             cancel_event = await session_manager.register_stream(assistant_subtask_id)
-            add_span_event("sse.stream_registered", {
-                "subtask_id": str(assistant_subtask_id),
-                "task_id": str(execution_request.task_id),
-            })
+            add_span_event(
+                "sse.stream_registered",
+                {
+                    "subtask_id": str(assistant_subtask_id),
+                    "task_id": str(execution_request.task_id),
+                },
+            )
 
             is_sse = execution_dispatcher.supports_streaming(execution_request)
-            add_span_event("sse.mode_determined", {
-                "is_sse_mode": is_sse,
-                "shell_type": execution_request.bot[0].get("shell_type", "Chat") if execution_request.bot else "Chat",
-            })
+            add_span_event(
+                "sse.mode_determined",
+                {
+                    "is_sse_mode": is_sse,
+                    "shell_type": (
+                        execution_request.bot[0].get("shell_type", "Chat")
+                        if execution_request.bot
+                        else "Chat"
+                    ),
+                },
+            )
 
             if is_sse:
                 # SSE mode (Chat shell): stream directly via OpenAI client
@@ -900,10 +913,13 @@ async def _create_streaming_response_unified(
             # Stream events from the unified source
             event_count = 0
             try:
-                add_span_event("sse.event_iteration_start", {
-                    "subtask_id": str(assistant_subtask_id),
-                    "is_sse_mode": is_sse,
-                })
+                add_span_event(
+                    "sse.event_iteration_start",
+                    {
+                        "subtask_id": str(assistant_subtask_id),
+                        "is_sse_mode": is_sse,
+                    },
+                )
                 async for event in _iter_events():
                     event_count += 1
                     if cancel_event.is_set() or await session_manager.is_cancelled(
@@ -912,10 +928,13 @@ async def _create_streaming_response_unified(
                         logger.info(
                             f"Stream cancelled for subtask {assistant_subtask_id}"
                         )
-                        add_span_event("sse.stream_cancelled", {
-                            "subtask_id": str(assistant_subtask_id),
-                            "events_processed": event_count,
-                        })
+                        add_span_event(
+                            "sse.stream_cancelled",
+                            {
+                                "subtask_id": str(assistant_subtask_id),
+                                "events_processed": event_count,
+                            },
+                        )
                         break
 
                     if event.type == EventType.CHUNK.value:
@@ -1107,14 +1126,20 @@ async def _create_streaming_response_unified(
                         logger.info(
                             f"[OPENAPI] Stream completed for subtask {assistant_subtask_id}"
                         )
-                        add_span_event("sse.terminal_event", {
-                            "event_type": "DONE",
-                            "total_events": event_count,
-                        })
-                add_span_event("sse.event_iteration_complete", {
-                    "subtask_id": str(assistant_subtask_id),
-                    "total_events": event_count,
-                })
+                        add_span_event(
+                            "sse.terminal_event",
+                            {
+                                "event_type": "DONE",
+                                "total_events": event_count,
+                            },
+                        )
+                add_span_event(
+                    "sse.event_iteration_complete",
+                    {
+                        "subtask_id": str(assistant_subtask_id),
+                        "total_events": event_count,
+                    },
+                )
             finally:
                 # Wait for SSE dispatch task to complete
                 if dispatch_task is not None:
@@ -1146,11 +1171,14 @@ async def _create_streaming_response_unified(
 
     async def generate():
         event_count = 0
-        add_span_event("sse.generate_start", {
-            "response_id": response_id,
-            "task_id": str(task_kind_id),
-            "subtask_id": str(assistant_subtask_id),
-        })
+        add_span_event(
+            "sse.generate_start",
+            {
+                "response_id": response_id,
+                "task_id": str(task_kind_id),
+                "subtask_id": str(assistant_subtask_id),
+            },
+        )
         try:
             async for event in streaming_service.create_streaming_response(
                 response_id=response_id,
@@ -1171,19 +1199,28 @@ async def _create_streaming_response_unified(
                 event_count += 1
                 # Log every 100 events and first 5 events
                 if event_count <= 5 or event_count % 100 == 0:
-                    add_span_event("sse.event_yielded", {
-                        "event_number": event_count,
-                        "response_id": response_id,
-                    })
+                    add_span_event(
+                        "sse.event_yielded",
+                        {
+                            "event_number": event_count,
+                            "response_id": response_id,
+                        },
+                    )
                 yield event
-            add_span_event("sse.generate_complete", {
-                "total_events_sent": event_count,
-                "response_id": response_id,
-            })
+            add_span_event(
+                "sse.generate_complete",
+                {
+                    "total_events_sent": event_count,
+                    "response_id": response_id,
+                },
+            )
         except NotImplementedError as e:
-            add_span_event("sse.generate_not_implemented", {
-                "error": str(e),
-            })
+            add_span_event(
+                "sse.generate_not_implemented",
+                {
+                    "error": str(e),
+                },
+            )
             # Return error in SSE format
             import json
 

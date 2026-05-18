@@ -1086,12 +1086,15 @@ class ExecutionDispatcher:
             f"[ExecutionDispatcher] About to call client.responses.create: "
             f"task_id={request.task_id}, subtask_id={request.subtask_id}"
         )
-        add_span_event("sse.openai_request_start", {
-            "model": openai_request.get("model"),
-            "base_url": base_url,
-            "tools_count": len(tools),
-            "request_id": request_id,
-        })
+        add_span_event(
+            "sse.openai_request_start",
+            {
+                "model": openai_request.get("model"),
+                "base_url": base_url,
+                "tools_count": len(tools),
+                "request_id": request_id,
+            },
+        )
         # Use async with to ensure stream is properly closed on exit.
         # Without this, breaking out of the stream loop leaves the underlying
         # httpx Response open. When GC eventually collects it, httpcore's
@@ -1116,11 +1119,14 @@ class ExecutionDispatcher:
                 f"[ExecutionDispatcher] Stream created, starting to iterate events: "
                 f"task_id={request.task_id}, subtask_id={request.subtask_id}"
             )
-            add_span_event("sse.openai_stream_created", {
-                "task_id": str(request.task_id),
-                "subtask_id": str(request.subtask_id),
-                "request_id": request_id,
-            })
+            add_span_event(
+                "sse.openai_stream_created",
+                {
+                    "task_id": str(request.task_id),
+                    "subtask_id": str(request.subtask_id),
+                    "request_id": request_id,
+                },
+            )
 
             event_count = 0
             last_cancel_check = 0
@@ -1129,10 +1135,13 @@ class ExecutionDispatcher:
 
             try:
                 # Process streaming events
-                add_span_event("sse.openai_event_iteration_start", {
-                    "task_id": str(request.task_id),
-                    "subtask_id": str(request.subtask_id),
-                })
+                add_span_event(
+                    "sse.openai_event_iteration_start",
+                    {
+                        "task_id": str(request.task_id),
+                        "subtask_id": str(request.subtask_id),
+                    },
+                )
                 async for event in stream:
                     event_count += 1
 
@@ -1173,12 +1182,15 @@ class ExecutionDispatcher:
                             f"task_id={request.task_id}, subtask_id={request.subtask_id}"
                         )
                         # Add trace event for first few events and terminal events
-                        add_span_event("sse.openai_event_received", {
-                            "event_type": event_type,
-                            "event_number": event_count,
-                            "task_id": str(request.task_id),
-                            "subtask_id": str(request.subtask_id),
-                        })
+                        add_span_event(
+                            "sse.openai_event_received",
+                            {
+                                "event_type": event_type,
+                                "event_number": event_count,
+                                "task_id": str(request.task_id),
+                                "subtask_id": str(request.subtask_id),
+                            },
+                        )
 
                     # Convert event to dict for parsing
                     event_data = (
@@ -1222,12 +1234,15 @@ class ExecutionDispatcher:
                             f"task_id={request.task_id}, subtask_id={request.subtask_id}, "
                             f"event_type={event_type}, request_id={request_id}"
                         )
-                        add_span_event("sse.openai_terminal_event", {
-                            "event_type": event_type,
-                            "total_events": event_count,
-                            "task_id": str(request.task_id),
-                            "subtask_id": str(request.subtask_id),
-                        })
+                        add_span_event(
+                            "sse.openai_terminal_event",
+                            {
+                                "event_type": event_type,
+                                "total_events": event_count,
+                                "task_id": str(request.task_id),
+                                "subtask_id": str(request.subtask_id),
+                            },
+                        )
                         break
 
                 # If cancelled, emit CANCELLED event
@@ -1250,12 +1265,15 @@ class ExecutionDispatcher:
                         request_id,
                         event_count,
                     )
-                    add_span_event("sse.openai_stream_no_terminal", {
-                        "warning": True,
-                        "total_events": event_count,
-                        "task_id": str(request.task_id),
-                        "subtask_id": str(request.subtask_id),
-                    })
+                    add_span_event(
+                        "sse.openai_stream_no_terminal",
+                        {
+                            "warning": True,
+                            "total_events": event_count,
+                            "task_id": str(request.task_id),
+                            "subtask_id": str(request.subtask_id),
+                        },
+                    )
 
                 # Log when stream iteration completes
                 logger.info(
@@ -1264,20 +1282,26 @@ class ExecutionDispatcher:
                     f"total_events={event_count}, cancelled={cancelled}, "
                     f"terminal_event_type={terminal_event_type or 'none'}, request_id={request_id}"
                 )
-                add_span_event("sse.openai_event_iteration_complete", {
-                    "total_events": event_count,
-                    "cancelled": cancelled,
-                    "terminal_event_type": terminal_event_type or "none",
-                    "task_id": str(request.task_id),
-                    "subtask_id": str(request.subtask_id),
-                })
+                add_span_event(
+                    "sse.openai_event_iteration_complete",
+                    {
+                        "total_events": event_count,
+                        "cancelled": cancelled,
+                        "terminal_event_type": terminal_event_type or "none",
+                        "task_id": str(request.task_id),
+                        "subtask_id": str(request.subtask_id),
+                    },
+                )
             finally:
                 # Unregister stream to clean up
                 await session_manager.unregister_stream(request.subtask_id)
-                add_span_event("sse.stream_unregistered", {
-                    "task_id": str(request.task_id),
-                    "subtask_id": str(request.subtask_id),
-                })
+                add_span_event(
+                    "sse.stream_unregistered",
+                    {
+                        "task_id": str(request.task_id),
+                        "subtask_id": str(request.subtask_id),
+                    },
+                )
 
     async def _dispatch_image_generation(
         self,
