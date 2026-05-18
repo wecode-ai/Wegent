@@ -147,7 +147,7 @@ class SharedTaskService:
                     .filter(
                         TaskResource.id == task_id,
                         TaskResource.kind == "Task",
-                        TaskResource.is_active == TaskResource.STATE_ACTIVE,
+                        TaskResource.is_active.in_(TaskResource.is_active_query()),
                     )
                     .first()
                 )
@@ -262,7 +262,7 @@ class SharedTaskService:
             .filter(
                 TaskResource.id == task_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
+                TaskResource.is_active.in_(TaskResource.is_active_query()),
             )
             .first()
         )
@@ -656,7 +656,7 @@ class SharedTaskService:
                 TaskResource.id == share_info.task_id,
                 TaskResource.user_id == share_info.user_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
+                TaskResource.is_active.in_(TaskResource.is_active_query()),
             )
             .first()
         )
@@ -836,7 +836,7 @@ class SharedTaskService:
                 TaskResource.id == task_id,
                 TaskResource.user_id == user_id,
                 TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
+                TaskResource.is_active.in_(TaskResource.is_active_query()),
             )
             .first()
         )

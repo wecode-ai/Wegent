@@ -42,6 +42,47 @@ def _parse_arguments(value: str) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def normalize_tool_output(value: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (TypeError, ValueError):
+            return value
+    return value
+
+
+def _build_pending_user_input_payload(
+    *,
+    block: dict[str, Any],
+    tool_output: dict[str, Any],
+) -> Optional[dict[str, Any]]:
+    payload = tool_output.get("pending_user_input_payload")
+    if isinstance(payload, dict):
+        return payload
+
+    ask_id = tool_output.get("ask_id")
+    tool_input = block.get("tool_input")
+    if not isinstance(tool_input, dict):
+        tool_input = {}
+
+    fallback_payload: dict[str, Any] = {}
+    if isinstance(ask_id, str) and ask_id:
+        fallback_payload["ask_id"] = ask_id
+
+    questions = tool_input.get("questions")
+    if isinstance(questions, list) and questions:
+        fallback_payload["questions"] = questions
+
+    if fallback_payload:
+        fallback_payload["type"] = (
+            str(tool_output.get("type") or block.get("tool_name") or "")
+            or "interactive_form_question"
+        )
+        return fallback_payload
+
+    return None
+
+
 def _extract_text_content(value: Any) -> str:
     if isinstance(value, str):
         return value
@@ -207,6 +248,7 @@ def _build_tool_item_from_tool_call(
             server_label=str((block or {}).get("server_label") or ""),
             arguments=arguments,
             status=_shell_call_status(block),
+            output=normalize_tool_output((block or {}).get("tool_output")),
         )
 
     return FunctionCallOutputItem(
@@ -250,6 +292,7 @@ def _build_tool_item_from_block(block: dict[str, Any]) -> ResponseOutputItem:
         )
 
     if protocol == "mcp_call":
+        tool_output = normalize_tool_output(block.get("tool_output"))
         return MCPCallOutputItem(
             type="mcp_call",
             id=tool_use_id or f"mcp_{tool_name}",
@@ -257,6 +300,7 @@ def _build_tool_item_from_block(block: dict[str, Any]) -> ResponseOutputItem:
             server_label=str(block.get("server_label") or ""),
             arguments=_dump_arguments(tool_input),
             status=_shell_call_status(block),
+            output=tool_output,
         )
 
     return FunctionCallOutputItem(
@@ -455,3 +499,33 @@ def build_response_output(
             )
         )
     return output
+
+
+def extract_pending_user_input_state(
+    subtasks: Iterable[Subtask],
+) -> tuple[bool, Optional[dict[str, Any]]]:
+    """Extract persisted interactive-form pending state from assistant tool blocks."""
+    for subtask in subtasks:
+        result = subtask.result if isinstance(subtask.result, dict) else {}
+        blocks = result.get("blocks")
+        if not isinstance(blocks, list):
+            continue
+
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+
+            output = normalize_tool_output(block.get("tool_output"))
+            if not isinstance(output, dict):
+                continue
+
+            if output.get("pending_user_input") is True:
+                payload = _build_pending_user_input_payload(
+                    block=block,
+                    tool_output=output,
+                )
+                if payload is not None:
+                    return True, payload
+                return True, None
+
+    return False, None
