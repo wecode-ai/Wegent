@@ -33,7 +33,6 @@ from app.models.dingtalk_doc import DingtalkSyncedNode
 from app.models.user import User
 from app.services.dingtalk_doc_service import (
     MAX_NODES_PER_SYNC,
-    MAX_RECURSION_DEPTH,
     MCP_TOOL_LIST_NODES,
     DingTalkDocService,
 )
@@ -91,9 +90,7 @@ class DingTalkWikiSpaceService:
         Returns a dict with sync statistics: added, updated, deleted, total,
         mcp_nodes_fetched.
         """
-        wikispace_mcp_url = DingTalkWikiSpaceService.get_user_wikispace_mcp_url(
-            user
-        )
+        wikispace_mcp_url = DingTalkWikiSpaceService.get_user_wikispace_mcp_url(user)
         if not wikispace_mcp_url:
             raise ValueError(
                 "DingTalk WikiSpace MCP URL is not configured or not enabled"
@@ -415,6 +412,7 @@ class DingTalkWikiSpaceService:
         Completeness is determined by counting the number of fields with
         meaningful (non-None, non-empty-string) values.
         """
+
         def _completeness(node: dict[str, Any]) -> int:
             return sum(1 for v in node.values() if v is not None and v != "")
 

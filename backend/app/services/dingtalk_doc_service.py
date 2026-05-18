@@ -491,8 +491,6 @@ class DingTalkDocService:
                 return datetime.fromtimestamp(ts)
             if isinstance(update_time, str):
                 # Try ISO 8601 parse, then convert to local time
-                from datetime import timezone as _tz
-
                 dt = datetime.fromisoformat(update_time.replace("Z", "+00:00"))
                 if dt.tzinfo is not None:
                     # Convert to local time and strip tzinfo

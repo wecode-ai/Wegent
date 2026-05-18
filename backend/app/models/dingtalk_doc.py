@@ -5,7 +5,6 @@
 """DingTalk synced document node model for storing synced DingTalk docs."""
 
 import enum
-from datetime import datetime
 
 from sqlalchemy import Boolean, Column, DateTime, Index, Integer, String
 from sqlalchemy.sql import func
@@ -15,6 +14,7 @@ from app.db.base import Base
 
 class DingTalkNodeSource(str, enum.Enum):
     """Source of a synced DingTalk node."""
+
     DOCS = "docs"
     WIKISPACE = "wikispace"
 
