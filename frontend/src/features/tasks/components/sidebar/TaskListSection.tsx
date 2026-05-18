@@ -176,8 +176,7 @@ export default function TaskListSection({
       if (task.task_type === 'knowledge' && task.knowledge_base_id) {
         // Knowledge type tasks navigate to the dedicated KB chat page
         // This ensures full task functionality (follow-up questions, link sharing, etc.)
-        // Include taskId in URL so the page can load the correct chat history
-        targetPath = `/knowledge/document/${task.knowledge_base_id}?taskId=${task.id}`
+        targetPath = `/knowledge/document/${task.knowledge_base_id}`
       } else if (task.task_type === 'task') {
         // Task type tasks navigate to device chat page
         targetPath = '/devices/chat'
