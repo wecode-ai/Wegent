@@ -35,7 +35,7 @@ import { EditDocumentDialog } from './EditDocumentDialog'
 import { RetrievalTestDialog } from './RetrievalTestDialog'
 import { useDocuments } from '../hooks/useDocuments'
 import { useFolders } from '../hooks/useFolders'
-import { FolderTree } from './FolderTree'
+import { FolderTree, type SortField, type SortOrder } from './FolderTree'
 import { CreateFolderDialog } from './CreateFolderDialog'
 import { DeleteFolderDialog } from './DeleteFolderDialog'
 import { MoveDocumentDialog } from './MoveDocumentDialog'
@@ -119,9 +119,6 @@ interface DocumentListProps {
   /** Whether this KB belongs to an organization-level namespace (affects URL format in DocumentDetailDialog) */
   isOrganization?: boolean
 }
-
-type SortField = 'name' | 'size' | 'date' | 'updatedAt'
-type SortOrder = 'asc' | 'desc'
 
 /** Flatten folder tree into a flat list for select dropdowns */
 function flattenFoldersForSelect(
@@ -285,37 +282,11 @@ export function DocumentList({
     }
   }, [selectedIds, onSelectionChange, initialSelectionDone])
 
-  const filteredAndSortedDocuments = useMemo(() => {
-    let result = [...documents]
-
-    // Filter by search query (name-based frontend search)
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase()
-      result = result.filter(doc => doc.name.toLowerCase().includes(query))
-    }
-
-    // Sort
-    result.sort((a, b) => {
-      let comparison = 0
-      switch (sortField) {
-        case 'name':
-          comparison = a.name.localeCompare(b.name)
-          break
-        case 'size':
-          comparison = a.file_size - b.file_size
-          break
-        case 'date':
-          comparison = new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-          break
-        case 'updatedAt':
-          comparison = new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()
-          break
-      }
-      return sortOrder === 'asc' ? comparison : -comparison
-    })
-
-    return result
-  }, [documents, searchQuery, sortField, sortOrder])
+  const filteredDocuments = useMemo(() => {
+    if (!searchQuery.trim()) return documents
+    const query = searchQuery.toLowerCase()
+    return documents.filter(doc => doc.name.toLowerCase().includes(query))
+  }, [documents, searchQuery])
 
   const canManageAnyDocuments = canUpload || canManageAllDocuments
 
@@ -449,15 +420,14 @@ export function DocumentList({
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
-      setSelectedIds(new Set(filteredAndSortedDocuments.map(doc => doc.id)))
+      setSelectedIds(new Set(filteredDocuments.map(doc => doc.id)))
     } else {
       setSelectedIds(new Set())
     }
   }
 
   const isAllSelected =
-    filteredAndSortedDocuments.length > 0 &&
-    filteredAndSortedDocuments.every(doc => selectedIds.has(doc.id))
+    filteredDocuments.length > 0 && filteredDocuments.every(doc => selectedIds.has(doc.id))
 
   const isPartialSelected = selectedIds.size > 0 && !isAllSelected
 
@@ -823,7 +793,7 @@ export function DocumentList({
             {t('common:actions.retry')}
           </Button>
         </div>
-      ) : filteredAndSortedDocuments.length > 0 || folders.length > 0 ? (
+      ) : filteredDocuments.length > 0 || folders.length > 0 ? (
         <>
           {/* Batch action bar - shown when items are selected (not in notebook mode where selection is for context injection) */}
           {canManageAllDocuments && selectedIds.size > 0 && !onSelectionChange && (
@@ -850,7 +820,7 @@ export function DocumentList({
           {compact ? (
             <div className="space-y-2">
               {/* Select all control bar for notebook mode */}
-              {onSelectionChange && filteredAndSortedDocuments.length > 0 && (
+              {onSelectionChange && filteredDocuments.length > 0 && (
                 <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-muted">
                   <button
                     onClick={() => handleSelectAll(!isAllSelected)}
@@ -864,13 +834,13 @@ export function DocumentList({
                     <span>{t('document.document.batch.selectAll')}</span>
                   </button>
                   <span className="text-text-muted">
-                    ({selectedIds.size}/{filteredAndSortedDocuments.length})
+                    ({selectedIds.size}/{filteredDocuments.length})
                   </span>
                 </div>
               )}
               <FolderTree
                 folders={folders}
-                documents={filteredAndSortedDocuments}
+                documents={filteredDocuments}
                 compact={true}
                 onViewDetail={setViewingDoc}
                 onEdit={setEditingDoc}
@@ -889,6 +859,8 @@ export function DocumentList({
                 onRenameFolder={canUpload ? handleRenameFolder : undefined}
                 onDeleteFolder={canUpload ? handleDeleteFolderClick : undefined}
                 canManageFolders={canUpload}
+                sortField={sortField}
+                sortOrder={sortOrder}
               />
             </div>
           ) : (
@@ -976,7 +948,7 @@ export function DocumentList({
                 {/* Document rows with folder tree - no extra border */}
                 <FolderTree
                   folders={folders}
-                  documents={filteredAndSortedDocuments}
+                  documents={filteredDocuments}
                   compact={false}
                   withBorder={false}
                   onViewDetail={setViewingDoc}
@@ -997,6 +969,8 @@ export function DocumentList({
                   onRenameFolder={canUpload ? handleRenameFolder : undefined}
                   onDeleteFolder={canUpload ? handleDeleteFolderClick : undefined}
                   canManageFolders={canUpload}
+                  sortField={sortField}
+                  sortOrder={sortOrder}
                 />
               </div>
             </div>

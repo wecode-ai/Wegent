@@ -28,6 +28,8 @@ interface FolderNode {
   documentCount: number
   /** Whether this is a real folder from the API (enables CRUD operations) */
   isApiFolder: boolean
+  created_at?: string
+  updated_at?: string
 }
 
 interface DocumentNode {
@@ -65,6 +67,81 @@ interface FolderTreeProps {
   onDeleteFolder?: (folderId: number, folderName: string) => void
   /** Whether the user can manage folders (permission from KB) */
   canManageFolders?: boolean
+  /** Sort field for mixed folder/document sorting */
+  sortField?: SortField
+  /** Sort order */
+  sortOrder?: SortOrder
+}
+
+export type SortField = 'name' | 'size' | 'date' | 'updatedAt'
+export type SortOrder = 'asc' | 'desc'
+
+/** Get display name for a tree node */
+function getNodeName(node: TreeNode): string {
+  return node.type === 'document' ? (node as DocumentNode).displayName : (node as FolderNode).name
+}
+
+/** Get sortable value from a tree node based on sort field */
+function getNodeSortValue(node: TreeNode, field: SortField): string | number {
+  if (node.type === 'document') {
+    const doc = (node as DocumentNode).document
+    switch (field) {
+      case 'name':
+        return doc.name
+      case 'size':
+        return doc.file_size
+      case 'date':
+        return new Date(doc.created_at).getTime()
+      case 'updatedAt':
+        return new Date(doc.updated_at).getTime()
+    }
+  }
+  // Folders: use created_at/updated_at when available, fallback to name for size
+  const folder = node as FolderNode
+  switch (field) {
+    case 'date':
+      return folder.created_at ? new Date(folder.created_at).getTime() : 0
+    case 'updatedAt':
+      return folder.updated_at ? new Date(folder.updated_at).getTime() : 0
+    default:
+      return folder.name
+  }
+}
+
+/**
+ * Sort tree nodes: folders and documents mixed together.
+ * For name/date/updatedAt: mixed comparison by field value.
+ * For size: folders first (folders lack size), then documents by size.
+ */
+function sortTreeNodes(nodes: TreeNode[], field: SortField, order: SortOrder): TreeNode[] {
+  const sorted = [...nodes]
+  sorted.sort((a, b) => {
+    const aVal = getNodeSortValue(a, field)
+    const bVal = getNodeSortValue(b, field)
+
+    // For name/date/updatedAt: mixed comparison by field value
+    if (field !== 'size') {
+      const cmp =
+        typeof aVal === 'number' && typeof bVal === 'number'
+          ? aVal - bVal
+          : String(aVal).localeCompare(String(bVal))
+      return order === 'asc' ? cmp : -cmp
+    }
+
+    // For size: folders first, then documents by field value
+    const aIsFolder = a.type !== 'document'
+    const bIsFolder = b.type !== 'document'
+    if (aIsFolder !== bIsFolder) {
+      return aIsFolder ? -1 : 1
+    }
+    if (aIsFolder && bIsFolder) {
+      const cmp = getNodeName(a).localeCompare(getNodeName(b))
+      return order === 'asc' ? cmp : -cmp
+    }
+    const cmp = (aVal as number) - (bVal as number)
+    return order === 'asc' ? cmp : -cmp
+  })
+  return sorted
 }
 
 /**
@@ -72,18 +149,26 @@ interface FolderTreeProps {
  */
 function convertFolderToNode(
   folder: KnowledgeFolder,
-  docsByFolderId: Map<number, KnowledgeDocument[]>
+  docsByFolderId: Map<number, KnowledgeDocument[]>,
+  sortField: SortField,
+  sortOrder: SortOrder
 ): FolderNode {
   const folderDocs = docsByFolderId.get(folder.id) || []
 
-  const children: TreeNode[] = [
-    ...folderDocs.map(doc => ({
-      type: 'document' as const,
-      displayName: doc.name,
-      document: doc,
-    })),
-    ...folder.children.map(child => convertFolderToNode(child, docsByFolderId)),
-  ]
+  const children: TreeNode[] = sortTreeNodes(
+    [
+      ...folderDocs.map(doc => ({
+        type: 'document' as const,
+        displayName: doc.name,
+        document: doc,
+      })),
+      ...folder.children.map(child =>
+        convertFolderToNode(child, docsByFolderId, sortField, sortOrder)
+      ),
+    ],
+    sortField,
+    sortOrder
+  )
 
   // Count total documents recursively
   const totalDocs =
@@ -97,6 +182,8 @@ function convertFolderToNode(
     children,
     documentCount: totalDocs,
     isApiFolder: true,
+    created_at: folder.created_at,
+    updated_at: folder.updated_at,
   }
 }
 
@@ -110,7 +197,12 @@ function convertFolderToNode(
  * When no API folders exist, falls back to building a virtual tree
  * from document name paths (backward compatible '/' splitting).
  */
-function buildMergedTree(folders: KnowledgeFolder[], documents: KnowledgeDocument[]): TreeNode[] {
+function buildMergedTree(
+  folders: KnowledgeFolder[],
+  documents: KnowledgeDocument[],
+  sortField: SortField,
+  sortOrder: SortOrder
+): TreeNode[] {
   // Group documents: root (folder_id=0) vs folder-specific
   const rootDocs: KnowledgeDocument[] = []
   const docsByFolderId = new Map<number, KnowledgeDocument[]>()
@@ -129,26 +221,34 @@ function buildMergedTree(folders: KnowledgeFolder[], documents: KnowledgeDocumen
 
   // If there are real folders from the API, use them to build the tree
   if (hasAnyRealFolder) {
-    const tree: TreeNode[] = [
-      ...rootDocs.map(doc => ({
-        type: 'document' as const,
-        displayName: doc.name,
-        document: doc,
-      })),
-      ...folders.map(folder => convertFolderToNode(folder, docsByFolderId)),
-    ]
+    const tree: TreeNode[] = sortTreeNodes(
+      [
+        ...rootDocs.map(doc => ({
+          type: 'document' as const,
+          displayName: doc.name,
+          document: doc,
+        })),
+        ...folders.map(folder => convertFolderToNode(folder, docsByFolderId, sortField, sortOrder)),
+      ],
+      sortField,
+      sortOrder
+    )
     return tree
   }
 
   // Fallback: build virtual tree from document names (backward compat)
-  return buildFallbackTree(documents)
+  return buildFallbackTree(documents, sortField, sortOrder)
 }
 
 /**
  * Build virtual tree by splitting document names on '/'.
  * This is the backward-compatible fallback when no real folders exist.
  */
-function buildFallbackTree(documents: KnowledgeDocument[]): TreeNode[] {
+function buildFallbackTree(
+  documents: KnowledgeDocument[],
+  sortField: SortField,
+  sortOrder: SortOrder
+): TreeNode[] {
   const root: TreeNode[] = []
   const folderMap = new Map<string, FolderNode>()
 
@@ -195,7 +295,17 @@ function buildFallbackTree(documents: KnowledgeDocument[]): TreeNode[] {
     }
   }
 
-  return root
+  return sortTreeRecursive(root, sortField, sortOrder)
+}
+
+/** Recursively sort tree nodes and their children */
+function sortTreeRecursive(nodes: TreeNode[], field: SortField, order: SortOrder): TreeNode[] {
+  return sortTreeNodes(nodes, field, order).map(node => {
+    if (node.type !== 'document' && (node as FolderNode).children.length > 0) {
+      return { ...node, children: sortTreeRecursive((node as FolderNode).children, field, order) }
+    }
+    return node
+  })
 }
 
 /** Generate a stable key for a tree node based on its type */
@@ -512,8 +622,13 @@ export function FolderTree({
   onRenameFolder,
   onDeleteFolder,
   canManageFolders = false,
+  sortField = 'date',
+  sortOrder = 'desc',
 }: FolderTreeProps) {
-  const tree = useMemo(() => buildMergedTree(folders, documents), [folders, documents])
+  const tree = useMemo(
+    () => buildMergedTree(folders, documents, sortField, sortOrder),
+    [folders, documents, sortField, sortOrder]
+  )
 
   // Collect all folder paths for default-expand
   const allFolderPaths = useMemo(() => {
