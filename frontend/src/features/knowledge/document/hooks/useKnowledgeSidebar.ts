@@ -106,8 +106,10 @@ export interface UseKnowledgeSidebarReturn {
 
   // DingTalk docs
   dingtalkDocCount: number
+  wikispaceDocCount: number
   isDingtalkConfigured: boolean
   isDingtalkLoading: boolean
+  isWikispaceConfigured: boolean
 
   // Summary counts from backend
   summary?: {
@@ -192,8 +194,10 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
 
   // DingTalk docs state
   const [dingtalkDocCount, setDingtalkDocCount] = useState(0)
+  const [wikispaceDocCount, setWikispaceDocCount] = useState(0)
   const [isDingtalkConfigured, setIsDingtalkConfigured] = useState(false)
   const [isDingtalkLoading, setIsDingtalkLoading] = useState(true)
+  const [isWikispaceConfigured, setIsWikispaceConfigured] = useState(false)
 
   // Load initial data using the optimized all-grouped API
   const loadInitialData = useCallback(async () => {
@@ -214,20 +218,27 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     }
   }, [user, loadInitialData])
 
-  // Load DingTalk docs sync status
   const loadDingtalkStatus = useCallback(async () => {
     setIsDingtalkLoading(true)
-    try {
-      const status = await dingtalkDocApi.getSyncStatus()
-      setDingtalkDocCount(status.total_nodes)
-      setIsDingtalkConfigured(status.is_configured)
-    } catch {
-      // Not critical - DingTalk may not be configured
+    const [docsResult, wsResult] = await Promise.allSettled([
+      dingtalkDocApi.getSyncStatus(),
+      dingtalkDocApi.getWikispaceSyncStatus(),
+    ])
+    if (docsResult.status === 'fulfilled') {
+      setDingtalkDocCount(docsResult.value.total_nodes)
+      setIsDingtalkConfigured(docsResult.value.is_configured)
+    } else {
       setIsDingtalkConfigured(false)
       setDingtalkDocCount(0)
-    } finally {
-      setIsDingtalkLoading(false)
     }
+    if (wsResult.status === 'fulfilled') {
+      setIsWikispaceConfigured(wsResult.value.is_configured)
+      setWikispaceDocCount(wsResult.value.total_nodes)
+    } else {
+      setIsWikispaceConfigured(false)
+      setWikispaceDocCount(0)
+    }
+    setIsDingtalkLoading(false)
   }, [])
 
   useEffect(() => {
@@ -578,8 +589,10 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
 
     // DingTalk docs
     dingtalkDocCount,
+    wikispaceDocCount,
     isDingtalkConfigured,
     isDingtalkLoading,
+    isWikispaceConfigured,
 
     // Summary from backend
     summary: allGroupedData?.summary,
