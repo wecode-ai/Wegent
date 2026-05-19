@@ -260,11 +260,18 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
 
     // Remove duplicates by (id, group_id) so the same KB can appear in different groups
     const seen = new Set<string>()
-    return all.filter(kb => {
+    const deduped = all.filter(kb => {
       const key = `${kb.id}-${kb.group_id}`
       if (seen.has(key)) return false
       seen.add(key)
       return true
+    })
+
+    // Sort by updated_at DESC globally (most recent first)
+    return deduped.sort((a, b) => {
+      const aTime = a.updated_at ? new Date(a.updated_at).getTime() : 0
+      const bTime = b.updated_at ? new Date(b.updated_at).getTime() : 0
+      return bTime - aTime
     })
   }, [allGroupedData])
 
