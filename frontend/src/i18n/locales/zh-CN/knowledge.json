@@ -127,7 +127,7 @@
       "from": "来自",
       "permission": "权限",
       "createdAt": "创建时间",
-      "lastAccess": "最近访问",
+      "updatedAt": "更新时间",
       "actions": "操作",
       "edit": "编辑",
       "delete": "删除",

@@ -127,7 +127,7 @@
       "from": "From",
       "permission": "Permission",
       "createdAt": "Created",
-      "lastAccess": "Last Access",
+      "updatedAt": "Updated",
       "actions": "Actions",
       "edit": "Edit",
       "delete": "Delete",

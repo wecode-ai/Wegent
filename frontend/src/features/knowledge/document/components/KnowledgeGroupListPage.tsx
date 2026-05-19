@@ -226,12 +226,14 @@ export function KnowledgeGroupListPage({
             comparison = a.name.localeCompare(b.name)
             break
           case 'created':
+            // asc = earliest first, desc = newest first
             comparison =
-              new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+              new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
             break
           case 'updated':
+            // asc = earliest first, desc = newest first
             comparison =
-              new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime()
+              new Date(a.updated_at || 0).getTime() - new Date(b.updated_at || 0).getTime()
             break
           case 'group':
             if (getKbGroupInfo) {
@@ -244,25 +246,9 @@ export function KnowledgeGroupListPage({
             comparison = getRolePriority(getKbRole(a)) - getRolePriority(getKbRole(b))
             break
           case 'default':
-            // Default sort: permission (asc) > group (asc) > name (asc)
-            // 1. Sort by permission (higher priority first)
-            const permComparison = getRolePriority(getKbRole(a)) - getRolePriority(getKbRole(b))
-            if (permComparison !== 0) {
-              comparison = permComparison
-              break
-            }
-            // 2. Sort by group name
-            if (getKbGroupInfo) {
-              const groupA = getKbGroupInfo(a).groupName
-              const groupB = getKbGroupInfo(b).groupName
-              const groupComparison = groupA.localeCompare(groupB)
-              if (groupComparison !== 0) {
-                comparison = groupComparison
-                break
-              }
-            }
-            // 3. Sort by name
-            comparison = a.name.localeCompare(b.name)
+            // Default sort: created_at DESC (newest first)
+            comparison =
+              new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
             break
           default:
             comparison = 0
@@ -391,7 +377,7 @@ export function KnowledgeGroupListPage({
             className="flex items-center hover:text-text-primary transition-colors"
             onClick={() => handleSort('updated')}
           >
-            {t('document.table.lastAccess', '最近访问')}
+            {t('document.table.updatedAt', '更新时间')}
             <SortIcon column="updated" />
           </button>
         </th>
