@@ -171,6 +171,39 @@ class TestListNodesInWikispace:
         assert second_recursive_call.kwargs["folder_id"] == "folder-2"
 
     @pytest.mark.asyncio
+    async def test_skips_folder_recursion_when_node_id_missing(self) -> None:
+        """Folder entries without nodeId are not passed to recursive traversal."""
+        session = AsyncMock()
+        session.call_tool = AsyncMock(
+            return_value=_make_mcp_result(
+                {
+                    "items": [
+                        {"nodeType": "folder", "workspaceId": "WS1"},
+                        {"nodeId": "doc-1", "nodeType": "doc", "workspaceId": "WS1"},
+                    ]
+                }
+            )
+        )
+        all_nodes: list[dict[str, str]] = []
+
+        with patch.object(
+            DingTalkDocService,
+            "_list_nodes_recursive",
+            new=AsyncMock(),
+        ) as mock_recursive:
+            await DingTalkWikiSpaceService._list_nodes_in_wikispace(
+                session=session,
+                workspace_id="WS1",
+                all_nodes=all_nodes,
+            )
+
+        assert all_nodes == [
+            {"nodeType": "folder", "workspaceId": "WS1"},
+            {"nodeId": "doc-1", "nodeType": "doc", "workspaceId": "WS1"},
+        ]
+        mock_recursive.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_handles_empty_first_page_without_recursion(self) -> None:
         """Empty result stops pagination and avoids recursive folder traversal."""
         session = AsyncMock()

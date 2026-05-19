@@ -300,7 +300,9 @@ class DingTalkWikiSpaceService:
         for node in first_batch:
             if node.get("nodeType") == "folder":
                 ws_id = node.get("workspaceId") or workspace_id
-                node_id = node.get("nodeId", "")
+                node_id = node.get("nodeId")
+                if not node_id:
+                    continue
                 await DingTalkDocService._list_nodes_recursive(
                     session,
                     folder_id=node_id,
@@ -323,7 +325,9 @@ class DingTalkWikiSpaceService:
             for node in batch:
                 if node.get("nodeType") == "folder":
                     ws_id = node.get("workspaceId") or workspace_id
-                    node_id = node.get("nodeId", "")
+                    node_id = node.get("nodeId")
+                    if not node_id:
+                        continue
                     await DingTalkDocService._list_nodes_recursive(
                         session,
                         folder_id=node_id,
