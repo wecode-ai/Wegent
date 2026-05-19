@@ -6,6 +6,8 @@
  * DingTalk synced document node types.
  */
 
+export type DingtalkNodeSource = 'docs' | 'wikispace'
+
 export interface DingtalkDocNode {
   id: number
   dingtalk_node_id: string
@@ -16,6 +18,7 @@ export interface DingtalkDocNode {
   workspace_id: string
   content_type: string
   content_updated_at: string
+  source: DingtalkNodeSource
   is_active: boolean
   last_synced_at: string
   created_at: string
