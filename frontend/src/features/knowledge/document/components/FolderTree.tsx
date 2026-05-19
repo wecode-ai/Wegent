@@ -67,13 +67,13 @@ interface FolderTreeProps {
   onDeleteFolder?: (folderId: number, folderName: string) => void
   /** Whether the user can manage folders (permission from KB) */
   canManageFolders?: boolean
-  /** Sort field for mixed folder/document sorting */
-  sortField?: SortField
-  /** Sort order */
-  sortOrder?: SortOrder
+  /** Sort field for mixed folder/document sorting (required) */
+  sortField: SortField
+  /** Sort order (required) */
+  sortOrder: SortOrder
 }
 
-export type SortField = 'name' | 'size' | 'date' | 'updatedAt'
+export type SortField = 'name' | 'size' | 'createdAt' | 'updatedAt'
 export type SortOrder = 'asc' | 'desc'
 
 /** Get display name for a tree node */
@@ -90,7 +90,7 @@ function getNodeSortValue(node: TreeNode, field: SortField): string | number {
         return doc.name
       case 'size':
         return doc.file_size
-      case 'date':
+      case 'createdAt':
         return new Date(doc.created_at).getTime()
       case 'updatedAt':
         return new Date(doc.updated_at).getTime()
@@ -99,7 +99,7 @@ function getNodeSortValue(node: TreeNode, field: SortField): string | number {
   // Folders: use created_at/updated_at when available, fallback to name for size
   const folder = node as FolderNode
   switch (field) {
-    case 'date':
+    case 'createdAt':
       return folder.created_at ? new Date(folder.created_at).getTime() : 0
     case 'updatedAt':
       return folder.updated_at ? new Date(folder.updated_at).getTime() : 0
@@ -110,7 +110,7 @@ function getNodeSortValue(node: TreeNode, field: SortField): string | number {
 
 /**
  * Sort tree nodes: folders and documents mixed together.
- * For name/date/updatedAt: mixed comparison by field value.
+ * For name/createdAt/updatedAt: mixed comparison by field value.
  * For size: folders first (folders lack size), then documents by size.
  */
 function sortTreeNodes(nodes: TreeNode[], field: SortField, order: SortOrder): TreeNode[] {
@@ -119,7 +119,7 @@ function sortTreeNodes(nodes: TreeNode[], field: SortField, order: SortOrder): T
     const aVal = getNodeSortValue(a, field)
     const bVal = getNodeSortValue(b, field)
 
-    // For name/date/updatedAt: mixed comparison by field value
+    // For name/createdAt/updatedAt: mixed comparison by field value
     if (field !== 'size') {
       const cmp =
         typeof aVal === 'number' && typeof bVal === 'number'
@@ -135,10 +135,11 @@ function sortTreeNodes(nodes: TreeNode[], field: SortField, order: SortOrder): T
       return aIsFolder ? -1 : 1
     }
     if (aIsFolder && bIsFolder) {
-      const cmp = getNodeName(a).localeCompare(getNodeName(b))
-      return order === 'asc' ? cmp : -cmp
+      // Folders always sorted by name ascending, consistent with macOS behavior
+      return getNodeName(a).localeCompare(getNodeName(b))
     }
-    const cmp = (aVal as number) - (bVal as number)
+    // Both are documents: compare by file_size (guaranteed number for document nodes)
+    const cmp = Number(aVal) - Number(bVal)
     return order === 'asc' ? cmp : -cmp
   })
   return sorted
@@ -146,29 +147,23 @@ function sortTreeNodes(nodes: TreeNode[], field: SortField, order: SortOrder): T
 
 /**
  * Convert API folder nodes to TreeNode structure recursively.
+ * Does NOT sort children — sorting is handled uniformly by sortTreeRecursive
+ * after the full tree is built.
  */
 function convertFolderToNode(
   folder: KnowledgeFolder,
-  docsByFolderId: Map<number, KnowledgeDocument[]>,
-  sortField: SortField,
-  sortOrder: SortOrder
+  docsByFolderId: Map<number, KnowledgeDocument[]>
 ): FolderNode {
   const folderDocs = docsByFolderId.get(folder.id) || []
 
-  const children: TreeNode[] = sortTreeNodes(
-    [
-      ...folderDocs.map(doc => ({
-        type: 'document' as const,
-        displayName: doc.name,
-        document: doc,
-      })),
-      ...folder.children.map(child =>
-        convertFolderToNode(child, docsByFolderId, sortField, sortOrder)
-      ),
-    ],
-    sortField,
-    sortOrder
-  )
+  const children: TreeNode[] = [
+    ...folderDocs.map(doc => ({
+      type: 'document' as const,
+      displayName: doc.name,
+      document: doc,
+    })),
+    ...folder.children.map(child => convertFolderToNode(child, docsByFolderId)),
+  ]
 
   // Count total documents recursively
   const totalDocs =
@@ -221,19 +216,15 @@ function buildMergedTree(
 
   // If there are real folders from the API, use them to build the tree
   if (hasAnyRealFolder) {
-    const tree: TreeNode[] = sortTreeNodes(
-      [
-        ...rootDocs.map(doc => ({
-          type: 'document' as const,
-          displayName: doc.name,
-          document: doc,
-        })),
-        ...folders.map(folder => convertFolderToNode(folder, docsByFolderId, sortField, sortOrder)),
-      ],
-      sortField,
-      sortOrder
-    )
-    return tree
+    const tree: TreeNode[] = [
+      ...rootDocs.map(doc => ({
+        type: 'document' as const,
+        displayName: doc.name,
+        document: doc,
+      })),
+      ...folders.map(folder => convertFolderToNode(folder, docsByFolderId)),
+    ]
+    return sortTreeRecursive(tree, sortField, sortOrder)
   }
 
   // Fallback: build virtual tree from document names (backward compat)
@@ -384,10 +375,13 @@ function FolderRow({
 
   if (compact) {
     return (
-      <button
-        className="flex items-center gap-1.5 w-full px-2 py-1.5 hover:bg-surface rounded-lg transition-colors text-left"
+      <div
+        role="button"
+        tabIndex={0}
+        className="flex items-center gap-2 w-full px-2 py-2 hover:bg-surface rounded-lg transition-colors text-left cursor-pointer"
         style={{ paddingLeft: `${8 + indent}px` }}
         onClick={() => onToggle(node.path)}
+        onKeyDown={e => e.key === 'Enter' && onToggle(node.path)}
         title={node.name}
       >
         {expanded ? (
@@ -405,7 +399,7 @@ function FolderRow({
           {t('document.folder.docCount', { count: node.documentCount })}
         </span>
         {folderActions}
-      </button>
+      </div>
     )
   }
 
@@ -622,8 +616,8 @@ export function FolderTree({
   onRenameFolder,
   onDeleteFolder,
   canManageFolders = false,
-  sortField = 'date',
-  sortOrder = 'desc',
+  sortField,
+  sortOrder,
 }: FolderTreeProps) {
   const tree = useMemo(
     () => buildMergedTree(folders, documents, sortField, sortOrder),

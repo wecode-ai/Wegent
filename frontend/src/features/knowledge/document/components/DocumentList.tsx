@@ -183,7 +183,7 @@ export function DocumentList({
   const [editingDoc, setEditingDoc] = useState<KnowledgeDocument | null>(null)
   const [deletingDoc, setDeletingDoc] = useState<KnowledgeDocument | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
-  const [sortField, setSortField] = useState<SortField>('date')
+  const [sortField, setSortField] = useState<SortField>('createdAt')
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [batchLoading, setBatchLoading] = useState(false)
@@ -923,10 +923,10 @@ export function DocumentList({
                   </div>
                   <div
                     className="w-40 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
-                    onClick={() => handleSort('date')}
+                    onClick={() => handleSort('createdAt')}
                   >
                     {t('document.document.columns.date')}
-                    <SortIcon field="date" />
+                    <SortIcon field="createdAt" />
                   </div>
                   {/* Updated date column header */}
                   <div
