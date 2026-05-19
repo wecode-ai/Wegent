@@ -147,6 +147,25 @@ class TestExceptionHandlers:
             assert "Request parameter validation failed" in response_body["detail"]
             assert "errors" in response_body
 
+    async def test_validation_exception_handler_serializes_bytes_input(self):
+        """Test validation errors with raw bytes input remain JSON serializable."""
+        exc = RequestValidationError(
+            errors=[
+                {
+                    "type": "model_attributes_type",
+                    "loc": ("body",),
+                    "msg": "Input should be a valid dictionary",
+                    "input": b'{"task_id": 123}',
+                }
+            ]
+        )
+
+        response = await validation_exception_handler(request=None, exc=exc)
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        response_body = eval(response.body.decode())
+        assert response_body["errors"][0]["input"] == '{"task_id": 123}'
+
     async def test_python_exception_handler(self):
         """Test Python exception handler for general exceptions"""
         exc = Exception("Something went wrong")

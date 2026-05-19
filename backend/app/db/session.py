@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager, contextmanager
 from typing import AsyncGenerator, Generator, Optional
 
 from sqlalchemy import create_engine
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session, sessionmaker
@@ -62,16 +63,24 @@ _AsyncSessionLocal: Optional[sessionmaker] = None
 
 def _get_async_database_url() -> str:
     """Convert sync DATABASE_URL to async driver URL."""
-    url = SQLALCHEMY_DATABASE_URL
-    if "pymysql" in url:
-        return url.replace("pymysql", "asyncmy")
-    elif url.startswith("mysql://"):
-        return url.replace("mysql://", "mysql+asyncmy://")
-    elif "asyncmy" in url:
-        return url
-    elif url.startswith("sqlite"):
-        return url.replace("sqlite://", "sqlite+aiosqlite://")
-    return url.replace("mysql+", "mysql+asyncmy+", 1)
+    url = make_url(SQLALCHEMY_DATABASE_URL)
+    if url.drivername.startswith("mysql"):
+        return url.set(drivername="mysql+asyncmy").render_as_string(hide_password=False)
+    if url.drivername.startswith("sqlite"):
+        return url.set(drivername="sqlite+aiosqlite").render_as_string(
+            hide_password=False
+        )
+    return url.render_as_string(hide_password=False)
+
+
+def _configure_async_engine_dialect(async_engine: AsyncEngine) -> None:
+    """Apply async driver compatibility settings."""
+    dialect = async_engine.sync_engine.dialect
+    if dialect.name == "mysql" and dialect.driver == "asyncmy":
+        # SQLAlchemy's asyncmy dialect inherits PyMySQL ping detection, which may
+        # choose ping() based on the installed PyMySQL version. asyncmy requires
+        # the reconnect argument, so force pool_pre_ping to call ping(False).
+        dialect._send_false_to_ping = True
 
 
 def _create_async_engine() -> AsyncEngine:
@@ -79,7 +88,7 @@ def _create_async_engine() -> AsyncEngine:
     async_url = _get_async_database_url()
     if async_url.startswith("sqlite"):
         return create_async_engine(async_url, pool_pre_ping=True)
-    return create_async_engine(
+    async_engine = create_async_engine(
         async_url,
         pool_pre_ping=True,
         pool_size=10,
@@ -87,6 +96,8 @@ def _create_async_engine() -> AsyncEngine:
         pool_timeout=30,
         pool_recycle=3600,
     )
+    _configure_async_engine_dialect(async_engine)
+    return async_engine
 
 
 def get_async_engine() -> AsyncEngine:

@@ -988,6 +988,48 @@ class TestCleanupTaskExecutorAPI(CleanupExecutorTestHelpers):
         )
         mark_deleted.assert_called_once_with([1])
 
+    async def test_cleanup_stale_task_executor_skips_recent_task_executor(
+        self, job_service, mock_db
+    ):
+        """Test task-scoped stale cleanup keeps executors under inactive threshold."""
+        mock_task = self._create_mock_task_resource(100, 1, preserve_executor=False)
+        mock_subtask = self._create_mock_subtask(1, 100)
+        mock_task.updated_at = datetime.now() - timedelta(hours=1)
+        mock_subtask.updated_at = datetime.now() - timedelta(hours=1)
+
+        with (
+            patch.object(
+                job_service,
+                "_get_active_task_resource",
+                new_callable=AsyncMock,
+                return_value=mock_task,
+            ),
+            patch.object(
+                job_service,
+                "_get_cleanup_subtasks_for_task",
+                new_callable=AsyncMock,
+                return_value=[mock_subtask],
+            ),
+            patch(
+                "app.services.adapters.executor_job.executor_kinds_service"
+            ) as executor_service,
+        ):
+            executor_service.delete_executor_task_async = AsyncMock()
+
+            result = await job_service.cleanup_stale_task_executor(
+                mock_db,
+                task_id=100,
+                inactive_hours=24,
+                dry_run=False,
+            )
+
+        assert result["task_id"] == 100
+        assert result["deleted"] is False
+        assert result["skipped"] is True
+        assert result["reason"] == "not_stale"
+        assert "eligible_after" in result
+        executor_service.delete_executor_task_async.assert_not_called()
+
     async def test_cleanup_task_executor_skips_preserved_task(
         self, job_service, mock_db
     ):

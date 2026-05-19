@@ -17,6 +17,7 @@ from app.api.endpoints.admin import (
     public_retrievers,
     public_shells,
     public_teams,
+    runtime_cleanup,
     stats,
     subscription_monitor,
     system_config,
@@ -46,3 +47,4 @@ router.include_router(tasks.router, tags=["admin-tasks"])
 router.include_router(im_channels.router, tags=["admin-im-channels"])
 router.include_router(device_monitor.router, tags=["admin-device-monitor"])
 router.include_router(templates.router, tags=["admin-templates"])
+router.include_router(runtime_cleanup.router, tags=["admin-runtime-cleanup"])
