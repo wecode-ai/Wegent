@@ -3244,7 +3244,8 @@ class KnowledgeService:
         if source_kb_id == target_kb_id:
             raise ValueError("Source and target knowledge bases must be different")
 
-        # Both source and target must be personal KBs (namespace="default")
+        # Get source and target knowledge bases
+        # Note: We no longer restrict to personal KBs only - any KB with write access is allowed
         source_kb = (
             db.query(Kind)
             .filter(Kind.id == source_kb_id, Kind.kind == "KnowledgeBase")
@@ -3252,8 +3253,6 @@ class KnowledgeService:
         )
         if not source_kb:
             raise ValueError("Source knowledge base not found")
-        if source_kb.namespace != "default":
-            raise ValueError("Source knowledge base must be a personal knowledge base")
 
         target_kb = (
             db.query(Kind)
@@ -3262,8 +3261,6 @@ class KnowledgeService:
         )
         if not target_kb:
             raise ValueError("Target knowledge base not found")
-        if target_kb.namespace != "default":
-            raise ValueError("Target knowledge base must be a personal knowledge base")
 
         # --- Collect all documents to transfer ---
         # 1. Explicit document IDs
@@ -3374,7 +3371,7 @@ class KnowledgeService:
 
             doc.kind_id = target_kb_id
             doc.index_status = DocumentIndexStatus.NOT_INDEXED
-            doc.is_active = False
+            doc.is_active = True  # Keep document visible in target KB
             transferred_doc_count += 1
 
         # --- Update document counts for both KBs ---
@@ -3382,6 +3379,33 @@ class KnowledgeService:
         KnowledgeService._update_document_count_cache(db, target_kb_id)
 
         db.commit()
+
+        # --- Trigger indexing in target KB ---
+        user = db.query(User).filter(User.id == user_id).first()
+        if user and target_kb:
+            from app.services.knowledge.orchestrator import KnowledgeOrchestrator
+
+            orchestrator = KnowledgeOrchestrator()
+            for doc in docs:
+                try:
+                    orchestrator._schedule_indexing_celery(
+                        db=db,
+                        knowledge_base=target_kb,
+                        document=doc,
+                        user=user,
+                        trigger_summary=False,  # Don't trigger summary on transfer
+                    )
+                    logger.info(
+                        "Scheduled indexing for transferred document %d in target KB %d",
+                        doc.id,
+                        target_kb_id,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to schedule indexing for transferred document %d",
+                        doc.id,
+                        exc_info=True,
+                    )
 
         # --- Clean up RAG indices from source KB (best-effort) ---
         rag_gateway = _get_delete_gateway()
