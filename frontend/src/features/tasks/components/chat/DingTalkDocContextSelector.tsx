@@ -257,20 +257,21 @@ export function DingTalkDocContextSelector({
 
   // My Docs state
   const [nodes, setNodes] = useState<DingtalkDocNode[]>([])
-  const [loading, setLoading] = useState(false)
+  // Initialize loading to true to prevent first-frame flicker (empty state → loading)
+  const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [isConfigured, setIsConfigured] = useState(false)
+  const [isConfigured, setIsConfigured] = useState(true)
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null)
 
   // Wikispace state
   const [wikispaceNodes, setWikispaceNodes] = useState<DingtalkDocNode[]>([])
-  const [wikispaceLoading, setWikispaceLoading] = useState(false)
+  // Initialize wikispaceLoading to true to prevent first-frame flicker
+  const [wikispaceLoading, setWikispaceLoading] = useState(true)
   const [wikispaceSyncing, setWikispaceSyncing] = useState(false)
   const [wikispaceError, setWikispaceError] = useState<string | null>(null)
   const [wikispaceConfigured, setWikispaceConfigured] = useState(false)
   const [wikispaceLastSyncedAt, setWikispaceLastSyncedAt] = useState<string | null>(null)
-
   // Shared search state
   const [searchQuery, setSearchQuery] = useState('')
 
@@ -305,7 +306,7 @@ export function DingTalkDocContextSelector({
       setWikispaceConfigured(status.is_configured)
       setWikispaceLastSyncedAt(status.last_synced_at)
     } catch (err) {
-      console.error('Failed to fetch DingTalk wikispace:', err)
+      console.error('Failed to sync DingTalk wikispace:', err)
       setWikispaceError(t('chat:dingtalkDocs.loadFailed'))
     } finally {
       setWikispaceLoading(false)
