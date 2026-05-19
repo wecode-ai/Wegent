@@ -28,6 +28,7 @@ from app.api.endpoints import (
     skill_market,
     subtasks,
     tables,
+    token_issuers,
     users,
     utils,
     web_scraper,
@@ -143,6 +144,7 @@ api_router.include_router(
     openapi_responses.router, prefix="/v1/responses", tags=["openapi-responses"]
 )
 api_router.include_router(deep_research.router, prefix="/v1", tags=["deep-research"])
+api_router.include_router(token_issuers.router, prefix="/v1", tags=["token-issuers"])
 api_router.include_router(
     knowledge.router, prefix="/knowledge-bases", tags=["knowledge"]
 )

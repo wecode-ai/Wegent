@@ -7,11 +7,12 @@
 import React, { useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
-import { KeyRound, Key } from 'lucide-react'
+import { KeyRound, Key, ShieldCheck } from 'lucide-react'
 import ServiceKeyList from './ServiceKeyList'
 import PersonalKeyList from './PersonalKeyList'
+import OutboundTokenIssuerList from './OutboundTokenIssuerList'
 
-type KeyType = 'service' | 'personal'
+type KeyType = 'service' | 'personal' | 'outbound'
 
 const ApiKeyManagement: React.FC = () => {
   const { t } = useTranslation('admin')
@@ -19,7 +20,6 @@ const ApiKeyManagement: React.FC = () => {
 
   return (
     <div className="space-y-4">
-      {/* Header with Tab Switcher */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-semibold text-text-primary mb-1">{t('api_keys.title')}</h2>
@@ -27,7 +27,6 @@ const ApiKeyManagement: React.FC = () => {
         </div>
       </div>
 
-      {/* Tab Switcher */}
       <div className="flex gap-2 p-1 bg-muted rounded-lg w-fit">
         <Button
           variant={activeKeyType === 'service' ? 'default' : 'ghost'}
@@ -47,15 +46,22 @@ const ApiKeyManagement: React.FC = () => {
           <Key className="w-4 h-4" />
           {t('api_keys.personal_keys')}
         </Button>
+        <Button
+          variant={activeKeyType === 'outbound' ? 'default' : 'ghost'}
+          size="sm"
+          onClick={() => setActiveKeyType('outbound')}
+          className="gap-2"
+          data-testid="outbound-tab-button"
+        >
+          <ShieldCheck className="w-4 h-4" />
+          {t('api_keys.outbound_tokens')}
+        </Button>
       </div>
 
-      {/* Content */}
       <div className="mt-4">
-        {activeKeyType === 'service' ? (
-          <ServiceKeyList showHeader={false} />
-        ) : (
-          <PersonalKeyList showHeader={false} />
-        )}
+        {activeKeyType === 'service' && <ServiceKeyList showHeader={false} />}
+        {activeKeyType === 'personal' && <PersonalKeyList showHeader={false} />}
+        {activeKeyType === 'outbound' && <OutboundTokenIssuerList showHeader={false} />}
       </div>
     </div>
   )
