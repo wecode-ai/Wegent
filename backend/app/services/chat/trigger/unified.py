@@ -187,6 +187,7 @@ async def build_execution_request(
     previous_bot_id: Optional[int] = None,
     knowledge_base_names: Optional[List[Dict[str, str]]] = None,
     reasoning_config: Optional[Dict[str, Any]] = None,
+    mcp_servers: Optional[List[Dict[str, Any]]] = None,
 ):
     """Build ExecutionRequest without dispatching.
 
@@ -211,6 +212,7 @@ async def build_execution_request(
         preload_skills: Optional list of skills to preload
         knowledge_base_names: Optional list of KB names in {'namespace': str, 'name': str} format
         reasoning_config: Optional reasoning config dict with 'effort' and 'summary' keys
+        mcp_servers: Optional list of user-provided MCP server configs
 
     Returns:
         ExecutionRequest ready for dispatch
@@ -272,6 +274,7 @@ async def build_execution_request(
             override_model_name=override_model_name,
             force_override=force_override,
             previous_bot_id=previous_bot_id,
+            user_mcp_servers=mcp_servers,
         )
 
         # Merge reasoning_config from API request into model_config

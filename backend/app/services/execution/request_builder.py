@@ -11,7 +11,7 @@ providing complete Bot, Model, Ghost, Shell, and Skill resolution.
 """
 
 import logging
-from typing import Any, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -106,6 +106,8 @@ class TaskRequestBuilder:
         override_model_name: Optional[str] = None,
         force_override: bool = False,
         team_member_prompt: Optional[str] = None,
+        # User-provided MCP servers (from API request)
+        user_mcp_servers: Optional[List[Dict[str, Any]]] = None,
     ) -> ExecutionRequest:
         """Build ExecutionRequest from database models.
 
@@ -134,6 +136,7 @@ class TaskRequestBuilder:
             override_model_name: Optional model name to override bot's model
             force_override: If True, override takes highest priority
             team_member_prompt: Optional additional prompt from team member
+            user_mcp_servers: Optional list of user-provided MCP server configs from API request
 
         Returns:
             ExecutionRequest ready for dispatch
@@ -292,6 +295,7 @@ class TaskRequestBuilder:
             user=user,
             is_subscription=is_subscription,
             auth_token=auth_token,
+            user_mcp_servers=user_mcp_servers,
         )
 
         # Determine if group chat
@@ -1573,6 +1577,7 @@ Response template:
         user: User,
         is_subscription: bool = False,
         auth_token: str = "",
+        user_mcp_servers: Optional[List[Dict[str, Any]]] = None,
     ) -> list[dict]:
         """Build MCP servers configuration.
 
@@ -1580,9 +1585,10 @@ Response template:
         1. System-level MCP servers (from CHAT_MCP_SERVERS setting)
         2. Bot-level MCP servers (from Ghost CRD mcpServers config)
         3. Auto-injected System MCP (for subscription tasks)
+        4. User-provided MCP servers (from API request tools)
 
-        Bot-level servers take precedence over system-level servers
-        when there are name conflicts.
+        User-provided servers take highest precedence, then bot-level,
+        then system-level when there are name conflicts.
 
         Ghost CRD format (dict):
             {"server_name": {"url": "...", "type": "...", "headers": {...}}}
@@ -1595,6 +1601,7 @@ Response template:
             team: Team Kind object
             is_subscription: Whether this is a subscription task
             auth_token: Authentication token for MCP server
+            user_mcp_servers: Optional list of user-provided MCP server configs from API request
 
         Returns:
             List of MCP server configuration dictionaries
@@ -1649,13 +1656,41 @@ Response template:
                                 server_entry["env"] = server_config["env"]
                             bot_mcp_servers.append(server_entry)
 
-        # Merge system and bot MCP servers (bot takes precedence)
+        # Process user-provided MCP servers from API request
+        user_mcp_list = []
+        if user_mcp_servers:
+            for server_config in user_mcp_servers:
+                if isinstance(server_config, dict):
+                    server_entry = {
+                        "name": server_config.get("name", "user-server"),
+                        "url": server_config.get("url", ""),
+                        "type": server_config.get("type", "streamable-http"),
+                    }
+                    # Convert "headers" to "auth" for chat_shell compatibility
+                    if "headers" in server_config:
+                        server_entry["auth"] = server_config["headers"]
+                    # Include stdio-specific fields (command, args, env)
+                    if "command" in server_config:
+                        server_entry["command"] = server_config["command"]
+                    if "args" in server_config:
+                        server_entry["args"] = server_config["args"]
+                    if "env" in server_config:
+                        server_entry["env"] = server_config["env"]
+                    user_mcp_list.append(server_entry)
+
+        # Merge MCP servers from all sources (user takes highest precedence)
         # Build a dict to deduplicate by server name
         servers_by_name = {}
+        # 1. System-level servers (lowest precedence)
         for server in system_mcp_servers:
             server_name = server.get("name", "server")
             servers_by_name[server_name] = server
+        # 2. Bot-level servers (medium precedence)
         for server in bot_mcp_servers:
+            server_name = server.get("name", "server")
+            servers_by_name[server_name] = server
+        # 3. User-provided servers (highest precedence)
+        for server in user_mcp_list:
             server_name = server.get("name", "server")
             servers_by_name[server_name] = server
 
@@ -1663,10 +1698,11 @@ Response template:
 
         if merged_servers:
             logger.info(
-                "[TaskRequestBuilder] Built %d MCP servers (system=%d, bot=%d): %s",
+                "[TaskRequestBuilder] Built %d MCP servers (system=%d, bot=%d, user=%d): %s",
                 len(merged_servers),
                 len(system_mcp_servers),
                 len(bot_mcp_servers),
+                len(user_mcp_list),
                 [s["name"] for s in merged_servers],
             )
 
