@@ -37,7 +37,7 @@ import TeamCreationWizard from './wizard/TeamCreationWizard'
 import { TeamApiCallButton } from './TeamApiCallButton'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useToast } from '@/hooks/use-toast'
-import { sortTeamsByUpdatedAt } from '@/utils/team'
+import { getTeamDisplayName, sortTeamsByUpdatedAt } from '@/utils/team'
 import { isGroupTeam, isPublicTeam, isSharedTeam } from '@/utils/team-permissions'
 import type { BaseRole } from '@/types/base-role'
 import { sortBotsByUpdatedAt } from '@/utils/bot'
@@ -562,6 +562,7 @@ export default function TeamList({
                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-0 min-w-0">
                         <ResourceListItem
                           name={team.name}
+                          displayName={getTeamDisplayName(team)}
                           description={team.description}
                           icon={
                             <TeamIconDisplay
