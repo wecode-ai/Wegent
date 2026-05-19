@@ -62,7 +62,6 @@ export function ProjectSection({ onTaskSelect, variant = 'all' }: ProjectSection
     selectedProjectTaskId,
     setSelectedProjectTaskId,
     refreshProjects,
-    isWorkspaceEnabled,
   } = useProjectContext()
   const { clearAllStreams } = useChatStreamContext()
   const { setSelectedTask } = useTaskContext()
@@ -94,7 +93,7 @@ export function ProjectSection({ onTaskSelect, variant = 'all' }: ProjectSection
     if (isGroupSection) {
       return isPathlessProject(project)
     }
-    return isWorkspaceEnabled || isPathlessProject(project)
+    return true
   })
 
   // Dialog states

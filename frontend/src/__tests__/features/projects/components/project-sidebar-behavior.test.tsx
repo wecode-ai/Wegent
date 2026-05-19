@@ -18,6 +18,7 @@ const toggleProjectExpandedMock = jest.fn()
 const setSelectedProjectTaskIdMock = jest.fn()
 const clearAllStreamsMock = jest.fn()
 const setSelectedTaskMock = jest.fn()
+let isWorkspaceEnabledMock = true
 
 const pathlessProject: ProjectWithTasks = {
   id: 1,
@@ -150,7 +151,7 @@ jest.mock('@/features/projects/contexts/projectContext', () => ({
     addTaskToProject: addTaskToProjectMock,
     removeTaskFromProject: removeTaskFromProjectMock,
     projectTaskIds: new Set([101, 202]),
-    isWorkspaceEnabled: true,
+    isWorkspaceEnabled: isWorkspaceEnabledMock,
   }),
 }))
 
@@ -169,6 +170,7 @@ jest.mock('@/components/common/TaskInlineRename', () => ({
 describe('project sidebar behavior', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    isWorkspaceEnabledMock = true
   })
 
   test('renders one project section containing pathless and workspace projects', () => {
@@ -176,6 +178,15 @@ describe('project sidebar behavior', () => {
 
     expect(screen.getByText('workspaceSection.title')).toBeInTheDocument()
     expect(screen.queryByText('section.title')).not.toBeInTheDocument()
+    expect(screen.getByText('pathless-project')).toBeInTheDocument()
+    expect(screen.getByText('workspace-project')).toBeInTheDocument()
+  })
+
+  test('keeps workspace projects visible in the unified section when workspace creation is disabled', () => {
+    isWorkspaceEnabledMock = false
+
+    render(<ProjectSection onTaskSelect={jest.fn()} />)
+
     expect(screen.getByText('pathless-project')).toBeInTheDocument()
     expect(screen.getByText('workspace-project')).toBeInTheDocument()
   })
