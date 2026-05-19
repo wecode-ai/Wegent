@@ -109,7 +109,13 @@
       "columnSyncedAt": "同步时间",
       "columnActions": "操作",
       "openInDingtalk": "在钉钉中打开",
-      "lastModified": "最近修改"
+      "lastModified": "最近修改",
+      "myDocs": "我的文档",
+      "wikispace": "知识库",
+      "wikispaceSyncHint": "点击同步按钮从钉钉拉取知识库",
+      "wikispaceEmpty": "暂无知识库内容",
+      "wikispaceNotConfigured": "钉钉知识库 MCP 未配置",
+      "wikispaceConfigureHint": "请前往设置配置钉钉知识库 MCP"
     },
     "groupFilter": {
       "all": "全部分组"

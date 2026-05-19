@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Import endpoints - RAG module is conditionally imported based on STANDALONE_MODE
 from app.api.endpoints import (
     admin,
     api_keys,
@@ -28,6 +27,7 @@ from app.api.endpoints import (
     skill_market,
     subtasks,
     tables,
+    token_issuers,
     users,
     utils,
     web_scraper,
@@ -35,6 +35,7 @@ from app.api.endpoints import (
     wizard,
     work_queue,
 )
+from app.api.endpoints.dingtalk_wikispace import router as dingtalk_wikispace_router
 from app.core.config import settings
 
 # RAG module is heavy (llama_index, scipy, pandas, grpc) - skip in standalone mode
@@ -141,6 +142,7 @@ api_router.include_router(
     openapi_responses.router, prefix="/v1/responses", tags=["openapi-responses"]
 )
 api_router.include_router(deep_research.router, prefix="/v1", tags=["deep-research"])
+api_router.include_router(token_issuers.router, prefix="/v1", tags=["token-issuers"])
 api_router.include_router(
     knowledge.router, prefix="/knowledge-bases", tags=["knowledge"]
 )
@@ -172,6 +174,11 @@ api_router.include_router(share.router, prefix="/share", tags=["share"])
 api_router.include_router(tables.router, prefix="/tables", tags=["tables"])
 api_router.include_router(
     dingtalk_docs.router, prefix="/dingtalk-docs", tags=["dingtalk-docs"]
+)
+api_router.include_router(
+    dingtalk_wikispace_router,
+    prefix="/dingtalk-wikispace",
+    tags=["dingtalk-wikispace"],
 )
 
 # Work queue endpoints (message forwarding and inbox)

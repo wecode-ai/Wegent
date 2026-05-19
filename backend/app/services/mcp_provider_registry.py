@@ -75,6 +75,18 @@ MCP_PROVIDER_REGISTRY: dict[str, MCPProviderDefinition] = {
                     "记录",
                 ),
             },
+            "wikispace": {
+                "service_id": "wikispace",
+                "server_name": "dingtalk_wikispace",
+                "detail_url": "https://mcp.dingtalk.com/#/detail?mcpId=9730",
+                "skill_name": "dingtalk-wikispace",
+                "display_name": "钉钉知识库",
+                "message_keywords": (
+                    "钉钉知识库",
+                    "dingtalk wikispace",
+                    "wikispace",
+                ),
+            },
         },
     }
 }

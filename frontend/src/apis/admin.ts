@@ -3,10 +3,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { apiClient } from './client'
+import { outboundTokenAdminApis } from './outboundTokens'
 import { RetrieverCRD } from './retrievers'
 
 // Re-export RetrieverCRD for backward compatibility
 export type { RetrieverCRD } from './retrievers'
+export type {
+  SigningKey,
+  SigningKeyCreateRequest,
+  SigningKeyListResponse,
+  TokenIssuer,
+  TokenIssuerCreateRequest,
+  TokenIssuerListResponse,
+  TokenIssuerUpdateRequest,
+} from './outboundTokens'
 
 // Admin User Types
 export type UserRole = 'admin' | 'user'
@@ -165,6 +175,7 @@ export interface AdminPersonalKeyListResponse {
   items: AdminPersonalKey[]
   total: number
 }
+
 // Background Execution Monitor Types
 export interface BackgroundExecutionMonitorStats {
   total_executions: number
@@ -544,6 +555,8 @@ export interface AdminTemplateUpdate {
 
 // Admin API Services
 export const adminApis = {
+  ...outboundTokenAdminApis,
+
   // ==================== User Management ====================
 
   /**

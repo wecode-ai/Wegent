@@ -22,6 +22,7 @@ from app.api.endpoints.admin import (
     system_config,
     tasks,
     templates,
+    token_issuers,
     users,
 )
 
@@ -37,6 +38,7 @@ router.include_router(public_shells.router, tags=["admin-public-shells"])
 router.include_router(public_retrievers.router, tags=["admin-public-retrievers"])
 router.include_router(system_config.router, tags=["admin-system-config"])
 router.include_router(api_keys.router, tags=["admin-api-keys"])
+router.include_router(token_issuers.router, tags=["admin-token-issuers"])
 router.include_router(kind_management.router, tags=["admin-kind-management"])
 router.include_router(stats.router, tags=["admin-stats"])
 router.include_router(subscription_monitor.router, tags=["admin-subscription-monitor"])

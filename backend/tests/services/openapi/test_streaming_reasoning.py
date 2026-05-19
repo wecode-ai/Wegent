@@ -236,6 +236,25 @@ class TestStreamingServiceReasoning:
 
     @pytest.mark.asyncio
     async def test_mcp_call_stream(self, streaming_service):
+        tool_output = {
+            "__silent_exit__": True,
+            "reason": "interactive_form_question form displayed; waiting for user response via new conversation",
+            "pending_user_input": True,
+            "pending_user_input_payload": {
+                "type": "interactive_form_question",
+                "interaction_type": "interactive_form",
+                "tool_name": "interactive_form_question",
+                "ask_id": "ask_123",
+                "task_id": 321,
+                "subtask_id": 456,
+                "questions": [
+                    {"id": "exp_id", "question": "Enter experiment id"},
+                ],
+                "submit_mode": "new_response",
+                "submit_format": "markdown_message",
+            },
+        }
+
         async def mcp_call_stream():
             yield StreamingChunk(
                 type="mcp_call_added",
@@ -255,6 +274,7 @@ class TestStreamingServiceReasoning:
                     "arguments": '{"query": "SSE timeout"}',
                     "output_index": 0,
                     "status": "completed",
+                    "output": tool_output,
                 },
             )
             yield StreamingChunk(type="text", content="resolved")
@@ -280,6 +300,28 @@ class TestStreamingServiceReasoning:
             and e["item"]["type"] == "mcp_call"
         )
         assert mcp_added["item"]["server_label"] == "wegent-knowledge"
+
+        mcp_completed = next(
+            e for e in events if e["type"] == "response.mcp_call.completed"
+        )
+        assert mcp_completed["output"] == tool_output
+
+        mcp_done = next(
+            e
+            for e in events
+            if e["type"] == "response.output_item.done"
+            and e["item"]["type"] == "mcp_call"
+        )
+        assert mcp_done["item"]["output"] == tool_output
+
+        completed = next(e for e in events if e["type"] == "response.completed")
+        assert completed["response"]["pending_user_input"] is True
+        assert (
+            completed["response"]["pending_user_input_payload"]["ask_id"] == "ask_123"
+        )
+        assert completed["response"]["output"][0]["type"] == "mcp_call"
+        assert completed["response"]["output"][0]["output"] == tool_output
+        assert completed["response"]["output"][1]["type"] == "message"
 
     @pytest.mark.asyncio
     async def test_shell_call_stream(self, streaming_service):

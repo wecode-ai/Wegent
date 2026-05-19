@@ -242,6 +242,7 @@ class MCPCallOutputItem(BaseModel):
     server_label: str
     arguments: str
     status: str
+    output: Optional[Any] = None
 
 
 class ShellCallAction(BaseModel):
@@ -291,6 +292,8 @@ class ResponseObject(BaseModel):
     error: Optional[ResponseError] = None
     model: str  # The model string from request
     output: List[ResponseOutputItem] = Field(default_factory=list)
+    pending_user_input: Optional[bool] = None
+    pending_user_input_payload: Optional[Dict[str, Any]] = None
     previous_response_id: Optional[str] = None
 
 
