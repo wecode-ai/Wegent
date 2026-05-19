@@ -894,108 +894,111 @@ export function DocumentList({
           ) : (
             /* Normal mode: Table layout with folder tree - single bordered container */
             <div className="border border-border rounded-lg overflow-x-auto">
-              {/* Table header */}
-              <div className="flex items-center gap-4 px-4 py-2.5 bg-surface text-xs text-text-muted font-medium min-w-[880px] border-b border-border">
-                {/* Checkbox for select all */}
-                {canManageAllDocuments && (
-                  <div className="flex-shrink-0">
-                    <Checkbox
-                      checked={isAllSelected}
-                      onCheckedChange={handleSelectAll}
-                      className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
-                      {...(isPartialSelected ? { 'data-state': 'indeterminate' } : {})}
-                    />
-                  </div>
-                )}
-                {/* Icon + Name column header */}
-                <div
-                  ref={nameColumnRef}
-                  className={`relative flex items-center gap-2 ${nameColumnWidth ? 'flex-shrink-0' : 'flex-1 min-w-[200px]'}`}
-                  style={nameColumnWidth ? { width: `${nameColumnWidth}px` } : undefined}
-                >
-                  {/* Icon placeholder */}
-                  <div className="w-4 h-4 flex-shrink-0" />
-                  <span
-                    className="cursor-pointer hover:text-text-primary select-none"
-                    onClick={() => handleSort('name')}
-                  >
-                    {t('document.document.columns.name')}
-                    <SortIcon field="name" />
-                  </span>
-                  {/* Column resize handle */}
+              {/* Inner container - width determined by content, background covers all */}
+              <div className="bg-base min-w-[880px] w-fit">
+                {/* Table header */}
+                <div className="flex items-center gap-4 px-4 py-2.5 bg-surface text-xs text-text-muted font-medium border-b border-border">
+                  {/* Checkbox for select all */}
+                  {canManageAllDocuments && (
+                    <div className="flex-shrink-0">
+                      <Checkbox
+                        checked={isAllSelected}
+                        onCheckedChange={handleSelectAll}
+                        className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+                        {...(isPartialSelected ? { 'data-state': 'indeterminate' } : {})}
+                      />
+                    </div>
+                  )}
+                  {/* Icon + Name column header */}
                   <div
-                    className="absolute top-0 right-0 bottom-0 w-3 cursor-col-resize z-10 group/resize flex items-center justify-center"
-                    onMouseDown={handleNameResizeMouseDown}
-                    onClick={e => e.stopPropagation()}
+                    ref={nameColumnRef}
+                    className={`relative flex items-center gap-2 ${nameColumnWidth ? 'flex-shrink-0' : 'flex-1 min-w-[200px]'}`}
+                    style={nameColumnWidth ? { width: `${nameColumnWidth}px` } : undefined}
                   >
-                    <div className="w-0.5 h-3/4 rounded-full bg-border group-hover/resize:bg-primary/50 transition-colors" />
+                    {/* Icon placeholder */}
+                    <div className="w-4 h-4 flex-shrink-0" />
+                    <span
+                      className="cursor-pointer hover:text-text-primary select-none"
+                      onClick={() => handleSort('name')}
+                    >
+                      {t('document.document.columns.name')}
+                      <SortIcon field="name" />
+                    </span>
+                    {/* Column resize handle */}
+                    <div
+                      className="absolute top-0 right-0 bottom-0 w-3 cursor-col-resize z-10 group/resize flex items-center justify-center"
+                      onMouseDown={handleNameResizeMouseDown}
+                      onClick={e => e.stopPropagation()}
+                    >
+                      <div className="w-0.5 h-3/4 rounded-full bg-border group-hover/resize:bg-primary/50 transition-colors" />
+                    </div>
                   </div>
-                </div>
-                {/* Spacer to match DocumentItem edit button area */}
-                <div className="w-7 flex-shrink-0" />
-                <div className="w-20 flex-shrink-0 text-center">
-                  {t('document.document.columns.type')}
-                </div>
-                <div
-                  className="w-20 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
-                  onClick={() => handleSort('size')}
-                >
-                  {t('document.document.columns.size')}
-                  <SortIcon field="size" />
-                </div>
-                {/* Creator column header */}
-                <div className="w-24 flex-shrink-0 text-center">
-                  {t('document.document.columns.createdBy')}
-                </div>
-                <div
-                  className="w-40 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
-                  onClick={() => handleSort('date')}
-                >
-                  {t('document.document.columns.date')}
-                  <SortIcon field="date" />
-                </div>
-                {/* Updated date column header */}
-                <div
-                  className="w-40 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
-                  onClick={() => handleSort('updatedAt')}
-                >
-                  {t('document.document.columns.updatedAt')}
-                  <SortIcon field="updatedAt" />
-                </div>
-                <div className="w-24 flex-shrink-0 text-center">
-                  {t('document.document.columns.indexStatus')}
-                </div>
-                {canManageAnyDocuments && (
+                  {/* Spacer to match DocumentItem edit button area */}
+                  <div className="w-7 flex-shrink-0" />
                   <div className="w-20 flex-shrink-0 text-center">
-                    {t('document.document.columns.actions')}
+                    {t('document.document.columns.type')}
                   </div>
-                )}
+                  <div
+                    className="w-20 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
+                    onClick={() => handleSort('size')}
+                  >
+                    {t('document.document.columns.size')}
+                    <SortIcon field="size" />
+                  </div>
+                  {/* Creator column header */}
+                  <div className="w-24 flex-shrink-0 text-center">
+                    {t('document.document.columns.createdBy')}
+                  </div>
+                  <div
+                    className="w-40 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
+                    onClick={() => handleSort('date')}
+                  >
+                    {t('document.document.columns.date')}
+                    <SortIcon field="date" />
+                  </div>
+                  {/* Updated date column header */}
+                  <div
+                    className="w-40 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
+                    onClick={() => handleSort('updatedAt')}
+                  >
+                    {t('document.document.columns.updatedAt')}
+                    <SortIcon field="updatedAt" />
+                  </div>
+                  <div className="w-24 flex-shrink-0 text-center">
+                    {t('document.document.columns.indexStatus')}
+                  </div>
+                  {canManageAnyDocuments && (
+                    <div className="w-20 flex-shrink-0 text-center">
+                      {t('document.document.columns.actions')}
+                    </div>
+                  )}
+                </div>
+                {/* Document rows with folder tree - no extra border */}
+                <FolderTree
+                  folders={folders}
+                  documents={filteredAndSortedDocuments}
+                  compact={false}
+                  withBorder={false}
+                  onViewDetail={setViewingDoc}
+                  onEdit={setEditingDoc}
+                  onDelete={setDeletingDoc}
+                  onRefresh={handleRefreshWebDocument}
+                  onReindex={handleReindexDocument}
+                  onMove={handleMoveDocument}
+                  refreshingDocId={refreshingDocId}
+                  reindexingDocId={reindexingDocId}
+                  canManage={canManageDocument}
+                  canSelect={doc => canSelectDocument(doc) && canManageAllDocuments}
+                  selectedIds={selectedIds}
+                  onSelect={handleSelectDoc}
+                  ragConfigured={ragConfigured}
+                  nameColumnWidth={nameColumnWidth ?? undefined}
+                  onCreateFolder={canUpload ? handleCreateFolder : undefined}
+                  onRenameFolder={canUpload ? handleRenameFolder : undefined}
+                  onDeleteFolder={canUpload ? handleDeleteFolderClick : undefined}
+                  canManageFolders={canUpload}
+                />
               </div>
-              {/* Document rows with folder tree - no extra border */}
-              <FolderTree
-                folders={folders}
-                documents={filteredAndSortedDocuments}
-                compact={false}
-                withBorder={false}
-                onViewDetail={setViewingDoc}
-                onEdit={setEditingDoc}
-                onDelete={setDeletingDoc}
-                onRefresh={handleRefreshWebDocument}
-                onReindex={handleReindexDocument}
-                onMove={handleMoveDocument}
-                refreshingDocId={refreshingDocId}
-                reindexingDocId={reindexingDocId}
-                canManage={canManageDocument}
-                canSelect={doc => canSelectDocument(doc) && canManageAllDocuments}
-                selectedIds={selectedIds}
-                onSelect={handleSelectDoc}
-                ragConfigured={ragConfigured}
-                nameColumnWidth={nameColumnWidth ?? undefined}
-                onCreateFolder={canUpload ? handleCreateFolder : undefined}
-                onRenameFolder={canUpload ? handleRenameFolder : undefined}
-                onDeleteFolder={canUpload ? handleDeleteFolderClick : undefined}
-                canManageFolders={canUpload}
-              />
             </div>
           )}
           {/* Overlay during column resize to prevent pointer event interference */}

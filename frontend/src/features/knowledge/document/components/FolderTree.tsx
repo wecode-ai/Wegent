@@ -301,7 +301,7 @@ function FolderRow({
 
   return (
     <div
-      className="flex items-center gap-3 px-4 py-3 bg-surface/50 hover:bg-surface transition-colors cursor-pointer border-b border-border min-w-[800px]"
+      className="flex items-center gap-3 px-4 py-3 bg-surface/50 hover:bg-surface transition-colors cursor-pointer border-b border-border min-w-[880px]"
       style={{ paddingLeft: `${16 + indent}px` }}
       onClick={() => onToggle(node.path)}
     >
