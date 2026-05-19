@@ -491,13 +491,18 @@ def scan_stale_index_tasks():
     """
     from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
     from app.services.knowledge.index_state_machine import (
-        _get_active_index_stale_reason,
+        _get_active_index_stale_reason_for,
         mark_document_index_failed,
     )
 
     with SessionLocal() as db:
         active_docs = (
-            db.query(KnowledgeDocument)
+            db.query(
+                KnowledgeDocument.id,
+                KnowledgeDocument.index_generation,
+                KnowledgeDocument.index_status,
+                KnowledgeDocument.updated_at,
+            )
             .filter(
                 KnowledgeDocument.index_status.in_(
                     [
@@ -513,19 +518,19 @@ def scan_stale_index_tasks():
         )
 
         marked_count = 0
-        for doc in active_docs:
-            stale_reason = _get_active_index_stale_reason(doc)
+        for doc_id, generation, index_status, updated_at in active_docs:
+            stale_reason = _get_active_index_stale_reason_for(index_status, updated_at)
             if stale_reason is not None:
                 finalized = mark_document_index_failed(
                     db=db,
-                    document_id=doc.id,
-                    generation=doc.index_generation,
+                    document_id=doc_id,
+                    generation=generation,
                 )
                 if finalized:
                     marked_count += 1
                     logger.info(
-                        f"[StaleScanner] Marked document {doc.id} as FAILED, "
-                        f"reason={stale_reason}, status_was={doc.index_status}"
+                        f"[StaleScanner] Marked document {doc_id} as FAILED, "
+                        f"reason={stale_reason}, status_was={index_status}"
                     )
 
         logger.info(

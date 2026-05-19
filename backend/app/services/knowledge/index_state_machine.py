@@ -60,30 +60,44 @@ def _get_active_index_stale_reason(
     document: KnowledgeDocument,
 ) -> Optional[str]:
     """Return a stale reason when an active indexing state is expired."""
-    if document.updated_at is None:
+    return _get_active_index_stale_reason_for(
+        document.index_status, document.updated_at
+    )
+
+
+def _get_active_index_stale_reason_for(
+    index_status: DocumentIndexStatus,
+    updated_at: Optional[datetime],
+) -> Optional[str]:
+    """Return a stale reason based on raw status and timestamp values.
+
+    Accepts raw values instead of ORM object so callers can use
+    lightweight column queries without loading full KnowledgeDocument rows.
+    """
+    if updated_at is None:
         return None
 
-    age_seconds = (_utcnow() - document.updated_at).total_seconds()
+    age_seconds = (_utcnow() - updated_at).total_seconds()
     if (
-        document.index_status == DocumentIndexStatus.QUEUED
+        index_status == DocumentIndexStatus.QUEUED
         and age_seconds >= settings.KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS
     ):
         return "stale_queued"
 
     if (
-        document.index_status == DocumentIndexStatus.PENDING_CONVERSION
+        index_status == DocumentIndexStatus.PENDING_CONVERSION
         and age_seconds >= settings.KNOWLEDGE_INDEX_STALE_PENDING_CONVERSION_SECONDS
     ):
         return "stale_pending_conversion"
 
     if (
-        document.index_status == DocumentIndexStatus.INDEXING
+        index_status == DocumentIndexStatus.INDEXING
         and age_seconds >= settings.KNOWLEDGE_INDEX_STALE_INDEXING_SECONDS
     ):
         return "stale_indexing"
 
     if (
-        document.index_status == DocumentIndexStatus.CONVERTING
+        index_status == DocumentIndexStatus.CONVERTING
         and age_seconds >= settings.KNOWLEDGE_INDEX_STALE_CONVERTING_SECONDS
     ):
         return "stale_converting"
@@ -387,6 +401,12 @@ def mark_document_index_started(
     )
 
 
+_INDEX_SUCCEEDED_ALLOWED_STATUSES = {
+    DocumentIndexStatus.QUEUED,
+    DocumentIndexStatus.INDEXING,
+}
+
+
 @trace_sync(
     span_name="knowledge.mark_document_index_succeeded",
     tracer_name="knowledge.state_machine",
@@ -419,7 +439,7 @@ def mark_document_index_succeeded(
         .filter(
             KnowledgeDocument.id == document_id,
             KnowledgeDocument.index_generation == generation,
-            KnowledgeDocument.index_status.in_(ACTIVE_INDEX_STATUSES),
+            KnowledgeDocument.index_status.in_(_INDEX_SUCCEEDED_ALLOWED_STATUSES),
         )
         .update(
             {
