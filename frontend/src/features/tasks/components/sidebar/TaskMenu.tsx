@@ -29,6 +29,7 @@ import {
 } from '@/components/ui/dropdown'
 import { useProjectContext } from '@/features/projects'
 import { ProjectCreateDialog } from '@/features/projects/components/ProjectCreateDialog'
+import { canImportOrdinaryTaskToProject } from '@/features/projects/utils/projectClassification'
 
 interface TaskMenuProps {
   taskId: number
@@ -49,6 +50,7 @@ export default function TaskMenu({
   const { t: tProjects } = useTranslation('projects')
   const { projects, addTaskToProject } = useProjectContext()
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const importableProjects = projects.filter(canImportOrdinaryTaskToProject)
 
   const handleMoveToGroup = async (projectId: number) => {
     await addTaskToProject(projectId, taskId)
@@ -92,8 +94,8 @@ export default function TaskMenu({
                     <PlusIcon className="h-3.5 w-3.5 mr-2" />
                     {tProjects('menu.createGroup')}
                   </DropdownMenuItem>
-                  {projects.length > 0 && <DropdownMenuSeparator />}
-                  {projects.map(project => (
+                  {importableProjects.length > 0 && <DropdownMenuSeparator />}
+                  {importableProjects.map(project => (
                     <DropdownMenuItem
                       key={project.id}
                       onClick={e => {

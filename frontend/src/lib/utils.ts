@@ -55,7 +55,7 @@ export function formatUTCDate(dateStr: string | null | undefined, fallback: stri
 export function isVersionAtLeast(version: string, targetVersion: string): boolean {
   const parseVersion = (v: string): number[] | null => {
     // Remove any pre-release suffix (e.g., "-beta", "-rc1")
-    const baseVersion = v.split('-')[0]
+    const baseVersion = v.trim().replace(/^v/i, '').split('-')[0]
     const parts = baseVersion.split('.').map(Number)
     // Validate all parts are valid numbers
     if (parts.some(isNaN) || parts.length === 0) {

@@ -32,6 +32,7 @@ import { ProjectCreateDialog } from './ProjectCreateDialog'
 import { taskApis } from '@/apis/tasks'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { useRouter } from 'next/navigation'
+import { canImportOrdinaryTaskToProject } from '../utils/projectClassification'
 
 interface ProjectTaskMenuProps {
   taskId: number
@@ -54,7 +55,9 @@ export function ProjectTaskMenu({
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
 
   // Filter out the current project from the list
-  const otherProjects = projects.filter(p => p.id !== projectId)
+  const otherProjects = projects.filter(
+    p => p.id !== projectId && canImportOrdinaryTaskToProject(p)
+  )
 
   const handleCopyTaskId = async () => {
     const textToCopy = taskId.toString()

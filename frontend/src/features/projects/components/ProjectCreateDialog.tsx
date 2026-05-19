@@ -28,6 +28,7 @@ import { useProjectContext } from '../contexts/projectContext'
 import { projectApis } from '@/apis/projects'
 import { useDevices } from '@/contexts/DeviceContext'
 import type { ProjectConfig } from '@/types/api'
+import { isVersionAtLeast } from '@/lib/utils'
 
 const PROJECT_COLORS = [
   { id: 'red', value: '#EF4444' },
@@ -39,6 +40,8 @@ const PROJECT_COLORS = [
   { id: 'pink', value: '#EC4899' },
   { id: 'gray', value: '#6B7280' },
 ]
+
+const MIN_WORKSPACE_PROJECT_DEVICE_VERSION = 'v1.7.11'
 
 function getNameFromPath(path: string): string {
   const trimmed = path.replace(/\/+$/, '')
@@ -83,6 +86,19 @@ export function ProjectCreateDialog({
 
   const [isCreating, setIsCreating] = useState(false)
 
+  const selectedDevice = useMemo(
+    () => onlineDevices.find(device => device.device_id === deviceId) ?? null,
+    [deviceId, onlineDevices]
+  )
+
+  const selectedDeviceSupportsWorkspaceProject = Boolean(
+    selectedDevice?.executor_version &&
+    isVersionAtLeast(selectedDevice.executor_version, MIN_WORKSPACE_PROJECT_DEVICE_VERSION)
+  )
+
+  const showDeviceVersionUnsupported =
+    isWorkspaceMode && Boolean(selectedDevice) && !selectedDeviceSupportsWorkspaceProject
+
   // Auto-select first online device when dialog opens
   useEffect(() => {
     if (open && isWorkspaceMode && !deviceId && onlineDevices.length > 0) {
@@ -110,7 +126,7 @@ export function ProjectCreateDialog({
   }
 
   const handleCreateWorkspace = async () => {
-    if (!deviceId) return
+    if (!deviceId || !selectedDeviceSupportsWorkspaceProject) return
 
     setIsCreating(true)
     try {
@@ -161,7 +177,9 @@ export function ProjectCreateDialog({
     setLocalPath('')
   }
 
-  const canCreate = isWorkspaceMode ? Boolean(deviceId) : Boolean(name.trim())
+  const canCreate = isWorkspaceMode
+    ? Boolean(deviceId) && selectedDeviceSupportsWorkspaceProject
+    : Boolean(name.trim())
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -205,6 +223,18 @@ export function ProjectCreateDialog({
                       ))}
                     </SelectContent>
                   </Select>
+                )}
+                {showDeviceVersionUnsupported && (
+                  <p
+                    className="text-sm text-destructive"
+                    data-testid="workspace-device-version-warning"
+                  >
+                    {t('workspace.deviceVersionUnsupported', {
+                      version:
+                        selectedDevice?.executor_version || t('workspace.unknownDeviceVersion'),
+                      requiredVersion: MIN_WORKSPACE_PROJECT_DEVICE_VERSION,
+                    })}
+                  </p>
                 )}
               </div>
 
