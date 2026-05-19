@@ -30,6 +30,14 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from '@/components/ui/table'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type {
@@ -196,8 +204,8 @@ export function KnowledgeGroupListPage({
 }: KnowledgeGroupListPageProps) {
   const isGroupSectionMode = groupNativeKbs.length > 0 || groupSharedKbs.length > 0
   const { t } = useTranslation('knowledge')
-  const [sortBy, setSortBy] = useState<SortBy>('default')
-  const [sortOrder, setSortOrder] = useState<SortOrder>('asc')
+  const [sortBy, setSortBy] = useState<SortBy>('created')
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
 
   // Determine which data source to use
   // Prefer knowledgeBasesWithGroupInfo when available (has my_role field)
@@ -337,9 +345,9 @@ export function KnowledgeGroupListPage({
     showFromColumn: boolean,
     groupColumnTitle?: string
   ) => (
-    <thead className="sticky top-0 bg-surface border-b border-border">
-      <tr className="text-left text-sm text-text-secondary">
-        <th className="px-6 py-3 font-medium w-[35%]">
+    <TableHeader className="sticky top-0 bg-surface border-b border-border">
+      <TableRow className="text-left text-sm text-text-secondary">
+        <TableHead className="h-auto px-6 py-3 font-medium w-[35%]">
           <button
             className="flex items-center hover:text-text-primary transition-colors"
             onClick={() => handleSort('name')}
@@ -347,9 +355,9 @@ export function KnowledgeGroupListPage({
             {t('document.table.name', '名称')}
             <SortIcon column="name" />
           </button>
-        </th>
+        </TableHead>
         {showGroupColumn && (
-          <th className="px-6 py-3 font-medium w-[20%]">
+          <TableHead className="h-auto px-6 py-3 font-medium w-[20%]">
             <button
               className="flex items-center hover:text-text-primary transition-colors"
               onClick={() => handleSort('group')}
@@ -357,13 +365,17 @@ export function KnowledgeGroupListPage({
               {groupColumnTitle || t('document.table.group', '归属')}
               <SortIcon column="group" />
             </button>
-          </th>
+          </TableHead>
         )}
         {showFromColumn && (
-          <th className="px-6 py-3 font-medium w-[15%]">{t('document.table.from', '来自')}</th>
+          <TableHead className="h-auto px-6 py-3 font-medium w-[15%]">
+            {t('document.table.from', '来自')}
+          </TableHead>
         )}
-        <th className="px-6 py-3 font-medium w-[15%]">{t('document.table.permission', '权限')}</th>
-        <th className="px-6 py-3 font-medium w-[12%]">
+        <TableHead className="h-auto px-6 py-3 font-medium w-[15%]">
+          {t('document.table.permission', '权限')}
+        </TableHead>
+        <TableHead className="h-auto px-6 py-3 font-medium w-[12%]">
           <button
             className="flex items-center hover:text-text-primary transition-colors"
             onClick={() => handleSort('created')}
@@ -371,8 +383,8 @@ export function KnowledgeGroupListPage({
             {t('document.table.createdAt', '创建时间')}
             <SortIcon column="created" />
           </button>
-        </th>
-        <th className="px-6 py-3 font-medium w-[12%]">
+        </TableHead>
+        <TableHead className="h-auto px-6 py-3 font-medium w-[12%]">
           <button
             className="flex items-center hover:text-text-primary transition-colors"
             onClick={() => handleSort('updated')}
@@ -380,12 +392,12 @@ export function KnowledgeGroupListPage({
             {t('document.table.updatedAt', '更新时间')}
             <SortIcon column="updated" />
           </button>
-        </th>
-        <th className="px-6 py-3 font-medium w-[15%] text-right">
+        </TableHead>
+        <TableHead className="h-auto px-6 py-3 font-medium w-[15%] text-right">
           {t('document.table.actions', '操作')}
-        </th>
-      </tr>
-    </thead>
+        </TableHead>
+      </TableRow>
+    </TableHeader>
   )
 
   // Render table rows
@@ -394,7 +406,7 @@ export function KnowledgeGroupListPage({
     showGroupColumn: boolean,
     showFromColumn: boolean
   ) => (
-    <tbody>
+    <TableBody>
       {kbs.map(kb => (
         <KnowledgeBaseRow
           key={kb.id}
@@ -412,7 +424,7 @@ export function KnowledgeGroupListPage({
           tFunc={t}
         />
       ))}
-    </tbody>
+    </TableBody>
   )
 
   // Render personal mode content with separate sections
@@ -443,10 +455,10 @@ export function KnowledgeGroupListPage({
             <span className="ml-2 text-text-muted">({sortedCreatedByMe.length})</span>
           </h3>
           {hasCreated ? (
-            <table className="w-full table-fixed min-w-0">
+            <Table className="w-full table-fixed min-w-0">
               {renderTableHeader(false, false)}
               {renderTableRows(sortedCreatedByMe, false, false)}
-            </table>
+            </Table>
           ) : (
             <div className="px-6 py-8 text-center text-text-muted">
               <p>{t('document.personalGroups.noCreated', '您还没有创建任何知识库')}</p>
@@ -464,10 +476,10 @@ export function KnowledgeGroupListPage({
             <span className="ml-2 text-text-muted">({sortedSharedWithMe.length})</span>
           </h3>
           {hasShared ? (
-            <table className="w-full table-fixed min-w-0">
+            <Table className="w-full table-fixed min-w-0">
               {renderTableHeader(true, true, t('document.table.belongsTo', '归属'))}
               {renderTableRows(sortedSharedWithMe, true, true)}
-            </table>
+            </Table>
           ) : (
             <div className="px-6 py-8 text-center text-text-muted">
               <p>{t('document.personalGroups.noShared', '暂没有分享给您的知识库')}</p>
@@ -512,10 +524,10 @@ export function KnowledgeGroupListPage({
             <span className="ml-2 text-text-muted">({sortedNative.length})</span>
           </h3>
           {hasNative ? (
-            <table className="w-full table-fixed min-w-0">
+            <Table className="w-full table-fixed min-w-0">
               {renderTableHeader(false, false)}
               {renderTableRows(sortedNative, false, false)}
-            </table>
+            </Table>
           ) : (
             <div className="px-6 py-8 text-center text-text-muted">
               <p>{t('document.groupSections.noNative', '暂无群组知识库')}</p>
@@ -530,10 +542,10 @@ export function KnowledgeGroupListPage({
             <span className="ml-2 text-text-muted">({sortedShared.length})</span>
           </h3>
           {hasShared ? (
-            <table className="w-full table-fixed min-w-0">
+            <Table className="w-full table-fixed min-w-0">
               {renderTableHeader(false, true)}
               {renderTableRows(sortedShared, false, true)}
-            </table>
+            </Table>
           ) : (
             <div className="px-6 py-8 text-center text-text-muted">
               <p>{t('document.groupSections.noShared', '暂无分享的知识库')}</p>
@@ -602,10 +614,10 @@ export function KnowledgeGroupListPage({
             </p>
           </div>
         ) : (
-          <table className="w-full table-fixed min-w-0">
+          <Table className="w-full table-fixed min-w-0">
             {renderTableHeader(isAllMode, showFromColumn)}
             {renderTableRows(filteredKbs, isAllMode, showFromColumn)}
-          </table>
+          </Table>
         )}
       </div>
     </div>
@@ -643,53 +655,53 @@ function KnowledgeBaseRow({
   tFunc,
 }: KnowledgeBaseRowProps) {
   return (
-    <tr
+    <TableRow
       className="border-b border-border hover:bg-surface-hover cursor-pointer transition-colors"
       onClick={onClick}
       data-testid={`kb-row-${kb.id}`}
     >
       {/* Name column */}
-      <td className="px-6 py-3 overflow-hidden">
+      <TableCell className="px-6 py-3 overflow-hidden">
         <div className="flex items-center gap-3 min-w-0">
           <KbTypeIcon kbType={kb.kb_type} className="w-5 h-5 flex-shrink-0" />
           <span className="text-sm font-medium text-text-primary truncate">{kb.name}</span>
           {isFavorite && <Star className="w-4 h-4 text-yellow-500 fill-yellow-500 flex-shrink-0" />}
         </div>
-      </td>
+      </TableCell>
 
       {/* Group column - only in "All" mode */}
       {showGroupInfo && (
-        <td className="px-6 py-3 text-text-secondary overflow-hidden">
+        <TableCell className="px-6 py-3 text-text-secondary overflow-hidden">
           <span className="truncate block">{groupInfo ? groupInfo.groupName : '--'}</span>
-        </td>
+        </TableCell>
       )}
 
       {/* From column - shows who shared the KB */}
       {showFromInfo && (
-        <td className="px-6 py-3 text-text-secondary overflow-hidden">
+        <TableCell className="px-6 py-3 text-text-secondary overflow-hidden">
           <span className="truncate block">
             {'group_type' in kb ? getKbShareSourceText(kb as KnowledgeBaseWithGroupInfo) : '--'}
           </span>
-        </td>
+        </TableCell>
       )}
 
       {/* Permission column */}
-      <td className="px-6 py-3 text-text-secondary whitespace-nowrap">
+      <TableCell className="px-6 py-3 text-text-secondary whitespace-nowrap">
         {'my_role' in kb && kb.my_role ? ROLE_DISPLAY_NAMES[kb.my_role as MemberRole] : '--'}
-      </td>
+      </TableCell>
 
       {/* Created at column */}
-      <td className="px-6 py-3 text-text-secondary whitespace-nowrap">
+      <TableCell className="px-6 py-3 text-text-secondary whitespace-nowrap">
         {formatRelativeTime(kb.created_at, tFunc)}
-      </td>
+      </TableCell>
 
-      {/* Last access column */}
-      <td className="px-6 py-3 text-text-secondary whitespace-nowrap">
+      {/* Updated at column */}
+      <TableCell className="px-6 py-3 text-text-secondary whitespace-nowrap">
         {formatRelativeTime(kb.updated_at, tFunc)}
-      </td>
+      </TableCell>
 
       {/* Actions column - Migrate, Edit and Delete */}
-      <td className="px-6 py-3">
+      <TableCell className="px-6 py-3">
         <div className="flex items-center justify-end gap-1">
           {canMigrate && onMigrate && (
             <Button
@@ -737,8 +749,8 @@ function KnowledgeBaseRow({
             </Button>
           )}
         </div>
-      </td>
-    </tr>
+      </TableCell>
+    </TableRow>
   )
 }
 
