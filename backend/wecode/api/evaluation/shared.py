@@ -259,8 +259,10 @@ async def upload_file(
                 # If no slot specified, validate against all file-upload slots
                 # (attachment, link+attachment, link_or_attachment modes)
                 slots_to_check = [
-                    s for s in answer_slots
-                    if s.get("inputMode") in ("attachment", "link+attachment", "link_or_attachment")
+                    s
+                    for s in answer_slots
+                    if s.get("inputMode")
+                    in ("attachment", "link+attachment", "link_or_attachment")
                 ]
 
             # Collect all allowed extensions from relevant slots
@@ -270,9 +272,7 @@ async def upload_file(
                 accept = answer_slot.get("accept", "")
                 if accept:
                     allowed_extensions = [
-                        ext.strip().lower()
-                        for ext in accept.split(",")
-                        if ext.strip()
+                        ext.strip().lower() for ext in accept.split(",") if ext.strip()
                     ]
                     all_allowed_extensions.extend(allowed_extensions)
                     accept_display_list.append(accept)
@@ -285,10 +285,12 @@ async def upload_file(
                 ):
                     # Format allowed types for display (remove dots and deduplicate)
                     allowed_types = ", ".join(
-                        sorted(set(
-                            acc.replace(".", "").upper()
-                            for acc in accept_display_list
-                        ))
+                        sorted(
+                            set(
+                                acc.replace(".", "").upper()
+                                for acc in accept_display_list
+                            )
+                        )
                     )
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
@@ -586,19 +588,15 @@ def download_file(
     """
     storage_service = get_storage_service()
 
-    # Handle potential '+' to space conversion issue
-    # Some URL encodings use '+' for space, but FastAPI may not decode it
-    s3_path_normalized = s3_path.replace("+", " ")
-
     # Verify permission
-    if not _verify_download_permission(s3_path_normalized, current_user, db):
+    if not _verify_download_permission(s3_path, current_user, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have permission to download this file",
         )
 
     # Get file info first to check existence and get size
-    file_info = storage_service.get_file_info(s3_path_normalized)
+    file_info = storage_service.get_file_info(s3_path)
     if file_info is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -606,15 +604,15 @@ def download_file(
         )
 
     # Get file stream
-    file_stream = storage_service.get_stream(s3_path_normalized)
+    file_stream = storage_service.get_stream(s3_path)
     if file_stream is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="File not found",
         )
 
-    # Extract filename from normalized path
-    filename = s3_path_normalized.split("/")[-1]
+    # Extract filename from path
+    filename = s3_path.split("/")[-1]
 
     # Try to determine content type based on file extension or use stored content type
     content_type = file_info.get("content_type", "application/octet-stream")
@@ -701,19 +699,15 @@ def stream_file(
 
     storage_service = get_storage_service()
 
-    # Handle potential '+' to space conversion issue
-    # Some URL encodings use '+' for space, but FastAPI may not decode it
-    s3_path_normalized = s3_path.replace("+", " ")
-
-    # Verify permission (use normalized path)
-    if not _verify_download_permission(s3_path_normalized, current_user, db):
+    # Verify permission
+    if not _verify_download_permission(s3_path, current_user, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have permission to preview this file",
         )
 
-    # Get file info first to check existence and get size (use normalized path)
-    file_info = storage_service.get_file_info(s3_path_normalized)
+    # Get file info first to check existence and get size
+    file_info = storage_service.get_file_info(s3_path)
     if file_info is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -722,8 +716,8 @@ def stream_file(
 
     file_size = file_info.get("size", 0)
 
-    # Extract filename from normalized path
-    filename = s3_path_normalized.split("/")[-1]
+    # Extract filename from path
+    filename = s3_path.split("/")[-1]
 
     # Determine content type
     content_type = file_info.get("content_type", "application/octet-stream")
@@ -788,9 +782,7 @@ def stream_file(
             content_length = end - start + 1
 
             # Get range stream
-            file_stream = storage_service.get_range_stream(
-                s3_path_normalized, start, end
-            )
+            file_stream = storage_service.get_range_stream(s3_path, start, end)
             if file_stream is None:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -815,7 +807,7 @@ def stream_file(
             pass
 
     # No range request or invalid range - return full file
-    file_stream = storage_service.get_stream(s3_path_normalized)
+    file_stream = storage_service.get_stream(s3_path)
     if file_stream is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -856,18 +848,15 @@ def get_file_content(
     """
     storage_service = get_storage_service()
 
-    # Handle potential '+' to space conversion issue
-    s3_path_normalized = s3_path.replace("+", " ")
-
     # Verify permission (same as download)
-    if not _verify_download_permission(s3_path_normalized, current_user, db):
+    if not _verify_download_permission(s3_path, current_user, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have permission to access this file",
         )
 
     # Get file info first to check existence
-    file_info = storage_service.get_file_info(s3_path_normalized)
+    file_info = storage_service.get_file_info(s3_path)
     if file_info is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -875,7 +864,7 @@ def get_file_content(
         )
 
     # Get file stream
-    file_stream = storage_service.get_stream(s3_path_normalized)
+    file_stream = storage_service.get_stream(s3_path)
     if file_stream is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

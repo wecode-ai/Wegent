@@ -143,8 +143,7 @@ export async function downloadEvaluationFile(
   onProgress?: DownloadProgressCallback
 ): Promise<void> {
   const token = getToken()
-  const params = new URLSearchParams({ s3_path: s3Path })
-  const url = getEvaluationUrl(`/shared/files/download?${params}`)
+  const url = getEvaluationUrl(`/shared/files/download?s3_path=${encodeURIComponent(s3Path)}`)
 
   try {
     const response = await fetch(url, {
@@ -294,8 +293,7 @@ export async function uploadTextAsFile(
  */
 export async function fetchFileContent(s3Path: string): Promise<string> {
   const token = getToken()
-  const params = new URLSearchParams({ s3_path: s3Path })
-  const url = getEvaluationUrl(`/shared/files/content?${params}`)
+  const url = getEvaluationUrl(`/shared/files/content?s3_path=${encodeURIComponent(s3Path)}`)
 
   const response = await fetch(url, {
     method: 'GET',
