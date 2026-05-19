@@ -112,4 +112,26 @@ describe('ProjectCreateDialog', () => {
       expect(screen.getByRole('button', { name: 'workspaceCreate.submit' })).not.toBeDisabled()
     })
   })
+  test('filters OpenClaw devices from workspace project creation', () => {
+    devicesMock = [
+      {
+        ...baseDevice,
+        device_id: 'claudecode-device',
+        name: 'ClaudeCode Device',
+        bind_shell: 'claudecode',
+      },
+      {
+        ...baseDevice,
+        id: 2,
+        device_id: 'openclaw-device',
+        name: 'OpenClaw Device',
+        bind_shell: 'openclaw',
+      },
+    ]
+
+    render(<ProjectCreateDialog open={true} onOpenChange={jest.fn()} mode="workspace" />)
+
+    expect(screen.getByText('ClaudeCode Device')).toBeInTheDocument()
+    expect(screen.queryByText('OpenClaw Device')).not.toBeInTheDocument()
+  })
 })

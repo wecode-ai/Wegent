@@ -67,7 +67,9 @@ export function ProjectCreateDialog({
 
   // Online devices only, prefer cloud ClaudeCode devices first
   const onlineDevices = useMemo(() => {
-    const online = devices.filter(d => d.status === 'online' || d.status === 'busy')
+    const online = devices.filter(
+      d => (d.status === 'online' || d.status === 'busy') && d.bind_shell !== 'openclaw'
+    )
     return online.sort((a, b) => {
       const aIsCloudCode = a.device_type === 'cloud' && a.bind_shell === 'claudecode' ? 0 : 1
       const bIsCloudCode = b.device_type === 'cloud' && b.bind_shell === 'claudecode' ? 0 : 1
