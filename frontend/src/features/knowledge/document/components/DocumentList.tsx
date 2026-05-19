@@ -889,13 +889,14 @@ export function DocumentList({
                   >
                     {/* Icon placeholder */}
                     <div className="w-4 h-4 flex-shrink-0" />
-                    <span
+                    <button
+                      type="button"
                       className="cursor-pointer hover:text-text-primary select-none"
                       onClick={() => handleSort('name')}
                     >
                       {t('document.document.columns.name')}
                       <SortIcon field="name" />
-                    </span>
+                    </button>
                     {/* Column resize handle */}
                     <div
                       className="absolute top-0 right-0 bottom-0 w-3 cursor-col-resize z-10 group/resize flex items-center justify-center"
@@ -910,32 +911,35 @@ export function DocumentList({
                   <div className="w-20 flex-shrink-0 text-center">
                     {t('document.document.columns.type')}
                   </div>
-                  <div
+                  <button
+                    type="button"
                     className="w-20 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
                     onClick={() => handleSort('size')}
                   >
                     {t('document.document.columns.size')}
                     <SortIcon field="size" />
-                  </div>
+                  </button>
                   {/* Creator column header */}
                   <div className="w-24 flex-shrink-0 text-center">
                     {t('document.document.columns.createdBy')}
                   </div>
-                  <div
+                  <button
+                    type="button"
                     className="w-40 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
                     onClick={() => handleSort('createdAt')}
                   >
                     {t('document.document.columns.date')}
                     <SortIcon field="createdAt" />
-                  </div>
+                  </button>
                   {/* Updated date column header */}
-                  <div
+                  <button
+                    type="button"
                     className="w-40 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
                     onClick={() => handleSort('updatedAt')}
                   >
                     {t('document.document.columns.updatedAt')}
                     <SortIcon field="updatedAt" />
-                  </div>
+                  </button>
                   <div className="w-24 flex-shrink-0 text-center">
                     {t('document.document.columns.indexStatus')}
                   </div>

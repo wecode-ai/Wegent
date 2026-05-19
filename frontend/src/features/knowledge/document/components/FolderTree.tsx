@@ -723,7 +723,7 @@ export function FolderTree({
   ))
 
   if (withBorder) {
-    return <div className="border border-border rounded-lg">{treeNodes}</div>
+    return <div className="border border-border rounded-lg overflow-x-auto">{treeNodes}</div>
   }
 
   return <>{treeNodes}</>
