@@ -893,7 +893,7 @@ export function DocumentList({
             </div>
           ) : (
             /* Normal mode: Table layout with folder tree - single bordered container */
-            <div className="border border-border rounded-lg overflow-hidden">
+            <div className="border border-border rounded-lg overflow-x-auto">
               {/* Table header */}
               <div className="flex items-center gap-4 px-4 py-2.5 bg-surface text-xs text-text-muted font-medium min-w-[880px] border-b border-border">
                 {/* Checkbox for select all */}
@@ -907,17 +907,22 @@ export function DocumentList({
                     />
                   </div>
                 )}
-                {/* Icon placeholder */}
-                <div className="w-8 flex-shrink-0" />
+                {/* Icon + Name column header */}
                 <div
                   ref={nameColumnRef}
-                  className={`relative cursor-pointer hover:text-text-primary select-none ${nameColumnWidth ? 'flex-shrink-0' : 'flex-1 min-w-[120px]'}`}
+                  className={`relative flex items-center gap-2 ${nameColumnWidth ? 'flex-shrink-0' : 'flex-1 min-w-[200px]'}`}
                   style={nameColumnWidth ? { width: `${nameColumnWidth}px` } : undefined}
-                  onClick={() => handleSort('name')}
                 >
-                  {t('document.document.columns.name')}
-                  <SortIcon field="name" />
-                  {/* Column resize handle - 12px wide hit area on right edge, visible line on hover */}
+                  {/* Icon placeholder */}
+                  <div className="w-4 h-4 flex-shrink-0" />
+                  <span
+                    className="cursor-pointer hover:text-text-primary select-none"
+                    onClick={() => handleSort('name')}
+                  >
+                    {t('document.document.columns.name')}
+                    <SortIcon field="name" />
+                  </span>
+                  {/* Column resize handle */}
                   <div
                     className="absolute top-0 right-0 bottom-0 w-3 cursor-col-resize z-10 group/resize flex items-center justify-center"
                     onMouseDown={handleNameResizeMouseDown}
@@ -926,8 +931,8 @@ export function DocumentList({
                     <div className="w-0.5 h-3/4 rounded-full bg-border group-hover/resize:bg-primary/50 transition-colors" />
                   </div>
                 </div>
-                {/* Spacer to match DocumentItem middle area */}
-                <div className="w-48 flex-shrink-0" />
+                {/* Spacer to match DocumentItem edit button area */}
+                <div className="w-7 flex-shrink-0" />
                 <div className="w-20 flex-shrink-0 text-center">
                   {t('document.document.columns.type')}
                 </div>

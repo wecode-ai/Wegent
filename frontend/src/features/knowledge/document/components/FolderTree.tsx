@@ -236,37 +236,37 @@ function FolderRow({
   const folderActions =
     isApiFolder && canManageFolders ? (
       <span
-        className="flex items-center gap-0.5 ml-auto flex-shrink-0"
+        className="flex items-center gap-1 ml-auto flex-shrink-0"
         onClick={e => e.stopPropagation()}
       >
         {onCreateFolder && (
           <button
-            className="p-0.5 rounded hover:bg-border transition-colors"
+            className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"
             title={t('document.folder.create')}
             onClick={() => onCreateFolder(node.id)}
             data-testid={`create-subfolder-${node.id}`}
           >
-            <FolderPlus className="w-3 h-3 text-text-muted" />
+            <FolderPlus className="w-3.5 h-3.5" />
           </button>
         )}
         {onRenameFolder && (
           <button
-            className="p-0.5 rounded hover:bg-border transition-colors"
+            className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"
             title={t('document.folder.rename')}
             onClick={() => onRenameFolder(node.id, node.name)}
             data-testid={`rename-folder-${node.id}`}
           >
-            <Pencil className="w-3 h-3 text-text-muted" />
+            <Pencil className="w-3.5 h-3.5" />
           </button>
         )}
         {onDeleteFolder && (
           <button
-            className="p-0.5 rounded hover:bg-border transition-colors"
+            className="p-1.5 rounded-md text-text-muted hover:text-error hover:bg-error/10 transition-colors"
             title={t('document.folder.delete')}
             onClick={() => onDeleteFolder(node.id, node.name)}
             data-testid={`delete-folder-${node.id}`}
           >
-            <Trash2 className="w-3 h-3 text-text-muted" />
+            <Trash2 className="w-3.5 h-3.5" />
           </button>
         )}
       </span>
@@ -301,7 +301,7 @@ function FolderRow({
 
   return (
     <div
-      className="flex items-center gap-3 px-4 py-2.5 bg-surface/50 hover:bg-surface transition-colors cursor-pointer border-b border-border min-w-[800px]"
+      className="flex items-center gap-3 px-4 py-3 bg-surface/50 hover:bg-surface transition-colors cursor-pointer border-b border-border min-w-[800px]"
       style={{ paddingLeft: `${16 + indent}px` }}
       onClick={() => onToggle(node.path)}
     >
@@ -350,7 +350,6 @@ interface FolderTreeNodeProps {
   onSelect?: (doc: KnowledgeDocument, selected: boolean) => void
   ragConfigured?: boolean
   nameColumnWidth?: number
-  isLast?: boolean
 }
 
 function FolderTreeNode({
@@ -377,7 +376,6 @@ function FolderTreeNode({
   onSelect,
   ragConfigured,
   nameColumnWidth,
-  isLast,
 }: FolderTreeNodeProps) {
   if (node.type === 'document') {
     const doc = node.document
@@ -408,29 +406,28 @@ function FolderTreeNode({
       )
     }
 
-    const extraIndent = depth * 16
+    const indent = depth * 16
     return (
-      <div style={extraIndent > 0 ? { paddingLeft: `${extraIndent}px` } : undefined}>
-        <DocumentItem
-          document={docWithDisplayName}
-          onViewDetail={onViewDetail ? () => onViewDetail(doc) : undefined}
-          onEdit={onEdit ? () => onEdit(doc) : undefined}
-          onDelete={onDelete ? () => onDelete(doc) : undefined}
-          onRefresh={onRefresh ? () => onRefresh(doc) : undefined}
-          onReindex={onReindex ? () => onReindex(doc) : undefined}
-          onMove={onMove ? () => onMove(doc) : undefined}
-          isRefreshing={isRefreshing?.(doc.id) ?? false}
-          isReindexing={isReindexing?.(doc.id) ?? false}
-          canManage={canManage?.(doc) ?? true}
-          canSelect={canSelect?.(doc) ?? false}
-          showBorder={!isLast}
-          selected={selected?.(doc.id) ?? false}
-          onSelect={onSelect}
-          compact={false}
-          ragConfigured={ragConfigured}
-          nameColumnWidth={nameColumnWidth}
-        />
-      </div>
+      <DocumentItem
+        document={docWithDisplayName}
+        indent={indent}
+        onViewDetail={onViewDetail ? () => onViewDetail(doc) : undefined}
+        onEdit={onEdit ? () => onEdit(doc) : undefined}
+        onDelete={onDelete ? () => onDelete(doc) : undefined}
+        onRefresh={onRefresh ? () => onRefresh(doc) : undefined}
+        onReindex={onReindex ? () => onReindex(doc) : undefined}
+        onMove={onMove ? () => onMove(doc) : undefined}
+        isRefreshing={isRefreshing?.(doc.id) ?? false}
+        isReindexing={isReindexing?.(doc.id) ?? false}
+        canManage={canManage?.(doc) ?? true}
+        canSelect={canSelect?.(doc) ?? false}
+        showBorder={true}
+        selected={selected?.(doc.id) ?? false}
+        onSelect={onSelect}
+        compact={false}
+        ragConfigured={ragConfigured}
+        nameColumnWidth={nameColumnWidth}
+      />
     )
   }
 
@@ -451,7 +448,7 @@ function FolderTreeNode({
       />
       {isExpanded && (
         <div>
-          {node.children.map((child, idx) => (
+          {node.children.map(child => (
             <FolderTreeNode
               key={treeNodeKey(child)}
               node={child}
@@ -477,7 +474,6 @@ function FolderTreeNode({
               onSelect={onSelect}
               ragConfigured={ragConfigured}
               nameColumnWidth={nameColumnWidth}
-              isLast={idx === node.children.length - 1}
             />
           ))}
         </div>
@@ -556,7 +552,7 @@ export function FolderTree({
   if (compact) {
     return (
       <div className="space-y-0.5">
-        {tree.map((node, idx) => (
+        {tree.map(node => (
           <FolderTreeNode
             key={node.type === 'document' ? `doc:${node.document.id}` : `folder:${node.path}`}
             node={node}
@@ -581,7 +577,6 @@ export function FolderTree({
             selected={id => selectedIds?.has(id) ?? false}
             onSelect={onSelect}
             ragConfigured={ragConfigured}
-            isLast={idx === tree.length - 1}
           />
         ))}
       </div>
@@ -589,7 +584,7 @@ export function FolderTree({
   }
 
   // Normal (table) mode
-  const treeNodes = tree.map((node, idx) => (
+  const treeNodes = tree.map(node => (
     <FolderTreeNode
       key={node.type === 'document' ? `doc:${node.document.id}` : `folder:${node.path}`}
       node={node}
@@ -615,13 +610,12 @@ export function FolderTree({
       onSelect={onSelect}
       ragConfigured={ragConfigured}
       nameColumnWidth={nameColumnWidth}
-      isLast={idx === tree.length - 1}
     />
   ))
 
   if (withBorder) {
-    return <div className="border border-border rounded-lg overflow-x-auto">{treeNodes}</div>
+    return <div className="border border-border rounded-lg">{treeNodes}</div>
   }
 
-  return <div className="overflow-x-auto">{treeNodes}</div>
+  return <>{treeNodes}</>
 }

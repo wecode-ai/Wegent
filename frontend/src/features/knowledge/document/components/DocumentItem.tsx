@@ -55,6 +55,8 @@ interface DocumentItemProps {
   ragConfigured?: boolean
   /** Width of the name column in pixels (for table mode column resize) */
   nameColumnWidth?: number
+  /** Indentation for nested documents (in pixels, applied to name column only) */
+  indent?: number
 }
 
 export function DocumentItem({
@@ -75,6 +77,7 @@ export function DocumentItem({
   isReindexing = false,
   ragConfigured = true,
   nameColumnWidth,
+  indent = 0,
 }: DocumentItemProps) {
   const { t } = useTranslation()
 
@@ -423,22 +426,26 @@ export function DocumentItem({
         </div>
       )}
 
-      {/* File icon */}
-      <div className="p-2 bg-primary/10 rounded-lg flex-shrink-0">
-        {isTable ? (
-          <Table2 className="w-4 h-4 text-primary" />
-        ) : isWeb ? (
-          <Globe className="w-4 h-4 text-primary" />
-        ) : (
-          <FileText className="w-4 h-4 text-primary" />
-        )}
-      </div>
-
-      {/* File name */}
+      {/* Icon + Name container - indent applied to both */}
       <div
-        className={`flex items-center gap-2 ${nameColumnWidth ? 'flex-shrink-0' : 'flex-1 min-w-[120px]'}`}
-        style={nameColumnWidth ? { width: `${nameColumnWidth}px` } : undefined}
+        className={`flex items-center gap-2 ${nameColumnWidth ? 'flex-shrink-0' : 'flex-1 min-w-[200px]'}`}
+        style={{
+          ...(nameColumnWidth ? { width: `${nameColumnWidth}px` } : {}),
+          ...(indent > 0 ? { paddingLeft: `${indent}px` } : {}),
+        }}
       >
+        {/* File icon */}
+        <div className="flex-shrink-0">
+          {isTable ? (
+            <Table2 className="w-4 h-4 text-primary" />
+          ) : isWeb ? (
+            <Globe className="w-4 h-4 text-primary" />
+          ) : (
+            <FileText className="w-4 h-4 text-primary" />
+          )}
+        </div>
+
+        {/* File name */}
         <TooltipProvider>
           <Tooltip delayDuration={300}>
             <TooltipTrigger asChild>
@@ -459,8 +466,8 @@ export function DocumentItem({
           </button>
         )}
       </div>
-      {/* Edit button - in the middle area */}
-      <div className="w-48 flex-shrink-0 flex items-center justify-center">
+      {/* Edit button - right aligned */}
+      <div className="w-7 flex-shrink-0 flex items-center justify-end">
         {canManage && (
           <button
             className="p-1 rounded-md text-primary hover:bg-primary/10 transition-colors"
@@ -580,7 +587,7 @@ export function DocumentItem({
           {/* Move to folder button */}
           {onMove && (
             <button
-              className="h-11 min-w-[44px] p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"
+              className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"
               onClick={handleMove}
               title={t('knowledge:document.folder.moveDocument')}
               data-testid="move-button"
