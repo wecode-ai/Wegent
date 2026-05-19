@@ -152,14 +152,14 @@ CONVERSION_LOCK_RESULTS_TOTAL = Counter(
     ["result"],  # result: acquired, retry, exhausted
 )
 
-# Backend callback results
+# Backend HTTP request results
 CALLBACK_RESULTS_TOTAL = Counter(
     "converter_callback_results_total",
-    "Backend HTTP callback results",
+    "Backend HTTP request results",
     [
-        "callback_type",
+        "request_type",
         "status",
-    ],  # callback_type: started/completed/failed/download, status: success/failed
+    ],  # request_type: started/completed/failed/download, status: success/failed
 )
 
 
@@ -311,15 +311,33 @@ def record_callback_success(callback_type: str):
     """Record a successful backend callback.
 
     Args:
-        callback_type: Type of callback ("started", "completed", "failed", "download").
+        callback_type: Type of callback ("started", "completed", "failed").
     """
-    CALLBACK_RESULTS_TOTAL.labels(callback_type=callback_type, status="success").inc()
+    CALLBACK_RESULTS_TOTAL.labels(request_type=callback_type, status="success").inc()
 
 
 def record_callback_failed(callback_type: str):
     """Record a failed backend callback.
 
     Args:
-        callback_type: Type of callback ("started", "completed", "failed", "download").
+        callback_type: Type of callback ("started", "completed", "failed").
     """
-    CALLBACK_RESULTS_TOTAL.labels(callback_type=callback_type, status="failed").inc()
+    CALLBACK_RESULTS_TOTAL.labels(request_type=callback_type, status="failed").inc()
+
+
+def record_http_request_success(request_type: str):
+    """Record a successful HTTP request (non-callback, e.g., download).
+
+    Args:
+        request_type: Type of request (e.g., "download").
+    """
+    CALLBACK_RESULTS_TOTAL.labels(request_type=request_type, status="success").inc()
+
+
+def record_http_request_failed(request_type: str):
+    """Record a failed HTTP request (non-callback, e.g., download).
+
+    Args:
+        request_type: Type of request (e.g., "download").
+    """
+    CALLBACK_RESULTS_TOTAL.labels(request_type=request_type, status="failed").inc()

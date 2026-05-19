@@ -10,8 +10,8 @@ import httpx
 
 from knowledge_doc_converter.config import settings
 from knowledge_doc_converter.core.metrics import (
-    record_callback_failed,
-    record_callback_success,
+    record_http_request_failed,
+    record_http_request_success,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,11 +46,11 @@ class ContentFetcher:
                 for chunk in resp.iter_bytes(chunk_size=65536):
                     chunks.append(chunk)
                 data = b"".join(chunks)
-            record_callback_success("download")
+            record_http_request_success("download")
             logger.info(f"Downloaded {len(data)} bytes from {path}")
             return data
         except Exception:
-            record_callback_failed("download")
+            record_http_request_failed("download")
             raise
 
 

@@ -592,7 +592,12 @@ def mark_document_conversion_succeeded(
         .filter(
             KnowledgeDocument.id == document_id,
             KnowledgeDocument.index_generation == generation,
-            KnowledgeDocument.index_status == DocumentIndexStatus.CONVERTING,
+            KnowledgeDocument.index_status.in_(
+                [
+                    DocumentIndexStatus.CONVERTING,
+                    DocumentIndexStatus.PENDING_CONVERSION,
+                ]
+            ),
         )
         .update(update_payload, synchronize_session=False)
     )

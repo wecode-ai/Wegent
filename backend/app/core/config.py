@@ -327,9 +327,9 @@ class Settings(BaseSettings):
     KNOWLEDGE_INDEX_LOCK_EXTEND_INTERVAL_SECONDS: int = 30
     KNOWLEDGE_INDEX_LOCK_RETRY_DELAY_SECONDS: int = 15
     KNOWLEDGE_INDEX_LOCK_MAX_RETRIES: int = 1
-    KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS: int = 7200  # 120 min
+    KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS: int = 600  # 10 min
     KNOWLEDGE_INDEX_STALE_PENDING_CONVERSION_SECONDS: int = 7200  # 120 min
-    KNOWLEDGE_INDEX_STALE_INDEXING_SECONDS: int = 7200  # 120 min
+    KNOWLEDGE_INDEX_STALE_INDEXING_SECONDS: int = 2700  # 45 min
 
     # --- Document Conversion Configuration ---
 
@@ -342,7 +342,9 @@ class Settings(BaseSettings):
     # [Retained, value adjusted] Stale detection for CONVERTING status
     # MUST be > converter CONVERSION_TASK_TIME_LIMIT to avoid false kills
     # See cross-service config constraints in design doc section 4.4
-    KNOWLEDGE_INDEX_STALE_CONVERTING_SECONDS: int = 12000  # was 1800
+    KNOWLEDGE_INDEX_STALE_CONVERTING_SECONDS: int = (
+        14400  # was 12000, 20% margin over lock_timeout
+    )
 
     # [Migrated to knowledge_doc_converter] The following configs have been moved:
     # KNOWLEDGE_CONVERSION_LOCK_TIMEOUT_SECONDS  -> converter config (value: 12000)

@@ -125,6 +125,8 @@ async def _poll_until_done(
 ) -> None:
     """Poll MinerU task status until completion."""
     start_time = asyncio.get_running_loop().time()
+    consecutive_errors = 0
+    max_consecutive_errors = 5
 
     while True:
         elapsed = asyncio.get_running_loop().time() - start_time
@@ -151,12 +153,21 @@ async def _poll_until_done(
             elif status in ("failed", "error"):
                 raise RuntimeError(f"MinerU task failed: {task_id}")
             else:
+                consecutive_errors = 0
                 logger.debug(f"[MinerU] Task status: {status}, waiting...")
                 await asyncio.sleep(config.poll_interval_seconds)
         except RuntimeError:
             raise
         except Exception as e:
-            logger.warning(f"[MinerU] Status check error: {e}")
+            consecutive_errors += 1
+            if consecutive_errors >= max_consecutive_errors:
+                raise RuntimeError(
+                    f"MinerU consecutive errors ({consecutive_errors}) "
+                    f"exceeded threshold ({max_consecutive_errors})"
+                ) from e
+            logger.warning(
+                f"[MinerU] Status check error ({consecutive_errors}/{max_consecutive_errors}): {e}"
+            )
             await asyncio.sleep(config.poll_interval_seconds)
 
 

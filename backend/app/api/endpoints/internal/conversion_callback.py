@@ -108,7 +108,37 @@ def conversion_completed_callback(
             detail="Invalid base64 payload for markdown_bytes",
         )
 
-    # Step 2: State transition with staleness check
+    # Step 2: Overwrite attachment BEFORE state transition
+    # If overwrite fails, status remains CONVERTING and stale scanner will
+    # properly mark it FAILED. This avoids metadata (file_extension, name,
+    # file_size) being updated to md format while the actual attachment
+    # content is still the original PDF.
+    payload = request.index_dispatch_payload
+    try:
+        attachment_id = payload["attachment_id"]
+        user_id = payload["user_id"]
+    except KeyError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing key in index_dispatch_payload: {e}",
+        )
+
+    try:
+        context_service.overwrite_attachment(
+            db=db,
+            context_id=attachment_id,
+            user_id=user_id,
+            filename=request.converted_name,
+            binary_data=markdown_bytes,
+        )
+    except Exception:
+        logger.exception(
+            f"[ConversionCallback] Attachment overwrite failed: "
+            f"document_id={request.document_id}"
+        )
+        raise
+
+    # Step 3: State transition with staleness check (after attachment overwrite)
     succeeded = mark_document_conversion_succeeded(
         db=db,
         document_id=request.document_id,
@@ -121,16 +151,6 @@ def conversion_completed_callback(
         return ConversionCompletedResponse(
             ok=True, skipped=True, skip_reason="stale_conversion"
         )
-
-    # Step 3: Overwrite attachment with markdown
-    payload = request.index_dispatch_payload
-    context_service.overwrite_attachment(
-        db=db,
-        context_id=payload["attachment_id"],
-        user_id=payload["user_id"],
-        filename=request.converted_name,
-        binary_data=markdown_bytes,
-    )
 
     # Step 4: Dispatch indexing task (compensate on failure)
     try:
