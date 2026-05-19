@@ -152,13 +152,21 @@ export function DocumentList({
 }: DocumentListProps) {
   const { t } = useTranslation('knowledge')
   const { user } = useUser()
-  const { documents, loading, error, create, remove, refresh, batchDelete, transfer } = useDocuments({
-    knowledgeBaseId: knowledgeBase.id,
-  })
+  const { documents, loading, error, create, remove, refresh, batchDelete, transfer } =
+    useDocuments({
+      knowledgeBaseId: knowledgeBase.id,
+    })
 
   // Folder state
-  const { folders, fetchFolders, createFolder, updateFolder, deleteFolder, moveDocument, batchMove } =
-    useFolders({ knowledgeBaseId: knowledgeBase.id })
+  const {
+    folders,
+    fetchFolders,
+    createFolder,
+    updateFolder,
+    deleteFolder,
+    moveDocument,
+    batchMove,
+  } = useFolders({ knowledgeBaseId: knowledgeBase.id })
 
   const [showCreateFolder, setShowCreateFolder] = useState(false)
   const [createFolderParentId, setCreateFolderParentId] = useState(0)
