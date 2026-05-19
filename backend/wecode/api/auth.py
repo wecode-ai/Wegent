@@ -23,6 +23,8 @@ from app.services.k_batch import apply_default_resources_sync
 from app.services.user import user_service
 from wecode.config.aidesk_config import aidesk_config
 from wecode.service.aidesk_auth_service import aidesk_auth_service
+from wecode.service.erp_entity_resolver import ErpEntityResolver
+from wecode.service.erp_user_service import ErpUserService
 from wecode.service.get_user_gitinfo import get_user_gitinfo
 
 router = APIRouter()
@@ -179,6 +181,30 @@ async def cas_login(
         except Exception as e:
             logger.error(f"Failed to get git token: {str(e)}")
             # Continue login flow, don't interrupt
+
+        # Write ERP profile directly from CAS XML for org_department resolution
+        try:
+            employee_id = info_node.findtext("username")
+            department_name = info_node.findtext("organization")
+            erp_name = info_node.findtext("erpname")
+            erp_email = info_node.findtext("fullemail")
+
+            if employee_id:
+                ErpUserService.upsert_profile(
+                    db=db,
+                    user_id=user.id,
+                    employee_id=employee_id,
+                    department_name=department_name,
+                    erp_name=erp_name,
+                    email=erp_email,
+                )
+                logger.info(
+                    f"Updated ERP profile for CAS user {user.id}: "
+                    f"emp={ErpEntityResolver._mask_ssn(employee_id)}, "
+                    f"dept={department_name}"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to write ERP profile for CAS user {user.id}: {e}")
 
         # Create access token
         access_token = create_access_token(data={"sub": user.user_name})

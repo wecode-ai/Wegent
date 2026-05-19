@@ -5,6 +5,12 @@
 """
 Internal API endpoints
 """
+# Register ERP entity resolver for org_department entity type
+from app.services.share.external_entity_resolver import register_entity_resolver
+from wecode.service.erp_entity_resolver import ErpEntityResolver
+
+register_entity_resolver("org_department", ErpEntityResolver)
+
 # Register Weibo MCP Provider before MCPProviderRegistry.initialize() is called
 # This must be done before importing any modules that trigger app.services.mcp_providers.service import
 from app.services.mcp_providers.core.registry import MCPProviderRegistry
@@ -40,6 +46,8 @@ from wecode.api.admin_published_apps import router as admin_published_apps_route
 from wecode.api.apikey import router as apikey_router
 from wecode.api.auth import router as auth_router
 from wecode.api.cloud_devices import router as cloud_devices_router
+from wecode.api.department_search import router as department_search_router
+from wecode.api.dept_visibility_admin import router as dept_visibility_admin_router
 from wecode.api.device_monitor_patch import (
     apply_patch_to_api_router as _apply_device_monitor_patch,
 )
@@ -51,6 +59,16 @@ from wecode.api.transition_page import router as transition_page_router
 
 api_router.include_router(apikey_router, prefix="/internal/apikey", tags=["internal"])
 api_router.include_router(auth_router, prefix="/internal/auth", tags=["internal"])
+api_router.include_router(
+    department_search_router,
+    prefix="/internal/departments",
+    tags=["internal"],
+)
+api_router.include_router(
+    dept_visibility_admin_router,
+    prefix="/internal/admin/dept-visibility",
+    tags=["internal-admin"],
+)
 api_router.include_router(
     cloud_devices_router, prefix="/cloud-devices", tags=["cloud-devices"]
 )

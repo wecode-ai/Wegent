@@ -1,0 +1,18 @@
+{
+  "document": {
+    "permission": {
+      "orgDepartment": "部门",
+      "searchDepartmentPlaceholder": "搜索部门...",
+      "supervisor": "负责人",
+      "members": "人",
+      "addDepartment": "添加部门权限",
+      "selectDepartment": "选择部门",
+      "selectDepartmentRequired": "请选择部门",
+      "addDepartmentButton": "添加部门",
+      "noDepartmentResults": "没有匹配的部门",
+      "add": "添加",
+      "searchFailed": "搜索失败",
+      "partialFailure": "{{count}} 个部门添加失败：{{names}}"
+    }
+  }
+}
