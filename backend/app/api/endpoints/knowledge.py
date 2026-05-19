@@ -12,7 +12,7 @@ which provides a unified interface for both REST API and MCP tools.
 import asyncio
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -681,11 +681,13 @@ def transfer_documents_to_kb(
         return result
     except ValueError as e:
         error_msg = str(e)
-        status_code = (
-            status.HTTP_404_NOT_FOUND
-            if "not found" in error_msg.lower()
-            else status.HTTP_400_BAD_REQUEST
-        )
+        error_lower = error_msg.lower()
+        if "not found" in error_lower:
+            status_code = status.HTTP_404_NOT_FOUND
+        elif "permission" in error_lower or "access denied" in error_lower:
+            status_code = status.HTTP_403_FORBIDDEN
+        else:
+            status_code = status.HTTP_400_BAD_REQUEST
         raise HTTPException(
             status_code=status_code,
             detail=error_msg,
@@ -1083,6 +1085,7 @@ def batch_move_documents(
 
     Moves all specified documents that the user has permission to move.
     Returns a summary of successful and failed operations.
+    Raises 400 for invalid folder_id, 404 for not found documents, 403 for permission issues.
     """
     result = KnowledgeFolderService.batch_move_documents(
         db=db,
@@ -1098,6 +1101,28 @@ def batch_move_documents(
             "user_id": str(current_user.id),
         },
     )
+
+    # If all operations failed, determine the most appropriate error code
+    if result.success_count == 0 and result.failed_count > 0:
+        # Check the error type from the result message to determine status code
+        error_msg = result.message.lower() if result.message else ""
+        if "not found" in error_msg:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=result.message,
+            )
+        elif "permission" in error_msg or "access denied" in error_msg:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=result.message,
+            )
+        else:
+            # Default to 400 for validation errors (e.g., invalid folder_id)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=result.message,
+            )
+
     return result
 
 
