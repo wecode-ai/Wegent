@@ -84,7 +84,6 @@ MCP_PROVIDER_REGISTRY: dict[str, MCPProviderDefinition] = {
                 "message_keywords": (
                     "钉钉知识库",
                     "dingtalk wikispace",
-                    "知识库",
                     "wikispace",
                 ),
             },

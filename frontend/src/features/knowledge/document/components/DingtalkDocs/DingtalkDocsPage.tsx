@@ -10,6 +10,7 @@
 
 'use client'
 
+import Link from 'next/link'
 import { useState, useEffect, useCallback } from 'react'
 import { RefreshCw, FolderOpen, BookOpen, ExternalLink } from 'lucide-react'
 import type { TFunction } from 'i18next'
@@ -318,13 +319,13 @@ function WikispaceNotConfigured({ t }: { t: TFunction }) {
       <p className="text-sm text-text-muted mb-4">
         {t('document.dingtalk.wikispaceConfigureHint', '请前往设置配置钉钉知识库 MCP')}
       </p>
-      <a
+      <Link
         href="/settings?section=integrations&tab=integrations"
         className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium transition-colors"
       >
         {t('document.dingtalk.goToSettings', '前往设置')}
         <ExternalLink className="w-3.5 h-3.5" />
-      </a>
+      </Link>
     </div>
   )
 }

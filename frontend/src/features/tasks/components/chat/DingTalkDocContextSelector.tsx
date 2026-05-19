@@ -29,12 +29,12 @@ import {
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
 import { dingtalkDocApi } from '@/apis/dingtalk-doc'
-import type { DingtalkDocNode } from '@/types/dingtalk-doc'
-import type { DingTalkDocContext } from '@/types/context'
+import type { DingtalkDocNode, DingtalkNodeSource } from '@/types/dingtalk-doc'
+import type { DingTalkDocContext, ContextItem } from '@/types/context'
 
-/** Collect all descendant node IDs (including self) from a node. */
+/** Collect all descendant selection keys (including self) from a node. */
 export function collectDescendants(node: DingtalkDocNode): string[] {
-  const ids: string[] = [node.dingtalk_node_id]
+  const ids: string[] = [getDingTalkSelectionKey(node.source, node.dingtalk_node_id)]
   if (node.children) {
     for (const child of node.children) {
       ids.push(...collectDescendants(child))
@@ -43,9 +43,15 @@ export function collectDescendants(node: DingtalkDocNode): string[] {
   return ids
 }
 
+/** Build a stable selection key for a DingTalk node. */
+export function getDingTalkSelectionKey(source: DingtalkNodeSource, nodeId: string): string {
+  return `${source}:${nodeId}`
+}
+
 /** Check if all nodes under a tree node are selected. */
 export function isNodeFullySelected(node: DingtalkDocNode, selected: Set<string>): boolean {
-  if (!selected.has(node.dingtalk_node_id)) return false
+  const selectionKey = getDingTalkSelectionKey(node.source, node.dingtalk_node_id)
+  if (!selected.has(selectionKey)) return false
   if (node.children) {
     return node.children.every(child => isNodeFullySelected(child, selected))
   }
@@ -77,9 +83,10 @@ export function DingtalkContextTreeNode({
 }: TreeNodeItemProps) {
   const isFolder = node.node_type === 'folder'
   const [isExpanded, setIsExpanded] = useState(level === 0)
+  const selectionKey = getDingTalkSelectionKey(node.source, node.dingtalk_node_id)
   const isSelected = isFolder
     ? isNodeFullySelected(node, selectedIds)
-    : selectedIds.has(node.dingtalk_node_id)
+    : selectedIds.has(selectionKey)
   const isPartial = isFolder ? isNodePartiallySelected(node, selectedIds) : false
   const hasChildren = isFolder && node.children && node.children.length > 0
 
@@ -137,7 +144,7 @@ export function DingtalkContextTreeNode({
             onToggle(node)
           }
         }}
-        data-testid={`dingtalk-ctx-node-${node.dingtalk_node_id}`}
+        data-testid={`dingtalk-ctx-node-${node.source}-${node.dingtalk_node_id}`}
       >
         {/* Expand toggle for folders */}
         {isFolder && hasChildren ? (
@@ -145,7 +152,7 @@ export function DingtalkContextTreeNode({
             type="button"
             className="flex-shrink-0 w-5 h-5 flex items-center justify-center hover:bg-muted rounded"
             onClick={handleToggle}
-            data-testid={`dingtalk-ctx-expand-${node.dingtalk_node_id}`}
+            data-testid={`dingtalk-ctx-expand-${node.source}-${node.dingtalk_node_id}`}
           >
             {isExpanded ? (
               <ChevronDown className="w-3 h-3 text-text-muted" />
@@ -197,7 +204,7 @@ export function DingtalkContextTreeNode({
             className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
             onClick={e => e.stopPropagation()}
             aria-label={node.name}
-            data-testid={`dingtalk-ctx-link-${node.dingtalk_node_id}`}
+            data-testid={`dingtalk-ctx-link-${node.source}-${node.dingtalk_node_id}`}
           >
             <ExternalLink className="w-3 h-3 text-text-muted hover:text-primary" />
           </a>
@@ -209,7 +216,7 @@ export function DingtalkContextTreeNode({
         <div>
           {node.children!.map(child => (
             <DingtalkContextTreeNode
-              key={child.dingtalk_node_id}
+              key={getDingTalkSelectionKey(child.source, child.dingtalk_node_id)}
               node={child}
               level={level + 1}
               selectedIds={selectedIds}
@@ -253,7 +260,7 @@ export function DingTalkDocContextSelector({
   const [loading, setLoading] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [isConfigured, setIsConfigured] = useState(true)
+  const [isConfigured, setIsConfigured] = useState(false)
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null)
 
   // Wikispace state
@@ -341,17 +348,20 @@ export function DingTalkDocContextSelector({
   /** Build a DingTalkDocContext from a node. */
   const buildContext = useCallback((node: DingtalkDocNode): DingTalkDocContext => {
     return {
-      id: node.dingtalk_node_id,
+      id: getDingTalkSelectionKey(node.source, node.dingtalk_node_id),
       name: node.name,
       type: 'dingtalk_doc',
       doc_url: node.doc_url,
       node_type: node.node_type as 'folder' | 'doc' | 'file',
       dingtalk_node_id: node.dingtalk_node_id,
+      source: node.source,
     }
   }, [])
 
   const handleToggle = useCallback(
     (node: DingtalkDocNode) => {
+      const selectionKey = getDingTalkSelectionKey(node.source, node.dingtalk_node_id)
+
       if (node.node_type === 'folder') {
         // Collect all descendant IDs (including folder itself)
         const allIds = collectDescendants(node)
@@ -364,7 +374,8 @@ export function DingTalkDocContextSelector({
           // Select all descendants not yet selected
           const toAdd: DingTalkDocContext[] = []
           const addNode = (n: DingtalkDocNode) => {
-            if (!selectedContexts.has(n.dingtalk_node_id)) {
+            const childSelectionKey = getDingTalkSelectionKey(n.source, n.dingtalk_node_id)
+            if (!selectedContexts.has(childSelectionKey)) {
               toAdd.push(buildContext(n))
             }
             if (n.children) {
@@ -378,8 +389,8 @@ export function DingTalkDocContextSelector({
         }
       } else {
         // Single doc/file toggle
-        if (selectedContexts.has(node.dingtalk_node_id)) {
-          onDeselect(node.dingtalk_node_id)
+        if (selectedContexts.has(selectionKey)) {
+          onDeselect(selectionKey)
         } else {
           onSelect(buildContext(node))
         }
@@ -393,7 +404,8 @@ export function DingTalkDocContextSelector({
     const countDocs = (nodeList: DingtalkDocNode[]): number => {
       let count = 0
       for (const node of nodeList) {
-        if (node.node_type !== 'folder' && selectedContexts.has(node.dingtalk_node_id)) {
+        const selectionKey = getDingTalkSelectionKey(node.source, node.dingtalk_node_id)
+        if (node.node_type !== 'folder' && selectedContexts.has(selectionKey)) {
           count++
         }
         if (node.children) {
@@ -454,13 +466,13 @@ export function DingTalkDocContextSelector({
       return (
         <div className="py-6 px-4 text-center space-y-3">
           <p className="text-sm text-text-muted">{t('chat:dingtalkDocs.wikispaceNotConfigured')}</p>
-          <a
+          <Link
             href="/settings?section=integrations&tab=integrations"
             className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium transition-colors"
           >
             {t('chat:dingtalkDocs.goToConfigure')}
             <ExternalLink className="w-3.5 h-3.5" />
-          </a>
+          </Link>
         </div>
       )
     }
@@ -484,7 +496,7 @@ export function DingTalkDocContextSelector({
 
     return activeNodes.map(node => (
       <DingtalkContextTreeNode
-        key={node.dingtalk_node_id}
+        key={getDingTalkSelectionKey(node.source, node.dingtalk_node_id)}
         node={node}
         level={0}
         selectedIds={selectedContexts}
@@ -575,14 +587,14 @@ export function DingTalkDocContextSelector({
 }
 
 /**
- * Collect all DingTalk doc IDs from selected contexts.
+ * Collect all DingTalk selection keys from selected contexts.
  * Used by ContextSelector to bridge the generic ContextItem type to the
  * Set<string> format required by DingTalkDocContextSelector.
  */
-export function getDingTalkSelectedIds(
-  selectedContexts: { type: string; id: number | string }[]
-): Set<string> {
+export function getDingTalkSelectedIds(selectedContexts: ContextItem[]): Set<string> {
   return new Set(
-    selectedContexts.filter(ctx => ctx.type === 'dingtalk_doc').map(ctx => String(ctx.id))
+    selectedContexts
+      .filter((ctx): ctx is DingTalkDocContext => ctx.type === 'dingtalk_doc')
+      .map(ctx => getDingTalkSelectionKey(ctx.source, ctx.dingtalk_node_id))
   )
 }

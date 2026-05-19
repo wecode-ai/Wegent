@@ -16,7 +16,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.models.dingtalk_doc import DingtalkSyncedNode
+from app.models.dingtalk_doc import DingTalkNodeSource, DingtalkSyncedNode
 from app.models.user import User
 from app.services.user_mcp_service import UserMCPService
 
@@ -31,6 +31,8 @@ MAX_RECURSION_DEPTH = 10
 
 # Maximum nodes to sync per user (safety limit)
 MAX_NODES_PER_SYNC = 5000
+
+DOCS_SOURCE = DingTalkNodeSource.DOCS
 
 
 class DingTalkDocService:
@@ -85,7 +87,7 @@ class DingTalkDocService:
         # Sync to database - use local time (no timezone) consistent with created_at
         now = datetime.now()
         stats = DingTalkDocService._sync_nodes_to_db(
-            user.id, all_nodes, now, db, source="docs"
+            user.id, all_nodes, now, db, source=DOCS_SOURCE
         )
         stats["mcp_nodes_fetched"] = len(all_nodes)
 
@@ -245,7 +247,7 @@ class DingTalkDocService:
                 try:
                     data = json.loads(raw_text)
                 except (json.JSONDecodeError, TypeError):
-                    logger.warning(
+                    logger.debug(
                         "Failed to parse list_nodes result content as JSON. "
                         "Raw text (first 500 chars): %.500s",
                         raw_text,
@@ -294,18 +296,30 @@ class DingTalkDocService:
         return nodes, next_page_token
 
     @staticmethod
+    def _normalize_source(source: DingTalkNodeSource | str) -> str:
+        """Normalize a DingTalk node source into its persisted string value."""
+        if isinstance(source, DingTalkNodeSource):
+            return source.value
+
+        try:
+            return DingTalkNodeSource(source).value
+        except ValueError as exc:
+            raise ValueError(f"Unsupported DingTalk node source: {source}") from exc
+
+    @staticmethod
     def _sync_nodes_to_db(
         user_id: int,
         nodes: list[dict[str, Any]],
         sync_time: datetime,
         db: Session,
-        source: str = "docs",  # Should be DingTalkNodeSource enum value
+        source: DingTalkNodeSource = DOCS_SOURCE,
     ) -> dict[str, Any]:
         """Sync fetched nodes to the database.
 
         Compares with existing records and performs add/update/delete operations.
         Only operates on nodes with the given source value.
         """
+        source_value = DingTalkDocService._normalize_source(source)
         added = 0
         updated = 0
         deleted = 0
@@ -323,7 +337,7 @@ class DingTalkDocService:
             db.query(DingtalkSyncedNode)
             .filter(
                 DingtalkSyncedNode.user_id == user_id,
-                DingtalkSyncedNode.source == source,
+                DingtalkSyncedNode.source == source_value,
                 DingtalkSyncedNode.is_active == True,  # noqa: E712
             )
             .all()
@@ -347,7 +361,7 @@ class DingTalkDocService:
                 db.query(DingtalkSyncedNode)
                 .filter(
                     DingtalkSyncedNode.user_id == user_id,
-                    DingtalkSyncedNode.source == source,
+                    DingtalkSyncedNode.source == source_value,
                     DingtalkSyncedNode.dingtalk_node_id.in_(node_ids),
                 )
                 .all()
@@ -436,7 +450,7 @@ class DingTalkDocService:
                     content_updated_at=content_updated_at,
                     is_active=True,
                     last_synced_at=sync_time,
-                    source=source,
+                    source=source_value,
                 )
                 db.add(new_node)
                 added += 1
@@ -448,7 +462,7 @@ class DingTalkDocService:
             logger.exception(
                 "Failed to commit synced nodes for user %s (source=%s)",
                 user_id,
-                source,
+                source_value,
             )
             raise
 
@@ -456,7 +470,7 @@ class DingTalkDocService:
             db.query(DingtalkSyncedNode)
             .filter(
                 DingtalkSyncedNode.user_id == user_id,
-                DingtalkSyncedNode.source == source,
+                DingtalkSyncedNode.source == source_value,
                 DingtalkSyncedNode.is_active == True,  # noqa: E712
             )
             .count()
@@ -507,7 +521,7 @@ class DingTalkDocService:
             db.query(DingtalkSyncedNode)
             .filter(
                 DingtalkSyncedNode.user_id == user_id,
-                DingtalkSyncedNode.source == "docs",
+                DingtalkSyncedNode.source == DOCS_SOURCE.value,
                 DingtalkSyncedNode.is_active == True,  # noqa: E712
             )
             .order_by(DingtalkSyncedNode.node_type, DingtalkSyncedNode.name)
@@ -523,7 +537,7 @@ class DingTalkDocService:
             db.query(DingtalkSyncedNode.last_synced_at)
             .filter(
                 DingtalkSyncedNode.user_id == user.id,
-                DingtalkSyncedNode.source == "docs",
+                DingtalkSyncedNode.source == DOCS_SOURCE.value,
                 DingtalkSyncedNode.is_active == True,  # noqa: E712
             )
             .order_by(DingtalkSyncedNode.last_synced_at.desc())
@@ -534,7 +548,7 @@ class DingTalkDocService:
             db.query(DingtalkSyncedNode)
             .filter(
                 DingtalkSyncedNode.user_id == user.id,
-                DingtalkSyncedNode.source == "docs",
+                DingtalkSyncedNode.source == DOCS_SOURCE.value,
                 DingtalkSyncedNode.is_active == True,  # noqa: E712
             )
             .count()
@@ -551,7 +565,7 @@ class DingTalkDocService:
         node_id: int,
         user_id: int,
         db: Session,
-        source: str | None = None,
+        source: DingTalkNodeSource | None = None,
     ) -> bool:
         """Delete a synced document node (local cache only).
 
@@ -559,7 +573,7 @@ class DingTalkDocService:
             node_id: The database ID of the node to delete.
             user_id: The user ID who owns the node.
             db: Database session.
-            source: Optional source filter (e.g., "docs", "wikispace").
+            source: Optional source filter (e.g., docs or wikispace).
                     If provided, only deletes if the node matches this source.
 
         Returns:
@@ -570,7 +584,10 @@ class DingTalkDocService:
             DingtalkSyncedNode.user_id == user_id,
         ]
         if source is not None:
-            filters.append(DingtalkSyncedNode.source == source)
+            filters.append(
+                DingtalkSyncedNode.source
+                == DingTalkDocService._normalize_source(source)
+            )
 
         node = db.query(DingtalkSyncedNode).filter(*filters).first()
         if not node:

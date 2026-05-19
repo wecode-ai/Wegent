@@ -73,3 +73,38 @@ class DingtalkSyncResult(BaseModel):
     # Useful for diagnosing issues where the MCP returns data but nothing is
     # written (e.g. all nodes lack a nodeId).
     mcp_nodes_fetched: int = 0
+
+
+def build_dingtalk_tree(
+    nodes: list[DingtalkDocNode],
+) -> list[DingtalkDocNodeWithChildren]:
+    """Build a tree structure from a flat DingTalk node list."""
+    node_map: dict[str | None, DingtalkDocNodeWithChildren] = {}
+
+    for node in nodes:
+        node_map[node.dingtalk_node_id] = DingtalkDocNodeWithChildren(
+            **node.model_dump(),
+            children=[],
+        )
+
+    roots: list[DingtalkDocNodeWithChildren] = []
+    for node in nodes:
+        tree_node = node_map[node.dingtalk_node_id]
+        parent = node_map.get(node.parent_node_id)
+        if parent:
+            parent.children.append(tree_node)
+        else:
+            roots.append(tree_node)
+
+    def sort_key(node: DingtalkDocNodeWithChildren) -> tuple[int, str]:
+        type_order = {"folder": 0, "doc": 1, "file": 2}
+        return (type_order.get(node.node_type, 3), node.name.lower())
+
+    def sort_tree(tree: list[DingtalkDocNodeWithChildren]) -> None:
+        tree.sort(key=sort_key)
+        for node in tree:
+            if node.children:
+                sort_tree(node.children)
+
+    sort_tree(roots)
+    return roots

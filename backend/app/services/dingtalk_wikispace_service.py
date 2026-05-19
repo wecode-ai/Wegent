@@ -30,7 +30,7 @@ from urllib.parse import urlparse, urlunparse
 
 from sqlalchemy.orm import Session
 
-from app.models.dingtalk_doc import DingtalkSyncedNode
+from app.models.dingtalk_doc import DingTalkNodeSource, DingtalkSyncedNode
 from app.models.user import User
 from app.services.dingtalk_doc_service import (
     MAX_NODES_PER_SYNC,
@@ -47,7 +47,7 @@ from shared.telemetry.decorators import (
 logger = logging.getLogger(__name__)
 
 # Source identifier for wikispace nodes
-WIKISPACE_SOURCE = "wikispace"
+WIKISPACE_SOURCE = DingTalkNodeSource.WIKISPACE
 
 # Tool name on the knowledge base MCP for listing knowledge bases
 MCP_TOOL_LIST_WIKI_SPACES = "list_wikiSpaces"
@@ -70,12 +70,14 @@ def _sanitize_url_for_telemetry(url: str) -> str:
     """
     try:
         parsed = urlparse(url)
-        # Reconstruct URL with only safe components: scheme, host, port, path
-        # Strip userinfo (username/password) and query string
+        netloc = parsed.hostname or ""
+        if parsed.port:
+            netloc = f"{netloc}:{parsed.port}"
+
         sanitized = urlunparse(
             (
                 parsed.scheme,
-                parsed.hostname or "",
+                netloc,
                 parsed.path,
                 "",  # params (deprecated, always empty)
                 "",  # query - removed for security
@@ -281,8 +283,7 @@ class DingTalkWikiSpaceService:
         first_result = await session.call_tool(MCP_TOOL_LIST_NODES, first_args)
         try:
             logger.info(
-                "list_nodes(workspaceId=%s) first response "
-                "(first 1000 chars): %.1000s",
+                "list_nodes(workspaceId=%s) first response (first 1000 chars): %.1000s",
                 workspace_id,
                 repr(first_result),
             )
@@ -494,7 +495,7 @@ class DingTalkWikiSpaceService:
             db.query(DingtalkSyncedNode)
             .filter(
                 DingtalkSyncedNode.user_id == user_id,
-                DingtalkSyncedNode.source == WIKISPACE_SOURCE,
+                DingtalkSyncedNode.source == WIKISPACE_SOURCE.value,
                 DingtalkSyncedNode.is_active == True,  # noqa: E712
             )
             .order_by(DingtalkSyncedNode.node_type, DingtalkSyncedNode.name)
@@ -511,7 +512,7 @@ class DingTalkWikiSpaceService:
             db.query(DingtalkSyncedNode.last_synced_at)
             .filter(
                 DingtalkSyncedNode.user_id == user.id,
-                DingtalkSyncedNode.source == WIKISPACE_SOURCE,
+                DingtalkSyncedNode.source == WIKISPACE_SOURCE.value,
                 DingtalkSyncedNode.is_active == True,  # noqa: E712
             )
             .order_by(DingtalkSyncedNode.last_synced_at.desc())
@@ -522,7 +523,7 @@ class DingTalkWikiSpaceService:
             db.query(DingtalkSyncedNode)
             .filter(
                 DingtalkSyncedNode.user_id == user.id,
-                DingtalkSyncedNode.source == WIKISPACE_SOURCE,
+                DingtalkSyncedNode.source == WIKISPACE_SOURCE.value,
                 DingtalkSyncedNode.is_active == True,  # noqa: E712
             )
             .count()
@@ -533,6 +534,3 @@ class DingTalkWikiSpaceService:
             "total_nodes": total,
             "is_configured": is_configured,
         }
-
-
-dingtalk_wikispace_service = DingTalkWikiSpaceService()

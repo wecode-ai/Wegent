@@ -13,13 +13,14 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.security import get_current_user
+from app.models.dingtalk_doc import DingTalkNodeSource
 from app.models.user import User
 from app.schemas.dingtalk_doc import (
     DingtalkDocNode,
-    DingtalkDocNodeWithChildren,
     DingtalkDocTreeResponse,
     DingtalkSyncResult,
     DingtalkSyncStatus,
+    build_dingtalk_tree,
 )
 from app.services.dingtalk_doc_service import DingTalkDocService
 from app.services.dingtalk_wikispace_service import DingTalkWikiSpaceService
@@ -27,45 +28,6 @@ from app.services.dingtalk_wikispace_service import DingTalkWikiSpaceService
 router = APIRouter()
 
 logger = logging.getLogger(__name__)
-
-
-def _build_tree(nodes: list[DingtalkDocNode]) -> list[DingtalkDocNodeWithChildren]:
-    """Build a tree structure from flat node list using parent_node_id.
-
-    Only includes active nodes. Root nodes have parent_node_id = None.
-    """
-    node_map: dict[str | None, DingtalkDocNodeWithChildren] = {}
-
-    # First pass: create tree nodes for all items
-    for node in nodes:
-        node_map[node.dingtalk_node_id] = DingtalkDocNodeWithChildren(
-            **node.model_dump(),
-            children=[],
-        )
-
-    # Second pass: build parent-child relationships
-    roots: list[DingtalkDocNodeWithChildren] = []
-    for node in nodes:
-        tree_node = node_map[node.dingtalk_node_id]
-        parent = node_map.get(node.parent_node_id)
-        if parent:
-            parent.children.append(tree_node)
-        else:
-            roots.append(tree_node)
-
-    # Sort: folders first, then by name
-    def sort_key(n: DingtalkDocNodeWithChildren) -> tuple[int, str]:
-        type_order = {"folder": 0, "doc": 1, "file": 2}
-        return (type_order.get(n.node_type, 3), n.name.lower())
-
-    def sort_tree(tree: list[DingtalkDocNodeWithChildren]) -> None:
-        tree.sort(key=sort_key)
-        for node in tree:
-            if node.children:
-                sort_tree(node.children)
-
-    sort_tree(roots)
-    return roots
 
 
 @router.get("", response_model=DingtalkDocTreeResponse)
@@ -76,7 +38,7 @@ def get_wikispace_nodes(
     """Get all synced DingTalk wikispace nodes for the current user as a tree."""
     nodes = DingTalkWikiSpaceService.get_wikispace_nodes(current_user.id, db)
     node_schemas = [DingtalkDocNode.model_validate(node) for node in nodes]
-    tree = _build_tree(node_schemas)
+    tree = build_dingtalk_tree(node_schemas)
     return DingtalkDocTreeResponse(nodes=tree, total_count=len(node_schemas))
 
 
@@ -123,7 +85,10 @@ def delete_synced_wikispace_node(
 ) -> dict[str, str]:
     """Delete a synced wikispace node from local cache (does not delete from DingTalk)."""
     success = DingTalkDocService.delete_synced_node(
-        node_id, current_user.id, db, source="wikispace"
+        node_id,
+        current_user.id,
+        db,
+        source=DingTalkNodeSource.WIKISPACE,
     )
     if not success:
         raise HTTPException(status_code=404, detail="Node not found")
