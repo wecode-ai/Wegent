@@ -84,6 +84,20 @@ def test_filter_passthrough_when_hidden_list_empty(fake_redis: _FakeRedis):
     assert [d.id for d in result] == ["1001", "1002", "1003"]
 
 
+def test_filter_hides_by_id_with_leading_zeros(fake_redis: _FakeRedis):
+    """Hidden list '001' should match dept.id '001' after normalization."""
+    fake_redis.hset(REDIS_KEY, FIELD_HIDDEN, json.dumps(["001"]))
+
+    depts = [
+        DepartmentInfo(id="001", name="测试部", label="测试部"),
+        DepartmentInfo(id="002", name="研发部", label="研发部"),
+    ]
+
+    result = filter_hidden_for_user("normaluser", depts)
+
+    assert [d.id for d in result] == ["002"]
+
+
 def test_filter_fail_open_when_redis_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ):

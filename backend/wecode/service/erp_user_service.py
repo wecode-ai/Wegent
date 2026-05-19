@@ -28,14 +28,10 @@ class ErpUserService:
     ) -> Optional[WecodeErpUser]:
         """Find or create a WecodeErpUser and update the provided fields.
 
-        Empty-string employee_id is rejected to avoid polluting the table
-        with rows that can never match (employee_id is the lookup key).
+        At least one of employee_id, department_name, erp_name, or email
+        must be provided, otherwise the call is a no-op.
         """
         if not any([employee_id, department_name, erp_name, email]):
-            return None
-        # Guard: None or empty-string employee_id creates a row that
-        # lazy-sync will never match, causing infinite re-sync loops.
-        if not employee_id or not employee_id.strip():
             return None
 
         profile = (

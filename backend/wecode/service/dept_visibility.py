@@ -167,8 +167,12 @@ def is_hidden(
     if hidden_ids is None or hidden_names is None:
         hidden_ids, hidden_names = _split_hidden_items(hidden_items)
 
-    if dept.id is not None and str(dept.id) in hidden_ids:
-        return True
+    if dept.id is not None:
+        dept_id_str = str(dept.id)
+        if dept_id_str.isdigit():
+            dept_id_str = str(int(dept_id_str))
+        if dept_id_str in hidden_ids:
+            return True
     if dept.name and dept.name in hidden_names:
         return True
     if dept.label and dept.label in hidden_names:
