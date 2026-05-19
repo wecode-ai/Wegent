@@ -541,6 +541,15 @@
         "enable_hint": "When enabled, Wegent will inject your DingTalk AI Table MCP into supported agents automatically.",
         "save_success": "DingTalk AI Table configuration saved",
         "save_failed": "Failed to save DingTalk AI Table configuration"
+      },
+      "wikispace": {
+        "title": "DingTalk Knowledge Base",
+        "description": "Access and manage DingTalk knowledge bases",
+        "default_name": "DingTalk Knowledge Base",
+        "enable_label": "Enable DingTalk Knowledge Base",
+        "enable_hint": "Allow AI to access your DingTalk knowledge bases",
+        "save_success": "DingTalk Knowledge Base configuration saved",
+        "save_failed": "Failed to save DingTalk Knowledge Base configuration"
       }
     }
   },
