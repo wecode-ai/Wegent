@@ -346,17 +346,17 @@ Thanks to the following developers for their contributions and efforts to make t
     </td></tr>
 <tr>
     <td align="center">
-        <a href="https://github.com/RockysGit">
-            <img src="https://avatars.githubusercontent.com/u/61232321?v=4" width="80;" alt="RockysGit"/>
-            <br />
-            <sub><b>RockysGit</b></sub>
-        </a>
-    </td>
-    <td align="center">
         <a href="https://github.com/cocowh">
             <img src="https://avatars.githubusercontent.com/u/17496282?v=4" width="80;" alt="cocowh"/>
             <br />
             <sub><b>Birch</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/RockysGit">
+            <img src="https://avatars.githubusercontent.com/u/61232321?v=4" width="80;" alt="RockysGit"/>
+            <br />
+            <sub><b>RockysGit</b></sub>
         </a>
     </td>
     <td align="center">
