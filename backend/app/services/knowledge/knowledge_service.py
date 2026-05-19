@@ -2202,7 +2202,7 @@ class KnowledgeService:
         db: Session,
     ) -> list[KnowledgeBaseWithGroupInfo]:
         """Aggregate multi-source permission info into shared_with_me responses."""
-        from dataclasses import dataclass, field
+        from dataclasses import dataclass
 
         @dataclass
         class KbSourceInfo:
@@ -2568,7 +2568,6 @@ class KnowledgeService:
         entity_result = KnowledgeService._collect_entity_authorized_kbs(
             db, user_id, accessible_groups
         )
-        entity_kbs = entity_result.entity_kbs
         entity_personal_kb_ids = entity_result.entity_personal_kb_ids
         entity_shared_to_me_kbs = entity_result.entity_shared_to_me_kbs
         shared_into_group_kbs = entity_result.shared_into_group_kbs
@@ -3199,6 +3198,204 @@ class KnowledgeService:
     # ============== Document Transfer Between Knowledge Bases ==============
 
     @staticmethod
+    def validate_kb_access_and_fetch(
+        db: Session,
+        source_kb_id: int,
+        target_kb_id: int,
+        user_id: int,
+    ) -> tuple[Kind, Kind]:
+        """Validate KB write access and fetch source/target KB records."""
+        from app.services.knowledge.folder_service import KnowledgeFolderService
+
+        KnowledgeFolderService._check_kb_write_access(db, source_kb_id, user_id)
+        KnowledgeFolderService._check_kb_write_access(db, target_kb_id, user_id)
+
+        if source_kb_id == target_kb_id:
+            raise ValueError("Source and target knowledge bases must be different")
+
+        source_kb = (
+            db.query(Kind)
+            .filter(Kind.id == source_kb_id, Kind.kind == "KnowledgeBase")
+            .first()
+        )
+        if not source_kb:
+            raise ValueError("Source knowledge base not found")
+
+        target_kb = (
+            db.query(Kind)
+            .filter(Kind.id == target_kb_id, Kind.kind == "KnowledgeBase")
+            .first()
+        )
+        if not target_kb:
+            raise ValueError("Target knowledge base not found")
+
+        return source_kb, target_kb
+
+    @staticmethod
+    def collect_transfer_doc_and_folder_ids(
+        db: Session,
+        source_kb_id: int,
+        document_ids: list[int],
+        folder_ids: list[int],
+    ) -> tuple[set[int], set[int]]:
+        """Collect document IDs and descendant folder IDs for transfer."""
+        from app.services.knowledge.folder_service import KnowledgeFolderService
+
+        all_doc_ids = set(document_ids)
+        descendant_folder_ids: set[int] = set()
+
+        if folder_ids:
+            for folder_id in folder_ids:
+                descendants = KnowledgeFolderService._collect_descendant_ids(
+                    db=db,
+                    folder_id=folder_id,
+                    kind_id=source_kb_id,
+                )
+                descendants.add(folder_id)
+                descendant_folder_ids.update(descendants)
+
+            folder_docs = (
+                db.query(KnowledgeDocument.id)
+                .filter(
+                    KnowledgeDocument.kind_id == source_kb_id,
+                    KnowledgeDocument.folder_id.in_(descendant_folder_ids),
+                )
+                .all()
+            )
+            all_doc_ids.update(doc_id for (doc_id,) in folder_docs)
+
+        return all_doc_ids, descendant_folder_ids
+
+    @staticmethod
+    def recreate_folders_in_target(
+        db: Session,
+        descendant_folder_ids: set[int],
+        target_kb_id: int,
+        source_kb_id: int,
+    ) -> tuple[dict[int, int], int]:
+        """Recreate transferred folder hierarchy in the target KB."""
+        old_to_new_folder: dict[int, int] = {}
+        transferred_folder_count = 0
+
+        if not descendant_folder_ids:
+            return old_to_new_folder, transferred_folder_count
+
+        source_folders = (
+            db.query(KnowledgeFolder)
+            .filter(
+                KnowledgeFolder.id.in_(descendant_folder_ids),
+                KnowledgeFolder.kind_id == source_kb_id,
+            )
+            .all()
+        )
+
+        sorted_folders = sorted(
+            source_folders,
+            key=lambda folder: (
+                folder.parent_id in descendant_folder_ids,
+                folder.parent_id,
+            ),
+        )
+
+        for source_folder in sorted_folders:
+            new_parent_id = 0
+            if (
+                source_folder.parent_id > 0
+                and source_folder.parent_id in old_to_new_folder
+            ):
+                new_parent_id = old_to_new_folder[source_folder.parent_id]
+
+            new_folder = KnowledgeFolder(
+                kind_id=target_kb_id,
+                parent_id=new_parent_id,
+                name=source_folder.name,
+            )
+            db.add(new_folder)
+            db.flush()
+            old_to_new_folder[source_folder.id] = new_folder.id
+            transferred_folder_count += 1
+
+        return old_to_new_folder, transferred_folder_count
+
+    @staticmethod
+    def transfer_documents_mutate(
+        db: Session,
+        all_doc_ids: set[int],
+        old_to_new_folder: dict[int, int],
+        target_kb_id: int,
+        source_kb_id: int,
+    ) -> tuple[list[KnowledgeDocument], int]:
+        """Move documents to target KB and reset index state."""
+        from app.models.knowledge import DocumentIndexStatus
+
+        docs = (
+            db.query(KnowledgeDocument)
+            .filter(
+                KnowledgeDocument.id.in_(all_doc_ids),
+                KnowledgeDocument.kind_id == source_kb_id,
+            )
+            .all()
+        )
+
+        transferred_doc_count = 0
+        for doc in docs:
+            if doc.folder_id > 0 and doc.folder_id in old_to_new_folder:
+                doc.folder_id = old_to_new_folder[doc.folder_id]
+            else:
+                doc.folder_id = 0
+
+            doc.kind_id = target_kb_id
+            doc.index_status = DocumentIndexStatus.NOT_INDEXED
+            doc.is_active = True
+            transferred_doc_count += 1
+
+        return docs, transferred_doc_count
+
+    @staticmethod
+    def cleanup_rag_indices(
+        db: Session,
+        source_kb: Kind,
+        docs: list[KnowledgeDocument],
+        user_id: int,
+    ) -> None:
+        """Best-effort cleanup of transferred document RAG indices."""
+        import logging
+
+        from app.services.knowledge.index_runtime import get_kb_index_info_by_record
+        from app.services.rag.runtime_resolver import RagRuntimeResolver
+
+        logger = logging.getLogger(__name__)
+        rag_gateway = _get_delete_gateway()
+
+        for doc in docs:
+            spec = source_kb.json.get("spec", {})
+            retrieval_config = spec.get("retrievalConfig")
+            if not retrieval_config or not retrieval_config.get("retriever_name"):
+                break
+
+            try:
+                kb_info = get_kb_index_info_by_record(
+                    db=db,
+                    knowledge_base=source_kb,
+                    current_user_id=user_id,
+                )
+                delete_runtime_spec = RagRuntimeResolver().build_delete_runtime_spec(
+                    db=db,
+                    knowledge_base_id=source_kb.id,
+                    document_ref=str(doc.id),
+                    index_owner_user_id=kb_info.index_owner_user_id,
+                )
+                _run_async_in_new_loop(
+                    rag_gateway.delete_document_index(delete_runtime_spec, db=db)
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to delete RAG index for doc %d during transfer",
+                    doc.id,
+                    exc_info=True,
+                )
+
+    @staticmethod
     def transfer_documents_to_kb(
         db: Session,
         source_kb_id: int,
@@ -3230,69 +3427,22 @@ class KnowledgeService:
         """
         import logging
 
-        from app.models.knowledge import DocumentIndexStatus
-        from app.services.knowledge.folder_service import KnowledgeFolderService
-        from app.services.knowledge.index_runtime import get_kb_index_info_by_record
-
         logger = logging.getLogger(__name__)
 
-        # --- Access validation ---
-        KnowledgeFolderService._check_kb_write_access(db, source_kb_id, user_id)
-        KnowledgeFolderService._check_kb_write_access(db, target_kb_id, user_id)
-
-        # Prevent self-transfer
-        if source_kb_id == target_kb_id:
-            raise ValueError("Source and target knowledge bases must be different")
-
-        # Get source and target knowledge bases
-        # Note: We no longer restrict to personal KBs only - any KB with write access is allowed
-        source_kb = (
-            db.query(Kind)
-            .filter(Kind.id == source_kb_id, Kind.kind == "KnowledgeBase")
-            .first()
+        source_kb, target_kb = KnowledgeService.validate_kb_access_and_fetch(
+            db=db,
+            source_kb_id=source_kb_id,
+            target_kb_id=target_kb_id,
+            user_id=user_id,
         )
-        if not source_kb:
-            raise ValueError("Source knowledge base not found")
-
-        target_kb = (
-            db.query(Kind)
-            .filter(Kind.id == target_kb_id, Kind.kind == "KnowledgeBase")
-            .first()
-        )
-        if not target_kb:
-            raise ValueError("Target knowledge base not found")
-
-        # --- Collect all documents to transfer ---
-        # 1. Explicit document IDs
-        all_doc_ids = set(document_ids)
-
-        # 2. Documents inside transferred folders (including subfolders)
-        descendant_folder_ids: set[int] = set()
-        folder_doc_ids: set[int] = set()
-
-        if folder_ids:
-            for fid in folder_ids:
-                descendants = KnowledgeFolderService._collect_descendant_ids(
-                    db=db,
-                    folder_id=fid,
-                    kind_id=source_kb_id,
-                )
-                descendants.add(fid)
-                descendant_folder_ids.update(descendants)
-
-            # Query documents in those folders
-            folder_docs = (
-                db.query(KnowledgeDocument.id)
-                .filter(
-                    KnowledgeDocument.kind_id == source_kb_id,
-                    KnowledgeDocument.folder_id.in_(descendant_folder_ids),
-                )
-                .all()
+        all_doc_ids, descendant_folder_ids = (
+            KnowledgeService.collect_transfer_doc_and_folder_ids(
+                db=db,
+                source_kb_id=source_kb_id,
+                document_ids=document_ids,
+                folder_ids=folder_ids,
             )
-            for (did,) in folder_docs:
-                folder_doc_ids.add(did)
-
-            all_doc_ids.update(folder_doc_ids)
+        )
 
         if not all_doc_ids:
             return TransferDocumentsResponse(
@@ -3312,75 +3462,26 @@ class KnowledgeService:
             target_kb_id,
         )
 
-        # --- Recreate folder hierarchy in target KB ---
-        old_to_new_folder: dict[int, int] = {}
-        transferred_folder_count = 0
-
-        if descendant_folder_ids:
-            # Load folder records from source KB
-            source_folders = (
-                db.query(KnowledgeFolder)
-                .filter(
-                    KnowledgeFolder.id.in_(descendant_folder_ids),
-                    KnowledgeFolder.kind_id == source_kb_id,
-                )
-                .all()
+        old_to_new_folder, transferred_folder_count = (
+            KnowledgeService.recreate_folders_in_target(
+                db=db,
+                descendant_folder_ids=descendant_folder_ids,
+                target_kb_id=target_kb_id,
+                source_kb_id=source_kb_id,
             )
-            source_folder_map: dict[int, KnowledgeFolder] = {
-                f.id: f for f in source_folders
-            }
-
-            # Sort by parent_id so parents are created before children
-            sorted_folders = sorted(
-                source_folders,
-                key=lambda f: (f.parent_id in descendant_folder_ids, f.parent_id),
-            )
-
-            for sf in sorted_folders:
-                new_parent_id = 0
-                if sf.parent_id > 0 and sf.parent_id in old_to_new_folder:
-                    new_parent_id = old_to_new_folder[sf.parent_id]
-
-                new_folder = KnowledgeFolder(
-                    kind_id=target_kb_id,
-                    parent_id=new_parent_id,
-                    name=sf.name,
-                )
-                db.add(new_folder)
-                db.flush()
-                old_to_new_folder[sf.id] = new_folder.id
-                transferred_folder_count += 1
-
-        # --- Transfer documents ---
-        docs = (
-            db.query(KnowledgeDocument)
-            .filter(
-                KnowledgeDocument.id.in_(all_doc_ids),
-                KnowledgeDocument.kind_id == source_kb_id,
-            )
-            .all()
+        )
+        docs, transferred_doc_count = KnowledgeService.transfer_documents_mutate(
+            db=db,
+            all_doc_ids=all_doc_ids,
+            old_to_new_folder=old_to_new_folder,
+            target_kb_id=target_kb_id,
+            source_kb_id=source_kb_id,
         )
 
-        transferred_doc_count = 0
-        for doc in docs:
-            # Map folder_id to new folder if applicable
-            if doc.folder_id > 0 and doc.folder_id in old_to_new_folder:
-                doc.folder_id = old_to_new_folder[doc.folder_id]
-            else:
-                doc.folder_id = 0  # move to root
-
-            doc.kind_id = target_kb_id
-            doc.index_status = DocumentIndexStatus.NOT_INDEXED
-            doc.is_active = True  # Keep document visible in target KB
-            transferred_doc_count += 1
-
-        # --- Update document counts for both KBs ---
         KnowledgeService._update_document_count_cache(db, source_kb_id)
         KnowledgeService._update_document_count_cache(db, target_kb_id)
-
         db.commit()
 
-        # --- Trigger indexing in target KB ---
         user = db.query(User).filter(User.id == user_id).first()
         if user and target_kb:
             from app.services.knowledge.orchestrator import KnowledgeOrchestrator
@@ -3393,7 +3494,7 @@ class KnowledgeService:
                         knowledge_base=target_kb,
                         document=doc,
                         user=user,
-                        trigger_summary=False,  # Don't trigger summary on transfer
+                        trigger_summary=False,
                     )
                     logger.info(
                         "Scheduled indexing for transferred document %d in target KB %d",
@@ -3407,40 +3508,12 @@ class KnowledgeService:
                         exc_info=True,
                     )
 
-        # --- Clean up RAG indices from source KB (best-effort) ---
-        rag_gateway = _get_delete_gateway()
-        for doc in docs:
-            if not source_kb:
-                break
-            spec = source_kb.json.get("spec", {})
-            retrieval_config = spec.get("retrievalConfig")
-            if not retrieval_config or not retrieval_config.get("retriever_name"):
-                break
-
-            try:
-                kb_info = get_kb_index_info_by_record(
-                    db=db,
-                    knowledge_base=source_kb,
-                    current_user_id=user_id,
-                )
-
-                from app.services.rag.runtime_resolver import RagRuntimeResolver
-
-                delete_runtime_spec = RagRuntimeResolver().build_delete_runtime_spec(
-                    db=db,
-                    knowledge_base_id=source_kb_id,
-                    document_ref=str(doc.id),
-                    index_owner_user_id=kb_info.index_owner_user_id,
-                )
-                _run_async_in_new_loop(
-                    rag_gateway.delete_document_index(delete_runtime_spec, db=db)
-                )
-            except Exception:
-                logger.warning(
-                    "Failed to delete RAG index for doc %d during transfer",
-                    doc.id,
-                    exc_info=True,
-                )
+        KnowledgeService.cleanup_rag_indices(
+            db=db,
+            source_kb=source_kb,
+            docs=docs,
+            user_id=user_id,
+        )
 
         return TransferDocumentsResponse(
             success=True,

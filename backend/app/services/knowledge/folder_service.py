@@ -481,8 +481,13 @@ class KnowledgeFolderService:
                 )
                 success_count += 1
             except ValueError:
+                # Expected validation errors (not found, permission denied, invalid folder)
                 failed_ids.append(doc_id)
                 db.rollback()
+            except Exception:
+                # Unexpected errors: rollback and re-raise
+                db.rollback()
+                raise
 
         return BatchOperationResult(
             success_count=success_count,
