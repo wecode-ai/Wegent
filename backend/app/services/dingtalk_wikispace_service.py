@@ -138,6 +138,7 @@ class DingTalkWikiSpaceService:
             wikispace_mcp_url=wikispace_mcp_url,
             docs_mcp_url=docs_mcp_url,
         )
+        original_count = len(all_nodes)
 
         if len(all_nodes) > MAX_NODES_PER_SYNC:
             logger.warning(
@@ -152,7 +153,7 @@ class DingTalkWikiSpaceService:
         stats = DingTalkDocService._sync_nodes_to_db(
             user.id, all_nodes, now, db, source=WIKISPACE_SOURCE
         )
-        stats["mcp_nodes_fetched"] = len(all_nodes)
+        stats["mcp_nodes_fetched"] = original_count
         sanitized_wikispace_mcp_url = _sanitize_url_for_telemetry(wikispace_mcp_url)
         add_span_event(
             "dingtalk.wikispace.sync.completed",

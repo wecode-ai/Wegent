@@ -202,21 +202,14 @@ class DingTalkDocService:
             if not page_token:
                 break
 
-    # Known list keys in DingTalk MCP responses.
-    # "items" / "nodes":     common node-list keys from docs MCP
-    # "wikiSpaces":          wikiSpace MCP list_wikiSpaces response
-    # "spaces":              alternative knowledge-base list key
-    # "spaceList":           another alternative KB list key
-    # "documents":           search_documents response
-    # "files":               list_nodes variant
+    # Known list keys in DingTalk MCP list_nodes/list_wikiSpaces responses.
+    # Add new keys only after validating them against real MCP payloads.
     _NODE_LIST_KEYS = (
         "items",
         "nodes",
         "wikiSpaces",
         "spaces",
         "spaceList",
-        "documents",
-        "files",
     )
 
     @staticmethod
@@ -565,7 +558,7 @@ class DingTalkDocService:
         node_id: int,
         user_id: int,
         db: Session,
-        source: DingTalkNodeSource | None = None,
+        source: DingTalkNodeSource | None = DOCS_SOURCE,
     ) -> bool:
         """Delete a synced document node (local cache only).
 
@@ -573,8 +566,8 @@ class DingTalkDocService:
             node_id: The database ID of the node to delete.
             user_id: The user ID who owns the node.
             db: Database session.
-            source: Optional source filter (e.g., docs or wikispace).
-                    If provided, only deletes if the node matches this source.
+            source: Source filter for the node (docs by default).
+                    Pass None explicitly only when cross-source deletion is intended.
 
         Returns:
             True if the node was found and deleted, False otherwise.

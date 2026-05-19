@@ -443,6 +443,7 @@ export function DingTalkDocContextSelector({
           <Link
             href="/settings/integrations"
             className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium transition-colors"
+            data-testid="dingtalk-go-to-configure"
           >
             {t('chat:dingtalkDocs.goToConfigure')}
             <ExternalLink className="w-3.5 h-3.5" />
@@ -455,7 +456,12 @@ export function DingTalkDocContextSelector({
       return (
         <div className="py-4 px-3 text-center space-y-2">
           <p className="text-sm text-red-500">{activeError}</p>
-          <button onClick={handleRetry} className="text-xs text-primary hover:underline">
+          <button
+            type="button"
+            onClick={handleRetry}
+            className="text-xs text-primary hover:underline"
+            data-testid="dingtalk-retry-button"
+          >
             {t('common:actions.retry')}
           </button>
         </div>
@@ -469,6 +475,7 @@ export function DingTalkDocContextSelector({
           <Link
             href="/settings?section=integrations&tab=integrations"
             className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium transition-colors"
+            data-testid="dingtalk-go-to-configure-wikispace"
           >
             {t('chat:dingtalkDocs.goToConfigure')}
             <ExternalLink className="w-3.5 h-3.5" />
@@ -486,6 +493,7 @@ export function DingTalkDocContextSelector({
             onClick={handleActiveSync}
             disabled={activeSyncing}
             className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium transition-colors disabled:opacity-50"
+            data-testid="dingtalk-empty-sync-button"
           >
             <RefreshCw className={cn('w-3.5 h-3.5', activeSyncing && 'animate-spin')} />
             {activeSyncing ? t('chat:dingtalkDocs.syncing') : t('chat:dingtalkDocs.syncNow')}
@@ -595,6 +603,10 @@ export function getDingTalkSelectedIds(selectedContexts: ContextItem[]): Set<str
   return new Set(
     selectedContexts
       .filter((ctx): ctx is DingTalkDocContext => ctx.type === 'dingtalk_doc')
-      .map(ctx => getDingTalkSelectionKey(ctx.source, ctx.dingtalk_node_id))
+      .map(ctx => {
+        const source: DingtalkNodeSource =
+          ctx.source === 'wikispace' || ctx.source === 'docs' ? ctx.source : 'docs'
+        return getDingTalkSelectionKey(source, ctx.dingtalk_node_id)
+      })
   )
 }

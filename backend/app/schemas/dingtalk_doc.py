@@ -11,6 +11,8 @@ from typing import Optional
 
 from pydantic import BaseModel
 
+from app.models.dingtalk_doc import DingTalkNodeSource
+
 
 class DingtalkDocNodeBase(BaseModel):
     """Base schema for a DingTalk document node."""
@@ -22,9 +24,7 @@ class DingtalkDocNodeBase(BaseModel):
     node_type: str  # folder, doc, file
     workspace_id: str = ""
     content_type: str = ""
-    source: str = (
-        "docs"  # Source: "docs" (personal documents) or "wikispace" (knowledge base)
-    )
+    source: DingTalkNodeSource = DingTalkNodeSource.DOCS
     content_updated_at: datetime
 
 

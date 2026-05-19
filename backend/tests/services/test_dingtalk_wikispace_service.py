@@ -205,7 +205,7 @@ class TestParseListNodesResult:
         assert result[0]["workspaceId"] == "WS100"
         assert token is None
 
-    @pytest.mark.parametrize("key", ["spaces", "spaceList", "documents", "files"])
+    @pytest.mark.parametrize("key", ["spaces", "spaceList"])
     def test_supports_extended_list_keys(self, key: str) -> None:
         """All supported alternative list keys are parsed correctly."""
         payload = {key: [{"workspaceId": "WS200", "name": f"Node from {key}"}]}
