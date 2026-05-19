@@ -104,7 +104,7 @@ export interface KnowledgeGroupListPageProps {
   canMigrate?: (kb: KbDataItem) => boolean
 }
 
-type SortBy = 'name' | 'updated' | 'group' | 'permission' | 'default'
+type SortBy = 'name' | 'created' | 'updated' | 'group' | 'permission' | 'default'
 type SortOrder = 'asc' | 'desc'
 
 /** Role priority for sorting (lower number = higher priority) */
@@ -224,6 +224,10 @@ export function KnowledgeGroupListPage({
         switch (sortBy) {
           case 'name':
             comparison = a.name.localeCompare(b.name)
+            break
+          case 'created':
+            comparison =
+              new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
             break
           case 'updated':
             comparison =
@@ -373,7 +377,16 @@ export function KnowledgeGroupListPage({
           <th className="px-6 py-3 font-medium w-[15%]">{t('document.table.from', '来自')}</th>
         )}
         <th className="px-6 py-3 font-medium w-[15%]">{t('document.table.permission', '权限')}</th>
-        <th className="px-6 py-3 font-medium w-[15%]">
+        <th className="px-6 py-3 font-medium w-[12%]">
+          <button
+            className="flex items-center hover:text-text-primary transition-colors"
+            onClick={() => handleSort('created')}
+          >
+            {t('document.table.createdAt', '创建时间')}
+            <SortIcon column="created" />
+          </button>
+        </th>
+        <th className="px-6 py-3 font-medium w-[12%]">
           <button
             className="flex items-center hover:text-text-primary transition-colors"
             onClick={() => handleSort('updated')}
@@ -677,6 +690,11 @@ function KnowledgeBaseRow({
       {/* Permission column */}
       <td className="px-6 py-3 text-text-secondary whitespace-nowrap">
         {'my_role' in kb && kb.my_role ? ROLE_DISPLAY_NAMES[kb.my_role as MemberRole] : '--'}
+      </td>
+
+      {/* Created at column */}
+      <td className="px-6 py-3 text-text-secondary whitespace-nowrap">
+        {formatRelativeTime(kb.created_at, tFunc)}
       </td>
 
       {/* Last access column */}

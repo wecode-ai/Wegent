@@ -126,6 +126,7 @@
       "belongsTo": "Belongs To",
       "from": "From",
       "permission": "Permission",
+      "createdAt": "Created",
       "lastAccess": "Last Access",
       "actions": "Actions",
       "edit": "Edit",
