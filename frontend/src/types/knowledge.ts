@@ -751,6 +751,13 @@ export interface PersonalKnowledgeBaseGroup {
 /** Group type for knowledge base categorization */
 export type KnowledgeGroupType = 'personal' | 'personal-shared' | 'group' | 'organization'
 
+/** Group info for a knowledge base (for display purposes) */
+export interface KbGroupInfo {
+  groupId: string
+  groupName: string
+  groupType: KnowledgeGroupType
+}
+
 /** Knowledge base with group info for all-grouped response */
 export interface KnowledgeBaseWithGroupInfo {
   id: number

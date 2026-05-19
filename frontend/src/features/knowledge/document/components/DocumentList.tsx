@@ -47,6 +47,7 @@ import type {
   KnowledgeDocument,
   KnowledgeFolder,
   SplitterConfig,
+  KbGroupInfo,
 } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
@@ -93,12 +94,8 @@ function DocAutoOpener({
   return null
 }
 
-/** Group info for breadcrumb display */
-export interface KbGroupInfo {
-  groupId: string
-  groupName: string
-  groupType: 'personal' | 'personal-shared' | 'group' | 'organization'
-}
+// Re-export KbGroupInfo from types for backwards compatibility
+export type { KbGroupInfo } from '@/types/knowledge'
 
 interface DocumentListProps {
   knowledgeBase: KnowledgeBase

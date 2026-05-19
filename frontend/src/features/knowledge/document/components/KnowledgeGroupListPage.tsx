@@ -44,17 +44,10 @@ import type {
   KnowledgeBase,
   KnowledgeBaseType,
   KnowledgeBaseWithGroupInfo,
-  KnowledgeGroupType,
+  KbGroupInfo,
   MemberRole,
 } from '@/types/knowledge'
 import { ROLE_DISPLAY_NAMES } from '@/types/base-role'
-
-/** Group info for display */
-export interface KbGroupInfo {
-  groupId: string
-  groupName: string
-  groupType: KnowledgeGroupType
-}
 
 /** Union type for KB data that can be either KnowledgeBase or KnowledgeBaseWithGroupInfo */
 export type KbDataItem = KnowledgeBase | KnowledgeBaseWithGroupInfo
@@ -112,7 +105,7 @@ export interface KnowledgeGroupListPageProps {
   canMigrate?: (kb: KbDataItem) => boolean
 }
 
-type SortBy = 'name' | 'created' | 'updated' | 'group' | 'permission' | 'default'
+type SortBy = 'name' | 'created' | 'updated' | 'group' | 'permission'
 type SortOrder = 'asc' | 'desc'
 
 /** Role priority for sorting (lower number = higher priority) */
@@ -130,34 +123,27 @@ function getRolePriority(role: string | null | undefined): number {
   return ROLE_PRIORITY[role] ?? 999
 }
 
-/** Format relative time */
-function formatRelativeTime(
-  dateStr: string | undefined,
-  tFunc: ReturnType<typeof useTranslation>['t']
-): string {
+/** Format date time: current year shows "x月xx日 xx:xx", previous years show "xxxx年x月xx日 xx:xx" */
+function formatDateTime(dateStr: string | undefined, locale: string): string {
   if (!dateStr) return '--'
 
   const date = new Date(dateStr)
   const now = new Date()
-  const diffMs = now.getTime() - date.getTime()
-  const diffMinutes = Math.floor(diffMs / (1000 * 60))
-  const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+  const isCurrentYear = date.getFullYear() === now.getFullYear()
 
-  if (diffMinutes < 1) {
-    return tFunc('document.sidebar.justNow', '刚刚')
-  } else if (diffMinutes < 60) {
-    return `${diffMinutes} ${tFunc('document.table.minutesAgo', '分钟前')}`
-  } else if (diffHours < 24) {
-    // Show time like "12:30"
-    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-  } else if (diffDays === 1) {
-    return tFunc('document.sidebar.yesterday', '昨天')
-  } else if (diffDays < 7) {
-    return `${diffDays} ${tFunc('document.table.daysAgo', '天前')}`
+  // Use locale-aware formatting
+  if (isCurrentYear) {
+    // Current year: "5月19日 14:30"
+    return date.toLocaleDateString(locale, {
+      month: 'numeric',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
   } else {
-    // Show date like "2月02日 16:08"
-    return date.toLocaleDateString('zh-CN', {
+    // Previous years: "2025年5月19日 14:30"
+    return date.toLocaleDateString(locale, {
+      year: 'numeric',
       month: 'numeric',
       day: 'numeric',
       hour: '2-digit',
@@ -227,42 +213,42 @@ export function KnowledgeGroupListPage({
   // Sort function for knowledge bases
   const sortKbs = useCallback(
     (kbs: KbDataItem[]) => {
-      return [...kbs].sort((a, b) => {
+      // Pre-compute timestamps for date-based sorting to avoid creating Date objects in each comparison
+      const withTimestamps = kbs.map(kb => ({
+        kb,
+        createdTime: kb.created_at ? new Date(kb.created_at).getTime() : 0,
+        updatedTime: kb.updated_at ? new Date(kb.updated_at).getTime() : 0,
+      }))
+
+      withTimestamps.sort((a, b) => {
         let comparison = 0
         switch (sortBy) {
           case 'name':
-            comparison = a.name.localeCompare(b.name)
+            comparison = a.kb.name.localeCompare(b.kb.name)
             break
           case 'created':
-            // asc = earliest first, desc = newest first
-            comparison =
-              new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
+            comparison = a.createdTime - b.createdTime
             break
           case 'updated':
-            // asc = earliest first, desc = newest first
-            comparison =
-              new Date(a.updated_at || 0).getTime() - new Date(b.updated_at || 0).getTime()
+            comparison = a.updatedTime - b.updatedTime
             break
           case 'group':
             if (getKbGroupInfo) {
-              const groupA = getKbGroupInfo(a).groupName
-              const groupB = getKbGroupInfo(b).groupName
+              const groupA = getKbGroupInfo(a.kb).groupName
+              const groupB = getKbGroupInfo(b.kb).groupName
               comparison = groupA.localeCompare(groupB)
             }
             break
           case 'permission':
-            comparison = getRolePriority(getKbRole(a)) - getRolePriority(getKbRole(b))
-            break
-          case 'default':
-            // Default sort: created_at DESC (newest first)
-            comparison =
-              new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+            comparison = getRolePriority(getKbRole(a.kb)) - getRolePriority(getKbRole(b.kb))
             break
           default:
             comparison = 0
         }
         return sortOrder === 'asc' ? comparison : -comparison
       })
+
+      return withTimestamps.map(item => item.kb)
     },
     [sortBy, sortOrder, getKbGroupInfo, getKbRole]
   )
@@ -345,9 +331,9 @@ export function KnowledgeGroupListPage({
     showFromColumn: boolean,
     groupColumnTitle?: string
   ) => (
-    <TableHeader className="sticky top-0 bg-surface border-b border-border">
+    <TableHeader className="sticky top-0 bg-surface">
       <TableRow className="text-left text-sm text-text-secondary">
-        <TableHead className="h-auto px-6 py-3 font-medium w-[35%]">
+        <TableHead className="h-auto px-6 py-3 font-medium w-[30%]">
           <button
             className="flex items-center hover:text-text-primary transition-colors"
             onClick={() => handleSort('name')}
@@ -357,7 +343,7 @@ export function KnowledgeGroupListPage({
           </button>
         </TableHead>
         {showGroupColumn && (
-          <TableHead className="h-auto px-6 py-3 font-medium w-[20%]">
+          <TableHead className="h-auto px-6 py-3 font-medium w-[15%]">
             <button
               className="flex items-center hover:text-text-primary transition-colors"
               onClick={() => handleSort('group')}
@@ -368,11 +354,11 @@ export function KnowledgeGroupListPage({
           </TableHead>
         )}
         {showFromColumn && (
-          <TableHead className="h-auto px-6 py-3 font-medium w-[15%]">
+          <TableHead className="h-auto px-6 py-3 font-medium w-[12%]">
             {t('document.table.from', '来自')}
           </TableHead>
         )}
-        <TableHead className="h-auto px-6 py-3 font-medium w-[15%]">
+        <TableHead className="h-auto px-6 py-3 font-medium w-[10%]">
           {t('document.table.permission', '权限')}
         </TableHead>
         <TableHead className="h-auto px-6 py-3 font-medium w-[12%]">
@@ -393,7 +379,7 @@ export function KnowledgeGroupListPage({
             <SortIcon column="updated" />
           </button>
         </TableHead>
-        <TableHead className="h-auto px-6 py-3 font-medium w-[15%] text-right">
+        <TableHead className="h-auto px-6 py-3 font-medium w-[9%] text-right">
           {t('document.table.actions', '操作')}
         </TableHead>
       </TableRow>
@@ -421,7 +407,6 @@ export function KnowledgeGroupListPage({
           showFromInfo={showFromColumn}
           groupInfo={getKbGroupInfo?.(kb)}
           canMigrate={canMigrate?.(kb)}
-          tFunc={t}
         />
       ))}
     </TableBody>
@@ -637,7 +622,6 @@ interface KnowledgeBaseRowProps {
   showFromInfo?: boolean
   groupInfo?: KbGroupInfo
   canMigrate?: boolean
-  tFunc: ReturnType<typeof useTranslation>['t']
 }
 
 function KnowledgeBaseRow({
@@ -652,8 +636,8 @@ function KnowledgeBaseRow({
   showFromInfo,
   groupInfo,
   canMigrate,
-  tFunc,
 }: KnowledgeBaseRowProps) {
+  const { t, i18n } = useTranslation('knowledge')
   return (
     <TableRow
       className="border-b border-border hover:bg-surface-hover cursor-pointer transition-colors"
@@ -692,12 +676,12 @@ function KnowledgeBaseRow({
 
       {/* Created at column */}
       <TableCell className="px-6 py-3 text-text-secondary whitespace-nowrap">
-        {formatRelativeTime(kb.created_at, tFunc)}
+        {formatDateTime(kb.created_at, i18n.language)}
       </TableCell>
 
       {/* Updated at column */}
       <TableCell className="px-6 py-3 text-text-secondary whitespace-nowrap">
-        {formatRelativeTime(kb.updated_at, tFunc)}
+        {formatDateTime(kb.updated_at, i18n.language)}
       </TableCell>
 
       {/* Actions column - Migrate, Edit and Delete */}
@@ -712,7 +696,7 @@ function KnowledgeBaseRow({
                 e.stopPropagation()
                 onMigrate()
               }}
-              title={tFunc('document.migrate.title', '迁移到群组')}
+              title={t('document.migrate.title', '迁移到群组')}
               data-testid={`migrate-kb-${kb.id}`}
             >
               <FolderOutput className="w-4 h-4 text-text-muted hover:text-primary transition-colors" />
@@ -727,7 +711,7 @@ function KnowledgeBaseRow({
                 e.stopPropagation()
                 onEdit()
               }}
-              title={tFunc('document.table.edit', '编辑')}
+              title={t('document.table.edit', '编辑')}
               data-testid={`edit-kb-${kb.id}`}
             >
               <Pencil className="w-4 h-4 text-text-muted" />
@@ -742,7 +726,7 @@ function KnowledgeBaseRow({
                 e.stopPropagation()
                 onDelete()
               }}
-              title={tFunc('document.table.delete', '删除')}
+              title={t('document.table.delete', '删除')}
               data-testid={`delete-kb-${kb.id}`}
             >
               <Trash2 className="w-4 h-4 text-text-muted hover:text-error" />

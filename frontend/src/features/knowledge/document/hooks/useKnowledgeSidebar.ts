@@ -18,7 +18,7 @@ import type {
   KnowledgeBase,
   AllGroupedKnowledgeResponse,
   KnowledgeBaseWithGroupInfo,
-  KnowledgeGroupType,
+  KbGroupInfo,
 } from '@/types/knowledge'
 import type { KbDataItem } from '../components/KnowledgeGroupListPage'
 import type { Group } from '@/types/group'
@@ -50,12 +50,8 @@ export interface RecentAccessItem {
   accessedAt: number
 }
 
-/** Group info for a knowledge base */
-export interface KbGroupInfo {
-  groupId: string
-  groupName: string
-  groupType: KnowledgeGroupType
-}
+// Re-export KbGroupInfo from types for convenience
+export type { KbGroupInfo } from '@/types/knowledge'
 
 export interface UseKnowledgeSidebarReturn {
   // Favorites
