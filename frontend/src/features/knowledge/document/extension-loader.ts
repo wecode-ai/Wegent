@@ -3,24 +3,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Knowledge base extension loader.
+ * KB extension loader.
  *
- * The module path is injected at build time via the environment variable
- * NEXT_PUBLIC_KB_EXTENSION_MODULE. In open-source builds this variable is
- * unset and the loader is a no-op. Internal builds set it to
- * @wecode/features/knowledge via webpack DefinePlugin or .env.
+ * Internal build: dynamically loads @wecode/features/knowledge so its
+ * side effects (registering ERP department permission UI etc.) run at
+ * page mount. The module specifier is a literal string, which both
+ * webpack and Turbopack can statically analyze and bundle.
  */
 
-const EXTENSION_MODULE =
-  (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_KB_EXTENSION_MODULE) || ''
-
 export async function loadKBExtensions(): Promise<void> {
-  if (!EXTENSION_MODULE) {
-    return
-  }
   try {
-    await import(/* webpackIgnore: true */ EXTENSION_MODULE)
+    await import('@wecode/features/knowledge')
   } catch (error) {
-    console.warn(`Failed to load KB extension module "${EXTENSION_MODULE}"`, error)
+    console.warn('Failed to load KB extension @wecode/features/knowledge', error)
   }
 }

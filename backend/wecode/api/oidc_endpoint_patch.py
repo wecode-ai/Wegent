@@ -191,6 +191,34 @@ async def _patched_oidc_callback(
                 # Do not interrupt login flow, log error
                 logger.error(f"OIDC git_info initialization failed: {str(e)}")
 
+        # Sync ERP profile from OpenSearch API using username (email prefix)
+        try:
+            from wecode.service.erp_client import erp_client
+            from wecode.service.erp_entity_resolver import ErpEntityResolver
+            from wecode.service.erp_user_service import ErpUserService
+
+            erp_employee = erp_client.search_employee(user_name)
+            if erp_employee and erp_employee.ssn:
+                ErpUserService.upsert_profile(
+                    db=db,
+                    user_id=user.id,
+                    employee_id=erp_employee.ssn,
+                    department_name=erp_employee.department,
+                    erp_name=erp_employee.name,
+                    email=erp_employee.email,
+                )
+                logger.info(
+                    f"Synced ERP profile for OIDC user {user.id}: "
+                    f"emp={ErpEntityResolver._mask_ssn(erp_employee.ssn or '')}, "
+                    f"dept={erp_employee.department}"
+                )
+            else:
+                logger.info(
+                    f"No ERP employee found for OIDC user {user.id} with username={user_name}"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to sync ERP profile for OIDC user {user.id}: {e}")
+
         jwt_token = create_access_token(
             data={"sub": user.user_name, "user_id": user.id}
         )
@@ -216,12 +244,15 @@ def apply_patch() -> None:
     Patch the OIDC router: replace GET /callback endpoint implementation.
     """
     if oidc_module is None:
+        logger.error("OIDC patch FAILED: oidc_module import failed")
         return
 
     target_router = getattr(oidc_module, "router", None)
     if target_router is None or not hasattr(target_router, "routes"):
+        logger.error("OIDC patch FAILED: target router not found")
         return
 
+    patched = False
     for route in target_router.routes:
         path = getattr(route, "path", None)
         methods = getattr(route, "methods", set())
@@ -235,6 +266,14 @@ def apply_patch() -> None:
             # Replace route endpoint
             setattr(_patched_oidc_callback, "_wecode_patched", True)
             route.endpoint = _patched_oidc_callback
+            patched = True
+
+    if not patched:
+        logger.error(
+            "OIDC patch FAILED: /callback GET route not found or already patched"
+        )
+    else:
+        logger.info("OIDC patch applied successfully")
 
 
 # Auto-apply on import
