@@ -95,6 +95,8 @@ export interface DingTalkDocContext extends BaseContextItem {
   node_type: 'folder' | 'doc' | 'file'
   /** DingTalk node ID */
   dingtalk_node_id: string
+  /** DingTalk node source to disambiguate docs and wikispace selections */
+  source: 'docs' | 'wikispace'
 }
 
 /**

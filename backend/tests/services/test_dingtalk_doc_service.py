@@ -28,7 +28,7 @@ class TestGetUserDingtalkMcpUrl:
         mock_user = MagicMock()
         mock_db = MagicMock()
 
-        result = DingTalkDocService.get_user_dingtalk_mcp_url(mock_user, mock_db)
+        result = DingTalkDocService.get_user_dingtalk_mcp_url(mock_user)
 
         assert result == "https://mcp.example.com/dingtalk"
         mock_mcp_service.get_provider_service_config.assert_called_once_with(
@@ -47,7 +47,7 @@ class TestGetUserDingtalkMcpUrl:
         mock_user = MagicMock()
         mock_db = MagicMock()
 
-        result = DingTalkDocService.get_user_dingtalk_mcp_url(mock_user, mock_db)
+        result = DingTalkDocService.get_user_dingtalk_mcp_url(mock_user)
 
         assert result is None
 
@@ -61,7 +61,7 @@ class TestGetUserDingtalkMcpUrl:
         mock_user = MagicMock()
         mock_db = MagicMock()
 
-        result = DingTalkDocService.get_user_dingtalk_mcp_url(mock_user, mock_db)
+        result = DingTalkDocService.get_user_dingtalk_mcp_url(mock_user)
 
         assert result is None
 
@@ -77,7 +77,7 @@ class TestGetUserDingtalkMcpUrl:
         mock_user = MagicMock()
         mock_db = MagicMock()
 
-        result = DingTalkDocService.get_user_dingtalk_mcp_url(mock_user, mock_db)
+        result = DingTalkDocService.get_user_dingtalk_mcp_url(mock_user)
 
         assert result is None
 
@@ -92,7 +92,7 @@ class TestGetUserDingtalkMcpUrl:
         mock_user = MagicMock()
         mock_db = MagicMock()
 
-        result = DingTalkDocService.get_user_dingtalk_mcp_url(mock_user, mock_db)
+        result = DingTalkDocService.get_user_dingtalk_mcp_url(mock_user)
 
         assert result is None
 
@@ -107,7 +107,7 @@ class TestIsConfigured:
         mock_user = MagicMock()
         mock_db = MagicMock()
 
-        result = DingTalkDocService.is_configured(mock_user, mock_db)
+        result = DingTalkDocService.is_configured(mock_user)
 
         assert result is True
 
@@ -120,7 +120,7 @@ class TestIsConfigured:
         mock_user = MagicMock()
         mock_db = MagicMock()
 
-        result = DingTalkDocService.is_configured(mock_user, mock_db)
+        result = DingTalkDocService.is_configured(mock_user)
 
         assert result is False
 

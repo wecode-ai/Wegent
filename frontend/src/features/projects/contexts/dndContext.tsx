@@ -24,6 +24,7 @@ import { useProjectContext } from './projectContext'
 import { GripVertical } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
+import { canImportOrdinaryTaskToProject } from '../utils/projectClassification'
 
 interface DraggedTask {
   id: number
@@ -52,7 +53,7 @@ interface TaskDndProviderProps {
 }
 
 export function TaskDndProvider({ children }: TaskDndProviderProps) {
-  const { addTaskToProject, removeTaskFromProject } = useProjectContext()
+  const { projects, addTaskToProject, removeTaskFromProject } = useProjectContext()
   const { toast } = useToast()
   const { t } = useTranslation('projects')
   const [draggedTask, setDraggedTask] = useState<DraggedTask | null>(null)
@@ -147,6 +148,18 @@ export function TaskDndProvider({ children }: TaskDndProviderProps) {
       const activeData = active.data.current
 
       if (over && over.data.current?.type === 'project' && activeData?.type === 'task') {
+        const projectId = over.data.current.projectId as number
+        const targetProject = projects.find(project => project.id === projectId)
+        if (!targetProject || !canImportOrdinaryTaskToProject(targetProject)) {
+          toast({
+            description: t('toast.taskImportPathlessOnly'),
+            variant: 'destructive',
+          })
+          setDraggedTask(null)
+          setActiveDropTarget(null)
+          return
+        }
+
         // Check if the task is a group chat
         const task = activeData.task as Task
         if (task.is_group_chat) {
@@ -159,7 +172,6 @@ export function TaskDndProvider({ children }: TaskDndProviderProps) {
           return
         }
         // Dragging from history to project - add task to project
-        const projectId = over.data.current.projectId as number
         const taskId = activeData.task.id as number
         await addTaskToProject(projectId, taskId)
       } else if (
@@ -171,9 +183,19 @@ export function TaskDndProvider({ children }: TaskDndProviderProps) {
         const targetProjectId = over.data.current.projectId as number
         const sourceProjectId = activeData.projectId as number
         const taskId = activeData.taskId as number
+        const targetProject = projects.find(project => project.id === targetProjectId)
 
         // Only move if dropping on a different project
         if (targetProjectId !== sourceProjectId) {
+          if (!targetProject || !canImportOrdinaryTaskToProject(targetProject)) {
+            toast({
+              description: t('toast.taskImportPathlessOnly'),
+              variant: 'destructive',
+            })
+            setDraggedTask(null)
+            setActiveDropTarget(null)
+            return
+          }
           // Add task to target project (this will update the project_id)
           await addTaskToProject(targetProjectId, taskId)
         }
@@ -191,7 +213,7 @@ export function TaskDndProvider({ children }: TaskDndProviderProps) {
       setDraggedTask(null)
       setActiveDropTarget(null)
     },
-    [addTaskToProject, removeTaskFromProject, toast, t]
+    [projects, addTaskToProject, removeTaskFromProject, toast, t]
   )
 
   const handleDragCancel = useCallback(() => {

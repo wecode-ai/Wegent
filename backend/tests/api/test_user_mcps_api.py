@@ -122,6 +122,14 @@ class TestUserMcpsAPI:
                 "enabled": False,
                 "url": "",
             },
+            {
+                "provider_id": "dingtalk",
+                "service_id": "wikispace",
+                "server_name": "dingtalk_wikispace",
+                "detail_url": "https://mcp.dingtalk.com/#/detail?mcpId=9730",
+                "enabled": False,
+                "url": "",
+            },
         ]
 
     def test_enable_provider_service_without_url_fails(
