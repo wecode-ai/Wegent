@@ -13,6 +13,7 @@ const mockAddUserMessage = jest.fn()
 const mockUpdateUserMessage = jest.fn()
 const mockToast = jest.fn()
 const mockSendChatGuidance = jest.fn().mockResolvedValue({ success: true })
+const mockRefreshSelectedTaskDetail = jest.fn()
 
 let isMachineStreamingMock = true
 let taskInputMessageMock = 'next question'
@@ -33,7 +34,7 @@ jest.mock('@/features/tasks/contexts/taskContext', () => ({
   useTaskContext: () => ({
     selectedTaskDetail: selectedTaskDetailMock,
     refreshTasks: jest.fn(),
-    refreshSelectedTaskDetail: jest.fn(),
+    refreshSelectedTaskDetail: mockRefreshSelectedTaskDetail,
     markTaskAsViewed: jest.fn(),
   }),
 }))
@@ -260,6 +261,26 @@ describe('useChatStreamHandlers queue integration', () => {
     const { result } = renderQueueableHook()
 
     expect(result.current.canQueueMessage).toBe(false)
+  })
+
+  it('does not show a destructive send error while the task is still pending', async () => {
+    isMachineStreamingMock = false
+    selectedTaskDetailMock = {
+      id: 42,
+      status: 'PENDING',
+      is_group_chat: false,
+      subtasks: [],
+    } as unknown as TaskDetail
+    mockContextSendMessage.mockRejectedValueOnce(new Error('Unknown error'))
+
+    const { result } = renderQueueableHook()
+
+    await act(async () => {
+      await result.current.handleSendMessage()
+    })
+
+    expect(mockToast).not.toHaveBeenCalledWith(expect.objectContaining({ variant: 'destructive' }))
+    expect(mockRefreshSelectedTaskDetail).toHaveBeenCalledWith(false)
   })
 
   it('shows a retry action that resends a failed queued message', async () => {

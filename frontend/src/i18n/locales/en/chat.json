@@ -58,6 +58,16 @@
     "send_failed": "Failed to send guidance",
     "no_active_stream": "No active response can receive guidance"
   },
+  "pending_task_confirm": {
+    "eyebrow": "Task handoff confirmation",
+    "title": "Previous task has not started",
+    "description": "Before sending a new message, choose what to do with the task that has not started.",
+    "wait": "Keep waiting",
+    "wait_hint": "Keep the current task",
+    "confirm": "Cancel previous and send",
+    "confirm_hint": "Start this new message",
+    "confirming": "Processing..."
+  },
   "status": {
     "typing": "AI is typing...",
     "thinking": "AI is thinking...",
