@@ -466,17 +466,16 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
       setViewMode('kb')
       addRecentAccess(kb)
 
-      // For notebook type, fetch full KB data to get guided_questions
-      // before setting selectedKb - avoids a double render with incomplete data
+      // For notebook type, set selectedKb immediately with available data to avoid
+      // flashing the empty state, then fetch full KB data to get guided_questions
       if (kb.kb_type === 'notebook') {
+        setSelectedKb(kb)
         getKnowledgeBase(kb.id)
           .then(fullKb => {
             // Discard stale response if user has since selected a different KB
             setSelectedKb(prev => {
               if (latestSelectedKbIdRef.current !== kb.id) return prev
-              // First time setting or same KB
-              if (!prev || prev.id === kb.id) return fullKb
-              return prev
+              return fullKb
             })
           })
           .catch(error => {
