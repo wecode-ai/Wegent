@@ -60,9 +60,7 @@ interface DeviceUpgradeState {
 }
 
 function isTerminalUpgradeStatus(status: DeviceUpgradeStatusPayload['status']) {
-  return TERMINAL_UPGRADE_STATUSES.includes(
-    status as (typeof TERMINAL_UPGRADE_STATUSES)[number]
-  )
+  return TERMINAL_UPGRADE_STATUSES.includes(status as (typeof TERMINAL_UPGRADE_STATUSES)[number])
 }
 
 interface StatCardProps {
@@ -172,7 +170,7 @@ export function DeviceMonitorPanel() {
   const [appliedVersionFilter, setAppliedVersionFilter] = useState('')
   const [page, setPage] = useState(1)
   const limit = 20
-  const deviceMonitorVncExtension = useAdminDeviceMonitorVncExtension()
+  const deviceMonitorVncExtension = useAdminDeviceMonitorVncExtension(devices)
 
   useEffect(() => {
     if (statusFilter === 'offline' && versionFilter) {
@@ -728,10 +726,10 @@ export function DeviceMonitorPanel() {
                               {isUpgradeInProgress
                                 ? upgradeState.message
                                 : canUpgrade
-                                ? t('admin:device_monitor.actions.upgrade')
-                                : t('admin:device_monitor.actions.upgrade_unsupported', {
-                                    version: MIN_AUTO_UPGRADE_VERSION,
-                                  })}
+                                  ? t('admin:device_monitor.actions.upgrade')
+                                  : t('admin:device_monitor.actions.upgrade_unsupported', {
+                                      version: MIN_AUTO_UPGRADE_VERSION,
+                                    })}
                             </TooltipContent>
                           </Tooltip>
                         )}

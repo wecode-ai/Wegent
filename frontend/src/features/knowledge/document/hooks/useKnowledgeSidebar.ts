@@ -75,6 +75,7 @@ export interface UseKnowledgeSidebarReturn {
   selectedGroupId: string | null
   selectedKb: KnowledgeBase | null
   selectKb: (kb: KnowledgeBase) => void
+  replaceKnowledgeBase: (kb: KnowledgeBase) => void
   selectGroup: (groupId: string) => void
   selectGroups: () => void
   clearSelection: () => void
@@ -160,6 +161,23 @@ function toKnowledgeBase(kb: KnowledgeBaseWithGroupInfo): KnowledgeBase {
     exempt_calls_before_check: 5,
     created_at: kb.created_at,
     updated_at: kb.updated_at,
+  }
+}
+
+function mergeKnowledgeBase(
+  existing: KnowledgeBaseWithGroupInfo,
+  updated: KnowledgeBase
+): KnowledgeBaseWithGroupInfo {
+  return {
+    ...existing,
+    name: updated.name,
+    description: updated.description,
+    namespace: updated.namespace,
+    document_count: updated.document_count,
+    kb_type: updated.kb_type || existing.kb_type,
+    user_id: updated.user_id,
+    updated_at: updated.updated_at,
+    created_at: updated.created_at,
   }
 }
 
@@ -488,6 +506,56 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     [addRecentAccess]
   )
 
+  const replaceKnowledgeBase = useCallback((updatedKb: KnowledgeBase) => {
+    setAllGroupedData(prev => {
+      if (!prev) return prev
+
+      const updateList = (items: KnowledgeBaseWithGroupInfo[]) =>
+        items.map(item => (item.id === updatedKb.id ? mergeKnowledgeBase(item, updatedKb) : item))
+
+      return {
+        ...prev,
+        personal: {
+          created_by_me: updateList(prev.personal.created_by_me),
+          shared_with_me: updateList(prev.personal.shared_with_me),
+        },
+        groups: prev.groups.map(group => ({
+          ...group,
+          knowledge_bases: updateList(group.knowledge_bases),
+        })),
+        organization: {
+          ...prev.organization,
+          knowledge_bases: updateList(prev.organization.knowledge_bases),
+        },
+      }
+    })
+
+    setSelectedKb(prev => {
+      if (!prev || prev.id !== updatedKb.id) return prev
+      return {
+        ...prev,
+        ...updatedKb,
+      }
+    })
+
+    setFavorites(prev => prev.map(kb => (kb.id === updatedKb.id ? { ...kb, ...updatedKb } : kb)))
+
+    setRecentAccessItems(prev => {
+      const next = prev.map(item =>
+        item.kbId === updatedKb.id
+          ? {
+              ...item,
+              kbName: updatedKb.name,
+              kbType: updatedKb.kb_type || 'notebook',
+              namespace: updatedKb.namespace,
+            }
+          : item
+      )
+      saveRecentAccess(next)
+      return next
+    })
+  }, [])
+
   const selectGroup = useCallback((groupId: string) => {
     setSelectedGroupId(groupId)
     setSelectedKbId(null)
@@ -564,6 +632,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     selectedGroupId,
     selectedKb,
     selectKb,
+    replaceKnowledgeBase,
     selectGroup,
     selectGroups,
     clearSelection,

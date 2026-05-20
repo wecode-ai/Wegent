@@ -13,6 +13,7 @@
 'use client'
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
+import { usePathname } from 'next/navigation'
 import { FolderOpen } from 'lucide-react'
 import { Spinner } from '@/components/ui/spinner'
 import { userApis } from '@/apis/user'
@@ -21,6 +22,7 @@ import { saveGlobalModelPreference, type ModelPreference } from '@/utils/modelPr
 import { getModelFromConfig } from '@/features/settings/services/bots'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
+import { parseKbUrl } from '@/utils/knowledgeUrl'
 import { useKnowledgeSidebar, type KnowledgeGroup } from '../hooks/useKnowledgeSidebar'
 import { useNamespaceRoleMap } from '../hooks/useNamespaceRoleMap'
 import { useGroupKbs } from '../hooks/useGroupKbs'
@@ -60,6 +62,14 @@ export function KnowledgeDocumentPageDesktop({
 }: KnowledgeDocumentPageDesktopProps = {}) {
   const { t } = useTranslation('knowledge')
   const { user } = useUser()
+  const pathname = usePathname()
+  const parsedKbUrl = useMemo(() => {
+    if (!pathname || pathname.startsWith('/knowledge/document/')) {
+      return null
+    }
+    return parseKbUrl(pathname)
+  }, [pathname])
+  const currentDocPath = parsedKbUrl?.docPath ?? initialDocPath
 
   // Knowledge sidebar hook
   const sidebar = useKnowledgeSidebar()
@@ -179,7 +189,7 @@ export function KnowledgeDocumentPageDesktop({
   )
 
   // URL sync and navigation
-  const { initialUrlSyncDone, updateUrlParams, navigateToKb } = useKnowledgeUrlSync({
+  const { initialUrlSyncDone, updateUrlParams, navigateToKbViaHistory } = useKnowledgeUrlSync({
     initialKbNamespace,
     initialKbName,
     allKnowledgeBases: sidebar.allKnowledgeBases,
@@ -187,6 +197,7 @@ export function KnowledgeDocumentPageDesktop({
     selectKb: sidebar.selectKb,
     selectGroup: sidebar.selectGroup,
     selectDingtalk: sidebar.selectDingtalk,
+    clearSelection: sidebar.clearSelection,
   })
 
   // Handle clear selection event from sidebar
@@ -259,16 +270,17 @@ export function KnowledgeDocumentPageDesktop({
     (kb: KnowledgeBase | { id: number; name: string; namespace: string }) => {
       const fullKb = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
       if (fullKb) {
-        // Only set sidebar selection if we're already on a detail page (initialKbName is defined).
-        // When on the main page, skip selectKb to avoid flashing the detail panel
-        // before navigation - URL sync on the destination page will handle selection.
-        if (initialKbName) {
-          sidebar.selectKb(fullKb)
-        }
-        navigateToKb(fullKb, sidebar.allKnowledgeBasesWithGroupInfo)
+        // Always update state and URL without causing a page remount to avoid UI flickering.
+        // Use history.pushState instead of router.push so Next.js doesn't unmount/remount
+        // the entire page component. This works for both the main page and detail pages.
+        sidebar.selectKb(fullKb)
+        // Update sidebar collapse synchronously (not via useEffect) so the
+        // sidebar state is correct in the same render cycle as the selectedKb update
+        updateSidebarCollapsed(fullKb.kb_type === 'notebook')
+        navigateToKbViaHistory(fullKb, sidebar.allKnowledgeBasesWithGroupInfo)
       }
     },
-    [sidebar, navigateToKb, initialKbName]
+    [sidebar, navigateToKbViaHistory, updateSidebarCollapsed]
   )
 
   const handleSelectAll = useCallback(() => {
@@ -375,6 +387,14 @@ export function KnowledgeDocumentPageDesktop({
     [sidebar, updateUrlParams]
   )
 
+  const handleKnowledgeBaseTypeConverted = useCallback(
+    (updatedKb: KnowledgeBase) => {
+      sidebar.replaceKnowledgeBase(updatedKb)
+      dialogs.setEditingKb(updatedKb)
+    },
+    [sidebar, dialogs]
+  )
+
   const renderMainContent = () => {
     // When navigating to a specific KB via URL, show loading until the URL sync
     // completes and selectedKb is set, to avoid flashing the list page
@@ -407,13 +427,14 @@ export function KnowledgeDocumentPageDesktop({
     if (sidebar.selectedKb) {
       return (
         <KnowledgeDetailPanel
+          key={`${sidebar.selectedKb.id}-${currentDocPath ?? ''}`}
           selectedKb={sidebar.selectedKb}
           isTreeCollapsed={isSidebarCollapsed}
           onExpandTree={() => updateSidebarCollapsed(false)}
           onEditKb={dialogs.setEditingKb}
           groupInfo={selectedKbGroupInfo}
           onGroupClick={handleGroupClick}
-          initialDocPath={initialDocPath}
+          initialDocPath={currentDocPath}
         />
       )
     }
@@ -628,6 +649,7 @@ export function KnowledgeDocumentPageDesktop({
         onOpenChange={open => !dialogs.isUpdating && !open && dialogs.setEditingKb(null)}
         knowledgeBase={dialogs.editingKb}
         onSubmit={dialogs.handleUpdate}
+        onTypeConverted={handleKnowledgeBaseTypeConverted}
         loading={dialogs.isUpdating}
         knowledgeDefaultTeamId={knowledgeDefaultTeamId}
         bindModel={knowledgeBindModel}
