@@ -207,7 +207,7 @@ describe('DeviceMonitorPanel', () => {
       expect(mockedAdminApis.getDevices).toHaveBeenCalledTimes(1)
     })
 
-    fireEvent.change(screen.getByTestId('device-search-input'), {
+    fireEvent.change(await screen.findByTestId('device-search-input'), {
       target: { value: 'mac' },
     })
 
