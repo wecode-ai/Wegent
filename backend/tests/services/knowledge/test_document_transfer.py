@@ -198,9 +198,10 @@ def test_transfer_documents_between_personal_kbs(test_db: Session) -> None:
     )
     assert len(source_docs) == 0
 
-    # Verify documents are active and have NOT_INDEXED status
+    # Verify documents are inactive (will be set to True after successful reindexing)
+    # and have NOT_INDEXED status
     for doc in transferred_docs:
-        assert doc.is_active is True
+        assert doc.is_active is False
         assert doc.index_status == DocumentIndexStatus.NOT_INDEXED
 
 
@@ -240,9 +241,9 @@ def test_transfer_documents_from_personal_to_team_kb(test_db: Session) -> None:
     )
     assert len(transferred_docs) == 2
 
-    # Verify documents are active
+    # Verify documents are inactive (will be set to True after successful reindexing)
     for doc in transferred_docs:
-        assert doc.is_active is True
+        assert doc.is_active is False
 
 
 @pytest.mark.unit
@@ -518,10 +519,23 @@ def test_transfer_triggers_indexing_in_target_kb(
     mock_get_delete_gateway: MagicMock,
     test_db: Session,
 ) -> None:
-    """Test that transfer triggers indexing in target KB."""
+    """Test that transfer triggers indexing in target KB when retrieval config exists."""
     owner = _create_user(test_db, "owner-index-trigger")
     source_kb_id = _create_kb(test_db, owner.id, "source-index-kb")
     target_kb_id = _create_kb(test_db, owner.id, "target-index-kb")
+
+    # Add retrieval_config to target KB to enable indexing
+    target_kb = test_db.query(Kind).filter(Kind.id == target_kb_id).first()
+    target_kb_json = target_kb.json
+    target_kb_json["spec"]["retrievalConfig"] = {
+        "retriever_name": "test-retriever",
+        "retrieval_mode": "vector",
+    }
+    target_kb.json = target_kb_json
+    from sqlalchemy.orm.attributes import flag_modified
+
+    flag_modified(target_kb, "json")
+    test_db.commit()
 
     # Create document
     doc = _create_document(test_db, source_kb_id, owner.id, "index-doc.md")
@@ -542,10 +556,12 @@ def test_transfer_triggers_indexing_in_target_kb(
 
     assert result.success is True
 
-    # Verify indexing was scheduled for the transferred document
-    # The orchestrator is instantiated inside the method, so we mock the class method
-    # Note: The mock may not be called if the KB has no retrieval config, which is expected
-    # for a KB without RAG setup
+    # Verify indexing was scheduled for the target KB and transferred document
+    mock_schedule_indexing.assert_called_once()
+    call_args = mock_schedule_indexing.call_args
+    assert call_args.kwargs.get("knowledge_base") is not None
+    assert call_args.kwargs.get("document") is not None
+    assert call_args.kwargs.get("document").id == doc.id
 
 
 @pytest.mark.unit

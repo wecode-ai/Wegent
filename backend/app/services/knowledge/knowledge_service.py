@@ -3289,6 +3289,14 @@ class KnowledgeService:
             .all()
         )
 
+        # Verify all requested folders were found
+        found_folder_ids = {f.id for f in source_folders}
+        missing_folder_ids = descendant_folder_ids - found_folder_ids
+        if missing_folder_ids:
+            raise ValueError(
+                f"Folders not found in source knowledge base: {sorted(missing_folder_ids)}"
+            )
+
         sorted_folders = sorted(
             source_folders,
             key=lambda folder: (
@@ -3337,6 +3345,14 @@ class KnowledgeService:
             .all()
         )
 
+        # Verify all requested documents were found
+        found_doc_ids = {d.id for d in docs}
+        missing_doc_ids = all_doc_ids - found_doc_ids
+        if missing_doc_ids:
+            raise ValueError(
+                f"Documents not found in source knowledge base: {sorted(missing_doc_ids)}"
+            )
+
         transferred_doc_count = 0
         for doc in docs:
             if doc.folder_id > 0 and doc.folder_id in old_to_new_folder:
@@ -3346,7 +3362,7 @@ class KnowledgeService:
 
             doc.kind_id = target_kb_id
             doc.index_status = DocumentIndexStatus.NOT_INDEXED
-            doc.is_active = True
+            doc.is_active = False  # Will be set to True after successful reindexing
             transferred_doc_count += 1
 
         return docs, transferred_doc_count
@@ -3453,6 +3469,21 @@ class KnowledgeService:
                 source_kb_id=source_kb_id,
                 target_kb_id=target_kb_id,
             )
+
+        # Check document limit for notebook mode target knowledge base
+        target_kb_spec = target_kb.json.get("spec", {})
+        target_kb_type = target_kb_spec.get("kbType", "notebook")
+        if target_kb_type == "notebook":
+            current_count = KnowledgeService.get_document_count(db, target_kb_id)
+            if (
+                current_count + len(all_doc_ids)
+                > KnowledgeService.NOTEBOOK_MAX_DOCUMENTS
+            ):
+                raise ValueError(
+                    f"Cannot transfer to notebook mode knowledge base: "
+                    f"transfer would exceed the limit of {KnowledgeService.NOTEBOOK_MAX_DOCUMENTS} documents. "
+                    f"Current: {current_count}, transferring: {len(all_doc_ids)}"
+                )
 
         logger.info(
             "Transferring %d document(s) and %d folder(s) from KB %d to KB %d",

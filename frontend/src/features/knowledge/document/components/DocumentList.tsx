@@ -41,7 +41,7 @@ import { FolderTree, type SortField, type SortOrder } from './FolderTree'
 import { CreateFolderDialog } from './CreateFolderDialog'
 import { DeleteFolderDialog } from './DeleteFolderDialog'
 import { MoveDocumentDialog } from './MoveDocumentDialog'
-import { TransferToKbDialog } from './TransferToKbDialog'
+import { TransferToKbDialog } from './transfer-to-kb-dialog'
 import { useColumnResize } from '../hooks/useColumnResize'
 import { refreshKnowledgeBaseSummary } from '@/apis/knowledge'
 import { toast } from '@/hooks/use-toast'
@@ -631,10 +631,10 @@ export function DocumentList({
           setSelectedIds(new Set())
           refresh()
           fetchFolders()
+          setShowTransfer(false)
         }
       } finally {
         setIsTransferring(false)
-        setShowTransfer(false)
       }
     },
     [selectedIds, documents, transfer, refresh, fetchFolders]
@@ -871,6 +871,7 @@ export function DocumentList({
                 onClick={() => setShowBatchMove(true)}
                 disabled={batchLoading || isBatchMoving || isTransferring}
                 data-testid="batch-move-button"
+                aria-label={t('document.document.batch.move')}
               >
                 <FolderInput className="w-4 h-4 mr-1" />
                 {compact ? '' : t('document.document.batch.move')}
@@ -881,6 +882,7 @@ export function DocumentList({
                 onClick={() => setShowTransfer(true)}
                 disabled={batchLoading || isBatchMoving || isTransferring}
                 data-testid="batch-transfer-button"
+                aria-label={t('document.document.batch.transfer')}
               >
                 <ArrowRightLeft className="w-4 h-4 mr-1" />
                 {compact ? '' : t('document.document.batch.transfer')}
