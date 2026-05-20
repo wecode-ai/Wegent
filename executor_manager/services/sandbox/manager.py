@@ -1055,8 +1055,8 @@ class SandboxManager(metaclass=SingletonMeta):
     async def _collect_expired_sandboxes(self) -> None:
         """Terminate expired sandboxes.
 
-        Uses repository to efficiently find sandboxes whose last_activity_timestamp
-        is older than the configured TTL.
+        Scans active sandboxes and terminates those that have been idle longer
+        than the configured inactivity timeout.
         """
         lock = get_distributed_lock()
         if not lock.acquire("sandbox_gc", expire_seconds=300):
@@ -1067,9 +1067,26 @@ class SandboxManager(metaclass=SingletonMeta):
 
         try:
             logger.info("[SandboxManager] Running sandbox GC...")
-            expired_task_ids = self._repository.get_expired_sandbox_ids(
-                self._config.timeout.redis_ttl
-            )
+            active_task_ids = self._repository.get_active_sandbox_ids()
+            if not active_task_ids:
+                logger.info("[SandboxManager] No active sandboxes found")
+                return
+
+            now = time.time()
+            inactivity_timeout = self._config.timeout.sandbox_inactive_timeout
+            expired_task_ids = []
+            for task_id_str in active_task_ids:
+                sandbox = self._repository.load_sandbox(task_id_str)
+                if sandbox is None:
+                    self._repository.remove_from_active_set(task_id_str)
+                    logger.debug(
+                        f"[SandboxManager] Cleaned orphaned ZSet entry: {task_id_str}"
+                    )
+                    continue
+
+                idle_seconds = now - sandbox.last_activity_at
+                if idle_seconds >= inactivity_timeout:
+                    expired_task_ids.append(task_id_str)
 
             if not expired_task_ids:
                 logger.info("[SandboxManager] No expired sandboxes found")

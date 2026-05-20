@@ -13,13 +13,13 @@ Redis Data Structure:
   - {subtask_id} fields: Execution data JSON
   - TTL: session_hash_ttl (longer than redis_ttl to ensure GC can load data)
 - Active Sandboxes ZSet: wegent-sandbox:active (score = last_activity timestamp)
-  - GC uses redis_ttl to determine which sandboxes are expired
+  - Stores recent activity timestamps and supports orphan cleanup helpers
 
 GC Design:
 - GC runs every GC_INTERVAL (default 3600s) to clean up expired sandboxes
-- Sandboxes are considered expired if last_activity > redis_ttl (default 86400s)
+- Sandbox expiration is determined by sandbox.last_activity_at in SandboxManager
 - Session hash has TTL = session_hash_ttl = redis_ttl + GC_INTERVAL + buffer
-- This ensures GC can still load sandbox data even when it's marked as expired
+- This ensures GC can still load sandbox data long enough to terminate expired sandboxes
 """
 
 import json
@@ -109,6 +109,9 @@ class SandboxRepository(metaclass=SingletonMeta):
                 "status": sandbox.status.value,
                 "error_message": sandbox.error_message,
                 "created_at": sandbox.created_at,
+                "started_at": sandbox.started_at,
+                "last_activity_at": sandbox.last_activity_at,
+                "expires_at": sandbox.expires_at,
                 "shell_type": sandbox.shell_type,
                 "user_id": sandbox.user_id,
                 "user_name": sandbox.user_name,
@@ -333,16 +336,17 @@ class SandboxRepository(metaclass=SingletonMeta):
             return []
 
     def get_expired_sandbox_ids(self, max_age_seconds: int) -> List[str]:
-        """Get sandbox IDs that have been inactive for longer than max_age.
+        """Get sandbox IDs whose last-activity score is older than max_age.
 
-        Uses ZRANGEBYSCORE to efficiently find sandboxes whose last_activity_timestamp
-        is older than the cutoff time.
+        This helper is based on ZSet activity timestamps. SandboxManager GC now
+        expires sandboxes using sandbox.expires_at, but this method remains useful
+        for diagnostics or legacy maintenance paths that need activity-age queries.
 
         Args:
-            max_age_seconds: Maximum age in seconds (e.g., 86400 for 24 hours)
+            max_age_seconds: Maximum activity age in seconds
 
         Returns:
-            List of expired sandbox IDs
+            List of sandbox IDs whose activity score is older than the cutoff
         """
         if self.redis_client is None:
             return []
