@@ -294,6 +294,14 @@ class DingTalkWikiSpaceService:
         first_batch, first_token = DingTalkDocService._parse_list_nodes_result(
             first_result
         )
+
+        # Set parentId for root-level nodes to the knowledge base's nodeId.
+        # This ensures the directory tree correctly shows these nodes under
+        # the KB folder (which has nodeId = workspace_id).
+        for node in first_batch:
+            if not node.get("parentId"):
+                node["parentId"] = workspace_id
+
         all_nodes.extend(first_batch)
 
         # Recurse into sub-folders found in the first batch.
@@ -321,6 +329,12 @@ class DingTalkWikiSpaceService:
             }
             result = await session.call_tool(MCP_TOOL_LIST_NODES, args)
             batch, page_token = DingTalkDocService._parse_list_nodes_result(result)
+
+            # Set parentId for root-level nodes to the knowledge base's nodeId.
+            for node in batch:
+                if not node.get("parentId"):
+                    node["parentId"] = workspace_id
+
             all_nodes.extend(batch)
             for node in batch:
                 if node.get("nodeType") == "folder":
