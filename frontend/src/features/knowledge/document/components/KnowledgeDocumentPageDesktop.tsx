@@ -387,6 +387,14 @@ export function KnowledgeDocumentPageDesktop({
     [sidebar, updateUrlParams]
   )
 
+  const handleKnowledgeBaseTypeConverted = useCallback(
+    (updatedKb: KnowledgeBase) => {
+      sidebar.replaceKnowledgeBase(updatedKb)
+      dialogs.setEditingKb(updatedKb)
+    },
+    [sidebar, dialogs]
+  )
+
   const renderMainContent = () => {
     // When navigating to a specific KB via URL, show loading until the URL sync
     // completes and selectedKb is set, to avoid flashing the list page
@@ -641,6 +649,7 @@ export function KnowledgeDocumentPageDesktop({
         onOpenChange={open => !dialogs.isUpdating && !open && dialogs.setEditingKb(null)}
         knowledgeBase={dialogs.editingKb}
         onSubmit={dialogs.handleUpdate}
+        onTypeConverted={handleKnowledgeBaseTypeConverted}
         loading={dialogs.isUpdating}
         knowledgeDefaultTeamId={knowledgeDefaultTeamId}
         bindModel={knowledgeBindModel}
