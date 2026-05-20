@@ -528,8 +528,12 @@ const MessageBubble = memo(
     // Default to true for user messages if isCurrentUserMessage is not provided
     const shouldAlignRight = isUserTypeMessage && (isCurrentUserMessage ?? true)
 
-    const { baseClasses: bubbleBaseClasses, typeClasses: bubbleTypeClasses } =
+    const { baseClasses: defaultBubbleBaseClasses, typeClasses: defaultBubbleTypeClasses } =
       getMessageBubbleClassNames(isUserTypeMessage)
+    const bubbleBaseClasses = isEditing
+      ? 'relative w-full overflow-visible text-text-primary'
+      : defaultBubbleBaseClasses
+    const bubbleTypeClasses = isEditing ? '' : defaultBubbleTypeClasses
 
     const formatTimestamp = (timestamp: number | undefined) => {
       return formatDateTime(timestamp)
