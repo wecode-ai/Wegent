@@ -179,7 +179,7 @@ export function KnowledgeDocumentPageDesktop({
   )
 
   // URL sync and navigation
-  const { updateUrlParams, navigateToKb } = useKnowledgeUrlSync({
+  const { initialUrlSyncDone, updateUrlParams, navigateToKb } = useKnowledgeUrlSync({
     initialKbNamespace,
     initialKbName,
     allKnowledgeBases: sidebar.allKnowledgeBases,
@@ -376,6 +376,16 @@ export function KnowledgeDocumentPageDesktop({
   )
 
   const renderMainContent = () => {
+    // When navigating to a specific KB via URL, show loading until the URL sync
+    // completes and selectedKb is set, to avoid flashing the list page
+    if (initialKbName && !sidebar.selectedKb && !initialUrlSyncDone) {
+      return (
+        <div className="flex-1 flex items-center justify-center">
+          <Spinner size="lg" />
+        </div>
+      )
+    }
+
     if (sidebar.viewMode === 'dingtalk') {
       // Wait for DingTalk status to finish loading before rendering
       if (sidebar.isDingtalkLoading) {
