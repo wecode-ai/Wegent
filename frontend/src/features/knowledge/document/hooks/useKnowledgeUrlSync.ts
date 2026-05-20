@@ -9,9 +9,9 @@
  * and provides helpers to update the URL when navigation changes.
  */
 
-import { useState, useEffect, useCallback } from 'react'
-import { useSearchParams, useRouter } from 'next/navigation'
-import { buildKbUrl } from '@/utils/knowledgeUrl'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useSearchParams, useRouter, usePathname } from 'next/navigation'
+import { buildKbUrl, parseKbUrl } from '@/utils/knowledgeUrl'
 import type { KnowledgeBase } from '@/types/knowledge'
 
 interface UseKnowledgeUrlSyncParams {
@@ -22,6 +22,7 @@ interface UseKnowledgeUrlSyncParams {
   selectKb: (kb: KnowledgeBase) => void
   selectGroup: (groupId: string) => void
   selectDingtalk: () => void
+  clearSelection: () => void
 }
 
 export function useKnowledgeUrlSync({
@@ -32,30 +33,43 @@ export function useKnowledgeUrlSync({
   selectKb,
   selectGroup,
   selectDingtalk,
+  clearSelection,
 }: UseKnowledgeUrlSyncParams) {
   const router = useRouter()
+  const pathname = usePathname()
   const searchParams = useSearchParams()
   const [initialUrlSyncDone, setInitialUrlSyncDone] = useState(false)
+  const lastSyncedUrlRef = useRef<string | null>(null)
 
-  // Sync selected KB or group from URL parameter on initial load only
+  // Keep sidebar selection in sync with the current URL.
+  // This handles initial load, client-side history updates, and browser back/forward.
   useEffect(() => {
-    if (initialUrlSyncDone) return
     if (isGroupsLoading) return
 
-    if (initialKbName) {
+    const currentUrlKey = `${pathname}?${searchParams.toString()}`
+    if (lastSyncedUrlRef.current === currentUrlKey && initialUrlSyncDone) return
+
+    const parsedKbUrl = pathname ? parseKbUrl(pathname) : null
+
+    if (parsedKbUrl) {
       let found: KnowledgeBase | undefined
-      if (initialKbNamespace) {
+      if (parsedKbUrl.namespace) {
         found = allKnowledgeBases.find(
           kb =>
-            kb.name.toLowerCase() === initialKbName.toLowerCase() &&
-            kb.namespace.toLowerCase() === initialKbNamespace.toLowerCase()
+            kb.name.toLowerCase() === parsedKbUrl.kbName.toLowerCase() &&
+            kb.namespace.toLowerCase() === parsedKbUrl.namespace.toLowerCase()
         )
       } else {
-        found = allKnowledgeBases.find(kb => kb.name.toLowerCase() === initialKbName.toLowerCase())
+        found = allKnowledgeBases.find(
+          kb => kb.name.toLowerCase() === parsedKbUrl.kbName.toLowerCase()
+        )
       }
       if (found) {
         selectKb(found)
+      } else {
+        clearSelection()
       }
+      lastSyncedUrlRef.current = currentUrlKey
       setInitialUrlSyncDone(true)
       return
     }
@@ -75,17 +89,20 @@ export function useKnowledgeUrlSync({
       selectDingtalk()
     } else if (groupParam) {
       selectGroup(groupParam)
+    } else {
+      clearSelection()
     }
+    lastSyncedUrlRef.current = currentUrlKey
     setInitialUrlSyncDone(true)
   }, [
+    pathname,
     searchParams,
     allKnowledgeBases,
     isGroupsLoading,
     selectKb,
     selectGroup,
     selectDingtalk,
-    initialKbNamespace,
-    initialKbName,
+    clearSelection,
     initialUrlSyncDone,
   ])
 
@@ -93,7 +110,11 @@ export function useKnowledgeUrlSync({
     (params: { kb?: number | null; group?: string | null }) => {
       if (params.kb !== undefined && params.kb !== null) return
 
-      if (initialKbName !== undefined) {
+      const isVirtualKbRoute = Boolean(
+        pathname && parseKbUrl(pathname) && !pathname.startsWith('/knowledge/document/')
+      )
+
+      if (isVirtualKbRoute || initialKbName !== undefined || initialKbNamespace !== undefined) {
         const newSearchParams = new URLSearchParams()
         newSearchParams.set('type', 'document')
         if (params.group !== undefined && params.group !== null) {
@@ -117,22 +138,7 @@ export function useKnowledgeUrlSync({
 
       router.replace(`?${newSearchParams.toString()}`, { scroll: false })
     },
-    [router, searchParams, initialKbName]
-  )
-
-  const navigateToKb = useCallback(
-    (
-      kb: { name: string; namespace: string },
-      allKbsWithGroupInfo: Array<{ name: string; namespace: string; group_type?: string }>
-    ) => {
-      const kbWithInfo = allKbsWithGroupInfo.find(
-        k => k.name === kb.name && k.namespace === kb.namespace
-      )
-      const isOrganization = kbWithInfo?.group_type === 'organization'
-      const kbPath = buildKbUrl(kb.namespace, kb.name, isOrganization)
-      router.push(kbPath)
-    },
-    [router]
+    [router, searchParams, pathname, initialKbName, initialKbNamespace]
   )
 
   // Navigate to a KB by updating the URL via history.pushState without triggering
@@ -153,5 +159,5 @@ export function useKnowledgeUrlSync({
     []
   )
 
-  return { initialUrlSyncDone, updateUrlParams, navigateToKb, navigateToKbViaHistory }
+  return { initialUrlSyncDone, updateUrlParams, navigateToKbViaHistory }
 }

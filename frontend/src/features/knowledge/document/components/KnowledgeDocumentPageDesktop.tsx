@@ -13,6 +13,7 @@
 'use client'
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
+import { usePathname } from 'next/navigation'
 import { FolderOpen } from 'lucide-react'
 import { Spinner } from '@/components/ui/spinner'
 import { userApis } from '@/apis/user'
@@ -21,6 +22,7 @@ import { saveGlobalModelPreference, type ModelPreference } from '@/utils/modelPr
 import { getModelFromConfig } from '@/features/settings/services/bots'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
+import { parseKbUrl } from '@/utils/knowledgeUrl'
 import { useKnowledgeSidebar, type KnowledgeGroup } from '../hooks/useKnowledgeSidebar'
 import { useNamespaceRoleMap } from '../hooks/useNamespaceRoleMap'
 import { useGroupKbs } from '../hooks/useGroupKbs'
@@ -60,6 +62,14 @@ export function KnowledgeDocumentPageDesktop({
 }: KnowledgeDocumentPageDesktopProps = {}) {
   const { t } = useTranslation('knowledge')
   const { user } = useUser()
+  const pathname = usePathname()
+  const parsedKbUrl = useMemo(() => {
+    if (!pathname || pathname.startsWith('/knowledge/document/')) {
+      return null
+    }
+    return parseKbUrl(pathname)
+  }, [pathname])
+  const currentDocPath = parsedKbUrl?.docPath ?? initialDocPath
 
   // Knowledge sidebar hook
   const sidebar = useKnowledgeSidebar()
@@ -187,6 +197,7 @@ export function KnowledgeDocumentPageDesktop({
     selectKb: sidebar.selectKb,
     selectGroup: sidebar.selectGroup,
     selectDingtalk: sidebar.selectDingtalk,
+    clearSelection: sidebar.clearSelection,
   })
 
   // Handle clear selection event from sidebar
@@ -408,13 +419,14 @@ export function KnowledgeDocumentPageDesktop({
     if (sidebar.selectedKb) {
       return (
         <KnowledgeDetailPanel
+          key={`${sidebar.selectedKb.id}-${currentDocPath ?? ''}`}
           selectedKb={sidebar.selectedKb}
           isTreeCollapsed={isSidebarCollapsed}
           onExpandTree={() => updateSidebarCollapsed(false)}
           onEditKb={dialogs.setEditingKb}
           groupInfo={selectedKbGroupInfo}
           onGroupClick={handleGroupClick}
-          initialDocPath={initialDocPath}
+          initialDocPath={currentDocPath}
         />
       )
     }

@@ -204,6 +204,20 @@ export function DocumentList({
   const [movingDoc, setMovingDoc] = useState<KnowledgeDocument | null>(null)
   const [isMovingDoc, setIsMovingDoc] = useState(false)
 
+  // Reset KB-scoped UI state when switching knowledge bases.
+  useEffect(() => {
+    setViewingDoc(null)
+    setEditingDoc(null)
+    setDeletingDoc(null)
+    setSelectedIds(new Set())
+    setInitialSelectionDone(false)
+    setInitialDocPathHandled(false)
+    setSearchQuery('')
+    setShowSearchPopover(false)
+    setSelectedUploadFolderId(0)
+    setMovingDoc(null)
+  }, [knowledgeBase.id])
+
   // Resizable name column width (normal table mode only)
   const {
     widthOverride: nameColumnWidth,
