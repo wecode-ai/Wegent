@@ -53,11 +53,13 @@ export function useKnowledgeUrlSync({
 
     if (parsedKbUrl) {
       let found: KnowledgeBase | undefined
-      if (parsedKbUrl.namespace) {
+      const targetNamespace = parsedKbUrl.namespace
+
+      if (targetNamespace) {
         found = allKnowledgeBases.find(
           kb =>
             kb.name.toLowerCase() === parsedKbUrl.kbName.toLowerCase() &&
-            kb.namespace.toLowerCase() === parsedKbUrl.namespace.toLowerCase()
+            kb.namespace.toLowerCase() === targetNamespace.toLowerCase()
         )
       } else {
         found = allKnowledgeBases.find(
