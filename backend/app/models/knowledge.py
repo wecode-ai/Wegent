@@ -53,6 +53,8 @@ class DocumentIndexStatus(str, PyEnum):
 
     NOT_INDEXED = "not_indexed"
     QUEUED = "queued"
+    PENDING_CONVERSION = "pending_conversion"
+    CONVERTING = "converting"
     INDEXING = "indexing"
     SUCCESS = "success"
     FAILED = "failed"

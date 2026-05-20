@@ -182,17 +182,14 @@ class JobService(BaseService[Kind, None, None]):
         inactive_hours: int = 24,
         dry_run: bool = False,
     ) -> Dict[str, object]:
-        """Clean up executor resources for a single task after the stale window."""
-        task = await self._get_active_task_resource(db, task_id)
-        task_crd = Task.model_validate(task.json)
-        task_status = task_crd.status.status if task_crd.status else "PENDING"
+        """Clean up executor resources for a single task after the stale window.
 
-        if task_status not in ["COMPLETED", "FAILED", "CANCELLED"]:
-            return self._build_cleanup_result(
-                task_id,
-                "task_not_finished",
-                details={"inactive_hours": inactive_hours, "dry_run": dry_run},
-            )
+        The inactive_hours parameter is the sole eligibility gate. Task status is
+        intentionally not checked here — a pod stuck in RUNNING with no activity for
+        24h is just as stale as a COMPLETED one, and the admin explicitly requested
+        cleanup with the inactivity threshold.
+        """
+        task = await self._get_task_resource_any_state(db, task_id)
 
         subtasks = await self._get_cleanup_subtasks_for_task(db, task_id)
         if not subtasks:
@@ -785,6 +782,21 @@ class JobService(BaseService[Kind, None, None]):
             return task
 
         raise HTTPException(status_code=404, detail="Task not found")
+
+    async def _get_task_resource_any_state(
+        self, db: AsyncSession, task_id: int
+    ) -> TaskResource:
+        """Load a task resource by id regardless of its is_active state."""
+        result = await db.execute(
+            select(TaskResource).filter(
+                TaskResource.id == task_id,
+                TaskResource.kind == "Task",
+            )
+        )
+        task = result.scalars().first()
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        return task
 
     async def _get_cleanup_subtasks_for_task(
         self, db: AsyncSession, task_id: int

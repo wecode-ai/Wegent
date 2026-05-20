@@ -75,7 +75,10 @@ Web documents support re-scraping for updates. When webpage content changes, use
 |--------|-------------|
 | **Enabled** | Document is indexed and searchable |
 | **Disabled** | Document exists but excluded from search |
-| **Processing** | Document is being indexed |
+| **Queued** | Document waiting to be processed |
+| **Pending Conversion** | Document waiting for format conversion (PDF/PPTX etc.) |
+| **Converting** | Document being converted to Markdown |
+| **Indexing** | Document being indexed for RAG |
 | **Error** | Indexing failed |
 
 ---

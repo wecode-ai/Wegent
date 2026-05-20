@@ -45,6 +45,8 @@ class IndexExecutionDecision:
 
 ACTIVE_INDEX_STATUSES = {
     DocumentIndexStatus.QUEUED,
+    DocumentIndexStatus.PENDING_CONVERSION,
+    DocumentIndexStatus.CONVERTING,
     DocumentIndexStatus.INDEXING,
 }
 
@@ -58,21 +60,47 @@ def _get_active_index_stale_reason(
     document: KnowledgeDocument,
 ) -> Optional[str]:
     """Return a stale reason when an active indexing state is expired."""
-    if document.updated_at is None:
+    return _get_active_index_stale_reason_for(
+        document.index_status, document.updated_at
+    )
+
+
+def _get_active_index_stale_reason_for(
+    index_status: DocumentIndexStatus,
+    updated_at: Optional[datetime],
+) -> Optional[str]:
+    """Return a stale reason based on raw status and timestamp values.
+
+    Accepts raw values instead of ORM object so callers can use
+    lightweight column queries without loading full KnowledgeDocument rows.
+    """
+    if updated_at is None:
         return None
 
-    age_seconds = (_utcnow() - document.updated_at).total_seconds()
+    age_seconds = (_utcnow() - updated_at).total_seconds()
     if (
-        document.index_status == DocumentIndexStatus.QUEUED
+        index_status == DocumentIndexStatus.QUEUED
         and age_seconds >= settings.KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS
     ):
         return "stale_queued"
 
     if (
-        document.index_status == DocumentIndexStatus.INDEXING
+        index_status == DocumentIndexStatus.PENDING_CONVERSION
+        and age_seconds >= settings.KNOWLEDGE_INDEX_STALE_PENDING_CONVERSION_SECONDS
+    ):
+        return "stale_pending_conversion"
+
+    if (
+        index_status == DocumentIndexStatus.INDEXING
         and age_seconds >= settings.KNOWLEDGE_INDEX_STALE_INDEXING_SECONDS
     ):
         return "stale_indexing"
+
+    if (
+        index_status == DocumentIndexStatus.CONVERTING
+        and age_seconds >= settings.KNOWLEDGE_INDEX_STALE_CONVERTING_SECONDS
+    ):
+        return "stale_converting"
 
     return None
 
@@ -242,7 +270,12 @@ def mark_document_index_enqueue_failed(
         .filter(
             KnowledgeDocument.id == document_id,
             KnowledgeDocument.index_generation == generation,
-            KnowledgeDocument.index_status == DocumentIndexStatus.QUEUED,
+            KnowledgeDocument.index_status.in_(
+                [
+                    DocumentIndexStatus.QUEUED,
+                    DocumentIndexStatus.PENDING_CONVERSION,
+                ]
+            ),
         )
         .update(
             {
@@ -368,6 +401,12 @@ def mark_document_index_started(
     )
 
 
+_INDEX_SUCCEEDED_ALLOWED_STATUSES = {
+    DocumentIndexStatus.QUEUED,
+    DocumentIndexStatus.INDEXING,
+}
+
+
 @trace_sync(
     span_name="knowledge.mark_document_index_succeeded",
     tracer_name="knowledge.state_machine",
@@ -400,7 +439,7 @@ def mark_document_index_succeeded(
         .filter(
             KnowledgeDocument.id == document_id,
             KnowledgeDocument.index_generation == generation,
-            KnowledgeDocument.index_status.in_(ACTIVE_INDEX_STATUSES),
+            KnowledgeDocument.index_status.in_(_INDEX_SUCCEEDED_ALLOWED_STATUSES),
         )
         .update(
             {
@@ -455,5 +494,139 @@ def mark_document_index_failed(
         document_id=document_id,
         generation=generation,
         reason="finalized" if updated > 0 else "stale_or_already_finalized",
+    )
+    return updated > 0
+
+
+@trace_sync(
+    span_name="knowledge.mark_document_conversion_started",
+    tracer_name="knowledge.state_machine",
+    extract_attributes=lambda db, document_id, generation: {
+        "knowledge.document_id": document_id,
+        "knowledge.index_generation": generation,
+    },
+)
+def mark_document_conversion_started(
+    db: Session,
+    document_id: int,
+    generation: int,
+) -> IndexExecutionDecision:
+    """Transition QUEUED -> CONVERTING when conversion worker picks up the task."""
+    document = (
+        db.query(KnowledgeDocument)
+        .filter(KnowledgeDocument.id == document_id)
+        .with_for_update()
+        .first()
+    )
+    if document is None:
+        db.rollback()
+        _record_transition(
+            "knowledge.conversion.start.skipped",
+            document_id=document_id,
+            generation=generation,
+            reason="document_not_found",
+        )
+        return IndexExecutionDecision(should_execute=False, reason="document_not_found")
+
+    if document.index_generation != generation:
+        db.rollback()
+        _record_transition(
+            "knowledge.conversion.start.skipped",
+            document_id=document_id,
+            generation=generation,
+            reason="stale_generation",
+            previous_status=document.index_status,
+        )
+        return IndexExecutionDecision(should_execute=False, reason="stale_generation")
+
+    current_status = document.index_status or DocumentIndexStatus.NOT_INDEXED
+    if current_status not in (
+        DocumentIndexStatus.QUEUED,
+        DocumentIndexStatus.PENDING_CONVERSION,
+    ):
+        db.rollback()
+        _record_transition(
+            "knowledge.conversion.start.skipped",
+            document_id=document_id,
+            generation=generation,
+            reason=f"unexpected_status_{current_status.value}",
+            previous_status=current_status,
+        )
+        return IndexExecutionDecision(
+            should_execute=False,
+            reason=f"unexpected_status_{current_status.value}",
+        )
+
+    document.index_status = DocumentIndexStatus.CONVERTING
+    document.updated_at = _utcnow()
+    db.commit()
+    _record_transition(
+        "knowledge.conversion.start.accepted",
+        document_id=document_id,
+        generation=generation,
+        reason="conversion_started",
+        previous_status=current_status,
+    )
+    return IndexExecutionDecision(should_execute=True, reason="conversion_started")
+
+
+@trace_sync(
+    span_name="knowledge.mark_document_conversion_succeeded",
+    tracer_name="knowledge.state_machine",
+    extract_attributes=lambda db, document_id, generation, converted_extension=None, converted_name=None, converted_file_size=None: {
+        "knowledge.document_id": document_id,
+        "knowledge.index_generation": generation,
+        "knowledge.converted_extension": converted_extension or "",
+    },
+)
+def mark_document_conversion_succeeded(
+    db: Session,
+    document_id: int,
+    generation: int,
+    *,
+    converted_extension: Optional[str] = None,
+    converted_name: Optional[str] = None,
+    converted_file_size: Optional[int] = None,
+) -> bool:
+    """Transition CONVERTING -> QUEUED after successful conversion.
+
+    When conversion metadata is provided, also updates the document's
+    file_extension, name, and file_size to reflect the converted format.
+    This ensures subsequent re-index or stale-recovery routes the document
+    directly to index_document_task instead of convert_document_task.
+    """
+    update_payload = {
+        KnowledgeDocument.index_status: DocumentIndexStatus.QUEUED,
+        KnowledgeDocument.updated_at: _utcnow(),
+    }
+
+    if converted_extension is not None:
+        update_payload[KnowledgeDocument.file_extension] = converted_extension
+    if converted_name is not None:
+        update_payload[KnowledgeDocument.name] = converted_name
+    if converted_file_size is not None:
+        update_payload[KnowledgeDocument.file_size] = converted_file_size
+
+    updated = (
+        db.query(KnowledgeDocument)
+        .filter(
+            KnowledgeDocument.id == document_id,
+            KnowledgeDocument.index_generation == generation,
+            KnowledgeDocument.index_status.in_(
+                [
+                    DocumentIndexStatus.CONVERTING,
+                    DocumentIndexStatus.PENDING_CONVERSION,
+                ]
+            ),
+        )
+        .update(update_payload, synchronize_session=False)
+    )
+    db.commit()
+
+    _record_transition(
+        "knowledge.conversion.finalize.success",
+        document_id=document_id,
+        generation=generation,
+        reason="converted" if updated > 0 else "stale_or_already_finalized",
     )
     return updated > 0
