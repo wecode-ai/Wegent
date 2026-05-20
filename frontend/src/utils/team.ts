@@ -10,6 +10,10 @@ const parseTimestamp = (value?: string) => {
   return Number.isFinite(timestamp) ? timestamp : 0
 }
 
+export const getTeamDisplayName = (team: Pick<Team, 'name' | 'displayName'>) => {
+  return team.displayName?.trim() || team.name
+}
+
 export const sortTeamsByUpdatedAt = (teams: Team[]) => {
   return [...teams].sort((a, b) => parseTimestamp(b.updated_at) - parseTimestamp(a.updated_at))
 }

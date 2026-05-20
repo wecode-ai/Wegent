@@ -12,6 +12,7 @@ import {
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (key: string, fallback?: string) => fallback || key,
+    i18n: { language: 'zh-CN' },
   }),
 }))
 

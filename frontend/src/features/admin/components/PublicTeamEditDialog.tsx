@@ -32,13 +32,9 @@ import TeamEditDrawer from '@/features/settings/components/TeamEditDrawer'
 import { useTranslation } from '@/hooks/useTranslation'
 import { UnifiedShell } from '@/apis/shells'
 import { BotEditRef } from '@/features/settings/components/BotEdit'
-import {
-  adminApis,
-  AdminPublicTeam,
-  AdminPublicTeamCreate,
-  AdminPublicTeamUpdate,
-} from '@/apis/admin'
+import { adminApis, AdminPublicTeam, AdminPublicTeamCreate } from '@/apis/admin'
 import { publicResourceApis } from '@/apis/publicResources'
+import { buildPublicTeamUpdateData, resolvePublicTeamName } from '../utils/publicTeamPayload'
 
 // Import sub-components from settings
 import TeamBasicInfoForm from '@/features/settings/components/team-edit/TeamBasicInfoForm'
@@ -752,21 +748,18 @@ export default function PublicTeamEditDialog({
 
       // Create or update team
       if (editingTeam) {
-        const updateData: AdminPublicTeamUpdate = {
-          json: teamJson,
-          is_active: isActive,
-        }
-        if (namespace !== editingTeam.namespace) {
-          updateData.namespace = namespace
-        }
+        const updateData = buildPublicTeamUpdateData({
+          editingTeam,
+          name,
+          namespace,
+          teamJson,
+          isActive,
+        })
         await adminApis.updatePublicTeam(editingTeam.id, updateData)
         toast({ title: t('public_teams.success.updated') })
       } else {
         const createData: AdminPublicTeamCreate = {
-          name:
-            name.trim() ||
-            (teamJson.metadata as Record<string, unknown>)?.name?.toString() ||
-            'new-team',
+          name: resolvePublicTeamName(name, teamJson, 'new-team'),
           namespace,
           json: teamJson,
         }

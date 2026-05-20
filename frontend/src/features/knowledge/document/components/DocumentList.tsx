@@ -35,7 +35,7 @@ import { EditDocumentDialog } from './EditDocumentDialog'
 import { RetrievalTestDialog } from './RetrievalTestDialog'
 import { useDocuments } from '../hooks/useDocuments'
 import { useFolders } from '../hooks/useFolders'
-import { FolderTree } from './FolderTree'
+import { FolderTree, type SortField, type SortOrder } from './FolderTree'
 import { CreateFolderDialog } from './CreateFolderDialog'
 import { DeleteFolderDialog } from './DeleteFolderDialog'
 import { MoveDocumentDialog } from './MoveDocumentDialog'
@@ -47,6 +47,7 @@ import type {
   KnowledgeDocument,
   KnowledgeFolder,
   SplitterConfig,
+  KbGroupInfo,
 } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
@@ -93,12 +94,8 @@ function DocAutoOpener({
   return null
 }
 
-/** Group info for breadcrumb display */
-export interface KbGroupInfo {
-  groupId: string
-  groupName: string
-  groupType: 'personal' | 'personal-shared' | 'group' | 'organization'
-}
+// Re-export KbGroupInfo from types for backwards compatibility
+export type { KbGroupInfo } from '@/types/knowledge'
 
 interface DocumentListProps {
   knowledgeBase: KnowledgeBase
@@ -122,9 +119,6 @@ interface DocumentListProps {
   /** Whether this KB belongs to an organization-level namespace (affects URL format in DocumentDetailDialog) */
   isOrganization?: boolean
 }
-
-type SortField = 'name' | 'size' | 'date' | 'updatedAt'
-type SortOrder = 'asc' | 'desc'
 
 /** Flatten folder tree into a flat list for select dropdowns */
 function flattenFoldersForSelect(
@@ -189,7 +183,7 @@ export function DocumentList({
   const [editingDoc, setEditingDoc] = useState<KnowledgeDocument | null>(null)
   const [deletingDoc, setDeletingDoc] = useState<KnowledgeDocument | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
-  const [sortField, setSortField] = useState<SortField>('date')
+  const [sortField, setSortField] = useState<SortField>('createdAt')
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [batchLoading, setBatchLoading] = useState(false)
@@ -288,37 +282,11 @@ export function DocumentList({
     }
   }, [selectedIds, onSelectionChange, initialSelectionDone])
 
-  const filteredAndSortedDocuments = useMemo(() => {
-    let result = [...documents]
-
-    // Filter by search query (name-based frontend search)
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase()
-      result = result.filter(doc => doc.name.toLowerCase().includes(query))
-    }
-
-    // Sort
-    result.sort((a, b) => {
-      let comparison = 0
-      switch (sortField) {
-        case 'name':
-          comparison = a.name.localeCompare(b.name)
-          break
-        case 'size':
-          comparison = a.file_size - b.file_size
-          break
-        case 'date':
-          comparison = new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-          break
-        case 'updatedAt':
-          comparison = new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()
-          break
-      }
-      return sortOrder === 'asc' ? comparison : -comparison
-    })
-
-    return result
-  }, [documents, searchQuery, sortField, sortOrder])
+  const filteredDocuments = useMemo(() => {
+    if (!searchQuery.trim()) return documents
+    const query = searchQuery.toLowerCase()
+    return documents.filter(doc => doc.name.toLowerCase().includes(query))
+  }, [documents, searchQuery])
 
   const canManageAnyDocuments = canUpload || canManageAllDocuments
 
@@ -452,17 +420,16 @@ export function DocumentList({
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
-      setSelectedIds(new Set(filteredAndSortedDocuments.map(doc => doc.id)))
+      setSelectedIds(new Set(filteredDocuments.map(doc => doc.id)))
     } else {
       setSelectedIds(new Set())
     }
   }
 
   const isAllSelected =
-    filteredAndSortedDocuments.length > 0 &&
-    filteredAndSortedDocuments.every(doc => selectedIds.has(doc.id))
+    filteredDocuments.length > 0 && filteredDocuments.every(doc => selectedIds.has(doc.id))
 
-  const isPartialSelected = selectedIds.size > 0 && !isAllSelected
+  const isPartialSelected = filteredDocuments.some(doc => selectedIds.has(doc.id)) && !isAllSelected
 
   // Batch operations using batch API
   const handleBatchDelete = async () => {
@@ -826,7 +793,7 @@ export function DocumentList({
             {t('common:actions.retry')}
           </Button>
         </div>
-      ) : filteredAndSortedDocuments.length > 0 || folders.length > 0 ? (
+      ) : filteredDocuments.length > 0 || folders.length > 0 ? (
         <>
           {/* Batch action bar - shown when items are selected (not in notebook mode where selection is for context injection) */}
           {canManageAllDocuments && selectedIds.size > 0 && !onSelectionChange && (
@@ -853,7 +820,7 @@ export function DocumentList({
           {compact ? (
             <div className="space-y-2">
               {/* Select all control bar for notebook mode */}
-              {onSelectionChange && filteredAndSortedDocuments.length > 0 && (
+              {onSelectionChange && filteredDocuments.length > 0 && (
                 <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-muted">
                   <button
                     onClick={() => handleSelectAll(!isAllSelected)}
@@ -867,13 +834,14 @@ export function DocumentList({
                     <span>{t('document.document.batch.selectAll')}</span>
                   </button>
                   <span className="text-text-muted">
-                    ({selectedIds.size}/{filteredAndSortedDocuments.length})
+                    ({filteredDocuments.filter(doc => selectedIds.has(doc.id)).length}/
+                    {filteredDocuments.length})
                   </span>
                 </div>
               )}
               <FolderTree
                 folders={folders}
-                documents={filteredAndSortedDocuments}
+                documents={filteredDocuments}
                 compact={true}
                 onViewDetail={setViewingDoc}
                 onEdit={setEditingDoc}
@@ -892,108 +860,123 @@ export function DocumentList({
                 onRenameFolder={canUpload ? handleRenameFolder : undefined}
                 onDeleteFolder={canUpload ? handleDeleteFolderClick : undefined}
                 canManageFolders={canUpload}
+                sortField={sortField}
+                sortOrder={sortOrder}
               />
             </div>
           ) : (
             /* Normal mode: Table layout with folder tree - single bordered container */
-            <div className="border border-border rounded-lg overflow-hidden">
-              {/* Table header */}
-              <div className="flex items-center gap-4 px-4 py-2.5 bg-surface text-xs text-text-muted font-medium min-w-[880px] border-b border-border">
-                {/* Checkbox for select all */}
-                {canManageAllDocuments && (
-                  <div className="flex-shrink-0">
-                    <Checkbox
-                      checked={isAllSelected}
-                      onCheckedChange={handleSelectAll}
-                      className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
-                      {...(isPartialSelected ? { 'data-state': 'indeterminate' } : {})}
-                    />
-                  </div>
-                )}
-                {/* Icon placeholder */}
-                <div className="w-8 flex-shrink-0" />
-                <div
-                  ref={nameColumnRef}
-                  className={`relative cursor-pointer hover:text-text-primary select-none ${nameColumnWidth ? 'flex-shrink-0' : 'flex-1 min-w-[120px]'}`}
-                  style={nameColumnWidth ? { width: `${nameColumnWidth}px` } : undefined}
-                  onClick={() => handleSort('name')}
-                >
-                  {t('document.document.columns.name')}
-                  <SortIcon field="name" />
-                  {/* Column resize handle - 12px wide hit area on right edge, visible line on hover */}
+            <div className="border border-border rounded-lg overflow-x-auto">
+              {/* Inner container - width determined by content, background covers all */}
+              <div className="bg-base min-w-[880px] w-fit">
+                {/* Table header */}
+                <div className="flex items-center gap-4 px-4 py-2.5 bg-surface text-xs text-text-muted font-medium border-b border-border">
+                  {/* Checkbox for select all */}
+                  {canManageAllDocuments && (
+                    <div className="flex-shrink-0">
+                      <Checkbox
+                        checked={isPartialSelected ? 'indeterminate' : isAllSelected}
+                        onCheckedChange={handleSelectAll}
+                        className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+                      />
+                    </div>
+                  )}
+                  {/* Icon + Name column header */}
                   <div
-                    className="absolute top-0 right-0 bottom-0 w-3 cursor-col-resize z-10 group/resize flex items-center justify-center"
-                    onMouseDown={handleNameResizeMouseDown}
-                    onClick={e => e.stopPropagation()}
+                    ref={nameColumnRef}
+                    className={`relative flex items-center gap-2 ${nameColumnWidth ? 'flex-shrink-0' : 'flex-1 min-w-[200px]'}`}
+                    style={nameColumnWidth ? { width: `${nameColumnWidth}px` } : undefined}
                   >
-                    <div className="w-0.5 h-3/4 rounded-full bg-border group-hover/resize:bg-primary/50 transition-colors" />
+                    {/* Icon placeholder */}
+                    <div className="w-4 h-4 flex-shrink-0" />
+                    <button
+                      type="button"
+                      className="cursor-pointer hover:text-text-primary select-none"
+                      onClick={() => handleSort('name')}
+                    >
+                      {t('document.document.columns.name')}
+                      <SortIcon field="name" />
+                    </button>
+                    {/* Column resize handle */}
+                    <div
+                      className="absolute top-0 right-0 bottom-0 w-3 cursor-col-resize z-10 group/resize flex items-center justify-center"
+                      onMouseDown={handleNameResizeMouseDown}
+                      onClick={e => e.stopPropagation()}
+                    >
+                      <div className="w-0.5 h-3/4 rounded-full bg-border group-hover/resize:bg-primary/50 transition-colors" />
+                    </div>
                   </div>
-                </div>
-                {/* Spacer to match DocumentItem middle area */}
-                <div className="w-48 flex-shrink-0" />
-                <div className="w-20 flex-shrink-0 text-center">
-                  {t('document.document.columns.type')}
-                </div>
-                <div
-                  className="w-20 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
-                  onClick={() => handleSort('size')}
-                >
-                  {t('document.document.columns.size')}
-                  <SortIcon field="size" />
-                </div>
-                {/* Creator column header */}
-                <div className="w-24 flex-shrink-0 text-center">
-                  {t('document.document.columns.createdBy')}
-                </div>
-                <div
-                  className="w-40 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
-                  onClick={() => handleSort('date')}
-                >
-                  {t('document.document.columns.date')}
-                  <SortIcon field="date" />
-                </div>
-                {/* Updated date column header */}
-                <div
-                  className="w-40 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
-                  onClick={() => handleSort('updatedAt')}
-                >
-                  {t('document.document.columns.updatedAt')}
-                  <SortIcon field="updatedAt" />
-                </div>
-                <div className="w-24 flex-shrink-0 text-center">
-                  {t('document.document.columns.indexStatus')}
-                </div>
-                {canManageAnyDocuments && (
+                  {/* Spacer to match DocumentItem edit button area */}
+                  <div className="w-7 flex-shrink-0" />
                   <div className="w-20 flex-shrink-0 text-center">
-                    {t('document.document.columns.actions')}
+                    {t('document.document.columns.type')}
                   </div>
-                )}
+                  <button
+                    type="button"
+                    className="w-20 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
+                    onClick={() => handleSort('size')}
+                  >
+                    {t('document.document.columns.size')}
+                    <SortIcon field="size" />
+                  </button>
+                  {/* Creator column header */}
+                  <div className="w-24 flex-shrink-0 text-center">
+                    {t('document.document.columns.createdBy')}
+                  </div>
+                  <button
+                    type="button"
+                    className="w-40 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
+                    onClick={() => handleSort('createdAt')}
+                  >
+                    {t('document.document.columns.date')}
+                    <SortIcon field="createdAt" />
+                  </button>
+                  {/* Updated date column header */}
+                  <button
+                    type="button"
+                    className="w-40 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
+                    onClick={() => handleSort('updatedAt')}
+                  >
+                    {t('document.document.columns.updatedAt')}
+                    <SortIcon field="updatedAt" />
+                  </button>
+                  <div className="w-24 flex-shrink-0 text-center">
+                    {t('document.document.columns.indexStatus')}
+                  </div>
+                  {canManageAnyDocuments && (
+                    <div className="w-20 flex-shrink-0 text-center">
+                      {t('document.document.columns.actions')}
+                    </div>
+                  )}
+                </div>
+                {/* Document rows with folder tree - no extra border */}
+                <FolderTree
+                  folders={folders}
+                  documents={filteredDocuments}
+                  compact={false}
+                  withBorder={false}
+                  onViewDetail={setViewingDoc}
+                  onEdit={setEditingDoc}
+                  onDelete={setDeletingDoc}
+                  onRefresh={handleRefreshWebDocument}
+                  onReindex={handleReindexDocument}
+                  onMove={handleMoveDocument}
+                  refreshingDocId={refreshingDocId}
+                  reindexingDocId={reindexingDocId}
+                  canManage={canManageDocument}
+                  canSelect={doc => canSelectDocument(doc) && canManageAllDocuments}
+                  selectedIds={selectedIds}
+                  onSelect={handleSelectDoc}
+                  ragConfigured={ragConfigured}
+                  nameColumnWidth={nameColumnWidth ?? undefined}
+                  onCreateFolder={canUpload ? handleCreateFolder : undefined}
+                  onRenameFolder={canUpload ? handleRenameFolder : undefined}
+                  onDeleteFolder={canUpload ? handleDeleteFolderClick : undefined}
+                  canManageFolders={canUpload}
+                  sortField={sortField}
+                  sortOrder={sortOrder}
+                />
               </div>
-              {/* Document rows with folder tree - no extra border */}
-              <FolderTree
-                folders={folders}
-                documents={filteredAndSortedDocuments}
-                compact={false}
-                withBorder={false}
-                onViewDetail={setViewingDoc}
-                onEdit={setEditingDoc}
-                onDelete={setDeletingDoc}
-                onRefresh={handleRefreshWebDocument}
-                onReindex={handleReindexDocument}
-                onMove={handleMoveDocument}
-                refreshingDocId={refreshingDocId}
-                reindexingDocId={reindexingDocId}
-                canManage={canManageDocument}
-                canSelect={doc => canSelectDocument(doc) && canManageAllDocuments}
-                selectedIds={selectedIds}
-                onSelect={handleSelectDoc}
-                ragConfigured={ragConfigured}
-                nameColumnWidth={nameColumnWidth ?? undefined}
-                onCreateFolder={canUpload ? handleCreateFolder : undefined}
-                onRenameFolder={canUpload ? handleRenameFolder : undefined}
-                onDeleteFolder={canUpload ? handleDeleteFolderClick : undefined}
-                canManageFolders={canUpload}
-              />
             </div>
           )}
           {/* Overlay during column resize to prevent pointer event interference */}

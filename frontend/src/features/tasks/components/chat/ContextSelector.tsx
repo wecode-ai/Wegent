@@ -14,11 +14,7 @@ import {
   User,
   Building2,
   MessageSquareText,
-  RefreshCw,
-  Search,
 } from 'lucide-react'
-import { dingtalkDocApi } from '@/apis/dingtalk-doc'
-import type { DingtalkDocNode } from '@/types/dingtalk-doc'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import Link from 'next/link'
 import {
@@ -40,7 +36,6 @@ import type {
   ContextItem,
   KnowledgeBaseContext,
   TableContext,
-  DingTalkDocContext,
 } from '@/types/context'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useOrganizationNamespace } from '@/hooks/useOrganizationNamespace'
@@ -49,9 +44,7 @@ import { formatDocumentCount } from '@/lib/i18n-helpers'
 import { getKnowledgeBaseGroup } from '@/utils/knowledge-base-grouping'
 import {
   getDingTalkSelectedIds,
-  DingtalkContextTreeNode,
-  collectDescendants,
-  isNodeFullySelected,
+  DingTalkDocContextSelector,
 } from './DingTalkDocContextSelector'
 
 interface GroupedKnowledgeBases {
@@ -162,14 +155,6 @@ export default function ContextSelector({
   const [tableError, setTableError] = useState<string | null>(null)
   const [searchValue, setSearchValue] = useState('')
   const [activeTab, setActiveTab] = useState('knowledge')
-  const [dingtalkNodes, setDingtalkNodes] = useState<DingtalkDocNode[]>([])
-  const [hasFetchedDingtalk, setHasFetchedDingtalk] = useState(false)
-  const [dingtalkLoading, setDingtalkLoading] = useState(false)
-  const [dingtalkSyncing, setDingtalkSyncing] = useState(false)
-  const [dingtalkError, setDingtalkError] = useState<string | null>(null)
-  const [dingtalkConfigured, setDingtalkConfigured] = useState(true)
-  const [dingtalkLastSyncedAt, setDingtalkLastSyncedAt] = useState<string | null>(null)
-  const [dingtalkSearchQuery, setDingtalkSearchQuery] = useState('')
   const {
     organizationNamespace,
     loading: organizationNamespaceLoading,
@@ -239,47 +224,11 @@ export default function ContextSelector({
     fetchTables()
   }, [fetchTables])
 
-  // Fetch DingTalk docs
-  const fetchDingtalkDocs = useCallback(async () => {
-    setDingtalkLoading(true)
-    setDingtalkError(null)
-    try {
-      const [tree, status] = await Promise.all([
-        dingtalkDocApi.getDocs(),
-        dingtalkDocApi.getSyncStatus(),
-      ])
-      setDingtalkNodes(tree.nodes)
-      setDingtalkConfigured(status.is_configured)
-      setDingtalkLastSyncedAt(status.last_synced_at)
-    } catch {
-      setDingtalkError(t('chat:dingtalkDocs.loadFailed'))
-    } finally {
-      setDingtalkLoading(false)
-    }
-  }, [t])
-
-  const handleDingtalkSync = useCallback(async () => {
-    setDingtalkSyncing(true)
-    setDingtalkError(null)
-    try {
-      await dingtalkDocApi.syncDocs()
-      await fetchDingtalkDocs()
-    } catch {
-      setDingtalkError(t('chat:dingtalkDocs.syncFailed'))
-    } finally {
-      setDingtalkSyncing(false)
-    }
-  }, [fetchDingtalkDocs, t])
-
   const handleTabChange = useCallback(
     (value: string) => {
       setActiveTab(value)
-      if (value === 'dingtalk' && !hasFetchedDingtalk) {
-        fetchDingtalkDocs()
-        setHasFetchedDingtalk(true)
-      }
     },
-    [fetchDingtalkDocs, hasFetchedDingtalk]
+    []
   )
 
   // Group knowledge bases by category (personal, group, organization)
@@ -451,80 +400,17 @@ export default function ContextSelector({
     }
   }
 
-  // Compute the set of selected DingTalk node IDs
+  // Compute the set of selected DingTalk node IDs, bridging ContextItem[] to Set<string>
+  // for the DingTalkDocContextSelector component.
   const selectedDingTalkIds = useMemo(
     () => getDingTalkSelectedIds(selectedContexts),
     [selectedContexts]
-  )
-
-  /** Build a DingTalkDocContext from a DingtalkDocNode. */
-  const buildDingtalkContext = useCallback(
-    (node: DingtalkDocNode): DingTalkDocContext => ({
-      id: node.dingtalk_node_id,
-      name: node.name,
-      type: 'dingtalk_doc',
-      doc_url: node.doc_url,
-      node_type: node.node_type as 'folder' | 'doc' | 'file',
-      dingtalk_node_id: node.dingtalk_node_id,
-    }),
-    []
-  )
-
-  /** Handle DingTalk node toggle: folder selects/deselects all descendants, doc/file toggles individually. */
-  const handleDingtalkToggle = useCallback(
-    (node: DingtalkDocNode) => {
-      if (node.node_type === 'folder') {
-        const allIds = collectDescendants(node)
-        const allSelected = isNodeFullySelected(node, selectedDingTalkIds)
-
-        if (allSelected) {
-          if (onDeselectMultiple) {
-            onDeselectMultiple(allIds)
-          } else {
-            allIds.forEach(id => onDeselect(id))
-          }
-        } else {
-          const toAdd: DingTalkDocContext[] = []
-          const addNode = (n: DingtalkDocNode) => {
-            if (!selectedDingTalkIds.has(n.dingtalk_node_id)) {
-              toAdd.push(buildDingtalkContext(n))
-            }
-            if (n.children) {
-              n.children.forEach(addNode)
-            }
-          }
-          addNode(node)
-          if (toAdd.length > 0) {
-            if (onSelectMultiple) {
-              onSelectMultiple(toAdd)
-            } else {
-              toAdd.forEach(ctx => onSelect(ctx))
-            }
-          }
-        }
-      } else {
-        if (selectedDingTalkIds.has(node.dingtalk_node_id)) {
-          onDeselect(node.dingtalk_node_id)
-        } else {
-          onSelect(buildDingtalkContext(node))
-        }
-      }
-    },
-    [
-      selectedDingTalkIds,
-      buildDingtalkContext,
-      onSelect,
-      onDeselect,
-      onSelectMultiple,
-      onDeselectMultiple,
-    ]
   )
 
   // Reset search when popover closes
   useEffect(() => {
     if (!open) {
       setSearchValue('')
-      setDingtalkSearchQuery('')
       setActiveTab('knowledge')
     }
   }, [open])
@@ -906,103 +792,21 @@ export default function ContextSelector({
             </Command>
           </TabsContent>
 
-          {/* DingTalk Docs Tab */}
-          <TabsContent value="dingtalk" className="m-0">
-            {/* Search input */}
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
-              <Search className="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
-              <input
-                type="text"
-                value={dingtalkSearchQuery}
-                onChange={event => setDingtalkSearchQuery(event.target.value)}
-                placeholder={t('chat:dingtalkDocs.searchPlaceholder')}
-                className="flex-1 text-sm bg-transparent outline-none text-text-primary placeholder:text-text-muted"
-                data-testid="context-selector-dingtalk-search-input"
+          {/* DingTalk Docs Tab — delegates rendering to the shared DingTalkDocContextSelector */}
+          <TabsContent value="dingtalk" className="m-0 flex flex-col">
+            {activeTab === 'dingtalk' && (
+              <DingTalkDocContextSelector
+                selectedContexts={selectedDingTalkIds}
+                onSelect={ctx => onSelect(ctx)}
+                onDeselect={id => onDeselect(id)}
+                onSelectMultiple={ctxs => {
+                  if (onSelectMultiple) onSelectMultiple(ctxs)
+                }}
+                onDeselectMultiple={ids => {
+                  if (onDeselectMultiple) onDeselectMultiple(ids)
+                }}
               />
-            </div>
-
-            {/* Sync toolbar */}
-            <div className="flex items-center justify-between px-3 h-9 border-b border-border">
-              <span className="text-xs text-text-muted">
-                {dingtalkConfigured && dingtalkLastSyncedAt
-                  ? t('chat:dingtalkDocs.lastSynced', {
-                      time: new Date(dingtalkLastSyncedAt).toLocaleString(),
-                    })
-                  : null}
-              </span>
-              {dingtalkConfigured && (
-                <button
-                  type="button"
-                  onClick={handleDingtalkSync}
-                  disabled={dingtalkSyncing}
-                  className={cn(
-                    'flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors',
-                    dingtalkSyncing && 'opacity-50 cursor-not-allowed'
-                  )}
-                  data-testid="context-selector-dingtalk-sync"
-                >
-                  <RefreshCw className={cn('w-3 h-3', dingtalkSyncing && 'animate-spin')} />
-                  {dingtalkSyncing ? t('chat:dingtalkDocs.syncing') : t('chat:dingtalkDocs.sync')}
-                </button>
-              )}
-            </div>
-
-            {/* DingTalk content */}
-            <div className="max-h-[300px] overflow-y-auto">
-              {dingtalkLoading ? (
-                <div className="py-6 px-4 text-center text-sm text-text-muted">
-                  {t('common:actions.loading')}
-                </div>
-              ) : !dingtalkConfigured ? (
-                <div className="py-6 px-4 text-center space-y-3">
-                  <p className="text-sm text-text-muted">{t('chat:dingtalkDocs.notConfigured')}</p>
-                  <Link
-                    href="/settings/integrations"
-                    className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium transition-colors"
-                  >
-                    {t('chat:dingtalkDocs.goToConfigure')}
-                  </Link>
-                </div>
-              ) : dingtalkError ? (
-                <div className="py-6 px-4 text-center space-y-2">
-                  <p className="text-sm text-red-500">{dingtalkError}</p>
-                  <button
-                    onClick={fetchDingtalkDocs}
-                    className="text-xs text-primary hover:underline"
-                  >
-                    {t('common:actions.retry')}
-                  </button>
-                </div>
-              ) : dingtalkNodes.length === 0 ? (
-                <div className="py-6 px-4 text-center space-y-3">
-                  <p className="text-sm text-text-muted">{t('chat:dingtalkDocs.empty')}</p>
-                  <button
-                    type="button"
-                    onClick={handleDingtalkSync}
-                    disabled={dingtalkSyncing}
-                    className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium transition-colors disabled:opacity-50"
-                  >
-                    <RefreshCw className={cn('w-3.5 h-3.5', dingtalkSyncing && 'animate-spin')} />
-                    {dingtalkSyncing
-                      ? t('chat:dingtalkDocs.syncing')
-                      : t('chat:dingtalkDocs.syncNow')}
-                  </button>
-                </div>
-              ) : (
-                <div className="py-1 px-1">
-                  {dingtalkNodes.map(node => (
-                    <DingtalkContextTreeNode
-                      key={node.dingtalk_node_id}
-                      node={node}
-                      level={0}
-                      selectedIds={selectedDingTalkIds}
-                      onToggle={handleDingtalkToggle}
-                      searchQuery={dingtalkSearchQuery}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
+            )}
           </TabsContent>
         </Tabs>
       </PopoverContent>
