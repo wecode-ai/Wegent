@@ -15,8 +15,6 @@ import pytest
 from app.models.dingtalk_doc import DingTalkNodeSource, DingtalkSyncedNode
 from app.services.dingtalk_doc_service import DingTalkDocService
 from app.services.dingtalk_wikispace_service import (
-    MCP_TOOL_LIST_WIKI_SPACES,
-    WIKISPACE_SOURCE,
     DingTalkWikiSpaceService,
     _sanitize_url_for_telemetry,
 )
@@ -197,9 +195,16 @@ class TestListNodesInWikispace:
                 all_nodes=all_nodes,
             )
 
+        # parentId is set to workspace_id for root-level nodes to ensure
+        # the directory tree correctly shows them under the KB folder.
         assert all_nodes == [
-            {"nodeType": "folder", "workspaceId": "WS1"},
-            {"nodeId": "doc-1", "nodeType": "doc", "workspaceId": "WS1"},
+            {"nodeType": "folder", "workspaceId": "WS1", "parentId": "WS1"},
+            {
+                "nodeId": "doc-1",
+                "nodeType": "doc",
+                "workspaceId": "WS1",
+                "parentId": "WS1",
+            },
         ]
         mock_recursive.assert_not_awaited()
 
