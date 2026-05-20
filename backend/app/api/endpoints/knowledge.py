@@ -694,9 +694,10 @@ def transfer_documents_to_kb(
         )
     except SQLAlchemyError as e:
         db.rollback()
+        logger.exception("Database error during document transfer")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Database error during transfer: {str(e)}",
+            detail="Database error during transfer",
         )
 
 

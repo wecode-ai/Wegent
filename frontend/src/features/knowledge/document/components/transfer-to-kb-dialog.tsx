@@ -97,6 +97,13 @@ export function TransferToKbDialog({
     }
   }, [open, currentKnowledgeBaseId])
 
+  // Clear targetKbId when dialog closes (handles both UI interaction and parent prop change)
+  useEffect(() => {
+    if (!open) {
+      setTargetKbId('')
+    }
+  }, [open])
+
   // Group KBs by type
   const groupedKbs = useMemo(() => groupKnowledgeBases(allKbs), [allKbs])
   const hasKbs = allKbs.length > 0
