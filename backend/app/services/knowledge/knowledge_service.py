@@ -50,6 +50,7 @@ from app.services.group_permission import (
     get_user_groups,
     get_view_role_in_group,
 )
+from app.services.knowledge.folder_policy import assert_document_can_be_placed_in_folder
 from app.services.knowledge.namespace_utils import is_organization_namespace
 from app.services.knowledge.permission_policy import (
     can_create_namespace_knowledge_base,
@@ -1072,20 +1073,14 @@ class KnowledgeService:
                     f"Current count: {current_count}"
                 )
 
+        validated_folder_id = data.folder_id
+
         # Validate that the folder belongs to this knowledge base (if a non-root folder is specified)
         if data.folder_id and data.folder_id != 0:
-            folder = (
-                db.query(KnowledgeFolder)
-                .filter(
-                    KnowledgeFolder.id == data.folder_id,
-                    KnowledgeFolder.kind_id == knowledge_base_id,
-                )
-                .first()
+            target_folder = assert_document_can_be_placed_in_folder(
+                db, knowledge_base_id, data.folder_id
             )
-            if not folder:
-                raise ValueError(
-                    f"Folder {data.folder_id} not found in this knowledge base"
-                )
+            validated_folder_id = target_folder.id
 
         document = KnowledgeDocument(
             kind_id=knowledge_base_id,
@@ -1094,7 +1089,7 @@ class KnowledgeService:
             file_extension=data.file_extension,
             file_size=data.file_size,
             user_id=user_id,
-            folder_id=data.folder_id,
+            folder_id=validated_folder_id,
             splitter_config=(
                 data.splitter_config.model_dump(exclude_none=True)
                 if data.splitter_config
