@@ -1,0 +1,54 @@
+[project]
+name = "wegent-knowledge-doc-converter"
+version = "1.0.0"
+description = "Wegent Knowledge Document Converter - Celery worker for PDF-to-Markdown conversion"
+requires-python = ">=3.10,<=3.13"
+dependencies = [
+    "celery[redis]>=5.3.0",
+    "redis>=5.0.0",
+    "pydantic>=2.5.3",
+    "pydantic-settings>=2.0.0",
+    "httpx[brotli,socks]>=0.26.0",
+    "python-dotenv>=1.0.0",
+    "prometheus_client>=0.20.0",
+    "wegent-knowledge-engine",
+    "wegent-shared",
+]
+
+[tool.uv.sources]
+wegent-knowledge-engine = { path = "../knowledge_engine", editable = true }
+wegent-shared = { path = "../shared", editable = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.1",
+    "pytest-mock>=3.15.1",
+    "pytest-cov>=7.0.0",
+    "black>=23.7.0",
+    "isort>=5.12.0",
+]
+
+[tool.black]
+line-length = 88
+target-version = ['py310']
+
+[tool.isort]
+profile = "black"
+line_length = 88
+skip = [".venv", "venv"]
+skip_gitignore = true
+known_first_party = ["knowledge_doc_converter", "knowledge_engine", "shared"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["knowledge_doc_converter"]

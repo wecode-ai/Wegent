@@ -327,8 +327,45 @@ class Settings(BaseSettings):
     KNOWLEDGE_INDEX_LOCK_EXTEND_INTERVAL_SECONDS: int = 30
     KNOWLEDGE_INDEX_LOCK_RETRY_DELAY_SECONDS: int = 15
     KNOWLEDGE_INDEX_LOCK_MAX_RETRIES: int = 1
-    KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS: int = 600
-    KNOWLEDGE_INDEX_STALE_INDEXING_SECONDS: int = 2700
+    KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS: int = 600  # 10 min
+    KNOWLEDGE_INDEX_STALE_PENDING_CONVERSION_SECONDS: int = 7200  # 120 min
+    KNOWLEDGE_INDEX_STALE_INDEXING_SECONDS: int = 2700  # 45 min
+
+    # --- Document Conversion Configuration ---
+
+    # [Retained] Master switch: when False, all files indexed directly
+    KNOWLEDGE_CONVERSION_ENABLED: bool = False
+    # [Retained] Comma-separated file extensions requiring conversion
+    KNOWLEDGE_CONVERSION_FILE_TYPES: str = ""
+    # [Retained] Celery queue name for conversion tasks
+    KNOWLEDGE_CONVERSION_QUEUE: str = "knowledge_conversion"
+    # [Retained, value adjusted] Stale detection for CONVERTING status
+    # MUST be > converter CONVERSION_TASK_TIME_LIMIT to avoid false kills
+    # See cross-service config constraints in design doc section 4.4
+    KNOWLEDGE_INDEX_STALE_CONVERTING_SECONDS: int = (
+        14400  # was 12000, 20% margin over lock_timeout
+    )
+
+    # [Migrated to knowledge_doc_converter] The following configs have been moved:
+    # KNOWLEDGE_CONVERSION_LOCK_TIMEOUT_SECONDS  -> converter config (value: 12000)
+    # KNOWLEDGE_CONVERSION_LOCK_EXTEND_INTERVAL_SECONDS -> converter config
+    # KNOWLEDGE_CONVERSION_LOCK_MAX_RETRIES -> converter config
+    # KNOWLEDGE_CONVERSION_LOCK_RETRY_DELAY_SECONDS -> converter config
+    # MINERU_API_BASE_URL -> converter config
+    # MINERU_BACKEND -> converter config
+    # MINERU_PARSE_METHOD -> converter config
+    # MINERU_LANG_LIST -> converter config
+    # MINERU_FORMULA_ENABLE -> converter config
+    # MINERU_TABLE_ENABLE -> converter config
+    # MINERU_POLL_INTERVAL_SECONDS -> converter config
+    # MINERU_MAX_WAIT_SECONDS -> converter config
+    # WORKER_CONVERSION_S3_ENABLED -> converter config
+    # WORKER_CONVERSION_S3_ENDPOINT -> converter config
+    # WORKER_CONVERSION_S3_ACCESS_KEY -> converter config
+    # WORKER_CONVERSION_S3_SECRET_KEY -> converter config
+    # WORKER_CONVERSION_S3_BUCKET_NAME -> converter config
+    # WORKER_CONVERSION_S3_REGION_NAME -> converter config
+    # --- End Document Conversion Configuration ---
 
     # Circuit breaker configuration
     CIRCUIT_BREAKER_FAIL_MAX: int = 5  # Open circuit after 5 consecutive failures
@@ -594,6 +631,20 @@ class Settings(BaseSettings):
     # OpenTelemetry configuration is centralized in shared/telemetry/config.py
     # Use: from shared.telemetry.config import get_otel_config
     # All OTEL_* environment variables are read from there
+
+    def needs_conversion(self, file_extension: str) -> bool:
+        """Check if a file extension requires conversion before indexing."""
+        if not self.KNOWLEDGE_CONVERSION_ENABLED:
+            return False
+        if not self.KNOWLEDGE_CONVERSION_FILE_TYPES:
+            return False
+        ext = file_extension.lstrip(".").lower()
+        types = [
+            t.strip().lower()
+            for t in self.KNOWLEDGE_CONVERSION_FILE_TYPES.split(",")
+            if t.strip()
+        ]
+        return ext in types
 
     def get_rag_runtime_mode(self, operation: str) -> str:
         """Resolve the effective RAG runtime mode for an operation."""

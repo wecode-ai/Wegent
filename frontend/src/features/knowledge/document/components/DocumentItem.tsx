@@ -164,8 +164,13 @@ export function DocumentItem({
   const isWeb = document.source_type === 'web'
   const isNotIndexed = document.index_status === 'not_indexed'
   const isIndexFailed = document.index_status === 'failed'
+  const isPendingConversion = document.index_status === 'pending_conversion'
+  const isConverting = document.index_status === 'converting'
   const isBackendIndexing =
-    document.index_status === 'queued' || document.index_status === 'indexing'
+    document.index_status === 'queued' ||
+    document.index_status === 'indexing' ||
+    isConverting ||
+    isPendingConversion
   const showIndexingState = isReindexing || isBackendIndexing
   const canReindex =
     ragConfigured &&
@@ -298,7 +303,11 @@ export function DocumentItem({
                     </TooltipTrigger>
                     <TooltipContent side="top" className="max-w-xs">
                       <p className="text-xs">
-                        {t('knowledge:document.document.indexStatus.indexingHint')}
+                        {isPendingConversion
+                          ? t('knowledge:document.document.indexStatus.pendingConversionHint')
+                          : isConverting
+                            ? t('knowledge:document.document.indexStatus.convertingHint')
+                            : t('knowledge:document.document.indexStatus.indexingHint')}
                       </p>
                     </TooltipContent>
                   </Tooltip>
@@ -552,13 +561,21 @@ export function DocumentItem({
                     size="sm"
                     className="whitespace-nowrap cursor-help bg-blue-500/10 text-blue-600 border-blue-500/20"
                   >
-                    {t('knowledge:document.document.indexStatus.indexing')}
+                    {isPendingConversion
+                      ? t('knowledge:document.document.indexStatus.pendingConversion')
+                      : isConverting
+                        ? t('knowledge:document.document.indexStatus.converting')
+                        : t('knowledge:document.document.indexStatus.indexing')}
                   </Badge>
                 </span>
               </TooltipTrigger>
               <TooltipContent side="top" className="max-w-xs">
                 <p className="text-xs">
-                  {t('knowledge:document.document.indexStatus.indexingHint')}
+                  {isPendingConversion
+                    ? t('knowledge:document.document.indexStatus.pendingConversionHint')
+                    : isConverting
+                      ? t('knowledge:document.document.indexStatus.convertingHint')
+                      : t('knowledge:document.document.indexStatus.indexingHint')}
                 </p>
               </TooltipContent>
             </Tooltip>

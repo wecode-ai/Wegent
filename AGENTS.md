@@ -13,6 +13,7 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 - **Executor Manager**: Task orchestration via Docker
 - **Chat Shell**: Lightweight AI chat engine for Chat Shell type (LangGraph + multi-LLM)
 - **Knowledge Runtime**: Standalone RAG HTTP service called by Backend (reuses knowledge_engine)
+- **Knowledge Doc Converter**: Celery worker for PDF/PPTX-to-Markdown OCR conversion (MinerU + S3)
 - **Shared**: Common utilities, models, and cryptography
 
 **Core principles:**
@@ -561,6 +562,26 @@ t('actions.save')             // Ambiguous - which namespace?
 
 **Port:** 8200 (default)
 
+### Knowledge Doc Converter
+
+**Tech:** Celery, Redis, MinerU (PDF/PPTX OCR), S3, Prometheus
+
+**Purpose:** Standalone Celery worker that converts PDF/PPTX documents to Markdown via MinerU OCR, then uploads results to S3. Communicates with Backend via internal HTTP callbacks.
+
+**Queue:** `knowledge_conversion`
+
+**Key config:**
+- `MINERU_API_BASE_URL` / `MINERU_API_KEY` — MinerU service endpoint
+- `WORKER_CONVERSION_S3_ENABLED` / `WORKER_CONVERSION_S3_*` — S3 upload settings
+- `PROMETHEUS_ENABLED` / `PROMETHEUS_PORT` / `PROMETHEUS_PATH` — Metrics endpoint
+
+**Document conversion flow:**
+1. Backend sets status to `pending_conversion` and dispatches Celery task
+2. Converter acquires distributed lock, downloads attachment via Backend API
+3. Sends document to MinerU, collects Markdown output
+4. Uploads result to S3, notifies Backend via callback (`/api/internal/conversion/callback/*`)
+5. Backend transitions status: `pending_conversion → converting → queued → indexing → success`
+
 
 ---
 
@@ -600,6 +621,7 @@ cd executor && uv run pytest
 cd executor_manager && uv run pytest
 cd chat_shell && uv run pytest
 cd knowledge_runtime && uv run pytest
+cd knowledge_doc_converter && uv run pytest
 cd shared && uv run pytest
 cd frontend && npm test
 
@@ -611,5 +633,5 @@ cd frontend && npm run format
 cd backend && uv run alembic revision --autogenerate -m "msg" && uv run alembic upgrade head
 ```
 
-**Ports:** 3000 (frontend), 8000 (backend), 8001 (chat shell), 3306 (MySQL), 6379 (Redis)
+**Ports:** 3000 (frontend), 8000 (backend), 8001 (chat shell), 8200 (knowledge runtime), 9090 (converter metrics), 3306 (MySQL), 6379 (Redis)
 
