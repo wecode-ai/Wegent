@@ -135,5 +135,23 @@ export function useKnowledgeUrlSync({
     [router]
   )
 
-  return { initialUrlSyncDone, updateUrlParams, navigateToKb }
+  // Navigate to a KB by updating the URL via history.pushState without triggering
+  // a Next.js page remount. Use this when switching KBs from the sidebar on a
+  // detail page to avoid the full unmount-remount cycle that causes UI flickering.
+  const navigateToKbViaHistory = useCallback(
+    (
+      kb: { name: string; namespace: string },
+      allKbsWithGroupInfo: Array<{ name: string; namespace: string; group_type?: string }>
+    ) => {
+      const kbWithInfo = allKbsWithGroupInfo.find(
+        k => k.name === kb.name && k.namespace === kb.namespace
+      )
+      const isOrganization = kbWithInfo?.group_type === 'organization'
+      const kbPath = buildKbUrl(kb.namespace, kb.name, isOrganization)
+      window.history.pushState({}, '', kbPath)
+    },
+    []
+  )
+
+  return { initialUrlSyncDone, updateUrlParams, navigateToKb, navigateToKbViaHistory }
 }

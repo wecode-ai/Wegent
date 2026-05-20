@@ -179,7 +179,7 @@ export function KnowledgeDocumentPageDesktop({
   )
 
   // URL sync and navigation
-  const { initialUrlSyncDone, updateUrlParams, navigateToKb } = useKnowledgeUrlSync({
+  const { initialUrlSyncDone, updateUrlParams, navigateToKbViaHistory } = useKnowledgeUrlSync({
     initialKbNamespace,
     initialKbName,
     allKnowledgeBases: sidebar.allKnowledgeBases,
@@ -259,16 +259,17 @@ export function KnowledgeDocumentPageDesktop({
     (kb: KnowledgeBase | { id: number; name: string; namespace: string }) => {
       const fullKb = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
       if (fullKb) {
-        // Only set sidebar selection if we're already on a detail page (initialKbName is defined).
-        // When on the main page, skip selectKb to avoid flashing the detail panel
-        // before navigation - URL sync on the destination page will handle selection.
-        if (initialKbName) {
-          sidebar.selectKb(fullKb)
-        }
-        navigateToKb(fullKb, sidebar.allKnowledgeBasesWithGroupInfo)
+        // Always update state and URL without causing a page remount to avoid UI flickering.
+        // Use history.pushState instead of router.push so Next.js doesn't unmount/remount
+        // the entire page component. This works for both the main page and detail pages.
+        sidebar.selectKb(fullKb)
+        // Update sidebar collapse synchronously (not via useEffect) so the
+        // sidebar state is correct in the same render cycle as the selectedKb update
+        updateSidebarCollapsed(fullKb.kb_type === 'notebook')
+        navigateToKbViaHistory(fullKb, sidebar.allKnowledgeBasesWithGroupInfo)
       }
     },
-    [sidebar, navigateToKb, initialKbName]
+    [sidebar, navigateToKbViaHistory, updateSidebarCollapsed]
   )
 
   const handleSelectAll = useCallback(() => {
