@@ -381,7 +381,12 @@ function FolderRow({
         className="flex items-center gap-2 w-full px-2 py-2 hover:bg-surface rounded-lg transition-colors text-left cursor-pointer"
         style={{ paddingLeft: `${8 + indent}px` }}
         onClick={() => onToggle(node.path)}
-        onKeyDown={e => e.key === 'Enter' && onToggle(node.path)}
+        onKeyDown={e => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            onToggle(node.path)
+          }
+        }}
         title={node.name}
       >
         {expanded ? (
@@ -624,26 +629,48 @@ export function FolderTree({
     [folders, documents, sortField, sortOrder]
   )
 
-  // Collect all folder paths for default-expand
+  // Collect all folder paths for default-expand (from source data, independent of sort)
   const allFolderPaths = useMemo(() => {
     const paths: string[] = []
-    const collect = (nodes: TreeNode[]) => {
-      for (const node of nodes) {
-        if (node.type === 'folder' || node.type === 'api-folder') {
-          paths.push(node.path)
-          collect(node.children)
+
+    // API folder paths: folder:${id}
+    const collectApiPaths = (items: KnowledgeFolder[]) => {
+      for (const f of items) {
+        paths.push(`folder:${f.id}`)
+        if (f.children) collectApiPaths(f.children)
+      }
+    }
+    collectApiPaths(folders)
+
+    // Fallback virtual folder paths from document names containing '/'
+    if (folders.length === 0) {
+      const seen = new Set<string>()
+      for (const doc of documents) {
+        const parts = doc.name.split('/')
+        for (let i = 1; i < parts.length; i++) {
+          const path = parts.slice(0, i).join('/')
+          if (!seen.has(path)) {
+            seen.add(path)
+            paths.push(path)
+          }
         }
       }
     }
-    collect(tree)
-    return paths
-  }, [tree])
 
-  // Default: all folders expanded; sync when asynchronously loaded folders change
+    return paths
+  }, [folders, documents])
+
+  // Default: all folders expanded; sync when new folders are added
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
 
   useEffect(() => {
-    setExpandedFolders(new Set(allFolderPaths))
+    setExpandedFolders(prev => {
+      const next = new Set(prev)
+      for (const path of allFolderPaths) {
+        next.add(path)
+      }
+      return next
+    })
   }, [allFolderPaths])
 
   const handleToggleFolder = (path: string) => {

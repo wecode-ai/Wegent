@@ -429,7 +429,7 @@ export function DocumentList({
   const isAllSelected =
     filteredDocuments.length > 0 && filteredDocuments.every(doc => selectedIds.has(doc.id))
 
-  const isPartialSelected = selectedIds.size > 0 && !isAllSelected
+  const isPartialSelected = filteredDocuments.some(doc => selectedIds.has(doc.id)) && !isAllSelected
 
   // Batch operations using batch API
   const handleBatchDelete = async () => {
@@ -834,7 +834,8 @@ export function DocumentList({
                     <span>{t('document.document.batch.selectAll')}</span>
                   </button>
                   <span className="text-text-muted">
-                    ({selectedIds.size}/{filteredDocuments.length})
+                    ({filteredDocuments.filter(doc => selectedIds.has(doc.id)).length}/
+                    {filteredDocuments.length})
                   </span>
                 </div>
               )}
@@ -874,10 +875,9 @@ export function DocumentList({
                   {canManageAllDocuments && (
                     <div className="flex-shrink-0">
                       <Checkbox
-                        checked={isAllSelected}
+                        checked={isPartialSelected ? 'indeterminate' : isAllSelected}
                         onCheckedChange={handleSelectAll}
                         className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
-                        {...(isPartialSelected ? { 'data-state': 'indeterminate' } : {})}
                       />
                     </div>
                   )}
