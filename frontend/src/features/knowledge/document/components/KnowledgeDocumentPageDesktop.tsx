@@ -196,6 +196,7 @@ export function KnowledgeDocumentPageDesktop({
     isGroupsLoading: sidebar.isGroupsLoading,
     selectKb: sidebar.selectKb,
     selectGroup: sidebar.selectGroup,
+    selectGroups: sidebar.selectGroups,
     selectDingtalk: sidebar.selectDingtalk,
     clearSelection: sidebar.clearSelection,
   })
