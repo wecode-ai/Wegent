@@ -1000,7 +1000,7 @@ class TestCleanupTaskExecutorAPI(CleanupExecutorTestHelpers):
         with (
             patch.object(
                 job_service,
-                "_get_active_task_resource",
+                "_get_task_resource_any_state",
                 new_callable=AsyncMock,
                 return_value=mock_task,
             ),
