@@ -52,6 +52,8 @@
     "switchProject": "切换项目",
     "currentProject": "当前项目",
     "noOnlineDevices": "没有在线设备，请先启动设备",
+    "unknownDeviceVersion": "未知版本",
+    "deviceVersionUnsupported": "当前设备版本 {{version}} 低于 {{requiredVersion}}，请升级到 {{requiredVersion}} 或更高版本后再新建项目。",
     "defaultPathHint": "不填则默认使用 ~/.wegent-executor/workspace/project{id}",
     "local": "本地设备",
     "cloud": "云端设备",
@@ -97,7 +99,8 @@
     "addTaskFailed": "添加对话失败",
     "removeTaskSuccess": "对话已从分组移除",
     "removeTaskFailed": "移除对话失败",
-    "groupChatNotSupported": "对话分组功能暂时不支持群聊加入"
+    "groupChatNotSupported": "对话分组功能暂时不支持群聊加入",
+    "taskImportPathlessOnly": "普通任务只能导入到不带路径的项目"
   },
   "colors": {
     "red": "红色",

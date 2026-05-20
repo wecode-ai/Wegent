@@ -21,6 +21,7 @@ Note: sandbox_id is derived from task_id internally (sandbox_id = str(task_id))
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 
 from executor_manager.models.sandbox import SandboxStatus
 from executor_manager.schemas.sandbox import (
@@ -50,6 +51,13 @@ router = APIRouter(prefix="/sandboxes", tags=["sandboxes"])
 # =============================================================================
 # Sandbox Lifecycle Endpoints
 # =============================================================================
+
+
+class CleanupStaleSandboxesRequest(BaseModel):
+    """Request body for stale sandbox cleanup."""
+
+    inactive_hours: int = Field(default=24, ge=1, le=720)
+    dry_run: bool = False
 
 
 @router.post("", response_model=CreateSandboxResponse)
@@ -116,6 +124,27 @@ async def create_sandbox(request: CreateSandboxRequest, http_request: Request):
         created_at=sandbox.created_at,
         expires_at=sandbox.expires_at,
         message="Sandbox created successfully",
+    )
+
+
+@router.post("/cleanup-stale")
+async def cleanup_stale_sandboxes(
+    request: CleanupStaleSandboxesRequest,
+    http_request: Request,
+):
+    """Clean up sandboxes inactive longer than the requested threshold."""
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    logger.info(
+        "[SandboxAPI] Cleanup stale sandboxes: inactive_hours=%s dry_run=%s from %s",
+        request.inactive_hours,
+        request.dry_run,
+        client_ip,
+    )
+
+    manager = get_sandbox_manager()
+    return await manager.cleanup_stale_sandboxes(
+        inactive_hours=request.inactive_hours,
+        dry_run=request.dry_run,
     )
 
 

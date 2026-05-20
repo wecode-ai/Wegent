@@ -137,6 +137,53 @@ class TestSandboxManager:
         # Repository is always initialized, but Redis client may be None
         assert manager._repository is not None
 
+    @pytest.mark.asyncio
+    async def test_cleanup_stale_sandboxes_skips_recent_sandbox(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker
+    ):
+        """Test manual cleanup does not delete sandboxes under the age threshold."""
+        manager = sandbox_manager_with_mock_redis
+        sample_sandbox.last_activity_at = time.time() - 3600
+        mocker.patch.object(
+            manager._repository, "get_active_sandbox_ids", return_value=["12345"]
+        )
+        mocker.patch.object(
+            manager._repository, "load_sandbox", return_value=sample_sandbox
+        )
+        terminate = mocker.patch.object(manager, "terminate_sandbox")
+
+        result = await manager.cleanup_stale_sandboxes(inactive_hours=24)
+
+        assert result["deleted"] == []
+        assert result["skipped"][0]["reason"] == "not_stale"
+        terminate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cleanup_stale_sandboxes_deletes_old_sandbox(
+        self, sandbox_manager_with_mock_redis, sample_sandbox, mocker
+    ):
+        """Test manual cleanup deletes sandboxes beyond the age threshold."""
+        manager = sandbox_manager_with_mock_redis
+        sample_sandbox.last_activity_at = time.time() - (25 * 3600)
+        mocker.patch.object(
+            manager._repository, "get_active_sandbox_ids", return_value=["12345"]
+        )
+        mocker.patch.object(
+            manager._repository, "load_sandbox", return_value=sample_sandbox
+        )
+        terminate = mocker.patch.object(
+            manager,
+            "terminate_sandbox",
+            new_callable=AsyncMock,
+            return_value=(True, "terminated"),
+        )
+
+        result = await manager.cleanup_stale_sandboxes(inactive_hours=24)
+
+        assert result["skipped"] == []
+        assert result["deleted"][0]["sandbox_id"] == "12345"
+        terminate.assert_awaited_once_with("12345")
+
     # ----- create_sandbox Tests -----
 
     @pytest.mark.asyncio

@@ -7,6 +7,19 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 
+def _make_json_serializable(value):
+    """Convert validation error details into JSON-serializable values."""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    if isinstance(value, dict):
+        return {key: _make_json_serializable(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_make_json_serializable(item) for item in value]
+    if isinstance(value, tuple):
+        return [_make_json_serializable(item) for item in value]
+    return value
+
+
 class NotFoundException(HTTPException):
     """Resource not found exception"""
 
@@ -63,7 +76,7 @@ async def validation_exception_handler(request, exc: RequestValidationError):
         content={
             "error_code": status.HTTP_422_UNPROCESSABLE_ENTITY,
             "detail": "Request parameter validation failed",
-            "errors": exc.errors(),
+            "errors": _make_json_serializable(exc.errors()),
         },
     )
 

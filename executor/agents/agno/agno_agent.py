@@ -173,9 +173,35 @@ class AgnoAgent(Agent):
         self.is_silent_exit: bool = False
         self.silent_exit_reason: str = ""
 
+        # Maps id(ToolExecution) → generated UUID for correlating tool_start and tool_done
+        # when the LLM does not provide a tool_call_id
+        self._pending_tool_ids: Dict[int, str] = {}
+
         # Note: emitter is created in base class Agent.__init__()
         # using EmitterBuilder with CallbackTransport
         # Access via self.get_emitter()
+
+    def _get_tool_use_id(self, tool: Any) -> str:
+        """Return stable tool_use_id for tool_call_started events.
+
+        Uses ToolExecution.tool_call_id when available; otherwise generates a UUID
+        and caches it by object identity so the paired tool_call_completed event
+        can retrieve the same ID via _pop_tool_use_id.
+        """
+        tool_call_id = getattr(tool, "tool_call_id", "") or ""
+        if tool_call_id:
+            return tool_call_id
+        obj_id = id(tool)
+        if obj_id not in self._pending_tool_ids:
+            self._pending_tool_ids[obj_id] = str(uuid.uuid4())
+        return self._pending_tool_ids[obj_id]
+
+    def _pop_tool_use_id(self, tool: Any) -> str:
+        """Return and remove the cached tool_use_id for tool_call_completed events."""
+        tool_call_id = getattr(tool, "tool_call_id", "") or ""
+        if tool_call_id:
+            return tool_call_id
+        return self._pending_tool_ids.pop(id(tool), str(uuid.uuid4()))
 
     def add_thinking_step(
         self,
@@ -758,9 +784,7 @@ class AgnoAgent(Agent):
         if run_response_event.event in [RunEvent.tool_call_started]:
             tool_name = run_response_event.tool.tool_name
             tool_args = run_response_event.tool.tool_args
-            tool_use_id = getattr(run_response_event.tool, "id", "") or str(
-                uuid.uuid4()
-            )
+            tool_use_id = self._get_tool_use_id(run_response_event.tool)
 
             logger.info(f"🔧 AGENT TOOL STARTED: {tool_name}")
             logger.info(f"   Args: {tool_args}")
@@ -803,9 +827,7 @@ class AgnoAgent(Agent):
         if run_response_event.event in [RunEvent.tool_call_completed]:
             tool_name = run_response_event.tool.tool_name
             tool_result = run_response_event.tool.result
-            tool_use_id = getattr(run_response_event.tool, "id", "") or str(
-                uuid.uuid4()
-            )
+            tool_use_id = self._pop_tool_use_id(run_response_event.tool)
 
             logger.info(f"✅ AGENT TOOL COMPLETED: {tool_name}")
             logger.info(f"   Result: {tool_result[:100] if tool_result else 'None'}...")
@@ -1309,9 +1331,7 @@ class AgnoAgent(Agent):
         if run_response_event.event in [TeamRunEvent.tool_call_started]:
             tool_name = run_response_event.tool.tool_name
             tool_args = run_response_event.tool.tool_args
-            tool_use_id = getattr(run_response_event.tool, "id", "") or str(
-                uuid.uuid4()
-            )
+            tool_use_id = self._get_tool_use_id(run_response_event.tool)
 
             logger.info(f"\n🔧 TEAM TOOL STARTED: {tool_name}")
             logger.info(f"   Args: {tool_args}")
@@ -1354,9 +1374,7 @@ class AgnoAgent(Agent):
         if run_response_event.event in [TeamRunEvent.tool_call_completed]:
             tool_name = run_response_event.tool.tool_name
             tool_result = run_response_event.tool.result
-            tool_use_id = getattr(run_response_event.tool, "id", "") or str(
-                uuid.uuid4()
-            )
+            tool_use_id = self._pop_tool_use_id(run_response_event.tool)
 
             logger.info(f"\n✅ TEAM TOOL COMPLETED: {tool_name}")
 
@@ -1411,9 +1429,7 @@ class AgnoAgent(Agent):
         if run_response_event.event in [RunEvent.tool_call_started]:
             tool_name = run_response_event.tool.tool_name
             tool_args = run_response_event.tool.tool_args
-            tool_use_id = getattr(run_response_event.tool, "id", "") or str(
-                uuid.uuid4()
-            )
+            tool_use_id = self._get_tool_use_id(run_response_event.tool)
 
             logger.info(f"\n🤖 MEMBER TOOL STARTED: {run_response_event.agent_id}")
             logger.info(f"   Tool: {tool_name}")
@@ -1457,9 +1473,7 @@ class AgnoAgent(Agent):
         if run_response_event.event in [RunEvent.tool_call_completed]:
             tool_name = run_response_event.tool.tool_name
             tool_result = run_response_event.tool.result
-            tool_use_id = getattr(run_response_event.tool, "id", "") or str(
-                uuid.uuid4()
-            )
+            tool_use_id = self._pop_tool_use_id(run_response_event.tool)
 
             logger.info(f"\n✅ MEMBER TOOL COMPLETED: {run_response_event.agent_id}")
             logger.info(f"   Tool: {tool_name}")

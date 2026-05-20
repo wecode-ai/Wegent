@@ -176,6 +176,44 @@ class _ExecutorRuntimeClient:
         except Exception as e:
             return False, self._format_http_error(e)
 
+    async def cleanup_stale_sandboxes(
+        self,
+        inactive_hours: int = 24,
+        dry_run: bool = False,
+    ):
+        """Clean up stale sandboxes via executor_manager API."""
+        import httpx
+
+        from app.core.config import settings
+
+        base_url = settings.EXECUTOR_MANAGER_URL.rstrip("/")
+        url = f"{base_url}/executor-manager/sandboxes/cleanup-stale"
+        payload = {"inactive_hours": inactive_hours, "dry_run": dry_run}
+
+        try:
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                response = await client.post(
+                    url,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+                response.raise_for_status()
+                return response.json()
+        except Exception as e:
+            return {
+                "target": "sandboxes",
+                "inactive_hours": inactive_hours,
+                "dry_run": dry_run,
+                "deleted": [],
+                "skipped": [],
+                "failed": [
+                    {
+                        "reason": "executor_manager_error",
+                        "error": self._format_http_error(e),
+                    }
+                ],
+            }
+
     async def prepare_executor(self, request: ExecutionRequest):
         """Prepare a normal executor runtime without dispatching the task."""
         import httpx

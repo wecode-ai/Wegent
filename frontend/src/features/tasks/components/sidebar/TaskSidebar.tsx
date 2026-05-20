@@ -725,7 +725,7 @@ function TaskHistorySection({
   isHistoryManageDialogOpen: _isHistoryManageDialogOpen,
   setIsHistoryManageDialogOpen,
 }: TaskHistorySectionProps) {
-  const { projectTaskIds, projects, isWorkspaceEnabled } = useProjectContext()
+  const { projectTaskIds, projects } = useProjectContext()
 
   // Filter out tasks that are already in projects from history lists
   const filteredPersonalTasks = React.useMemo(
@@ -871,11 +871,6 @@ function TaskHistorySection({
           className={filteredGroupTasks.length > 0 ? 'pt-3 mt-2 border-t border-border-light' : ''}
         >
           <ProjectSection onTaskSelect={onTaskSelect} />
-          {isWorkspaceEnabled && (
-            <div className="pt-3 mt-2 border-t border-border-light">
-              <ProjectSection onTaskSelect={onTaskSelect} variant="workspace" />
-            </div>
-          )}
         </div>
       )}
 

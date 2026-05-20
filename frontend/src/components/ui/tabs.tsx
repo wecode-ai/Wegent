@@ -48,7 +48,11 @@ const TabsContent = React.forwardRef<
   <TabsPrimitive.Content
     ref={ref}
     className={cn(
-      'mt-2 ring-offset-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
+      // data-[state=inactive]:hidden uses display:none !important to ensure
+      // inactive tab content is hidden even when flex/grid classes are applied.
+      // Without this, Tailwind's flex class overrides the HTML hidden attribute
+      // that Radix sets, causing all tab panels to render simultaneously.
+      'mt-2 ring-offset-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 data-[state=inactive]:hidden',
       className
     )}
     {...props}

@@ -52,6 +52,8 @@
     "switchProject": "Switch Project",
     "currentProject": "Current Project",
     "noOnlineDevices": "No online devices. Please start a device first.",
+    "unknownDeviceVersion": "unknown version",
+    "deviceVersionUnsupported": "Selected device version {{version}} is below {{requiredVersion}}. Upgrade to {{requiredVersion}} or later before creating a project.",
     "defaultPathHint": "If empty, defaults to ~/.wegent-executor/workspace/project{id}",
     "local": "Local device",
     "cloud": "Cloud device",
@@ -97,7 +99,8 @@
     "addTaskFailed": "Failed to add task",
     "removeTaskSuccess": "Task removed from project",
     "removeTaskFailed": "Failed to remove task",
-    "groupChatNotSupported": "Group chats cannot be added to chat groups"
+    "groupChatNotSupported": "Group chats cannot be added to chat groups",
+    "taskImportPathlessOnly": "Ordinary tasks can only be imported into pathless projects"
   },
   "colors": {
     "red": "Red",
