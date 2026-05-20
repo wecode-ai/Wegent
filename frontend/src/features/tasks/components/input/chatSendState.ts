@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export type ChatPrimaryAction = 'send' | 'queue' | 'stop' | 'loading'
+export type ChatPrimaryAction = 'send' | 'queue' | 'stop' | 'cancel' | 'loading'
 
 interface ChatSendStateInput {
   isLoading: boolean
@@ -76,10 +76,10 @@ export function getChatSendState(input: ChatSendStateInput): ChatSendState {
 
   if (input.selectedTaskStatus === 'PENDING') {
     return {
-      primaryAction: 'loading',
-      isPrimaryDisabled: true,
+      primaryAction: 'cancel',
+      isPrimaryDisabled: false,
       showStopAction: false,
-      showPendingAction: true,
+      showPendingAction: false,
     }
   }
 

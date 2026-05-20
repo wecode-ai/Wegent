@@ -58,6 +58,16 @@
     "send_failed": "引导发送失败",
     "no_active_stream": "当前没有可接收引导的回复"
   },
+  "pending_task_confirm": {
+    "eyebrow": "任务接续确认",
+    "title": "上一条任务尚未开始",
+    "description": "发送新消息前，需要先处理上一条未开始的任务。",
+    "wait": "继续等待",
+    "wait_hint": "保留当前任务",
+    "confirm": "取消上一条并发送",
+    "confirm_hint": "开始这条新消息",
+    "confirming": "处理中..."
+  },
   "status": {
     "typing": "AI 正在输入...",
     "thinking": "AI 正在思考...",
