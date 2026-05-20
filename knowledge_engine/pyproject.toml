@@ -37,6 +37,7 @@ dependencies = [
     "orjson>=3.9.0",
     "langchain-text-splitters>=0.3.0",
     "wegent-shared",
+    "boto3>=1.42.97",
 ]
 
 [tool.uv.sources]

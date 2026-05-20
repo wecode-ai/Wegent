@@ -61,10 +61,12 @@ from app.api.endpoints.adapter import (
     teams,
     templates,
 )
+from app.api.endpoints.internal import attachments_router as internal_attachments_router
 from app.api.endpoints.internal import bots_router as internal_bots_router
 from app.api.endpoints.internal import (
     callback_router,
     chat_storage_router,
+    conversion_callback_router,
     object_storage_router,
     rag_content_router,
     services_router,
@@ -255,4 +257,14 @@ api_router.include_router(
 )
 api_router.include_router(
     callback_router, prefix="/internal", tags=["internal-callback"]
+)
+api_router.include_router(
+    internal_attachments_router,
+    prefix="/internal",
+    tags=["internal-attachments"],
+)
+api_router.include_router(
+    conversion_callback_router,
+    prefix="/internal",
+    tags=["internal-conversion-callback"],
 )

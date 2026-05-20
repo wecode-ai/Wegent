@@ -67,11 +67,22 @@ celery_app.conf.update(
     task_default_retry_delay=60,  # 1 minute default retry delay
     # Default queue configuration
     task_default_queue=settings.CELERY_TASK_DEFAULT_QUEUE,
+    # Task routing - conversion tasks go to dedicated queue
+    # knowledge_doc_converter microservice consumes this queue
+    task_routes={
+        "knowledge_doc_converter.convert_document": {
+            "queue": settings.KNOWLEDGE_CONVERSION_QUEUE,
+        },
+    },
     # Beat schedule for periodic tasks
     beat_schedule={
         "check-due-subscriptions": {
             "task": "app.tasks.subscription_tasks.check_due_subscriptions",
             "schedule": float(settings.FLOW_SCHEDULER_INTERVAL_SECONDS),
+        },
+        "scan-stale-index-tasks": {
+            "task": "app.tasks.knowledge_tasks.scan_stale_index_tasks",
+            "schedule": 5 * 60,  # every 5 minutes
         },
     },
     # Beat scheduler class - Use default PersistentScheduler (file-based)

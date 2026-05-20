@@ -128,6 +128,7 @@ dependencies = [
     # Shared utilities (monorepo workspace dependency)
     "wegent-shared",
     "minio>=7.2.20",
+    "boto3>=1.42.97",
 ]
 
 [tool.uv.sources]
