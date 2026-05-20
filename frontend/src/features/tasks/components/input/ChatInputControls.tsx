@@ -115,6 +115,8 @@ export interface ChatInputControlsProps {
 
   // Actions
   onStopStream: () => void
+  onCancelTask?: () => void
+  isCancelling?: boolean
   onSendMessage: () => void
   onSendGuidance?: () => void
 
@@ -227,6 +229,8 @@ export function ChatInputControls({
   canQueueMessage = false,
   canSendGuidance = false,
   onStopStream,
+  onCancelTask,
+  isCancelling = false,
   onSendMessage,
   onSendGuidance,
   hasNoTeams = false,
@@ -312,6 +316,22 @@ export function ChatInputControls({
       />
     )
 
+    const renderCancelTaskAction = () => {
+      if (isCancelling) {
+        return renderStoppingAction()
+      }
+
+      return (
+        <ActionButton
+          onClick={onCancelTask}
+          title="Cancel task"
+          icon={<CircleStop className="h-4 w-4 text-orange-500" />}
+          className="hover:bg-orange-100"
+          data-testid="cancel-task-button"
+        />
+      )
+    }
+
     if (sendState.primaryAction === 'loading') {
       if (sendState.showStopAction) {
         return renderStoppingAction()
@@ -326,6 +346,10 @@ export function ChatInputControls({
 
     if (sendState.primaryAction === 'stop') {
       return renderStopAction()
+    }
+
+    if (sendState.primaryAction === 'cancel') {
+      return renderCancelTaskAction()
     }
 
     if (sendState.primaryAction === 'queue') {
@@ -396,6 +420,8 @@ export function ChatInputControls({
         canQueueMessage={canQueueMessage}
         canSendGuidance={canSendGuidance}
         onStopStream={onStopStream}
+        onCancelTask={onCancelTask}
+        isCancelling={isCancelling}
         onSendMessage={onSendMessage}
         onSendGuidance={onSendGuidance}
         hasNoTeams={hasNoTeams}

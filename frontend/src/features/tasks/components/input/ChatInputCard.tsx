@@ -200,6 +200,8 @@ export function ChatInputCard({
   isSubtaskStreaming,
   canSendGuidance,
   onStopStream,
+  onCancelTask,
+  isCancelling,
   onSendMessage,
   onSendGuidance,
   // Skill selector props
@@ -608,6 +610,8 @@ export function ChatInputCard({
             canQueueMessage={canQueueMessage}
             canSendGuidance={canSendGuidance}
             onStopStream={onStopStream}
+            onCancelTask={onCancelTask}
+            isCancelling={isCancelling}
             onSendMessage={onSendMessage}
             onSendGuidance={onSendGuidance}
             hasNoTeams={hasNoTeams}
