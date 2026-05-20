@@ -18,7 +18,7 @@ import type {
   KnowledgeBase,
   AllGroupedKnowledgeResponse,
   KnowledgeBaseWithGroupInfo,
-  KnowledgeGroupType,
+  KbGroupInfo,
 } from '@/types/knowledge'
 import type { KbDataItem } from '../components/KnowledgeGroupListPage'
 import type { Group } from '@/types/group'
@@ -50,12 +50,8 @@ export interface RecentAccessItem {
   accessedAt: number
 }
 
-/** Group info for a knowledge base */
-export interface KbGroupInfo {
-  groupId: string
-  groupName: string
-  groupType: KnowledgeGroupType
-}
+// Re-export KbGroupInfo from types for convenience
+export type { KbGroupInfo } from '@/types/knowledge'
 
 export interface UseKnowledgeSidebarReturn {
   // Favorites
@@ -260,11 +256,18 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
 
     // Remove duplicates by (id, group_id) so the same KB can appear in different groups
     const seen = new Set<string>()
-    return all.filter(kb => {
+    const deduped = all.filter(kb => {
       const key = `${kb.id}-${kb.group_id}`
       if (seen.has(key)) return false
       seen.add(key)
       return true
+    })
+
+    // Sort by updated_at DESC globally (most recent first)
+    return deduped.sort((a, b) => {
+      const aTime = a.updated_at ? new Date(a.updated_at).getTime() : 0
+      const bTime = b.updated_at ? new Date(b.updated_at).getTime() : 0
+      return bTime - aTime
     })
   }, [allGroupedData])
 
@@ -463,17 +466,16 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
       setViewMode('kb')
       addRecentAccess(kb)
 
-      // For notebook type, fetch full KB data to get guided_questions
-      // before setting selectedKb - avoids a double render with incomplete data
+      // For notebook type, set selectedKb immediately with available data to avoid
+      // flashing the empty state, then fetch full KB data to get guided_questions
       if (kb.kb_type === 'notebook') {
+        setSelectedKb(kb)
         getKnowledgeBase(kb.id)
           .then(fullKb => {
             // Discard stale response if user has since selected a different KB
             setSelectedKb(prev => {
               if (latestSelectedKbIdRef.current !== kb.id) return prev
-              // First time setting or same KB
-              if (!prev || prev.id === kb.id) return fullKb
-              return prev
+              return fullKb
             })
           })
           .catch(error => {

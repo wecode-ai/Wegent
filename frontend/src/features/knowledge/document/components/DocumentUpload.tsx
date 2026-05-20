@@ -750,7 +750,8 @@ export function DocumentUpload({
               <ClipboardPaste className="w-4 h-4 mr-2" />
               {t('document.upload.pasteText')}
             </Button>
-            {onTableAdd && (
+            {/* Table add button hidden - deprecated in favor of DingTalk document sync */}
+            {/* {onTableAdd && (
               <Button
                 variant="outline"
                 size="sm"
@@ -761,7 +762,7 @@ export function DocumentUpload({
                 <Link className="w-4 h-4 mr-2" />
                 {t('document.upload.addTable')}
               </Button>
-            )}
+            )} */}
           </div>
 
           <p className="text-xs text-text-muted mt-4">
