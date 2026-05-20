@@ -36,8 +36,14 @@ def get_folder_depth(
 
     depth = 0
     current_id = folder_id
+    visited_ids: set[int] = set()
 
     while current_id > 0:
+        if current_id in visited_ids:
+            raise ValueError(
+                f"Folder {current_id} has a parent cycle and cannot be traversed safely"
+            )
+        visited_ids.add(current_id)
         current_folder = folder_map.get(current_id) if folder_map is not None else None
         if current_folder is None:
             current_folder = (
@@ -63,6 +69,21 @@ def validate_new_folder_depth(
     *,
     folder_map: Optional[Dict[int, KnowledgeFolder]] = None,
 ) -> None:
+    """Validate folder depth for a new folder under the given parent.
+
+    Args:
+        db: Active database session.
+        kind_id: Knowledge base identifier that owns the folder tree.
+        parent_id: Parent folder identifier, or 0 for the knowledge base root.
+        folder_map: Optional in-memory folder lookup used to avoid extra queries.
+
+    Returns:
+        None.
+
+    Raises:
+        ValueError: Raised with FOLDER_DEPTH_EXCEEDED_MESSAGE when the new folder
+            would exceed the maximum allowed folder depth.
+    """
     parent_depth = get_folder_depth(db, kind_id, parent_id, folder_map=folder_map)
     new_depth = parent_depth + 1
     if new_depth > MAX_FOLDER_DEPTH:
@@ -76,6 +97,21 @@ def validate_document_target_folder_depth(
     *,
     folder_map: Optional[Dict[int, KnowledgeFolder]] = None,
 ) -> None:
+    """Validate folder depth for a document target folder.
+
+    Args:
+        db: Active database session.
+        kind_id: Knowledge base identifier that owns the folder tree.
+        folder_id: Target folder identifier, or 0 for the knowledge base root.
+        folder_map: Optional in-memory folder lookup used to avoid extra queries.
+
+    Returns:
+        None.
+
+    Raises:
+        ValueError: Raised with DOCUMENT_FOLDER_DEPTH_EXCEEDED_MESSAGE when the
+            target folder exceeds the maximum allowed folder depth.
+    """
     target_depth = get_folder_depth(db, kind_id, folder_id, folder_map=folder_map)
     if target_depth > MAX_FOLDER_DEPTH:
         raise ValueError(DOCUMENT_FOLDER_DEPTH_EXCEEDED_MESSAGE)
@@ -89,9 +125,14 @@ def assert_document_can_be_placed_in_folder(
     """Validate that a document can be placed in the target folder.
 
     Returns the folder row when folder_id > 0 so callers can reuse it if needed.
-    Root placement (folder_id == 0) is always allowed and returns None.
+    Only folder_id == 0 is treated as the knowledge base root and returns None.
+    Negative folder IDs are invalid and also return None for callers that treat
+    them as a rejected target.
     """
-    if folder_id <= 0:
+    if folder_id < 0:
+        return None
+
+    if folder_id == 0:
         return None
 
     folder = (
@@ -119,8 +160,14 @@ def get_subtree_max_relative_depth(
 
     max_depth = 1
     queue = deque([(root_folder_id, 1)])
+    visited_ids: set[int] = set()
     while queue:
         current_id, depth = queue.popleft()
+        if current_id in visited_ids:
+            raise ValueError(
+                f"Folder {current_id} has a parent cycle and cannot be traversed safely"
+            )
+        visited_ids.add(current_id)
         max_depth = max(max_depth, depth)
         for child_id in children_map.get(current_id, []):
             queue.append((child_id, depth + 1))
