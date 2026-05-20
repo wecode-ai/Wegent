@@ -390,7 +390,7 @@ export function KnowledgeDocumentPageDesktop({
 
   const handleKnowledgeBaseTypeConverted = useCallback(
     (updatedKb: KnowledgeBase) => {
-      sidebar.replaceKnowledgeBase(updatedKb)
+      sidebar.syncConvertedKnowledgeBase(updatedKb)
       dialogs.setEditingKb(updatedKb)
     },
     [sidebar, dialogs]
