@@ -23,7 +23,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
-import { listKnowledgeBases } from '@/apis/knowledge'
+import { getOrganizationNamespace, listKnowledgeBases } from '@/apis/knowledge'
 import type { KnowledgeBase } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { toast } from '@/hooks/use-toast'
@@ -37,31 +37,55 @@ interface TransferToKbDialogProps {
   selectedFolderCount: number
   /** Current knowledge base ID (excluded from target list) */
   currentKnowledgeBaseId: number
+  /** Current knowledge base namespace used to filter allowed target namespaces */
+  currentKnowledgeBaseNamespace: string
   /** Callback when user confirms the transfer */
   onConfirm: (targetKbId: number) => Promise<void>
   /** Whether the transfer operation is in progress */
   isSubmitting?: boolean
+  /** Progress text shown while a transfer is running */
+  progressText?: string
 }
 /**
  * Group knowledge bases by their namespace for display
  * - namespace === 'default' -> personal KB
  * - other namespaces -> team/organization KB (we treat them as "team" for simplicity)
  */
-function groupKnowledgeBases(kbs: KnowledgeBase[]) {
+function getNamespaceScope(namespace: string, organizationNamespace: string | null) {
+  if (namespace === 'default') return 'personal'
+  if (organizationNamespace && namespace === organizationNamespace) return 'organization'
+  return 'group'
+}
+
+function canTransferToNamespace(
+  sourceNamespace: string,
+  targetNamespace: string,
+  organizationNamespace: string | null
+) {
+  const sourceScope = getNamespaceScope(sourceNamespace, organizationNamespace)
+  const targetScope = getNamespaceScope(targetNamespace, organizationNamespace)
+  if (sourceScope === 'personal') return targetScope === 'group' || targetScope === 'organization'
+  if (sourceScope === 'group') return targetScope === 'personal' || targetScope === 'organization'
+  return targetScope === 'organization'
+}
+
+function groupKnowledgeBases(kbs: KnowledgeBase[], organizationNamespace: string | null) {
   const personal: KnowledgeBase[] = []
   const team: KnowledgeBase[] = []
+  const organization: KnowledgeBase[] = []
 
   for (const kb of kbs) {
-    // namespace === 'default' means personal KB
-    if (kb.namespace === 'default') {
+    const scope = getNamespaceScope(kb.namespace, organizationNamespace)
+    if (scope === 'personal') {
       personal.push(kb)
+    } else if (scope === 'organization') {
+      organization.push(kb)
     } else {
-      // All other namespaces are treated as team/org KBs
       team.push(kb)
     }
   }
 
-  return { personal, team }
+  return { personal, team, organization }
 }
 
 export function TransferToKbDialog({
@@ -70,21 +94,32 @@ export function TransferToKbDialog({
   selectedDocumentCount,
   selectedFolderCount,
   currentKnowledgeBaseId,
+  currentKnowledgeBaseNamespace,
   onConfirm,
   isSubmitting = false,
+  progressText,
 }: TransferToKbDialogProps) {
   const { t } = useTranslation('knowledge')
   const [targetKbId, setTargetKbId] = useState<string>('')
   const [allKbs, setAllKbs] = useState<KnowledgeBase[]>([])
+  const [organizationNamespace, setOrganizationNamespace] = useState<string | null>(null)
   const [loadingKbs, setLoadingKbs] = useState(false)
 
   // Fetch all KBs when dialog opens (personal, team, organization)
   useEffect(() => {
     if (open) {
       setLoadingKbs(true)
-      listKnowledgeBases('all')
-        .then(res => {
-          setAllKbs(res.items.filter(kb => kb.id !== currentKnowledgeBaseId))
+      Promise.all([listKnowledgeBases('all'), getOrganizationNamespace()])
+        .then(([res, org]) => {
+          const orgNamespace = org.namespace
+          setOrganizationNamespace(orgNamespace)
+          setAllKbs(
+            res.items.filter(
+              kb =>
+                kb.id !== currentKnowledgeBaseId &&
+                canTransferToNamespace(currentKnowledgeBaseNamespace, kb.namespace, orgNamespace)
+            )
+          )
         })
         .catch(() => {
           setAllKbs([])
@@ -95,7 +130,7 @@ export function TransferToKbDialog({
         })
         .finally(() => setLoadingKbs(false))
     }
-  }, [open, currentKnowledgeBaseId])
+  }, [open, currentKnowledgeBaseId, currentKnowledgeBaseNamespace, t])
 
   // Clear targetKbId when dialog closes (handles both UI interaction and parent prop change)
   useEffect(() => {
@@ -105,7 +140,10 @@ export function TransferToKbDialog({
   }, [open])
 
   // Group KBs by type
-  const groupedKbs = useMemo(() => groupKnowledgeBases(allKbs), [allKbs])
+  const groupedKbs = useMemo(
+    () => groupKnowledgeBases(allKbs, organizationNamespace),
+    [allKbs, organizationNamespace]
+  )
   const hasKbs = allKbs.length > 0
 
   const handleOpenChange = (newOpen: boolean) => {
@@ -175,7 +213,7 @@ export function TransferToKbDialog({
                     </>
                   )}
 
-                  {/* Team/Organization KBs */}
+                  {/* Team KBs */}
                   {groupedKbs.team.length > 0 && (
                     <>
                       <SelectItem
@@ -192,10 +230,34 @@ export function TransferToKbDialog({
                       ))}
                     </>
                   )}
+
+                  {/* Organization KBs */}
+                  {groupedKbs.organization.length > 0 && (
+                    <>
+                      <SelectItem
+                        value="__organization_group__"
+                        disabled
+                        className="font-semibold text-text-secondary"
+                      >
+                        {t('knowledgeBase.organization')}
+                      </SelectItem>
+                      {groupedKbs.organization.map(kb => (
+                        <SelectItem key={kb.id} value={String(kb.id)}>
+                          {kb.namespace} / {kb.name}
+                        </SelectItem>
+                      ))}
+                    </>
+                  )}
                 </SelectContent>
               </Select>
             )}
           </div>
+          {isSubmitting && progressText && (
+            <div className="flex items-center gap-2 rounded-md bg-primary/5 px-3 py-2 text-sm text-primary">
+              <Spinner />
+              <span>{progressText}</span>
+            </div>
+          )}
         </div>
 
         <DialogFooter>

@@ -32,7 +32,6 @@ from app.services.knowledge.folder_policy import (
     validate_folder_move_depth,
     validate_new_folder_depth,
 )
-from app.schemas.knowledge import BatchOperationResult
 from app.services.knowledge.knowledge_service import KnowledgeService
 
 logger = logging.getLogger(__name__)

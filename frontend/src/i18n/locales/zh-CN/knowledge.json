@@ -232,7 +232,7 @@
       "batchMoveDocumentHint": "将 {{count}} 个已选文档移动到：",
       "batchMoveSuccess": "已成功移动 {{count}} 个文档",
       "batchMoveFailed": "移动文档失败",
-      "batchMovePartial": "成功移动 {{success}} 个，{{failed}} 个失败"
+      "batchMovePartial": "批量移动完成：成功 {{success}} 个，失败 {{failed}} 个。失败文档仍保留选中状态，请查看高亮项后重试"
     },
     "document": {
       "title": "文档",
@@ -308,13 +308,14 @@
         "move": "移动",
         "transfer": "转移到知识库",
         "transferTitle": "转移到其他知识库",
-        "transferHint": "将 {{docCount}} 个文档和 {{folderCount}} 个文件夹转移到另一个个人知识库，文件夹结构将被保留。",
+        "transferHint": "将 {{docCount}} 个文档和 {{folderCount}} 个文件夹转移到允许的目标知识库，文件夹结构将被保留。",
         "selectTargetKb": "选择目标知识库",
         "targetKbRequired": "请选择目标知识库",
         "transferring": "转移中...",
+        "transferringProgress": "正在转移 {{current}}/{{total}} 项...",
         "transferSuccess": "已成功转移 {{docCount}} 个文档和 {{folderCount}} 个文件夹",
         "transferFailed": "转移失败",
-        "noOtherKbs": "没有其他可用的个人知识库"
+        "noOtherKbs": "没有符合转移规则的目标知识库"
       },
       "detail": {
         "title": "文档详情",

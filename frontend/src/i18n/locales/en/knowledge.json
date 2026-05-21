@@ -232,7 +232,7 @@
       "batchMoveDocumentHint": "Move {{count}} selected documents to:",
       "batchMoveSuccess": "{{count}} document(s) moved successfully",
       "batchMoveFailed": "Failed to move documents",
-      "batchMovePartial": "{{success}} moved, {{failed}} failed"
+      "batchMovePartial": "Batch move completed: {{success}} succeeded, {{failed}} failed. Failed documents remain selected and highlighted for retry"
     },
     "document": {
       "title": "Documents",
@@ -308,13 +308,14 @@
         "move": "Move",
         "transfer": "Transfer to KB",
         "transferTitle": "Transfer to Knowledge Base",
-        "transferHint": "Transfer {{docCount}} document(s) and {{folderCount}} folder(s) to another personal knowledge base. The folder structure will be preserved.",
+        "transferHint": "Transfer {{docCount}} document(s) and {{folderCount}} folder(s) to an allowed target knowledge base. The folder structure will be preserved.",
         "selectTargetKb": "Select target knowledge base",
         "targetKbRequired": "Please select a target knowledge base",
         "transferring": "Transferring...",
+        "transferringProgress": "Transferring {{current}}/{{total}} item(s)...",
         "transferSuccess": "Transferred {{docCount}} document(s) and {{folderCount}} folder(s) successfully",
         "transferFailed": "Transfer failed",
-        "noOtherKbs": "No other personal knowledge bases available"
+        "noOtherKbs": "No target knowledge bases match the transfer rules"
       },
       "detail": {
         "title": "Document Detail",
