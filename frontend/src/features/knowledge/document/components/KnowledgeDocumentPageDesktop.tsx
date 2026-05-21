@@ -196,6 +196,7 @@ export function KnowledgeDocumentPageDesktop({
     isGroupsLoading: sidebar.isGroupsLoading,
     selectKb: sidebar.selectKb,
     selectGroup: sidebar.selectGroup,
+    selectGroups: sidebar.selectGroups,
     selectDingtalk: sidebar.selectDingtalk,
     clearSelection: sidebar.clearSelection,
   })
@@ -389,7 +390,7 @@ export function KnowledgeDocumentPageDesktop({
 
   const handleKnowledgeBaseTypeConverted = useCallback(
     (updatedKb: KnowledgeBase) => {
-      sidebar.replaceKnowledgeBase(updatedKb)
+      sidebar.syncConvertedKnowledgeBase(updatedKb)
       dialogs.setEditingKb(updatedKb)
     },
     [sidebar, dialogs]

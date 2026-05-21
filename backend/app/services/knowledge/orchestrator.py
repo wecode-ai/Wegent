@@ -2072,6 +2072,23 @@ class KnowledgeOrchestrator:
                 "error_message": "Document not found or access denied",
             }
 
+        # Verify manage permission before mutating content
+        from app.models.kind import Kind
+
+        kb = (
+            db.query(Kind)
+            .filter(Kind.id == document.kind_id, Kind.kind == "KnowledgeBase")
+            .first()
+        )
+        if not kb:
+            return {
+                "success": False,
+                "document": None,
+                "error_code": "KB_NOT_FOUND",
+                "error_message": "Knowledge base not found for document",
+            }
+        KnowledgeService._assert_can_manage_document(db, kb, document, user.id)
+
         if document.source_type != DocumentSourceType.WEB.value:
             return {
                 "success": False,
@@ -2114,11 +2131,11 @@ class KnowledgeOrchestrator:
         if document.attachment_id:
             # Try to overwrite existing attachment
             try:
-                attachment, _ = context_service.overwrite_attachment(
+                attachment, _ = context_service.overwrite_attachment_internal(
                     db=db,
                     context_id=document.attachment_id,
-                    user_id=user.id,
                     filename=document.name,
+                    reason="web_refresh",
                     binary_data=content_bytes,
                 )
                 logger.info(

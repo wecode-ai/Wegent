@@ -21,6 +21,7 @@ interface UseKnowledgeUrlSyncParams {
   isGroupsLoading: boolean
   selectKb: (kb: KnowledgeBase) => void
   selectGroup: (groupId: string) => void
+  selectGroups: () => void
   selectDingtalk: () => void
   clearSelection: () => void
 }
@@ -32,6 +33,7 @@ export function useKnowledgeUrlSync({
   isGroupsLoading,
   selectKb,
   selectGroup,
+  selectGroups,
   selectDingtalk,
   clearSelection,
 }: UseKnowledgeUrlSyncParams) {
@@ -87,6 +89,8 @@ export function useKnowledgeUrlSync({
           selectKb(found)
         }
       }
+    } else if (groupParam === 'all-groups') {
+      selectGroups()
     } else if (groupParam === 'dingtalk') {
       selectDingtalk()
     } else if (groupParam) {
@@ -103,6 +107,7 @@ export function useKnowledgeUrlSync({
     isGroupsLoading,
     selectKb,
     selectGroup,
+    selectGroups,
     selectDingtalk,
     clearSelection,
     initialUrlSyncDone,

@@ -5,6 +5,7 @@
 import pytest
 from sqlalchemy.orm import Session
 
+from app.core.exceptions import CustomHTTPException
 from app.core.security import get_password_hash
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeFolder
@@ -17,6 +18,7 @@ from app.schemas.knowledge import (
     KnowledgeBaseUpdate,
     KnowledgeDocumentCreate,
     KnowledgeFolderCreate,
+    KnowledgeFolderUpdate,
     ResourceScope,
 )
 from app.schemas.namespace import GroupRole
@@ -1170,3 +1172,268 @@ def test_delete_knowledge_base_removes_orphaned_folders(test_db: Session) -> Non
     assert (
         folder_count_after == 0
     ), f"Expected 0 folders after KB deletion, but found {folder_count_after} orphaned folder(s)"
+
+
+@pytest.mark.unit
+def test_create_folder_allows_up_to_four_levels_under_knowledge_base(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "owner-kb-folder-depth-ok")
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="kb-folder-depth-ok", namespace="default"),
+    )
+
+    parent_id = 0
+    for depth in range(4):
+        folder = KnowledgeFolderService.create_folder(
+            test_db,
+            knowledge_base_id,
+            owner.id,
+            KnowledgeFolderCreate(name=f"level-{depth + 1}", parent_id=parent_id),
+        )
+        parent_id = folder.id
+
+    deepest_folder = KnowledgeFolderService.get_folder(test_db, parent_id, owner.id)
+    assert deepest_folder.parent_id > 0
+
+
+@pytest.mark.unit
+def test_create_folder_rejects_fifth_folder_level_under_knowledge_base(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "owner-kb-folder-depth-limit")
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="kb-folder-depth-limit", namespace="default"),
+    )
+
+    parent_id = 0
+    for depth in range(4):
+        folder = KnowledgeFolderService.create_folder(
+            test_db,
+            knowledge_base_id,
+            owner.id,
+            KnowledgeFolderCreate(name=f"level-{depth + 1}", parent_id=parent_id),
+        )
+        parent_id = folder.id
+
+    with pytest.raises(
+        CustomHTTPException,
+        match="maximum depth of 4 levels under a knowledge base",
+    ):
+        KnowledgeFolderService.create_folder(
+            test_db,
+            knowledge_base_id,
+            owner.id,
+            KnowledgeFolderCreate(name="level-5", parent_id=parent_id),
+        )
+
+
+@pytest.mark.unit
+def test_move_folder_rejects_subtree_that_would_exceed_depth_limit(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "owner-kb-folder-move-depth")
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="kb-folder-move-depth", namespace="default"),
+    )
+
+    parent_id = 0
+    for depth in range(4):
+        folder = KnowledgeFolderService.create_folder(
+            test_db,
+            knowledge_base_id,
+            owner.id,
+            KnowledgeFolderCreate(name=f"level-{depth + 1}", parent_id=parent_id),
+        )
+        parent_id = folder.id
+    level4_id = parent_id
+
+    move_root = KnowledgeFolderService.create_folder(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+        KnowledgeFolderCreate(name="move-root", parent_id=0),
+    )
+    move_child = KnowledgeFolderService.create_folder(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+        KnowledgeFolderCreate(name="move-child", parent_id=move_root.id),
+    )
+
+    with pytest.raises(
+        CustomHTTPException,
+        match="maximum depth of 4 levels under a knowledge base",
+    ):
+        KnowledgeFolderService.update_folder(
+            test_db,
+            move_root.id,
+            owner.id,
+            KnowledgeFolderUpdate(parent_id=level4_id),
+            knowledge_base_id=knowledge_base_id,
+        )
+
+    refreshed_child = KnowledgeFolderService.get_folder(
+        test_db, move_child.id, owner.id
+    )
+    assert refreshed_child.parent_id == move_root.id
+
+
+@pytest.mark.unit
+def test_create_document_allows_target_folder_at_depth_four(test_db: Session) -> None:
+    owner = _create_user(test_db, "owner-kb-document-depth-allowed")
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="kb-document-depth-allowed", namespace="default"),
+    )
+
+    parent_id = 0
+    for depth in range(4):
+        folder = KnowledgeFolderService.create_folder(
+            test_db,
+            knowledge_base_id,
+            owner.id,
+            KnowledgeFolderCreate(name=f"level-{depth + 1}", parent_id=parent_id),
+        )
+        parent_id = folder.id
+
+    document = KnowledgeService.create_document(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+        KnowledgeDocumentCreate(
+            attachment_id=0,
+            name="doc.md",
+            file_extension="md",
+            file_size=10,
+            folder_id=parent_id,
+            source_type=DocumentSourceType.TEXT,
+            source_config={},
+        ),
+    )
+    assert document.folder_id == parent_id
+
+
+@pytest.mark.unit
+def test_move_document_allows_target_folder_at_depth_four(test_db: Session) -> None:
+    owner = _create_user(test_db, "owner-kb-move-document-depth-allowed")
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="kb-move-document-depth-allowed", namespace="default"),
+    )
+
+    parent_id = 0
+    for depth in range(4):
+        folder = KnowledgeFolderService.create_folder(
+            test_db,
+            knowledge_base_id,
+            owner.id,
+            KnowledgeFolderCreate(name=f"level-{depth + 1}", parent_id=parent_id),
+        )
+        parent_id = folder.id
+
+    doc = KnowledgeService.create_document(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+        KnowledgeDocumentCreate(
+            attachment_id=0,
+            name="doc-root.md",
+            file_extension="md",
+            file_size=10,
+            folder_id=0,
+            source_type=DocumentSourceType.TEXT,
+            source_config={},
+        ),
+    )
+
+    moved = KnowledgeFolderService.move_document(test_db, doc.id, parent_id, owner.id)
+    assert moved.folder_id == parent_id
+
+
+@pytest.mark.unit
+def test_document_operations_reject_target_folder_beyond_depth_four(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "owner-kb-document-depth-too-deep")
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="kb-document-depth-too-deep", namespace="default"),
+    )
+
+    parent_id = 0
+    for depth in range(4):
+        folder = KnowledgeFolderService.create_folder(
+            test_db,
+            knowledge_base_id,
+            owner.id,
+            KnowledgeFolderCreate(name=f"level-{depth + 1}", parent_id=parent_id),
+        )
+        parent_id = folder.id
+
+    # Simulate legacy dirty data created before the new depth rule existed.
+    too_deep_folder = KnowledgeFolder(
+        kind_id=knowledge_base_id,
+        parent_id=parent_id,
+        name="level-5-legacy",
+    )
+    test_db.add(too_deep_folder)
+    test_db.commit()
+    test_db.refresh(too_deep_folder)
+
+    with pytest.raises(
+        CustomHTTPException,
+        match="Documents can only be placed within the 4th folder level",
+    ):
+        KnowledgeService.create_document(
+            test_db,
+            knowledge_base_id,
+            owner.id,
+            KnowledgeDocumentCreate(
+                attachment_id=0,
+                name="too-deep-doc.md",
+                file_extension="md",
+                file_size=10,
+                folder_id=too_deep_folder.id,
+                source_type=DocumentSourceType.TEXT,
+                source_config={},
+            ),
+        )
+
+    doc = KnowledgeService.create_document(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+        KnowledgeDocumentCreate(
+            attachment_id=0,
+            name="root-doc.md",
+            file_extension="md",
+            file_size=10,
+            folder_id=0,
+            source_type=DocumentSourceType.TEXT,
+            source_config={},
+        ),
+    )
+
+    with pytest.raises(
+        CustomHTTPException,
+        match="Documents can only be placed within the 4th folder level",
+    ):
+        KnowledgeFolderService.move_document(
+            test_db, doc.id, too_deep_folder.id, owner.id
+        )

@@ -116,19 +116,65 @@ def conversion_completed_callback(
     payload = request.index_dispatch_payload
     try:
         attachment_id = payload["attachment_id"]
-        user_id = payload["user_id"]
     except KeyError as e:
         raise HTTPException(
             status_code=400,
             detail=f"Missing key in index_dispatch_payload: {e}",
         )
 
+    # Verify dispatch payload is bound to the correct document and KB.
+    # Without this, a mis-bound callback could overwrite the right attachment
+    # but then queue indexing for a different document/KB.
+    from app.models.knowledge import KnowledgeDocument
+
+    doc = (
+        db.query(KnowledgeDocument)
+        .filter(KnowledgeDocument.id == request.document_id)
+        .first()
+    )
+    if not doc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Document {request.document_id} not found",
+        )
+    if doc.attachment_id != attachment_id:
+        logger.error(
+            f"[ConversionCallback] attachment_id mismatch: "
+            f"document_id={request.document_id} expects attachment_id={doc.attachment_id}, "
+            f"but payload provides attachment_id={attachment_id}"
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="attachment_id does not belong to the target document",
+        )
+
+    payload_document_id = payload.get("document_id")
+    payload_kb_id = payload.get("knowledge_base_id")
+    if payload_document_id is not None and payload_document_id != doc.id:
+        logger.error(
+            f"[ConversionCallback] document_id mismatch in payload: "
+            f"expected={doc.id}, got={payload_document_id}"
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="payload document_id does not match the target document",
+        )
+    if payload_kb_id is not None and str(doc.kind_id) != str(payload_kb_id):
+        logger.error(
+            f"[ConversionCallback] knowledge_base_id mismatch in payload: "
+            f"expected={doc.kind_id}, got={payload_kb_id}"
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="payload knowledge_base_id does not match the target document's KB",
+        )
+
     try:
-        context_service.overwrite_attachment(
+        context_service.overwrite_attachment_internal(
             db=db,
             context_id=attachment_id,
-            user_id=user_id,
             filename=request.converted_name,
+            reason="conversion_callback",
             binary_data=markdown_bytes,
         )
     except Exception:

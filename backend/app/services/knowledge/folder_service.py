@@ -10,7 +10,7 @@ including tree building, cascade deletion, and document-to-folder assignment.
 """
 
 import logging
-from collections import defaultdict, deque
+from collections import defaultdict
 from typing import Dict, List, Optional
 
 from sqlalchemy import func, text
@@ -23,6 +23,13 @@ from app.schemas.knowledge import (
     KnowledgeFolderCreate,
     KnowledgeFolderResponse,
     KnowledgeFolderUpdate,
+)
+from app.services.knowledge.folder_policy import (
+    assert_document_can_be_placed_in_folder,
+    get_folder_depth,
+    get_subtree_max_relative_depth,
+    validate_folder_move_depth,
+    validate_new_folder_depth,
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
 
@@ -103,6 +110,7 @@ class KnowledgeFolderService:
                 raise ValueError(
                     f"Parent folder {data.parent_id} not found in this knowledge base"
                 )
+        validate_new_folder_depth(db, knowledge_base_id, data.parent_id)
 
         folder = KnowledgeFolder(
             kind_id=knowledge_base_id,
@@ -283,6 +291,31 @@ class KnowledgeFolderService:
                 )
                 if new_parent_id in descendant_ids:
                     raise ValueError("Cannot move a folder into one of its descendants")
+                locked_subtree_rows = (
+                    db.query(KnowledgeFolder)
+                    .filter(
+                        KnowledgeFolder.kind_id == locked_folder.kind_id,
+                        KnowledgeFolder.id.in_(descendant_ids),
+                    )
+                    .all()
+                )
+                folder_map = {
+                    row.id: row
+                    for row in [locked_folder, locked_parent, *locked_subtree_rows]
+                }
+                target_parent_depth = get_folder_depth(
+                    db,
+                    locked_folder.kind_id,
+                    new_parent_id,
+                    folder_map=folder_map,
+                )
+                subtree_max_depth = get_subtree_max_relative_depth(
+                    folder_map, locked_folder.id
+                )
+                validate_folder_move_depth(
+                    target_parent_depth=target_parent_depth,
+                    subtree_max_relative_depth=subtree_max_depth,
+                )
             folder.parent_id = new_parent_id
 
         db.commit()
@@ -400,16 +433,10 @@ class KnowledgeFolderService:
         # Filter on kind_id first to leverage ix_knowledge_folders_parent
         # (kind_id, parent_id) — the primary-key lookup on id is then cheap.
         if folder_id > 0:
-            target_folder = (
-                db.query(KnowledgeFolder)
-                .filter(
-                    KnowledgeFolder.kind_id == doc.kind_id,
-                    KnowledgeFolder.id == folder_id,
-                )
-                .first()
+            target_folder = assert_document_can_be_placed_in_folder(
+                db, doc.kind_id, folder_id
             )
-            if not target_folder:
-                raise ValueError("Target folder not found in this knowledge base")
+            folder_id = target_folder.id
 
         doc.folder_id = folder_id
         db.commit()
@@ -466,19 +493,19 @@ class KnowledgeFolderService:
             WITH RECURSIVE descendants AS (
                 -- Anchor: direct children of the target folder
                 SELECT id
-                FROM   knowledge_folders
-                WHERE  kind_id   = :kind_id
-                  AND  parent_id = :folder_id
+                FROM knowledge_folders
+                WHERE kind_id = :kind_id
+                  AND parent_id = :folder_id
 
                 UNION ALL
 
                 -- Recursive: children of already-found descendants
                 SELECT kf.id
-                FROM   knowledge_folders kf
-                INNER JOIN descendants d ON kf.parent_id = d.id
-                WHERE  kf.kind_id = :kind_id
-            )
-            SELECT id FROM descendants
+                FROM knowledge_folders kf
+                         INNER JOIN descendants d ON kf.parent_id = d.id
+                WHERE kf.kind_id = :kind_id)
+            SELECT id
+            FROM descendants
             """
         )
         rows = db.execute(sql, {"kind_id": kind_id, "folder_id": folder_id}).fetchall()

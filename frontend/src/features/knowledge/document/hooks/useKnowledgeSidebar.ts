@@ -75,7 +75,7 @@ export interface UseKnowledgeSidebarReturn {
   selectedGroupId: string | null
   selectedKb: KnowledgeBase | null
   selectKb: (kb: KnowledgeBase) => void
-  replaceKnowledgeBase: (kb: KnowledgeBase) => void
+  syncConvertedKnowledgeBase: (kb: KnowledgeBase) => void
   selectGroup: (groupId: string) => void
   selectGroups: () => void
   clearSelection: () => void
@@ -506,7 +506,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     [addRecentAccess]
   )
 
-  const replaceKnowledgeBase = useCallback((updatedKb: KnowledgeBase) => {
+  const syncConvertedKnowledgeBase = useCallback((updatedKb: KnowledgeBase) => {
     setAllGroupedData(prev => {
       if (!prev) return prev
 
@@ -632,7 +632,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     selectedGroupId,
     selectedKb,
     selectKb,
-    replaceKnowledgeBase,
+    syncConvertedKnowledgeBase,
     selectGroup,
     selectGroups,
     clearSelection,
