@@ -123,12 +123,38 @@ def conversion_completed_callback(
             detail=f"Missing key in index_dispatch_payload: {e}",
         )
 
+    # Verify attachment_id belongs to the target document to prevent
+    # cross-write: if the payload is mis-bound, content would be written
+    # into the wrong attachment and then indexed against the wrong KB.
+    from app.models.knowledge import KnowledgeDocument
+
+    doc = (
+        db.query(KnowledgeDocument)
+        .filter(KnowledgeDocument.id == request.document_id)
+        .first()
+    )
+    if not doc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Document {request.document_id} not found",
+        )
+    if doc.attachment_id != attachment_id:
+        logger.error(
+            f"[ConversionCallback] attachment_id mismatch: "
+            f"document_id={request.document_id} expects attachment_id={doc.attachment_id}, "
+            f"but payload provides attachment_id={attachment_id}"
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="attachment_id does not belong to the target document",
+        )
+
     try:
-        context_service.overwrite_attachment(
+        context_service.overwrite_attachment_internal(
             db=db,
             context_id=attachment_id,
-            user_id=None,
             filename=request.converted_name,
+            reason="conversion_callback",
             binary_data=markdown_bytes,
         )
     except Exception:

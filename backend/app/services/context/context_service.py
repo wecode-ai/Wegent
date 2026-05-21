@@ -405,35 +405,84 @@ class ContextService:
         self,
         db: Session,
         context_id: int,
-        user_id: Optional[int] = None,
-        filename: str = "",
-        binary_data: bytes = b"",
+        user_id: int,
+        filename: str,
+        binary_data: bytes,
     ) -> Tuple[SubtaskContext, Optional[TruncationInfo]]:
         """
-        Overwrite an existing attachment with new content.
+        Overwrite an existing attachment with owner validation.
 
         Args:
             db: Database session
             context_id: Attachment context ID to overwrite
-            user_id: Optional user ID for ownership validation.
-                     Pass None when caller has already performed permission checks.
+            user_id: User ID for ownership validation (required)
             filename: New filename
             binary_data: New file binary data
 
         Returns:
             Tuple of (Updated SubtaskContext record, TruncationInfo if truncated)
+
+        Raises:
+            NotFoundException: If context not found or user is not the owner
         """
-        context = self.get_context_optional(db, context_id, user_id)
-        if context is None or context.context_type != ContextType.ATTACHMENT.value:
+        context = self.get_context(db, context_id, user_id)
+        if context.context_type != ContextType.ATTACHMENT.value:
             raise NotFoundException(f"Context {context_id} not found")
 
+        return self._overwrite_attachment_impl(db, context, filename, binary_data)
+
+    def overwrite_attachment_internal(
+        self,
+        db: Session,
+        context_id: int,
+        filename: str,
+        reason: str,
+        binary_data: bytes,
+    ) -> Tuple[SubtaskContext, Optional[TruncationInfo]]:
+        """
+        Overwrite an existing attachment without owner validation.
+
+        Trusted internal path — caller must enforce business-level authorization
+        before calling. Used by knowledge management and conversion callbacks
+        where the caller has already verified permissions at a higher level.
+
+        Args:
+            db: Database session
+            context_id: Attachment context ID to overwrite
+            filename: New filename
+            reason: Audit reason (e.g. "knowledge_manage", "conversion_callback")
+            binary_data: New file binary data
+
+        Returns:
+            Tuple of (Updated SubtaskContext record, TruncationInfo if truncated)
+
+        Raises:
+            NotFoundException: If context not found
+        """
+        context = self.get_context(db, context_id)
+        if context.context_type != ContextType.ATTACHMENT.value:
+            raise NotFoundException(f"Context {context_id} not found")
+
+        logger.info(
+            f"Internal attachment overwrite: context_id={context_id}, "
+            f"reason={reason}, owner_user_id={context.user_id}"
+        )
+
+        return self._overwrite_attachment_impl(db, context, filename, binary_data)
+
+    def _overwrite_attachment_impl(
+        self,
+        db: Session,
+        context: SubtaskContext,
+        filename: str,
+        binary_data: bytes,
+    ) -> Tuple[SubtaskContext, Optional[TruncationInfo]]:
+        """Shared implementation for attachment overwrite."""
         extension, file_size, mime_type = self._validate_attachment_input(
             filename, binary_data
         )
 
         storage_backend = get_storage_backend(db)
-        # Use context.user_id (original owner) for storage key generation,
-        # not the optional caller user_id which may be None
         storage_key = context.storage_key or generate_storage_key(
             context.id, context.user_id
         )

@@ -2131,11 +2131,11 @@ class KnowledgeOrchestrator:
         if document.attachment_id:
             # Try to overwrite existing attachment
             try:
-                attachment, _ = context_service.overwrite_attachment(
+                attachment, _ = context_service.overwrite_attachment_internal(
                     db=db,
                     context_id=document.attachment_id,
-                    user_id=None,
                     filename=document.name,
+                    reason="web_refresh",
                     binary_data=content_bytes,
                 )
                 logger.info(

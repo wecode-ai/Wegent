@@ -110,6 +110,7 @@ class DocumentDeleteResult:
 
     success: bool
     kb_id: Optional[int] = None
+    error: Optional[str] = None
 
 
 @dataclass
@@ -1241,8 +1242,9 @@ class KnowledgeService:
             .filter(Kind.id == doc.kind_id, Kind.kind == "KnowledgeBase")
             .first()
         )
-        if kb:
-            KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
+        if not kb:
+            raise ValueError("Knowledge base not found for document")
+        KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
 
         if data.name is not None:
             doc.name = data.name
@@ -1296,8 +1298,11 @@ class KnowledgeService:
             .filter(Kind.id == doc.kind_id, Kind.kind == "KnowledgeBase")
             .first()
         )
-        if kb:
-            KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
+        if not kb:
+            return DocumentDeleteResult(
+                success=False, kb_id=None, error="Knowledge base not found for document"
+            )
+        KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
 
         # Store document_id (used as doc_ref in RAG), kind_id, and attachment_id before deletion for cleanup
         doc_ref = str(doc.id)  # document_id is used as doc_ref in RAG indexing
@@ -1507,8 +1512,9 @@ class KnowledgeService:
             .filter(Kind.id == doc.kind_id, Kind.kind == "KnowledgeBase")
             .first()
         )
-        if kb:
-            KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
+        if not kb:
+            raise ValueError("Knowledge base not found for document")
+        KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
 
         if not doc.attachment_id:
             raise ValueError("Document has no attachment to update")
@@ -1527,11 +1533,11 @@ class KnowledgeService:
         filename = context.original_filename or _build_attachment_filename(
             doc.name, doc.file_extension
         )
-        context_service.overwrite_attachment(
+        context_service.overwrite_attachment_internal(
             db=db,
             context_id=context.id,
-            user_id=None,
             filename=filename,
+            reason="knowledge_manage",
             binary_data=binary_content,
         )
 
