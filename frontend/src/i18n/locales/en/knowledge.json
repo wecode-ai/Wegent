@@ -288,6 +288,7 @@
       "confirmDelete": "Are you sure you want to delete this document?",
       "nameRequired": "Document name is required",
       "namePlaceholder": "Enter document name",
+      "createFailed": "Failed to create document",
       "updateFailed": "Failed to update document",
       "dropzone": "Drop files here or click to browse",
       "supportedTypes": "PDF, Word, PPT, Excel, TXT, MD (Max {{maxSize}}MB)",
