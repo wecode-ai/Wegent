@@ -14,6 +14,7 @@ This service handles:
 import asyncio
 import os
 import time
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from executor_manager.common.config import get_config
@@ -468,6 +469,83 @@ class SandboxManager(metaclass=SingletonMeta):
 
         logger.info(f"[SandboxManager] Sandbox terminated: {sandbox_id}")
         return True, f"Sandbox {sandbox_id} terminated successfully"
+
+    async def cleanup_stale_sandboxes(
+        self,
+        *,
+        inactive_hours: int = 24,
+        dry_run: bool = False,
+    ) -> Dict[str, Any]:
+        """Clean up sandboxes inactive longer than inactive_hours."""
+        now = time.time()
+        max_age_seconds = inactive_hours * 3600
+        result: Dict[str, Any] = {
+            "target": "sandboxes",
+            "inactive_hours": inactive_hours,
+            "dry_run": dry_run,
+            "deleted": [],
+            "skipped": [],
+            "failed": [],
+        }
+
+        for raw_sandbox_id in self._repository.get_active_sandbox_ids():
+            sandbox_id = self._normalize_sandbox_id(raw_sandbox_id)
+            sandbox = self._repository.load_sandbox(sandbox_id)
+            if sandbox is None:
+                result["failed"].append(
+                    {"sandbox_id": sandbox_id, "reason": "sandbox_not_found"}
+                )
+                continue
+
+            inactive_seconds = now - sandbox.last_activity_at
+            if inactive_seconds < max_age_seconds:
+                eligible_at = sandbox.last_activity_at + max_age_seconds
+                result["skipped"].append(
+                    {
+                        "sandbox_id": sandbox.sandbox_id,
+                        "reason": "not_stale",
+                        "last_activity_at": self._format_timestamp(
+                            sandbox.last_activity_at
+                        ),
+                        "eligible_after": self._format_timestamp(eligible_at),
+                    }
+                )
+                continue
+
+            if dry_run:
+                result["skipped"].append(
+                    {"sandbox_id": sandbox.sandbox_id, "reason": "dry_run"}
+                )
+                continue
+
+            success, message = await self.terminate_sandbox(sandbox.sandbox_id)
+            if success:
+                result["deleted"].append(
+                    {
+                        "sandbox_id": sandbox.sandbox_id,
+                        "container_name": sandbox.container_name,
+                    }
+                )
+            else:
+                result["failed"].append(
+                    {
+                        "sandbox_id": sandbox.sandbox_id,
+                        "reason": "delete_failed",
+                        "error": message,
+                    }
+                )
+
+        return result
+
+    def _normalize_sandbox_id(self, sandbox_id: Any) -> str:
+        """Normalize Redis sandbox IDs to strings."""
+        if isinstance(sandbox_id, bytes):
+            return sandbox_id.decode("utf-8")
+        return str(sandbox_id)
+
+    def _format_timestamp(self, timestamp: float) -> str:
+        """Format a Unix timestamp as an ISO string."""
+        return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
 
     async def keep_alive(
         self, sandbox_id: str, additional_timeout: Optional[int] = None

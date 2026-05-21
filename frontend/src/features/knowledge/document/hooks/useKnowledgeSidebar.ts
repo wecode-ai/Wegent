@@ -18,7 +18,7 @@ import type {
   KnowledgeBase,
   AllGroupedKnowledgeResponse,
   KnowledgeBaseWithGroupInfo,
-  KnowledgeGroupType,
+  KbGroupInfo,
 } from '@/types/knowledge'
 import type { KbDataItem } from '../components/KnowledgeGroupListPage'
 import type { Group } from '@/types/group'
@@ -50,12 +50,8 @@ export interface RecentAccessItem {
   accessedAt: number
 }
 
-/** Group info for a knowledge base */
-export interface KbGroupInfo {
-  groupId: string
-  groupName: string
-  groupType: KnowledgeGroupType
-}
+// Re-export KbGroupInfo from types for convenience
+export type { KbGroupInfo } from '@/types/knowledge'
 
 export interface UseKnowledgeSidebarReturn {
   // Favorites
@@ -79,6 +75,7 @@ export interface UseKnowledgeSidebarReturn {
   selectedGroupId: string | null
   selectedKb: KnowledgeBase | null
   selectKb: (kb: KnowledgeBase) => void
+  syncConvertedKnowledgeBase: (kb: KnowledgeBase) => void
   selectGroup: (groupId: string) => void
   selectGroups: () => void
   clearSelection: () => void
@@ -164,6 +161,23 @@ function toKnowledgeBase(kb: KnowledgeBaseWithGroupInfo): KnowledgeBase {
     exempt_calls_before_check: 5,
     created_at: kb.created_at,
     updated_at: kb.updated_at,
+  }
+}
+
+function mergeKnowledgeBase(
+  existing: KnowledgeBaseWithGroupInfo,
+  updated: KnowledgeBase
+): KnowledgeBaseWithGroupInfo {
+  return {
+    ...existing,
+    name: updated.name,
+    description: updated.description,
+    namespace: updated.namespace,
+    document_count: updated.document_count,
+    kb_type: updated.kb_type || existing.kb_type,
+    user_id: updated.user_id,
+    updated_at: updated.updated_at,
+    created_at: updated.created_at,
   }
 }
 
@@ -260,11 +274,18 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
 
     // Remove duplicates by (id, group_id) so the same KB can appear in different groups
     const seen = new Set<string>()
-    return all.filter(kb => {
+    const deduped = all.filter(kb => {
       const key = `${kb.id}-${kb.group_id}`
       if (seen.has(key)) return false
       seen.add(key)
       return true
+    })
+
+    // Sort by updated_at DESC globally (most recent first)
+    return deduped.sort((a, b) => {
+      const aTime = a.updated_at ? new Date(a.updated_at).getTime() : 0
+      const bTime = b.updated_at ? new Date(b.updated_at).getTime() : 0
+      return bTime - aTime
     })
   }, [allGroupedData])
 
@@ -463,17 +484,16 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
       setViewMode('kb')
       addRecentAccess(kb)
 
-      // For notebook type, fetch full KB data to get guided_questions
-      // before setting selectedKb - avoids a double render with incomplete data
+      // For notebook type, set selectedKb immediately with available data to avoid
+      // flashing the empty state, then fetch full KB data to get guided_questions
       if (kb.kb_type === 'notebook') {
+        setSelectedKb(kb)
         getKnowledgeBase(kb.id)
           .then(fullKb => {
             // Discard stale response if user has since selected a different KB
             setSelectedKb(prev => {
               if (latestSelectedKbIdRef.current !== kb.id) return prev
-              // First time setting or same KB
-              if (!prev || prev.id === kb.id) return fullKb
-              return prev
+              return fullKb
             })
           })
           .catch(error => {
@@ -485,6 +505,56 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     },
     [addRecentAccess]
   )
+
+  const syncConvertedKnowledgeBase = useCallback((updatedKb: KnowledgeBase) => {
+    setAllGroupedData(prev => {
+      if (!prev) return prev
+
+      const updateList = (items: KnowledgeBaseWithGroupInfo[]) =>
+        items.map(item => (item.id === updatedKb.id ? mergeKnowledgeBase(item, updatedKb) : item))
+
+      return {
+        ...prev,
+        personal: {
+          created_by_me: updateList(prev.personal.created_by_me),
+          shared_with_me: updateList(prev.personal.shared_with_me),
+        },
+        groups: prev.groups.map(group => ({
+          ...group,
+          knowledge_bases: updateList(group.knowledge_bases),
+        })),
+        organization: {
+          ...prev.organization,
+          knowledge_bases: updateList(prev.organization.knowledge_bases),
+        },
+      }
+    })
+
+    setSelectedKb(prev => {
+      if (!prev || prev.id !== updatedKb.id) return prev
+      return {
+        ...prev,
+        ...updatedKb,
+      }
+    })
+
+    setFavorites(prev => prev.map(kb => (kb.id === updatedKb.id ? { ...kb, ...updatedKb } : kb)))
+
+    setRecentAccessItems(prev => {
+      const next = prev.map(item =>
+        item.kbId === updatedKb.id
+          ? {
+              ...item,
+              kbName: updatedKb.name,
+              kbType: updatedKb.kb_type || 'notebook',
+              namespace: updatedKb.namespace,
+            }
+          : item
+      )
+      saveRecentAccess(next)
+      return next
+    })
+  }, [])
 
   const selectGroup = useCallback((groupId: string) => {
     setSelectedGroupId(groupId)
@@ -562,6 +632,7 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     selectedGroupId,
     selectedKb,
     selectKb,
+    syncConvertedKnowledgeBase,
     selectGroup,
     selectGroups,
     clearSelection,

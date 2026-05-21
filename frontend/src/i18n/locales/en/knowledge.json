@@ -126,7 +126,8 @@
       "belongsTo": "Belongs To",
       "from": "From",
       "permission": "Permission",
-      "lastAccess": "Last Access",
+      "createdAt": "Created",
+      "updatedAt": "Updated",
       "actions": "Actions",
       "edit": "Edit",
       "delete": "Delete",
@@ -223,6 +224,8 @@
       "updateFailed": "Failed to update folder",
       "deleteFailed": "Failed to delete folder",
       "moveDocumentFailed": "Failed to move document",
+      "depthExceeded": "Folder hierarchy cannot exceed 4 levels",
+      "documentPlacementDepthExceeded": "Documents can only be placed in the 4th folder level or above",
       "moveDocumentHint": "Move \"{{name}}\" to:",
       "current": "current"
     },
@@ -244,7 +247,11 @@
         "unavailable": "Index Unavailable",
         "unavailableHint": "AI will use other tools to browse documents (slightly less efficient than quick retrieval)",
         "indexing": "Indexing",
-        "indexingHint": "Index is being generated. Refresh the page later to check the latest status."
+        "indexingHint": "Index is being generated. Refresh the page later to check the latest status.",
+        "converting": "Converting",
+        "convertingHint": "Document is being converted to a searchable format. This may take a few minutes.",
+        "pendingConversion": "Pending Conversion",
+        "pendingConversionHint": "Document is waiting to be converted to a searchable format."
       },
       "reindex": "Reindex",
       "index": "Start Indexing",

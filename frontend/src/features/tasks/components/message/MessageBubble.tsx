@@ -52,6 +52,7 @@ import type { ClarificationData, ClarificationAnswer, AskUserFormData } from '@/
 import type { SourceReference, GeminiAnnotation } from '@/types/socket'
 import type { Model } from '../../hooks/useModelSelection'
 import type { UnifiedModel } from '@/apis/models'
+import { isTextBlock } from './thinking/types'
 import type { MessageBlock } from './thinking/types'
 import { useTraceAction } from '@/hooks/useTraceAction'
 import { useMessageFeedback } from '@/hooks/useMessageFeedback'
@@ -448,16 +449,18 @@ function canShowReEdit(
   return isCompleted && isNotRunning
 }
 
-function getCopyableContent(rawContent: string): string {
-  const content = (rawContent ?? '').trim()
-  if (!content) return ''
-
-  if (!content.includes('${$$}$')) {
-    return content
-  }
-
-  const [, result] = content.split('${$$}$')
-  return (result || '').trim()
+/**
+ * Extract copyable text content from message blocks.
+ * When a message uses the blocks-based rendering (MixedContentView),
+ * msg.content only holds the last streamed text block's content.
+ * The full content is stored across all TextBlock entries in msg.result.blocks.
+ */
+function getCopyableContentFromBlocks(blocks: MessageBlock[]): string {
+  return blocks
+    .filter(isTextBlock)
+    .map(b => b.content)
+    .join('\n\n')
+    .trim()
 }
 
 const MessageBubble = memo(
@@ -525,8 +528,12 @@ const MessageBubble = memo(
     // Default to true for user messages if isCurrentUserMessage is not provided
     const shouldAlignRight = isUserTypeMessage && (isCurrentUserMessage ?? true)
 
-    const { baseClasses: bubbleBaseClasses, typeClasses: bubbleTypeClasses } =
+    const { baseClasses: defaultBubbleBaseClasses, typeClasses: defaultBubbleTypeClasses } =
       getMessageBubbleClassNames(isUserTypeMessage)
+    const bubbleBaseClasses = isEditing
+      ? 'relative w-full overflow-visible text-text-primary'
+      : defaultBubbleBaseClasses
+    const bubbleTypeClasses = isEditing ? '' : defaultBubbleTypeClasses
 
     const formatTimestamp = (timestamp: number | undefined) => {
       return formatDateTime(timestamp)
@@ -1633,7 +1640,7 @@ const MessageBubble = memo(
                       {/* Hide BubbleTools during streaming */}
                       {!isStreaming && (
                         <BubbleTools
-                          contentToCopy={getCopyableContent(msg.content || '')}
+                          contentToCopy={getCopyableContentFromBlocks(msg.result?.blocks ?? [])}
                           onCopySuccess={() => trace.copy(msg.type, msg.subtaskId)}
                           tools={[
                             {
@@ -1641,9 +1648,12 @@ const MessageBubble = memo(
                               title: t('messages.download') || 'Download',
                               icon: <Download className="h-4 w-4 text-text-muted" />,
                               onClick: () => {
-                                const blob = new Blob([getCopyableContent(msg.content || '')], {
-                                  type: 'text/plain;charset=utf-8',
-                                })
+                                const blob = new Blob(
+                                  [getCopyableContentFromBlocks(msg.result?.blocks ?? [])],
+                                  {
+                                    type: 'text/plain;charset=utf-8',
+                                  }
+                                )
                                 const url = URL.createObjectURL(blob)
                                 const a = document.createElement('a')
                                 a.href = url

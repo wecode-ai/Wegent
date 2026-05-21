@@ -126,7 +126,8 @@
       "belongsTo": "归属",
       "from": "来自",
       "permission": "权限",
-      "lastAccess": "最近访问",
+      "createdAt": "创建时间",
+      "updatedAt": "更新时间",
       "actions": "操作",
       "edit": "编辑",
       "delete": "删除",
@@ -223,6 +224,8 @@
       "updateFailed": "更新文件夹失败",
       "deleteFailed": "删除文件夹失败",
       "moveDocumentFailed": "移动文档失败",
+      "depthExceeded": "文件夹层级不能超过 4 层",
+      "documentPlacementDepthExceeded": "文档只能放在第 4 层文件夹及以上位置",
       "moveDocumentHint": "将文档 \"{{name}}\" 移动到：",
       "current": "当前"
     },
@@ -244,7 +247,11 @@
         "unavailable": "索引不可用",
         "unavailableHint": "AI 将使用其它工具浏览文档（效率略低于快速检索）",
         "indexing": "索引中",
-        "indexingHint": "索引正在生成中，稍后刷新页面查看最新状态"
+        "indexingHint": "索引正在生成中，稍后刷新页面查看最新状态",
+        "converting": "转换中",
+        "convertingHint": "文档正在转换为可检索的格式，可能需要几分钟。",
+        "pendingConversion": "待转换",
+        "pendingConversionHint": "文档正在等待转换为可检索的格式。"
       },
       "reindex": "重新索引",
       "index": "开始索引",

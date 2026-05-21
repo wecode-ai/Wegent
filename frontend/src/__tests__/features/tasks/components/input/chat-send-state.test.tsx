@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import type { ChatInputControlsProps } from '@/features/tasks/components/input/ChatInputControls'
 import { ChatInputControls } from '@/features/tasks/components/input/ChatInputControls'
 import { getChatSendState } from '@/features/tasks/components/input/chatSendState'
@@ -62,8 +62,10 @@ jest.mock('@/features/tasks/components/input/SendButton', () => ({
 
 jest.mock('@/components/ui/action-button', () => ({
   __esModule: true,
-  ActionButton: ({ title }: { title?: string }) => (
-    <button type="button">{title || 'Action'}</button>
+  ActionButton: ({ title, onClick }: { title?: string; onClick?: () => void }) => (
+    <button type="button" aria-label={title || 'Action'} onClick={onClick}>
+      {title || 'Action'}
+    </button>
   ),
 }))
 
@@ -157,6 +159,23 @@ describe('ChatInputControls send state', () => {
 
     expect(screen.getByRole('button', { name: 'Stop generating' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Queue message' })).toBeInTheDocument()
+  })
+
+  it('shows a cancel task action for pending non-group tasks', () => {
+    const onCancelTask = jest.fn()
+
+    render(
+      <ChatInputControls
+        {...createProps()}
+        selectedTaskDetail={{ status: 'PENDING', is_group_chat: false } as never}
+        onCancelTask={onCancelTask}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel task' }))
+
+    expect(onCancelTask).toHaveBeenCalledTimes(1)
+    expect(screen.queryByTestId('loading-dots')).not.toBeInTheDocument()
   })
 })
 
@@ -261,7 +280,7 @@ describe('getChatSendState', () => {
     })
   })
 
-  it('shows pending loading for non-group pending task', () => {
+  it('uses cancel as the primary action for non-group pending task', () => {
     expect(
       getChatSendState({
         isLoading: false,
@@ -279,10 +298,10 @@ describe('getChatSendState', () => {
         canQueueMessage: false,
       })
     ).toEqual({
-      primaryAction: 'loading',
-      isPrimaryDisabled: true,
+      primaryAction: 'cancel',
+      isPrimaryDisabled: false,
       showStopAction: false,
-      showPendingAction: true,
+      showPendingAction: false,
     })
   })
 

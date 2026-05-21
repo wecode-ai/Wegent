@@ -16,7 +16,14 @@ export type DocumentStatus = 'enabled' | 'disabled'
 
 export type DocumentSourceType = 'file' | 'text' | 'table' | 'web'
 
-export type DocumentIndexStatus = 'not_indexed' | 'queued' | 'indexing' | 'success' | 'failed'
+export type DocumentIndexStatus =
+  | 'not_indexed'
+  | 'queued'
+  | 'pending_conversion'
+  | 'converting'
+  | 'indexing'
+  | 'success'
+  | 'failed'
 
 export type KnowledgeResourceScope = 'personal' | 'organization' | 'group' | 'all'
 
@@ -750,6 +757,13 @@ export interface PersonalKnowledgeBaseGroup {
 
 /** Group type for knowledge base categorization */
 export type KnowledgeGroupType = 'personal' | 'personal-shared' | 'group' | 'organization'
+
+/** Group info for a knowledge base (for display purposes) */
+export interface KbGroupInfo {
+  groupId: string
+  groupName: string
+  groupType: KnowledgeGroupType
+}
 
 /** Knowledge base with group info for all-grouped response */
 export interface KnowledgeBaseWithGroupInfo {

@@ -50,6 +50,7 @@ from app.services.group_permission import (
     get_user_groups,
     get_view_role_in_group,
 )
+from app.services.knowledge.folder_policy import assert_document_can_be_placed_in_folder
 from app.services.knowledge.namespace_utils import is_organization_namespace
 from app.services.knowledge.permission_policy import (
     can_create_namespace_knowledge_base,
@@ -110,6 +111,7 @@ class DocumentDeleteResult:
 
     success: bool
     kb_id: Optional[int] = None
+    error: Optional[str] = None
 
 
 @dataclass
@@ -1072,20 +1074,14 @@ class KnowledgeService:
                     f"Current count: {current_count}"
                 )
 
+        validated_folder_id = data.folder_id
+
         # Validate that the folder belongs to this knowledge base (if a non-root folder is specified)
         if data.folder_id and data.folder_id != 0:
-            folder = (
-                db.query(KnowledgeFolder)
-                .filter(
-                    KnowledgeFolder.id == data.folder_id,
-                    KnowledgeFolder.kind_id == knowledge_base_id,
-                )
-                .first()
+            target_folder = assert_document_can_be_placed_in_folder(
+                db, knowledge_base_id, data.folder_id
             )
-            if not folder:
-                raise ValueError(
-                    f"Folder {data.folder_id} not found in this knowledge base"
-                )
+            validated_folder_id = target_folder.id
 
         document = KnowledgeDocument(
             kind_id=knowledge_base_id,
@@ -1094,7 +1090,7 @@ class KnowledgeService:
             file_extension=data.file_extension,
             file_size=data.file_size,
             user_id=user_id,
-            folder_id=data.folder_id,
+            folder_id=validated_folder_id,
             splitter_config=(
                 data.splitter_config.model_dump(exclude_none=True)
                 if data.splitter_config
@@ -1241,8 +1237,9 @@ class KnowledgeService:
             .filter(Kind.id == doc.kind_id, Kind.kind == "KnowledgeBase")
             .first()
         )
-        if kb:
-            KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
+        if not kb:
+            raise ValueError("Knowledge base not found for document")
+        KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
 
         if data.name is not None:
             doc.name = data.name
@@ -1296,8 +1293,11 @@ class KnowledgeService:
             .filter(Kind.id == doc.kind_id, Kind.kind == "KnowledgeBase")
             .first()
         )
-        if kb:
-            KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
+        if not kb:
+            return DocumentDeleteResult(
+                success=False, kb_id=None, error="Knowledge base not found for document"
+            )
+        KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
 
         # Store document_id (used as doc_ref in RAG), kind_id, and attachment_id before deletion for cleanup
         doc_ref = str(doc.id)  # document_id is used as doc_ref in RAG indexing
@@ -1507,8 +1507,9 @@ class KnowledgeService:
             .filter(Kind.id == doc.kind_id, Kind.kind == "KnowledgeBase")
             .first()
         )
-        if kb:
-            KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
+        if not kb:
+            raise ValueError("Knowledge base not found for document")
+        KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
 
         if not doc.attachment_id:
             raise ValueError("Document has no attachment to update")
@@ -1527,11 +1528,11 @@ class KnowledgeService:
         filename = context.original_filename or _build_attachment_filename(
             doc.name, doc.file_extension
         )
-        context_service.overwrite_attachment(
+        context_service.overwrite_attachment_internal(
             db=db,
             context_id=context.id,
-            user_id=user_id,
             filename=filename,
+            reason="knowledge_manage",
             binary_data=binary_content,
         )
 
