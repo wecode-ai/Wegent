@@ -202,6 +202,13 @@ class ResourceMember(Base):
             "resource_id",
             "status",
         ),
+        Index(
+            "idx_resource_members_entity_lookup",
+            "entity_type",
+            "entity_id",
+            "status",
+            "resource_type",
+        ),
         {
             "sqlite_autoincrement": True,
             "mysql_engine": "InnoDB",

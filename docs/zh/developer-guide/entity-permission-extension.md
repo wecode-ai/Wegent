@@ -164,6 +164,46 @@ _collect_entity_authorized_kbs(user_id, accessible_groups)
     → 收集角色和分组信息
 ```
 
+### 群组 Namespace 的实体成员
+
+除了 KnowledgeBase 外，**Namespace（群组）本身也支持实体成员绑定**。通过将部门等外部实体绑定为群组成员，该实体下的所有用户自动获得群组权限，并继承访问群组内下游资源（知识库、Team）的权限。
+
+**核心流程：**
+
+```text
+get_effective_role_in_group(db, user_id, group_name)
+├── 1. 直接用户绑定
+│   查询 ResourceMember (resource_type="Namespace", entity_type="user")
+│   → 返回直接分配的角色
+│
+├── 2. 实体绑定回退
+│   调用 _resolve_entity_roles_in_namespace()
+│   → 查询该群组的所有 entity_type != "user" 的 approved 绑定
+│   → 按 entity_type 分组，调用 resolver.match_entity_bindings()
+│   → 返回匹配的角色列表
+│
+└── 3. 父群组继承（仅当 1、2 均无结果时）
+    若 group_name = "aaa/bbb"
+    → 递归查询 "aaa" 的有效角色
+```
+
+当同一用户通过多个来源（直接成员 + 实体成员 + 父群组继承）获得权限时，取最高角色。该逻辑由 `get_highest_role()` 统一处理。
+
+**群组实体成员 API：**
+
+- `GET /api/groups/{group_name}/entity-members` — 列出群组的实体成员
+- `POST /api/groups/{group_name}/entity-members` — 添加实体成员（仅 Owner）
+- `PUT /api/groups/{group_name}/entity-members/{entity_type}/{entity_id}` — 更新实体成员角色（仅 Owner）
+- `DELETE /api/groups/{group_name}/entity-members/{entity_type}/{entity_id}` — 移除实体成员（仅 Owner）
+
+**批量优化：**
+
+`iter_user_groups_with_roles()` 在一次查询中批量解析所有直接和实体来源的群组成员关系，避免在列表场景下对每个群组重复调用解析器。`get_effective_roles_in_groups()` 基于此做批量角色计算。
+
+**共享实体角色解析：**
+
+`resolve_entity_roles_for_resource()`（位于 `external_entity_resolver.py`）提供了通用的实体角色查询逻辑，被 `_resolve_entity_roles_in_namespace()` 和 `UnifiedShareService._get_highest_entity_role()` 复用，避免重复实现。
+
 ## 扩展架构设计
 
 ### Share Service 分层架构
