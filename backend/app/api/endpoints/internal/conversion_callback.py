@@ -116,7 +116,6 @@ def conversion_completed_callback(
     payload = request.index_dispatch_payload
     try:
         attachment_id = payload["attachment_id"]
-        user_id = payload["user_id"]
     except KeyError as e:
         raise HTTPException(
             status_code=400,
