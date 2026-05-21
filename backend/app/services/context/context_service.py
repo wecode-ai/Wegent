@@ -432,7 +432,11 @@ class ContextService:
         )
 
         storage_backend = get_storage_backend(db)
-        storage_key = context.storage_key or generate_storage_key(context.id, user_id)
+        # Use context.user_id (original owner) for storage key generation,
+        # not the optional caller user_id which may be None
+        storage_key = context.storage_key or generate_storage_key(
+            context.id, context.user_id
+        )
 
         self._reset_attachment_context(
             context=context,

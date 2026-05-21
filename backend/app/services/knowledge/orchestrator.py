@@ -2072,6 +2072,17 @@ class KnowledgeOrchestrator:
                 "error_message": "Document not found or access denied",
             }
 
+        # Verify manage permission before mutating content
+        from app.models.kind import Kind
+
+        kb = (
+            db.query(Kind)
+            .filter(Kind.id == document.kind_id, Kind.kind == "KnowledgeBase")
+            .first()
+        )
+        if kb:
+            KnowledgeService._assert_can_manage_document(db, kb, document, user.id)
+
         if document.source_type != DocumentSourceType.WEB.value:
             return {
                 "success": False,
