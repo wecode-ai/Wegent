@@ -137,6 +137,10 @@ class Settings(BaseSettings):
     # Task limits
     MAX_RUNNING_TASKS_PER_USER: int = 10
 
+    # Group entity member configuration
+    # Maximum number of entity members (departments, etc.) per group
+    MAX_ENTITY_MEMBERS_PER_GROUP: int = 30
+
     # Direct chat configuration
     MAX_CONCURRENT_CHATS: int = 50  # Maximum concurrent direct chat sessions
     CHAT_HISTORY_EXPIRE_SECONDS: int = 7200  # Chat history expiration (2 hours)

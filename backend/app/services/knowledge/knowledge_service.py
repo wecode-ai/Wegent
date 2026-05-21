@@ -2509,7 +2509,7 @@ class KnowledgeService:
         ]
 
         # 3. Get all accessible groups with roles (single query)
-        from app.services.group_permission import get_user_groups_with_roles
+        from app.services.group_member_helper import get_user_groups_with_roles
 
         accessible_groups_with_roles = get_user_groups_with_roles(db, user_id)
         accessible_group_names = [g[0] for g in accessible_groups_with_roles]

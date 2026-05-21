@@ -726,32 +726,28 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         """
         Get detailed team information including related user and bots
         """
-        # Check if user has access to this team (own or shared)
-        team = kindReader.get_by_id(db, KindType.TEAM, team_id)
+        # Check if user has access to this team (own, shared, or entity)
+        from app.services.share.team_share_service import team_share_service
+
+        team = team_share_service.get_resource(db, team_id, user_id)
 
         if not team:
-            raise HTTPException(status_code=404, detail="Team not found")
+            # Fallback: check group namespace permission for group teams
+            team = kindReader.get_by_id(db, KindType.TEAM, team_id)
+            if not team:
+                raise HTTPException(status_code=404, detail="Team not found")
+            if team.namespace != "default":
+                from app.schemas.namespace import GroupRole
+                from app.services.group_permission import check_group_permission
 
-        # Check if user is the owner or has shared access
+                if not check_group_permission(
+                    db, user_id, team.namespace, GroupRole.Reporter
+                ):
+                    raise HTTPException(status_code=404, detail="Team not found")
+            else:
+                raise HTTPException(status_code=404, detail="Team not found")
+
         is_author = team.user_id == user_id
-
-        if not is_author:
-            # Check if user has shared access via ResourceMember
-            shared_member = (
-                db.query(ResourceMember)
-                .filter(
-                    ResourceMember.resource_type == ResourceType.TEAM,
-                    ResourceMember.resource_id == team_id,
-                    ResourceMember.entity_type == "user",
-                    ResourceMember.entity_id == str(user_id),
-                    ResourceMember.status == MemberStatus.APPROVED,
-                )
-                .first()
-            )
-            if not shared_member:
-                raise HTTPException(
-                    status_code=403, detail="Access denied to this team"
-                )
 
         # Get team dict using the team owner's context (for loading related resources)
         team_owner_id = team.user_id
