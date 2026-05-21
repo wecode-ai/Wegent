@@ -463,6 +463,7 @@ export interface TransferDocumentsResponse {
   message: string
   transferred_document_count: number
   transferred_folder_count: number
+  deleted_folder_count: number
   source_kb_id: number
   target_kb_id: number
 }

@@ -221,6 +221,14 @@ export function DocumentList({
   // Transfer state
   const [showTransfer, setShowTransfer] = useState(false)
   const [isTransferring, setIsTransferring] = useState(false)
+  const transferProgressText = useMemo(() => {
+    if (!isTransferring) return undefined
+    const total = selectedIds.size + selectedFolderIds.size
+    return t('document.document.batch.transferringProgress', {
+      current: total,
+      total,
+    })
+  }, [isTransferring, selectedIds.size, selectedFolderIds.size, t])
 
   // Resizable name column width (normal table mode only)
   const {
@@ -670,7 +678,17 @@ export function DocumentList({
       try {
         const result = await batchMove(Array.from(selectedIds), targetFolderId)
         if (result.success_count > 0) {
-          setSelectedIds(new Set())
+          const nextSelectedIds = new Set(result.failed_ids)
+          setSelectedIds(nextSelectedIds)
+          if (result.failed_count > 0) {
+            toast({
+              description: t('document.folder.batchMovePartial', {
+                success: result.success_count,
+                failed: result.failed_count,
+              }),
+              variant: 'destructive',
+            })
+          }
           refresh()
           fetchFolders()
         }
@@ -679,7 +697,7 @@ export function DocumentList({
         setShowBatchMove(false)
       }
     },
-    [selectedIds, batchMove, refresh, fetchFolders]
+    [selectedIds, batchMove, refresh, fetchFolders, t]
   )
 
   // Transfer handler
@@ -1270,6 +1288,8 @@ export function DocumentList({
         currentKnowledgeBaseId={knowledgeBase.id}
         onConfirm={handleTransferConfirm}
         isSubmitting={isTransferring}
+        currentKnowledgeBaseNamespace={knowledgeBase.namespace || 'default'}
+        progressText={transferProgressText}
       />
     </div>
   )

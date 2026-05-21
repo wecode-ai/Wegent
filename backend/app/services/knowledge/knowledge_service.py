@@ -3229,7 +3229,44 @@ class KnowledgeService:
         if not target_kb:
             raise ValueError("Target knowledge base not found")
 
+        KnowledgeService.validate_transfer_namespace(db, source_kb, target_kb)
+
         return source_kb, target_kb
+
+    @staticmethod
+    def _get_transfer_namespace_level(db: Session, namespace: str) -> str:
+        """Return normalized namespace level for transfer rules."""
+        if namespace == "default":
+            return "personal"
+        ns = (
+            db.query(Namespace)
+            .filter(Namespace.name == namespace, Namespace.is_active == True)
+            .first()
+        )
+        if ns and ns.level == GroupLevel.organization.value:
+            return "organization"
+        return "group"
+
+    @staticmethod
+    def validate_transfer_namespace(
+        db: Session, source_kb: Kind, target_kb: Kind
+    ) -> None:
+        """Validate allowed transfer directions between namespace levels."""
+        source_level = KnowledgeService._get_transfer_namespace_level(
+            db, source_kb.namespace
+        )
+        target_level = KnowledgeService._get_transfer_namespace_level(
+            db, target_kb.namespace
+        )
+        allowed_targets = {
+            "personal": {"personal", "group", "organization"},
+            "group": {"personal", "group", "organization"},
+            "organization": {"organization"},
+        }
+        if target_level not in allowed_targets[source_level]:
+            raise ValueError(
+                "Invalid target knowledge base namespace for document transfer"
+            )
 
     @staticmethod
     def collect_transfer_doc_and_folder_ids(
@@ -3388,6 +3425,42 @@ class KnowledgeService:
         return old_to_new_folder, transferred_folder_count
 
     @staticmethod
+    def validate_transfer_document_names(
+        db: Session,
+        all_doc_ids: set[int],
+        target_kb_id: int,
+        source_kb_id: int,
+    ) -> None:
+        """Reject transfers that would create duplicate document names."""
+        source_names = [
+            name
+            for (name,) in db.query(KnowledgeDocument.name)
+            .filter(
+                KnowledgeDocument.id.in_(all_doc_ids),
+                KnowledgeDocument.kind_id == source_kb_id,
+            )
+            .all()
+        ]
+        if not source_names:
+            return
+
+        duplicate_rows = (
+            db.query(KnowledgeDocument.name)
+            .filter(
+                KnowledgeDocument.kind_id == target_kb_id,
+                KnowledgeDocument.name.in_(source_names),
+            )
+            .distinct()
+            .all()
+        )
+        duplicate_names = sorted(name for (name,) in duplicate_rows)
+        if duplicate_names:
+            raise ValueError(
+                "Target knowledge base already contains documents with the same names: "
+                + ", ".join(duplicate_names)
+            )
+
+    @staticmethod
     def transfer_documents_mutate(
         db: Session,
         all_doc_ids: set[int],
@@ -3404,6 +3477,7 @@ class KnowledgeService:
                 KnowledgeDocument.id.in_(all_doc_ids),
                 KnowledgeDocument.kind_id == source_kb_id,
             )
+            .with_for_update()
             .all()
         )
 
@@ -3435,39 +3509,11 @@ class KnowledgeService:
         source_kb_id: int,
         transferred_folder_ids: set[int],
     ) -> int:
-        """Delete empty folders from the source KB after a document transfer.
-
-        After documents are transferred out, some folders in the source KB may
-        become empty (no documents and no child folders).  This method walks
-        the folder tree bottom-up and removes any folder that:
-        1. Was involved in the transfer (i.e. is in *transferred_folder_ids*),
-           OR
-        2. Is a parent of a deleted folder and itself became empty.
-
-        Only folders that contain zero documents AND zero child folders are
-        removed, so partial transfers never lose folders that still hold
-        remaining documents.
-
-        IMPORTANT: The caller must flush document mutations to the database
-        before invoking this method, because it relies on SQL COUNT queries
-        that hit the database directly (not the session identity map).
-
-        Args:
-            db: Database session
-            source_kb_id: Source knowledge base ID
-            transferred_folder_ids: Set of folder IDs that were part of the
-                transfer (either explicitly selected or ancestor folders of
-                transferred documents).
-
-        Returns:
-            Number of folders deleted from the source KB.
-        """
+        """Delete empty source folders using batched count queries."""
         if not transferred_folder_ids:
             return 0
 
-        deleted_count = 0
-        # Collect the initial set of folders involved in the transfer.
-        folders_to_check = (
+        folders = (
             db.query(KnowledgeFolder)
             .filter(
                 KnowledgeFolder.kind_id == source_kb_id,
@@ -3475,99 +3521,93 @@ class KnowledgeService:
             )
             .all()
         )
+        folder_by_id = {folder.id: folder for folder in folders}
+        folder_ids_to_check = set(folder_by_id)
+        current_parent_ids = {
+            folder.parent_id
+            for folder in folders
+            if folder.parent_id and folder.parent_id > 0
+        }
 
-        folder_ids_to_check = {f.id for f in folders_to_check}
-
-        # Also include ancestor folders of the transferred folders that may
-        # become empty after their children are deleted.
-        for folder in list(folders_to_check):
-            current_id = folder.parent_id
-            while current_id and current_id > 0:
-                parent_folder = (
-                    db.query(KnowledgeFolder)
-                    .filter(
-                        KnowledgeFolder.id == current_id,
-                        KnowledgeFolder.kind_id == source_kb_id,
-                    )
-                    .first()
-                )
-                if parent_folder and parent_folder.id not in folder_ids_to_check:
-                    folder_ids_to_check.add(parent_folder.id)
-                    folders_to_check.append(parent_folder)
-                    current_id = parent_folder.parent_id
-                else:
-                    break
-
-        # Repeatedly scan and delete empty folders until no more can be
-        # deleted (a single pass may miss parents that become empty only
-        # after their children are removed).
-        changed = True
-        while changed:
-            changed = False
-            # Refresh the folder list from DB each iteration
-            remaining_folders = (
+        while current_parent_ids:
+            parents = (
                 db.query(KnowledgeFolder)
                 .filter(
                     KnowledgeFolder.kind_id == source_kb_id,
-                    KnowledgeFolder.id.in_(folder_ids_to_check),
+                    KnowledgeFolder.id.in_(current_parent_ids),
                 )
                 .all()
             )
+            current_parent_ids = set()
+            for parent in parents:
+                if parent.id in folder_ids_to_check:
+                    continue
+                folder_by_id[parent.id] = parent
+                folder_ids_to_check.add(parent.id)
+                if parent.parent_id and parent.parent_id > 0:
+                    current_parent_ids.add(parent.parent_id)
 
-            # Sort by depth: process deepest folders first.
-            folder_by_id = {f.id: f for f in remaining_folders}
-
-            def _compute_depth(fid: int) -> int:
-                depth = 0
-                visited = set()
-                current = fid
-                while current and current > 0 and current not in visited:
-                    visited.add(current)
-                    f = folder_by_id.get(current)
-                    if f is None:
-                        break
-                    current = f.parent_id
-                    depth += 1
-                return depth
-
-            sorted_folders = sorted(
-                remaining_folders, key=lambda f: _compute_depth(f.id), reverse=True
+        doc_counts = dict(
+            db.query(
+                KnowledgeDocument.folder_id,
+                func.count(KnowledgeDocument.id),
             )
+            .filter(
+                KnowledgeDocument.kind_id == source_kb_id,
+                KnowledgeDocument.folder_id.in_(folder_ids_to_check),
+            )
+            .group_by(KnowledgeDocument.folder_id)
+            .all()
+        )
+        child_counts = dict(
+            db.query(
+                KnowledgeFolder.parent_id,
+                func.count(KnowledgeFolder.id),
+            )
+            .filter(
+                KnowledgeFolder.kind_id == source_kb_id,
+                KnowledgeFolder.parent_id.in_(folder_ids_to_check),
+            )
+            .group_by(KnowledgeFolder.parent_id)
+            .all()
+        )
 
-            for folder in sorted_folders:
-                # Check if folder has any documents
-                doc_count = (
-                    db.query(func.count(KnowledgeDocument.id))
-                    .filter(
-                        KnowledgeDocument.kind_id == source_kb_id,
-                        KnowledgeDocument.folder_id == folder.id,
-                    )
-                    .scalar()
-                ) or 0
+        def folder_depth(folder_id: int) -> int:
+            depth = 0
+            seen = set()
+            current = folder_by_id.get(folder_id)
+            while current and current.parent_id > 0 and current.parent_id not in seen:
+                seen.add(current.parent_id)
+                depth += 1
+                current = folder_by_id.get(current.parent_id)
+            return depth
 
-                if doc_count > 0:
-                    continue
+        deleted_ids: list[int] = []
+        for folder in sorted(
+            folder_by_id.values(), key=lambda item: folder_depth(item.id), reverse=True
+        ):
+            if doc_counts.get(folder.id, 0) > 0 or child_counts.get(folder.id, 0) > 0:
+                continue
+            deleted_ids.append(folder.id)
+            if folder.parent_id in child_counts:
+                child_counts[folder.parent_id] = max(
+                    child_counts[folder.parent_id] - 1, 0
+                )
 
-                # Check if folder has any child folders
-                child_count = (
-                    db.query(func.count(KnowledgeFolder.id))
-                    .filter(
-                        KnowledgeFolder.kind_id == source_kb_id,
-                        KnowledgeFolder.parent_id == folder.id,
-                    )
-                    .scalar()
-                ) or 0
+        if not deleted_ids:
+            return 0
 
-                if child_count > 0:
-                    continue
-
-                # Folder is empty — delete it
-                db.delete(folder)
-                db.flush()  # Ensure deletion is visible to subsequent queries
-                deleted_count += 1
-                folder_ids_to_check.discard(folder.id)
-                changed = True
-
+        deleted_count = 0
+        for i in range(0, len(deleted_ids), 1000):
+            batch = deleted_ids[i : i + 1000]
+            deleted_count += (
+                db.query(KnowledgeFolder)
+                .filter(
+                    KnowledgeFolder.kind_id == source_kb_id,
+                    KnowledgeFolder.id.in_(batch),
+                )
+                .delete(synchronize_session=False)
+            )
         return deleted_count
 
     @staticmethod
@@ -3688,6 +3728,13 @@ class KnowledgeService:
                     f"transfer would exceed the limit of {KnowledgeService.NOTEBOOK_MAX_DOCUMENTS} documents. "
                     f"Current: {current_count}, transferring: {len(all_doc_ids)}"
                 )
+
+        KnowledgeService.validate_transfer_document_names(
+            db=db,
+            all_doc_ids=all_doc_ids,
+            target_kb_id=target_kb_id,
+            source_kb_id=source_kb_id,
+        )
 
         logger.info(
             "Transferring %d document(s) and %d folder(s) from KB %d to KB %d",
