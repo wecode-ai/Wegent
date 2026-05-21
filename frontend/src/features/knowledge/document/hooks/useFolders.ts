@@ -7,7 +7,6 @@
  */
 
 import { useState, useCallback } from 'react'
-import { ApiError } from '@/apis/client'
 import {
   getFolderTree,
   createFolder,
@@ -22,48 +21,19 @@ import type {
 } from '@/types/knowledge'
 import { toast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
+import { mapKnowledgeDocumentErrorMessage } from '../utils/error-messages'
 
 interface UseFoldersOptions {
   knowledgeBaseId: number | null
 }
-
-const FOLDER_DEPTH_EXCEEDED_MESSAGE =
-  'Folder hierarchy exceeds the maximum depth of 4 levels under a knowledge base'
-const DOCUMENT_FOLDER_DEPTH_EXCEEDED_MESSAGE =
-  'Documents can only be placed within the 4th folder level under a knowledge base or above'
-const FOLDER_DEPTH_EXCEEDED_ERROR_CODE = 'KNOWLEDGE_FOLDER_DEPTH_EXCEEDED'
-const DOCUMENT_FOLDER_DEPTH_EXCEEDED_ERROR_CODE = 'KNOWLEDGE_DOCUMENT_TARGET_FOLDER_DEPTH_EXCEEDED'
 
 export function useFolders(options: UseFoldersOptions) {
   const { knowledgeBaseId } = options
   const { t } = useTranslation('knowledge')
 
   const mapFolderErrorMessage = useCallback(
-    (error: unknown, fallbackKey: string): string => {
-      if (!(error instanceof Error)) {
-        return t(fallbackKey)
-      }
-
-      if (error instanceof ApiError) {
-        if (error.errorCode === FOLDER_DEPTH_EXCEEDED_ERROR_CODE) {
-          return t('document.folder.depthExceeded')
-        }
-
-        if (error.errorCode === DOCUMENT_FOLDER_DEPTH_EXCEEDED_ERROR_CODE) {
-          return t('document.folder.documentPlacementDepthExceeded')
-        }
-      }
-
-      if (error.message === FOLDER_DEPTH_EXCEEDED_MESSAGE) {
-        return t('document.folder.depthExceeded')
-      }
-
-      if (error.message === DOCUMENT_FOLDER_DEPTH_EXCEEDED_MESSAGE) {
-        return t('document.folder.documentPlacementDepthExceeded')
-      }
-
-      return error.message
-    },
+    (error: unknown, fallbackKey: string): string =>
+      mapKnowledgeDocumentErrorMessage(error, t, fallbackKey),
     [t]
   )
 

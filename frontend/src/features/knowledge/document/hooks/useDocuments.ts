@@ -21,6 +21,8 @@ import type {
   KnowledgeDocumentUpdate,
 } from '@/types/knowledge'
 import { toast } from '@/hooks/use-toast'
+import { useTranslation } from '@/hooks/useTranslation'
+import { mapKnowledgeDocumentErrorMessage } from '../utils/error-messages'
 
 interface UseDocumentsOptions {
   knowledgeBaseId: number | null
@@ -29,6 +31,7 @@ interface UseDocumentsOptions {
 
 export function useDocuments(options: UseDocumentsOptions) {
   const { knowledgeBaseId, autoLoad = true } = options
+  const { t } = useTranslation('knowledge')
 
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([])
   const [loading, setLoading] = useState(false)
@@ -65,14 +68,14 @@ export function useDocuments(options: UseDocumentsOptions) {
         setDocuments(prev => [created, ...prev])
         return created
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to create document'
+        const message = mapKnowledgeDocumentErrorMessage(err, t, 'document.createFailed')
         toast({ title: message, variant: 'destructive' })
         throw err
       } finally {
         setLoading(false)
       }
     },
-    [knowledgeBaseId]
+    [knowledgeBaseId, t]
   )
 
   const update = useCallback(async (id: number, data: KnowledgeDocumentUpdate) => {
