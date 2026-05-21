@@ -7,6 +7,7 @@
  */
 
 import { useState, useCallback } from 'react'
+import { ApiError } from '@/apis/client'
 import {
   getFolderTree,
   createFolder,
@@ -30,6 +31,8 @@ const FOLDER_DEPTH_EXCEEDED_MESSAGE =
   'Folder hierarchy exceeds the maximum depth of 4 levels under a knowledge base'
 const DOCUMENT_FOLDER_DEPTH_EXCEEDED_MESSAGE =
   'Documents can only be placed within the 4th folder level under a knowledge base or above'
+const FOLDER_DEPTH_EXCEEDED_ERROR_CODE = 'KNOWLEDGE_FOLDER_DEPTH_EXCEEDED'
+const DOCUMENT_FOLDER_DEPTH_EXCEEDED_ERROR_CODE = 'KNOWLEDGE_DOCUMENT_TARGET_FOLDER_DEPTH_EXCEEDED'
 
 export function useFolders(options: UseFoldersOptions) {
   const { knowledgeBaseId } = options
@@ -39,6 +42,16 @@ export function useFolders(options: UseFoldersOptions) {
     (error: unknown, fallbackKey: string): string => {
       if (!(error instanceof Error)) {
         return t(fallbackKey)
+      }
+
+      if (error instanceof ApiError) {
+        if (error.errorCode === FOLDER_DEPTH_EXCEEDED_ERROR_CODE) {
+          return t('document.folder.depthExceeded')
+        }
+
+        if (error.errorCode === DOCUMENT_FOLDER_DEPTH_EXCEEDED_ERROR_CODE) {
+          return t('document.folder.documentPlacementDepthExceeded')
+        }
       }
 
       if (error.message === FOLDER_DEPTH_EXCEEDED_MESSAGE) {

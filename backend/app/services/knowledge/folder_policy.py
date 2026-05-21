@@ -11,6 +11,7 @@ from typing import Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
+from app.core.exceptions import CustomHTTPException
 from app.models.knowledge import KnowledgeFolder
 
 # Knowledge base counts as level 1, so users can create at most 4 nested
@@ -21,6 +22,10 @@ FOLDER_DEPTH_EXCEEDED_MESSAGE = (
     "Folder hierarchy exceeds the maximum depth of 4 levels under a knowledge base"
 )
 DOCUMENT_FOLDER_DEPTH_EXCEEDED_MESSAGE = "Documents can only be placed within the 4th folder level under a knowledge base or above"
+FOLDER_DEPTH_EXCEEDED_ERROR_CODE = "KNOWLEDGE_FOLDER_DEPTH_EXCEEDED"
+DOCUMENT_FOLDER_DEPTH_EXCEEDED_ERROR_CODE = (
+    "KNOWLEDGE_DOCUMENT_TARGET_FOLDER_DEPTH_EXCEEDED"
+)
 
 
 def get_folder_depth(
@@ -87,7 +92,11 @@ def validate_new_folder_depth(
     parent_depth = get_folder_depth(db, kind_id, parent_id, folder_map=folder_map)
     new_depth = parent_depth + 1
     if new_depth > MAX_FOLDER_DEPTH:
-        raise ValueError(FOLDER_DEPTH_EXCEEDED_MESSAGE)
+        raise CustomHTTPException(
+            status_code=400,
+            detail=FOLDER_DEPTH_EXCEEDED_MESSAGE,
+            error_code=FOLDER_DEPTH_EXCEEDED_ERROR_CODE,
+        )
 
 
 def validate_document_target_folder_depth(
@@ -114,7 +123,11 @@ def validate_document_target_folder_depth(
     """
     target_depth = get_folder_depth(db, kind_id, folder_id, folder_map=folder_map)
     if target_depth > MAX_FOLDER_DEPTH:
-        raise ValueError(DOCUMENT_FOLDER_DEPTH_EXCEEDED_MESSAGE)
+        raise CustomHTTPException(
+            status_code=400,
+            detail=DOCUMENT_FOLDER_DEPTH_EXCEEDED_MESSAGE,
+            error_code=DOCUMENT_FOLDER_DEPTH_EXCEEDED_ERROR_CODE,
+        )
 
 
 def assert_document_can_be_placed_in_folder(

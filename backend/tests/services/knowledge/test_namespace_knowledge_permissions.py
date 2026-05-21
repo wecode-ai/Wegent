@@ -5,6 +5,7 @@
 import pytest
 from sqlalchemy.orm import Session
 
+from app.core.exceptions import CustomHTTPException
 from app.core.security import get_password_hash
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeFolder
@@ -1222,7 +1223,7 @@ def test_create_folder_rejects_fifth_folder_level_under_knowledge_base(
         parent_id = folder.id
 
     with pytest.raises(
-        ValueError,
+        CustomHTTPException,
         match="maximum depth of 4 levels under a knowledge base",
     ):
         KnowledgeFolderService.create_folder(
@@ -1270,7 +1271,7 @@ def test_move_folder_rejects_subtree_that_would_exceed_depth_limit(
     )
 
     with pytest.raises(
-        ValueError,
+        CustomHTTPException,
         match="maximum depth of 4 levels under a knowledge base",
     ):
         KnowledgeFolderService.update_folder(
@@ -1396,7 +1397,7 @@ def test_document_operations_reject_target_folder_beyond_depth_four(
     test_db.refresh(too_deep_folder)
 
     with pytest.raises(
-        ValueError,
+        CustomHTTPException,
         match="Documents can only be placed within the 4th folder level",
     ):
         KnowledgeService.create_document(
@@ -1430,7 +1431,7 @@ def test_document_operations_reject_target_folder_beyond_depth_four(
     )
 
     with pytest.raises(
-        ValueError,
+        CustomHTTPException,
         match="Documents can only be placed within the 4th folder level",
     ):
         KnowledgeFolderService.move_document(

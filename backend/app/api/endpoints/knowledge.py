@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core import security
 from app.core.config import settings
+from app.core.exceptions import CustomHTTPException
 from app.core.security import AuthContext, get_auth_context
 from app.db.session import SessionLocal
 from app.models.user import User
@@ -101,6 +102,9 @@ def _raise_document_detail_http_error(error: ValueError) -> None:
     - "access denied" or "permission" -> 403
     - anything else -> 400
     """
+    if isinstance(error, CustomHTTPException):
+        raise error
+
     error_msg = str(error)
     lower = error_msg.lower()
     if "not found" in lower:
