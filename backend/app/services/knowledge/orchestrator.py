@@ -2080,8 +2080,14 @@ class KnowledgeOrchestrator:
             .filter(Kind.id == document.kind_id, Kind.kind == "KnowledgeBase")
             .first()
         )
-        if kb:
-            KnowledgeService._assert_can_manage_document(db, kb, document, user.id)
+        if not kb:
+            return {
+                "success": False,
+                "document": None,
+                "error_code": "KB_NOT_FOUND",
+                "error_message": "Knowledge base not found for document",
+            }
+        KnowledgeService._assert_can_manage_document(db, kb, document, user.id)
 
         if document.source_type != DocumentSourceType.WEB.value:
             return {
