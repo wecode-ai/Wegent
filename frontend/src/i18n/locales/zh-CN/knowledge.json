@@ -224,6 +224,8 @@
       "updateFailed": "更新文件夹失败",
       "deleteFailed": "删除文件夹失败",
       "moveDocumentFailed": "移动文档失败",
+      "depthExceeded": "文件夹层级不能超过 4 层",
+      "documentPlacementDepthExceeded": "文档只能放在第 4 层文件夹及以上位置",
       "moveDocumentHint": "将文档 \"{{name}}\" 移动到：",
       "current": "当前"
     },

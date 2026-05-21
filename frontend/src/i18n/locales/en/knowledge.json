@@ -224,6 +224,8 @@
       "updateFailed": "Failed to update folder",
       "deleteFailed": "Failed to delete folder",
       "moveDocumentFailed": "Failed to move document",
+      "depthExceeded": "Folder hierarchy cannot exceed 4 levels",
+      "documentPlacementDepthExceeded": "Documents can only be placed in the 4th folder level or above",
       "moveDocumentHint": "Move \"{{name}}\" to:",
       "current": "current"
     },
