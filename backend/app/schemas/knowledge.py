@@ -906,6 +906,10 @@ class TransferDocumentsResponse(BaseModel):
     transferred_folder_count: int = Field(
         ..., description="Number of folders transferred"
     )
+    deleted_folder_count: int = Field(
+        default=0,
+        description="Number of empty folders deleted from source KB after transfer",
+    )
     source_kb_id: int = Field(..., description="Source knowledge base ID")
     target_kb_id: int = Field(..., description="Target knowledge base ID")
 

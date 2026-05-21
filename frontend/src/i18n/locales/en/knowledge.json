@@ -300,6 +300,7 @@
       "uploadSuccess": "File uploaded successfully",
       "batch": {
         "selected": "{{count}} selected",
+        "selectedWithFolders": "{{docCount}} document(s) and {{folderCount}} folder(s) selected",
         "selectAll": "Select All",
         "enable": "Enable",
         "disable": "Disable",

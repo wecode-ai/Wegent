@@ -596,3 +596,957 @@ def test_developer_can_transfer_documents_in_namespace_kb(test_db: Session) -> N
 
     assert result.success is True
     assert result.transferred_document_count == 1
+
+
+@pytest.mark.unit
+def test_transfer_partial_documents_preserves_folder_hierarchy(
+    test_db: Session,
+) -> None:
+    """Test that transferring only some documents from a folder recreates
+    the folder hierarchy in the target KB without moving unselected documents.
+
+    This is the core bug-fix scenario: when a user selects individual files
+    (not folders) for transfer, only those files should be moved, but the
+    folder structure they belong to should still be recreated in the target KB.
+    """
+    owner = _create_user(test_db, "owner-partial-folder-transfer")
+
+    # Create two KBs
+    source_kb_id = _create_kb(test_db, owner.id, "source-partial-kb")
+    target_kb_id = _create_kb(test_db, owner.id, "target-partial-kb")
+
+    # Create folder hierarchy in source KB: parent > child
+    parent_folder = _create_folder(test_db, source_kb_id, owner.id, "parent-folder")
+    child_folder = _create_folder(
+        test_db, source_kb_id, owner.id, "child-folder", parent_id=parent_folder.id
+    )
+
+    # Create documents: some in parent folder, some in child folder, some at root
+    doc_in_parent_a = _create_document(
+        test_db,
+        source_kb_id,
+        owner.id,
+        "doc-parent-a.md",
+        folder_id=parent_folder.id,
+    )
+    doc_in_parent_b = _create_document(
+        test_db,
+        source_kb_id,
+        owner.id,
+        "doc-parent-b.md",
+        folder_id=parent_folder.id,
+    )
+    doc_in_child_a = _create_document(
+        test_db,
+        source_kb_id,
+        owner.id,
+        "doc-child-a.md",
+        folder_id=child_folder.id,
+    )
+    doc_in_child_b = _create_document(
+        test_db,
+        source_kb_id,
+        owner.id,
+        "doc-child-b.md",
+        folder_id=child_folder.id,
+    )
+    doc_in_root = _create_document(test_db, source_kb_id, owner.id, "doc-root.md")
+
+    # Transfer only doc-parent-a and doc-child-a (NOT the full folder)
+    result = KnowledgeService.transfer_documents_to_kb(
+        db=test_db,
+        source_kb_id=source_kb_id,
+        target_kb_id=target_kb_id,
+        document_ids=[doc_in_parent_a.id, doc_in_child_a.id],
+        folder_ids=[],  # No folders explicitly selected
+        user_id=owner.id,
+    )
+
+    assert result.success is True
+    assert result.transferred_document_count == 2
+    # Folders should be recreated even though folder_ids is empty
+    assert result.transferred_folder_count == 2
+
+    # Verify folder hierarchy is recreated in target KB
+    target_folders = (
+        test_db.query(KnowledgeFolder)
+        .filter(KnowledgeFolder.kind_id == target_kb_id)
+        .all()
+    )
+    assert len(target_folders) == 2
+
+    target_parent = next((f for f in target_folders if f.name == "parent-folder"), None)
+    target_child = next((f for f in target_folders if f.name == "child-folder"), None)
+    assert target_parent is not None
+    assert target_child is not None
+    assert target_child.parent_id == target_parent.id  # Hierarchy preserved
+
+    # Verify transferred documents are in correct folders in target KB
+    transferred_docs = (
+        test_db.query(KnowledgeDocument)
+        .filter(KnowledgeDocument.kind_id == target_kb_id)
+        .all()
+    )
+    assert len(transferred_docs) == 2
+
+    doc_parent_a_transferred = next(
+        (d for d in transferred_docs if d.name == "doc-parent-a.md"), None
+    )
+    doc_child_a_transferred = next(
+        (d for d in transferred_docs if d.name == "doc-child-a.md"), None
+    )
+    assert doc_parent_a_transferred is not None
+    assert doc_child_a_transferred is not None
+    assert doc_parent_a_transferred.folder_id == target_parent.id
+    assert doc_child_a_transferred.folder_id == target_child.id
+
+    # Verify unselected documents remain in source KB with their folder intact
+    remaining_docs = (
+        test_db.query(KnowledgeDocument)
+        .filter(KnowledgeDocument.kind_id == source_kb_id)
+        .all()
+    )
+    assert len(remaining_docs) == 3  # doc-parent-b, doc-child-b, doc-root
+
+    remaining_names = {d.name for d in remaining_docs}
+    assert "doc-parent-b.md" in remaining_names
+    assert "doc-child-b.md" in remaining_names
+    assert "doc-root.md" in remaining_names
+
+    # Verify remaining documents still have their original folder_id
+    doc_parent_b = next(d for d in remaining_docs if d.name == "doc-parent-b.md")
+    doc_child_b = next(d for d in remaining_docs if d.name == "doc-child-b.md")
+    doc_root = next(d for d in remaining_docs if d.name == "doc-root.md")
+    assert doc_parent_b.folder_id == parent_folder.id
+    assert doc_child_b.folder_id == child_folder.id
+    assert doc_root.folder_id == 0
+
+    # Verify source folders still exist (not deleted)
+    source_folders = (
+        test_db.query(KnowledgeFolder)
+        .filter(KnowledgeFolder.kind_id == source_kb_id)
+        .all()
+    )
+    assert len(source_folders) == 2
+
+
+@pytest.mark.unit
+def test_transfer_single_document_from_folder_preserves_folder(
+    test_db: Session,
+) -> None:
+    """Test that transferring a single document from a folder recreates
+    the folder in the target KB and does not move sibling documents."""
+    owner = _create_user(test_db, "owner-single-doc-folder")
+
+    source_kb_id = _create_kb(test_db, owner.id, "source-single-doc-kb")
+    target_kb_id = _create_kb(test_db, owner.id, "target-single-doc-kb")
+
+    # Create a folder with two documents
+    folder = _create_folder(test_db, source_kb_id, owner.id, "my-folder")
+    doc_a = _create_document(
+        test_db, source_kb_id, owner.id, "doc-a.md", folder_id=folder.id
+    )
+    doc_b = _create_document(
+        test_db, source_kb_id, owner.id, "doc-b.md", folder_id=folder.id
+    )
+
+    # Transfer only doc_a
+    result = KnowledgeService.transfer_documents_to_kb(
+        db=test_db,
+        source_kb_id=source_kb_id,
+        target_kb_id=target_kb_id,
+        document_ids=[doc_a.id],
+        folder_ids=[],
+        user_id=owner.id,
+    )
+
+    assert result.success is True
+    assert result.transferred_document_count == 1
+    assert result.transferred_folder_count == 1
+
+    # Verify folder is recreated in target KB
+    target_folders = (
+        test_db.query(KnowledgeFolder)
+        .filter(KnowledgeFolder.kind_id == target_kb_id)
+        .all()
+    )
+    assert len(target_folders) == 1
+    assert target_folders[0].name == "my-folder"
+
+    # Verify doc_a is in the target folder
+    transferred_doc = (
+        test_db.query(KnowledgeDocument)
+        .filter(KnowledgeDocument.id == doc_a.id)
+        .first()
+    )
+    assert transferred_doc.kind_id == target_kb_id
+    assert transferred_doc.folder_id == target_folders[0].id
+
+    # Verify doc_b remains in source KB with original folder
+    remaining_doc = (
+        test_db.query(KnowledgeDocument)
+        .filter(KnowledgeDocument.id == doc_b.id)
+        .first()
+    )
+    assert remaining_doc.kind_id == source_kb_id
+    assert remaining_doc.folder_id == folder.id
+
+    # Verify source folder still exists
+    source_folder = (
+        test_db.query(KnowledgeFolder).filter(KnowledgeFolder.id == folder.id).first()
+    )
+    assert source_folder is not None
+
+
+@pytest.mark.unit
+def test_transfer_documents_with_nested_folder_ancestors(
+    test_db: Session,
+) -> None:
+    """Test that transferring a document from a deeply nested folder
+    recreates the entire ancestor chain in the target KB."""
+    owner = _create_user(test_db, "owner-nested-ancestor")
+
+    source_kb_id = _create_kb(test_db, owner.id, "source-nested-kb")
+    target_kb_id = _create_kb(test_db, owner.id, "target-nested-kb")
+
+    # Create deeply nested folder hierarchy: root > level1 > level2
+    root_folder = _create_folder(test_db, source_kb_id, owner.id, "root-folder")
+    level1_folder = _create_folder(
+        test_db, source_kb_id, owner.id, "level1-folder", parent_id=root_folder.id
+    )
+    level2_folder = _create_folder(
+        test_db,
+        source_kb_id,
+        owner.id,
+        "level2-folder",
+        parent_id=level1_folder.id,
+    )
+
+    # Create a document in the deepest folder
+    doc = _create_document(
+        test_db,
+        source_kb_id,
+        owner.id,
+        "deep-doc.md",
+        folder_id=level2_folder.id,
+    )
+
+    # Transfer only the document (no folder_ids)
+    result = KnowledgeService.transfer_documents_to_kb(
+        db=test_db,
+        source_kb_id=source_kb_id,
+        target_kb_id=target_kb_id,
+        document_ids=[doc.id],
+        folder_ids=[],
+        user_id=owner.id,
+    )
+
+    assert result.success is True
+    assert result.transferred_document_count == 1
+    assert result.transferred_folder_count == 3  # All 3 ancestor folders
+
+    # Verify full hierarchy is recreated in target KB
+    target_folders = (
+        test_db.query(KnowledgeFolder)
+        .filter(KnowledgeFolder.kind_id == target_kb_id)
+        .all()
+    )
+    assert len(target_folders) == 3
+
+    target_root = next((f for f in target_folders if f.name == "root-folder"), None)
+    target_level1 = next((f for f in target_folders if f.name == "level1-folder"), None)
+    target_level2 = next((f for f in target_folders if f.name == "level2-folder"), None)
+    assert target_root is not None
+    assert target_level1 is not None
+    assert target_level2 is not None
+
+    # Verify hierarchy: root -> level1 -> level2
+    assert target_level1.parent_id == target_root.id
+    assert target_level2.parent_id == target_level1.id
+
+    # Verify document is in the deepest folder
+    transferred_doc = (
+        test_db.query(KnowledgeDocument).filter(KnowledgeDocument.id == doc.id).first()
+    )
+    assert transferred_doc.kind_id == target_kb_id
+    assert transferred_doc.folder_id == target_level2.id
+
+
+@pytest.mark.unit
+def test_transfer_same_folder_documents_in_separate_operations_no_duplicate_folders(
+    test_db: Session,
+) -> None:
+    """Test that transferring documents from the same source folder to the
+    same target KB in two separate operations does NOT create duplicate
+    same-named folders in the target KB.
+
+    This is the bug-fix scenario: previously, each transfer operation would
+    unconditionally create a new folder in the target KB, resulting in
+    duplicate same-named folders when documents from the same source folder
+    were transferred in separate operations.
+    """
+    owner = _create_user(test_db, "owner-separate-transfer")
+
+    source_kb_id = _create_kb(test_db, owner.id, "source-sep-kb")
+    target_kb_id = _create_kb(test_db, owner.id, "target-sep-kb")
+
+    # Create a folder with two documents in source KB
+    folder = _create_folder(test_db, source_kb_id, owner.id, "shared-folder")
+    doc_a = _create_document(
+        test_db, source_kb_id, owner.id, "doc-a.md", folder_id=folder.id
+    )
+    doc_b = _create_document(
+        test_db, source_kb_id, owner.id, "doc-b.md", folder_id=folder.id
+    )
+
+    # First transfer: move doc_a to target KB
+    result1 = KnowledgeService.transfer_documents_to_kb(
+        db=test_db,
+        source_kb_id=source_kb_id,
+        target_kb_id=target_kb_id,
+        document_ids=[doc_a.id],
+        folder_ids=[],
+        user_id=owner.id,
+    )
+    assert result1.success is True
+    assert result1.transferred_document_count == 1
+    assert result1.transferred_folder_count == 1
+
+    # Verify one folder exists in target KB after first transfer
+    target_folders_after_first = (
+        test_db.query(KnowledgeFolder)
+        .filter(KnowledgeFolder.kind_id == target_kb_id)
+        .all()
+    )
+    assert len(target_folders_after_first) == 1
+    first_folder_id = target_folders_after_first[0].id
+
+    # Second transfer: move doc_b to the same target KB
+    result2 = KnowledgeService.transfer_documents_to_kb(
+        db=test_db,
+        source_kb_id=source_kb_id,
+        target_kb_id=target_kb_id,
+        document_ids=[doc_b.id],
+        folder_ids=[],
+        user_id=owner.id,
+    )
+    assert result2.success is True
+    assert result2.transferred_document_count == 1
+    # No new folder should be created — the existing one is reused
+    assert result2.transferred_folder_count == 0
+
+    # Verify still only ONE folder in target KB (no duplicate)
+    target_folders_after_second = (
+        test_db.query(KnowledgeFolder)
+        .filter(KnowledgeFolder.kind_id == target_kb_id)
+        .all()
+    )
+    assert len(target_folders_after_second) == 1
+    assert target_folders_after_second[0].id == first_folder_id
+
+    # Verify both documents are in the same folder in target KB
+    transferred_docs = (
+        test_db.query(KnowledgeDocument)
+        .filter(KnowledgeDocument.kind_id == target_kb_id)
+        .all()
+    )
+    assert len(transferred_docs) == 2
+    for doc in transferred_docs:
+        assert doc.folder_id == first_folder_id
+
+
+@pytest.mark.unit
+def test_transfer_nested_folder_documents_in_separate_operations_no_duplicates(
+    test_db: Session,
+) -> None:
+    """Test that transferring documents from nested folders in separate
+    operations reuses existing target folders at all hierarchy levels."""
+    owner = _create_user(test_db, "owner-nested-sep-transfer")
+
+    source_kb_id = _create_kb(test_db, owner.id, "source-nested-sep-kb")
+    target_kb_id = _create_kb(test_db, owner.id, "target-nested-sep-kb")
+
+    # Create nested folder hierarchy: parent > child
+    parent_folder = _create_folder(test_db, source_kb_id, owner.id, "parent-folder")
+    child_folder = _create_folder(
+        test_db, source_kb_id, owner.id, "child-folder", parent_id=parent_folder.id
+    )
+
+    # Create documents in both folders
+    doc_in_parent = _create_document(
+        test_db, source_kb_id, owner.id, "doc-parent.md", folder_id=parent_folder.id
+    )
+    doc_in_child = _create_document(
+        test_db, source_kb_id, owner.id, "doc-child.md", folder_id=child_folder.id
+    )
+
+    # First transfer: move doc_in_child (deepest) — recreates both parent and child
+    result1 = KnowledgeService.transfer_documents_to_kb(
+        db=test_db,
+        source_kb_id=source_kb_id,
+        target_kb_id=target_kb_id,
+        document_ids=[doc_in_child.id],
+        folder_ids=[],
+        user_id=owner.id,
+    )
+    assert result1.success is True
+    assert result1.transferred_folder_count == 2  # parent + child
+
+    # Record the target folder IDs after first transfer
+    target_folders_after_first = (
+        test_db.query(KnowledgeFolder)
+        .filter(KnowledgeFolder.kind_id == target_kb_id)
+        .all()
+    )
+    assert len(target_folders_after_first) == 2
+    target_parent = next(
+        f for f in target_folders_after_first if f.name == "parent-folder"
+    )
+    target_child = next(
+        f for f in target_folders_after_first if f.name == "child-folder"
+    )
+
+    # Second transfer: move doc_in_parent — should reuse existing parent folder
+    result2 = KnowledgeService.transfer_documents_to_kb(
+        db=test_db,
+        source_kb_id=source_kb_id,
+        target_kb_id=target_kb_id,
+        document_ids=[doc_in_parent.id],
+        folder_ids=[],
+        user_id=owner.id,
+    )
+    assert result2.success is True
+    assert result2.transferred_folder_count == 0  # No new folders created
+
+    # Verify still only 2 folders in target KB (no duplicates)
+    target_folders_after_second = (
+        test_db.query(KnowledgeFolder)
+        .filter(KnowledgeFolder.kind_id == target_kb_id)
+        .all()
+    )
+    assert len(target_folders_after_second) == 2
+
+    # Verify both documents are in correct folders
+    transferred_docs = (
+        test_db.query(KnowledgeDocument)
+        .filter(KnowledgeDocument.kind_id == target_kb_id)
+        .all()
+    )
+    assert len(transferred_docs) == 2
+
+    doc_parent_transferred = next(
+        d for d in transferred_docs if d.name == "doc-parent.md"
+    )
+    doc_child_transferred = next(
+        d for d in transferred_docs if d.name == "doc-child.md"
+    )
+    assert doc_parent_transferred.folder_id == target_parent.id
+    assert doc_child_transferred.folder_id == target_child.id
+
+
+# ============== Empty Folder Cleanup Tests ==============
+
+
+@pytest.mark.unit
+def test_transfer_all_documents_from_folder_deletes_empty_source_folder(
+    test_db: Session,
+) -> None:
+    """Test that transferring ALL documents from a folder deletes the
+    now-empty source folder from the source KB."""
+    owner = _create_user(test_db, "owner-cleanup-empty-folder")
+
+    source_kb_id = _create_kb(test_db, owner.id, "source-cleanup-kb")
+    target_kb_id = _create_kb(test_db, owner.id, "target-cleanup-kb")
+
+    # Create a folder with two documents
+    folder = _create_folder(test_db, source_kb_id, owner.id, "my-folder")
+    doc_a = _create_document(
+        test_db, source_kb_id, owner.id, "doc-a.md", folder_id=folder.id
+    )
+    doc_b = _create_document(
+        test_db, source_kb_id, owner.id, "doc-b.md", folder_id=folder.id
+    )
+
+    # Transfer ALL documents from the folder
+    result = KnowledgeService.transfer_documents_to_kb(
+        db=test_db,
+        source_kb_id=source_kb_id,
+        target_kb_id=target_kb_id,
+        document_ids=[doc_a.id, doc_b.id],
+        folder_ids=[],
+        user_id=owner.id,
+    )
+
+    assert result.success is True
+    assert result.transferred_document_count == 2
+    assert result.deleted_folder_count == 1  # Source folder should be deleted
+
+    # Verify source folder no longer exists
+    source_folder = (
+        test_db.query(KnowledgeFolder).filter(KnowledgeFolder.id == folder.id).first()
+    )
+    assert source_folder is None
+
+    # Verify no folders remain in source KB
+    source_folders = (
+        test_db.query(KnowledgeFolder)
+        .filter(KnowledgeFolder.kind_id == source_kb_id)
+        .all()
+    )
+    assert len(source_folders) == 0
+
+
+@pytest.mark.unit
+def test_transfer_partial_documents_from_folder_preserves_source_folder(
+    test_db: Session,
+) -> None:
+    """Test that transferring only SOME documents from a folder does NOT
+    delete the source folder (it still has remaining documents)."""
+    owner = _create_user(test_db, "owner-cleanup-partial")
+
+    source_kb_id = _create_kb(test_db, owner.id, "source-partial-cleanup-kb")
+    target_kb_id = _create_kb(test_db, owner.id, "target-partial-cleanup-kb")
+
+    # Create a folder with two documents
+    folder = _create_folder(test_db, source_kb_id, owner.id, "partial-folder")
+    doc_a = _create_document(
+        test_db, source_kb_id, owner.id, "doc-a.md", folder_id=folder.id
+    )
+    doc_b = _create_document(
+        test_db, source_kb_id, owner.id, "doc-b.md", folder_id=folder.id
+    )
+
+    # Transfer only doc_a (partial transfer)
+    result = KnowledgeService.transfer_documents_to_kb(
+        db=test_db,
+        source_kb_id=source_kb_id,
+        target_kb_id=target_kb_id,
+        document_ids=[doc_a.id],
+        folder_ids=[],
+        user_id=owner.id,
+    )
+
+    assert result.success is True
+    assert result.transferred_document_count == 1
+    assert result.deleted_folder_count == 0  # Folder still has doc_b
+
+    # Verify source folder still exists
+    source_folder = (
+        test_db.query(KnowledgeFolder).filter(KnowledgeFolder.id == folder.id).first()
+    )
+    assert source_folder is not None
+
+    # Verify doc_b remains in source KB
+    remaining_doc = (
+        test_db.query(KnowledgeDocument)
+        .filter(KnowledgeDocument.id == doc_b.id)
+        .first()
+    )
+    assert remaining_doc.kind_id == source_kb_id
+    assert remaining_doc.folder_id == folder.id
+
+
+@pytest.mark.unit
+def test_transfer_entire_nested_folder_hierarchy_deletes_all_empty_source_folders(
+    test_db: Session,
+) -> None:
+    """Test that transferring all documents from a nested folder hierarchy
+    deletes ALL empty source folders (bottom-up cascading deletion)."""
+    owner = _create_user(test_db, "owner-cleanup-nested")
+
+    source_kb_id = _create_kb(test_db, owner.id, "source-nested-cleanup-kb")
+    target_kb_id = _create_kb(test_db, owner.id, "target-nested-cleanup-kb")
+
+    # Create nested folder hierarchy: root > level1 > level2
+    root_folder = _create_folder(test_db, source_kb_id, owner.id, "root-folder")
+    level1_folder = _create_folder(
+        test_db, source_kb_id, owner.id, "level1-folder", parent_id=root_folder.id
+    )
+    level2_folder = _create_folder(
+        test_db,
+        source_kb_id,
+        owner.id,
+        "level2-folder",
+        parent_id=level1_folder.id,
+    )
+
+    # Create one document in the deepest folder
+    doc = _create_document(
+        test_db,
+        source_kb_id,
+        owner.id,
+        "deep-doc.md",
+        folder_id=level2_folder.id,
+    )
+
+    # Transfer the document (no folder_ids, just the document)
+    result = KnowledgeService.transfer_documents_to_kb(
+        db=test_db,
+        source_kb_id=source_kb_id,
+        target_kb_id=target_kb_id,
+        document_ids=[doc.id],
+        folder_ids=[],
+        user_id=owner.id,
+    )
+
+    assert result.success is True
+    assert result.transferred_document_count == 1
+    # All 3 source folders should be deleted (cascading bottom-up)
+    assert result.deleted_folder_count == 3
+
+    # Verify no folders remain in source KB
+    source_folders = (
+        test_db.query(KnowledgeFolder)
+        .filter(KnowledgeFolder.kind_id == source_kb_id)
+        .all()
+    )
+    assert len(source_folders) == 0
+
+
+@pytest.mark.unit
+def test_transfer_folder_with_all_documents_deletes_source_folder(
+    test_db: Session,
+) -> None:
+    """Test that transferring a folder via folder_ids (which includes all
+    documents) deletes the source folder."""
+    owner = _create_user(test_db, "owner-cleanup-folder-transfer")
+
+    source_kb_id = _create_kb(test_db, owner.id, "source-folder-cleanup-kb")
+    target_kb_id = _create_kb(test_db, owner.id, "target-folder-cleanup-kb")
+
+    # Create a folder with documents
+    folder = _create_folder(test_db, source_kb_id, owner.id, "transfer-folder")
+    doc_a = _create_document(
+        test_db, source_kb_id, owner.id, "doc-a.md", folder_id=folder.id
+    )
+    doc_b = _create_document(
+        test_db, source_kb_id, owner.id, "doc-b.md", folder_id=folder.id
+    )
+
+    # Transfer via folder_ids (transfers entire folder subtree)
+    result = KnowledgeService.transfer_documents_to_kb(
+        db=test_db,
+        source_kb_id=source_kb_id,
+        target_kb_id=target_kb_id,
+        document_ids=[],
+        folder_ids=[folder.id],
+        user_id=owner.id,
+    )
+
+    assert result.success is True
+    assert result.transferred_document_count == 2
+    assert result.deleted_folder_count == 1  # Source folder deleted
+
+    # Verify source folder no longer exists
+    source_folder = (
+        test_db.query(KnowledgeFolder).filter(KnowledgeFolder.id == folder.id).first()
+    )
+    assert source_folder is None
+
+
+@pytest.mark.unit
+def test_transfer_nested_folder_via_folder_ids_cascading_cleanup(
+    test_db: Session,
+) -> None:
+    """Test that transferring a parent folder via folder_ids deletes all
+    empty source folders (parent + children) in cascading fashion."""
+    owner = _create_user(test_db, "owner-cleanup-cascading")
+
+    source_kb_id = _create_kb(test_db, owner.id, "source-cascading-kb")
+    target_kb_id = _create_kb(test_db, owner.id, "target-cascading-kb")
+
+    # Create nested folder hierarchy: parent > child
+    parent_folder = _create_folder(test_db, source_kb_id, owner.id, "parent-folder")
+    child_folder = _create_folder(
+        test_db, source_kb_id, owner.id, "child-folder", parent_id=parent_folder.id
+    )
+
+    # Create documents in both folders
+    doc_in_parent = _create_document(
+        test_db,
+        source_kb_id,
+        owner.id,
+        "doc-parent.md",
+        folder_id=parent_folder.id,
+    )
+    doc_in_child = _create_document(
+        test_db,
+        source_kb_id,
+        owner.id,
+        "doc-child.md",
+        folder_id=child_folder.id,
+    )
+
+    # Transfer the parent folder (includes child folder and all documents)
+    result = KnowledgeService.transfer_documents_to_kb(
+        db=test_db,
+        source_kb_id=source_kb_id,
+        target_kb_id=target_kb_id,
+        document_ids=[],
+        folder_ids=[parent_folder.id],
+        user_id=owner.id,
+    )
+
+    assert result.success is True
+    assert result.transferred_document_count == 2
+    assert result.transferred_folder_count == 2  # Parent + child recreated
+    assert result.deleted_folder_count == 2  # Both source folders deleted
+
+    # Verify no folders remain in source KB
+    source_folders = (
+        test_db.query(KnowledgeFolder)
+        .filter(KnowledgeFolder.kind_id == source_kb_id)
+        .all()
+    )
+    assert len(source_folders) == 0
+
+
+@pytest.mark.unit
+def test_transfer_partial_nested_preserves_non_empty_parent(
+    test_db: Session,
+) -> None:
+    """Test that when only some documents are transferred from a nested
+    hierarchy, the parent folder is preserved if it still has documents."""
+    owner = _create_user(test_db, "owner-cleanup-partial-nested")
+
+    source_kb_id = _create_kb(test_db, owner.id, "source-partial-nested-kb")
+    target_kb_id = _create_kb(test_db, owner.id, "target-partial-nested-kb")
+
+    # Create nested folder hierarchy: parent > child
+    parent_folder = _create_folder(test_db, source_kb_id, owner.id, "parent-folder")
+    child_folder = _create_folder(
+        test_db, source_kb_id, owner.id, "child-folder", parent_id=parent_folder.id
+    )
+
+    # Create documents: one in parent, one in child
+    doc_in_parent = _create_document(
+        test_db,
+        source_kb_id,
+        owner.id,
+        "doc-parent.md",
+        folder_id=parent_folder.id,
+    )
+    doc_in_child = _create_document(
+        test_db,
+        source_kb_id,
+        owner.id,
+        "doc-child.md",
+        folder_id=child_folder.id,
+    )
+
+    # Transfer only the child document
+    result = KnowledgeService.transfer_documents_to_kb(
+        db=test_db,
+        source_kb_id=source_kb_id,
+        target_kb_id=target_kb_id,
+        document_ids=[doc_in_child.id],
+        folder_ids=[],
+        user_id=owner.id,
+    )
+
+    assert result.success is True
+    assert result.transferred_document_count == 1
+    # Child folder becomes empty and is deleted, but parent still has doc_in_parent
+    assert result.deleted_folder_count == 1
+
+    # Verify child folder is deleted but parent folder still exists
+    source_child = (
+        test_db.query(KnowledgeFolder)
+        .filter(KnowledgeFolder.id == child_folder.id)
+        .first()
+    )
+    assert source_child is None
+
+    source_parent = (
+        test_db.query(KnowledgeFolder)
+        .filter(KnowledgeFolder.id == parent_folder.id)
+        .first()
+    )
+    assert source_parent is not None
+
+    # Verify doc_in_parent remains in source KB
+    remaining_doc = (
+        test_db.query(KnowledgeDocument)
+        .filter(KnowledgeDocument.id == doc_in_parent.id)
+        .first()
+    )
+    assert remaining_doc.kind_id == source_kb_id
+    assert remaining_doc.folder_id == parent_folder.id
+
+
+@pytest.mark.unit
+def test_transfer_root_documents_no_folder_cleanup(
+    test_db: Session,
+) -> None:
+    """Test that transferring root-level documents (no folder) has
+    deleted_folder_count=0 since there are no folders to clean up."""
+    owner = _create_user(test_db, "owner-cleanup-root-docs")
+
+    source_kb_id = _create_kb(test_db, owner.id, "source-root-cleanup-kb")
+    target_kb_id = _create_kb(test_db, owner.id, "target-root-cleanup-kb")
+
+    # Create root-level documents (no folder)
+    doc1 = _create_document(test_db, source_kb_id, owner.id, "root-doc1.md")
+    doc2 = _create_document(test_db, source_kb_id, owner.id, "root-doc2.md")
+
+    # Transfer root documents
+    result = KnowledgeService.transfer_documents_to_kb(
+        db=test_db,
+        source_kb_id=source_kb_id,
+        target_kb_id=target_kb_id,
+        document_ids=[doc1.id, doc2.id],
+        folder_ids=[],
+        user_id=owner.id,
+    )
+
+    assert result.success is True
+    assert result.transferred_document_count == 2
+    assert result.deleted_folder_count == 0  # No folders involved
+
+
+@pytest.mark.unit
+def test_transfer_empty_selection_deleted_folder_count_is_zero(
+    test_db: Session,
+) -> None:
+    """Test that transferring nothing returns deleted_folder_count=0."""
+    owner = _create_user(test_db, "owner-cleanup-empty-selection")
+
+    source_kb_id = _create_kb(test_db, owner.id, "source-empty-cleanup-kb")
+    target_kb_id = _create_kb(test_db, owner.id, "target-empty-cleanup-kb")
+
+    result = KnowledgeService.transfer_documents_to_kb(
+        db=test_db,
+        source_kb_id=source_kb_id,
+        target_kb_id=target_kb_id,
+        document_ids=[],
+        folder_ids=[],
+        user_id=owner.id,
+    )
+
+    assert result.success is True
+    assert result.deleted_folder_count == 0
+
+
+@pytest.mark.unit
+def test_transfer_sibling_folders_one_empty_one_not(
+    test_db: Session,
+) -> None:
+    """Test that when two sibling folders are involved in a transfer and
+    only one becomes empty, only the empty one is deleted."""
+    owner = _create_user(test_db, "owner-cleanup-sibling")
+
+    source_kb_id = _create_kb(test_db, owner.id, "source-sibling-kb")
+    target_kb_id = _create_kb(test_db, owner.id, "target-sibling-kb")
+
+    # Create two sibling folders under the same parent
+    parent_folder = _create_folder(test_db, source_kb_id, owner.id, "parent-folder")
+    child_a = _create_folder(
+        test_db, source_kb_id, owner.id, "child-a", parent_id=parent_folder.id
+    )
+    child_b = _create_folder(
+        test_db, source_kb_id, owner.id, "child-b", parent_id=parent_folder.id
+    )
+
+    # child_a has 1 doc, child_b has 2 docs
+    doc_a = _create_document(
+        test_db, source_kb_id, owner.id, "doc-a.md", folder_id=child_a.id
+    )
+    doc_b1 = _create_document(
+        test_db, source_kb_id, owner.id, "doc-b1.md", folder_id=child_b.id
+    )
+    doc_b2 = _create_document(
+        test_db, source_kb_id, owner.id, "doc-b2.md", folder_id=child_b.id
+    )
+
+    # Transfer only doc_a and doc_b1 (child_a becomes empty, child_b still has doc_b2)
+    result = KnowledgeService.transfer_documents_to_kb(
+        db=test_db,
+        source_kb_id=source_kb_id,
+        target_kb_id=target_kb_id,
+        document_ids=[doc_a.id, doc_b1.id],
+        folder_ids=[],
+        user_id=owner.id,
+    )
+
+    assert result.success is True
+    assert result.transferred_document_count == 2
+    # Only child_a is deleted (empty); child_b and parent still have content
+    assert result.deleted_folder_count == 1
+
+    # Verify child_a is deleted
+    source_child_a = (
+        test_db.query(KnowledgeFolder).filter(KnowledgeFolder.id == child_a.id).first()
+    )
+    assert source_child_a is None
+
+    # Verify child_b still exists (has doc_b2)
+    source_child_b = (
+        test_db.query(KnowledgeFolder).filter(KnowledgeFolder.id == child_b.id).first()
+    )
+    assert source_child_b is not None
+
+    # Verify parent folder still exists (has child_b)
+    source_parent = (
+        test_db.query(KnowledgeFolder)
+        .filter(KnowledgeFolder.id == parent_folder.id)
+        .first()
+    )
+    assert source_parent is not None
+
+
+@pytest.mark.unit
+def test_separate_transfers_eventually_delete_all_empty_folders(
+    test_db: Session,
+) -> None:
+    """Test that transferring documents from the same folder in two
+    separate operations deletes the source folder after the second
+    transfer makes it empty."""
+    owner = _create_user(test_db, "owner-cleanup-two-step")
+
+    source_kb_id = _create_kb(test_db, owner.id, "source-two-step-kb")
+    target_kb_id = _create_kb(test_db, owner.id, "target-two-step-kb")
+
+    # Create a folder with two documents
+    folder = _create_folder(test_db, source_kb_id, owner.id, "two-step-folder")
+    doc_a = _create_document(
+        test_db, source_kb_id, owner.id, "doc-a.md", folder_id=folder.id
+    )
+    doc_b = _create_document(
+        test_db, source_kb_id, owner.id, "doc-b.md", folder_id=folder.id
+    )
+
+    # First transfer: move doc_a (partial — folder still has doc_b)
+    result1 = KnowledgeService.transfer_documents_to_kb(
+        db=test_db,
+        source_kb_id=source_kb_id,
+        target_kb_id=target_kb_id,
+        document_ids=[doc_a.id],
+        folder_ids=[],
+        user_id=owner.id,
+    )
+    assert result1.success is True
+    assert result1.deleted_folder_count == 0  # Folder still has doc_b
+
+    # Verify source folder still exists after first transfer
+    source_folder = (
+        test_db.query(KnowledgeFolder).filter(KnowledgeFolder.id == folder.id).first()
+    )
+    assert source_folder is not None
+
+    # Second transfer: move doc_b (folder now becomes empty)
+    result2 = KnowledgeService.transfer_documents_to_kb(
+        db=test_db,
+        source_kb_id=source_kb_id,
+        target_kb_id=target_kb_id,
+        document_ids=[doc_b.id],
+        folder_ids=[],
+        user_id=owner.id,
+    )
+    assert result2.success is True
+    assert result2.deleted_folder_count == 1  # Folder now empty
+
+    # Verify source folder is deleted after second transfer
+    source_folder_after = (
+        test_db.query(KnowledgeFolder).filter(KnowledgeFolder.id == folder.id).first()
+    )
+    assert source_folder_after is None
