@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument, KnowledgeFolder
 from app.schemas.knowledge import (
+    BatchOperationResult,
     KnowledgeFolderCreate,
     KnowledgeFolderResponse,
     KnowledgeFolderUpdate,
@@ -442,6 +443,60 @@ class KnowledgeFolderService:
         db.commit()
         db.refresh(doc)
         return doc
+
+    @staticmethod
+    def batch_move_documents(
+        db: Session,
+        document_ids: list[int],
+        folder_id: int,
+        user_id: int,
+    ) -> BatchOperationResult:
+        """Batch move multiple documents to a target folder.
+
+        Iterates through document_ids and moves each document individually
+        using the existing move_document method. Permission and not-found
+        errors are caught per-document so that one failure does not block
+        the rest.
+
+        Args:
+            db: Database session
+            document_ids: List of document IDs to move
+            folder_id: Target folder ID (0 = root)
+            user_id: Requesting user ID
+
+        Returns:
+            BatchOperationResult with success/failure counts
+        """
+        success_count = 0
+        failed_ids: list[int] = []
+
+        for doc_id in document_ids:
+            try:
+                KnowledgeFolderService.move_document(
+                    db=db,
+                    document_id=doc_id,
+                    folder_id=folder_id,
+                    user_id=user_id,
+                )
+                success_count += 1
+            except ValueError:
+                # Expected validation errors (not found, permission denied, invalid folder)
+                failed_ids.append(doc_id)
+                db.rollback()
+            except Exception:
+                # Unexpected errors: rollback and re-raise
+                db.rollback()
+                raise
+
+        return BatchOperationResult(
+            success_count=success_count,
+            failed_count=len(failed_ids),
+            failed_ids=failed_ids,
+            message=(
+                f"Successfully moved {success_count} documents, "
+                f"{len(failed_ids)} failed"
+            ),
+        )
 
     # ------------------------------------------------------------------
     # Private helpers

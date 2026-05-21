@@ -12,7 +12,7 @@ which provides a unified interface for both REST API and MCP tools.
 import asyncio
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -29,6 +29,7 @@ from app.schemas.knowledge import (
     AccessibleKnowledgeResponse,
     AllGroupedKnowledgeResponse,
     BatchDocumentIds,
+    BatchDocumentMoveRequest,
     BatchOperationResult,
     DocumentContentUpdate,
     DocumentDetailResponse,
@@ -50,6 +51,8 @@ from app.schemas.knowledge import (
     KnowledgeFolderUpdate,
     PersonalKnowledgeBaseGroup,
     ResourceScope,
+    TransferDocumentsRequest,
+    TransferDocumentsResponse,
 )
 from app.schemas.knowledge_qa_history import QAHistoryResponse
 from app.services.knowledge import (
@@ -618,6 +621,86 @@ def migrate_knowledge_base_to_group(
         ) from e
 
 
+@router.post(
+    "/{knowledge_base_id}/transfer-documents",
+    response_model=TransferDocumentsResponse,
+)
+@trace_sync("transfer_documents_to_kb", "knowledge.api")
+def transfer_documents_to_kb(
+    knowledge_base_id: int,
+    data: TransferDocumentsRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Transfer documents and/or folders to another personal knowledge base.
+
+    - Only personal KBs (namespace='default') can be the target
+    - User must have write access to both source and target KBs
+    - Folder structure is preserved in the target KB
+    - Documents' index_status is reset to 'not_indexed'
+    - RAG index is cleaned up from the source KB
+    """
+    try:
+        result = KnowledgeService.transfer_documents_to_kb(
+            db=db,
+            source_kb_id=knowledge_base_id,
+            target_kb_id=data.target_kb_id,
+            document_ids=data.document_ids,
+            folder_ids=data.folder_ids,
+            user_id=current_user.id,
+        )
+        add_span_event(
+            "knowledge.transfer.completed",
+            {
+                "source_kb_id": str(knowledge_base_id),
+                "target_kb_id": str(data.target_kb_id),
+                "document_count": str(result.transferred_document_count),
+                "folder_count": str(result.transferred_folder_count),
+                "user_id": str(current_user.id),
+            },
+        )
+        # Trigger KB summary updates in background for both KBs
+        if result.transferred_document_count > 0:
+            trace_ctx = capture_trace_context()
+            background_tasks.add_task(
+                _update_kb_summary_after_deletion,
+                kb_id=knowledge_base_id,
+                user_id=current_user.id,
+                user_name=current_user.user_name,
+                trace_context=trace_ctx,
+            )
+            background_tasks.add_task(
+                _update_kb_summary_after_deletion,
+                kb_id=data.target_kb_id,
+                user_id=current_user.id,
+                user_name=current_user.user_name,
+                trace_context=trace_ctx,
+            )
+        return result
+    except ValueError as e:
+        error_msg = str(e)
+        error_lower = error_msg.lower()
+        if "not found" in error_lower:
+            status_code = status.HTTP_404_NOT_FOUND
+        elif "permission" in error_lower or "access denied" in error_lower:
+            status_code = status.HTTP_403_FORBIDDEN
+        else:
+            status_code = status.HTTP_400_BAD_REQUEST
+        raise HTTPException(
+            status_code=status_code,
+            detail=error_msg,
+        )
+    except SQLAlchemyError as e:
+        db.rollback()
+        logger.exception("Database error during document transfer")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Database error during transfer",
+        )
+
+
 # ============== Knowledge Document Endpoints ==============
 
 
@@ -986,6 +1069,59 @@ def batch_delete_documents(
                 user_id=current_user.id,
                 user_name=current_user.user_name,
                 trace_context=trace_ctx,
+            )
+
+    return result
+
+
+@document_router.post("/batch/move", response_model=BatchOperationResult)
+@trace_sync("batch_move_documents", "knowledge.api")
+def batch_move_documents(
+    data: BatchDocumentMoveRequest,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Batch move multiple documents to a target folder.
+
+    Moves all specified documents that the user has permission to move.
+    Returns a summary of successful and failed operations.
+    Raises 400 for invalid folder_id, 404 for not found documents, 403 for permission issues.
+    """
+    result = KnowledgeFolderService.batch_move_documents(
+        db=db,
+        document_ids=data.document_ids,
+        folder_id=data.folder_id,
+        user_id=current_user.id,
+    )
+    add_span_event(
+        "knowledge.documents.batch_moved",
+        {
+            "success_count": str(result.success_count),
+            "failed_count": str(result.failed_count),
+            "user_id": str(current_user.id),
+        },
+    )
+
+    # If all operations failed, determine the most appropriate error code
+    if result.success_count == 0 and result.failed_count > 0:
+        # Check the error type from the result message to determine status code
+        error_msg = result.message.lower() if result.message else ""
+        if "not found" in error_msg:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=result.message,
+            )
+        elif "permission" in error_msg or "access denied" in error_msg:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=result.message,
+            )
+        else:
+            # Default to 400 for validation errors (e.g., invalid folder_id)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=result.message,
             )
 
     return result
