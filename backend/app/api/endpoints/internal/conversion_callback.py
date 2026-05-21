@@ -123,9 +123,9 @@ def conversion_completed_callback(
             detail=f"Missing key in index_dispatch_payload: {e}",
         )
 
-    # Verify attachment_id belongs to the target document to prevent
-    # cross-write: if the payload is mis-bound, content would be written
-    # into the wrong attachment and then indexed against the wrong KB.
+    # Verify dispatch payload is bound to the correct document and KB.
+    # Without this, a mis-bound callback could overwrite the right attachment
+    # but then queue indexing for a different document/KB.
     from app.models.knowledge import KnowledgeDocument
 
     doc = (
@@ -147,6 +147,27 @@ def conversion_completed_callback(
         raise HTTPException(
             status_code=400,
             detail="attachment_id does not belong to the target document",
+        )
+
+    payload_document_id = payload.get("document_id")
+    payload_kb_id = payload.get("knowledge_base_id")
+    if payload_document_id is not None and payload_document_id != doc.id:
+        logger.error(
+            f"[ConversionCallback] document_id mismatch in payload: "
+            f"expected={doc.id}, got={payload_document_id}"
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="payload document_id does not match the target document",
+        )
+    if payload_kb_id is not None and str(doc.kind_id) != str(payload_kb_id):
+        logger.error(
+            f"[ConversionCallback] knowledge_base_id mismatch in payload: "
+            f"expected={doc.kind_id}, got={payload_kb_id}"
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="payload knowledge_base_id does not match the target document's KB",
         )
 
     try:
