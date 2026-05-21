@@ -405,9 +405,9 @@ class ContextService:
         self,
         db: Session,
         context_id: int,
-        user_id: int,
-        filename: str,
-        binary_data: bytes,
+        user_id: Optional[int] = None,
+        filename: str = "",
+        binary_data: bytes = b"",
     ) -> Tuple[SubtaskContext, Optional[TruncationInfo]]:
         """
         Overwrite an existing attachment with new content.
@@ -415,7 +415,8 @@ class ContextService:
         Args:
             db: Database session
             context_id: Attachment context ID to overwrite
-            user_id: User ID (ownership validation)
+            user_id: Optional user ID for ownership validation.
+                     Pass None when caller has already performed permission checks.
             filename: New filename
             binary_data: New file binary data
 

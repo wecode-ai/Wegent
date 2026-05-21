@@ -2117,7 +2117,7 @@ class KnowledgeOrchestrator:
                 attachment, _ = context_service.overwrite_attachment(
                     db=db,
                     context_id=document.attachment_id,
-                    user_id=user.id,
+                    user_id=None,
                     filename=document.name,
                     binary_data=content_bytes,
                 )

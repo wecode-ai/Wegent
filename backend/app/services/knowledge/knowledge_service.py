@@ -1530,7 +1530,7 @@ class KnowledgeService:
         context_service.overwrite_attachment(
             db=db,
             context_id=context.id,
-            user_id=user_id,
+            user_id=None,
             filename=filename,
             binary_data=binary_content,
         )

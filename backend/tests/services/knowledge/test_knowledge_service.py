@@ -63,7 +63,7 @@ class TestKnowledgeServiceUpdateDocumentContent:
         mock_overwrite_attachment.assert_called_once_with(
             db=db,
             context_id=20,
-            user_id=99,
+            user_id=None,
             filename="release-notes.md",
             binary_data="# Updated release notes".encode("utf-8"),
         )

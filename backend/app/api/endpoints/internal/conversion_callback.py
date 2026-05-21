@@ -127,7 +127,7 @@ def conversion_completed_callback(
         context_service.overwrite_attachment(
             db=db,
             context_id=attachment_id,
-            user_id=user_id,
+            user_id=None,
             filename=request.converted_name,
             binary_data=markdown_bytes,
         )
