@@ -48,7 +48,7 @@ class TestKnowledgeServiceUpdateDocumentContent:
         with (
             patch.object(KnowledgeService, "get_document", return_value=document),
             patch.object(
-                context_service, "overwrite_attachment"
+                context_service, "overwrite_attachment_internal"
             ) as mock_overwrite_attachment,
         ):
             result = KnowledgeService.update_document_content(
@@ -63,8 +63,8 @@ class TestKnowledgeServiceUpdateDocumentContent:
         mock_overwrite_attachment.assert_called_once_with(
             db=db,
             context_id=20,
-            user_id=99,
             filename="release-notes.md",
+            reason="knowledge_manage",
             binary_data="# Updated release notes".encode("utf-8"),
         )
         db.refresh.assert_called_once_with(document)
