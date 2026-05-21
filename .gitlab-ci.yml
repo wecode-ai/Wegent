@@ -569,3 +569,5 @@ trigger_update_simulation_knowledge_web:
       changes:
         - knowledge_runtime/**/*
         - wecode/docker/knowledge/**/*
+        - shared/**/*
+        - knowledge_engine/**/*
