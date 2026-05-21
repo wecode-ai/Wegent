@@ -300,6 +300,7 @@
       "uploadSuccess": "文件上传成功",
       "batch": {
         "selected": "已选择 {{count}} 项",
+        "selectedWithFolders": "已选择 {{docCount}} 个文档和 {{folderCount}} 个文件夹",
         "selectAll": "选择所有",
         "enable": "批量启用",
         "disable": "批量停用",

@@ -197,6 +197,7 @@ export function DocumentList({
   const [sortField, setSortField] = useState<SortField>('createdAt')
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [selectedFolderIds, setSelectedFolderIds] = useState<Set<number>>(new Set())
   const [batchLoading, setBatchLoading] = useState(false)
   const [showSearchPopover, setShowSearchPopover] = useState(false)
   // Track if initial selection has been done
@@ -430,10 +431,76 @@ export function DocumentList({
         newSet.add(doc.id)
       } else {
         newSet.delete(doc.id)
+        // When deselecting a doc that belongs to a selected folder,
+        // remove the folder from selectedFolderIds since it's no longer fully selected.
+        // The remaining selected docs from that folder will still be in selectedIds,
+        // and the backend will correctly recreate the folder hierarchy for them.
+        if (doc.folder_id && doc.folder_id > 0) {
+          setSelectedFolderIds(prevFolderIds => {
+            const newFolderSet = new Set(prevFolderIds)
+            newFolderSet.delete(doc.folder_id)
+            return newFolderSet
+          })
+        }
       }
       return newSet
     })
   }
+
+  // Folder selection handler: when a folder is selected/deselected,
+  // select/deselect all documents within it (including sub-folders)
+  const handleSelectFolder = useCallback(
+    (folderId: number, selected: boolean) => {
+      setSelectedFolderIds(prev => {
+        const newSet = new Set(prev)
+        if (selected) {
+          newSet.add(folderId)
+        } else {
+          newSet.delete(folderId)
+        }
+        return newSet
+      })
+
+      // Collect all document IDs in the selected folder (recursively)
+      const collectDocIdsInFolder = (folderList: KnowledgeFolder[], targetId: number): number[] => {
+        for (const f of folderList) {
+          if (f.id === targetId) {
+            // Found the folder - collect all doc IDs recursively
+            const docIds: number[] = []
+            const collectDocs = (folder: KnowledgeFolder) => {
+              // Get documents directly in this folder
+              const folderDocs = documents.filter(d => d.folder_id === folder.id)
+              docIds.push(...folderDocs.map(d => d.id))
+              // Recurse into children
+              for (const child of folder.children) {
+                collectDocs(child)
+              }
+            }
+            collectDocs(f)
+            return docIds
+          }
+          // Search in children
+          const found = collectDocIdsInFolder(f.children, targetId)
+          if (found.length > 0) return found
+        }
+        return []
+      }
+
+      const docIdsInFolder = collectDocIdsInFolder(folders, folderId)
+      if (docIdsInFolder.length > 0) {
+        setSelectedIds(prev => {
+          const newSet = new Set(prev)
+          if (selected) {
+            docIdsInFolder.forEach(id => newSet.add(id))
+          } else {
+            docIdsInFolder.forEach(id => newSet.delete(id))
+          }
+          return newSet
+        })
+      }
+    },
+    [folders, documents]
+  )
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
@@ -616,19 +683,22 @@ export function DocumentList({
   )
 
   // Transfer handler
+  // Transfer handler
   const handleTransferConfirm = useCallback(
     async (targetKbId: number) => {
       setIsTransferring(true)
       try {
-        const selectedDocs = documents.filter(d => selectedIds.has(d.id))
-        const folderIds = [...new Set(selectedDocs.map(d => d.folder_id).filter(id => id > 0))]
+        // Pass folder_ids when the user explicitly selects folders for transfer.
+        // The backend will transfer all documents within those folders (including sub-folders)
+        // and recreate the folder hierarchy in the target KB.
         const result = await transfer({
           document_ids: Array.from(selectedIds),
-          folder_ids: folderIds,
+          folder_ids: Array.from(selectedFolderIds),
           target_kb_id: targetKbId,
         })
         if (result !== null) {
           setSelectedIds(new Set())
+          setSelectedFolderIds(new Set())
           refresh()
           fetchFolders()
           setShowTransfer(false)
@@ -637,9 +707,8 @@ export function DocumentList({
         setIsTransferring(false)
       }
     },
-    [selectedIds, documents, transfer, refresh, fetchFolders]
+    [selectedIds, selectedFolderIds, transfer, refresh, fetchFolders]
   )
-
   // Knowledge base type info
   const isNotebook = (knowledgeBase.kb_type || 'notebook') === 'notebook'
   // Check if RAG is configured (has retriever and embedding model)
@@ -857,47 +926,54 @@ export function DocumentList({
       ) : filteredDocuments.length > 0 || folders.length > 0 ? (
         <>
           {/* Batch action bar - shown when items are selected (not in notebook mode where selection is for context injection) */}
-          {canManageAllDocuments && selectedIds.size > 0 && !onSelectionChange && (
-            <div
-              className={`flex items-center gap-3 ${compact ? 'px-2 py-2' : 'px-4 py-2.5'} bg-primary/5 border border-primary/20 rounded-lg`}
-            >
-              <span className="text-sm text-text-primary">
-                {t('document.document.batch.selected', { count: selectedIds.size })}
-              </span>
-              <div className="flex-1" />
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowBatchMove(true)}
-                disabled={batchLoading || isBatchMoving || isTransferring}
-                data-testid="batch-move-button"
-                aria-label={t('document.document.batch.move')}
+          {canManageAllDocuments &&
+            (selectedIds.size > 0 || selectedFolderIds.size > 0) &&
+            !onSelectionChange && (
+              <div
+                className={`flex items-center gap-3 ${compact ? 'px-2 py-2' : 'px-4 py-2.5'} bg-primary/5 border border-primary/20 rounded-lg`}
               >
-                <FolderInput className="w-4 h-4 mr-1" />
-                {compact ? '' : t('document.document.batch.move')}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowTransfer(true)}
-                disabled={batchLoading || isBatchMoving || isTransferring}
-                data-testid="batch-transfer-button"
-                aria-label={t('document.document.batch.transfer')}
-              >
-                <ArrowRightLeft className="w-4 h-4 mr-1" />
-                {compact ? '' : t('document.document.batch.transfer')}
-              </Button>
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={handleBatchDelete}
-                disabled={batchLoading}
-              >
-                <Trash2 className="w-4 h-4 mr-1" />
-                {compact ? '' : t('document.document.batch.delete')}
-              </Button>
-            </div>
-          )}
+                <span className="text-sm text-text-primary">
+                  {selectedFolderIds.size > 0
+                    ? t('document.document.batch.selectedWithFolders', {
+                        docCount: selectedIds.size,
+                        folderCount: selectedFolderIds.size,
+                      })
+                    : t('document.document.batch.selected', { count: selectedIds.size })}
+                </span>
+                <div className="flex-1" />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowBatchMove(true)}
+                  disabled={batchLoading || isBatchMoving || isTransferring}
+                  data-testid="batch-move-button"
+                  aria-label={t('document.document.batch.move')}
+                >
+                  <FolderInput className="w-4 h-4 mr-1" />
+                  {compact ? '' : t('document.document.batch.move')}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowTransfer(true)}
+                  disabled={batchLoading || isBatchMoving || isTransferring}
+                  data-testid="batch-transfer-button"
+                  aria-label={t('document.document.batch.transfer')}
+                >
+                  <ArrowRightLeft className="w-4 h-4 mr-1" />
+                  {compact ? '' : t('document.document.batch.transfer')}
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={handleBatchDelete}
+                  disabled={batchLoading}
+                >
+                  <Trash2 className="w-4 h-4 mr-1" />
+                  {compact ? '' : t('document.document.batch.delete')}
+                </Button>
+              </div>
+            )}
 
           {/* Compact mode: Card layout */}
           {compact ? (
@@ -945,6 +1021,9 @@ export function DocumentList({
                 canManageFolders={canUpload}
                 sortField={sortField}
                 sortOrder={sortOrder}
+                canSelectFolders={canManageAllDocuments && !onSelectionChange}
+                selectedFolderIds={selectedFolderIds}
+                onSelectFolder={handleSelectFolder}
               />
             </div>
           ) : (
@@ -1058,6 +1137,9 @@ export function DocumentList({
                   canManageFolders={canUpload}
                   sortField={sortField}
                   sortOrder={sortOrder}
+                  canSelectFolders={canManageAllDocuments && !onSelectionChange}
+                  selectedFolderIds={selectedFolderIds}
+                  onSelectFolder={handleSelectFolder}
                 />
               </div>
             </div>
@@ -1184,7 +1266,7 @@ export function DocumentList({
         open={showTransfer}
         onOpenChange={setShowTransfer}
         selectedDocumentCount={selectedIds.size}
-        selectedFolderCount={0}
+        selectedFolderCount={selectedFolderIds.size}
         currentKnowledgeBaseId={knowledgeBase.id}
         onConfirm={handleTransferConfirm}
         isSubmitting={isTransferring}
