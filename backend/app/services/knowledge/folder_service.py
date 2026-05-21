@@ -25,11 +25,10 @@ from app.schemas.knowledge import (
     KnowledgeFolderUpdate,
 )
 from app.services.knowledge.folder_policy import (
-    FOLDER_DEPTH_EXCEEDED_MESSAGE,
-    MAX_FOLDER_DEPTH,
     assert_document_can_be_placed_in_folder,
     get_folder_depth,
     get_subtree_max_relative_depth,
+    validate_folder_move_depth,
     validate_new_folder_depth,
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
@@ -313,9 +312,10 @@ class KnowledgeFolderService:
                 subtree_max_depth = get_subtree_max_relative_depth(
                     folder_map, locked_folder.id
                 )
-                new_max_depth = target_parent_depth + subtree_max_depth
-                if new_max_depth > MAX_FOLDER_DEPTH:
-                    raise ValueError(FOLDER_DEPTH_EXCEEDED_MESSAGE)
+                validate_folder_move_depth(
+                    target_parent_depth=target_parent_depth,
+                    subtree_max_relative_depth=subtree_max_depth,
+                )
             folder.parent_id = new_parent_id
 
         db.commit()
@@ -493,19 +493,19 @@ class KnowledgeFolderService:
             WITH RECURSIVE descendants AS (
                 -- Anchor: direct children of the target folder
                 SELECT id
-                FROM   knowledge_folders
-                WHERE  kind_id   = :kind_id
-                  AND  parent_id = :folder_id
+                FROM knowledge_folders
+                WHERE kind_id = :kind_id
+                  AND parent_id = :folder_id
 
                 UNION ALL
 
                 -- Recursive: children of already-found descendants
                 SELECT kf.id
-                FROM   knowledge_folders kf
-                INNER JOIN descendants d ON kf.parent_id = d.id
-                WHERE  kf.kind_id = :kind_id
-            )
-            SELECT id FROM descendants
+                FROM knowledge_folders kf
+                         INNER JOIN descendants d ON kf.parent_id = d.id
+                WHERE kf.kind_id = :kind_id)
+            SELECT id
+            FROM descendants
             """
         )
         rows = db.execute(sql, {"kind_id": kind_id, "folder_id": folder_id}).fetchall()

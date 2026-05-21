@@ -130,6 +130,21 @@ def validate_document_target_folder_depth(
         )
 
 
+def validate_folder_move_depth(
+    *,
+    target_parent_depth: int,
+    subtree_max_relative_depth: int,
+) -> None:
+    """Validate depth after moving a folder subtree under a new parent."""
+    new_max_depth = target_parent_depth + subtree_max_relative_depth
+    if new_max_depth > MAX_FOLDER_DEPTH:
+        raise CustomHTTPException(
+            status_code=400,
+            detail=FOLDER_DEPTH_EXCEEDED_MESSAGE,
+            error_code=FOLDER_DEPTH_EXCEEDED_ERROR_CODE,
+        )
+
+
 def assert_document_can_be_placed_in_folder(
     db: Session,
     kind_id: int,
