@@ -12,7 +12,6 @@ Covers:
 - Role merging across user and external entity bindings
 """
 
-from typing import Optional
 from unittest.mock import patch
 
 import pytest
@@ -27,15 +26,15 @@ from app.models.share_link import ResourceType
 from app.models.user import User
 from app.schemas.knowledge import KnowledgeBaseCreate, ResourceScope
 from app.schemas.share import MemberRole
-from app.services.group_permission import get_user_groups_with_roles
+from app.services.group_member_helper import get_user_groups_with_roles
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.share import knowledge_share_service
 from app.services.share.external_entity_resolver import (
     IExternalEntityResolver,
-    _external_entity_resolvers,
     get_entity_resolver,
     register_entity_resolver,
 )
+from tests.utils.mock_resolver import MockDepartmentResolver, cleanup_resolvers
 
 
 def _create_user(test_db: Session, username: str, role: str = "user") -> User:
@@ -97,66 +96,6 @@ def _add_namespace_member(
     test_db.commit()
     test_db.refresh(member)
     return member
-
-
-class MockDepartmentResolver(IExternalEntityResolver):
-    """Mock resolver for testing external entity permission paths."""
-
-    def __init__(self, user_dept_map: Optional[dict[int, set[str]]] = None):
-        self.user_dept_map = user_dept_map or {}
-
-    @property
-    def requires_display_name_snapshot(self) -> bool:
-        return True
-
-    def get_display_name(self, db: Session, entity_id: str) -> Optional[str]:
-        return f"Dept-{entity_id}"
-
-    def match_entity_bindings(
-        self,
-        db: Session,
-        user_id: int,
-        entity_type: str,
-        entity_ids: list[str],
-        user_context: Optional[dict] = None,
-    ) -> list[str]:
-        if entity_type != "mock_department":
-            return []
-        user_depts = self.user_dept_map.get(user_id, set())
-        return list(user_depts & set(entity_ids))
-
-    def get_resource_ids_by_entity(
-        self,
-        db: Session,
-        user_id: int,
-        entity_type: str,
-        user_context: Optional[dict] = None,
-    ) -> list[int]:
-        if entity_type != "mock_department":
-            return []
-        user_depts = self.user_dept_map.get(user_id, set())
-        if not user_depts:
-            return []
-        results = (
-            db.query(ResourceMember.resource_id)
-            .filter(
-                ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
-                ResourceMember.entity_type == "mock_department",
-                ResourceMember.entity_id.in_(list(user_depts)),
-                ResourceMember.status == MemberStatus.APPROVED.value,
-            )
-            .all()
-        )
-        return list(set(r.resource_id for r in results))
-
-
-@pytest.fixture(autouse=True)
-def cleanup_resolvers():
-    """Clean up mock resolver registrations after each test."""
-    original = dict(_external_entity_resolvers)
-    yield
-    _external_entity_resolvers.clear()
-    _external_entity_resolvers.update(original)
 
 
 @pytest.mark.unit
