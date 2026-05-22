@@ -227,7 +227,12 @@
       "depthExceeded": "文件夹层级不能超过 4 层",
       "documentPlacementDepthExceeded": "文档只能放在第 4 层文件夹及以上位置",
       "moveDocumentHint": "将文档 \"{{name}}\" 移动到：",
-      "current": "当前"
+      "current": "当前",
+      "batchMoveDocument": "批量移动文档",
+      "batchMoveDocumentHint": "将 {{count}} 个已选文档移动到：",
+      "batchMoveSuccess": "已成功移动 {{count}} 个文档",
+      "batchMoveFailed": "移动文档失败",
+      "batchMovePartial": "批量移动完成：成功 {{success}} 个，失败 {{failed}} 个。失败文档仍保留选中状态，请查看高亮项后重试"
     },
     "document": {
       "title": "文档",
@@ -295,10 +300,33 @@
       "uploadSuccess": "文件上传成功",
       "batch": {
         "selected": "已选择 {{count}} 项",
+        "selectedWithFolders": "已选择 {{docCount}} 个文档和 {{folderCount}} 个文件夹",
         "selectAll": "选择所有",
         "enable": "批量启用",
         "disable": "批量停用",
-        "delete": "批量删除"
+        "delete": "批量删除",
+        "move": "移动",
+        "transfer": "转移到知识库",
+        "transferTitle": "转移到其他知识库",
+        "transferHint": "将 {{docCount}} 个文档和 {{folderCount}} 个文件夹转移到允许的目标知识库，文件夹结构将被保留。",
+        "selectTargetKb": "选择目标知识库",
+        "targetKbRequired": "请选择目标知识库",
+        "transferring": "转移中...",
+        "transferringProgress": "正在转移 {{current}}/{{total}} 项...",
+        "transferSuccess": "已成功转移 {{docCount}} 个文档和 {{folderCount}} 个文件夹",
+        "transferFailed": "转移失败",
+        "noOtherKbs": "没有符合转移规则的目标知识库",
+        "errors": {
+          "SOURCE_TARGET_SAME": "源知识库和目标知识库不能相同",
+          "SOURCE_KB_NOT_FOUND": "源知识库不存在",
+          "TARGET_KB_NOT_FOUND": "目标知识库不存在",
+          "INVALID_TRANSFER_NAMESPACE": "不支持的目标知识库命名空间",
+          "FOLDERS_NOT_FOUND": "源知识库中未找到指定文件夹",
+          "DOCS_NOT_FOUND": "源知识库中未找到指定文档",
+          "NOTEBOOK_DOC_LIMIT_EXCEEDED": "笔记本模式知识库文档数量超出限制",
+          "DUPLICATE_DOCUMENT_NAMES": "目标知识库中已存在同名文档",
+          "KB_INSUFFICIENT_PERMISSION": "您没有操作该知识库的权限"
+        }
       },
       "detail": {
         "title": "文档详情",
@@ -642,7 +670,16 @@
       "confirm": "确认迁移",
       "sourceKnowledgeBase": "待迁移知识库",
       "success": "知识库迁移成功",
-      "failed": "知识库迁移失败"
+      "failed": "知识库迁移失败",
+      "errors": {
+        "KB_NOT_FOUND": "知识库不存在",
+        "KB_NOT_PERSONAL": "仅个人知识库可以迁移到群组",
+        "KB_NOT_CREATOR": "仅创建者可以迁移此知识库",
+        "KB_NO_GROUP_ACCESS": "您没有访问该群组的权限",
+        "KB_INSUFFICIENT_PERMISSION": "您需要目标群组的管理员或创建者权限才能迁移知识库",
+        "KB_DUPLICATE_NAME_IN_GROUP": "目标群组中已存在同名知识库",
+        "KB_MIGRATE_CONFLICT": "目标群组中已存在同名知识库"
+      }
     }
   },
   "add_repository": "添加仓库",
