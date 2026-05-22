@@ -122,6 +122,13 @@ class APIClient {
             // detail is an object (e.g. { error_code: 'no_dingtalk_binding', message: '...' })
             if (typeof json.detail.message === 'string') {
               errorMsg = json.detail.message
+            } else if (
+              typeof json.detail.error_code === 'string' ||
+              typeof json.detail.error_code === 'number'
+            ) {
+              errorMsg = String(json.detail.error_code)
+            } else {
+              errorMsg = JSON.stringify(json.detail)
             }
             if (
               typeof json.detail.error_code === 'string' ||
@@ -135,6 +142,12 @@ class APIClient {
             (typeof json.error_code === 'string' || typeof json.error_code === 'number')
           ) {
             errorCode = json.error_code
+          } else if (
+            json?.detail &&
+            (typeof json.detail.error_code === 'string' ||
+              typeof json.detail.error_code === 'number')
+          ) {
+            errorCode = json.detail.error_code
           }
         } catch {
           // Not JSON, use original text directly

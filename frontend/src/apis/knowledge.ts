@@ -436,3 +436,49 @@ export async function moveDocument(
     folder_id: folderId,
   })
 }
+
+/**
+ * Batch move multiple documents to a target folder
+ */
+export async function batchMoveDocuments(
+  documentIds: number[],
+  folderId: number
+): Promise<BatchOperationResult> {
+  return apiClient.post<BatchOperationResult>('/knowledge-documents/batch/move', {
+    document_ids: documentIds,
+    folder_id: folderId,
+  })
+}
+
+// ============== Document Transfer Between KBs ==============
+
+export interface TransferDocumentsRequest {
+  document_ids: number[]
+  folder_ids: number[]
+  target_kb_id: number
+}
+
+export interface TransferDocumentsResponse {
+  success: boolean
+  message: string
+  transferred_document_count: number
+  transferred_folder_count: number
+  deleted_folder_count: number
+  source_kb_id: number
+  target_kb_id: number
+}
+
+/**
+ * Transfer documents and/or folders from one knowledge base to another
+ * @param sourceKbId Source knowledge base ID
+ * @param data Transfer request with document IDs, folder IDs, and target KB ID
+ */
+export async function transferDocuments(
+  sourceKbId: number,
+  data: TransferDocumentsRequest
+): Promise<TransferDocumentsResponse> {
+  return apiClient.post<TransferDocumentsResponse>(
+    `/knowledge-bases/${sourceKbId}/transfer-documents`,
+    data
+  )
+}
