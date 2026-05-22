@@ -18,6 +18,7 @@ import type {
   GroupMemberCreate,
   GroupMemberUpdate,
   GroupMemberListResponse,
+  GroupEntityMember,
   AddMemberResult,
 } from '@/types/group'
 
@@ -169,4 +170,26 @@ export const transferOwnership = async (
   await apiClient.post(`/groups/${encodeURIComponent(groupName)}/transfer-ownership`, {
     new_owner_user_id: newOwnerUserId,
   })
+}
+
+/**
+ * List entity-type members in a group
+ */
+export const listGroupEntityMembers = async (groupName: string): Promise<GroupEntityMember[]> => {
+  return await apiClient.get<GroupEntityMember[]>(
+    `/groups/${encodeURIComponent(groupName)}/entity-members`
+  )
+}
+
+/**
+ * Remove an entity-type member from a group
+ */
+export const removeGroupEntityMember = async (
+  groupName: string,
+  entityType: string,
+  entityId: string
+): Promise<void> => {
+  await apiClient.delete(
+    `/groups/${encodeURIComponent(groupName)}/entity-members/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`
+  )
 }

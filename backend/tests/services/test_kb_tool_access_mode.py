@@ -28,8 +28,8 @@ class TestRestrictedAnalystBatchLookup:
         db = Mock(spec=Session)
 
         with patch(
-            "app.services.group_permission.get_user_groups_with_roles",
-            return_value=[("team", GroupRole.RestrictedAnalyst.value)],
+            "app.services.group_permission.iter_user_groups_with_roles",
+            return_value=[("team", GroupRole.RestrictedAnalyst.value, "user", "1")],
         ):
             restricted_groups = get_restricted_analyst_groups(
                 db,

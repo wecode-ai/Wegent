@@ -92,6 +92,11 @@
     "levelOrganizationHint": "公司：公司级别群组，所有用户可见。"
   },
   "groupMembers": {
+    "tabs": {
+      "members": "用户",
+      "authorizations": "授权"
+    },
+    "addUserTab": "添加用户",
     "selectUser": "选择用户...",
     "selectMaintainer": "选择Maintainer...",
     "username": "用户名",
@@ -131,6 +136,8 @@
     "pendingChange": "未保存",
     "pendingChangesCount": "已修改 {{count}} 项",
     "visibleMembersCount": "显示 {{count}} 位成员",
+    "visibleAuthorizationsCount": "显示 {{count}} 条记录",
+    "unsavedChangesInMembersTab": "成员页有未保存变更",
     "confirmDiscardRoleChanges": "您有未保存的角色变更，确定要放弃吗？",
     "saveRoleChangesSuccess": "已保存 {{count}} 个角色变更",
     "noMembersFound": "没有找到匹配的成员",

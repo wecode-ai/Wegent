@@ -2,13 +2,20 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from unittest.mock import patch
+
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, get_password_hash
 from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.share_link import ResourceType
 from app.models.user import User
+from app.services.group_member_helper import create_group_entity_member
+from app.services.share.external_entity_resolver import register_entity_resolver
+from tests.utils.mock_resolver import MockDepartmentResolver, cleanup_resolvers
 
 
 def _auth_header(token: str) -> dict[str, str]:
@@ -328,3 +335,69 @@ def test_admin_can_list_organization_group_members_without_membership(
     assert response.status_code == 200
     member_user_ids = {item["user_id"] for item in response.json()}
     assert member_user_ids == {owner.id, developer.id}
+
+
+def test_transfer_ownership_to_entity_member_creates_user_record(
+    test_client: TestClient, test_db: Session
+) -> None:
+    owner = _create_user(test_db, "entity-owner-transfer")
+    employee = _create_user(test_db, "employee-transfer")
+    group = _create_group(test_db, owner, "entity-transfer-group")
+    group.level = "organization"
+    test_db.commit()
+    _add_member(test_db, group, owner, "Owner")
+
+    # Add entity member with Maintainer role
+    create_group_entity_member(
+        test_db,
+        group_name="entity-transfer-group",
+        entity_type="mock_department",
+        entity_id="dept_1",
+        role="Maintainer",
+    )
+    register_entity_resolver(
+        "mock_department", lambda: MockDepartmentResolver({employee.id: {"dept_1"}})
+    )
+
+    owner_token = create_access_token(data={"sub": owner.user_name})
+
+    response = test_client.post(
+        f"/api/groups/{group.name}/transfer-ownership",
+        headers=_auth_header(owner_token),
+        params={"new_owner_user_id": employee.id},
+    )
+
+    assert response.status_code == 200
+
+    test_db.refresh(group)
+    assert group.owner_user_id == employee.id
+
+    # Previous owner demoted to Maintainer
+    previous_owner_member = (
+        test_db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == "Namespace",
+            ResourceMember.resource_id == group.id,
+            ResourceMember.entity_type == "user",
+            ResourceMember.entity_id == str(owner.id),
+            ResourceMember.status == MemberStatus.APPROVED.value,
+        )
+        .first()
+    )
+    assert previous_owner_member is not None
+    assert previous_owner_member.role == "Maintainer"
+
+    # New owner should have a user-type ResourceMember record created
+    new_owner_member = (
+        test_db.query(ResourceMember)
+        .filter(
+            ResourceMember.resource_type == "Namespace",
+            ResourceMember.resource_id == group.id,
+            ResourceMember.entity_type == "user",
+            ResourceMember.entity_id == str(employee.id),
+            ResourceMember.status == MemberStatus.APPROVED.value,
+        )
+        .first()
+    )
+    assert new_owner_member is not None
+    assert new_owner_member.role == "Owner"
