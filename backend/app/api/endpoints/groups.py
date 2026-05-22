@@ -343,9 +343,7 @@ def add_entity_member_endpoint(
         )
 
     # Validate entity_id via resolver if implemented
-    resolver = get_entity_resolver(
-        member_create.entity_type, entity_type=member_create.entity_type
-    )
+    resolver = get_entity_resolver(member_create.entity_type)
     if resolver and not resolver.validate_entity_id(db, member_create.entity_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -605,7 +603,7 @@ def add_entity_members_batch_endpoint(
             )
 
         # Validate entity_id via resolver if implemented
-        resolver = get_entity_resolver(m.entity_type, entity_type=m.entity_type)
+        resolver = get_entity_resolver(m.entity_type)
         if resolver and not resolver.validate_entity_id(db, m.entity_id):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
