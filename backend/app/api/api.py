@@ -14,6 +14,7 @@ from app.api.endpoints import (
     health,
     knowledge,
     knowledge_open,
+    knowledge_transfer,
     mcp_providers,
     oidc,
     openapi_responses,
@@ -147,6 +148,14 @@ api_router.include_router(deep_research.router, prefix="/v1", tags=["deep-resear
 api_router.include_router(token_issuers.router, prefix="/v1", tags=["token-issuers"])
 api_router.include_router(
     knowledge.router, prefix="/knowledge-bases", tags=["knowledge"]
+)
+api_router.include_router(
+    knowledge_transfer.router, prefix="/knowledge-bases", tags=["knowledge-transfer"]
+)
+api_router.include_router(
+    knowledge_transfer.document_router,
+    prefix="/knowledge-documents",
+    tags=["knowledge-transfer"],
 )
 api_router.include_router(
     knowledge.document_router, prefix="/knowledge-documents", tags=["knowledge"]
