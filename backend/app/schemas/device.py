@@ -8,7 +8,7 @@ Device schemas for request/response validation.
 
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional
+from typing import Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -133,6 +133,55 @@ class DeviceListResponse(BaseModel):
 
     items: List[DeviceInfo]
     total: int
+
+
+class DeviceCommandRequest(BaseModel):
+    """Request model for executing a command on a local device."""
+
+    command_key: str = Field(
+        ...,
+        min_length=1,
+        description="Configured command key to execute",
+    )
+    path: Optional[str] = Field(None, description="Execution path for the command")
+    args: List[str] = Field(
+        default_factory=list,
+        description="Command arguments appended after the configured command",
+    )
+    cwd: Optional[str] = Field(
+        None,
+        description="Deprecated alias for path; path takes precedence when both are set",
+    )
+    env: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Additional environment variables for the command",
+    )
+    timeout_seconds: int = Field(
+        default=60,
+        gt=0,
+        le=600,
+        description="Command timeout in seconds",
+    )
+    max_output_bytes: int = Field(
+        default=1024 * 1024,
+        gt=0,
+        le=5 * 1024 * 1024,
+        description="Maximum stdout and stderr bytes returned separately",
+    )
+
+
+class DeviceCommandResponse(BaseModel):
+    """Response model for a completed local device command."""
+
+    success: bool
+    exit_code: Optional[int] = None
+    stdout: Union[str, List[str]] = ""
+    stderr: str = ""
+    duration: float
+    timed_out: bool = False
+    error: Optional[str] = None
+    stdout_truncated: bool = False
+    stderr_truncated: bool = False
 
 
 class DeviceRegisterPayload(BaseModel):

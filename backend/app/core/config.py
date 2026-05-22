@@ -68,6 +68,27 @@ def _normalize_rag_runtime_mode_mapping(value: Mapping[Any, Any]) -> dict[str, s
     return normalized_mapping
 
 
+def _parse_json_object_setting(value: Any, setting_name: str) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if isinstance(value, Mapping):
+        return {
+            str(key).strip(): item for key, item in value.items() if str(key).strip()
+        }
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{setting_name} must be a JSON object") from exc
+        if not isinstance(parsed, Mapping):
+            raise ValueError(f"{setting_name} must be a JSON object")
+        return _parse_json_object_setting(parsed, setting_name)
+    raise ValueError(f"{setting_name} must be a mapping")
+
+
 class Settings(BaseSettings):
     # Project configuration
     PROJECT_NAME: str = "Task Manager Backend"
@@ -109,6 +130,9 @@ class Settings(BaseSettings):
     # Latest Executor version (manually updated when releasing new versions)
     # This is used to show upgrade warnings in the UI
     EXECUTOR_LATEST_VERSION: str = "1.0.0"
+    # Optional local device command overrides/additions. API callers pass the key;
+    # Backend resolves the shell command and optional post processor from registry.
+    LOCAL_DEVICE_COMMANDS: dict[str, Any] = {}
 
     # Executor version checking configuration
     # If EXECUTOR_REGISTRY_URL is set, version is fetched from registry
@@ -271,6 +295,12 @@ class Settings(BaseSettings):
                     pass
             return [item.strip() for item in raw.split(",") if item.strip()]
         return v
+
+    @field_validator("LOCAL_DEVICE_COMMANDS", mode="before")
+    @classmethod
+    def parse_local_device_commands(cls, v: Any) -> dict[str, Any]:
+        """Parse local device command map from JSON settings."""
+        return _parse_json_object_setting(v, "LOCAL_DEVICE_COMMANDS")
 
     @field_validator("RAG_RUNTIME_MODE", mode="before")
     @classmethod
