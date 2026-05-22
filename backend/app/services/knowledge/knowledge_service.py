@@ -43,6 +43,7 @@ from app.schemas.knowledge import (
     KnowledgeDocumentUpdate,
     ResourceScope,
     TeamKnowledgeGroup,
+    TransferDocumentsResponse,
 )
 from app.schemas.namespace import GroupLevel, GroupRole
 from app.services.group_permission import (
@@ -298,7 +299,6 @@ class KnowledgeService:
             - Kind: The knowledge base Kind if found, None otherwise
             - has_access: True if user has access to the knowledge base, False otherwise
         """
-        from app.services.share import knowledge_share_service
 
         kb = KnowledgeService._get_knowledge_base_record(db, knowledge_base_id)
 
@@ -1274,7 +1274,6 @@ class KnowledgeService:
         Raises:
             ValueError: If permission denied
         """
-        import asyncio
         import logging
 
         from app.services.context import context_service
@@ -2200,7 +2199,7 @@ class KnowledgeService:
         db: Session,
     ) -> list[KnowledgeBaseWithGroupInfo]:
         """Aggregate multi-source permission info into shared_with_me responses."""
-        from dataclasses import dataclass, field
+        from dataclasses import dataclass
 
         @dataclass
         class KbSourceInfo:
@@ -2566,7 +2565,6 @@ class KnowledgeService:
         entity_result = KnowledgeService._collect_entity_authorized_kbs(
             db, user_id, accessible_groups
         )
-        entity_kbs = entity_result.entity_kbs
         entity_personal_kb_ids = entity_result.entity_personal_kb_ids
         entity_shared_to_me_kbs = entity_result.entity_shared_to_me_kbs
         shared_into_group_kbs = entity_result.shared_into_group_kbs
@@ -3085,7 +3083,7 @@ class KnowledgeService:
 
         return doc
 
-    # ============== Knowledge Base Migration ==============
+    # ============== Knowledge Base Migration and Transfer Delegates ==============
 
     @staticmethod
     def migrate_knowledge_base_to_group(
@@ -3094,102 +3092,33 @@ class KnowledgeService:
         user_id: int,
         target_group_name: str,
     ) -> dict:
-        """
-        Migrate a personal knowledge base to a group.
+        """Migrate a personal knowledge base to a group."""
+        from app.services.knowledge.knowledge_transfer import KnowledgeTransferService
 
-        Args:
-            db: Database session
-            knowledge_base_id: Knowledge base ID to migrate
-            user_id: Requesting user ID (must be the creator of the KB)
-            target_group_name: Target group name (namespace) to migrate to
-
-        Returns:
-            Dict with migration result information
-
-        Raises:
-            ValueError: If validation fails or permission denied
-        """
-        from sqlalchemy.orm.attributes import flag_modified
-
-        # Get the knowledge base
-        kb = (
-            db.query(Kind)
-            .filter(
-                Kind.id == knowledge_base_id,
-                Kind.kind == "KnowledgeBase",
-            )
-            .first()
+        return KnowledgeTransferService.migrate_knowledge_base_to_group(
+            db=db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=user_id,
+            target_group_name=target_group_name,
         )
 
-        if not kb:
-            raise ValueError("Knowledge base not found")
+    @staticmethod
+    def transfer_documents_to_kb(
+        db: Session,
+        source_kb_id: int,
+        target_kb_id: int,
+        document_ids: list[int],
+        folder_ids: list[int],
+        user_id: int,
+    ) -> TransferDocumentsResponse:
+        """Transfer documents and/or folders from one KB to another."""
+        from app.services.knowledge.knowledge_transfer import KnowledgeTransferService
 
-        # Only personal knowledge bases (namespace='default') can be migrated
-        if kb.namespace != "default":
-            raise ValueError("Only personal knowledge bases can be migrated to groups")
-
-        # Only the creator can migrate
-        if kb.user_id != user_id:
-            raise ValueError("Only the creator can migrate this knowledge base")
-
-        # Check if user has access to the target group
-        target_role = get_effective_role_in_group(db, user_id, target_group_name)
-        if target_role is None:
-            raise ValueError(f"You don't have access to group '{target_group_name}'")
-
-        # Check if user has Maintainer+ permission in target group
-        if target_role not in {GroupRole.Owner, GroupRole.Maintainer}:
-            raise ValueError(
-                "You need Maintainer or Owner permission in the target group to migrate knowledge bases"
-            )
-
-        # Check for duplicate name in target group
-        kb_spec = kb.json.get("spec", {})
-        kb_name = kb_spec.get("name", "")
-
-        existing_in_target = (
-            db.query(Kind)
-            .filter(
-                Kind.kind == "KnowledgeBase",
-                Kind.namespace == target_group_name,
-            )
-            .all()
+        return KnowledgeTransferService.transfer_documents_to_kb(
+            db=db,
+            source_kb_id=source_kb_id,
+            target_kb_id=target_kb_id,
+            document_ids=document_ids,
+            folder_ids=folder_ids,
+            user_id=user_id,
         )
-
-        for existing_kb in existing_in_target:
-            existing_spec = existing_kb.json.get("spec", {})
-            if existing_spec.get("name") == kb_name:
-                raise ValueError(
-                    f"A knowledge base with name '{kb_name}' already exists in the target group"
-                )
-
-        # Store old namespace for response
-        old_namespace = kb.namespace
-
-        # Update the namespace
-        kb.namespace = target_group_name
-
-        # Update the name in Kind record to reflect new namespace
-        # Format: kb-{user_id}-{namespace}-{name}
-        new_kb_name = f"kb-{user_id}-{target_group_name}-{kb_name}"
-        kb.name = new_kb_name
-
-        # Update the namespace in the JSON spec as well
-        kb_json = kb.json
-        if "metadata" not in kb_json:
-            kb_json["metadata"] = {}
-        kb_json["metadata"]["namespace"] = target_group_name
-        kb_json["metadata"]["name"] = new_kb_name
-        kb.json = kb_json
-        flag_modified(kb, "json")
-
-        db.commit()
-        db.refresh(kb)
-
-        return {
-            "success": True,
-            "message": f"Knowledge base '{kb_name}' migrated to group '{target_group_name}' successfully",
-            "knowledge_base_id": kb.id,
-            "old_namespace": old_namespace,
-            "new_namespace": target_group_name,
-        }
