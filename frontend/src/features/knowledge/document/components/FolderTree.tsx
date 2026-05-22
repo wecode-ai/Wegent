@@ -403,11 +403,13 @@ function FolderRow({
       </span>
     ) : null
 
-  // Folder checkbox for batch selection (only for API folders when canSelectFolders is enabled)
+  // Folder checkbox for batch selection (only for API folders with documents when canSelectFolders is enabled)
+  // Empty folders cannot be selected because the backend skips transfer when there are no documents
   const folderCheckbox =
     canSelectFolders && node.isApiFolder ? (
       <Checkbox
         checked={folderChecked}
+        disabled={node.documentCount === 0}
         onCheckedChange={checked => {
           onFolderCheck?.(checked === true)
         }}

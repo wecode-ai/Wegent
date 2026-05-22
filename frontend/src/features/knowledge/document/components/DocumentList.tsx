@@ -494,6 +494,36 @@ export function DocumentList({
   // select/deselect all documents within it (including sub-folders)
   const handleSelectFolder = useCallback(
     (folderId: number, selected: boolean) => {
+      // Collect all document IDs in the selected folder (recursively)
+      const collectDocIdsInFolder = (folderList: KnowledgeFolder[], targetId: number): number[] => {
+        for (const f of folderList) {
+          if (f.id === targetId) {
+            const docIds: number[] = []
+            const collectDocs = (folder: KnowledgeFolder) => {
+              const folderDocs = documents.filter(d => d.folder_id === folder.id)
+              docIds.push(...folderDocs.map(d => d.id))
+              for (const child of folder.children) {
+                collectDocs(child)
+              }
+            }
+            collectDocs(f)
+            return docIds
+          }
+          const found = collectDocIdsInFolder(f.children, targetId)
+          if (found.length > 0) return found
+        }
+        return []
+      }
+
+      const docIdsInFolder = collectDocIdsInFolder(folders, folderId)
+
+      // Prevent selecting empty folders/subtrees — the backend skips transfer
+      // when there are no documents, so allowing selection would mislead the user
+      // into thinking something will be transferred.
+      if (selected && docIdsInFolder.length === 0) {
+        return
+      }
+
       const affectedFolderIds = collectFolderAndDescendantIds(folders, folderId)
       setSelectedFolderIds(prev => {
         const newSet = new Set(prev)
@@ -505,32 +535,6 @@ export function DocumentList({
         return newSet
       })
 
-      // Collect all document IDs in the selected folder (recursively)
-      const collectDocIdsInFolder = (folderList: KnowledgeFolder[], targetId: number): number[] => {
-        for (const f of folderList) {
-          if (f.id === targetId) {
-            // Found the folder - collect all doc IDs recursively
-            const docIds: number[] = []
-            const collectDocs = (folder: KnowledgeFolder) => {
-              // Get documents directly in this folder
-              const folderDocs = documents.filter(d => d.folder_id === folder.id)
-              docIds.push(...folderDocs.map(d => d.id))
-              // Recurse into children
-              for (const child of folder.children) {
-                collectDocs(child)
-              }
-            }
-            collectDocs(f)
-            return docIds
-          }
-          // Search in children
-          const found = collectDocIdsInFolder(f.children, targetId)
-          if (found.length > 0) return found
-        }
-        return []
-      }
-
-      const docIdsInFolder = collectDocIdsInFolder(folders, folderId)
       if (docIdsInFolder.length > 0) {
         setSelectedIds(prev => {
           const newSet = new Set(prev)
@@ -549,8 +553,10 @@ export function DocumentList({
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
       setSelectedIds(new Set(filteredDocuments.map(doc => doc.id)))
+      setSelectedFolderIds(new Set()) // Clear folder selection to avoid duplicate transfer
     } else {
       setSelectedIds(new Set())
+      setSelectedFolderIds(new Set()) // Clear folder selection so action bar hides correctly
     }
   }
 
