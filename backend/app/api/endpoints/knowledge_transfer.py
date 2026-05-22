@@ -6,7 +6,7 @@
 
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -16,12 +16,14 @@ from app.core import security
 from app.core.exceptions import CustomHTTPException, StructuredValidationException
 from app.models.user import User
 from app.schemas.knowledge import (
+    BatchDocumentMoveRequest,
+    BatchOperationResult,
     KnowledgeBaseMigrateRequest,
     KnowledgeBaseMigrateResponse,
     TransferDocumentsRequest,
     TransferDocumentsResponse,
 )
-from app.services.knowledge import KnowledgeService
+from app.services.knowledge import KnowledgeFolderService, KnowledgeService
 from app.services.knowledge.knowledge_transfer import KB_MIGRATE_CONFLICT
 from shared.telemetry.decorators import (
     add_span_event,
@@ -32,6 +34,56 @@ from shared.telemetry.decorators import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+document_router = APIRouter()
+
+
+@document_router.post("/batch/move", response_model=BatchOperationResult)
+@trace_sync("batch_move_documents", "knowledge.api")
+def batch_move_documents(
+    data: BatchDocumentMoveRequest,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Batch move multiple documents to a target folder.
+
+    Moves all specified documents that the user has permission to move.
+    Returns a summary of successful and failed operations.
+    Raises 400 for invalid folder_id, 404 for not found documents, 403 for permission issues.
+    """
+    result = KnowledgeFolderService.batch_move_documents(
+        db=db,
+        document_ids=data.document_ids,
+        folder_id=data.folder_id,
+        user_id=current_user.id,
+    )
+    add_span_event(
+        "knowledge.documents.batch_moved",
+        {
+            "success_count": str(result.success_count),
+            "failed_count": str(result.failed_count),
+            "user_id": str(current_user.id),
+        },
+    )
+
+    if result.success_count == 0 and result.failed_count > 0:
+        error_msg = result.message.lower() if result.message else ""
+        if "not found" in error_msg:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=result.message,
+            )
+        if "permission" in error_msg or "access denied" in error_msg:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=result.message,
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result.message,
+        )
+
+    return result
 
 
 @router.post(

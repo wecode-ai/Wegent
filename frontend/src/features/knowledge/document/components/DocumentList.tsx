@@ -136,6 +136,41 @@ function flattenFoldersForSelect(
   return result
 }
 
+function collectFolderAndDescendantIds(folders: KnowledgeFolder[], targetId: number): Set<number> {
+  for (const folder of folders) {
+    if (folder.id === targetId) {
+      const ids = new Set<number>()
+      const collect = (current: KnowledgeFolder) => {
+        ids.add(current.id)
+        current.children.forEach(collect)
+      }
+      collect(folder)
+      return ids
+    }
+
+    const childIds = collectFolderAndDescendantIds(folder.children, targetId)
+    if (childIds.size > 0) return childIds
+  }
+
+  return new Set()
+}
+
+function collectFolderAndAncestorIds(folders: KnowledgeFolder[], targetId: number): Set<number> {
+  const findPath = (folderList: KnowledgeFolder[], path: number[]): number[] | null => {
+    for (const folder of folderList) {
+      const nextPath = [...path, folder.id]
+      if (folder.id === targetId) return nextPath
+
+      const childPath = findPath(folder.children, nextPath)
+      if (childPath) return childPath
+    }
+
+    return null
+  }
+
+  return new Set(findPath(folders, []) ?? [])
+}
+
 export function DocumentList({
   knowledgeBase,
   onBack,
@@ -439,14 +474,14 @@ export function DocumentList({
         newSet.add(doc.id)
       } else {
         newSet.delete(doc.id)
-        // When deselecting a doc that belongs to a selected folder,
-        // remove the folder from selectedFolderIds since it's no longer fully selected.
-        // The remaining selected docs from that folder will still be in selectedIds,
-        // and the backend will correctly recreate the folder hierarchy for them.
+        // Remove every selected ancestor folder because any selected ancestor
+        // would make the backend transfer this document through folder_ids.
+        // The remaining selected docs will still recreate their folder hierarchy.
         if (doc.folder_id && doc.folder_id > 0) {
+          const foldersToRemove = collectFolderAndAncestorIds(folders, doc.folder_id)
           setSelectedFolderIds(prevFolderIds => {
             const newFolderSet = new Set(prevFolderIds)
-            newFolderSet.delete(doc.folder_id)
+            foldersToRemove.forEach(folderId => newFolderSet.delete(folderId))
             return newFolderSet
           })
         }
@@ -459,12 +494,13 @@ export function DocumentList({
   // select/deselect all documents within it (including sub-folders)
   const handleSelectFolder = useCallback(
     (folderId: number, selected: boolean) => {
+      const affectedFolderIds = collectFolderAndDescendantIds(folders, folderId)
       setSelectedFolderIds(prev => {
         const newSet = new Set(prev)
         if (selected) {
           newSet.add(folderId)
         } else {
-          newSet.delete(folderId)
+          affectedFolderIds.forEach(id => newSet.delete(id))
         }
         return newSet
       })
@@ -701,14 +737,13 @@ export function DocumentList({
   )
 
   // Transfer handler
-  // Transfer handler
   const handleTransferConfirm = useCallback(
     async (targetKbId: number) => {
       setIsTransferring(true)
       try {
-        // Pass folder_ids when the user explicitly selects folders for transfer.
-        // The backend will transfer all documents within those folders (including sub-folders)
-        // and recreate the folder hierarchy in the target KB.
+        // Pass only folders that still represent complete subtree selections.
+        // If a user deselects a descendant document, its selected ancestor folders
+        // are removed so folder_ids cannot re-add that document during transfer.
         const result = await transfer({
           document_ids: Array.from(selectedIds),
           folder_ids: Array.from(selectedFolderIds),

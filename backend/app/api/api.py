@@ -153,6 +153,11 @@ api_router.include_router(
     knowledge_transfer.router, prefix="/knowledge-bases", tags=["knowledge-transfer"]
 )
 api_router.include_router(
+    knowledge_transfer.document_router,
+    prefix="/knowledge-documents",
+    tags=["knowledge-transfer"],
+)
+api_router.include_router(
     knowledge.document_router, prefix="/knowledge-documents", tags=["knowledge"]
 )
 api_router.include_router(
