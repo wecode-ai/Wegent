@@ -566,6 +566,7 @@ export function DocumentList({
     try {
       await batchDelete(Array.from(selectedIds))
       setSelectedIds(new Set())
+      setSelectedFolderIds(new Set())
     } catch {
       // Error handled by hook
     } finally {
@@ -714,9 +715,14 @@ export function DocumentList({
       try {
         const result = await batchMove(Array.from(selectedIds), targetFolderId)
         if (result.success_count > 0) {
-          const nextSelectedIds = new Set(result.failed_ids)
-          setSelectedIds(nextSelectedIds)
+          // Clear folder selection after batch move to prevent stale state.
+          // Moved documents no longer belong to the previously selected folders,
+          // so retaining selectedFolderIds would cause incorrect behavior in
+          // subsequent operations (e.g., transfer would re-include already-moved docs).
+          setSelectedFolderIds(new Set())
           if (result.failed_count > 0) {
+            const nextSelectedIds = new Set(result.failed_ids)
+            setSelectedIds(nextSelectedIds)
             toast({
               description: t('document.folder.batchMovePartial', {
                 success: result.success_count,
@@ -724,6 +730,8 @@ export function DocumentList({
               }),
               variant: 'destructive',
             })
+          } else {
+            setSelectedIds(new Set())
           }
           refresh()
           fetchFolders()
