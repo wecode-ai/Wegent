@@ -2,7 +2,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from unittest.mock import patch
+
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import CustomHTTPException
@@ -15,6 +18,7 @@ from app.models.user import User
 from app.schemas.knowledge import (
     DocumentSourceType,
     KnowledgeBaseCreate,
+    KnowledgeBaseMigrateResponse,
     KnowledgeBaseUpdate,
     KnowledgeDocumentCreate,
     KnowledgeFolderCreate,
@@ -850,6 +854,41 @@ def test_owner_can_migrate_personal_knowledge_base_to_group(
     assert result["success"] is True
     assert result["new_namespace"] == namespace.name
     assert migrated_kb.namespace == namespace.name
+
+
+def _auth_header(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.mark.unit
+def test_migrate_endpoint_uses_extracted_module(
+    test_client: TestClient,
+    test_token: str,
+) -> None:
+    """Migration route is served by the extracted endpoint module."""
+    migrate_response = KnowledgeBaseMigrateResponse(
+        success=True,
+        knowledge_base_id=123,
+        old_namespace="default",
+        new_namespace="group-target",
+        message="Migrated",
+    )
+
+    with patch(
+        "app.api.endpoints.knowledge_transfer.KnowledgeService.migrate_knowledge_base_to_group",
+        return_value=migrate_response,
+    ) as mock_migrate:
+        response = test_client.post(
+            "/api/knowledge-bases/123/migrate",
+            json={"target_group_name": "group-target"},
+            headers=_auth_header(test_token),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["new_namespace"] == "group-target"
+    mock_migrate.assert_called_once()
+    assert mock_migrate.call_args.kwargs["knowledge_base_id"] == 123
+    assert mock_migrate.call_args.kwargs["target_group_name"] == "group-target"
 
 
 @pytest.mark.unit

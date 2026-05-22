@@ -51,7 +51,21 @@ interface TransferToKbDialogProps {
  * - namespace === 'default' -> personal KB
  * - other namespaces -> team/organization KB (we treat them as "team" for simplicity)
  */
-function getNamespaceScope(namespace: string, organizationNamespace: string | null) {
+type KnowledgeNamespaceScope = 'personal' | 'group' | 'organization'
+
+const TRANSFER_ALLOWED_TARGET_SCOPES: Record<
+  KnowledgeNamespaceScope,
+  Set<KnowledgeNamespaceScope>
+> = {
+  personal: new Set(['personal', 'group', 'organization']),
+  group: new Set(['personal', 'group', 'organization']),
+  organization: new Set(['organization']),
+}
+
+function getNamespaceScope(
+  namespace: string,
+  organizationNamespace: string | null
+): KnowledgeNamespaceScope {
   if (namespace === 'default') return 'personal'
   if (organizationNamespace && namespace === organizationNamespace) return 'organization'
   return 'group'
@@ -61,12 +75,10 @@ function canTransferToNamespace(
   sourceNamespace: string,
   targetNamespace: string,
   organizationNamespace: string | null
-) {
+): boolean {
   const sourceScope = getNamespaceScope(sourceNamespace, organizationNamespace)
   const targetScope = getNamespaceScope(targetNamespace, organizationNamespace)
-  if (sourceScope === 'personal') return targetScope === 'group' || targetScope === 'organization'
-  if (sourceScope === 'group') return targetScope === 'personal' || targetScope === 'organization'
-  return targetScope === 'organization'
+  return TRANSFER_ALLOWED_TARGET_SCOPES[sourceScope]?.has(targetScope) ?? false
 }
 
 function groupKnowledgeBases(kbs: KnowledgeBase[], organizationNamespace: string | null) {
