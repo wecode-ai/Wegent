@@ -40,6 +40,9 @@ export const paths = {
   inbox: {
     getHref: () => '/inbox',
   },
+  wework: {
+    getHref: () => getRuntimeConfigSync().weworkUrl || 'http://localhost:1420',
+  },
   feedSubscriptions: {
     getHref: () => '/feed/subscriptions',
   },
