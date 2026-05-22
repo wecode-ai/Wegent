@@ -6,6 +6,7 @@
 
 import { useState, useMemo } from 'react'
 import { FolderOutput, Users, Building2, AlertCircle } from 'lucide-react'
+import { ApiError } from '@/apis/client'
 import {
   Dialog,
   DialogContent,
@@ -98,7 +99,11 @@ export function MigrateKnowledgeBaseDialog({
       await onMigrate(selectedGroup.name)
       handleOpenChange(false)
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('common:error'))
+      if (err instanceof ApiError && err.errorCode && typeof err.errorCode === 'string') {
+        setError(t(`document.migrate.errors.${err.errorCode}`))
+      } else {
+        setError(err instanceof Error ? err.message : t('common:error'))
+      }
     }
   }
 
