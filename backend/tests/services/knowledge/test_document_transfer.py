@@ -745,3 +745,213 @@ def test_transfer_endpoint_uses_extracted_module(
     mock_transfer.assert_called_once()
     assert mock_transfer.call_args.kwargs["source_kb_id"] == 10
     assert mock_transfer.call_args.kwargs["target_kb_id"] == 20
+
+
+@pytest.mark.unit
+def test_transfer_documents_from_personal_to_organization_kb(test_db: Session) -> None:
+    """Test transferring documents from personal KB to organization KB."""
+    owner = _create_user(test_db, "owner-personal-to-org")
+    org_ns = _create_namespace(
+        test_db, owner, "org-personal-target", level="organization"
+    )
+    _add_namespace_member(test_db, org_ns, owner, GroupRole.Owner, owner.id)
+    personal_kb_id = _create_kb(
+        test_db, owner.id, "personal-to-org-kb", namespace="default"
+    )
+    org_kb_id = _create_kb(test_db, owner.id, "org-target-kb", namespace=org_ns.name)
+    doc1 = _create_document(test_db, personal_kb_id, owner.id, "org-doc1.md")
+    doc2 = _create_document(test_db, personal_kb_id, owner.id, "org-doc2.md")
+
+    result = KnowledgeService.transfer_documents_to_kb(
+        db=test_db,
+        source_kb_id=personal_kb_id,
+        target_kb_id=org_kb_id,
+        document_ids=[doc1.id, doc2.id],
+        folder_ids=[],
+        user_id=owner.id,
+    )
+
+    assert result.success is True
+    assert result.transferred_document_count == 2
+    transferred_docs = (
+        test_db.query(KnowledgeDocument)
+        .filter(KnowledgeDocument.kind_id == org_kb_id)
+        .all()
+    )
+    assert len(transferred_docs) == 2
+    assert all(doc.is_active is False for doc in transferred_docs)
+
+
+@pytest.mark.unit
+def test_transfer_documents_from_team_to_organization_kb(test_db: Session) -> None:
+    """Test transferring documents from team KB to organization KB."""
+    owner = _create_user(test_db, "owner-team-to-org")
+    team_ns = _create_namespace(test_db, owner, "team-to-org-source", level="group")
+    org_ns = _create_namespace(test_db, owner, "org-team-target", level="organization")
+    _add_namespace_member(test_db, team_ns, owner, GroupRole.Owner, owner.id)
+    _add_namespace_member(test_db, org_ns, owner, GroupRole.Owner, owner.id)
+    team_kb_id = _create_kb(test_db, owner.id, "team-to-org-kb", namespace=team_ns.name)
+    org_kb_id = _create_kb(
+        test_db, owner.id, "org-team-target-kb", namespace=org_ns.name
+    )
+    doc1 = _create_document(test_db, team_kb_id, owner.id, "team-org-doc1.md")
+    doc2 = _create_document(test_db, team_kb_id, owner.id, "team-org-doc2.md")
+
+    result = KnowledgeService.transfer_documents_to_kb(
+        db=test_db,
+        source_kb_id=team_kb_id,
+        target_kb_id=org_kb_id,
+        document_ids=[doc1.id, doc2.id],
+        folder_ids=[],
+        user_id=owner.id,
+    )
+
+    assert result.success is True
+    assert result.transferred_document_count == 2
+    assert (
+        test_db.query(KnowledgeDocument)
+        .filter(KnowledgeDocument.kind_id == org_kb_id)
+        .count()
+        == 2
+    )
+
+
+@pytest.mark.unit
+def test_validate_transfer_namespace_rejects_org_to_team(test_db: Session) -> None:
+    """Organization documents cannot move into team knowledge bases."""
+    owner = _create_user(test_db, "owner-org-to-team-reject")
+    org_ns = _create_namespace(
+        test_db, owner, "org-to-team-reject", level="organization"
+    )
+    team_ns = _create_namespace(test_db, owner, "team-org-reject-target", level="group")
+    _add_namespace_member(test_db, org_ns, owner, GroupRole.Owner, owner.id)
+    _add_namespace_member(test_db, team_ns, owner, GroupRole.Owner, owner.id)
+    source_kb_id = _create_kb(
+        test_db, owner.id, "org-source-reject-kb", namespace=org_ns.name
+    )
+    target_kb_id = _create_kb(
+        test_db, owner.id, "team-target-reject-kb", namespace=team_ns.name
+    )
+    source_kb = test_db.query(Kind).filter(Kind.id == source_kb_id).first()
+    target_kb = test_db.query(Kind).filter(Kind.id == target_kb_id).first()
+
+    with pytest.raises(ValueError, match="Invalid target"):
+        KnowledgeTransferService.validate_transfer_namespace(
+            test_db, source_kb, target_kb
+        )
+
+
+@pytest.mark.unit
+def test_validate_transfer_namespace_rejects_org_to_group(test_db: Session) -> None:
+    """Organization documents cannot move into group-level knowledge bases."""
+    owner = _create_user(test_db, "owner-org-to-group-reject")
+    org_ns = _create_namespace(test_db, owner, "org-group-reject", level="organization")
+    group_ns = _create_namespace(
+        test_db, owner, "group-org-reject-target", level="group"
+    )
+    _add_namespace_member(test_db, org_ns, owner, GroupRole.Owner, owner.id)
+    _add_namespace_member(test_db, group_ns, owner, GroupRole.Owner, owner.id)
+    source_kb_id = _create_kb(
+        test_db, owner.id, "org-group-source-kb", namespace=org_ns.name
+    )
+    target_kb_id = _create_kb(
+        test_db, owner.id, "group-target-kb", namespace=group_ns.name
+    )
+    source_kb = test_db.query(Kind).filter(Kind.id == source_kb_id).first()
+    target_kb = test_db.query(Kind).filter(Kind.id == target_kb_id).first()
+
+    with pytest.raises(ValueError, match="Invalid target"):
+        KnowledgeTransferService.validate_transfer_namespace(
+            test_db, source_kb, target_kb
+        )
+
+
+@pytest.mark.unit
+def test_transfer_documents_mutate_uses_row_lock(test_db: Session) -> None:
+    """transfer_documents_mutate acquires row-level locks via with_for_update()."""
+    owner = _create_user(test_db, "owner-row-lock")
+    source_kb_id = _create_kb(test_db, owner.id, "source-row-lock-kb")
+    target_kb_id = _create_kb(test_db, owner.id, "target-row-lock-kb")
+    doc = _create_document(test_db, source_kb_id, owner.id, "lock-doc.md")
+
+    # Patch the query chain to verify with_for_update is called
+    with patch.object(
+        test_db.query(KnowledgeDocument).__class__,
+        "with_for_update",
+        autospec=True,
+    ) as mock_for_update:
+        # Set up the chain: with_for_update returns a mock whose .all() returns docs
+        mock_query = test_db.query(KnowledgeDocument)
+        mock_for_update.return_value = mock_query
+
+        docs, count = KnowledgeTransferService.transfer_documents_mutate(
+            db=test_db,
+            all_doc_ids={doc.id},
+            old_to_new_folder={},
+            target_kb_id=target_kb_id,
+            source_kb_id=source_kb_id,
+        )
+
+        mock_for_update.assert_called_once()
+
+    assert count == 1
+    assert docs[0].kind_id == target_kb_id
+
+
+@pytest.mark.unit
+def test_validate_transfer_document_names_allows_no_duplicates(
+    test_db: Session,
+) -> None:
+    """Transfer validation passes when no duplicate names exist in target KB."""
+    owner = _create_user(test_db, "owner-no-duplicate-transfer")
+    source_kb_id = _create_kb(test_db, owner.id, "source-no-dup-kb")
+    target_kb_id = _create_kb(test_db, owner.id, "target-no-dup-kb")
+    source_doc = _create_document(test_db, source_kb_id, owner.id, "unique-name.md")
+    _create_document(test_db, target_kb_id, owner.id, "different-name.md")
+
+    # Should not raise any exception
+    KnowledgeTransferService.validate_transfer_document_names(
+        db=test_db,
+        all_doc_ids={source_doc.id},
+        target_kb_id=target_kb_id,
+        source_kb_id=source_kb_id,
+    )
+
+
+@pytest.mark.unit
+def test_validate_transfer_document_names_multiple_duplicates(test_db: Session) -> None:
+    """Multiple duplicate names are all reported in the structured error."""
+    owner = _create_user(test_db, "owner-multi-dup-transfer")
+    source_kb_id = _create_kb(test_db, owner.id, "source-multi-dup-kb")
+    target_kb_id = _create_kb(test_db, owner.id, "target-multi-dup-kb")
+    doc_a = _create_document(test_db, source_kb_id, owner.id, "dup-a.md")
+    doc_b = _create_document(test_db, source_kb_id, owner.id, "dup-b.md")
+    _create_document(test_db, target_kb_id, owner.id, "dup-a.md")
+    _create_document(test_db, target_kb_id, owner.id, "dup-b.md")
+
+    with pytest.raises(StructuredValidationException) as exc_info:
+        KnowledgeTransferService.validate_transfer_document_names(
+            db=test_db,
+            all_doc_ids={doc_a.id, doc_b.id},
+            target_kb_id=target_kb_id,
+            source_kb_id=source_kb_id,
+        )
+
+    assert exc_info.value.error_code == "DUPLICATE_DOCUMENT_NAMES"
+    assert sorted(exc_info.value.payload["names"]) == ["dup-a.md", "dup-b.md"]
+
+
+@pytest.mark.unit
+def test_validate_transfer_document_names_empty_doc_ids(test_db: Session) -> None:
+    """Transfer validation passes when no documents are being transferred."""
+    owner = _create_user(test_db, "owner-empty-doc-ids")
+    source_kb_id = _create_kb(test_db, owner.id, "source-empty-ids-kb")
+    target_kb_id = _create_kb(test_db, owner.id, "target-empty-ids-kb")
+
+    # Should not raise any exception
+    KnowledgeTransferService.validate_transfer_document_names(
+        db=test_db,
+        all_doc_ids=set(),
+        target_kb_id=target_kb_id,
+        source_kb_id=source_kb_id,
+    )
