@@ -1,0 +1,364 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""Tests for local device command RPC service."""
+
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
+
+
+def test_local_device_command_registry_default_includes_diagnostic_commands():
+    """Default command registry should include basic diagnostic commands."""
+    from app.core.config import Settings
+    from app.services.device.command_registry import resolve_local_device_command
+
+    settings = Settings()
+
+    pwd_definition = resolve_local_device_command("pwd", settings.LOCAL_DEVICE_COMMANDS)
+    ls_definition = resolve_local_device_command("ls_a", settings.LOCAL_DEVICE_COMMANDS)
+    git_clone_definition = resolve_local_device_command(
+        "git_clone", settings.LOCAL_DEVICE_COMMANDS
+    )
+
+    assert pwd_definition is not None
+    assert pwd_definition.command == "pwd"
+    assert pwd_definition.post_processor is None
+    assert ls_definition is not None
+    assert ls_definition.command == "ls -a"
+    assert ls_definition.post_processor == "file_list"
+    assert git_clone_definition is not None
+    assert git_clone_definition.command == "git clone"
+    assert git_clone_definition.post_processor is None
+
+
+def test_local_device_command_registry_supports_inline_post_processor():
+    """One command config object should contain command and post processor."""
+    from app.services.device.command_registry import resolve_local_device_command
+
+    definition = resolve_local_device_command(
+        "repo_files",
+        {
+            "repo_files": {
+                "command": "ls -a",
+                "post_processor": "file_list",
+            }
+        },
+    )
+
+    assert definition is not None
+    assert definition.command == "ls -a"
+    assert definition.post_processor == "file_list"
+
+
+def test_local_device_command_registry_keeps_default_processor_for_string_override():
+    """A simple string override should not drop a built-in post processor."""
+    from app.services.device.command_registry import resolve_local_device_command
+
+    definition = resolve_local_device_command("ls_a", {"ls_a": "ls -a"})
+
+    assert definition is not None
+    assert definition.command == "ls -a"
+    assert definition.post_processor == "file_list"
+
+
+def test_local_device_command_registry_builds_argv_with_request_args():
+    """Command argv should append request args without shell string concatenation."""
+    from app.services.device.command_registry import build_local_device_command_argv
+
+    argv = build_local_device_command_argv("ls -a", ["backend", "docs"])
+
+    assert argv == ["ls", "-a", "backend", "docs"]
+
+
+def test_local_device_command_registry_builds_git_clone_argv():
+    """git_clone should support repository URL and target directory args."""
+    from app.services.device.command_registry import (
+        build_local_device_command_argv,
+        resolve_local_device_command,
+    )
+
+    definition = resolve_local_device_command("git_clone")
+
+    assert definition is not None
+    assert build_local_device_command_argv(
+        definition.command,
+        ["https://github.com/wecode-ai/Wegent.git", "Wegent"],
+    ) == ["git", "clone", "https://github.com/wecode-ai/Wegent.git", "Wegent"]
+
+
+def test_file_list_post_processor_filters_special_entries():
+    """file_list post processor should return a clean file name list."""
+    from app.services.device.command_post_processor import apply_command_post_processor
+
+    result = {
+        "success": True,
+        "exit_code": 0,
+        "stdout": ".\n..\n.env\nbackend\n\n",
+        "stderr": "",
+        "duration": 0.01,
+    }
+
+    processed = apply_command_post_processor(result, "file_list")
+
+    assert processed["stdout"] == [".env", "backend"]
+
+
+@pytest.mark.asyncio
+async def test_execute_command_calls_registered_device_socket(monkeypatch):
+    """Service should send command RPC to the target device socket."""
+    from app.services.device import command_service
+
+    mock_sio = AsyncMock()
+    mock_sio.call.return_value = {
+        "success": True,
+        "exit_code": 0,
+        "stdout": "ok\n",
+        "stderr": "",
+        "duration": 0.01,
+        "timed_out": False,
+    }
+
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_online_info",
+        AsyncMock(return_value={"socket_id": "socket-123"}),
+    )
+    monkeypatch.setattr(command_service, "get_sio", lambda: mock_sio)
+
+    result = await command_service.local_device_command_service.execute_command(
+        user_id=7,
+        device_id="device-abc",
+        command="pwd",
+        path="/tmp",
+        args=["-P"],
+        env={"A": "B"},
+        timeout_seconds=5,
+        max_output_bytes=1024,
+    )
+
+    assert result["success"] is True
+    assert result["stdout"] == "ok\n"
+    mock_sio.call.assert_awaited_once_with(
+        "device:execute_command",
+        {
+            "command": "pwd",
+            "cwd": "/tmp",
+            "args": ["-P"],
+            "argv": ["pwd", "-P"],
+            "env": {"A": "B"},
+            "timeout_seconds": 5,
+            "max_output_bytes": 1024,
+        },
+        to="socket-123",
+        namespace="/local-executor",
+        timeout=10,
+    )
+
+
+@pytest.mark.asyncio
+async def test_execute_command_rejects_offline_device(monkeypatch):
+    """Service should reject devices without online socket information."""
+    from app.services.device import command_service
+
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_online_info",
+        AsyncMock(return_value=None),
+    )
+
+    with pytest.raises(command_service.DeviceCommandError) as exc_info:
+        await command_service.local_device_command_service.execute_command(
+            user_id=7,
+            device_id="offline-device",
+            command="pwd",
+        )
+
+    assert "offline" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_execute_configured_device_command_resolves_executes_and_post_processes(
+    monkeypatch,
+):
+    """Internal service API should resolve key, execute command, and post-process."""
+    from app.services.device import command_service
+
+    execute_mock = AsyncMock(
+        return_value={
+            "success": True,
+            "exit_code": 0,
+            "stdout": ".\n..\nbackend\n",
+            "stderr": "",
+            "duration": 0.02,
+            "timed_out": False,
+        }
+    )
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    monkeypatch.setattr(
+        command_service.local_device_command_service,
+        "execute_command",
+        execute_mock,
+    )
+
+    result = await command_service.execute_configured_device_command(
+        db=object(),
+        user_id=7,
+        device_id="device-abc",
+        command_key="repo_files",
+        path="/tmp",
+        args=["backend"],
+        env={"A": "B"},
+        timeout_seconds=5,
+        max_output_bytes=1024,
+        command_config={
+            "repo_files": {
+                "command": "ls -a",
+                "post_processor": "file_list",
+            }
+        },
+    )
+
+    assert result["stdout"] == ["backend"]
+    execute_mock.assert_awaited_once_with(
+        user_id=7,
+        device_id="device-abc",
+        command="ls -a",
+        path="/tmp",
+        args=["backend"],
+        env={"A": "B"},
+        timeout_seconds=5,
+        max_output_bytes=1024,
+    )
+
+
+@pytest.mark.asyncio
+async def test_execute_configured_device_command_rejects_unowned_device(monkeypatch):
+    """Internal service API should reject devices the user does not own."""
+    from app.services.device import command_service
+
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: None,
+    )
+
+    with pytest.raises(command_service.DeviceCommandNotFoundError):
+        await command_service.execute_configured_device_command(
+            db=object(),
+            user_id=7,
+            device_id="device-abc",
+            command_key="pwd",
+        )
+
+
+@pytest.mark.asyncio
+async def test_execute_device_command_endpoint_maps_request_to_service(monkeypatch):
+    """Endpoint should delegate HTTP request data to the internal service API."""
+    from app.api.endpoints import devices
+    from app.schemas.device import DeviceCommandRequest
+
+    service_mock = AsyncMock(
+        return_value={
+            "success": True,
+            "exit_code": 0,
+            "stdout": "ok",
+            "stderr": "",
+            "duration": 0.02,
+            "timed_out": False,
+        }
+    )
+    monkeypatch.setattr(devices, "execute_configured_device_command", service_mock)
+    db = object()
+
+    response = await devices.execute_device_command(
+        device_id="device-abc",
+        request=DeviceCommandRequest(
+            command_key="repo_status",
+            path="/tmp",
+            args=["--short"],
+            env={"A": "B"},
+            timeout_seconds=5,
+            max_output_bytes=1024,
+        ),
+        db=db,
+        current_user=SimpleNamespace(id=7),
+    )
+
+    assert response.success is True
+    assert response.stdout == "ok"
+    service_mock.assert_awaited_once_with(
+        db=db,
+        user_id=7,
+        device_id="device-abc",
+        command_key="repo_status",
+        path="/tmp",
+        args=["--short"],
+        env={"A": "B"},
+        timeout_seconds=5,
+        max_output_bytes=1024,
+    )
+
+
+@pytest.mark.asyncio
+async def test_execute_device_command_endpoint_applies_configured_post_processor(
+    monkeypatch,
+):
+    """Endpoint should return post-processed internal service results."""
+    from app.api.endpoints import devices
+    from app.schemas.device import DeviceCommandRequest
+
+    service_mock = AsyncMock(
+        return_value={
+            "success": True,
+            "exit_code": 0,
+            "stdout": [".env", "backend"],
+            "stderr": "",
+            "duration": 0.02,
+            "timed_out": False,
+        }
+    )
+    monkeypatch.setattr(devices, "execute_configured_device_command", service_mock)
+
+    response = await devices.execute_device_command(
+        device_id="device-abc",
+        request=DeviceCommandRequest(command_key="repo_files"),
+        db=object(),
+        current_user=SimpleNamespace(id=7),
+    )
+
+    assert response.success is True
+    assert response.stdout == [".env", "backend"]
+
+
+@pytest.mark.asyncio
+async def test_execute_device_command_endpoint_rejects_unknown_command_key(monkeypatch):
+    """Endpoint should reject command keys missing from backend configuration."""
+    from fastapi import HTTPException
+
+    from app.api.endpoints import devices
+    from app.schemas.device import DeviceCommandRequest
+
+    async def raise_unknown_key(**kwargs):
+        raise devices.DeviceCommandUnknownKeyError(
+            "Device command key 'repo_status' is not configured"
+        )
+
+    monkeypatch.setattr(devices, "execute_configured_device_command", raise_unknown_key)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await devices.execute_device_command(
+            device_id="device-abc",
+            request=DeviceCommandRequest(command_key="repo_status"),
+            db=object(),
+            current_user=SimpleNamespace(id=7),
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "not configured" in exc_info.value.detail
