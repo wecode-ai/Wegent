@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import CustomHTTPException
 from app.core.security import get_password_hash
 from app.models.kind import Kind
-from app.models.knowledge import KnowledgeFolder
+from app.models.knowledge import KnowledgeDocument, KnowledgeFolder
 from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
 from app.models.user import User
@@ -1476,3 +1476,68 @@ def test_document_operations_reject_target_folder_beyond_depth_four(
         KnowledgeFolderService.move_document(
             test_db, doc.id, too_deep_folder.id, owner.id
         )
+
+
+@pytest.mark.unit
+def test_batch_move_documents_uses_bulk_update(test_db: Session) -> None:
+    owner = _create_user(test_db, "owner-kb-batch-move-bulk")
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="kb-batch-move-bulk", namespace="default"),
+    )
+    target_folder = KnowledgeFolderService.create_folder(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+        KnowledgeFolderCreate(name="target", parent_id=0),
+    )
+    doc1 = KnowledgeService.create_document(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+        KnowledgeDocumentCreate(
+            attachment_id=0,
+            name="batch-doc-1.md",
+            file_extension="md",
+            file_size=10,
+            folder_id=0,
+            source_type=DocumentSourceType.TEXT,
+            source_config={},
+        ),
+    )
+    doc2 = KnowledgeService.create_document(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+        KnowledgeDocumentCreate(
+            attachment_id=0,
+            name="batch-doc-2.md",
+            file_extension="md",
+            file_size=10,
+            folder_id=0,
+            source_type=DocumentSourceType.TEXT,
+            source_config={},
+        ),
+    )
+
+    with patch.object(
+        KnowledgeFolderService,
+        "move_document",
+        side_effect=AssertionError("batch move must not call per-document move"),
+    ):
+        result = KnowledgeFolderService.batch_move_documents(
+            test_db, [doc1.id, doc2.id], target_folder.id, owner.id
+        )
+
+    assert result.success_count == 2
+    assert result.failed_ids == []
+    test_db.expire_all()
+    moved_folder_ids = {
+        row.folder_id
+        for row in test_db.query(KnowledgeDocument)
+        .filter(KnowledgeDocument.id.in_([doc1.id, doc2.id]))
+        .all()
+    }
+    assert moved_folder_ids == {target_folder.id}
