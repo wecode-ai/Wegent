@@ -102,6 +102,7 @@ EOF
         echo "EXECUTOR_MANAGER_PORT=$EXECUTOR_MANAGER_PORT" >> "$temp_file"
         echo "KNOWLEDGE_RUNTIME_PORT=$KNOWLEDGE_RUNTIME_PORT" >> "$temp_file"
         echo "WEGENT_FRONTEND_PORT=$WEGENT_FRONTEND_PORT" >> "$temp_file"
+        echo "WEWORK_PORT=$WEWORK_PORT" >> "$temp_file"
         echo "EXECUTOR_IMAGE=$EXECUTOR_IMAGE" >> "$temp_file"
         echo "WEGENT_SOCKET_URL=$WEGENT_SOCKET_URL" >> "$temp_file"
     fi
@@ -185,19 +186,26 @@ init_config() {
     WEGENT_FRONTEND_PORT=${input_frontend_port:-$DEFAULT_WEGENT_FRONTEND_PORT}
     echo ""
 
+    # WeWork Port
+    echo -e "${CYAN}6. WeWork Port${NC}"
+    echo -e "   The port for WeWork multi-platform workspace app."
+    read -p "   WeWork Port [$DEFAULT_WEWORK_PORT]: " input_wework_port
+    WEWORK_PORT=${input_wework_port:-$DEFAULT_WEWORK_PORT}
+    echo ""
+
     # === Other Settings ===
     echo -e "${BLUE}━━━ Other Settings ━━━${NC}"
     echo ""
 
     # Executor Image
-    echo -e "${CYAN}6. Executor Docker Image${NC}"
+    echo -e "${CYAN}7. Executor Docker Image${NC}"
     echo -e "   The Docker image used for task execution."
     read -p "   Executor Image [$DEFAULT_EXECUTOR_IMAGE]: " input_image
     EXECUTOR_IMAGE=${input_image:-$DEFAULT_EXECUTOR_IMAGE}
     echo ""
 
     # Socket URL
-    echo -e "${CYAN}7. Socket URL${NC}"
+    echo -e "${CYAN}8. Socket URL${NC}"
     echo -e "   The WebSocket URL for real-time communication."
     echo -e "   For remote access, use your machine's IP address."
     echo -e "   Detected local IP: ${GREEN}$local_ip${NC}"
@@ -215,6 +223,7 @@ init_config() {
     echo -e "    Executor Mgr Port:   ${CYAN}$EXECUTOR_MANAGER_PORT${NC}"
     echo -e "    Knowledge Rtm Port:  ${CYAN}$KNOWLEDGE_RUNTIME_PORT${NC}"
     echo -e "    Frontend Port:       ${CYAN}$WEGENT_FRONTEND_PORT${NC}"
+    echo -e "    WeWork Port:         ${CYAN}$WEWORK_PORT${NC}"
     echo -e "  ${YELLOW}Other Settings:${NC}"
     echo -e "    Executor Image:      ${CYAN}$EXECUTOR_IMAGE${NC}"
     echo -e "    Socket URL:          ${CYAN}$WEGENT_SOCKET_URL${NC}"
