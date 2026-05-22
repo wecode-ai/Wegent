@@ -315,7 +315,18 @@
         "transferringProgress": "正在转移 {{current}}/{{total}} 项...",
         "transferSuccess": "已成功转移 {{docCount}} 个文档和 {{folderCount}} 个文件夹",
         "transferFailed": "转移失败",
-        "noOtherKbs": "没有符合转移规则的目标知识库"
+        "noOtherKbs": "没有符合转移规则的目标知识库",
+        "errors": {
+          "SOURCE_TARGET_SAME": "源知识库和目标知识库不能相同",
+          "SOURCE_KB_NOT_FOUND": "源知识库不存在",
+          "TARGET_KB_NOT_FOUND": "目标知识库不存在",
+          "INVALID_TRANSFER_NAMESPACE": "不支持的目标知识库命名空间",
+          "FOLDERS_NOT_FOUND": "源知识库中未找到指定文件夹",
+          "DOCS_NOT_FOUND": "源知识库中未找到指定文档",
+          "NOTEBOOK_DOC_LIMIT_EXCEEDED": "笔记本模式知识库文档数量超出限制",
+          "DUPLICATE_DOCUMENT_NAMES": "目标知识库中已存在同名文档",
+          "KB_INSUFFICIENT_PERMISSION": "您没有操作该知识库的权限"
+        }
       },
       "detail": {
         "title": "文档详情",
@@ -659,7 +670,16 @@
       "confirm": "确认迁移",
       "sourceKnowledgeBase": "待迁移知识库",
       "success": "知识库迁移成功",
-      "failed": "知识库迁移失败"
+      "failed": "知识库迁移失败",
+      "errors": {
+        "KB_NOT_FOUND": "知识库不存在",
+        "KB_NOT_PERSONAL": "仅个人知识库可以迁移到群组",
+        "KB_NOT_CREATOR": "仅创建者可以迁移此知识库",
+        "KB_NO_GROUP_ACCESS": "您没有访问该群组的权限",
+        "KB_INSUFFICIENT_PERMISSION": "您需要目标群组的管理员或创建者权限才能迁移知识库",
+        "KB_DUPLICATE_NAME_IN_GROUP": "目标群组中已存在同名知识库",
+        "KB_MIGRATE_CONFLICT": "目标群组中已存在同名知识库"
+      }
     }
   },
   "add_repository": "添加仓库",

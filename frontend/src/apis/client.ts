@@ -103,12 +103,22 @@ class APIClient {
           const json = JSON.parse(errorText)
           if (json && typeof json.detail === 'string') {
             errorMsg = json.detail
+          } else if (json && typeof json.detail === 'object' && json.detail !== null) {
+            // StructuredValidationException: detail is an object with error_code and extra fields.
+            // Use error_code as message fallback — callers should prefer errorCode for i18n lookup.
+            errorMsg = json.detail.error_code || JSON.stringify(json.detail)
           }
           if (
             json &&
             (typeof json.error_code === 'string' || typeof json.error_code === 'number')
           ) {
             errorCode = json.error_code
+          } else if (
+            json?.detail &&
+            (typeof json.detail.error_code === 'string' ||
+              typeof json.detail.error_code === 'number')
+          ) {
+            errorCode = json.detail.error_code
           }
         } catch {
           // Not JSON, use original text directly

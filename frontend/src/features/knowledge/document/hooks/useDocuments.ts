@@ -7,6 +7,7 @@
  */
 
 import { useState, useCallback, useEffect } from 'react'
+import { ApiError } from '@/apis/client'
 import {
   listDocuments,
   createDocument,
@@ -132,6 +133,7 @@ export function useDocuments(options: UseDocumentsOptions) {
   }, [])
 
   // Transfer documents to another KB
+  // Transfer documents to another KB
   const transfer = useCallback(
     async (data: TransferDocumentsRequest): Promise<TransferDocumentsResponse | null> => {
       if (!knowledgeBaseId) return null
@@ -148,19 +150,21 @@ export function useDocuments(options: UseDocumentsOptions) {
         await fetchDocuments()
         return result
       } catch (err) {
-        const message =
-          err instanceof Error
-            ? err.message
-            : t('document.document.batch.transferFailed')
+        let message: string
+        if (err instanceof ApiError && err.errorCode && typeof err.errorCode === 'string') {
+          const i18nKey = `document.document.batch.errors.${err.errorCode}`
+          message = t(i18nKey)
+        } else {
+          message = err instanceof Error ? err.message : t('document.document.batch.transferFailed')
+        }
         toast({ title: message, variant: 'destructive' })
         return null
       } finally {
         setLoading(false)
       }
     },
-    [knowledgeBaseId, fetchDocuments]
+    [knowledgeBaseId, fetchDocuments, t]
   )
-
   useEffect(() => {
     if (autoLoad && knowledgeBaseId) {
       fetchDocuments()

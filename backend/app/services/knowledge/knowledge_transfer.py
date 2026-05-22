@@ -6,10 +6,11 @@
 
 import logging
 
+from fastapi import status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import StructuredValidationException
+from app.core.exceptions import CustomHTTPException, StructuredValidationException
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument, KnowledgeFolder
 from app.models.namespace import Namespace
@@ -22,6 +23,26 @@ from app.services.knowledge.knowledge_service import (
     _get_delete_gateway,
     _run_async_in_new_loop,
 )
+
+# ============== Error Codes for i18n ==============
+
+# Migration error codes
+KB_NOT_FOUND = "KB_NOT_FOUND"
+KB_NOT_PERSONAL = "KB_NOT_PERSONAL"
+KB_NOT_CREATOR = "KB_NOT_CREATOR"
+KB_NO_GROUP_ACCESS = "KB_NO_GROUP_ACCESS"
+KB_INSUFFICIENT_PERMISSION = "KB_INSUFFICIENT_PERMISSION"
+KB_DUPLICATE_NAME_IN_GROUP = "KB_DUPLICATE_NAME_IN_GROUP"
+KB_MIGRATE_CONFLICT = "KB_MIGRATE_CONFLICT"
+
+# Transfer error codes
+SOURCE_TARGET_SAME = "SOURCE_TARGET_SAME"
+SOURCE_KB_NOT_FOUND = "SOURCE_KB_NOT_FOUND"
+TARGET_KB_NOT_FOUND = "TARGET_KB_NOT_FOUND"
+INVALID_TRANSFER_NAMESPACE = "INVALID_TRANSFER_NAMESPACE"
+FOLDERS_NOT_FOUND = "FOLDERS_NOT_FOUND"
+DOCS_NOT_FOUND = "DOCS_NOT_FOUND"
+NOTEBOOK_DOC_LIMIT_EXCEEDED = "NOTEBOOK_DOC_LIMIT_EXCEEDED"
 
 
 class KnowledgeTransferService:
@@ -64,25 +85,43 @@ class KnowledgeTransferService:
         )
 
         if not kb:
-            raise ValueError("Knowledge base not found")
+            raise CustomHTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Knowledge base not found",
+                error_code=KB_NOT_FOUND,
+            )
 
         # Only personal knowledge bases (namespace='default') can be migrated
         if kb.namespace != "default":
-            raise ValueError("Only personal knowledge bases can be migrated to groups")
+            raise CustomHTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Only personal knowledge bases can be migrated to groups",
+                error_code=KB_NOT_PERSONAL,
+            )
 
         # Only the creator can migrate
         if kb.user_id != user_id:
-            raise ValueError("Only the creator can migrate this knowledge base")
+            raise CustomHTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the creator can migrate this knowledge base",
+                error_code=KB_NOT_CREATOR,
+            )
 
         # Check if user has access to the target group
         target_role = get_effective_role_in_group(db, user_id, target_group_name)
         if target_role is None:
-            raise ValueError(f"You don't have access to group '{target_group_name}'")
+            raise CustomHTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"You don't have access to group '{target_group_name}'",
+                error_code=KB_NO_GROUP_ACCESS,
+            )
 
         # Check if user has Maintainer+ permission in target group
         if target_role not in {GroupRole.Owner, GroupRole.Maintainer}:
-            raise ValueError(
-                "You need Maintainer or Owner permission in the target group to migrate knowledge bases"
+            raise CustomHTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You need Maintainer or Owner permission in the target group to migrate knowledge bases",
+                error_code=KB_INSUFFICIENT_PERMISSION,
             )
 
         # Check for duplicate name in target group
@@ -101,8 +140,10 @@ class KnowledgeTransferService:
         for existing_kb in existing_in_target:
             existing_spec = existing_kb.json.get("spec", {})
             if existing_spec.get("name") == kb_name:
-                raise ValueError(
-                    f"A knowledge base with name '{kb_name}' already exists in the target group"
+                raise CustomHTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"A knowledge base with name '{kb_name}' already exists in the target group",
+                    error_code=KB_DUPLICATE_NAME_IN_GROUP,
                 )
 
         # Store old namespace for response
@@ -148,11 +189,22 @@ class KnowledgeTransferService:
         """Validate KB write access and fetch source/target KB records."""
         from app.services.knowledge.folder_service import KnowledgeFolderService
 
-        KnowledgeFolderService._check_kb_write_access(db, source_kb_id, user_id)
-        KnowledgeFolderService._check_kb_write_access(db, target_kb_id, user_id)
+        try:
+            KnowledgeFolderService._check_kb_write_access(db, source_kb_id, user_id)
+            KnowledgeFolderService._check_kb_write_access(db, target_kb_id, user_id)
+        except ValueError as e:
+            raise CustomHTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=str(e),
+                error_code=KB_INSUFFICIENT_PERMISSION,
+            ) from e
 
         if source_kb_id == target_kb_id:
-            raise ValueError("Source and target knowledge bases must be different")
+            raise CustomHTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Source and target knowledge bases must be different",
+                error_code=SOURCE_TARGET_SAME,
+            )
 
         source_kb = (
             db.query(Kind)
@@ -160,7 +212,11 @@ class KnowledgeTransferService:
             .first()
         )
         if not source_kb:
-            raise ValueError("Source knowledge base not found")
+            raise CustomHTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Source knowledge base not found",
+                error_code=SOURCE_KB_NOT_FOUND,
+            )
 
         target_kb = (
             db.query(Kind)
@@ -168,7 +224,11 @@ class KnowledgeTransferService:
             .first()
         )
         if not target_kb:
-            raise ValueError("Target knowledge base not found")
+            raise CustomHTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Target knowledge base not found",
+                error_code=TARGET_KB_NOT_FOUND,
+            )
 
         KnowledgeTransferService.validate_transfer_namespace(db, source_kb, target_kb)
 
@@ -205,8 +265,10 @@ class KnowledgeTransferService:
             "organization": {"organization"},
         }
         if target_level not in allowed_targets[source_level]:
-            raise ValueError(
-                "Invalid target knowledge base namespace for document transfer"
+            raise CustomHTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid target knowledge base namespace for document transfer",
+                error_code=INVALID_TRANSFER_NAMESPACE,
             )
 
     @staticmethod
@@ -316,8 +378,10 @@ class KnowledgeTransferService:
         found_folder_ids = {f.id for f in source_folders}
         missing_folder_ids = descendant_folder_ids - found_folder_ids
         if missing_folder_ids:
-            raise ValueError(
-                f"Folders not found in source knowledge base: {sorted(missing_folder_ids)}"
+            raise CustomHTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Folders not found in source knowledge base: {sorted(missing_folder_ids)}",
+                error_code=FOLDERS_NOT_FOUND,
             )
 
         sorted_folders = sorted(
@@ -425,8 +489,10 @@ class KnowledgeTransferService:
         found_doc_ids = {d.id for d in docs}
         missing_doc_ids = all_doc_ids - found_doc_ids
         if missing_doc_ids:
-            raise ValueError(
-                f"Documents not found in source knowledge base: {sorted(missing_doc_ids)}"
+            raise CustomHTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Documents not found in source knowledge base: {sorted(missing_doc_ids)}",
+                error_code=DOCS_NOT_FOUND,
             )
 
         transferred_doc_count = 0
@@ -685,10 +751,14 @@ class KnowledgeTransferService:
                 current_count + len(all_doc_ids)
                 > KnowledgeService.NOTEBOOK_MAX_DOCUMENTS
             ):
-                raise ValueError(
-                    f"Cannot transfer to notebook mode knowledge base: "
-                    f"transfer would exceed the limit of {KnowledgeService.NOTEBOOK_MAX_DOCUMENTS} documents. "
-                    f"Current: {current_count}, transferring: {len(all_doc_ids)}"
+                raise CustomHTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Cannot transfer to notebook mode knowledge base: "
+                        f"transfer would exceed the limit of {KnowledgeService.NOTEBOOK_MAX_DOCUMENTS} documents. "
+                        f"Current: {current_count}, transferring: {len(all_doc_ids)}"
+                    ),
+                    error_code=NOTEBOOK_DOC_LIMIT_EXCEEDED,
                 )
 
         KnowledgeTransferService.validate_transfer_document_names(

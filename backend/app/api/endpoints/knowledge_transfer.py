@@ -6,14 +6,14 @@
 
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, status
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.api.endpoints.knowledge import _update_kb_summary_after_deletion
 from app.core import security
-from app.core.exceptions import StructuredValidationException
+from app.core.exceptions import CustomHTTPException, StructuredValidationException
 from app.models.user import User
 from app.schemas.knowledge import (
     KnowledgeBaseMigrateRequest,
@@ -22,6 +22,7 @@ from app.schemas.knowledge import (
     TransferDocumentsResponse,
 )
 from app.services.knowledge import KnowledgeService
+from app.services.knowledge.knowledge_transfer import KB_MIGRATE_CONFLICT
 from shared.telemetry.decorators import (
     add_span_event,
     capture_trace_context,
@@ -68,22 +69,20 @@ def migrate_knowledge_base_to_group(
             },
         )
         return result
+    except CustomHTTPException:
+        raise
     except IntegrityError as e:
         db.rollback()
-        raise HTTPException(
+        raise CustomHTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="A knowledge base with this name already exists in the target group",
+            error_code=KB_MIGRATE_CONFLICT,
         ) from e
     except SQLAlchemyError as e:
         db.rollback()
-        raise HTTPException(
+        raise CustomHTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Database error during migration: {str(e)}",
-        ) from e
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
         ) from e
 
 
@@ -144,25 +143,12 @@ def transfer_documents_to_kb(
                 trace_context=trace_ctx,
             )
         return result
-    except StructuredValidationException as e:
-        raise e
-    except ValueError as e:
-        error_msg = str(e)
-        error_lower = error_msg.lower()
-        if "not found" in error_lower:
-            status_code = status.HTTP_404_NOT_FOUND
-        elif "permission" in error_lower or "access denied" in error_lower:
-            status_code = status.HTTP_403_FORBIDDEN
-        else:
-            status_code = status.HTTP_400_BAD_REQUEST
-        raise HTTPException(
-            status_code=status_code,
-            detail=error_msg,
-        )
+    except (CustomHTTPException, StructuredValidationException):
+        raise
     except SQLAlchemyError:
         db.rollback()
         logger.exception("Database error during document transfer")
-        raise HTTPException(
+        raise CustomHTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Database error during transfer",
         )

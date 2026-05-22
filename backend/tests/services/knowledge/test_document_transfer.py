@@ -19,7 +19,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import StructuredValidationException
+from app.core.exceptions import CustomHTTPException, StructuredValidationException
 from app.core.security import get_password_hash
 from app.models.kind import Kind
 from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument, KnowledgeFolder
@@ -226,10 +226,11 @@ def test_validate_transfer_namespace_rejects_org_to_personal(test_db: Session) -
     source_kb = test_db.query(Kind).filter(Kind.id == source_kb_id).first()
     target_kb = test_db.query(Kind).filter(Kind.id == target_kb_id).first()
 
-    with pytest.raises(ValueError, match="Invalid target"):
+    with pytest.raises(CustomHTTPException) as exc_info:
         KnowledgeTransferService.validate_transfer_namespace(
             test_db, source_kb, target_kb
         )
+    assert exc_info.value.error_code == "INVALID_TRANSFER_NAMESPACE"
 
 
 @pytest.mark.unit
@@ -425,7 +426,7 @@ def test_transfer_documents_without_permission_fails(test_db: Session) -> None:
     target_kb_id = _create_kb(test_db, owner.id, "target-perm-kb")
     doc = _create_document(test_db, source_kb_id, owner.id, "perm-doc.md")
 
-    with pytest.raises(ValueError, match="access denied"):
+    with pytest.raises(CustomHTTPException) as exc_info:
         KnowledgeService.transfer_documents_to_kb(
             db=test_db,
             source_kb_id=source_kb_id,
@@ -434,6 +435,7 @@ def test_transfer_documents_without_permission_fails(test_db: Session) -> None:
             folder_ids=[],
             user_id=other_user.id,
         )
+    assert exc_info.value.error_code == "KB_INSUFFICIENT_PERMISSION"
 
 
 @pytest.mark.unit
@@ -443,7 +445,7 @@ def test_transfer_to_same_kb_fails(test_db: Session) -> None:
     kb_id = _create_kb(test_db, owner.id, "same-kb")
     doc = _create_document(test_db, kb_id, owner.id, "same-doc.md")
 
-    with pytest.raises(ValueError, match="must be different"):
+    with pytest.raises(CustomHTTPException) as exc_info:
         KnowledgeService.transfer_documents_to_kb(
             db=test_db,
             source_kb_id=kb_id,
@@ -452,6 +454,7 @@ def test_transfer_to_same_kb_fails(test_db: Session) -> None:
             folder_ids=[],
             user_id=owner.id,
         )
+    assert exc_info.value.error_code == "SOURCE_TARGET_SAME"
 
 
 @pytest.mark.unit
@@ -835,10 +838,11 @@ def test_validate_transfer_namespace_rejects_org_to_team(test_db: Session) -> No
     source_kb = test_db.query(Kind).filter(Kind.id == source_kb_id).first()
     target_kb = test_db.query(Kind).filter(Kind.id == target_kb_id).first()
 
-    with pytest.raises(ValueError, match="Invalid target"):
+    with pytest.raises(CustomHTTPException) as exc_info:
         KnowledgeTransferService.validate_transfer_namespace(
             test_db, source_kb, target_kb
         )
+    assert exc_info.value.error_code == "INVALID_TRANSFER_NAMESPACE"
 
 
 @pytest.mark.unit
@@ -860,10 +864,11 @@ def test_validate_transfer_namespace_rejects_org_to_group(test_db: Session) -> N
     source_kb = test_db.query(Kind).filter(Kind.id == source_kb_id).first()
     target_kb = test_db.query(Kind).filter(Kind.id == target_kb_id).first()
 
-    with pytest.raises(ValueError, match="Invalid target"):
+    with pytest.raises(CustomHTTPException) as exc_info:
         KnowledgeTransferService.validate_transfer_namespace(
             test_db, source_kb, target_kb
         )
+    assert exc_info.value.error_code == "INVALID_TRANSFER_NAMESPACE"
 
 
 @pytest.mark.unit
