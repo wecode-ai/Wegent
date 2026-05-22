@@ -964,8 +964,10 @@ def transfer_ownership(
             detail="Only the current owner can transfer ownership",
         )
 
-    # Check new owner is at least a Maintainer
-    new_owner_role = get_user_role_in_group(db, new_owner_user_id, group_name)
+    # Check new owner is at least a Maintainer (including entity-derived roles)
+    from app.services.group_permission import get_effective_role_in_group
+
+    new_owner_role = get_effective_role_in_group(db, new_owner_user_id, group_name)
     if new_owner_role not in [GroupRole.Owner, GroupRole.Maintainer]:
         raise HTTPException(
             status_code=400,
@@ -981,12 +983,24 @@ def transfer_ownership(
     group.owner_user_id = new_owner_user_id
 
     # Update member roles
-    # Update member roles
     if current_owner_member:
         current_owner_member.role = GroupRole.Maintainer.value
 
     if new_owner_member:
         new_owner_member.role = GroupRole.Owner.value
+    else:
+        # Entity members cannot directly become owner; create a user record
+        new_owner_member = ResourceMember.create(
+            resource_type=NAMESPACE_RESOURCE_TYPE,
+            resource_id=group.id,
+            entity_type="user",
+            entity_id=str(new_owner_user_id),
+            role=GroupRole.Owner.value,
+            status=MemberStatus.APPROVED.value,
+            invited_by_user_id=current_owner_user_id,
+        )
+        db.add(new_owner_member)
+
     db.commit()
     db.refresh(group)
 
