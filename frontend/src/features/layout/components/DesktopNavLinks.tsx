@@ -11,7 +11,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
 
 interface DesktopNavLinksProps {
-  activePage: 'chat' | 'code' | 'wiki' | 'flow' | 'dashboard'
+  activePage: 'chat' | 'code' | 'wiki' | 'flow' | 'dashboard' | 'wework'
 }
 
 export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
@@ -63,6 +63,13 @@ export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
           startTransition(() => {
             router.push(paths.feed.getHref())
           })
+        },
+      },
+      {
+        key: 'wework' as const,
+        label: t('common:navigation.wework'),
+        onClick: () => {
+          window.open(paths.wework.getHref(), '_blank')
         },
       },
       ...(isWikiEnabled

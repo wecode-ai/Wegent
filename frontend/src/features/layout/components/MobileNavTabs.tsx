@@ -10,13 +10,14 @@ import {
   CodeBracketIcon,
   BookOpenIcon,
   Cog6ToothIcon,
+  RocketLaunchIcon,
 } from '@heroicons/react/24/outline'
 import { paths } from '@/config/paths'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
 
 interface MobileNavTabsProps {
-  activePage: 'chat' | 'code' | 'wiki' | 'dashboard'
+  activePage: 'chat' | 'code' | 'wiki' | 'dashboard' | 'wework'
 }
 
 export function MobileNavTabs({ activePage }: MobileNavTabsProps) {
@@ -38,6 +39,12 @@ export function MobileNavTabs({ activePage }: MobileNavTabsProps) {
       label: t('common:navigation.code'),
       icon: CodeBracketIcon,
       path: paths.code.getHref(),
+    },
+    {
+      key: 'wework' as const,
+      label: t('common:navigation.wework'),
+      icon: RocketLaunchIcon,
+      path: paths.wework.getHref(),
     },
     ...(isWikiEnabled
       ? [
@@ -70,7 +77,13 @@ export function MobileNavTabs({ activePage }: MobileNavTabsProps) {
           <button
             key={tab.key}
             type="button"
-            onClick={() => router.push(tab.path)}
+            onClick={() => {
+              if (tab.key === 'wework') {
+                window.open(tab.path, '_blank')
+              } else {
+                router.push(tab.path)
+              }
+            }}
             className={`
               flex items-center justify-center gap-1.5
               px-3 py-1.5 rounded-full text-base font-bold
