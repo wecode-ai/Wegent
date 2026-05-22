@@ -288,6 +288,7 @@
       "confirmDelete": "确定要删除这个文档吗？",
       "nameRequired": "请输入文档名称",
       "namePlaceholder": "输入文档名称",
+      "createFailed": "创建文档失败",
       "updateFailed": "更新文档失败",
       "dropzone": "拖拽文件到此处或点击浏览",
       "supportedTypes": "支持 PDF、Word、PPT、Excel、TXT、MD 文件（最大 {{maxSize}}MB）",
