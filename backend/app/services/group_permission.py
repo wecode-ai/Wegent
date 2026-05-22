@@ -11,7 +11,8 @@ from app.schemas.base_role import has_permission
 from app.schemas.namespace import GroupLevel, GroupRole
 from app.services.group_member_helper import (
     NAMESPACE_RESOURCE_TYPE,
-    get_user_groups_with_roles,
+    get_namespace_id_by_name,
+    iter_user_groups_with_roles,
 )
 
 RoleResolver = Callable[[Session, int, str], Optional[GroupRole]]
@@ -44,6 +45,36 @@ def get_user_role_in_group(
     return None
 
 
+def _resolve_entity_roles_in_namespace(
+    db: Session, user_id: int, namespace_id: int
+) -> list[str]:
+    """Resolve entity-derived roles for a user in a namespace.
+
+    Pulls all approved entity-type members (excluding 'user' and 'namespace')
+    for the namespace, groups by entity_type, calls resolver.match_entity_bindings,
+    and returns matched roles.
+
+    Args:
+        db: Database session
+        user_id: User ID
+        namespace_id: Namespace ID
+
+    Returns:
+        List of role strings from matched entity bindings
+    """
+    from app.services.share.external_entity_resolver import (
+        resolve_entity_roles_for_resource,
+    )
+
+    return resolve_entity_roles_for_resource(
+        db,
+        resource_type=NAMESPACE_RESOURCE_TYPE,
+        resource_id=namespace_id,
+        user_id=user_id,
+        exclude_entity_types=["user", "namespace"],
+    )
+
+
 def check_group_permission(
     db: Session, user_id: int, group_name: str, required_role: GroupRole
 ) -> bool:
@@ -62,7 +93,7 @@ def check_group_permission(
     Returns:
         True if user has permission, False otherwise
     """
-    user_role = get_user_role_in_group(db, user_id, group_name)
+    user_role = get_effective_role_in_group(db, user_id, group_name)
 
     if user_role is None:
         return False
@@ -74,7 +105,7 @@ def check_group_permission(
 def get_user_groups(db: Session, user_id: int) -> list[str]:
     """
     Get all group names that user has access to, including inherited permissions
-    from parent groups.
+    from parent groups and entity-derived memberships.
 
     Permission inheritance logic:
     - If user is a member of 'aaa', they have access to 'aaa/bbb', 'aaa/bbb/ccc', etc.
@@ -90,11 +121,11 @@ def get_user_groups(db: Session, user_id: int) -> list[str]:
     # Get all active groups
     all_groups = db.query(Namespace).filter(Namespace.is_active == True).all()
 
-    # Get user's direct memberships with roles
-    direct_memberships = get_user_groups_with_roles(db, user_id)
+    # Get user's direct + entity memberships with roles
+    all_memberships = iter_user_groups_with_roles(db, user_id)
 
     # Create a mapping of group_name -> role
-    direct_group_names = {name for name, _ in direct_memberships}
+    direct_group_names = {name for name, _, _, _ in all_memberships}
     accessible_groups = set(direct_group_names)
 
     # Check permission inheritance for all groups
@@ -121,12 +152,12 @@ def get_effective_role_in_group(
     db: Session, user_id: int, group_name: str
 ) -> Optional[GroupRole]:
     """
-    Get user's effective role in a group, considering inheritance from parent groups.
+    Get user's effective role in a group, considering direct membership,
+    entity-derived memberships, and inheritance from parent groups.
 
-    Inheritance rules:
-    - Direct membership role takes precedence
-    - If no direct membership, inherits from nearest parent group
-    - Inherited roles maintain their level (Owner stays Owner, etc.)
+    Resolution rules:
+    - Collect roles from direct user membership, entity bindings, and parent groups
+    - Return the highest privilege role among all sources
 
     Args:
         db: Database session
@@ -134,25 +165,42 @@ def get_effective_role_in_group(
         group_name: Group name
 
     Returns:
-        GroupRole if user has access (direct or inherited), None otherwise
+        GroupRole if user has access (direct, entity, or inherited), None otherwise
     """
-    # First check direct membership
-    direct_role = get_user_role_in_group(db, user_id, group_name)
-    if direct_role is not None:
-        return direct_role
+    from app.schemas.base_role import get_highest_role
 
-    # Check parent groups (from nearest to farthest)
-    if "/" in group_name:
+    candidates = []
+
+    # 1) Direct user membership
+    direct_role_str = get_user_role_in_group(db, user_id, group_name)
+    if direct_role_str is not None:
+        candidates.append(direct_role_str.value)
+
+    # 2) Entity-derived memberships
+    namespace_id = get_namespace_id_by_name(db, group_name)
+    if namespace_id is not None:
+        entity_roles = _resolve_entity_roles_in_namespace(db, user_id, namespace_id)
+        candidates.extend(entity_roles)
+
+    # 3) Parent group inheritance (only if no direct/entity hit)
+    if not candidates and "/" in group_name:
         parts = group_name.split("/")
         # Check from nearest parent upward
         for i in range(len(parts) - 1, 0, -1):
             parent_name = "/".join(parts[:i])
-            parent_role = get_user_role_in_group(db, user_id, parent_name)
+            parent_role = get_effective_role_in_group(db, user_id, parent_name)
             if parent_role is not None:
-                # Return the same role level from parent
-                return parent_role
+                candidates.append(parent_role.value)
+                break
 
-    return None
+    if not candidates:
+        return None
+
+    highest_role_str = get_highest_role(candidates)
+    try:
+        return GroupRole(highest_role_str)
+    except ValueError:
+        return None
 
 
 def get_view_role_in_group(
@@ -227,34 +275,45 @@ def is_restricted_analyst(db: Session, user_id: int, group_name: str) -> bool:
 def get_effective_roles_in_groups(
     db: Session, user_id: int, group_names: list[str]
 ) -> dict[str, GroupRole]:
-    """Get effective roles for multiple groups with a single membership fetch."""
+    """Get effective roles for multiple groups with a single membership fetch.
+
+    Covers direct user memberships, entity-derived memberships, and parent
+    group inheritance. Uses iter_user_groups_with_roles for the user-side
+    batch resolution to avoid N x namespace resolver calls.
+    """
     if not group_names:
         return {}
 
-    direct_roles: dict[str, GroupRole] = {}
-    for group_name, role_str in get_user_groups_with_roles(db, user_id):
-        try:
-            direct_roles[group_name] = GroupRole(role_str)
-        except ValueError:
-            continue
+    from app.schemas.base_role import get_highest_role
+
+    # Batch fetch all user memberships (direct + entity)
+    all_memberships = iter_user_groups_with_roles(db, user_id)
+
+    # group_name -> list of role strings
+    role_map: dict[str, list[str]] = {}
+    for group_name, role, _src_type, _src_id in all_memberships:
+        role_map.setdefault(group_name, []).append(role)
 
     effective_roles: dict[str, GroupRole] = {}
     for group_name in dict.fromkeys(group_names):
-        direct_role = direct_roles.get(group_name)
-        if direct_role is not None:
-            effective_roles[group_name] = direct_role
-            continue
+        roles = role_map.get(group_name, [])
 
-        if "/" not in group_name:
-            continue
+        # Parent group inheritance
+        if not roles and "/" in group_name:
+            parts = group_name.split("/")
+            for i in range(len(parts) - 1, 0, -1):
+                parent_name = "/".join(parts[:i])
+                parent_roles = role_map.get(parent_name)
+                if parent_roles:
+                    roles = parent_roles
+                    break
 
-        parts = group_name.split("/")
-        for i in range(len(parts) - 1, 0, -1):
-            parent_name = "/".join(parts[:i])
-            parent_role = direct_roles.get(parent_name)
-            if parent_role is not None:
-                effective_roles[group_name] = parent_role
-                break
+        if roles:
+            highest = get_highest_role(roles)
+            try:
+                effective_roles[group_name] = GroupRole(highest)
+            except ValueError:
+                continue
 
     return effective_roles
 

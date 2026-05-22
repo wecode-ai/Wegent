@@ -17,9 +17,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   listGroupMembers,
-  addGroupMemberByUsername,
   removeGroupMember,
   batchUpdateGroupMemberRoles,
   inviteAllUsers,
@@ -28,11 +28,18 @@ import {
 import { ApiError } from '@/apis/client'
 import { toast } from 'sonner'
 import type { Group, GroupMember, GroupRole } from '@/types/group'
-import type { SearchUser } from '@/types/api'
+import type { GroupExtensionConfig } from '@/features/groups/extension-loader'
 import { ASSIGNABLE_ROLES, BASE_ROLES, canLeave, compareRoles, isOwner } from '@/types/base-role'
 import { canManageNamespace } from '@/utils/namespace-permissions'
-import { ArrowUpDown, ChevronDown, ChevronUp, UserPlusIcon, LogOutIcon } from 'lucide-react'
-import { UserSearchSelect } from '@/components/common/UserSearchSelect'
+import {
+  ArrowUpDown,
+  ChevronDown,
+  ChevronUp,
+  UserPlusIcon,
+  PlusIcon,
+  LogOutIcon,
+} from 'lucide-react'
+import { AddMemberPanel } from './AddMemberPanel'
 
 interface GroupMembersDialogProps {
   isOpen: boolean
@@ -134,15 +141,18 @@ export function GroupMembersDialog({
   const { t } = useTranslation()
   const [members, setMembers] = useState<GroupMember[]>([])
   const [loading, setLoading] = useState(false)
-  const [showAddMember, setShowAddMember] = useState(false)
-  const [selectedRole, setSelectedRole] = useState<GroupRole>('Reporter')
+  const [showAddPanel, setShowAddPanel] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isSavingRoleChanges, setIsSavingRoleChanges] = useState(false)
-  const [selectedUsers, setSelectedUsers] = useState<SearchUser[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [sortField, setSortField] = useState<MemberSortField>('role')
   const [sortOrder, setSortOrder] = useState<SortOrder>('asc')
   const [roleDrafts, setRoleDrafts] = useState<Record<number, GroupRole>>({})
+  const [activeTab, setActiveTab] = useState<'members' | 'authorizations'>('members')
+  const [extensionConfig, setExtensionConfig] = useState<GroupExtensionConfig | null>(null)
+  const [isExtensionLoading, setIsExtensionLoading] = useState(false)
+  const [entityRefreshTrigger, setEntityRefreshTrigger] = useState(0)
+  const [entityCount, setEntityCount] = useState(0)
 
   const myRole = group?.my_role
   const isPrivateGroup = group?.visibility === 'private'
@@ -180,13 +190,39 @@ export function GroupMembersDialog({
       setSearchQuery('')
       setSortField('role')
       setSortOrder('asc')
-      setShowAddMember(false)
-      setSelectedRole('Reporter')
-      setSelectedUsers([])
+      setShowAddPanel(false)
+      setActiveTab('members')
       loadMembers()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, group])
+
+  useEffect(() => {
+    if (!isOpen) {
+      setExtensionConfig(null)
+      setIsExtensionLoading(false)
+      return
+    }
+    let active = true
+    setIsExtensionLoading(true)
+    import('@/features/groups/extension-loader')
+      .then(({ loadGroupExtension }) => loadGroupExtension())
+      .then(config => {
+        if (active) {
+          setExtensionConfig(config)
+          setIsExtensionLoading(false)
+        }
+      })
+      .catch((err: unknown) => {
+        if (active) {
+          console.warn('Failed to load group extension', err)
+          setIsExtensionLoading(false)
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [isOpen])
 
   const loadMembers = async () => {
     if (!group) return
@@ -210,62 +246,6 @@ export function GroupMembersDialog({
       toast.error(t('groups:groupMembers.loadMembersFailed'))
     } finally {
       setLoading(false)
-    }
-  }
-
-  const handleAddMembers = async () => {
-    if (!group || selectedUsers.length === 0) return
-
-    setIsSubmitting(true)
-    let successCount = 0
-    let alreadyMemberCount = 0
-    const errors: string[] = []
-
-    try {
-      for (const user of selectedUsers) {
-        // Check if user already exists in members
-        const existingMember = members.find(m => m.user_name === user.user_name)
-        if (existingMember) {
-          alreadyMemberCount++
-          continue
-        }
-
-        try {
-          const result = await addGroupMemberByUsername(group.name, user.user_name, selectedRole)
-          if (result.success) {
-            successCount++
-          } else {
-            errors.push(
-              `${user.user_name}: ${result.message || t('groups:groupMembers.addMemberFailed')}`
-            )
-          }
-        } catch (error: unknown) {
-          const err = error as { message?: string }
-          errors.push(
-            `${user.user_name}: ${err?.message || t('groups:groupMembers.addMemberFailed')}`
-          )
-        }
-      }
-
-      // Show results
-      if (successCount > 0) {
-        toast.success(t('groups:groupMembers.addMembersSuccess', { count: successCount }))
-      }
-      if (alreadyMemberCount > 0) {
-        toast.info(t('groups:groupMembers.alreadyMembers', { count: alreadyMemberCount }))
-      }
-      if (errors.length > 0) {
-        errors.forEach(err => toast.error(err))
-      }
-
-      // Reset form and reload members
-      setShowAddMember(false)
-      setSelectedRole('Reporter')
-      setSelectedUsers([])
-      loadMembers()
-      onSuccess()
-    } finally {
-      setIsSubmitting(false)
     }
   }
 
@@ -467,6 +447,197 @@ export function GroupMembersDialog({
     }
   }
 
+  const memberListContent = (
+    <>
+      <div className="w-full md:max-w-xs">
+        <Input
+          value={searchQuery}
+          onChange={e => setSearchQuery(e.target.value)}
+          placeholder={t('groups:groupMembers.searchMembersPlaceholder')}
+          aria-label={t('groups:groupMembers.searchMembersPlaceholder')}
+          disabled={loading}
+          data-testid="group-members-search-input"
+        />
+      </div>
+
+      {/* Members Table */}
+      {loading ? (
+        <div className="text-center py-8 text-text-secondary">{t('common:actions.loading')}</div>
+      ) : (
+        <div className="border border-border rounded-lg overflow-hidden">
+          <div className="overflow-x-auto max-h-[400px]">
+            <table className="w-full">
+              <thead className="bg-muted border-b border-border sticky top-0">
+                <tr>
+                  <th
+                    className="px-4 py-3 text-left text-xs font-medium text-text-primary"
+                    aria-sort={
+                      sortField === 'username'
+                        ? sortOrder === 'asc'
+                          ? 'ascending'
+                          : 'descending'
+                        : 'none'
+                    }
+                  >
+                    <button
+                      type="button"
+                      onClick={() => handleSort('username')}
+                      className="inline-flex items-center text-left transition-colors hover:text-primary"
+                      data-testid="group-members-sort-username-button"
+                    >
+                      {t('groups:groupMembers.username')}
+                      <SortIcon field="username" />
+                    </button>
+                  </th>
+                  <th
+                    className="px-4 py-3 text-left text-xs font-medium text-text-primary"
+                    aria-sort={
+                      sortField === 'role'
+                        ? sortOrder === 'asc'
+                          ? 'ascending'
+                          : 'descending'
+                        : 'none'
+                    }
+                  >
+                    <button
+                      type="button"
+                      onClick={() => handleSort('role')}
+                      className="inline-flex items-center text-left transition-colors hover:text-primary"
+                      data-testid="group-members-sort-role-button"
+                    >
+                      {t('groups:groups.role')}
+                      <SortIcon field="role" />
+                    </button>
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-text-primary">
+                    {t('groups:groupMembers.invitedBy')}
+                  </th>
+                  <th
+                    className="px-4 py-3 text-left text-xs font-medium text-text-primary"
+                    aria-sort={
+                      sortField === 'joinDate'
+                        ? sortOrder === 'asc'
+                          ? 'ascending'
+                          : 'descending'
+                        : 'none'
+                    }
+                  >
+                    <button
+                      type="button"
+                      onClick={() => handleSort('joinDate')}
+                      className="inline-flex items-center text-left transition-colors hover:text-primary"
+                      data-testid="group-members-sort-join-date-button"
+                    >
+                      {t('groups:groupMembers.joinDate')}
+                      <SortIcon field="joinDate" />
+                    </button>
+                  </th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-text-primary">
+                    {t('groups:groupMembers.actions')}
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {visibleMembers.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-8 text-center text-sm text-text-secondary">
+                      {t('groups:groupMembers.noMembersFound')}
+                    </td>
+                  </tr>
+                )}
+                {visibleMembers.map(({ member, displayedRole }) => {
+                  const isMe = member.user_id === currentUserId
+                  const memberIsOwner = isOwner(displayedRole)
+                  const hasDraftRoleChange = displayedRole !== member.role
+
+                  return (
+                    <tr
+                      key={member.id}
+                      className={
+                        hasDraftRoleChange ? 'bg-primary/5 hover:bg-primary/10' : 'hover:bg-surface'
+                      }
+                    >
+                      <td className="px-4 py-3 text-sm font-medium text-text-primary">
+                        {getMemberDisplayName(member)}
+                        {isMe && (
+                          <Badge variant="info" className="ml-2">
+                            {t('groups:groupMembers.you')}
+                          </Badge>
+                        )}
+                        {hasDraftRoleChange && (
+                          <Badge variant="warning" className="ml-2">
+                            {t('groups:groupMembers.pendingChange')}
+                          </Badge>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-sm">
+                        {canUpdateRole &&
+                        !isMe &&
+                        !(myRole === 'Maintainer' && isOwner(member.role)) ? (
+                          <Select
+                            value={displayedRole}
+                            onValueChange={(value: GroupRole) => {
+                              if (isSavingRoleChanges) {
+                                return
+                              }
+                              handleRoleDraftChange(member, value)
+                            }}
+                            disabled={isSavingRoleChanges}
+                          >
+                            <SelectTrigger className="h-8 w-[180px]">
+                              <SelectValue placeholder={t(`groups:groups.roles.${displayedRole}`)}>
+                                {t(`groups:groups.roles.${displayedRole}`)}
+                              </SelectValue>
+                            </SelectTrigger>
+                            <SelectContent>
+                              {editableRoleOptions.map(role => (
+                                <SelectItem key={role} value={role}>
+                                  <div className="flex flex-col">
+                                    <span>{t(`groups:groups.roles.${role}`)}</span>
+                                    <span className="text-xs text-text-muted">
+                                      {t(`groups:groupMembers.roleDescriptions.${role}`)}
+                                    </span>
+                                  </div>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Badge variant={getRoleBadgeVariant(displayedRole)}>
+                            {t(`groups:groups.roles.${displayedRole}`)}
+                          </Badge>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-text-secondary">
+                        {member.invited_by_user_name || '-'}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-text-secondary">
+                        {new Date(member.created_at).toLocaleDateString()}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-right">
+                        {canRemoveMember && !memberIsOwner && !isMe && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleRemoveMember(member.user_id)}
+                            className="text-error hover:text-error"
+                            disabled={isSavingRoleChanges}
+                          >
+                            {t('groups:groupMembers.remove')}
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </>
+  )
+
   if (!group) {
     return null
   }
@@ -489,11 +660,20 @@ export function GroupMembersDialog({
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setShowAddMember(!showAddMember)}
+              onClick={() => setShowAddPanel(!showAddPanel)}
               disabled={isSubmitting}
+              data-testid="group-members-add-button"
             >
-              <UserPlusIcon className="w-4 h-4 mr-2" />
-              {t('groups:groups.actions.addMember')}
+              {showAddPanel || activeTab === 'members' || !extensionConfig ? (
+                <UserPlusIcon className="w-4 h-4 mr-2" />
+              ) : (
+                <PlusIcon className="w-4 h-4 mr-2" />
+              )}
+              {showAddPanel
+                ? t('common:actions.cancel')
+                : activeTab === 'members' || !extensionConfig
+                  ? t('groups:groups.actions.addMember')
+                  : extensionConfig.addTabLabel}
             </Button>
           )}
           {/* Temporarily hidden: Invite All Users button */}
@@ -511,363 +691,73 @@ export function GroupMembersDialog({
           )}
         </div>
 
-        {/* Add Member Form */}
-        {showAddMember && canAddMember && (
-          <div className="p-4 border border-border rounded-lg bg-surface space-y-3">
-            <h3 className="text-sm font-medium">{t('groups:groups.actions.addMember')}</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div className="md:col-span-2">
-                <UserSearchSelect
-                  selectedUsers={selectedUsers}
-                  onSelectedUsersChange={setSelectedUsers}
-                  disabled={isSubmitting}
-                  placeholder={t('groups:groupMembers.searchPlaceholder')}
-                />
-              </div>
-              <div>
-                <Select
-                  value={selectedRole}
-                  onValueChange={(value: GroupRole) => setSelectedRole(value)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder={t(`groups:groups.roles.${selectedRole}`)}>
-                      {t(`groups:groups.roles.${selectedRole}`)}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {myRole === 'Owner' && (
-                      <SelectItem value="Owner">
-                        <div className="flex flex-col">
-                          <span>{t('groups:groups.roles.Owner')}</span>
-                          <span className="text-xs text-text-muted">
-                            {t('groups:groupMembers.roleDescriptions.Owner')}
-                          </span>
-                        </div>
-                      </SelectItem>
-                    )}
-                    <SelectItem value="Maintainer">
-                      <div className="flex flex-col">
-                        <span>{t('groups:groups.roles.Maintainer')}</span>
-                        <span className="text-xs text-text-muted">
-                          {t('groups:groupMembers.roleDescriptions.Maintainer')}
-                        </span>
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="Developer">
-                      <div className="flex flex-col">
-                        <span>{t('groups:groups.roles.Developer')}</span>
-                        <span className="text-xs text-text-muted">
-                          {t('groups:groupMembers.roleDescriptions.Developer')}
-                        </span>
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="Reporter">
-                      <div className="flex flex-col">
-                        <span>{t('groups:groups.roles.Reporter')}</span>
-                        <span className="text-xs text-text-muted">
-                          {t('groups:groupMembers.roleDescriptions.Reporter')}
-                        </span>
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="RestrictedAnalyst">
-                      <div className="flex flex-col">
-                        <span>{t('groups:groups.roles.RestrictedAnalyst')}</span>
-                        <span className="text-xs text-text-muted">
-                          {t('groups:groupMembers.roleDescriptions.RestrictedAnalyst')}
-                        </span>
-                      </div>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            {/* Role Permission Description */}
-            <div className="p-3 bg-muted rounded-md">
-              <h4 className="text-sm font-medium mb-2">
-                {t('groups:groupMembers.rolePermissions')}
-              </h4>
-              <div className="space-y-2 text-xs text-text-muted">
-                {selectedRole === 'Reporter' && (
-                  <div>
-                    <strong>Reporter：</strong>
-                    {t('groups:groupMembers.roleDescriptions.Reporter')}
-                  </div>
-                )}
-                {selectedRole === 'Developer' && (
-                  <div>
-                    <strong>Developer：</strong>
-                    {t('groups:groupMembers.roleDescriptions.Developer')}
-                  </div>
-                )}
-                {selectedRole === 'Maintainer' && (
-                  <div>
-                    <strong>Maintainer：</strong>
-                    {t('groups:groupMembers.roleDescriptions.Maintainer')}
-                    <ul className="list-disc list-inside ml-2 mt-1">
-                      <li>
-                        {t(
-                          'groups:groupMembers.roleDescriptions.MaintainerDetails.manageResources'
-                        )}
-                      </li>
-                      <li>
-                        {t(
-                          'groups:groupMembers.roleDescriptions.MaintainerDetails.cannotManageNamespace'
-                        )}
-                      </li>
-                      <li>
-                        {t('groups:groupMembers.roleDescriptions.MaintainerDetails.canLeave')}
-                      </li>
-                    </ul>
-                  </div>
-                )}
-                {selectedRole === 'Owner' && (
-                  <div>
-                    <strong>Owner：</strong>
-                    {t('groups:groupMembers.roleDescriptions.Owner')}
-                    <ul className="list-disc list-inside ml-2 mt-1">
-                      <li>{t('groups:groupMembers.roleDescriptions.OwnerDetails.fullControl')}</li>
-                      <li>{t('groups:groupMembers.roleDescriptions.OwnerDetails.deleteGroup')}</li>
-                      <li>
-                        {t('groups:groupMembers.roleDescriptions.OwnerDetails.transferOwnership')}
-                      </li>
-                      <li>{t('groups:groupMembers.roleDescriptions.OwnerDetails.cannotLeave')}</li>
-                    </ul>
-                  </div>
-                )}
-                {selectedRole === 'RestrictedAnalyst' && (
-                  <div>
-                    <strong>{t('groups:groups.roles.RestrictedAnalyst')}：</strong>
-                    {t('groups:groupMembers.roleDescriptions.RestrictedAnalyst')}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setShowAddMember(false)
-                  setSelectedUsers([])
-                }}
-              >
-                {t('common:actions.cancel')}
-              </Button>
-              <Button
-                size="sm"
-                onClick={handleAddMembers}
-                disabled={selectedUsers.length === 0 || isSubmitting}
-              >
-                <UserPlusIcon className="w-4 h-4 mr-2" />
-                {isSubmitting
-                  ? t('groups:groupMembers.adding')
-                  : t('groups:groupMembers.addCount', { count: selectedUsers.length })}
-              </Button>
-            </div>
-          </div>
+        {/* Add Member Panel */}
+        {showAddPanel && canAddMember && (
+          <AddMemberPanel
+            group={group}
+            extensionConfig={extensionConfig}
+            myRole={myRole}
+            existingMemberUsernames={members.map(m => m.user_name).filter(Boolean) as string[]}
+            defaultTab={activeTab === 'members' ? 'addUser' : 'addEntity'}
+            onAddUserSuccess={() => {
+              toast.success(t('groups:groups.messages.memberAdded'))
+              setShowAddPanel(false)
+              loadMembers()
+              onSuccess()
+            }}
+            onAddEntitySuccess={() => {
+              toast.success(t('groups:groups.messages.memberAdded'))
+              setShowAddPanel(false)
+              setEntityRefreshTrigger(n => n + 1)
+              onSuccess()
+            }}
+            onCancel={() => setShowAddPanel(false)}
+          />
         )}
 
-        <div className="w-full md:max-w-xs">
-          <Input
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            placeholder={t('groups:groupMembers.searchMembersPlaceholder')}
-            aria-label={t('groups:groupMembers.searchMembersPlaceholder')}
-            disabled={loading}
-            data-testid="group-members-search-input"
-          />
-        </div>
-
-        {/* Members Table */}
-        {loading ? (
+        {/* Main Content Tabs */}
+        {isExtensionLoading ? (
           <div className="text-center py-8 text-text-secondary">{t('common:actions.loading')}</div>
+        ) : extensionConfig ? (
+          <Tabs
+            value={activeTab}
+            onValueChange={(value: string) => setActiveTab(value as 'members' | 'authorizations')}
+          >
+            <TabsList>
+              <TabsTrigger value="members" data-testid="group-members-tab">
+                {t('groups:groupMembers.tabs.members')}
+              </TabsTrigger>
+              <TabsTrigger value="authorizations" data-testid="group-authorizations-tab">
+                {extensionConfig.listTabLabel}
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value="members">{memberListContent}</TabsContent>
+            <TabsContent value="authorizations">
+              <extensionConfig.listView
+                key={`list-${group.name}`}
+                groupName={group.name}
+                canManage={canManageGroupMembers}
+                refreshTrigger={entityRefreshTrigger}
+                onCountChange={setEntityCount}
+              />
+            </TabsContent>
+          </Tabs>
         ) : (
-          <div className="border border-border rounded-lg overflow-hidden">
-            <div className="overflow-x-auto max-h-[400px]">
-              <table className="w-full">
-                <thead className="bg-muted border-b border-border sticky top-0">
-                  <tr>
-                    <th
-                      className="px-4 py-3 text-left text-xs font-medium text-text-primary"
-                      aria-sort={
-                        sortField === 'username'
-                          ? sortOrder === 'asc'
-                            ? 'ascending'
-                            : 'descending'
-                          : 'none'
-                      }
-                    >
-                      <button
-                        type="button"
-                        onClick={() => handleSort('username')}
-                        className="inline-flex items-center text-left transition-colors hover:text-primary"
-                        data-testid="group-members-sort-username-button"
-                      >
-                        {t('groups:groupMembers.username')}
-                        <SortIcon field="username" />
-                      </button>
-                    </th>
-                    <th
-                      className="px-4 py-3 text-left text-xs font-medium text-text-primary"
-                      aria-sort={
-                        sortField === 'role'
-                          ? sortOrder === 'asc'
-                            ? 'ascending'
-                            : 'descending'
-                          : 'none'
-                      }
-                    >
-                      <button
-                        type="button"
-                        onClick={() => handleSort('role')}
-                        className="inline-flex items-center text-left transition-colors hover:text-primary"
-                        data-testid="group-members-sort-role-button"
-                      >
-                        {t('groups:groups.role')}
-                        <SortIcon field="role" />
-                      </button>
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-text-primary">
-                      {t('groups:groupMembers.invitedBy')}
-                    </th>
-                    <th
-                      className="px-4 py-3 text-left text-xs font-medium text-text-primary"
-                      aria-sort={
-                        sortField === 'joinDate'
-                          ? sortOrder === 'asc'
-                            ? 'ascending'
-                            : 'descending'
-                          : 'none'
-                      }
-                    >
-                      <button
-                        type="button"
-                        onClick={() => handleSort('joinDate')}
-                        className="inline-flex items-center text-left transition-colors hover:text-primary"
-                        data-testid="group-members-sort-join-date-button"
-                      >
-                        {t('groups:groupMembers.joinDate')}
-                        <SortIcon field="joinDate" />
-                      </button>
-                    </th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-text-primary">
-                      {t('groups:groupMembers.actions')}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {visibleMembers.length === 0 && (
-                    <tr>
-                      <td colSpan={5} className="px-4 py-8 text-center text-sm text-text-secondary">
-                        {t('groups:groupMembers.noMembersFound')}
-                      </td>
-                    </tr>
-                  )}
-                  {visibleMembers.map(({ member, displayedRole }) => {
-                    const isMe = member.user_id === currentUserId
-                    const memberIsOwner = isOwner(displayedRole)
-                    const hasDraftRoleChange = displayedRole !== member.role
-
-                    return (
-                      <tr
-                        key={member.id}
-                        className={
-                          hasDraftRoleChange
-                            ? 'bg-primary/5 hover:bg-primary/10'
-                            : 'hover:bg-surface'
-                        }
-                      >
-                        <td className="px-4 py-3 text-sm font-medium text-text-primary">
-                          {getMemberDisplayName(member)}
-                          {isMe && (
-                            <Badge variant="info" className="ml-2">
-                              {t('groups:groupMembers.you')}
-                            </Badge>
-                          )}
-                          {hasDraftRoleChange && (
-                            <Badge variant="warning" className="ml-2">
-                              {t('groups:groupMembers.pendingChange')}
-                            </Badge>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-sm">
-                          {canUpdateRole &&
-                          !isMe &&
-                          !(myRole === 'Maintainer' && isOwner(member.role)) ? (
-                            <Select
-                              value={displayedRole}
-                              onValueChange={(value: GroupRole) => {
-                                if (isSavingRoleChanges) {
-                                  return
-                                }
-                                handleRoleDraftChange(member, value)
-                              }}
-                              disabled={isSavingRoleChanges}
-                            >
-                              <SelectTrigger className="h-8 w-[180px]">
-                                <SelectValue
-                                  placeholder={t(`groups:groups.roles.${displayedRole}`)}
-                                >
-                                  {t(`groups:groups.roles.${displayedRole}`)}
-                                </SelectValue>
-                              </SelectTrigger>
-                              <SelectContent>
-                                {editableRoleOptions.map(role => (
-                                  <SelectItem key={role} value={role}>
-                                    <div className="flex flex-col">
-                                      <span>{t(`groups:groups.roles.${role}`)}</span>
-                                      <span className="text-xs text-text-muted">
-                                        {t(`groups:groupMembers.roleDescriptions.${role}`)}
-                                      </span>
-                                    </div>
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          ) : (
-                            <Badge variant={getRoleBadgeVariant(displayedRole)}>
-                              {t(`groups:groups.roles.${displayedRole}`)}
-                            </Badge>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-text-secondary">
-                          {member.invited_by_user_name || '-'}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-text-secondary">
-                          {new Date(member.created_at).toLocaleDateString()}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-right">
-                          {canRemoveMember && !memberIsOwner && !isMe && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleRemoveMember(member.user_id)}
-                              className="text-error hover:text-error"
-                              disabled={isSavingRoleChanges}
-                            >
-                              {t('groups:groupMembers.remove')}
-                            </Button>
-                          )}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          memberListContent
         )}
 
         {/* Footer */}
         <div className="flex flex-col gap-3 border-t border-border pt-4 md:flex-row md:items-center md:justify-between">
           <div className="text-sm text-text-secondary">
-            {hasUnsavedRoleChanges
-              ? t('groups:groupMembers.pendingChangesCount', {
-                  count: Object.keys(roleDrafts).length,
-                })
-              : t('groups:groupMembers.visibleMembersCount', { count: visibleMembers.length })}
+            {activeTab === 'authorizations'
+              ? hasUnsavedRoleChanges
+                ? `${t('groups:groupMembers.visibleAuthorizationsCount', { count: entityCount })} · ${t('groups:groupMembers.unsavedChangesInMembersTab')}`
+                : t('groups:groupMembers.visibleAuthorizationsCount', { count: entityCount })
+              : hasUnsavedRoleChanges
+                ? t('groups:groupMembers.pendingChangesCount', {
+                    count: Object.keys(roleDrafts).length,
+                  })
+                : t('groups:groupMembers.visibleMembersCount', { count: visibleMembers.length })}
           </div>
           <div className="flex flex-wrap justify-end gap-2">
             {hasUnsavedRoleChanges && (
