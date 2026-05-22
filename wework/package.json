@@ -4,8 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --port 1420",
+    "tauri": "tauri dev",
     "build": "tsc -b && vite build",
+    "tauri:build": "tauri build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
