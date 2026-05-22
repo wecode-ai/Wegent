@@ -1,10 +1,11 @@
 import { useState } from 'react'
+import type { ReactNode } from 'react'
 import { useIsDesktop } from '@/hooks/useIsDesktop'
 import { Header } from './Header'
 import { Sidebar } from './Sidebar'
 
 interface AppLayoutProps {
-  children: React.ReactNode
+  children: ReactNode
 }
 
 export function AppLayout({ children }: AppLayoutProps) {
