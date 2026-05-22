@@ -42,6 +42,21 @@ load_config() {
             fi
         done < "$CONFIG_FILE"
         echo ""
+
+        # Backfill any missing port variables added after initial config was created
+        local needs_save=false
+        if ! grep -q "^KNOWLEDGE_RUNTIME_PORT=" "$CONFIG_FILE" 2>/dev/null; then
+            echo -e "  ${YELLOW}↳${NC} Adding missing KNOWLEDGE_RUNTIME_PORT=$DEFAULT_KNOWLEDGE_RUNTIME_PORT to .env"
+            needs_save=true
+        fi
+        if ! grep -q "^WEWORK_PORT=" "$CONFIG_FILE" 2>/dev/null; then
+            echo -e "  ${YELLOW}↳${NC} Adding missing WEWORK_PORT=$DEFAULT_WEWORK_PORT to .env"
+            needs_save=true
+        fi
+        if [ "$needs_save" = true ]; then
+            save_config
+            echo ""
+        fi
     fi
 }
 
@@ -959,6 +974,16 @@ check_port() {
     local port=$1
     local service=$2
     if lsof -Pi :$port -sTCP:LISTEN -t >/dev/null 2>&1; then
+        # Port in use - check if it's our own process
+        if [ -n "$service" ] && [ -f "$PID_DIR/$service.pid" ]; then
+            local our_pid
+            our_pid=$(cat "$PID_DIR/$service.pid" 2>/dev/null)
+            local port_pid
+            port_pid=$(lsof -Pi :$port -sTCP:LISTEN -t 2>/dev/null | head -1)
+            if [ -n "$our_pid" ] && [ "$our_pid" = "$port_pid" ]; then
+                return 0
+            fi
+        fi
         return 1
     fi
     return 0
