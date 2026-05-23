@@ -63,10 +63,16 @@ export function KnowledgeBaseSummaryCard({
   const topics = knowledgeBase.summary?.topics
   const summaryStatus = knowledgeBase.summary?.status
   const summaryError = knowledgeBase.summary?.error
-  const hasManualOverride = !!knowledgeBase.summary?.manual_long_summary
+  // Use backend-provided has_manual_override, fallback to computed value
+  const hasManualOverride = knowledgeBase.summary?.has_manual_override ?? false
 
   // Check if summary generation failed
   const isSummaryFailed = summaryStatus === 'failed'
+
+  // When AI summary failed but manual summary exists, still show the manual summary
+  // This allows users to edit manual summary as a fallback when AI generation fails
+  const shouldShowSummary =
+    (effectiveLongSummary || shortSummary) && (!isSummaryFailed || hasManualOverride)
 
   // Handle retry summary generation
   const handleRetry = async () => {
@@ -147,8 +153,8 @@ export function KnowledgeBaseSummaryCard({
             )}
           </div>
 
-          {/* Summary Section */}
-          {(effectiveLongSummary || shortSummary) && !isSummaryFailed && (
+          {/* Summary Section - show manual summary even when AI generation failed */}
+          {shouldShowSummary && (
             <div className="pt-3 border-t border-border/50">
               <div className="flex items-center justify-between gap-2 mb-2">
                 <div className="flex items-center gap-2 min-w-0">
@@ -216,8 +222,8 @@ export function KnowledgeBaseSummaryCard({
             </div>
           )}
 
-          {/* Topics */}
-          {topics && topics.length > 0 && !isSummaryFailed && (
+          {/* Topics - show even when AI failed if manual summary exists */}
+          {topics && topics.length > 0 && (!isSummaryFailed || hasManualOverride) && (
             <div className="flex flex-wrap gap-2">
               {topics.slice(0, 5).map((topic, index) => (
                 <span

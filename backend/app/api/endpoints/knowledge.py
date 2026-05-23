@@ -1331,7 +1331,7 @@ async def update_kb_summary(
     if not KnowledgeService.can_manage_knowledge_base(db, kb_id, current_user.id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only Owner or Maintainer can update knowledge base summary",
+            detail="Only creator or Maintainer can update knowledge base summary",
         )
 
     summary_service = get_summary_service(db)
@@ -1369,7 +1369,7 @@ async def reset_kb_summary(
     if not KnowledgeService.can_manage_knowledge_base(db, kb_id, current_user.id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only Owner or Maintainer can reset knowledge base summary",
+            detail="Only creator or Maintainer can reset knowledge base summary",
         )
 
     summary_service = get_summary_service(db)
