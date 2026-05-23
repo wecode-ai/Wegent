@@ -23,8 +23,10 @@ import {
   Square,
   AlertTriangle,
   FolderPlus,
+  Pencil,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -40,7 +42,11 @@ import { CreateFolderDialog } from './CreateFolderDialog'
 import { DeleteFolderDialog } from './DeleteFolderDialog'
 import { MoveDocumentDialog } from './MoveDocumentDialog'
 import { useColumnResize } from '../hooks/useColumnResize'
-import { refreshKnowledgeBaseSummary } from '@/apis/knowledge'
+import {
+  refreshKnowledgeBaseSummary,
+  resetKnowledgeBaseSummary,
+  updateKnowledgeBaseSummary,
+} from '@/apis/knowledge'
 import { toast } from '@/hooks/use-toast'
 import type {
   KnowledgeBase,
@@ -52,6 +58,7 @@ import type {
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
 import { useSearchParams, useRouter, usePathname } from 'next/navigation'
+import { EditKnowledgeBaseSummaryDialog } from './EditKnowledgeBaseSummaryDialog'
 
 /**
  * Inner component that uses useSearchParams (must be inside Suspense boundary).
@@ -198,6 +205,7 @@ export function DocumentList({
   const [reindexingDocId, setReindexingDocId] = useState<number | null>(null)
   // Track if summary is being retried
   const [isSummaryRetrying, setIsSummaryRetrying] = useState(false)
+  const [isSummaryEditOpen, setIsSummaryEditOpen] = useState(false)
   // Track selected upload folder
   const [selectedUploadFolderId, setSelectedUploadFolderId] = useState(0)
   // Track document being moved
@@ -224,6 +232,9 @@ export function DocumentList({
   // Check if summary generation failed
   const isSummaryFailed = knowledgeBase.summary?.status === 'failed'
   const summaryError = knowledgeBase.summary?.error
+  const effectiveSummary =
+    knowledgeBase.summary?.manual_long_summary || knowledgeBase.summary?.long_summary
+  const hasManualSummary = !!knowledgeBase.summary?.manual_long_summary
 
   // Handle retry summary generation
   const handleRetrySummary = async () => {
@@ -252,6 +263,22 @@ export function DocumentList({
         setIsSummaryRetrying(false)
       }
     }
+  }
+
+  const handleSaveSummary = async (content: string) => {
+    await updateKnowledgeBaseSummary(knowledgeBase.id, content)
+    toast({
+      description: t('chatPage.summaryEditSaved'),
+    })
+    onRefreshKnowledgeBase?.()
+  }
+
+  const handleResetSummary = async () => {
+    await resetKnowledgeBaseSummary(knowledgeBase.id)
+    toast({
+      description: t('chatPage.summaryResetDone'),
+    })
+    onRefreshKnowledgeBase?.()
   }
 
   // Auto-open document from initialDocPath prop (from virtual URL path segments)
@@ -520,7 +547,7 @@ export function DocumentList({
     }
   }
 
-  const longSummary = knowledgeBase.summary?.long_summary
+  const longSummary = effectiveSummary
 
   // Folder CRUD handlers
   const handleCreateFolder = async (parentId: number) => {
@@ -625,18 +652,39 @@ export function DocumentList({
             </h2>
             {/* Summary tooltip - next to title (only show if not failed) */}
             {longSummary && !isSummaryFailed && (
-              <TooltipProvider>
-                <Tooltip delayDuration={200}>
-                  <TooltipTrigger asChild>
-                    <button className="flex-shrink-0 p-0.5 rounded text-text-muted hover:text-primary hover:bg-surface transition-colors">
-                      <Info className="w-4 h-4" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom" align="start" className="max-w-md">
-                    <p className="text-sm leading-relaxed">{longSummary}</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
+              <>
+                <TooltipProvider>
+                  <Tooltip delayDuration={200}>
+                    <TooltipTrigger asChild>
+                      <button className="flex-shrink-0 p-0.5 rounded text-text-muted hover:text-primary hover:bg-surface transition-colors">
+                        <Info className="w-4 h-4" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" align="start" className="max-w-md">
+                      <div className="space-y-2">
+                        {hasManualSummary && (
+                          <Badge variant="secondary" size="sm">
+                            {t('chatPage.summaryManualBadge')}
+                          </Badge>
+                        )}
+                        <p className="text-sm leading-relaxed">{longSummary}</p>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+                {canManageAllDocuments && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setIsSummaryEditOpen(true)}
+                    className="h-6 px-2 text-xs"
+                    data-testid="kb-summary-inline-edit-button"
+                  >
+                    <Pencil className="w-3 h-3 mr-1" />
+                    {t('chatPage.summaryEdit')}
+                  </Button>
+                )}
+              </>
             )}
             {/* Summary failed warning - with retry button */}
             {isSummaryFailed && (
@@ -675,6 +723,15 @@ export function DocumentList({
         {/* Header actions (e.g., tabs) */}
         {headerActions}
       </div>
+      {canManageAllDocuments && (
+        <EditKnowledgeBaseSummaryDialog
+          open={isSummaryEditOpen}
+          onOpenChange={setIsSummaryEditOpen}
+          knowledgeBase={knowledgeBase}
+          onSave={handleSaveSummary}
+          onReset={handleResetSummary}
+        />
+      )}
 
       {/* Search bar and action buttons */}
       <div className="flex items-center gap-3 flex-wrap">

@@ -1483,9 +1483,9 @@ def _build_kb_meta_prompt(
                     kb_spec.get("summaryEnabled")
                     and summary_data.get("status") == "completed"
                 ):
-                    summary_text = select_kb_summary_text(
-                        summary_data, len(knowledge_base_ids)
-                    )
+                    summary_text = summary_data.get(
+                        "manual_long_summary"
+                    ) or select_kb_summary_text(summary_data, len(knowledge_base_ids))
                     topics = summary_data.get("topics", []) or []
             except Exception as e:
                 logger.warning(

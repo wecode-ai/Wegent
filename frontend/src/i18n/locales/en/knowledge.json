@@ -719,6 +719,18 @@
     "summaryFailedHint": "Click retry to regenerate summary",
     "summaryRetry": "Retry",
     "summaryRetrying": "Retrying...",
+    "summaryEdit": "Edit Summary",
+    "summaryEditTitle": "Edit Knowledge Base Summary",
+    "summaryEditDescription": "Manual summary takes priority for display and chat context, while AI summary keeps updating in the background.",
+    "summaryEditPlaceholder": "Enter knowledge base summary",
+    "summaryEditSaved": "Summary updated",
+    "summaryEditRequired": "Please enter summary content",
+    "summaryEditTooLong": "Summary must be 500 characters or fewer",
+    "summaryManualBadge": "Manual Summary",
+    "summaryManualHint": "Manual summary is currently active",
+    "summaryReset": "Restore AI Summary",
+    "summaryResetting": "Restoring...",
+    "summaryResetDone": "Restored AI summary",
     "guidedQuestions": {
       "hint": "Try these questions:"
     },

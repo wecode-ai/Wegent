@@ -52,6 +52,7 @@ from app.schemas.knowledge import (
     ResourceScope,
 )
 from app.schemas.knowledge_qa_history import QAHistoryResponse
+from app.schemas.summary import KnowledgeBaseSummaryUpdateRequest
 from app.services.knowledge import (
     KnowledgeFolderService,
     KnowledgeService,
@@ -1301,6 +1302,78 @@ async def get_kb_summary(
 
     summary_service = get_summary_service(db)
     summary = await summary_service.get_kb_summary(kb_id)
+    return KnowledgeBaseSummaryResponse(kb_id=kb_id, summary=summary)
+
+
+@summary_router.put("/{kb_id}/summary")
+@trace_async("update_kb_summary", "knowledge.api")
+async def update_kb_summary(
+    kb_id: int,
+    data: KnowledgeBaseSummaryUpdateRequest,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Manually update knowledge base summary."""
+    from app.schemas.summary import KnowledgeBaseSummaryResponse
+    from app.services.knowledge import get_summary_service
+
+    kb, has_access = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
+    if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge base not found",
+        )
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this knowledge base",
+        )
+    if not KnowledgeService.can_manage_knowledge_base(db, kb_id, current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only Owner or Maintainer can update knowledge base summary",
+        )
+
+    summary_service = get_summary_service(db)
+    summary = await summary_service.update_kb_manual_summary(
+        kb_id=kb_id,
+        user_id=current_user.id,
+        user_name=current_user.user_name,
+        content=data.long_summary,
+    )
+    return KnowledgeBaseSummaryResponse(kb_id=kb_id, summary=summary)
+
+
+@summary_router.post("/{kb_id}/summary/reset")
+@trace_async("reset_kb_summary", "knowledge.api")
+async def reset_kb_summary(
+    kb_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Reset manual knowledge base summary and fall back to AI summary."""
+    from app.schemas.summary import KnowledgeBaseSummaryResponse
+    from app.services.knowledge import get_summary_service
+
+    kb, has_access = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
+    if not kb:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge base not found",
+        )
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this knowledge base",
+        )
+    if not KnowledgeService.can_manage_knowledge_base(db, kb_id, current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only Owner or Maintainer can reset knowledge base summary",
+        )
+
+    summary_service = get_summary_service(db)
+    summary = await summary_service.reset_kb_manual_summary(kb_id)
     return KnowledgeBaseSummaryResponse(kb_id=kb_id, summary=summary)
 
 

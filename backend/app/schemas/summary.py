@@ -68,6 +68,15 @@ class KnowledgeBaseSummaryMetaInfo(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class SummaryEditorInfo(BaseModel):
+    """User information for manual knowledge base summary edits."""
+
+    id: int = Field(description="Editor user ID")
+    name: str = Field(description="Editor user name")
+
+    model_config = ConfigDict(extra="allow")
+
+
 class KnowledgeBaseSummary(BaseModel):
     """Knowledge base summary data structure."""
 
@@ -99,8 +108,34 @@ class KnowledgeBaseSummary(BaseModel):
         default=None,
         description="Document count when summary was last generated (for change detection)",
     )
+    manual_long_summary: Optional[str] = Field(
+        default=None,
+        description="Manual long summary override (up to 500 characters)",
+    )
+    manual_updated_at: Optional[datetime] = Field(
+        default=None,
+        description="Manual summary last update timestamp",
+    )
+    manual_updated_by: Optional[SummaryEditorInfo] = Field(
+        default=None,
+        description="Manual summary editor info",
+    )
+    has_manual_override: bool = Field(
+        default=False,
+        description="Whether a manual summary override is active",
+    )
 
     model_config = ConfigDict(extra="allow")
+
+
+class KnowledgeBaseSummaryUpdateRequest(BaseModel):
+    """Request payload for manual KB summary updates."""
+
+    long_summary: str = Field(
+        min_length=1,
+        max_length=500,
+        description="Manual long summary content",
+    )
 
 
 # API Response schemas

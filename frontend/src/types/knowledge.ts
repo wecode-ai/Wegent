@@ -472,6 +472,7 @@ export interface DocumentSummary {
 export interface KnowledgeBaseSummary {
   short_summary?: string
   long_summary?: string
+  manual_long_summary?: string | null
   topics?: string[]
   meta_info?: {
     document_count?: number
@@ -482,6 +483,12 @@ export interface KnowledgeBaseSummary {
   error?: string
   updated_at?: string
   last_summary_doc_count?: number
+  manual_updated_at?: string | null
+  manual_updated_by?: {
+    id: number
+    name: string
+  } | null
+  has_manual_override?: boolean
 }
 
 export interface KnowledgeBaseSummaryResponse {

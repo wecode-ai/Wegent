@@ -719,6 +719,18 @@
     "summaryFailedHint": "点击重试按钮重新生成摘要",
     "summaryRetry": "重试",
     "summaryRetrying": "重试中...",
+    "summaryEdit": "编辑摘要",
+    "summaryEditTitle": "编辑知识库摘要",
+    "summaryEditDescription": "手动摘要会优先用于展示和对话上下文，自动摘要仍会继续更新。",
+    "summaryEditPlaceholder": "请输入知识库摘要",
+    "summaryEditSaved": "摘要已更新",
+    "summaryEditRequired": "请输入摘要内容",
+    "summaryEditTooLong": "摘要不能超过 500 个字符",
+    "summaryManualBadge": "手动摘要",
+    "summaryManualHint": "当前正在使用手动摘要",
+    "summaryReset": "恢复 AI 摘要",
+    "summaryResetting": "恢复中...",
+    "summaryResetDone": "已恢复为 AI 摘要",
     "guidedQuestions": {
       "hint": "试试这些问题："
     },

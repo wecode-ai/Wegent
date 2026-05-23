@@ -116,6 +116,30 @@ export const knowledgeBaseApi = {
   },
 
   /**
+   * Update knowledge base manual summary
+   */
+  updateKnowledgeBaseSummary: async (
+    kbId: number,
+    data: { long_summary: string }
+  ): Promise<KnowledgeBaseSummaryResponse> => {
+    const response = await client.put<KnowledgeBaseSummaryResponse>(
+      `/knowledge-bases/${kbId}/summary`,
+      data
+    )
+    return response
+  },
+
+  /**
+   * Reset knowledge base manual summary
+   */
+  resetKnowledgeBaseSummary: async (kbId: number): Promise<KnowledgeBaseSummaryResponse> => {
+    const response = await client.post<KnowledgeBaseSummaryResponse>(
+      `/knowledge-bases/${kbId}/summary/reset`
+    )
+    return response
+  },
+
+  /**
    * Update document content (TEXT type only)
    * Updates the extracted_text field and triggers RAG re-indexing.
    * @param docId Document ID

@@ -65,6 +65,8 @@ export function KnowledgeBaseCard({
   // Determine knowledge base type (default to 'notebook' for backward compatibility)
   const kbType = knowledgeBase.kb_type || 'notebook'
   const isNotebook = kbType === 'notebook'
+  const effectiveShortSummary =
+    knowledgeBase.summary?.manual_long_summary || knowledgeBase.summary?.short_summary
 
   return (
     <Card
@@ -96,8 +98,8 @@ export function KnowledgeBaseCard({
       <div className="text-xs text-text-muted flex-1 min-h-0">
         {knowledgeBase.description ? (
           <p className="line-clamp-2">{knowledgeBase.description}</p>
-        ) : knowledgeBase.summary?.short_summary ? (
-          <p className="line-clamp-2">{knowledgeBase.summary.short_summary}</p>
+        ) : effectiveShortSummary ? (
+          <p className="line-clamp-2">{effectiveShortSummary}</p>
         ) : null}
       </div>
 

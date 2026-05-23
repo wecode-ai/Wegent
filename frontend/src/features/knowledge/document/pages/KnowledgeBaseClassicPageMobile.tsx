@@ -50,6 +50,7 @@ export function KnowledgeBaseClassicPageMobile({ knowledgeBaseId, initialDocPath
     knowledgeBase,
     loading: kbLoading,
     error: kbError,
+    refresh: refreshKnowledgeBase,
   } = useKnowledgeBaseDetail({
     knowledgeBaseId,
     autoLoad: true,
@@ -211,6 +212,7 @@ export function KnowledgeBaseClassicPageMobile({ knowledgeBaseId, initialDocPath
                   knowledgeBase={knowledgeBase}
                   canUpload={canUploadDocuments}
                   canManageAllDocuments={canManageKb}
+                  onRefreshKnowledgeBase={refreshKnowledgeBase}
                   initialDocPath={initialDocPath}
                 />
               </TabsContent>
@@ -226,6 +228,7 @@ export function KnowledgeBaseClassicPageMobile({ knowledgeBaseId, initialDocPath
               knowledgeBase={knowledgeBase}
               canUpload={canUploadDocuments}
               canManageAllDocuments={canManageKb}
+              onRefreshKnowledgeBase={refreshKnowledgeBase}
               initialDocPath={initialDocPath}
             />
           )}
