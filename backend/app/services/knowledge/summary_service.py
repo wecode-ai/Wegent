@@ -109,10 +109,6 @@ class SummaryService:
         normalized = content.strip()
         if not normalized:
             raise ValueError("Manual summary cannot be empty")
-        if len(normalized) > MANUAL_SUMMARY_MAX_LENGTH:
-            raise ValueError(
-                f"Manual summary exceeds {MANUAL_SUMMARY_MAX_LENGTH} characters"
-            )
         return normalized
 
     @staticmethod
@@ -579,6 +575,14 @@ class SummaryService:
 
         logger.info(f"[SummaryService] KB found: kb_id={kb_id}, name={kb.name}")
 
+        kb_spec = (kb.json or {}).get("spec", {})
+        if not kb_spec.get("summaryEnabled"):
+            logger.info(
+                "[SummaryService] KB summary is disabled, skipping trigger: kb_id=%s",
+                kb_id,
+            )
+            return None
+
         # 2. Check if trigger is needed (unless forced)
         # This check is now atomic with the lock
         if not force and not self._should_trigger_kb_summary(kb):
@@ -778,8 +782,6 @@ class SummaryService:
             "id": user_id,
             "name": user_name,
         }
-        summary_data.setdefault("status", "completed")
-        summary_data.setdefault("updated_at", datetime.now().isoformat())
 
         self._persist_kb_summary(kb, summary_data)
 

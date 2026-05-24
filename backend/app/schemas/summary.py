@@ -11,7 +11,7 @@ Defines Pydantic models for document-level and knowledge-base-level summary data
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class DocumentSummaryMetaInfo(BaseModel):
@@ -136,6 +136,17 @@ class KnowledgeBaseSummaryUpdateRequest(BaseModel):
         max_length=500,
         description="Manual long summary content",
     )
+
+    @field_validator("long_summary")
+    @classmethod
+    def validate_long_summary(cls, value: str) -> str:
+        """Trim and validate manual summary content."""
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Manual summary cannot be empty")
+        if len(normalized) > 500:
+            raise ValueError("Manual summary exceeds 500 characters")
+        return normalized
 
 
 # API Response schemas

@@ -42,12 +42,6 @@ import { CreateFolderDialog } from './CreateFolderDialog'
 import { DeleteFolderDialog } from './DeleteFolderDialog'
 import { MoveDocumentDialog } from './MoveDocumentDialog'
 import { useColumnResize } from '../hooks/useColumnResize'
-import {
-  refreshKnowledgeBaseSummary,
-  resetKnowledgeBaseSummary,
-  updateKnowledgeBaseSummary,
-} from '@/apis/knowledge'
-import { toast } from '@/hooks/use-toast'
 import type {
   KnowledgeBase,
   KnowledgeDocument,
@@ -59,6 +53,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
 import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import { EditKnowledgeBaseSummaryDialog } from './EditKnowledgeBaseSummaryDialog'
+import { useKnowledgeBaseSummaryActions } from '../hooks/useKnowledgeBaseSummaryActions'
 
 /**
  * Inner component that uses useSearchParams (must be inside Suspense boundary).
@@ -203,8 +198,6 @@ export function DocumentList({
   const [refreshingDocId, setRefreshingDocId] = useState<number | null>(null)
   // Track which document is being reindexed
   const [reindexingDocId, setReindexingDocId] = useState<number | null>(null)
-  // Track if summary is being retried
-  const [isSummaryRetrying, setIsSummaryRetrying] = useState(false)
   const [isSummaryEditOpen, setIsSummaryEditOpen] = useState(false)
   // Track selected upload folder
   const [selectedUploadFolderId, setSelectedUploadFolderId] = useState(0)
@@ -232,54 +225,21 @@ export function DocumentList({
   // Check if summary generation failed
   const isSummaryFailed = knowledgeBase.summary?.status === 'failed'
   const summaryError = knowledgeBase.summary?.error
+  const summaryEnabled = knowledgeBase.summary_enabled
   const effectiveSummary =
     knowledgeBase.summary?.manual_long_summary || knowledgeBase.summary?.long_summary
   const hasManualSummary = !!knowledgeBase.summary?.manual_long_summary
-
-  // Handle retry summary generation
-  const handleRetrySummary = async () => {
-    setIsSummaryRetrying(true)
-    try {
-      await refreshKnowledgeBaseSummary(knowledgeBase.id)
-      toast({
-        description: t('chatPage.summaryRetrying'),
-      })
-      // Refresh knowledge base details after a short delay
-      if (onRefreshKnowledgeBase) {
-        setTimeout(() => {
-          if (isMountedRef.current) {
-            onRefreshKnowledgeBase()
-          }
-        }, 2000)
-      }
-    } catch (err) {
-      console.error('Failed to refresh summary:', err)
-      toast({
-        variant: 'destructive',
-        description: t('chatPage.summaryFailed'),
-      })
-    } finally {
-      if (isMountedRef.current) {
-        setIsSummaryRetrying(false)
-      }
-    }
-  }
-
-  const handleSaveSummary = async (content: string) => {
-    await updateKnowledgeBaseSummary(knowledgeBase.id, content)
-    toast({
-      description: t('chatPage.summaryEditSaved'),
-    })
-    onRefreshKnowledgeBase?.()
-  }
-
-  const handleResetSummary = async () => {
-    await resetKnowledgeBaseSummary(knowledgeBase.id)
-    toast({
-      description: t('chatPage.summaryResetDone'),
-    })
-    onRefreshKnowledgeBase?.()
-  }
+  const hasVisibleSummary = !!effectiveSummary && (!isSummaryFailed || hasManualSummary)
+  const showRetry = summaryEnabled && isSummaryFailed
+  const {
+    isRetrying: isSummaryRetrying,
+    retrySummary,
+    saveSummary,
+    resetSummary,
+  } = useKnowledgeBaseSummaryActions({
+    knowledgeBaseId: knowledgeBase.id,
+    onRefresh: onRefreshKnowledgeBase,
+  })
 
   // Auto-open document from initialDocPath prop (from virtual URL path segments)
   // This runs once when documents are loaded, without modifying the URL
@@ -650,8 +610,8 @@ export function DocumentList({
             <h2 className="text-base font-medium text-text-primary truncate">
               {knowledgeBase.name}
             </h2>
-            {/* Summary tooltip - next to title (only show if not failed) */}
-            {longSummary && !isSummaryFailed && (
+            {/* Summary tooltip - keep visible when manual summary exists after AI failure */}
+            {(hasVisibleSummary || canManageAllDocuments) && (
               <>
                 <TooltipProvider>
                   <Tooltip delayDuration={200}>
@@ -661,14 +621,20 @@ export function DocumentList({
                       </button>
                     </TooltipTrigger>
                     <TooltipContent side="bottom" align="start" className="max-w-md">
-                      <div className="space-y-2">
-                        {hasManualSummary && (
-                          <Badge variant="secondary" size="sm">
-                            {t('chatPage.summaryManualBadge')}
-                          </Badge>
-                        )}
-                        <p className="text-sm leading-relaxed">{longSummary}</p>
-                      </div>
+                      {hasVisibleSummary ? (
+                        <div className="space-y-2">
+                          {hasManualSummary && (
+                            <Badge variant="secondary" size="sm">
+                              {t('chatPage.summaryManualBadge')}
+                            </Badge>
+                          )}
+                          <p className="text-sm leading-relaxed">{longSummary}</p>
+                        </div>
+                      ) : (
+                        <p className="text-sm leading-relaxed">
+                          {t('chatPage.summaryEditPlaceholder')}
+                        </p>
+                      )}
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
@@ -687,7 +653,7 @@ export function DocumentList({
               </>
             )}
             {/* Summary failed warning - with retry button */}
-            {isSummaryFailed && (
+            {showRetry && (
               <TooltipProvider>
                 <Tooltip delayDuration={200}>
                   <TooltipTrigger asChild>
@@ -703,11 +669,11 @@ export function DocumentList({
                 </Tooltip>
               </TooltipProvider>
             )}
-            {isSummaryFailed && (
+            {showRetry && (
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={handleRetrySummary}
+                onClick={retrySummary}
                 disabled={isSummaryRetrying}
                 className="h-6 px-2 text-xs text-amber-500 hover:text-amber-600"
               >
@@ -728,8 +694,8 @@ export function DocumentList({
           open={isSummaryEditOpen}
           onOpenChange={setIsSummaryEditOpen}
           knowledgeBase={knowledgeBase}
-          onSave={handleSaveSummary}
-          onReset={handleResetSummary}
+          onSave={saveSummary}
+          onReset={resetSummary}
         />
       )}
 

@@ -230,3 +230,104 @@ class TestKbMetaFormatter:
                 "topics": [],
             }
         ]
+
+    def test_build_kb_meta_prompt_prefers_manual_summary_even_when_summary_disabled(
+        self,
+    ):
+        from app.services.chat.preprocessing.contexts import _build_kb_meta_prompt
+
+        kb_kind = MagicMock()
+        kb_kind.json = {
+            "spec": {
+                "name": "Manual Docs",
+                "retrievalConfig": {"retriever_name": "retriever-a"},
+                "summaryEnabled": False,
+                "summary": {
+                    "status": "pending",
+                    "manual_long_summary": "Manual summary text",
+                    "topics": ["manual-topic"],
+                },
+            }
+        }
+        captured_meta = {}
+
+        def _capture_meta(kb_meta_list):
+            captured_meta["value"] = kb_meta_list
+            return "captured"
+
+        with (
+            patch(
+                "app.services.knowledge.task_knowledge_base_service.task_knowledge_base_service.get_knowledge_bases_by_ids",
+                return_value={12: kb_kind},
+            ),
+            patch(
+                "app.services.chat.preprocessing.kb_meta.format_kb_meta_prompt",
+                side_effect=_capture_meta,
+            ),
+            patch(
+                "app.services.knowledge.KnowledgeService.get_document_prompt_stats",
+                return_value={
+                    12: {
+                        "total_document_count": 10,
+                        "searchable_document_count": 8,
+                        "spreadsheet_document_count": 0,
+                    }
+                },
+                create=True,
+            ),
+        ):
+            result = _build_kb_meta_prompt(MagicMock(), [12])
+
+        assert result == "captured"
+        assert captured_meta["value"][0]["summary_text"] == "Manual summary text"
+        assert captured_meta["value"][0]["topics"] == ["manual-topic"]
+
+    def test_build_kb_meta_prompt_prefers_manual_summary_when_ai_failed(self):
+        from app.services.chat.preprocessing.contexts import _build_kb_meta_prompt
+
+        kb_kind = MagicMock()
+        kb_kind.json = {
+            "spec": {
+                "name": "Manual Fallback Docs",
+                "retrievalConfig": {"retriever_name": "retriever-a"},
+                "summaryEnabled": True,
+                "summary": {
+                    "status": "failed",
+                    "manual_long_summary": "Manual fallback summary",
+                    "long_summary": "AI summary should not be used",
+                    "topics": ["fallback-topic"],
+                },
+            }
+        }
+        captured_meta = {}
+
+        def _capture_meta(kb_meta_list):
+            captured_meta["value"] = kb_meta_list
+            return "captured"
+
+        with (
+            patch(
+                "app.services.knowledge.task_knowledge_base_service.task_knowledge_base_service.get_knowledge_bases_by_ids",
+                return_value={12: kb_kind},
+            ),
+            patch(
+                "app.services.chat.preprocessing.kb_meta.format_kb_meta_prompt",
+                side_effect=_capture_meta,
+            ),
+            patch(
+                "app.services.knowledge.KnowledgeService.get_document_prompt_stats",
+                return_value={
+                    12: {
+                        "total_document_count": 10,
+                        "searchable_document_count": 8,
+                        "spreadsheet_document_count": 0,
+                    }
+                },
+                create=True,
+            ),
+        ):
+            result = _build_kb_meta_prompt(MagicMock(), [12])
+
+        assert result == "captured"
+        assert captured_meta["value"][0]["summary_text"] == "Manual fallback summary"
+        assert captured_meta["value"][0]["topics"] == ["fallback-topic"]

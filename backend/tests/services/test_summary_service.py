@@ -265,6 +265,7 @@ class TestManualKnowledgeBaseSummary:
         assert summary.has_manual_override is True
         assert summary.manual_updated_by is not None
         assert summary.manual_updated_by.name == test_user.user_name
+        assert summary.status == "completed"
 
     @pytest.mark.asyncio
     async def test_reset_manual_summary_clears_override_fields(
@@ -284,6 +285,53 @@ class TestManualKnowledgeBaseSummary:
         assert summary.long_summary == "AI long summary"
         assert summary.manual_long_summary is None
         assert summary.has_manual_override is False
+
+    @pytest.mark.asyncio
+    async def test_update_manual_summary_does_not_set_completed_without_ai_summary(
+        self, test_db: Session, test_user: User
+    ):
+        kb_json = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "KnowledgeBase",
+            "metadata": {
+                "name": f"test-kb-pending-{test_user.id}",
+                "namespace": "default",
+            },
+            "spec": {
+                "name": "Pending KB",
+                "description": "A KB without AI summary",
+                "summaryEnabled": True,
+                "summary": {
+                    "status": "pending",
+                },
+            },
+            "status": {"state": "Available"},
+        }
+        kb = Kind(
+            user_id=test_user.id,
+            kind="KnowledgeBase",
+            name=f"test-kb-pending-{test_user.id}",
+            namespace="default",
+            json=kb_json,
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        )
+        test_db.add(kb)
+        test_db.commit()
+        test_db.refresh(kb)
+
+        summary_service = get_summary_service(test_db)
+        summary = await summary_service.update_kb_manual_summary(
+            kb.id,
+            test_user.id,
+            test_user.user_name,
+            "Manual long summary",
+        )
+
+        assert summary is not None
+        assert summary.status == "pending"
+        assert summary.manual_long_summary == "Manual long summary"
+        assert summary.has_manual_override is True
 
     @pytest.mark.asyncio
     async def test_trigger_kb_summary_preserves_manual_summary_and_updates_ai_fields(
@@ -348,6 +396,50 @@ class TestManualKnowledgeBaseSummary:
         assert refreshed_summary.long_summary == "New AI long summary"
         assert refreshed_summary.manual_long_summary == "Manual long summary"
         assert refreshed_summary.has_manual_override is True
+
+    @pytest.mark.asyncio
+    async def test_trigger_kb_summary_skips_when_summary_disabled(
+        self, test_db: Session, test_user: User
+    ):
+        kb_json = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "KnowledgeBase",
+            "metadata": {
+                "name": f"test-kb-disabled-{test_user.id}",
+                "namespace": "default",
+            },
+            "spec": {
+                "name": "Disabled Summary KB",
+                "description": "A KB with disabled AI summary",
+                "summaryEnabled": False,
+                "summary": {
+                    "status": "pending",
+                },
+            },
+            "status": {"state": "Available"},
+        }
+        kb = Kind(
+            user_id=test_user.id,
+            kind="KnowledgeBase",
+            name=f"test-kb-disabled-{test_user.id}",
+            namespace="default",
+            json=kb_json,
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        )
+        test_db.add(kb)
+        test_db.commit()
+        test_db.refresh(kb)
+
+        summary_service = get_summary_service(test_db)
+        result = await summary_service.trigger_kb_summary(
+            kb.id,
+            test_user.id,
+            test_user.user_name,
+            force=True,
+        )
+
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_clear_if_empty_summary_already_none(

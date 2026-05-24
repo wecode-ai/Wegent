@@ -4,20 +4,15 @@
 
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState } from 'react'
 import { BookOpen, FileText, Info, AlertTriangle, RefreshCw, Pencil } from 'lucide-react'
 import type { KnowledgeBase } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import {
-  refreshKnowledgeBaseSummary,
-  resetKnowledgeBaseSummary,
-  updateKnowledgeBaseSummary,
-} from '@/apis/knowledge'
-import { toast } from '@/hooks/use-toast'
 import { EditKnowledgeBaseSummaryDialog } from './EditKnowledgeBaseSummaryDialog'
+import { useKnowledgeBaseSummaryActions } from '../hooks/useKnowledgeBaseSummaryActions'
 
 interface KnowledgeBaseSummaryCardProps {
   knowledgeBase: KnowledgeBase
@@ -44,17 +39,11 @@ export function KnowledgeBaseSummaryCard({
   canEditSummary = false,
 }: KnowledgeBaseSummaryCardProps) {
   const { t } = useTranslation('knowledge')
-  const [isRetrying, setIsRetrying] = useState(false)
   const [isEditOpen, setIsEditOpen] = useState(false)
-
-  // Track component mounted state to prevent updates after unmount
-  const isMountedRef = useRef(true)
-
-  useEffect(() => {
-    return () => {
-      isMountedRef.current = false
-    }
-  }, [])
+  const { isRetrying, retrySummary, saveSummary, resetSummary } = useKnowledgeBaseSummaryActions({
+    knowledgeBaseId: knowledgeBase.id,
+    onRefresh,
+  })
 
   const longSummary = knowledgeBase.summary?.long_summary
   const manualLongSummary = knowledgeBase.summary?.manual_long_summary
@@ -63,61 +52,18 @@ export function KnowledgeBaseSummaryCard({
   const topics = knowledgeBase.summary?.topics
   const summaryStatus = knowledgeBase.summary?.status
   const summaryError = knowledgeBase.summary?.error
+  const summaryEnabled = knowledgeBase.summary_enabled
   // Use backend-provided has_manual_override, fallback to computed value
   const hasManualOverride = knowledgeBase.summary?.has_manual_override ?? false
 
   // Check if summary generation failed
   const isSummaryFailed = summaryStatus === 'failed'
+  const showRetry = summaryEnabled && isSummaryFailed
 
   // When AI summary failed but manual summary exists, still show the manual summary
   // This allows users to edit manual summary as a fallback when AI generation fails
   const shouldShowSummary =
     (effectiveLongSummary || shortSummary) && (!isSummaryFailed || hasManualOverride)
-
-  // Handle retry summary generation
-  const handleRetry = async () => {
-    setIsRetrying(true)
-    try {
-      await refreshKnowledgeBaseSummary(knowledgeBase.id)
-      toast({
-        description: t('chatPage.summaryRetrying'),
-      })
-      // Refresh knowledge base details after a short delay
-      if (onRefresh) {
-        setTimeout(() => {
-          if (isMountedRef.current) {
-            onRefresh()
-          }
-        }, 2000)
-      }
-    } catch (error) {
-      console.error('Failed to refresh summary:', error)
-      toast({
-        variant: 'destructive',
-        description: t('chatPage.summaryFailed'),
-      })
-    } finally {
-      if (isMountedRef.current) {
-        setIsRetrying(false)
-      }
-    }
-  }
-
-  const handleSaveSummary = async (content: string) => {
-    await updateKnowledgeBaseSummary(knowledgeBase.id, content)
-    toast({
-      description: t('chatPage.summaryEditSaved'),
-    })
-    onRefresh?.()
-  }
-
-  const handleResetSummary = async () => {
-    await resetKnowledgeBaseSummary(knowledgeBase.id)
-    toast({
-      description: t('chatPage.summaryResetDone'),
-    })
-    onRefresh?.()
-  }
 
   return (
     <>
@@ -154,7 +100,7 @@ export function KnowledgeBaseSummaryCard({
           </div>
 
           {/* Summary Section - show manual summary even when AI generation failed */}
-          {shouldShowSummary && (
+          {(shouldShowSummary || canEditSummary) && (
             <div className="pt-3 border-t border-border/50">
               <div className="flex items-center justify-between gap-2 mb-2">
                 <div className="flex items-center gap-2 min-w-0">
@@ -181,14 +127,18 @@ export function KnowledgeBaseSummaryCard({
                   </Button>
                 )}
               </div>
-              <p className="text-sm text-text-secondary leading-relaxed">
-                {effectiveLongSummary || shortSummary}
-              </p>
+              {shouldShowSummary ? (
+                <p className="text-sm text-text-secondary leading-relaxed">
+                  {effectiveLongSummary || shortSummary}
+                </p>
+              ) : (
+                <p className="text-sm text-text-muted">{t('chatPage.summaryEditPlaceholder')}</p>
+              )}
             </div>
           )}
 
           {/* Summary Failed Warning */}
-          {isSummaryFailed && (
+          {showRetry && (
             <div className="pt-3 border-t border-border/50">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -211,7 +161,7 @@ export function KnowledgeBaseSummaryCard({
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={handleRetry}
+                  onClick={retrySummary}
                   disabled={isRetrying}
                   className="h-8 text-xs"
                 >
@@ -250,8 +200,8 @@ export function KnowledgeBaseSummaryCard({
           open={isEditOpen}
           onOpenChange={setIsEditOpen}
           knowledgeBase={knowledgeBase}
-          onSave={handleSaveSummary}
-          onReset={handleResetSummary}
+          onSave={saveSummary}
+          onReset={resetSummary}
         />
       )}
     </>
