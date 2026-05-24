@@ -132,21 +132,25 @@ class KnowledgeBaseSummaryUpdateRequest(BaseModel):
     """Request payload for manual KB summary updates."""
 
     long_summary: str = Field(
-        min_length=1,
         max_length=500,
         description="Manual long summary content",
     )
 
+    @field_validator("long_summary", mode="before")
+    @classmethod
+    def normalize_long_summary(cls, value: str) -> str:
+        """Trim manual summary content before field constraints run."""
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
     @field_validator("long_summary")
     @classmethod
     def validate_long_summary(cls, value: str) -> str:
-        """Trim and validate manual summary content."""
-        normalized = value.strip()
-        if not normalized:
+        """Reject empty manual summary content after normalization."""
+        if not value:
             raise ValueError("Manual summary cannot be empty")
-        if len(normalized) > 500:
-            raise ValueError("Manual summary exceeds 500 characters")
-        return normalized
+        return value
 
 
 # API Response schemas

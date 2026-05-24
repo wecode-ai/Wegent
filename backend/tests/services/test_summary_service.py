@@ -200,6 +200,31 @@ class TestTriggerKbSummaryClearIfEmpty:
 
         assert result is None
 
+    @pytest.mark.asyncio
+    async def test_clear_if_empty_still_clears_when_summary_disabled(
+        self, test_db: Session, test_user: User, test_knowledge_base: Kind
+    ):
+        """Test clear_if_empty=True still clears stale AI summary when summary is disabled."""
+        test_knowledge_base.json["spec"]["summaryEnabled"] = False
+        test_db.commit()
+
+        summary_service = get_summary_service(test_db)
+        kb = test_db.query(Kind).filter(Kind.id == test_knowledge_base.id).first()
+        assert kb is not None
+        assert kb.json["spec"]["summary"] is not None
+
+        result = await summary_service.trigger_kb_summary(
+            test_knowledge_base.id,
+            test_user.id,
+            test_user.user_name,
+            force=False,
+            clear_if_empty=True,
+        )
+
+        assert result is None
+        test_db.refresh(kb)
+        assert kb.json["spec"]["summary"] is None
+
 
 class TestManualKnowledgeBaseSummary:
     """Test manual KB summary overrides."""

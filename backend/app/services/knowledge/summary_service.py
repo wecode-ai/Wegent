@@ -576,7 +576,7 @@ class SummaryService:
         logger.info(f"[SummaryService] KB found: kb_id={kb_id}, name={kb.name}")
 
         kb_spec = (kb.json or {}).get("spec", {})
-        if not kb_spec.get("summaryEnabled"):
+        if not kb_spec.get("summaryEnabled") and not clear_if_empty:
             logger.info(
                 "[SummaryService] KB summary is disabled, skipping trigger: kb_id=%s",
                 kb_id,

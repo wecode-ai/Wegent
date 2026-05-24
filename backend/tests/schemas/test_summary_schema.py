@@ -17,3 +17,11 @@ def test_knowledge_base_summary_update_request_trims_whitespace():
 def test_knowledge_base_summary_update_request_rejects_whitespace_only():
     with pytest.raises(ValidationError):
         KnowledgeBaseSummaryUpdateRequest(long_summary="   ")
+
+
+def test_knowledge_base_summary_update_request_trims_before_length_validation():
+    payload = KnowledgeBaseSummaryUpdateRequest(
+        long_summary=f"{' ' * 20}valid{' ' * 20}"
+    )
+
+    assert payload.long_summary == "valid"
