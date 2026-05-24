@@ -42,6 +42,7 @@ import { CreateFolderDialog } from './CreateFolderDialog'
 import { DeleteFolderDialog } from './DeleteFolderDialog'
 import { MoveDocumentDialog } from './MoveDocumentDialog'
 import { useColumnResize } from '../hooks/useColumnResize'
+import { toast } from '@/hooks/use-toast'
 import type {
   KnowledgeBase,
   KnowledgeDocument,
