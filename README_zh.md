@@ -339,25 +339,18 @@ docker compose up -d     # 启动
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/kerwin612">
-            <img src="https://avatars.githubusercontent.com/u/3371163?v=4" width="80;" alt="kerwin612"/>
-            <br />
-            <sub><b>Kerwin Bryant</b></sub>
-        </a>
-    </td></tr>
-<tr>
-    <td align="center">
         <a href="https://github.com/cocowh">
             <img src="https://avatars.githubusercontent.com/u/17496282?v=4" width="80;" alt="cocowh"/>
             <br />
             <sub><b>Birch</b></sub>
         </a>
-    </td>
+    </td></tr>
+<tr>
     <td align="center">
-        <a href="https://github.com/RockysGit">
-            <img src="https://avatars.githubusercontent.com/u/61232321?v=4" width="80;" alt="RockysGit"/>
+        <a href="https://github.com/kerwin612">
+            <img src="https://avatars.githubusercontent.com/u/3371163?v=4" width="80;" alt="kerwin612"/>
             <br />
-            <sub><b>RockysGit</b></sub>
+            <sub><b>Kerwin Bryant</b></sub>
         </a>
     </td>
     <td align="center">
@@ -365,6 +358,13 @@ docker compose up -d     # 启动
             <img src="https://avatars.githubusercontent.com/u/40860588?v=4" width="80;" alt="maquan0927"/>
             <br />
             <sub><b>Just Quan</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/RockysGit">
+            <img src="https://avatars.githubusercontent.com/u/61232321?v=4" width="80;" alt="RockysGit"/>
+            <br />
+            <sub><b>RockysGit</b></sub>
         </a>
     </td>
     <td align="center">
@@ -389,20 +389,27 @@ docker compose up -d     # 启动
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/DavidLeeUX">
+            <img src="https://avatars.githubusercontent.com/u/16267902?v=4" width="80;" alt="DavidLeeUX"/>
+            <br />
+            <sub><b>Kva</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/jolestar">
             <img src="https://avatars.githubusercontent.com/u/77268?v=4" width="80;" alt="jolestar"/>
             <br />
             <sub><b>Jolestar</b></sub>
         </a>
-    </td>
+    </td></tr>
+<tr>
     <td align="center">
         <a href="https://github.com/code-wangdi">
             <img src="https://avatars.githubusercontent.com/u/11024395?v=4" width="80;" alt="code-wangdi"/>
             <br />
             <sub><b>Code-wangdi</b></sub>
         </a>
-    </td></tr>
-<tr>
+    </td>
     <td align="center">
         <a href="https://github.com/haosenwang1018">
             <img src="https://avatars.githubusercontent.com/u/167664334?v=4" width="80;" alt="haosenwang1018"/>
@@ -451,15 +458,15 @@ docker compose up -d     # 启动
             <br />
             <sub><b>_</b></sub>
         </a>
-    </td>
+    </td></tr>
+<tr>
     <td align="center">
         <a href="https://github.com/andrewzq777">
             <img src="https://avatars.githubusercontent.com/u/223815624?v=4" width="80;" alt="andrewzq777"/>
             <br />
             <sub><b>Andrewzq777</b></sub>
         </a>
-    </td></tr>
-<tr>
+    </td>
     <td align="center">
         <a href="https://github.com/ch15084">
             <img src="https://avatars.githubusercontent.com/u/2509224?v=4" width="80;" alt="ch15084"/>
@@ -471,7 +478,7 @@ docker compose up -d     # 启动
         <a href="https://github.com/gdouyang">
             <img src="https://avatars.githubusercontent.com/u/13996763?v=4" width="80;" alt="gdouyang"/>
             <br />
-            <sub><b>gdouyang</b></sub>
+            <sub><b>Gdouyang</b></sub>
         </a>
     </td>
     <td align="center">
