@@ -88,7 +88,7 @@ export function MoveDocumentDialog({
             <Label className="text-sm font-medium">{t('document.folder.selectFolder')}</Label>
             <Select value={targetFolderId} onValueChange={setTargetFolderId}>
               <SelectTrigger
-                className="h-9"
+                className="h-11 min-w-[44px]"
                 data-testid={batchMode ? 'batch-move-folder-select' : undefined}
               >
                 <SelectValue />
