@@ -12,7 +12,8 @@
       "noDepartmentResults": "没有匹配的部门",
       "add": "添加",
       "searchFailed": "搜索失败",
-      "partialFailure": "{{count}} 个部门添加失败：{{names}}"
+      "partialFailure": "{{count}} 个部门添加失败：{{names}}",
+      "departmentLimitReached": "已达部门上限（{{limit}}），请减少选择数量"
     }
   }
 }

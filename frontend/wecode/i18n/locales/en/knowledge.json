@@ -12,7 +12,8 @@
       "noDepartmentResults": "No matching departments",
       "add": "Add",
       "searchFailed": "Search failed",
-      "partialFailure": "Failed to add {{count}} department(s): {{names}}"
+      "partialFailure": "Failed to add {{count}} department(s): {{names}}",
+      "departmentLimitReached": "Department limit reached ({{limit}}), please reduce selection"
     }
   }
 }

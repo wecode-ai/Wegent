@@ -9,30 +9,12 @@
  */
 
 import client from '@/apis/client'
-import type { PermissionResponse } from '@/types/knowledge'
+import type {
+  DepartmentBatchInput,
+  DepartmentBatchResponse,
+} from '@wecode/components/department-auth'
 
-/**
- * Backend FailedMemberResponse actually returns entity_type / entity_id for
- * non-user entity members. The shared open-source TS type omits these, so we
- * declare a wecode-local extension to keep typing accurate without modifying
- * open-source types.
- */
-export interface DepartmentBatchFailed {
-  user_id: number
-  error: string
-  entity_type?: string
-  entity_id?: string
-}
-
-export interface DepartmentBatchResponse {
-  succeeded: PermissionResponse[]
-  failed: DepartmentBatchFailed[]
-}
-
-export interface DepartmentBatchInput {
-  id: string
-  displayName?: string
-}
+export type { DepartmentBatchInput, DepartmentBatchResponse } from '@wecode/components/department-auth'
 
 export const knowledgePermissionExtensionApi = {
   /**

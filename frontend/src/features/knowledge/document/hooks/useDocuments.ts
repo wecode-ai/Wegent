@@ -147,7 +147,6 @@ export function useDocuments(options: UseDocumentsOptions) {
   )
 
   // Transfer documents to another KB
-  // Transfer documents to another KB
   const transfer = useCallback(
     async (data: TransferDocumentsRequest): Promise<TransferDocumentsResponse | null> => {
       if (!knowledgeBaseId) return null

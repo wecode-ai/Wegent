@@ -739,6 +739,7 @@ export function GroupMembersDialog({
                 canManage={canManageGroupMembers}
                 refreshTrigger={entityRefreshTrigger}
                 onCountChange={setEntityCount}
+                userRole={myRole}
               />
             </TabsContent>
           </Tabs>
