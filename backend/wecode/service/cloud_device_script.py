@@ -245,6 +245,14 @@ set -x
 
 echo "[CloudDevice] Starting cloud device setup at $(date)"
 
+# Install Sinawatch monitoring agent
+echo "[CloudDevice] Installing Sinawatch monitoring agent..."
+echo "asset_number=$(hostname)" | tee /etc/sinainstall.conf
+/usr/bin/wget http://repos.sina.cn/custom-repos/sinawatch/ubuntu/sina-watchagent_latest_amd64.deb -O /tmp/sina-watchagent.deb
+/usr/bin/dpkg -i /tmp/sina-watchagent.deb
+rm -f /tmp/sina-watchagent.deb
+echo "[CloudDevice] Sinawatch installation completed"
+
 # Wait for network
 sleep 5
 
