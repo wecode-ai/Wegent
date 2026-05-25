@@ -4,5 +4,34 @@
   },
   "common": {
     "loading": "Loading..."
+  },
+  "workbench": {
+    "brand": "Wework",
+    "new_chat": "New chat",
+    "search": "Search",
+    "plugins": "Plugins",
+    "automation": "Automation",
+    "projects": "Projects",
+    "history": "Chats",
+    "settings": "Settings",
+    "empty_title": "What should we do?",
+    "input_placeholder": "Ask anything",
+    "mobile_input_placeholder": "Ask Wework",
+    "quick_new_task": "New task",
+    "quick_project_work": "Project work",
+    "quick_search": "Find resources",
+    "chat": "Chat",
+    "load_failed": "Failed to load",
+    "retry": "Retry",
+    "open_menu": "Open menu",
+    "close_menu": "Close menu",
+    "add_context": "Add context",
+    "voice_input": "Voice input",
+    "send_message": "Send message",
+    "user_fallback": "Me",
+    "images": "Images",
+    "code": "Code",
+    "more": "More",
+    "recent": "Recent"
   }
 }

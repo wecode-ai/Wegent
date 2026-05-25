@@ -4,5 +4,34 @@
   },
   "common": {
     "loading": "加载中..."
+  },
+  "workbench": {
+    "brand": "Wework",
+    "new_chat": "新对话",
+    "search": "搜索",
+    "plugins": "插件",
+    "automation": "自动化",
+    "projects": "项目",
+    "history": "对话",
+    "settings": "设置",
+    "empty_title": "我们该做什么？",
+    "input_placeholder": "尽管问",
+    "mobile_input_placeholder": "询问 Wework",
+    "quick_new_task": "新任务",
+    "quick_project_work": "项目工作",
+    "quick_search": "查找资料",
+    "chat": "聊天",
+    "load_failed": "加载失败",
+    "retry": "重试",
+    "open_menu": "打开菜单",
+    "close_menu": "关闭菜单",
+    "add_context": "添加上下文",
+    "voice_input": "语音输入",
+    "send_message": "发送消息",
+    "user_fallback": "我",
+    "images": "图片",
+    "code": "编码",
+    "more": "更多",
+    "recent": "最近"
   }
 }

@@ -1,5 +1,6 @@
 import { Bot, Code2, Folder, Image, Menu, MoreHorizontal } from 'lucide-react'
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { ChatInput } from '@/components/chat/ChatInput'
 import { MessageList } from '@/components/chat/MessageList'
 import type { WorkbenchMessage, WorkbenchState } from '@/types/workbench'
@@ -43,6 +44,7 @@ export function MobileWorkbenchLayout({
   onInputChange,
   onSend,
 }: MobileWorkbenchLayoutProps) {
+  const { t } = useTranslation('common')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const hasConversation = messages.length > 0 || state.currentTask
 
@@ -57,12 +59,14 @@ export function MobileWorkbenchLayout({
                 data-testid="open-mobile-drawer-button"
                 onClick={() => setDrawerOpen(true)}
                 className="flex h-11 min-w-[44px] items-center justify-center rounded-full bg-surface"
-                aria-label="打开菜单"
+                aria-label={t('workbench.open_menu', '打开菜单')}
               >
                 <Menu className="h-6 w-6" />
               </button>
               <h1 className="min-w-0 flex-1 truncate px-4 text-center text-base font-semibold">
-                {state.currentTask?.title || state.currentProject?.name || 'Wework'}
+                {state.currentTask?.title ||
+                  state.currentProject?.name ||
+                  t('workbench.brand', 'Wework')}
               </h1>
               <div className="h-11 min-w-[44px]" />
             </header>
@@ -75,6 +79,7 @@ export function MobileWorkbenchLayout({
                 onChange={onInputChange}
                 onSubmit={onSend}
                 disabled={state.isSending}
+                placeholder={t('workbench.mobile_input_placeholder', '询问 Wework')}
               />
             </div>
           </>
@@ -86,12 +91,13 @@ export function MobileWorkbenchLayout({
                 data-testid="open-mobile-drawer-button"
                 onClick={() => setDrawerOpen(true)}
                 className="flex h-11 min-w-[44px] items-center justify-center rounded-full bg-surface"
-                aria-label="打开菜单"
+                aria-label={t('workbench.open_menu', '打开菜单')}
               >
                 <Menu className="h-6 w-6" />
               </button>
               <div className="flex h-11 min-w-[44px] items-center justify-center rounded-full bg-[#9b59b6] text-sm font-medium text-white">
-                {state.user?.user_name?.slice(0, 2).toUpperCase() || '我'}
+                {state.user?.user_name?.slice(0, 2).toUpperCase() ||
+                  t('workbench.user_fallback', '我')}
               </div>
             </header>
 
@@ -100,19 +106,27 @@ export function MobileWorkbenchLayout({
                 <Bot className="h-8 w-8 text-text-muted" />
               </div>
               <h1 className="mb-8 text-center text-2xl font-semibold tracking-normal">
-                我们该做什么？
+                {t('workbench.empty_title', '我们该做什么？')}
               </h1>
               <div className="mb-5 flex flex-wrap justify-center gap-3">
                 <QuickEntry
                   icon={Folder}
-                  label="项目库"
+                  label={t('workbench.quick_project_work', '项目工作')}
                   testId="mobile-projects-quick-entry-button"
                 />
-                <QuickEntry icon={Image} label="图片" testId="mobile-images-quick-entry-button" />
-                <QuickEntry icon={Code2} label="编码" testId="mobile-code-quick-entry-button" />
+                <QuickEntry
+                  icon={Image}
+                  label={t('workbench.quick_search', '查找资料')}
+                  testId="mobile-images-quick-entry-button"
+                />
+                <QuickEntry
+                  icon={Code2}
+                  label={t('workbench.quick_new_task', '新任务')}
+                  testId="mobile-code-quick-entry-button"
+                />
                 <QuickEntry
                   icon={MoreHorizontal}
-                  label="更多"
+                  label={t('workbench.more', '更多')}
                   testId="mobile-more-quick-entry-button"
                 />
               </div>
@@ -121,6 +135,7 @@ export function MobileWorkbenchLayout({
                 onChange={onInputChange}
                 onSubmit={onSend}
                 disabled={state.isSending}
+                placeholder={t('workbench.mobile_input_placeholder', '询问 Wework')}
               />
             </section>
           </div>

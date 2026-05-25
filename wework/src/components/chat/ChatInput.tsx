@@ -1,4 +1,5 @@
 import { ArrowUp, Mic, Plus } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 interface ChatInputProps {
   value: string
@@ -13,9 +14,11 @@ export function ChatInput({
   onChange,
   onSubmit,
   disabled,
-  placeholder = '尽管问',
+  placeholder,
 }: ChatInputProps) {
+  const { t } = useTranslation('common')
   const canSend = value.trim().length > 0 && !disabled
+  const inputPlaceholder = placeholder ?? t('workbench.input_placeholder', '尽管问')
 
   return (
     <form
@@ -29,7 +32,7 @@ export function ChatInput({
         type="button"
         data-testid="add-context-button"
         className="flex h-11 min-w-[44px] items-center justify-center rounded-full text-text-secondary hover:bg-muted"
-        aria-label="添加上下文"
+        aria-label={t('workbench.add_context', '添加上下文')}
       >
         <Plus className="h-6 w-6" />
       </button>
@@ -37,14 +40,14 @@ export function ChatInput({
         data-testid="chat-message-input"
         value={value}
         onChange={event => onChange(event.target.value)}
-        placeholder={placeholder}
+        placeholder={inputPlaceholder}
         className="min-w-0 flex-1 bg-transparent text-base text-text-primary outline-none placeholder:text-text-muted"
       />
       <button
         type="button"
         data-testid="voice-input-button"
         className="flex h-11 min-w-[44px] items-center justify-center rounded-full text-text-secondary hover:bg-muted"
-        aria-label="语音输入"
+        aria-label={t('workbench.voice_input', '语音输入')}
       >
         <Mic className="h-5 w-5" />
       </button>
@@ -53,7 +56,7 @@ export function ChatInput({
         data-testid="send-message-button"
         disabled={!canSend}
         className="flex h-11 min-w-[44px] items-center justify-center rounded-full bg-[#242424] text-white disabled:bg-[#9a9a9a]"
-        aria-label="发送消息"
+        aria-label={t('workbench.send_message', '发送消息')}
       >
         <ArrowUp className="h-5 w-5" />
       </button>
