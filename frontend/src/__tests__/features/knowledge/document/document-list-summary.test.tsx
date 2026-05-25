@@ -109,7 +109,6 @@ function createKnowledgeBase(overrides?: Partial<KnowledgeBase>): KnowledgeBase 
       status: 'failed',
       long_summary: 'AI summary',
       manual_long_summary: 'Manual summary',
-      has_manual_override: true,
       error: 'AI failed',
     },
     kb_type: 'classic',

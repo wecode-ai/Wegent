@@ -58,7 +58,12 @@ import { useUser } from '@/features/common/UserContext'
 import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import { EditKnowledgeBaseSummaryDialog } from './EditKnowledgeBaseSummaryDialog'
 import { useKnowledgeBaseSummaryActions } from '../hooks/useKnowledgeBaseSummaryActions'
-import { getEffectiveKnowledgeBaseLongSummary } from '../utils/summarySelectors'
+import {
+  getEffectiveKnowledgeBaseLongSummary,
+  hasManualSummaryOverride,
+  shouldShowSummaryContent,
+  shouldShowRetryButton,
+} from '../utils/summarySelectors'
 
 /**
  * Inner component that uses useSearchParams (must be inside Suspense boundary).
@@ -286,13 +291,11 @@ export function DocumentList({
   }, [])
 
   // Check if summary generation failed
-  const isSummaryFailed = knowledgeBase.summary?.status === 'failed'
   const summaryError = knowledgeBase.summary?.error
-  const summaryEnabled = knowledgeBase.summary_enabled
   const effectiveSummary = getEffectiveKnowledgeBaseLongSummary(knowledgeBase.summary)
-  const hasManualSummary = !!knowledgeBase.summary?.manual_long_summary
-  const hasVisibleSummary = !!effectiveSummary && (!isSummaryFailed || hasManualSummary)
-  const showRetry = summaryEnabled && isSummaryFailed
+  const hasManualSummary = hasManualSummaryOverride(knowledgeBase.summary)
+  const hasVisibleSummary = shouldShowSummaryContent(knowledgeBase.summary)
+  const showRetry = shouldShowRetryButton(knowledgeBase.summary, knowledgeBase.summary_enabled)
   const {
     isRetrying: isSummaryRetrying,
     retrySummary,

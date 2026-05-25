@@ -13,7 +13,12 @@ import { Badge } from '@/components/ui/badge'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { EditKnowledgeBaseSummaryDialog } from './EditKnowledgeBaseSummaryDialog'
 import { useKnowledgeBaseSummaryActions } from '../hooks/useKnowledgeBaseSummaryActions'
-import { getEffectiveKnowledgeBaseLongSummary } from '../utils/summarySelectors'
+import {
+  getEffectiveKnowledgeBaseLongSummary,
+  hasManualSummaryOverride,
+  shouldShowSummaryContent,
+  shouldShowRetryButton,
+} from '../utils/summarySelectors'
 
 interface KnowledgeBaseSummaryCardProps {
   knowledgeBase: KnowledgeBase
@@ -49,20 +54,10 @@ export function KnowledgeBaseSummaryCard({
   const effectiveLongSummary = getEffectiveKnowledgeBaseLongSummary(knowledgeBase.summary)
   const shortSummary = knowledgeBase.summary?.short_summary
   const topics = knowledgeBase.summary?.topics
-  const summaryStatus = knowledgeBase.summary?.status
   const summaryError = knowledgeBase.summary?.error
-  const summaryEnabled = knowledgeBase.summary_enabled
-  // Use backend-provided has_manual_override, fallback to computed value
-  const hasManualOverride = knowledgeBase.summary?.has_manual_override ?? false
-
-  // Check if summary generation failed
-  const isSummaryFailed = summaryStatus === 'failed'
-  const showRetry = summaryEnabled && isSummaryFailed
-
-  // When AI summary failed but manual summary exists, still show the manual summary
-  // This allows users to edit manual summary as a fallback when AI generation fails
-  const shouldShowSummary =
-    (effectiveLongSummary || shortSummary) && (!isSummaryFailed || hasManualOverride)
+  const hasManual = hasManualSummaryOverride(knowledgeBase.summary)
+  const showSummary = shouldShowSummaryContent(knowledgeBase.summary)
+  const showRetry = shouldShowRetryButton(knowledgeBase.summary, knowledgeBase.summary_enabled)
 
   return (
     <>
@@ -99,7 +94,7 @@ export function KnowledgeBaseSummaryCard({
           </div>
 
           {/* Summary Section - show manual summary even when AI generation failed */}
-          {(shouldShowSummary || canEditSummary) && (
+          {(showSummary || canEditSummary) && (
             <div className="pt-3 border-t border-border/50">
               <div className="flex items-center justify-between gap-2 mb-2">
                 <div className="flex items-center gap-2 min-w-0">
@@ -107,7 +102,7 @@ export function KnowledgeBaseSummaryCard({
                   <span className="text-xs font-medium text-text-muted uppercase tracking-wide">
                     {t('chatPage.summary')}
                   </span>
-                  {hasManualOverride && (
+                  {hasManual && (
                     <Badge variant="secondary" size="sm">
                       {t('chatPage.summaryManualBadge')}
                     </Badge>
@@ -126,7 +121,7 @@ export function KnowledgeBaseSummaryCard({
                   </Button>
                 )}
               </div>
-              {shouldShowSummary ? (
+              {showSummary ? (
                 <p className="text-sm text-text-secondary leading-relaxed">
                   {effectiveLongSummary || shortSummary}
                 </p>
@@ -172,7 +167,7 @@ export function KnowledgeBaseSummaryCard({
           )}
 
           {/* Topics - show even when AI failed if manual summary exists */}
-          {topics && topics.length > 0 && (!isSummaryFailed || hasManualOverride) && (
+          {topics && topics.length > 0 && showSummary && (
             <div className="flex flex-wrap gap-2">
               {topics.slice(0, 5).map((topic, index) => (
                 <span
