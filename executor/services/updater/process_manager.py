@@ -288,48 +288,29 @@ class ProcessManager:
         for var in pyi_vars:
             del env[var]
 
-        # Find and remove variables with values containing _MEI temp paths
-        # These are PyInstaller temporary directories that won't exist after restart
+        # Find and remove variables with values containing _MEI temp paths.
+        # These are PyInstaller temporary directories that won't exist after restart.
+        # Match both macOS and Linux onefile extraction paths.
         mei_path_vars = []
         for key, value in list(env.items()):
-            if "_MEI" in value and "/var/folders/" in value:
+            if "_MEI" in value:
                 mei_path_vars.append(key)
                 del env[key]
 
-        # Log SSL certificate related variables for debugging
-        ssl_vars = [
+        # SSL-related path variables should not keep stale onefile extraction
+        # paths, and they should only be inherited when the target path exists.
+        ssl_path_vars = [
             "SSL_CERT_FILE",
             "REQUESTS_CA_BUNDLE",
             "CURL_CA_BUNDLE",
             "OPENSSL_CONF",
         ]
-        logger.info("SSL/Certificate environment variables:")
-        for var in ssl_vars:
-            if var in env:
-                logger.info(f"  {var}={env[var]}")
-            else:
-                logger.info(f"  {var}=<not set>")
-
-        # Check if running as PyInstaller frozen executable
-        is_frozen = getattr(sys, "frozen", False)
-        logger.info(f"Running as PyInstaller frozen: {is_frozen}")
-
-        # Log the filtered environment variables
-        logger.info("All environment variables passed to child process:")
-        for key, value in sorted(env.items()):
-            # Mask sensitive values
-            masked_value = value
-            if any(
-                sensitive in key.lower()
-                for sensitive in ["token", "password", "secret", "key", "auth"]
-            ):
-                masked_value = "***" if value else ""
-            logger.info(f"  {key}={masked_value}")
-
-        if pyi_vars:
-            logger.info(f"Removed PyInstaller variables: {pyi_vars}")
-        if mei_path_vars:
-            logger.info(f"Removed variables with _MEI temp paths: {mei_path_vars}")
+        for key in ssl_path_vars:
+            value = env.get(key)
+            if not value:
+                continue
+            if "_MEI" in value or not os.path.exists(value):
+                del env[key]
 
         return env
 
@@ -385,7 +366,6 @@ class ProcessManager:
 
                     # Build nohup command: nohup <binary> [args]
                     cmd = ["nohup", str(binary_path)] + args
-
                     # Open log file for append
                     with open(log_file, "a") as log_fh:
                         # Write restart marker
@@ -412,7 +392,6 @@ class ProcessManager:
                     # No verbose mode - redirect output to DEVNULL
                     env = self._get_filtered_env()
                     cmd = ["nohup", str(binary_path)] + args
-
                     process = subprocess.Popen(
                         cmd,
                         stdout=subprocess.DEVNULL,

@@ -7,7 +7,6 @@
  */
 
 import { useState, useCallback } from 'react'
-import { ApiError } from '@/apis/client'
 import {
   getFolderTree,
   createFolder,
@@ -23,50 +22,15 @@ import type {
 } from '@/types/knowledge'
 import { toast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
+import { mapKnowledgeDocumentErrorMessage } from '../utils/error-messages'
 
 interface UseFoldersOptions {
   knowledgeBaseId: number | null
 }
 
-const FOLDER_DEPTH_EXCEEDED_MESSAGE =
-  'Folder hierarchy exceeds the maximum depth of 4 levels under a knowledge base'
-const DOCUMENT_FOLDER_DEPTH_EXCEEDED_MESSAGE =
-  'Documents can only be placed within the 4th folder level under a knowledge base or above'
-const FOLDER_DEPTH_EXCEEDED_ERROR_CODE = 'KNOWLEDGE_FOLDER_DEPTH_EXCEEDED'
-const DOCUMENT_FOLDER_DEPTH_EXCEEDED_ERROR_CODE = 'KNOWLEDGE_DOCUMENT_TARGET_FOLDER_DEPTH_EXCEEDED'
-
 export function useFolders(options: UseFoldersOptions) {
   const { knowledgeBaseId } = options
   const { t } = useTranslation('knowledge')
-
-  const mapFolderErrorMessage = useCallback(
-    (error: unknown, fallbackKey: string): string => {
-      if (!(error instanceof Error)) {
-        return t(fallbackKey)
-      }
-
-      if (error instanceof ApiError) {
-        if (error.errorCode === FOLDER_DEPTH_EXCEEDED_ERROR_CODE) {
-          return t('document.folder.depthExceeded')
-        }
-
-        if (error.errorCode === DOCUMENT_FOLDER_DEPTH_EXCEEDED_ERROR_CODE) {
-          return t('document.folder.documentPlacementDepthExceeded')
-        }
-      }
-
-      if (error.message === FOLDER_DEPTH_EXCEEDED_MESSAGE) {
-        return t('document.folder.depthExceeded')
-      }
-
-      if (error.message === DOCUMENT_FOLDER_DEPTH_EXCEEDED_MESSAGE) {
-        return t('document.folder.documentPlacementDepthExceeded')
-      }
-
-      return error.message
-    },
-    [t]
-  )
 
   const [folders, setFolders] = useState<KnowledgeFolder[]>([])
   const [loading, setLoading] = useState(false)
@@ -99,12 +63,12 @@ export function useFolders(options: UseFoldersOptions) {
         toast({ description: t('document.folder.createdToast', { name: folder.name }) })
         return folder
       } catch (err) {
-        const msg = mapFolderErrorMessage(err, 'document.folder.createFailed')
+        const msg = mapKnowledgeDocumentErrorMessage(err, t, 'document.folder.createFailed')
         toast({ description: msg, variant: 'destructive' })
         return null
       }
     },
-    [knowledgeBaseId, fetchFolders, mapFolderErrorMessage, t]
+    [knowledgeBaseId, fetchFolders, t]
   )
 
   const update = useCallback(
@@ -116,12 +80,12 @@ export function useFolders(options: UseFoldersOptions) {
         toast({ description: t('document.folder.updatedToast', { name: folder.name }) })
         return folder
       } catch (err) {
-        const msg = mapFolderErrorMessage(err, 'document.folder.updateFailed')
+        const msg = mapKnowledgeDocumentErrorMessage(err, t, 'document.folder.updateFailed')
         toast({ description: msg, variant: 'destructive' })
         return null
       }
     },
-    [knowledgeBaseId, fetchFolders, mapFolderErrorMessage, t]
+    [knowledgeBaseId, fetchFolders, t]
   )
 
   const remove = useCallback(
@@ -135,12 +99,12 @@ export function useFolders(options: UseFoldersOptions) {
         })
         return true
       } catch (err) {
-        const msg = mapFolderErrorMessage(err, 'document.folder.deleteFailed')
+        const msg = mapKnowledgeDocumentErrorMessage(err, t, 'document.folder.deleteFailed')
         toast({ description: msg, variant: 'destructive' })
         return false
       }
     },
-    [knowledgeBaseId, fetchFolders, mapFolderErrorMessage, t]
+    [knowledgeBaseId, fetchFolders, t]
   )
 
   const move = useCallback(
@@ -149,12 +113,12 @@ export function useFolders(options: UseFoldersOptions) {
         await moveDocument(documentId, folderId)
         return true
       } catch (err) {
-        const msg = mapFolderErrorMessage(err, 'document.folder.moveDocumentFailed')
+        const msg = mapKnowledgeDocumentErrorMessage(err, t, 'document.folder.moveDocumentFailed')
         toast({ description: msg, variant: 'destructive' })
         return false
       }
     },
-    [mapFolderErrorMessage]
+    [t]
   )
 
   const batchMove = useCallback(
@@ -177,12 +141,17 @@ export function useFolders(options: UseFoldersOptions) {
         }
         return result
       } catch (err) {
-        const msg = err instanceof Error ? err.message : t('document.folder.batchMoveFailed')
+        const msg = mapKnowledgeDocumentErrorMessage(err, t, 'document.folder.batchMoveFailed')
         toast({ description: msg, variant: 'destructive' })
-        return { success_count: 0, failed_count: documentIds.length, failed_ids: documentIds, message: msg }
+        return {
+          success_count: 0,
+          failed_count: documentIds.length,
+          failed_ids: documentIds,
+          message: msg,
+        }
       }
     },
-    []
+    [t]
   )
 
   return {
