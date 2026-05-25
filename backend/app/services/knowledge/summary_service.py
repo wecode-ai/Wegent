@@ -34,7 +34,6 @@ logger = logging.getLogger(__name__)
 
 # Maximum character length for document content before truncation
 MAX_DOCUMENT_CONTENT_LENGTH = 50000
-MANUAL_SUMMARY_MAX_LENGTH = 500
 
 # System prompt for document summary generation
 DOCUMENT_SUMMARY_PROMPT = """You are a professional document summary assistant. Your task is:

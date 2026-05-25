@@ -57,7 +57,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
 import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import { EditKnowledgeBaseSummaryDialog } from './EditKnowledgeBaseSummaryDialog'
-import { useKnowledgeBaseSummaryActions } from '../hooks/useKnowledgeBaseSummaryActions'
+import { useKnowledgeBaseSummaryEditor } from '../hooks/useKnowledgeBaseSummaryEditor'
 import {
   getEffectiveKnowledgeBaseLongSummary,
   hasManualSummaryOverride,
@@ -252,7 +252,6 @@ export function DocumentList({
   const [refreshingDocId, setRefreshingDocId] = useState<number | null>(null)
   // Track which document is being reindexed
   const [reindexingDocId, setReindexingDocId] = useState<number | null>(null)
-  const [isSummaryEditOpen, setIsSummaryEditOpen] = useState(false)
   // Track selected upload folder
   const [selectedUploadFolderId, setSelectedUploadFolderId] = useState(0)
   // Track document being moved
@@ -299,10 +298,10 @@ export function DocumentList({
   const {
     isRetrying: isSummaryRetrying,
     retrySummary,
-    saveSummary,
-    resetSummary,
-  } = useKnowledgeBaseSummaryActions({
-    knowledgeBaseId: knowledgeBase.id,
+    openEditor: openSummaryEditor,
+    editorDialogProps,
+  } = useKnowledgeBaseSummaryEditor({
+    knowledgeBase,
     onRefresh: onRefreshKnowledgeBase,
   })
 
@@ -843,7 +842,7 @@ export function DocumentList({
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => setIsSummaryEditOpen(true)}
+                    onClick={openSummaryEditor}
                     className="h-6 px-2 text-xs"
                     data-testid="kb-summary-inline-edit-button"
                   >
@@ -890,15 +889,7 @@ export function DocumentList({
         {/* Header actions (e.g., tabs) */}
         {headerActions}
       </div>
-      {canManageAllDocuments && (
-        <EditKnowledgeBaseSummaryDialog
-          open={isSummaryEditOpen}
-          onOpenChange={setIsSummaryEditOpen}
-          knowledgeBase={knowledgeBase}
-          onSave={saveSummary}
-          onReset={resetSummary}
-        />
-      )}
+      {canManageAllDocuments && <EditKnowledgeBaseSummaryDialog {...editorDialogProps} />}
 
       {/* Search bar and action buttons */}
       <div className="flex items-center gap-3 flex-wrap">

@@ -4,7 +4,6 @@
 
 'use client'
 
-import { useState } from 'react'
 import { BookOpen, FileText, Info, AlertTriangle, RefreshCw, Pencil } from 'lucide-react'
 import type { KnowledgeBase } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -12,7 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { EditKnowledgeBaseSummaryDialog } from './EditKnowledgeBaseSummaryDialog'
-import { useKnowledgeBaseSummaryActions } from '../hooks/useKnowledgeBaseSummaryActions'
+import { useKnowledgeBaseSummaryEditor } from '../hooks/useKnowledgeBaseSummaryEditor'
 import {
   getEffectiveKnowledgeBaseLongSummary,
   hasManualSummaryOverride,
@@ -45,11 +44,12 @@ export function KnowledgeBaseSummaryCard({
   canEditSummary = false,
 }: KnowledgeBaseSummaryCardProps) {
   const { t } = useTranslation('knowledge')
-  const [isEditOpen, setIsEditOpen] = useState(false)
-  const { isRetrying, retrySummary, saveSummary, resetSummary } = useKnowledgeBaseSummaryActions({
-    knowledgeBaseId: knowledgeBase.id,
-    onRefresh,
-  })
+  const { isRetrying, retrySummary, openEditor, editorDialogProps } = useKnowledgeBaseSummaryEditor(
+    {
+      knowledgeBase,
+      onRefresh,
+    }
+  )
 
   const effectiveLongSummary = getEffectiveKnowledgeBaseLongSummary(knowledgeBase.summary)
   const shortSummary = knowledgeBase.summary?.short_summary
@@ -112,7 +112,7 @@ export function KnowledgeBaseSummaryCard({
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => setIsEditOpen(true)}
+                    onClick={openEditor}
                     className="h-8 px-2 text-xs"
                     data-testid="kb-summary-edit-button"
                   >
@@ -189,15 +189,7 @@ export function KnowledgeBaseSummaryCard({
           <p className="text-xs text-text-muted italic">{t('chatPage.contextHint')}</p>
         </div>
       </div>
-      {canEditSummary && (
-        <EditKnowledgeBaseSummaryDialog
-          open={isEditOpen}
-          onOpenChange={setIsEditOpen}
-          knowledgeBase={knowledgeBase}
-          onSave={saveSummary}
-          onReset={resetSummary}
-        />
-      )}
+      {canEditSummary && <EditKnowledgeBaseSummaryDialog {...editorDialogProps} />}
     </>
   )
 }
