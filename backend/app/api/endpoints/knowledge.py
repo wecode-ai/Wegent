@@ -12,17 +12,16 @@ which provides a unified interface for both REST API and MCP tools.
 import asyncio
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
 from app.core.config import settings
 from app.core.exceptions import CustomHTTPException
-from app.core.security import AuthContext, get_auth_context
 from app.db.session import SessionLocal
 from app.models.user import User
 from app.schemas.knowledge import (
@@ -36,8 +35,6 @@ from app.schemas.knowledge import (
     InitialMemberCreate,
     KnowledgeBaseCreate,
     KnowledgeBaseListResponse,
-    KnowledgeBaseMigrateRequest,
-    KnowledgeBaseMigrateResponse,
     KnowledgeBaseResponse,
     KnowledgeBaseTypeUpdate,
     KnowledgeBaseUpdate,
@@ -563,60 +560,6 @@ def update_knowledge_base_type(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
-
-
-@router.post(
-    "/{knowledge_base_id}/migrate",
-    response_model=KnowledgeBaseMigrateResponse,
-)
-@trace_sync("migrate_knowledge_base_to_group", "knowledge.api")
-def migrate_knowledge_base_to_group(
-    knowledge_base_id: int,
-    data: KnowledgeBaseMigrateRequest,
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """
-    Migrate a personal knowledge base to a group.
-
-    - Only personal knowledge bases (namespace='default') can be migrated
-    - Only the creator of the knowledge base can migrate it
-    - User must have Maintainer or Owner permission in the target group
-    - Target group name must be a valid group namespace
-    """
-    try:
-        result = KnowledgeService.migrate_knowledge_base_to_group(
-            db=db,
-            knowledge_base_id=knowledge_base_id,
-            user_id=current_user.id,
-            target_group_name=data.target_group_name,
-        )
-        add_span_event(
-            "knowledge.base.migrated",
-            {
-                "kb_id": str(knowledge_base_id),
-                "user_id": str(current_user.id),
-                "target_group": data.target_group_name,
-            },
-        )
-        return result
-    except IntegrityError as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="A knowledge base with this name already exists in the target group",
-        ) from e
-    except SQLAlchemyError as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Database error during migration: {str(e)}",
-        ) from e
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        ) from e
 
 
 # ============== Knowledge Document Endpoints ==============

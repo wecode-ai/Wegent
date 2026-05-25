@@ -26,7 +26,8 @@ from typing import Any, Dict, Optional
 
 from executor.config import config
 from executor.config.device_config import DeviceConfig
-from executor.modes.local.events import ChatEvents, TaskEvents
+from executor.modes.local.command_handler import CommandHandler
+from executor.modes.local.events import ChatEvents, DeviceEvents, TaskEvents
 from executor.modes.local.extension_handler import DeviceExtensionHandler
 from executor.modes.local.handlers import TaskHandler, UpgradeHandler
 from executor.modes.local.heartbeat import LocalHeartbeatService
@@ -78,6 +79,7 @@ class LocalRunner:
 
         # Event handlers
         self.task_handler = TaskHandler(self)
+        self.command_handler = CommandHandler()
         self.upgrade_handler = UpgradeHandler(self)
         self.extension_handler = DeviceExtensionHandler(self)
 
@@ -229,6 +231,10 @@ class LocalRunner:
         )
         self.websocket_client.on(
             ChatEvents.MESSAGE, self.task_handler.handle_chat_message
+        )
+        self.websocket_client.on(
+            DeviceEvents.EXECUTE_COMMAND,
+            self.command_handler.handle_execute_command,
         )
 
         # Upgrade handler

@@ -50,6 +50,16 @@ class ValidationException(HTTPException):
         super().__init__(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
 
+class StructuredValidationException(HTTPException):
+    """Validation exception with a stable frontend-localizable error code."""
+
+    def __init__(self, error_code: str, payload: dict | None = None):
+        detail = {"error_code": error_code, **(payload or {})}
+        super().__init__(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+        self.error_code = error_code
+        self.payload = payload or {}
+
+
 class CustomHTTPException(HTTPException):
     """Custom HTTP exception"""
 

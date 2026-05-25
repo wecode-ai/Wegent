@@ -30,6 +30,8 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 - English version: [`docs/en/developer-guide/dynamic-context.md`](docs/en/developer-guide/dynamic-context.md)
 - Exposing capabilities guide (how to make features available to AI agents): [`docs/zh/developer-guide/exposing-capabilities.md`](docs/zh/developer-guide/exposing-capabilities.md)
 - English version: [`docs/en/developer-guide/exposing-capabilities.md`](docs/en/developer-guide/exposing-capabilities.md)
+- Local device command RPC (Backend-to-local-executor command execution): [`docs/zh/developer-guide/local-device-command-rpc.md`](docs/zh/developer-guide/local-device-command-rpc.md)
+- English version: [`docs/en/developer-guide/local-device-command-rpc.md`](docs/en/developer-guide/local-device-command-rpc.md)
 
 **📚 Documentation Writing Rules:**
 - All documentation files MUST include frontmatter with `sidebar_position` for ordering:
@@ -634,4 +636,3 @@ cd backend && uv run alembic revision --autogenerate -m "msg" && uv run alembic 
 ```
 
 **Ports:** 3000 (frontend), 8000 (backend), 8001 (chat shell), 8200 (knowledge runtime), 9090 (converter metrics), 3306 (MySQL), 6379 (Redis)
-

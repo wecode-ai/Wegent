@@ -55,25 +55,23 @@ class TeamShareService(UnifiedShareService):
         if team and team.user_id == user_id:
             return team
 
-        # Check if user has shared access
+        # Check if user has shared access (direct user or entity fallback)
         if team:
-            from app.models.resource_member import MemberStatus, ResourceMember
+            from app.schemas.share import MemberRole
 
-            member = (
-                db.query(ResourceMember)
-                .filter(
-                    ResourceMember.resource_type == ResourceType.TEAM.value,
-                    ResourceMember.resource_id == resource_id,
-                    ResourceMember.entity_type == "user",
-                    ResourceMember.entity_id == str(user_id),
-                    ResourceMember.status == MemberStatus.APPROVED.value,
-                )
-                .first()
-            )
-            if member:
+            if self.check_permission(db, resource_id, user_id, MemberRole.Reporter):
                 return team
 
         return None  # Return None if not authorized to prevent unauthorized access
+
+    def get_resource(
+        self, db: Session, resource_id: int, user_id: int
+    ) -> Optional[Kind]:
+        """Public entrypoint to fetch a team if the user has access.
+
+        Delegates to _get_resource; exposed for cross-service callers.
+        """
+        return self._get_resource(db, resource_id, user_id)
 
     def _get_resource_name(self, resource: Kind) -> str:
         """Get Team display name."""

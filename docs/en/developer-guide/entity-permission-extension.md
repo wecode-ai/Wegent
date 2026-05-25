@@ -164,6 +164,46 @@ _collect_entity_authorized_kbs(user_id, accessible_groups)
     → Collect role and group information
 ```
 
+### Group Namespace Entity Members
+
+In addition to KnowledgeBase, **Namespaces (groups) themselves support entity member bindings**. By binding external entities such as departments as group members, all users within that entity automatically gain group permissions and inherit access to downstream resources (knowledge bases, Teams) within the group.
+
+**Core flow:**
+
+```text
+get_effective_role_in_group(db, user_id, group_name)
+├── 1. Direct user binding
+│   Query ResourceMember (resource_type="Namespace", entity_type="user")
+│   → Return directly assigned role
+│
+├── 2. Entity binding fallback
+│   Call _resolve_entity_roles_in_namespace()
+│   → Query all approved entity bindings for this group (entity_type != "user")
+│   → Group by entity_type, call resolver.match_entity_bindings()
+│   → Return list of matched roles
+│
+└── 3. Parent group inheritance (only when 1 and 2 yield no results)
+    If group_name = "aaa/bbb"
+    → Recursively query effective role for "aaa"
+```
+
+When a user obtains permissions through multiple sources (direct member + entity member + parent group inheritance), the highest role wins. This is handled uniformly by `get_highest_role()`.
+
+**Group entity member APIs:**
+
+- `GET /api/groups/{group_name}/entity-members` — List group entity members
+- `POST /api/groups/{group_name}/entity-members` — Add an entity member (Owner only)
+- `PUT /api/groups/{group_name}/entity-members/{entity_type}/{entity_id}` — Update entity member role (Owner only)
+- `DELETE /api/groups/{group_name}/entity-members/{entity_type}/{entity_id}` — Remove an entity member (Owner only)
+
+**Batch optimization:**
+
+`iter_user_groups_with_roles()` resolves all direct and entity-derived group memberships in a single pass, avoiding repeated resolver calls per group in list scenarios. `get_effective_roles_in_groups()` builds on this for batch role computation.
+
+**Shared entity role resolution:**
+
+`resolve_entity_roles_for_resource()` (in `external_entity_resolver.py`) provides a common entity role query implementation, reused by both `_resolve_entity_roles_in_namespace()` and `UnifiedShareService._get_highest_entity_role()` to eliminate duplication.
+
 ## Extension Architecture Design
 
 ### Share Service Layered Architecture
