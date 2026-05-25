@@ -85,8 +85,7 @@
     "settings": "Settings",
     "docs": "Docs",
     "feedback": "Feedback",
-    "admin": "Admin",
-    "wework": "WeWork"
+    "admin": "Admin"
   },
   "sidebar": {
     "recent_visits": "Recent Visits",

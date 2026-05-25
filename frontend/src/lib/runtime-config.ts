@@ -55,8 +55,6 @@ export interface RuntimeConfig {
   bindGroupSteps: string
   /** Application version (e.g. "0.1.5"), "dev" in local development */
   appVersion: string
-  /** WeWork app URL */
-  weworkUrl: string
 }
 
 /** Default bind group steps configuration */
@@ -132,7 +130,6 @@ export const fetchRuntimeConfig = async (): Promise<RuntimeConfig> => {
         bindGroupDesc: process.env.NEXT_PUBLIC_BIND_GROUP_DESC || '',
         bindGroupSteps: process.env.NEXT_PUBLIC_BIND_GROUP_STEPS || DEFAULT_BIND_GROUP_STEPS,
         appVersion: process.env.NEXT_PUBLIC_APP_VERSION || 'dev',
-        weworkUrl: process.env.NEXT_PUBLIC_WEWORK_URL ?? '',
       }
       runtimeConfigCache = fallback
       return fallback
@@ -176,7 +173,6 @@ export const getRuntimeConfigSync = (): RuntimeConfig => {
     bindGroupDesc: process.env.NEXT_PUBLIC_BIND_GROUP_DESC || '',
     bindGroupSteps: process.env.NEXT_PUBLIC_BIND_GROUP_STEPS || DEFAULT_BIND_GROUP_STEPS,
     appVersion: process.env.NEXT_PUBLIC_APP_VERSION || 'dev',
-    weworkUrl: process.env.NEXT_PUBLIC_WEWORK_URL ?? '',
   }
 }
 
