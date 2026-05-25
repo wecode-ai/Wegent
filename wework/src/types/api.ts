@@ -91,3 +91,58 @@ export interface CreateProjectConversationResponse {
   project_id: number
   task: unknown
 }
+
+export interface ChatSendPayload {
+  task_id?: number
+  team_id: number
+  message: string
+  title?: string
+  task_type?: 'chat' | 'code' | 'task' | 'knowledge' | 'video' | 'image'
+  project_id?: number
+}
+
+export interface ChatSendAck {
+  success: boolean
+  task_id?: number
+  error?: string
+}
+
+export interface ChatStartPayload {
+  task_id: number
+  subtask_id: number
+  bot_name?: string
+  shell_type?: string
+  message_id?: number
+}
+
+export interface ChatChunkPayload {
+  task_id?: number
+  subtask_id: number
+  content: string
+  offset: number
+}
+
+export interface ChatDonePayload {
+  task_id?: number
+  subtask_id: number
+  offset: number
+  result: Record<string, unknown> & { value?: string; error?: string }
+  message_id?: number
+}
+
+export interface ChatErrorPayload {
+  task_id?: number
+  subtask_id: number
+  error: string
+  message_id?: number
+}
+
+export interface TaskJoinResponse {
+  streaming?: {
+    subtask_id: number
+    offset: number
+    cached_content: string
+  }
+  subtasks?: Array<Record<string, unknown>>
+  error?: string
+}
