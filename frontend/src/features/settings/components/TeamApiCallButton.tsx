@@ -305,7 +305,7 @@ interface TeamApiCallButtonProps {
 }
 
 export function TeamApiCallButton({ team }: TeamApiCallButtonProps) {
-  const { t, i18n } = useTranslation('common')
+  const { t } = useTranslation('common')
   const { toast } = useToast()
   const router = useRouter()
   const [open, setOpen] = useState(false)
@@ -322,8 +322,7 @@ export function TeamApiCallButton({ team }: TeamApiCallButtonProps) {
   const activeSample =
     codeSamples.find(sample => sample.language === activeSampleLanguage) ?? codeSamples[0]!
   const activeLanguageLabel = t(`teams.api_call.languages.${activeSample.language}`)
-  const docsLanguage = i18n.language?.startsWith('zh') ? 'zh' : 'en'
-  const docsUrl = `https://github.com/wecode-ai/wegent/blob/main/docs/${docsLanguage}/reference/openapi-responses-api.md`
+  const docsUrl = `https://wiki.api.weibo.com/zh/weibo_rd/dev/wecode/wegent-api`
 
   const handleSampleLanguageChange = (value: string) => {
     if ((TEAM_API_CODE_SAMPLE_LANGUAGES as readonly string[]).includes(value)) {
