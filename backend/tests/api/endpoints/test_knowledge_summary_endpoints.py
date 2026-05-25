@@ -92,3 +92,27 @@ def test_update_kb_summary_preserves_ai_status(
     body = response.json()
     assert body["summary"]["status"] == "pending"
     assert body["summary"]["manual_long_summary"] == "Manual summary"
+
+
+def test_refresh_kb_summary_returns_skipped_when_summary_disabled(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+):
+    kb = _create_kb_with_summary(
+        test_db,
+        test_user,
+        summary_enabled=False,
+        summary={"status": "failed"},
+    )
+
+    response = test_client.post(
+        f"/api/knowledge-bases/{kb.id}/summary/refresh",
+        headers={"Authorization": f"Bearer {test_token}"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "skipped"
+    assert body["message"] == "Summary generation is disabled"

@@ -1274,7 +1274,7 @@ async def update_kb_summary(
     if not KnowledgeService.can_manage_knowledge_base(db, kb_id, current_user.id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only creator or Maintainer can update knowledge base summary",
+            detail="You do not have permission to update knowledge base summary",
         )
 
     summary_service = get_summary_service(db)
@@ -1312,7 +1312,7 @@ async def reset_kb_summary(
     if not KnowledgeService.can_manage_knowledge_base(db, kb_id, current_user.id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only creator or Maintainer can reset knowledge base summary",
+            detail="You do not have permission to reset knowledge base summary",
         )
 
     summary_service = get_summary_service(db)
@@ -1347,6 +1347,13 @@ async def refresh_kb_summary(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied to this knowledge base",
+        )
+
+    kb_spec = (kb.json or {}).get("spec", {})
+    if not kb_spec.get("summaryEnabled"):
+        return SummaryRefreshResponse(
+            message="Summary generation is disabled",
+            status="skipped",
         )
 
     # Run in background, return immediately
