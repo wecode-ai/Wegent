@@ -3,18 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Group management extension loader.
+ * Group management extension loader (internal override).
  *
- * The open-source core ships with a default no-op implementation.
- * Internal deployments can set NEXT_PUBLIC_GROUP_EXTENSION_MODULE
- * to inject additional UI components (e.g., department management).
- *
- * The extension module must export:
- *   - tabLabel: string                // Label for the authorization tab
- *   - addForm: ComponentType          // Form rendered inside the add-member panel
- *   - listView: ComponentType         // List rendered inside the authorization tab
- *
- * Follows the same runtime dynamic import pattern as KB extensions.
+ * Directly loads @wecode/features/groups at runtime.
+ * Supports both export default and named exports for compatibility
+ * with the open-source extension contract.
  */
 
 import type { ComponentType } from 'react'
@@ -22,12 +15,18 @@ import type { ComponentType } from 'react'
 export interface GroupExtensionProps {
   groupName: string
   onSuccess: () => void
+  /** Optional cancel handler to close the add panel. */
+  onCancel?: () => void
+  /** User's role in the group, for determining available role options. */
+  userRole?: string
 }
 
 export interface GroupExtensionListProps {
   groupName: string
   canManage: boolean
   refreshTrigger?: number
+  /** User's role in the group, for determining available role options. */
+  userRole?: string
   /**
    * Report the total number of entity authorizations back to the parent.
    * Call this once after data is loaded (not on every render) to avoid
@@ -43,19 +42,14 @@ export interface GroupExtensionConfig {
   listView: ComponentType<GroupExtensionListProps>
 }
 
-const EXTENSION_MODULE =
-  (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_GROUP_EXTENSION_MODULE) || ''
-
 export async function loadGroupExtension(): Promise<GroupExtensionConfig | null> {
-  if (!EXTENSION_MODULE) {
-    return null
-  }
   try {
-    const mod = await import(/* webpackIgnore: true */ EXTENSION_MODULE)
-    const addForm = mod.addForm || mod.GroupExtension
-    const listView = mod.listView || mod.GroupExtensionList
-    const listTabLabel = mod.listTabLabel || mod.tabLabel || 'Authorizations'
-    const addTabLabel = mod.addTabLabel || mod.tabLabel || 'Add Entity'
+    const mod = await import('@wecode/features/groups')
+    // Support both export default (internal) and named exports (OSS contract)
+    if (mod.default) {
+      return mod.default
+    }
+    const { addForm, listView, listTabLabel, addTabLabel } = mod
     if (!addForm || !listView) {
       console.warn(
         `Group extension module must export addForm and listView. ` +
@@ -65,7 +59,7 @@ export async function loadGroupExtension(): Promise<GroupExtensionConfig | null>
     }
     return { listTabLabel, addTabLabel, addForm, listView }
   } catch (error) {
-    console.warn(`Failed to load group extension module "${EXTENSION_MODULE}"`, error)
+    console.warn('Failed to load group extension @wecode/features/groups', error)
     return null
   }
 }

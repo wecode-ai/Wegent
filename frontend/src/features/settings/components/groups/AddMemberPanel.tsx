@@ -231,6 +231,8 @@ export function AddMemberPanel({
               key={`add-${group.name}`}
               groupName={group.name}
               onSuccess={onAddEntitySuccess}
+              onCancel={onCancel}
+              userRole={myRole}
             />
           </TabsContent>
         </Tabs>
