@@ -370,11 +370,24 @@
       "endpoint": "Endpoint",
       "model": "Model",
       "curl_example": "curl 示例",
+      "code_examples": "调用示例",
       "copy_curl": "复制 curl",
+      "copy_sample": "复制 {{language}}",
       "manage_api_keys": "管理 API Key",
       "view_docs": "查看文档",
       "copy_success": "curl 已复制",
-      "copy_failed": "复制 curl 失败"
+      "copy_code_success": "代码已复制",
+      "copy_failed": "复制 curl 失败",
+      "copy_code_failed": "复制代码失败",
+      "rust_community_sdk": "Rust 示例使用社区常用的 async-openai SDK。",
+      "languages": {
+        "curl": "curl",
+        "javascript": "JavaScript",
+        "python": "Python",
+        "java": "Java",
+        "go": "Go",
+        "rust": "Rust"
+      }
     },
     "share": {
       "title": "智能体分享",

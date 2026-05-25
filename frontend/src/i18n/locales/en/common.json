@@ -370,11 +370,24 @@
       "endpoint": "Endpoint",
       "model": "Model",
       "curl_example": "curl example",
+      "code_examples": "Code examples",
       "copy_curl": "Copy curl",
+      "copy_sample": "Copy {{language}}",
       "manage_api_keys": "Manage API Keys",
       "view_docs": "View docs",
       "copy_success": "curl copied",
-      "copy_failed": "Failed to copy curl"
+      "copy_code_success": "Code copied",
+      "copy_failed": "Failed to copy curl",
+      "copy_code_failed": "Failed to copy code",
+      "rust_community_sdk": "Rust uses the community async-openai SDK.",
+      "languages": {
+        "curl": "curl",
+        "javascript": "JavaScript",
+        "python": "Python",
+        "java": "Java",
+        "go": "Go",
+        "rust": "Rust"
+      }
     },
     "share": {
       "title": "Agent Share",
