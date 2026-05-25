@@ -295,6 +295,8 @@
       "namePlaceholder": "Enter document name",
       "createFailed": "Failed to create document",
       "updateFailed": "Failed to update document",
+      "deleteFailed": "Failed to delete document",
+      "batchDeleteFailed": "Failed to batch delete documents",
       "dropzone": "Drop files here or click to browse",
       "supportedTypes": "PDF, Word, PPT, Excel, TXT, MD (Max {{maxSize}}MB)",
       "uploading": "Uploading...",
