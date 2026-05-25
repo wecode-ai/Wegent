@@ -13,6 +13,7 @@ import {
   updateFolder,
   deleteFolder,
   moveDocument,
+  batchMoveDocuments,
 } from '@/apis/knowledge'
 import type {
   KnowledgeFolder,
@@ -126,6 +127,36 @@ export function useFolders(options: UseFoldersOptions) {
     [mapFolderErrorMessage]
   )
 
+  const batchMove = useCallback(async (documentIds: number[], folderId: number) => {
+    try {
+      const result = await batchMoveDocuments(documentIds, folderId)
+      if (result.success_count > 0) {
+        toast({
+          description: t('document.folder.batchMoveSuccess', { count: result.success_count }),
+        })
+      }
+      if (result.failed_count > 0) {
+        toast({
+          description: t('document.folder.batchMovePartial', {
+            success: result.success_count,
+            failed: result.failed_count,
+          }),
+          variant: 'destructive',
+        })
+      }
+      return result
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : t('document.folder.batchMoveFailed')
+      toast({ description: msg, variant: 'destructive' })
+      return {
+        success_count: 0,
+        failed_count: documentIds.length,
+        failed_ids: documentIds,
+        message: msg,
+      }
+    }
+  }, [])
+
   return {
     folders,
     loading,
@@ -135,5 +166,6 @@ export function useFolders(options: UseFoldersOptions) {
     updateFolder: update,
     deleteFolder: remove,
     moveDocument: move,
+    batchMove,
   }
 }

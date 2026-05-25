@@ -19,7 +19,19 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
-from app.schemas.device import DeviceInfo, DeviceListResponse
+from app.schemas.device import (
+    DeviceCommandRequest,
+    DeviceCommandResponse,
+    DeviceInfo,
+    DeviceListResponse,
+)
+from app.services.device.command_service import (
+    DeviceCommandConfigurationError,
+    DeviceCommandError,
+    DeviceCommandNotFoundError,
+    DeviceCommandUnknownKeyError,
+    execute_configured_device_command,
+)
 from app.services.device_service import device_service
 
 logger = logging.getLogger(__name__)
@@ -362,3 +374,67 @@ async def trigger_device_upgrade(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to trigger upgrade: {str(e)}",
         )
+
+
+@router.post("/{device_id}/commands", response_model=DeviceCommandResponse)
+async def execute_device_command(
+    device_id: str,
+    request: DeviceCommandRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> DeviceCommandResponse:
+    """
+    Execute a shell command on an online local executor device.
+
+    The backend sends a Socket.IO RPC to the target local executor and waits for
+    the completed process result.
+    """
+    user_id = current_user.id
+    try:
+        result = await execute_configured_device_command(
+            db=db,
+            user_id=user_id,
+            device_id=device_id,
+            command_key=request.command_key,
+            path=request.path or request.cwd,
+            args=request.args,
+            env=request.env,
+            timeout_seconds=request.timeout_seconds,
+            max_output_bytes=request.max_output_bytes,
+        )
+    except DeviceCommandNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        )
+    except DeviceCommandUnknownKeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+    except DeviceCommandConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        )
+    except DeviceCommandError as exc:
+        logger.warning(
+            "[Device Command] Command RPC failed: user_id=%s, device_id=%s, error=%s",
+            user_id,
+            device_id,
+            exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+
+    logger.info(
+        "[Device Command] Command completed: user_id=%s, device_id=%s, "
+        "exit_code=%s, duration=%s",
+        user_id,
+        device_id,
+        result.get("exit_code"),
+        result.get("duration"),
+    )
+    return DeviceCommandResponse(**result)

@@ -19,6 +19,9 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.share_link import ResourceType
+
 logger = logging.getLogger(__name__)
 
 # Module-level resolver registry
@@ -43,11 +46,15 @@ def register_entity_resolver(
     )
 
 
-def get_entity_resolver(entity_type: str) -> Optional["IExternalEntityResolver"]:
+def get_entity_resolver(
+    entity_type: str, **init_kwargs: object
+) -> Optional["IExternalEntityResolver"]:
     """Get a resolver instance for the given entity type.
 
     Args:
         entity_type: The entity type to get a resolver for
+        **init_kwargs: Additional arguments to pass to resolver constructor
+            (e.g., entity_type for resolvers that need to know their type)
 
     Returns:
         An IExternalEntityResolver instance, or None if no resolver is registered
@@ -57,7 +64,7 @@ def get_entity_resolver(entity_type: str) -> Optional["IExternalEntityResolver"]
 
     cls = _external_entity_resolvers.get(entity_type)
     if cls:
-        instance = cls()
+        instance = cls(**init_kwargs)
         _resolver_instances[entity_type] = instance
         return instance
     return None
@@ -158,12 +165,48 @@ class IExternalEntityResolver(ABC):
                 result[eid] = name
         return result
 
+    def validate_entity_id(self, db: Session, entity_id: str) -> bool:
+        """Validate that the given entity ID exists in the external system.
+
+        Default implementation returns True (no validation).
+        Subclasses (e.g., ErpEntityResolver) can override to verify
+        entity existence via external APIs.
+
+        Args:
+            db: Database session
+            entity_id: Entity identifier to validate
+
+        Returns:
+            True if entity exists, False otherwise
+        """
+        return True
+
+    def get_user_entities(
+        self, db: Session, user_id: int, entity_type: str
+    ) -> list[str]:
+        """Get all entity IDs that the user is affiliated with.
+
+        Default implementation returns an empty list.
+        Subclasses can override when the external API supports
+        listing all affiliations for a user (optimization path).
+
+        Args:
+            db: Database session
+            user_id: User ID
+            entity_type: Entity type to resolve
+
+        Returns:
+            List of entity IDs the user matches
+        """
+        return []
+
     @abstractmethod
     def get_resource_ids_by_entity(
         self,
         db: Session,
         user_id: int,
         entity_type: str,
+        resource_type: str = ResourceType.KNOWLEDGE_BASE.value,
         user_context: Optional[dict] = None,
     ) -> list[int]:
         """Get resource IDs accessible to user via entity binding.
@@ -175,9 +218,127 @@ class IExternalEntityResolver(ABC):
             db: Database session
             user_id: User ID
             entity_type: Entity type to resolve
+            resource_type: Resource type to filter (default: KnowledgeBase)
             user_context: Optional user profile data
 
         Returns:
             List of resource IDs accessible via this entity type
         """
         ...
+
+
+def list_resources_by_entity_match(
+    db: Session,
+    resource_type: str,
+    entity_type: str,
+    matched_entity_ids: list[str],
+) -> list[int]:
+    """Query resource_ids from ResourceMember by entity match.
+
+    This is a shared utility used by all resolver implementations
+    to avoid duplicating the same SQL logic.
+
+    Args:
+        db: Database session
+        resource_type: Resource type filter (e.g., 'Namespace', 'KnowledgeBase')
+        entity_type: Entity type filter (e.g., 'org_department')
+        matched_entity_ids: List of entity IDs that matched the user
+
+    Returns:
+        List of distinct resource_ids
+    """
+    if not matched_entity_ids:
+        return []
+
+    rows = (
+        db.query(ResourceMember.resource_id)
+        .filter(
+            ResourceMember.resource_type == resource_type,
+            ResourceMember.entity_type == entity_type,
+            ResourceMember.entity_id.in_(matched_entity_ids),
+            ResourceMember.status == MemberStatus.APPROVED.value,
+        )
+        .distinct()
+        .all()
+    )
+    return [r[0] for r in rows]
+
+
+def resolve_entity_roles_for_resource(
+    db: Session,
+    resource_type: str | list[str],
+    resource_id: int,
+    user_id: int,
+    status: str | list[str] | None = None,
+    exclude_entity_types: list[str] | None = None,
+) -> list[str]:
+    """Resolve entity-derived role strings for a user on a specific resource.
+
+    Queries entity-type ResourceMember rows, groups by entity_type, calls
+    registered resolvers' match_entity_bindings, and returns all matched
+    role strings.  Callers can take the highest role themselves.
+
+    Args:
+        db: Database session
+        resource_type: Resource type(s) to filter
+        resource_id: Resource ID
+        user_id: User ID
+        status: Status value(s) to filter. Defaults to APPROVED.
+        exclude_entity_types: Additional entity types to exclude
+            (defaults to ['user', ''])
+
+    Returns:
+        List of role strings from matched entity bindings
+    """
+    from collections import defaultdict
+
+    if status is None:
+        status = MemberStatus.APPROVED.value
+
+    resource_types = (
+        [resource_type] if isinstance(resource_type, str) else resource_type
+    )
+    statuses = [status] if isinstance(status, str) else status
+    excludes = set(exclude_entity_types or [])
+    excludes.update({"user", ""})
+
+    entity_rows = (
+        db.query(
+            ResourceMember.entity_type,
+            ResourceMember.entity_id,
+            ResourceMember.role,
+        )
+        .filter(
+            ResourceMember.resource_type.in_(resource_types),
+            ResourceMember.resource_id == resource_id,
+            ResourceMember.entity_type.notin_(list(excludes)),
+            ResourceMember.entity_id.isnot(None),
+            ResourceMember.status.in_(statuses),
+        )
+        .all()
+    )
+
+    if not entity_rows:
+        return []
+
+    entity_groups: defaultdict[str, list[tuple[str, str]]] = defaultdict(list)
+    for et, eid, role in entity_rows:
+        if et and eid:
+            entity_groups[et].append((eid, role))
+
+    matched_roles = []
+    for entity_type_str, entries in entity_groups.items():
+        resolver = get_entity_resolver(entity_type_str)
+        if not resolver:
+            continue
+        eids = [eid for eid, _ in entries]
+        matched = resolver.match_entity_bindings(db, user_id, entity_type_str, eids)
+        if not matched:
+            continue
+        role_by_eid = {eid: role for eid, role in entries}
+        for eid in matched:
+            role = role_by_eid.get(eid)
+            if role:
+                matched_roles.append(role)
+
+    return matched_roles

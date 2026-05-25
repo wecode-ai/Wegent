@@ -7,13 +7,17 @@
  */
 
 import { useState, useCallback, useEffect } from 'react'
+import { ApiError } from '@/apis/client'
 import {
   listDocuments,
   createDocument,
   updateDocument,
   deleteDocument,
   batchDeleteDocuments,
+  transferDocuments,
   type BatchOperationResult,
+  type TransferDocumentsRequest,
+  type TransferDocumentsResponse,
 } from '@/apis/knowledge'
 import type {
   KnowledgeDocument,
@@ -129,6 +133,39 @@ export function useDocuments(options: UseDocumentsOptions) {
     }
   }, [])
 
+  // Transfer documents to another KB
+  // Transfer documents to another KB
+  const transfer = useCallback(
+    async (data: TransferDocumentsRequest): Promise<TransferDocumentsResponse | null> => {
+      if (!knowledgeBaseId) return null
+      setLoading(true)
+      setError(null)
+      try {
+        const result = await transferDocuments(knowledgeBaseId, data)
+        toast({
+          description: t('document.document.batch.transferSuccess', {
+            docCount: result.transferred_document_count,
+            folderCount: result.transferred_folder_count,
+          }),
+        })
+        await fetchDocuments()
+        return result
+      } catch (err) {
+        let message: string
+        if (err instanceof ApiError && err.errorCode && typeof err.errorCode === 'string') {
+          const i18nKey = `document.document.batch.errors.${err.errorCode}`
+          message = t(i18nKey)
+        } else {
+          message = err instanceof Error ? err.message : t('document.document.batch.transferFailed')
+        }
+        toast({ title: message, variant: 'destructive' })
+        return null
+      } finally {
+        setLoading(false)
+      }
+    },
+    [knowledgeBaseId, fetchDocuments, t]
+  )
   useEffect(() => {
     if (autoLoad && knowledgeBaseId) {
       fetchDocuments()
@@ -144,5 +181,6 @@ export function useDocuments(options: UseDocumentsOptions) {
     update,
     remove,
     batchDelete,
+    transfer,
   }
 }

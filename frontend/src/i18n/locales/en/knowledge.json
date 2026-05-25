@@ -227,7 +227,12 @@
       "depthExceeded": "Folder hierarchy cannot exceed 4 levels",
       "documentPlacementDepthExceeded": "Documents can only be placed in the 4th folder level or above",
       "moveDocumentHint": "Move \"{{name}}\" to:",
-      "current": "current"
+      "current": "current",
+      "batchMoveDocument": "Move Documents",
+      "batchMoveDocumentHint": "Move {{count}} selected documents to:",
+      "batchMoveSuccess": "{{count}} document(s) moved successfully",
+      "batchMoveFailed": "Failed to move documents",
+      "batchMovePartial": "Batch move completed: {{success}} succeeded, {{failed}} failed. Failed documents remain selected and highlighted for retry"
     },
     "document": {
       "title": "Documents",
@@ -296,10 +301,33 @@
       "uploadSuccess": "File uploaded successfully",
       "batch": {
         "selected": "{{count}} selected",
+        "selectedWithFolders": "{{docCount}} document(s) and {{folderCount}} folder(s) selected",
         "selectAll": "Select All",
         "enable": "Enable",
         "disable": "Disable",
-        "delete": "Delete"
+        "delete": "Delete",
+        "move": "Move",
+        "transfer": "Transfer to KB",
+        "transferTitle": "Transfer to Knowledge Base",
+        "transferHint": "Transfer {{docCount}} document(s) and {{folderCount}} folder(s) to an allowed target knowledge base. The folder structure will be preserved.",
+        "selectTargetKb": "Select target knowledge base",
+        "targetKbRequired": "Please select a target knowledge base",
+        "transferring": "Transferring...",
+        "transferringProgress": "Transferring {{current}}/{{total}} item(s)...",
+        "transferSuccess": "Transferred {{docCount}} document(s) and {{folderCount}} folder(s) successfully",
+        "transferFailed": "Transfer failed",
+        "noOtherKbs": "No target knowledge bases match the transfer rules",
+        "errors": {
+          "SOURCE_TARGET_SAME": "Source and target knowledge bases must be different",
+          "SOURCE_KB_NOT_FOUND": "Source knowledge base not found",
+          "TARGET_KB_NOT_FOUND": "Target knowledge base not found",
+          "INVALID_TRANSFER_NAMESPACE": "Unsupported target knowledge base namespace",
+          "FOLDERS_NOT_FOUND": "Specified folders not found in the source knowledge base",
+          "DOCS_NOT_FOUND": "Specified documents not found in the source knowledge base",
+          "NOTEBOOK_DOC_LIMIT_EXCEEDED": "Notebook mode knowledge base document limit exceeded",
+          "DUPLICATE_DOCUMENT_NAMES": "Documents with the same name already exist in the target knowledge base",
+          "KB_INSUFFICIENT_PERMISSION": "You do not have permission to operate on this knowledge base"
+        }
       },
       "detail": {
         "title": "Document Detail",
@@ -643,7 +671,16 @@
       "confirm": "Confirm Migration",
       "sourceKnowledgeBase": "Source Knowledge Base",
       "success": "Knowledge base migrated successfully",
-      "failed": "Failed to migrate knowledge base"
+      "failed": "Failed to migrate knowledge base",
+      "errors": {
+        "KB_NOT_FOUND": "Knowledge base not found",
+        "KB_NOT_PERSONAL": "Only personal knowledge bases can be migrated to a group",
+        "KB_NOT_CREATOR": "Only the creator can migrate this knowledge base",
+        "KB_NO_GROUP_ACCESS": "You do not have access to the target group",
+        "KB_INSUFFICIENT_PERMISSION": "You need maintainer or creator permission of the target group to migrate the knowledge base",
+        "KB_DUPLICATE_NAME_IN_GROUP": "A knowledge base with the same name already exists in the target group",
+        "KB_MIGRATE_CONFLICT": "A knowledge base with the same name already exists in the target group"
+      }
     }
   },
   "add_repository": "Add Repository",

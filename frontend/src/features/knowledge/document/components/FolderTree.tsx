@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import {
   ChevronRight,
   ChevronDown,
@@ -14,6 +14,7 @@ import {
   Pencil,
   Trash2,
 } from 'lucide-react'
+import { Checkbox } from '@/components/ui/checkbox'
 import { DocumentItem } from './DocumentItem'
 import type { KnowledgeDocument, KnowledgeFolder } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -71,6 +72,12 @@ interface FolderTreeProps {
   sortField: SortField
   /** Sort order (required) */
   sortOrder: SortOrder
+  /** Whether folders can be selected for batch operations (e.g., transfer) */
+  canSelectFolders?: boolean
+  /** Set of selected folder IDs (only API folders with isApiFolder=true) */
+  selectedFolderIds?: Set<number>
+  /** Callback when a folder is selected or deselected */
+  onSelectFolder?: (folderId: number, selected: boolean) => void
 }
 
 export type SortField = 'name' | 'size' | 'createdAt' | 'updatedAt'
@@ -307,6 +314,22 @@ function treeNodeKey(node: TreeNode): string {
   return `folder:${node.path}`
 }
 
+/**
+ * Collect all document IDs within a folder node recursively.
+ * Used to determine which documents are affected when a folder is selected/deselected.
+ */
+function collectDocumentIdsInNode(node: FolderNode): number[] {
+  const ids: number[] = []
+  for (const child of node.children) {
+    if (child.type === 'document') {
+      ids.push((child as DocumentNode).document.id)
+    } else {
+      ids.push(...collectDocumentIdsInNode(child as FolderNode))
+    }
+  }
+  return ids
+}
+
 interface FolderRowProps {
   node: FolderNode
   depth: number
@@ -317,6 +340,10 @@ interface FolderRowProps {
   onRenameFolder?: (folderId: number, currentName: string) => void
   onDeleteFolder?: (folderId: number, folderName: string) => void
   canManageFolders?: boolean
+  /** Folder selection props */
+  canSelectFolders?: boolean
+  folderChecked?: boolean | 'indeterminate'
+  onFolderCheck?: (checked: boolean) => void
 }
 
 function FolderRow({
@@ -329,6 +356,9 @@ function FolderRow({
   onRenameFolder,
   onDeleteFolder,
   canManageFolders,
+  canSelectFolders,
+  folderChecked,
+  onFolderCheck,
 }: FolderRowProps) {
   const { t } = useTranslation('knowledge')
   const indent = depth * (compact ? 12 : 16)
@@ -373,6 +403,22 @@ function FolderRow({
       </span>
     ) : null
 
+  // Folder checkbox for batch selection (only for API folders with documents when canSelectFolders is enabled)
+  // Empty folders cannot be selected because the backend skips transfer when there are no documents
+  const folderCheckbox =
+    canSelectFolders && node.isApiFolder ? (
+      <Checkbox
+        checked={folderChecked}
+        disabled={node.documentCount === 0}
+        onCheckedChange={checked => {
+          onFolderCheck?.(checked === true)
+        }}
+        onClick={e => e.stopPropagation()}
+        className="data-[state=checked]:bg-primary data-[state=checked]:border-primary flex-shrink-0"
+        data-testid={`folder-checkbox-${node.id}`}
+      />
+    ) : null
+
   if (compact) {
     return (
       <div
@@ -389,6 +435,7 @@ function FolderRow({
         }}
         title={node.name}
       >
+        {folderCheckbox}
         {expanded ? (
           <ChevronDown className="w-3 h-3 text-text-muted flex-shrink-0" />
         ) : (
@@ -414,6 +461,7 @@ function FolderRow({
       style={{ paddingLeft: `${16 + indent}px` }}
       onClick={() => onToggle(node.path)}
     >
+      {folderCheckbox}
       {expanded ? (
         <ChevronDown className="w-4 h-4 text-text-muted flex-shrink-0" />
       ) : (
@@ -459,6 +507,11 @@ interface FolderTreeNodeProps {
   onSelect?: (doc: KnowledgeDocument, selected: boolean) => void
   ragConfigured?: boolean
   nameColumnWidth?: number
+  // Folder selection props
+  canSelectFolders?: boolean
+  selectedFolderIds?: Set<number>
+  selectedIds?: Set<number>
+  onSelectFolder?: (folderId: number, selected: boolean) => void
 }
 
 function FolderTreeNode({
@@ -485,7 +538,21 @@ function FolderTreeNode({
   onSelect,
   ragConfigured,
   nameColumnWidth,
+  canSelectFolders,
+  selectedFolderIds,
+  selectedIds,
+  onSelectFolder,
 }: FolderTreeNodeProps) {
+  // Hooks must be called unconditionally (before any early returns)
+  const handleFolderCheck = useCallback(
+    (checked: boolean) => {
+      if (node.type !== 'document' && (node as FolderNode).isApiFolder) {
+        onSelectFolder?.((node as FolderNode).id, checked)
+      }
+    },
+    [node, onSelectFolder]
+  )
+
   if (node.type === 'document') {
     const doc = node.document
     const docWithDisplayName = { ...doc, name: node.displayName }
@@ -542,6 +609,21 @@ function FolderTreeNode({
 
   // Folder node
   const isExpanded = expandedFolders.has(node.path)
+
+  // Compute folder checkbox state based on selected documents within this folder
+  let folderChecked: boolean | 'indeterminate' = false
+  if (canSelectFolders && node.isApiFolder) {
+    const docIdsInFolder = collectDocumentIdsInNode(node)
+    const selectedCount = docIdsInFolder.filter(id => selectedIds?.has(id)).length
+    if (selectedCount === 0) {
+      folderChecked = selectedFolderIds?.has(node.id) ?? false
+    } else if (selectedCount === docIdsInFolder.length) {
+      folderChecked = true
+    } else {
+      folderChecked = 'indeterminate'
+    }
+  }
+
   return (
     <div>
       <FolderRow
@@ -554,6 +636,9 @@ function FolderTreeNode({
         onRenameFolder={onRenameFolder}
         onDeleteFolder={onDeleteFolder}
         canManageFolders={canManageFolders}
+        canSelectFolders={canSelectFolders}
+        folderChecked={folderChecked}
+        onFolderCheck={handleFolderCheck}
       />
       {isExpanded && (
         <div>
@@ -583,6 +668,10 @@ function FolderTreeNode({
               onSelect={onSelect}
               ragConfigured={ragConfigured}
               nameColumnWidth={nameColumnWidth}
+              canSelectFolders={canSelectFolders}
+              selectedFolderIds={selectedFolderIds}
+              selectedIds={selectedIds}
+              onSelectFolder={onSelectFolder}
             />
           ))}
         </div>
@@ -623,6 +712,9 @@ export function FolderTree({
   canManageFolders = false,
   sortField,
   sortOrder,
+  canSelectFolders = false,
+  selectedFolderIds,
+  onSelectFolder,
 }: FolderTreeProps) {
   const tree = useMemo(
     () => buildMergedTree(folders, documents, sortField, sortOrder),
@@ -713,6 +805,10 @@ export function FolderTree({
             selected={id => selectedIds?.has(id) ?? false}
             onSelect={onSelect}
             ragConfigured={ragConfigured}
+            canSelectFolders={canSelectFolders}
+            selectedFolderIds={selectedFolderIds}
+            selectedIds={selectedIds}
+            onSelectFolder={onSelectFolder}
           />
         ))}
       </div>
@@ -746,6 +842,10 @@ export function FolderTree({
       onSelect={onSelect}
       ragConfigured={ragConfigured}
       nameColumnWidth={nameColumnWidth}
+      canSelectFolders={canSelectFolders}
+      selectedFolderIds={selectedFolderIds}
+      selectedIds={selectedIds}
+      onSelectFolder={onSelectFolder}
     />
   ))
 

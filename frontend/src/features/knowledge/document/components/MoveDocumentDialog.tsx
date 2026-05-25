@@ -36,6 +36,10 @@ interface MoveDocumentDialogProps {
   onConfirm: (targetFolderId: number) => Promise<void>
   /** Whether the move operation is in progress */
   isSubmitting?: boolean
+  /** Batch mode: adapted for moving multiple documents at once */
+  batchMode?: boolean
+  /** Number of selected documents (only used in batch mode) */
+  selectedCount?: number
 }
 
 export function MoveDocumentDialog({
@@ -46,6 +50,8 @@ export function MoveDocumentDialog({
   currentFolderId = 0,
   onConfirm,
   isSubmitting = false,
+  batchMode = false,
+  selectedCount = 0,
 }: MoveDocumentDialogProps) {
   const { t } = useTranslation('knowledge')
   const [targetFolderId, setTargetFolderId] = useState<string>(String(currentFolderId))
@@ -56,8 +62,8 @@ export function MoveDocumentDialog({
 
   const handleOpenChange = (open: boolean) => {
     if (!open) {
-      // Reset to current folder when closing
-      setTargetFolderId(String(currentFolderId))
+      // Reset to current folder when closing (single mode) or root (batch mode)
+      setTargetFolderId(batchMode ? '0' : String(currentFolderId))
     }
     onOpenChange(open)
   }
@@ -66,30 +72,39 @@ export function MoveDocumentDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-[400px]">
         <DialogHeader>
-          <DialogTitle>{t('document.folder.moveDocument')}</DialogTitle>
+          <DialogTitle>
+            {batchMode ? t('document.folder.batchMoveDocument') : t('document.folder.moveDocument')}
+          </DialogTitle>
         </DialogHeader>
 
         <div className="py-4 space-y-4">
           <p className="text-sm text-text-secondary">
-            {t('document.folder.moveDocumentHint', { name: documentName })}
+            {batchMode
+              ? t('document.folder.batchMoveDocumentHint', { count: selectedCount })
+              : t('document.folder.moveDocumentHint', { name: documentName })}
           </p>
 
           <div className="space-y-1.5">
             <Label className="text-sm font-medium">{t('document.folder.selectFolder')}</Label>
             <Select value={targetFolderId} onValueChange={setTargetFolderId}>
-              <SelectTrigger className="h-9">
+              <SelectTrigger
+                className="h-9"
+                data-testid={batchMode ? 'batch-move-folder-select' : undefined}
+              >
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="0">
                   {t('document.folder.rootLevel')}
-                  {currentFolderId === 0 ? ` (${t('document.folder.current')})` : ''}
+                  {!batchMode && currentFolderId === 0 ? ` (${t('document.folder.current')})` : ''}
                 </SelectItem>
                 {folders.map(folder => (
                   <SelectItem key={folder.id} value={String(folder.id)}>
                     {'\u00A0'.repeat(folder.depth * 2)}
                     {folder.name}
-                    {folder.id === currentFolderId ? ` (${t('document.folder.current')})` : ''}
+                    {!batchMode && folder.id === currentFolderId
+                      ? ` (${t('document.folder.current')})`
+                      : ''}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -104,7 +119,8 @@ export function MoveDocumentDialog({
           <Button
             variant="primary"
             onClick={handleConfirm}
-            disabled={isSubmitting || Number(targetFolderId) === currentFolderId}
+            disabled={isSubmitting || (!batchMode && Number(targetFolderId) === currentFolderId)}
+            data-testid={batchMode ? 'batch-move-confirm-button' : undefined}
           >
             {t('common:actions.move')}
           </Button>
