@@ -117,8 +117,7 @@ class SummaryService:
     ) -> Optional[dict[str, Any]]:
         """Prepare KB summary payloads for persistence.
 
-        Strips derived has_manual_override so it is never stored;
-        it is recomputed at read time via _compute_has_manual_override.
+        Strips legacy derived fields so they are never stored.
         """
         if not summary_data:
             return None
@@ -126,13 +125,6 @@ class SummaryService:
         payload = dict(summary_data)
         payload.pop("has_manual_override", None)
         return payload
-
-    @staticmethod
-    def _compute_has_manual_override(
-        summary_data: Optional[dict[str, Any]],
-    ) -> bool:
-        """Derive has_manual_override from manual_long_summary presence."""
-        return bool(summary_data and summary_data.get("manual_long_summary"))
 
     def _persist_kb_summary(
         self, kb: Kind, summary_data: Optional[dict[str, Any]]
@@ -761,11 +753,6 @@ class SummaryService:
 
         if not summary_payload:
             return None
-
-        summary_payload["has_manual_override"] = self._compute_has_manual_override(
-            summary_data
-        )
-
         return KnowledgeBaseSummary(**summary_payload)
 
     async def update_kb_manual_summary(

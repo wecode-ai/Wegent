@@ -488,7 +488,6 @@ export interface KnowledgeBaseSummary {
     id: number
     name: string
   } | null
-  has_manual_override?: boolean
 }
 
 export interface KnowledgeBaseSummaryResponse {

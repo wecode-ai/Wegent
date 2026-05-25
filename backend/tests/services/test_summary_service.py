@@ -287,7 +287,6 @@ class TestManualKnowledgeBaseSummary:
         assert summary is not None
         assert summary.long_summary == "AI long summary"
         assert summary.manual_long_summary == "Manual long summary"
-        assert summary.has_manual_override is True
         assert summary.manual_updated_by is not None
         assert summary.manual_updated_by.name == test_user.user_name
         assert summary.status == "completed"
@@ -309,7 +308,6 @@ class TestManualKnowledgeBaseSummary:
         assert summary is not None
         assert summary.long_summary == "AI long summary"
         assert summary.manual_long_summary is None
-        assert summary.has_manual_override is False
 
     @pytest.mark.asyncio
     async def test_update_manual_summary_does_not_set_completed_without_ai_summary(
@@ -356,7 +354,6 @@ class TestManualKnowledgeBaseSummary:
         assert summary is not None
         assert summary.status == "pending"
         assert summary.manual_long_summary == "Manual long summary"
-        assert summary.has_manual_override is True
 
     @pytest.mark.asyncio
     async def test_trigger_kb_summary_preserves_manual_summary_and_updates_ai_fields(
@@ -420,7 +417,6 @@ class TestManualKnowledgeBaseSummary:
         assert refreshed_summary is not None
         assert refreshed_summary.long_summary == "New AI long summary"
         assert refreshed_summary.manual_long_summary == "Manual long summary"
-        assert refreshed_summary.has_manual_override is True
 
     @pytest.mark.asyncio
     async def test_trigger_kb_summary_skips_when_summary_disabled(

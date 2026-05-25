@@ -92,4 +92,3 @@ def test_update_kb_summary_preserves_ai_status(
     body = response.json()
     assert body["summary"]["status"] == "pending"
     assert body["summary"]["manual_long_summary"] == "Manual summary"
-    assert body["summary"]["has_manual_override"] is True

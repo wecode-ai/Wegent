@@ -120,11 +120,6 @@ class KnowledgeBaseSummary(BaseModel):
         default=None,
         description="Manual summary editor info",
     )
-    has_manual_override: bool = Field(
-        default=False,
-        description="Whether a manual summary override is active",
-    )
-
     model_config = ConfigDict(extra="allow")
 
 
