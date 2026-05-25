@@ -72,7 +72,7 @@ export function useDocuments(options: UseDocumentsOptions) {
         setDocuments(prev => [created, ...prev])
         return created
       } catch (err) {
-        const message = mapKnowledgeDocumentErrorMessage(err, t, 'document.createFailed')
+        const message = mapKnowledgeDocumentErrorMessage(err, t, 'document.document.createFailed')
         toast({ title: message, variant: 'destructive' })
         throw err
       } finally {
@@ -91,7 +91,7 @@ export function useDocuments(options: UseDocumentsOptions) {
         setDocuments(prev => prev.map(doc => (doc.id === id ? updated : doc)))
         return updated
       } catch (err) {
-        const message = mapKnowledgeDocumentErrorMessage(err, t, 'document.updateFailed')
+        const message = mapKnowledgeDocumentErrorMessage(err, t, 'document.document.updateFailed')
         toast({ title: message, variant: 'destructive' })
         throw err
       } finally {
@@ -109,7 +109,7 @@ export function useDocuments(options: UseDocumentsOptions) {
         await deleteDocument(id)
         setDocuments(prev => prev.filter(doc => doc.id !== id))
       } catch (err) {
-        const message = mapKnowledgeDocumentErrorMessage(err, t, 'document.deleteFailed')
+        const message = mapKnowledgeDocumentErrorMessage(err, t, 'document.document.deleteFailed')
         toast({ title: message, variant: 'destructive' })
         throw err
       } finally {
