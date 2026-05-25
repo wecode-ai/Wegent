@@ -166,24 +166,33 @@ class ErpEntityResolver(IExternalEntityResolver):
         """
         return None
 
+    def validate_entity_id(self, db: Session, entity_id: str) -> bool:
+        """Validate that the given department ID exists in ERP.
+
+        The ERP search API only supports keyword-based search, not exact
+        ID lookup, so this method cannot definitively reject invalid IDs.
+        Always returns True to avoid blocking valid operations.
+        """
+        return True
+
     def get_resource_ids_by_entity(
         self,
         db: Session,
         user_id: int,
         entity_type: str,
+        resource_type: str = "KnowledgeBase",
         user_context: Optional[dict] = None,
     ) -> list[int]:
         if entity_type != "org_department":
             return []
 
-        # Find all KBs with org_department bindings
+        # Find all candidate dept bindings for the given resource_type
         from app.models.resource_member import MemberStatus, ResourceMember
-        from app.models.share_link import ResourceType
 
         all_dept_bindings = (
             db.query(ResourceMember.entity_id)
             .filter(
-                ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                ResourceMember.resource_type == resource_type,
                 ResourceMember.entity_type == "org_department",
                 ResourceMember.entity_id.isnot(None),
                 ResourceMember.status == MemberStatus.APPROVED.value,
@@ -195,6 +204,7 @@ class ErpEntityResolver(IExternalEntityResolver):
         dept_ids = [b.entity_id for b in all_dept_bindings if b.entity_id]
         logger.info(
             f"get_resource_ids_by_entity: user_id={user_id} "
+            f"resource_type={resource_type} "
             f"total_org_department_bindings={len(dept_ids)}"
         )
         if not dept_ids:
@@ -211,22 +221,17 @@ class ErpEntityResolver(IExternalEntityResolver):
         if not matched_depts:
             return []
 
-        results = (
-            db.query(ResourceMember.resource_id)
-            .filter(
-                ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
-                ResourceMember.entity_type == "org_department",
-                ResourceMember.entity_id.in_(matched_depts),
-                ResourceMember.status == MemberStatus.APPROVED.value,
-            )
-            .all()
+        # Delegate resource_id resolution to the shared base utility
+        from app.services.share.external_entity_resolver import (
+            list_resources_by_entity_match,
         )
-        kb_ids = list(set(r.resource_id for r in results))
-        logger.info(
-            f"get_resource_ids_by_entity: resolved_kb_ids={kb_ids} "
-            f"for user_id={user_id}"
+
+        return list_resources_by_entity_match(
+            db,
+            resource_type=resource_type,
+            entity_type="org_department",
+            matched_entity_ids=matched_depts,
         )
-        return kb_ids
 
     def _read_profile_employee_id(self, db: Session, user_id: int) -> Optional[str]:
         profile = (

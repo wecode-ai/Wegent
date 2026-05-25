@@ -103,6 +103,16 @@ export interface GroupMemberListResponse {
   items: GroupMember[]
 }
 
+export interface GroupEntityMember {
+  entity_type: string
+  entity_id: string
+  entity_display_name?: string
+  role: GroupRole
+  invited_by_user_id: number
+  invited_by_user_name?: string
+  created_at: string
+}
+
 /**
  * Result of adding a member operation
  */

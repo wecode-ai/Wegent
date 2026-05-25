@@ -9,9 +9,9 @@
  * and provides helpers to update the URL when navigation changes.
  */
 
-import { useState, useEffect, useCallback } from 'react'
-import { useSearchParams, useRouter } from 'next/navigation'
-import { buildKbUrl } from '@/utils/knowledgeUrl'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useSearchParams, useRouter, usePathname } from 'next/navigation'
+import { buildKbUrl, parseKbUrl } from '@/utils/knowledgeUrl'
 import type { KnowledgeBase } from '@/types/knowledge'
 
 interface UseKnowledgeUrlSyncParams {
@@ -21,7 +21,9 @@ interface UseKnowledgeUrlSyncParams {
   isGroupsLoading: boolean
   selectKb: (kb: KnowledgeBase) => void
   selectGroup: (groupId: string) => void
+  selectGroups: () => void
   selectDingtalk: () => void
+  clearSelection: () => void
 }
 
 export function useKnowledgeUrlSync({
@@ -31,31 +33,47 @@ export function useKnowledgeUrlSync({
   isGroupsLoading,
   selectKb,
   selectGroup,
+  selectGroups,
   selectDingtalk,
+  clearSelection,
 }: UseKnowledgeUrlSyncParams) {
   const router = useRouter()
+  const pathname = usePathname()
   const searchParams = useSearchParams()
   const [initialUrlSyncDone, setInitialUrlSyncDone] = useState(false)
+  const lastSyncedUrlRef = useRef<string | null>(null)
 
-  // Sync selected KB or group from URL parameter on initial load only
+  // Keep sidebar selection in sync with the current URL.
+  // This handles initial load, client-side history updates, and browser back/forward.
   useEffect(() => {
-    if (initialUrlSyncDone) return
     if (isGroupsLoading) return
 
-    if (initialKbName) {
+    const currentUrlKey = `${pathname}?${searchParams.toString()}`
+    if (lastSyncedUrlRef.current === currentUrlKey && initialUrlSyncDone) return
+
+    const parsedKbUrl = pathname ? parseKbUrl(pathname) : null
+
+    if (parsedKbUrl) {
       let found: KnowledgeBase | undefined
-      if (initialKbNamespace) {
+      const targetNamespace = parsedKbUrl.namespace
+
+      if (targetNamespace) {
         found = allKnowledgeBases.find(
           kb =>
-            kb.name.toLowerCase() === initialKbName.toLowerCase() &&
-            kb.namespace.toLowerCase() === initialKbNamespace.toLowerCase()
+            kb.name.toLowerCase() === parsedKbUrl.kbName.toLowerCase() &&
+            kb.namespace.toLowerCase() === targetNamespace.toLowerCase()
         )
       } else {
-        found = allKnowledgeBases.find(kb => kb.name.toLowerCase() === initialKbName.toLowerCase())
+        found = allKnowledgeBases.find(
+          kb => kb.name.toLowerCase() === parsedKbUrl.kbName.toLowerCase()
+        )
       }
       if (found) {
         selectKb(found)
+      } else {
+        clearSelection()
       }
+      lastSyncedUrlRef.current = currentUrlKey
       setInitialUrlSyncDone(true)
       return
     }
@@ -71,21 +89,27 @@ export function useKnowledgeUrlSync({
           selectKb(found)
         }
       }
+    } else if (groupParam === 'all-groups') {
+      selectGroups()
     } else if (groupParam === 'dingtalk') {
       selectDingtalk()
     } else if (groupParam) {
       selectGroup(groupParam)
+    } else {
+      clearSelection()
     }
+    lastSyncedUrlRef.current = currentUrlKey
     setInitialUrlSyncDone(true)
   }, [
+    pathname,
     searchParams,
     allKnowledgeBases,
     isGroupsLoading,
     selectKb,
     selectGroup,
+    selectGroups,
     selectDingtalk,
-    initialKbNamespace,
-    initialKbName,
+    clearSelection,
     initialUrlSyncDone,
   ])
 
@@ -93,7 +117,11 @@ export function useKnowledgeUrlSync({
     (params: { kb?: number | null; group?: string | null }) => {
       if (params.kb !== undefined && params.kb !== null) return
 
-      if (initialKbName !== undefined) {
+      const isVirtualKbRoute = Boolean(
+        pathname && parseKbUrl(pathname) && !pathname.startsWith('/knowledge/document/')
+      )
+
+      if (isVirtualKbRoute || initialKbName !== undefined || initialKbNamespace !== undefined) {
         const newSearchParams = new URLSearchParams()
         newSearchParams.set('type', 'document')
         if (params.group !== undefined && params.group !== null) {
@@ -117,10 +145,13 @@ export function useKnowledgeUrlSync({
 
       router.replace(`?${newSearchParams.toString()}`, { scroll: false })
     },
-    [router, searchParams, initialKbName]
+    [router, searchParams, pathname, initialKbName, initialKbNamespace]
   )
 
-  const navigateToKb = useCallback(
+  // Navigate to a KB by updating the URL via history.pushState without triggering
+  // a Next.js page remount. Use this when switching KBs from the sidebar on a
+  // detail page to avoid the full unmount-remount cycle that causes UI flickering.
+  const navigateToKbViaHistory = useCallback(
     (
       kb: { name: string; namespace: string },
       allKbsWithGroupInfo: Array<{ name: string; namespace: string; group_type?: string }>
@@ -130,10 +161,10 @@ export function useKnowledgeUrlSync({
       )
       const isOrganization = kbWithInfo?.group_type === 'organization'
       const kbPath = buildKbUrl(kb.namespace, kb.name, isOrganization)
-      router.push(kbPath)
+      window.history.pushState({}, '', kbPath)
     },
-    [router]
+    []
   )
 
-  return { initialUrlSyncDone, updateUrlParams, navigateToKb }
+  return { initialUrlSyncDone, updateUrlParams, navigateToKbViaHistory }
 }

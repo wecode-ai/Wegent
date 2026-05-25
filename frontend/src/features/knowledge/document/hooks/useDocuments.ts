@@ -7,13 +7,17 @@
  */
 
 import { useState, useCallback, useEffect } from 'react'
+import { ApiError } from '@/apis/client'
 import {
   listDocuments,
   createDocument,
   updateDocument,
   deleteDocument,
   batchDeleteDocuments,
+  transferDocuments,
   type BatchOperationResult,
+  type TransferDocumentsRequest,
+  type TransferDocumentsResponse,
 } from '@/apis/knowledge'
 import type {
   KnowledgeDocument,
@@ -21,6 +25,8 @@ import type {
   KnowledgeDocumentUpdate,
 } from '@/types/knowledge'
 import { toast } from '@/hooks/use-toast'
+import { useTranslation } from '@/hooks/useTranslation'
+import { mapKnowledgeDocumentErrorMessage } from '../utils/error-messages'
 
 interface UseDocumentsOptions {
   knowledgeBaseId: number | null
@@ -29,6 +35,7 @@ interface UseDocumentsOptions {
 
 export function useDocuments(options: UseDocumentsOptions) {
   const { knowledgeBaseId, autoLoad = true } = options
+  const { t } = useTranslation('knowledge')
 
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([])
   const [loading, setLoading] = useState(false)
@@ -65,67 +72,112 @@ export function useDocuments(options: UseDocumentsOptions) {
         setDocuments(prev => [created, ...prev])
         return created
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to create document'
+        const message = mapKnowledgeDocumentErrorMessage(err, t, 'document.document.createFailed')
         toast({ title: message, variant: 'destructive' })
         throw err
       } finally {
         setLoading(false)
       }
     },
-    [knowledgeBaseId]
+    [knowledgeBaseId, t]
   )
 
-  const update = useCallback(async (id: number, data: KnowledgeDocumentUpdate) => {
-    setLoading(true)
-    setError(null)
-    try {
-      const updated = await updateDocument(id, data)
-      setDocuments(prev => prev.map(doc => (doc.id === id ? updated : doc)))
-      return updated
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to update document'
-      toast({ title: message, variant: 'destructive' })
-      throw err
-    } finally {
-      setLoading(false)
-    }
-  }, [])
+  const update = useCallback(
+    async (id: number, data: KnowledgeDocumentUpdate) => {
+      setLoading(true)
+      setError(null)
+      try {
+        const updated = await updateDocument(id, data)
+        setDocuments(prev => prev.map(doc => (doc.id === id ? updated : doc)))
+        return updated
+      } catch (err) {
+        const message = mapKnowledgeDocumentErrorMessage(err, t, 'document.document.updateFailed')
+        toast({ title: message, variant: 'destructive' })
+        throw err
+      } finally {
+        setLoading(false)
+      }
+    },
+    [t]
+  )
 
-  const remove = useCallback(async (id: number) => {
-    setLoading(true)
-    setError(null)
-    try {
-      await deleteDocument(id)
-      setDocuments(prev => prev.filter(doc => doc.id !== id))
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to delete document'
-      toast({ title: message, variant: 'destructive' })
-      throw err
-    } finally {
-      setLoading(false)
-    }
-  }, [])
+  const remove = useCallback(
+    async (id: number) => {
+      setLoading(true)
+      setError(null)
+      try {
+        await deleteDocument(id)
+        setDocuments(prev => prev.filter(doc => doc.id !== id))
+      } catch (err) {
+        const message = mapKnowledgeDocumentErrorMessage(err, t, 'document.document.deleteFailed')
+        toast({ title: message, variant: 'destructive' })
+        throw err
+      } finally {
+        setLoading(false)
+      }
+    },
+    [t]
+  )
 
   // Batch operations
-  const batchDelete = useCallback(async (ids: number[]): Promise<BatchOperationResult> => {
-    setLoading(true)
-    setError(null)
-    try {
-      const result = await batchDeleteDocuments(ids)
-      // Remove successfully deleted documents from state
-      setDocuments(prev =>
-        prev.filter(doc => !ids.includes(doc.id) || result.failed_ids.includes(doc.id))
-      )
-      return result
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to batch delete documents'
-      toast({ title: message, variant: 'destructive' })
-      throw err
-    } finally {
-      setLoading(false)
-    }
-  }, [])
+  const batchDelete = useCallback(
+    async (ids: number[]): Promise<BatchOperationResult> => {
+      setLoading(true)
+      setError(null)
+      try {
+        const result = await batchDeleteDocuments(ids)
+        // Remove successfully deleted documents from state
+        setDocuments(prev =>
+          prev.filter(doc => !ids.includes(doc.id) || result.failed_ids.includes(doc.id))
+        )
+        return result
+      } catch (err) {
+        const message = mapKnowledgeDocumentErrorMessage(
+          err,
+          t,
+          'document.document.batchDeleteFailed'
+        )
+        toast({ title: message, variant: 'destructive' })
+        throw err
+      } finally {
+        setLoading(false)
+      }
+    },
+    [t]
+  )
 
+  // Transfer documents to another KB
+  const transfer = useCallback(
+    async (data: TransferDocumentsRequest): Promise<TransferDocumentsResponse | null> => {
+      if (!knowledgeBaseId) return null
+      setLoading(true)
+      setError(null)
+      try {
+        const result = await transferDocuments(knowledgeBaseId, data)
+        toast({
+          description: t('document.document.batch.transferSuccess', {
+            docCount: result.transferred_document_count,
+            folderCount: result.transferred_folder_count,
+          }),
+        })
+        await fetchDocuments()
+        return result
+      } catch (err) {
+        let message: string
+        if (err instanceof ApiError && err.errorCode && typeof err.errorCode === 'string') {
+          const i18nKey = `document.document.batch.errors.${err.errorCode}`
+          message = t(i18nKey)
+        } else {
+          message = err instanceof Error ? err.message : t('document.document.batch.transferFailed')
+        }
+        toast({ title: message, variant: 'destructive' })
+        return null
+      } finally {
+        setLoading(false)
+      }
+    },
+    [knowledgeBaseId, fetchDocuments, t]
+  )
   useEffect(() => {
     if (autoLoad && knowledgeBaseId) {
       fetchDocuments()
@@ -141,5 +193,6 @@ export function useDocuments(options: UseDocumentsOptions) {
     update,
     remove,
     batchDelete,
+    transfer,
   }
 }

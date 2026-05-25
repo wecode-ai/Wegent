@@ -30,3 +30,9 @@ services:
     build:
       dockerfile: docker/knowledge_runtime/Dockerfile
     pull_policy: build
+
+  knowledge_doc_converter:
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: docker/knowledge_doc_converter/Dockerfile

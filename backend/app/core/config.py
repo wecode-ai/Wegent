@@ -68,6 +68,27 @@ def _normalize_rag_runtime_mode_mapping(value: Mapping[Any, Any]) -> dict[str, s
     return normalized_mapping
 
 
+def _parse_json_object_setting(value: Any, setting_name: str) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if isinstance(value, Mapping):
+        return {
+            str(key).strip(): item for key, item in value.items() if str(key).strip()
+        }
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{setting_name} must be a JSON object") from exc
+        if not isinstance(parsed, Mapping):
+            raise ValueError(f"{setting_name} must be a JSON object")
+        return _parse_json_object_setting(parsed, setting_name)
+    raise ValueError(f"{setting_name} must be a mapping")
+
+
 class Settings(BaseSettings):
     # Project configuration
     PROJECT_NAME: str = "Task Manager Backend"
@@ -109,6 +130,9 @@ class Settings(BaseSettings):
     # Latest Executor version (manually updated when releasing new versions)
     # This is used to show upgrade warnings in the UI
     EXECUTOR_LATEST_VERSION: str = "1.0.0"
+    # Optional local device command overrides/additions. API callers pass the key;
+    # Backend resolves the shell command and optional post processor from registry.
+    LOCAL_DEVICE_COMMANDS: dict[str, Any] = {}
 
     # Executor version checking configuration
     # If EXECUTOR_REGISTRY_URL is set, version is fetched from registry
@@ -136,6 +160,10 @@ class Settings(BaseSettings):
 
     # Task limits
     MAX_RUNNING_TASKS_PER_USER: int = 10
+
+    # Group entity member configuration
+    # Maximum number of entity members (departments, etc.) per group
+    MAX_ENTITY_MEMBERS_PER_GROUP: int = 30
 
     # Direct chat configuration
     MAX_CONCURRENT_CHATS: int = 50  # Maximum concurrent direct chat sessions
@@ -278,6 +306,12 @@ class Settings(BaseSettings):
             return [item.strip() for item in raw.split(",") if item.strip()]
         return v
 
+    @field_validator("LOCAL_DEVICE_COMMANDS", mode="before")
+    @classmethod
+    def parse_local_device_commands(cls, v: Any) -> dict[str, Any]:
+        """Parse local device command map from JSON settings."""
+        return _parse_json_object_setting(v, "LOCAL_DEVICE_COMMANDS")
+
     @field_validator("RAG_RUNTIME_MODE", mode="before")
     @classmethod
     def parse_rag_runtime_mode(cls, v: Any) -> str | dict[str, str]:
@@ -337,8 +371,45 @@ class Settings(BaseSettings):
     KNOWLEDGE_INDEX_LOCK_EXTEND_INTERVAL_SECONDS: int = 30
     KNOWLEDGE_INDEX_LOCK_RETRY_DELAY_SECONDS: int = 15
     KNOWLEDGE_INDEX_LOCK_MAX_RETRIES: int = 1
-    KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS: int = 600
-    KNOWLEDGE_INDEX_STALE_INDEXING_SECONDS: int = 2700
+    KNOWLEDGE_INDEX_STALE_QUEUED_SECONDS: int = 600  # 10 min
+    KNOWLEDGE_INDEX_STALE_PENDING_CONVERSION_SECONDS: int = 7200  # 120 min
+    KNOWLEDGE_INDEX_STALE_INDEXING_SECONDS: int = 2700  # 45 min
+
+    # --- Document Conversion Configuration ---
+
+    # [Retained] Master switch: when False, all files indexed directly
+    KNOWLEDGE_CONVERSION_ENABLED: bool = False
+    # [Retained] Comma-separated file extensions requiring conversion
+    KNOWLEDGE_CONVERSION_FILE_TYPES: str = ""
+    # [Retained] Celery queue name for conversion tasks
+    KNOWLEDGE_CONVERSION_QUEUE: str = "knowledge_conversion"
+    # [Retained, value adjusted] Stale detection for CONVERTING status
+    # MUST be > converter CONVERSION_TASK_TIME_LIMIT to avoid false kills
+    # See cross-service config constraints in design doc section 4.4
+    KNOWLEDGE_INDEX_STALE_CONVERTING_SECONDS: int = (
+        14400  # was 12000, 20% margin over lock_timeout
+    )
+
+    # [Migrated to knowledge_doc_converter] The following configs have been moved:
+    # KNOWLEDGE_CONVERSION_LOCK_TIMEOUT_SECONDS  -> converter config (value: 12000)
+    # KNOWLEDGE_CONVERSION_LOCK_EXTEND_INTERVAL_SECONDS -> converter config
+    # KNOWLEDGE_CONVERSION_LOCK_MAX_RETRIES -> converter config
+    # KNOWLEDGE_CONVERSION_LOCK_RETRY_DELAY_SECONDS -> converter config
+    # MINERU_API_BASE_URL -> converter config
+    # MINERU_BACKEND -> converter config
+    # MINERU_PARSE_METHOD -> converter config
+    # MINERU_LANG_LIST -> converter config
+    # MINERU_FORMULA_ENABLE -> converter config
+    # MINERU_TABLE_ENABLE -> converter config
+    # MINERU_POLL_INTERVAL_SECONDS -> converter config
+    # MINERU_MAX_WAIT_SECONDS -> converter config
+    # WORKER_CONVERSION_S3_ENABLED -> converter config
+    # WORKER_CONVERSION_S3_ENDPOINT -> converter config
+    # WORKER_CONVERSION_S3_ACCESS_KEY -> converter config
+    # WORKER_CONVERSION_S3_SECRET_KEY -> converter config
+    # WORKER_CONVERSION_S3_BUCKET_NAME -> converter config
+    # WORKER_CONVERSION_S3_REGION_NAME -> converter config
+    # --- End Document Conversion Configuration ---
 
     # Circuit breaker configuration
     CIRCUIT_BREAKER_FAIL_MAX: int = 5  # Open circuit after 5 consecutive failures
@@ -669,6 +740,20 @@ class Settings(BaseSettings):
     OPENCLAW_TOKEN_DAILY_THRESHOLD: int = 1_000_000
     # Number of top users to include in daily report
     OPENCLAW_TOP_N_USERS: int = 10
+
+    def needs_conversion(self, file_extension: str) -> bool:
+        """Check if a file extension requires conversion before indexing."""
+        if not self.KNOWLEDGE_CONVERSION_ENABLED:
+            return False
+        if not self.KNOWLEDGE_CONVERSION_FILE_TYPES:
+            return False
+        ext = file_extension.lstrip(".").lower()
+        types = [
+            t.strip().lower()
+            for t in self.KNOWLEDGE_CONVERSION_FILE_TYPES.split(",")
+            if t.strip()
+        ]
+        return ext in types
 
     def get_rag_runtime_mode(self, operation: str) -> str:
         """Resolve the effective RAG runtime mode for an operation."""

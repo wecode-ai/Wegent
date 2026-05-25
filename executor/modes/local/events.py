@@ -20,6 +20,7 @@ class DeviceEvents:
 
     REGISTER = "device:register"
     HEARTBEAT = "device:heartbeat"
+    EXECUTE_COMMAND = "device:execute_command"
 
 
 class TaskEvents:

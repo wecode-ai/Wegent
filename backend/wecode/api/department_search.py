@@ -57,4 +57,14 @@ def search_departments(
         )
     results = erp_client.search_departments(q)
     results = filter_hidden_for_user(current_user.user_name, results)
-    return {"departments": results}
+    # Drop departments with missing or empty ids to avoid React key-prop
+    # warnings in the frontend dropdown that maps over this list.
+    results = [d for d in results if d.id]
+    # Deduplicate by id in case the ERP search API returns duplicates.
+    seen: set[str] = set()
+    unique_results = []
+    for d in results:
+        if d.id not in seen:
+            seen.add(d.id)
+            unique_results.append(d)
+    return {"departments": unique_results}

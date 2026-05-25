@@ -2009,54 +2009,27 @@ class UnifiedShareService(ABC):
     ) -> Optional[str]:
         """Get the highest role granted via entity-type memberships.
 
-        Queries all entity bindings for the resource, resolves which entities
-        match the user via registered resolvers, and returns the highest
-        privilege role among matched bindings.
+        Delegates to shared resolve_entity_roles_for_resource and returns
+        the highest privilege role among matched bindings.
         """
-        resource_type_variants = self._resource_type_variants
-        approved_status_variants = self._approved_status_variants
-
-        entity_rows = (
-            db.query(
-                ResourceMember.entity_type,
-                ResourceMember.entity_id,
-                ResourceMember.role,
-            )
-            .filter(
-                ResourceMember.resource_type.in_(resource_type_variants),
-                ResourceMember.resource_id == resource_id,
-                ResourceMember.entity_type != "user",
-                ResourceMember.entity_type != "",
-                ResourceMember.entity_id.isnot(None),
-                ResourceMember.status.in_(approved_status_variants),
-            )
-            .all()
+        from app.services.share.external_entity_resolver import (
+            resolve_entity_roles_for_resource,
         )
 
-        if not entity_rows:
+        matched_roles = resolve_entity_roles_for_resource(
+            db,
+            resource_type=self._resource_type_variants,
+            resource_id=resource_id,
+            user_id=user_id,
+            status=self._approved_status_variants,
+        )
+        if not matched_roles:
             return None
 
-        from collections import defaultdict
-
-        entity_groups: defaultdict[str, list[tuple[str, str]]] = defaultdict(list)
-        for et, eid, role in entity_rows:
-            if et and eid:
-                entity_groups[et].append((eid, role))
-
         highest: Optional[str] = None
-        for entity_type_str, entries in entity_groups.items():
-            resolver = get_entity_resolver(entity_type_str)
-            if not resolver:
-                continue
-            eids = [eid for eid, _ in entries]
-            matched = resolver.match_entity_bindings(db, user_id, entity_type_str, eids)
-            if not matched:
-                continue
-            role_by_eid = {eid: role for eid, role in entries}
-            for eid in matched:
-                role = role_by_eid.get(eid)
-                if role and (highest is None or has_permission(role, highest)):
-                    highest = role
+        for role in matched_roles:
+            if highest is None or has_permission(role, highest):
+                highest = role
         return highest
 
     def check_entity_permission(

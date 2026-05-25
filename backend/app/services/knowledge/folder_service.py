@@ -10,7 +10,7 @@ including tree building, cascade deletion, and document-to-folder assignment.
 """
 
 import logging
-from collections import defaultdict, deque
+from collections import defaultdict
 from typing import Dict, List, Optional
 
 from sqlalchemy import func, text
@@ -19,12 +19,25 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument, KnowledgeFolder
+from app.schemas.base_role import BaseRole
 from app.schemas.knowledge import (
+    BatchOperationResult,
     KnowledgeFolderCreate,
     KnowledgeFolderResponse,
     KnowledgeFolderUpdate,
 )
+from app.services.knowledge.folder_policy import (
+    assert_document_can_be_placed_in_folder,
+    get_folder_depth,
+    get_subtree_max_relative_depth,
+    validate_document_target_folder_depth,
+    validate_folder_move_depth,
+    validate_new_folder_depth,
+)
 from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.knowledge.permission_policy import (
+    can_manage_accessible_knowledge_document,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +116,7 @@ class KnowledgeFolderService:
                 raise ValueError(
                     f"Parent folder {data.parent_id} not found in this knowledge base"
                 )
+        validate_new_folder_depth(db, knowledge_base_id, data.parent_id)
 
         folder = KnowledgeFolder(
             kind_id=knowledge_base_id,
@@ -283,6 +297,31 @@ class KnowledgeFolderService:
                 )
                 if new_parent_id in descendant_ids:
                     raise ValueError("Cannot move a folder into one of its descendants")
+                locked_subtree_rows = (
+                    db.query(KnowledgeFolder)
+                    .filter(
+                        KnowledgeFolder.kind_id == locked_folder.kind_id,
+                        KnowledgeFolder.id.in_(descendant_ids),
+                    )
+                    .all()
+                )
+                folder_map = {
+                    row.id: row
+                    for row in [locked_folder, locked_parent, *locked_subtree_rows]
+                }
+                target_parent_depth = get_folder_depth(
+                    db,
+                    locked_folder.kind_id,
+                    new_parent_id,
+                    folder_map=folder_map,
+                )
+                subtree_max_depth = get_subtree_max_relative_depth(
+                    folder_map, locked_folder.id
+                )
+                validate_folder_move_depth(
+                    target_parent_depth=target_parent_depth,
+                    subtree_max_relative_depth=subtree_max_depth,
+                )
             folder.parent_id = new_parent_id
 
         db.commit()
@@ -400,21 +439,176 @@ class KnowledgeFolderService:
         # Filter on kind_id first to leverage ix_knowledge_folders_parent
         # (kind_id, parent_id) — the primary-key lookup on id is then cheap.
         if folder_id > 0:
-            target_folder = (
-                db.query(KnowledgeFolder)
-                .filter(
-                    KnowledgeFolder.kind_id == doc.kind_id,
-                    KnowledgeFolder.id == folder_id,
-                )
-                .first()
+            target_folder = assert_document_can_be_placed_in_folder(
+                db, doc.kind_id, folder_id
             )
-            if not target_folder:
-                raise ValueError("Target folder not found in this knowledge base")
+            folder_id = target_folder.id
 
         doc.folder_id = folder_id
         db.commit()
         db.refresh(doc)
         return doc
+
+    @staticmethod
+    def batch_move_documents(
+        db: Session,
+        document_ids: list[int],
+        folder_id: int,
+        user_id: int,
+    ) -> BatchOperationResult:
+        """Batch move multiple documents to a target folder.
+
+        Loads documents, knowledge-base permissions, and target folder data in
+        bulk, then updates movable documents with one statement per knowledge
+        base. Permission and validation errors are still reported per document.
+
+        Args:
+            db: Database session
+            document_ids: List of document IDs to move
+            folder_id: Target folder ID (0 = root)
+            user_id: Requesting user ID
+
+        Returns:
+            BatchOperationResult with success/failure counts
+        """
+        if not document_ids:
+            return BatchOperationResult(
+                success_count=0,
+                failed_count=0,
+                failed_ids=[],
+                message="Successfully moved 0 documents, 0 failed",
+            )
+
+        requested_ids = list(dict.fromkeys(document_ids))
+        docs = KnowledgeFolderService._bulk_load_documents(db, requested_ids)
+        docs_by_id = {doc.id: doc for doc in docs}
+        failed_id_set = set(requested_ids) - set(docs_by_id)
+
+        kb_ids = {doc.kind_id for doc in docs}
+        kb_permissions = KnowledgeFolderService._bulk_resolve_document_permissions(
+            db, kb_ids, user_id
+        )
+        folder_validation = KnowledgeFolderService._bulk_validate_target_folder(
+            db, kb_ids, folder_id
+        )
+
+        movable_ids_by_kb: dict[int, list[int]] = defaultdict(list)
+        for doc in docs:
+            permission = kb_permissions.get(doc.kind_id)
+            if permission is None:
+                failed_id_set.add(doc.id)
+                continue
+            has_access, role, is_creator = permission
+            if not can_manage_accessible_knowledge_document(
+                has_access=has_access,
+                role=role,
+                is_creator=is_creator,
+                user_id=user_id,
+                document_owner_id=doc.user_id,
+            ):
+                failed_id_set.add(doc.id)
+                continue
+            validated_folder_id = folder_validation.get(doc.kind_id)
+            if validated_folder_id is None:
+                failed_id_set.add(doc.id)
+                continue
+            movable_ids_by_kb[doc.kind_id].append(doc.id)
+
+        success_count = KnowledgeFolderService._bulk_move_documents_by_kb(
+            db, movable_ids_by_kb, folder_id
+        )
+        db.commit()
+
+        failed_ids = [doc_id for doc_id in requested_ids if doc_id in failed_id_set]
+        return BatchOperationResult(
+            success_count=success_count,
+            failed_count=len(failed_ids),
+            failed_ids=failed_ids,
+            message=(
+                f"Successfully moved {success_count} documents, "
+                f"{len(failed_ids)} failed"
+            ),
+        )
+
+    @staticmethod
+    def _bulk_load_documents(
+        db: Session, document_ids: list[int]
+    ) -> list[KnowledgeDocument]:
+        """Load requested documents in batches to avoid per-document queries."""
+        documents: list[KnowledgeDocument] = []
+        for i in range(0, len(document_ids), _MAX_IN_CLAUSE_SIZE):
+            batch = document_ids[i : i + _MAX_IN_CLAUSE_SIZE]
+            documents.extend(
+                db.query(KnowledgeDocument)
+                .filter(KnowledgeDocument.id.in_(batch))
+                .all()
+            )
+        return documents
+
+    @staticmethod
+    def _bulk_resolve_document_permissions(
+        db: Session,
+        knowledge_base_ids: set[int],
+        user_id: int,
+    ) -> dict[int, tuple[bool, BaseRole | None, bool]]:
+        """Resolve user permissions for all touched knowledge bases once."""
+        return {
+            kb_id: KnowledgeService._get_user_kb_permission(db, kb_id, user_id)
+            for kb_id in knowledge_base_ids
+        }
+
+    @staticmethod
+    def _bulk_validate_target_folder(
+        db: Session,
+        knowledge_base_ids: set[int],
+        folder_id: int,
+    ) -> dict[int, int | None]:
+        """Validate the common target folder for every touched knowledge base."""
+        if folder_id <= 0:
+            return {kb_id: 0 for kb_id in knowledge_base_ids}
+
+        target_folders = (
+            db.query(KnowledgeFolder)
+            .filter(
+                KnowledgeFolder.id == folder_id,
+                KnowledgeFolder.kind_id.in_(knowledge_base_ids),
+            )
+            .all()
+        )
+        folders_by_kb = {folder.kind_id: folder for folder in target_folders}
+        folder_validation: dict[int, int | None] = {}
+        for kb_id in knowledge_base_ids:
+            folder = folders_by_kb.get(kb_id)
+            if folder is None:
+                folder_validation[kb_id] = None
+                continue
+            validate_document_target_folder_depth(db, kb_id, folder.id)
+            folder_validation[kb_id] = folder.id
+        return folder_validation
+
+    @staticmethod
+    def _bulk_move_documents_by_kb(
+        db: Session,
+        document_ids_by_kb: dict[int, list[int]],
+        target_folder_id: int,
+    ) -> int:
+        """Update movable documents in batches grouped by knowledge base."""
+        total_moved = 0
+        for kb_id, ids in document_ids_by_kb.items():
+            for i in range(0, len(ids), _MAX_IN_CLAUSE_SIZE):
+                batch = ids[i : i + _MAX_IN_CLAUSE_SIZE]
+                total_moved += (
+                    db.query(KnowledgeDocument)
+                    .filter(
+                        KnowledgeDocument.kind_id == kb_id,
+                        KnowledgeDocument.id.in_(batch),
+                    )
+                    .update(
+                        {"folder_id": target_folder_id},
+                        synchronize_session=False,
+                    )
+                )
+        return total_moved
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -466,19 +660,19 @@ class KnowledgeFolderService:
             WITH RECURSIVE descendants AS (
                 -- Anchor: direct children of the target folder
                 SELECT id
-                FROM   knowledge_folders
-                WHERE  kind_id   = :kind_id
-                  AND  parent_id = :folder_id
+                FROM knowledge_folders
+                WHERE kind_id = :kind_id
+                  AND parent_id = :folder_id
 
                 UNION ALL
 
                 -- Recursive: children of already-found descendants
                 SELECT kf.id
-                FROM   knowledge_folders kf
-                INNER JOIN descendants d ON kf.parent_id = d.id
-                WHERE  kf.kind_id = :kind_id
-            )
-            SELECT id FROM descendants
+                FROM knowledge_folders kf
+                         INNER JOIN descendants d ON kf.parent_id = d.id
+                WHERE kf.kind_id = :kind_id)
+            SELECT id
+            FROM descendants
             """
         )
         rows = db.execute(sql, {"kind_id": kind_id, "folder_id": folder_id}).fetchall()

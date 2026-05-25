@@ -16,7 +16,7 @@ import time
 from typing import Optional
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from wecode.config.erp_config import erp_config
 
@@ -35,7 +35,9 @@ class EmployeeInfo(BaseModel):
 class DepartmentInfo(BaseModel):
     """Department information returned by ERP search API."""
 
-    id: Optional[str] = None
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: Optional[str] = Field(default=None, validation_alias="department_id")
     name: Optional[str] = None
     label: Optional[str] = None
     supervisor_name: Optional[str] = None

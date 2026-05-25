@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { ComputerDesktopIcon } from '@heroicons/react/24/outline'
 
 import type { AdminDeviceInfo } from '@/apis/admin'
@@ -19,13 +19,23 @@ export interface AdminDeviceMonitorVncExtension {
   renderPanel: () => ReactNode
 }
 
+function isVncDeviceAvailable(device: AdminDeviceInfo): boolean {
+  return (
+    device.device_type === 'cloud' &&
+    device.bind_shell === 'claudecode' &&
+    device.status !== 'offline'
+  )
+}
+
 /**
  * Internal VNC extension for the admin device monitor.
  *
  * The open-source panel only knows how to call this extension. All VNC-specific
  * state, layout, and rendering stay within the wecode namespace.
  */
-export function useAdminDeviceMonitorVncExtension(): AdminDeviceMonitorVncExtension {
+export function useAdminDeviceMonitorVncExtension(
+  devices: AdminDeviceInfo[] = []
+): AdminDeviceMonitorVncExtension {
   const { t } = useTranslation('devices')
   const isMobile = useIsMobile()
   const [activeVncDeviceDetails, setActiveVncDeviceDetails] = useState<AdminDeviceInfo | null>(null)
@@ -47,9 +57,27 @@ export function useAdminDeviceMonitorVncExtension(): AdminDeviceMonitorVncExtens
     })
   }, [])
 
+  useEffect(() => {
+    if (!activeVncDeviceDetails) {
+      return
+    }
+
+    const activeDeviceStillAvailable = devices.some(device => {
+      return (
+        device.device_id === activeVncDeviceDetails.device_id &&
+        device.user_id === activeVncDeviceDetails.user_id &&
+        isVncDeviceAvailable(device)
+      )
+    })
+
+    if (!activeDeviceStillAvailable) {
+      closeVncPanel()
+    }
+  }, [activeVncDeviceDetails, closeVncPanel, devices])
+
   const renderAction = useCallback(
     (device: AdminDeviceInfo) => {
-      if (device.device_type !== 'cloud' || device.bind_shell !== 'claudecode') {
+      if (!isVncDeviceAvailable(device)) {
         return null
       }
 

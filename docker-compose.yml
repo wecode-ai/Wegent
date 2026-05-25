@@ -304,6 +304,46 @@ services:
       retries: 3
       start_period: 10s
 
+  knowledge_doc_converter:
+    build:
+      context: .
+      dockerfile: docker/knowledge_doc_converter/Dockerfile
+    container_name: wegent-knowledge-doc-converter
+    restart: always
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      BACKEND_BASE_URL: ${BACKEND_BASE_URL:-http://backend:8000}
+      BACKEND_INTERNAL_TOKEN: ${INTERNAL_SERVICE_TOKEN:-}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      CELERY_BROKER_URL: ${REDIS_URL:-redis://redis:6379/0}
+      CELERY_RESULT_BACKEND: ${REDIS_URL:-redis://redis:6379/1}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      MINERU_API_BASE_URL: ${MINERU_API_BASE_URL:-}
+      MINERU_BACKEND: ${MINERU_BACKEND:-pipeline}
+      MINERU_PARSE_METHOD: ${MINERU_PARSE_METHOD:-ocr}
+      MINERU_LANG_LIST: ${MINERU_LANG_LIST:-ch}
+      WORKER_CONVERSION_S3_ENABLED: ${WORKER_CONVERSION_S3_ENABLED:-false}
+      WORKER_CONVERSION_S3_ENDPOINT: ${WORKER_CONVERSION_S3_ENDPOINT:-}
+      WORKER_CONVERSION_S3_ACCESS_KEY: ${WORKER_CONVERSION_S3_ACCESS_KEY:-}
+      WORKER_CONVERSION_S3_SECRET_KEY: ${WORKER_CONVERSION_S3_SECRET_KEY:-}
+      WORKER_CONVERSION_S3_BUCKET_NAME: ${WORKER_CONVERSION_S3_BUCKET_NAME:-}
+      WORKER_CONVERSION_S3_REGION_NAME: ${WORKER_CONVERSION_S3_REGION_NAME:-us-east-1}
+      LOG_FILE_ENABLED: ${LOG_FILE_ENABLED:-true}
+      LOG_DIR: ${LOG_DIR:-/app/logs}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PROMETHEUS_ENABLED: ${PROMETHEUS_ENABLED:-false}
+      PROMETHEUS_PORT: ${PROMETHEUS_PORT:-9090}
+      PROMETHEUS_PATH: ${PROMETHEUS_PATH:-/metrics}
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:${PROMETHEUS_PORT:-9090}"
+    volumes:
+      - ./logs/knowledge_doc_converter:/app/logs
+    networks:
+      - wegent-network
+
 volumes:
   mysql_data:
     driver: local

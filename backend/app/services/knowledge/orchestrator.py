@@ -25,8 +25,9 @@ from typing import Any, Dict, List, Literal, Optional
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.kind import Kind
-from app.models.knowledge import KnowledgeDocument
+from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.knowledge import (
@@ -1639,20 +1640,88 @@ class KnowledgeOrchestrator:
             raise RuntimeError(message)
 
         try:
-            async_result = index_document_task.delay(
-                knowledge_base_id=str(knowledge_base.id),
-                attachment_id=document.attachment_id,
-                retriever_name=retriever_name,
-                retriever_namespace=retriever_namespace,
-                embedding_model_name=embedding_model_name,
-                embedding_model_namespace=embedding_model_namespace,
-                user_id=index_owner_user_id,
-                user_name=user.user_name,
-                document_id=document.id,
-                index_generation=generation,
-                splitter_config_dict=splitter_config,
-                trigger_summary=trigger_summary,
-            )
+            normalized_extension = _normalize_file_extension(document.file_extension)
+            if settings.needs_conversion(normalized_extension):
+                # File type requires conversion before indexing
+                # Task is dispatched to knowledge_doc_converter microservice
+                # via the shared Celery broker (knowledge_conversion queue)
+
+                # Override QUEUED -> PENDING_CONVERSION: document is waiting
+                # for a conversion worker, not for direct indexing
+                from datetime import datetime, timezone
+
+                document.index_status = DocumentIndexStatus.PENDING_CONVERSION
+                document.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                db.commit()
+
+                from app.core.celery_app import celery_app
+                from app.models.subtask_context import ContextType, SubtaskContext
+
+                attachment = (
+                    db.query(SubtaskContext)
+                    .filter(
+                        SubtaskContext.id == document.attachment_id,
+                        SubtaskContext.context_type == ContextType.ATTACHMENT.value,
+                    )
+                    .first()
+                )
+                original_filename = (
+                    attachment.original_filename if attachment else document.name
+                )
+
+                async_result = celery_app.send_task(
+                    "knowledge_doc_converter.convert_document",
+                    kwargs={
+                        "document_id": document.id,
+                        "attachment_id": document.attachment_id,
+                        "file_extension": normalized_extension,
+                        "original_filename": original_filename,
+                        "knowledge_base_name": knowledge_base.name,
+                        "index_generation": generation,
+                        "content_download_path": (
+                            f"/api/internal/attachments/{document.attachment_id}/download"
+                        ),
+                        "callback_status_path": "/api/internal/conversion/callback/status",
+                        "callback_completed_path": "/api/internal/conversion/callback/completed",
+                        "index_dispatch_payload": {
+                            "knowledge_base_id": str(knowledge_base.id),
+                            "attachment_id": document.attachment_id,
+                            "retriever_name": retriever_name,
+                            "retriever_namespace": retriever_namespace,
+                            "embedding_model_name": embedding_model_name,
+                            "embedding_model_namespace": embedding_model_namespace,
+                            "user_id": index_owner_user_id,
+                            "user_name": user.user_name,
+                            "document_id": document.id,
+                            "index_generation": generation,
+                            "splitter_config_dict": splitter_config,
+                            "trigger_summary": trigger_summary,
+                        },
+                    },
+                    queue=settings.KNOWLEDGE_CONVERSION_QUEUE,
+                )
+
+                logger.info(
+                    f"[Orchestrator] Conversion task enqueued: "
+                    f"document_id={document.id}, file_ext={normalized_extension}, "
+                    f"index_generation={generation}, celery_task_id={async_result.id}"
+                )
+            else:
+                # Direct indexing (no conversion)
+                async_result = index_document_task.delay(
+                    knowledge_base_id=str(knowledge_base.id),
+                    attachment_id=document.attachment_id,
+                    retriever_name=retriever_name,
+                    retriever_namespace=retriever_namespace,
+                    embedding_model_name=embedding_model_name,
+                    embedding_model_namespace=embedding_model_namespace,
+                    user_id=index_owner_user_id,
+                    user_name=user.user_name,
+                    document_id=document.id,
+                    index_generation=generation,
+                    splitter_config_dict=splitter_config,
+                    trigger_summary=trigger_summary,
+                )
         except Exception as exc:
             mark_document_index_enqueue_failed(
                 db=db,
@@ -1704,7 +1773,7 @@ class KnowledgeOrchestrator:
         Raises:
             ValueError: If document not found, access denied, or RAG not configured
         """
-        from app.models.knowledge import KnowledgeDocument
+        from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
         from app.services.knowledge.indexing import (
             extract_rag_config_from_knowledge_base,
             get_rag_indexing_skip_reason,
@@ -1980,7 +2049,7 @@ class KnowledgeOrchestrator:
         Raises:
             ValueError: If document not found, not a web document, or refresh fails
         """
-        from app.models.knowledge import KnowledgeDocument
+        from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
         from app.models.subtask_context import SubtaskContext
         from app.schemas.knowledge import DocumentSourceType
         from app.services.context import context_service
@@ -2002,6 +2071,23 @@ class KnowledgeOrchestrator:
                 "error_code": "NOT_FOUND",
                 "error_message": "Document not found or access denied",
             }
+
+        # Verify manage permission before mutating content
+        from app.models.kind import Kind
+
+        kb = (
+            db.query(Kind)
+            .filter(Kind.id == document.kind_id, Kind.kind == "KnowledgeBase")
+            .first()
+        )
+        if not kb:
+            return {
+                "success": False,
+                "document": None,
+                "error_code": "KB_NOT_FOUND",
+                "error_message": "Knowledge base not found for document",
+            }
+        KnowledgeService._assert_can_manage_document(db, kb, document, user.id)
 
         if document.source_type != DocumentSourceType.WEB.value:
             return {
@@ -2045,11 +2131,11 @@ class KnowledgeOrchestrator:
         if document.attachment_id:
             # Try to overwrite existing attachment
             try:
-                attachment, _ = context_service.overwrite_attachment(
+                attachment, _ = context_service.overwrite_attachment_internal(
                     db=db,
                     context_id=document.attachment_id,
-                    user_id=user.id,
                     filename=document.name,
+                    reason="web_refresh",
                     binary_data=content_bytes,
                 )
                 logger.info(

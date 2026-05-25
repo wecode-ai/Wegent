@@ -52,6 +52,7 @@ import type { Attachment } from '@/types/api'
 import { cn } from '@/lib/utils'
 import { validateTableUrl } from '@/apis/knowledge'
 import { DEFAULT_FLAT_CHUNK_CONFIG, DEFAULT_SPLITTER_CONFIG } from '@/types/knowledge'
+import { mapKnowledgeDocumentErrorMessage } from '../utils/error-messages'
 
 // Unsupported file extensions that need friendly error message (images are not supported for RAG)
 const KB_UNSUPPORTED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
@@ -478,7 +479,7 @@ export function DocumentUpload({
       setUploadMode('file')
       handleClose()
     } catch (err) {
-      setTableError(err instanceof Error ? err.message : t('document.upload.tableAddFailed'))
+      setTableError(mapKnowledgeDocumentErrorMessage(err, t, 'document.upload.tableAddFailed'))
     } finally {
       setTableSubmitting(false)
     }
@@ -531,7 +532,7 @@ export function DocumentUpload({
       handleClose()
     } catch (err) {
       // Map error messages from backend
-      const errorMessage = err instanceof Error ? err.message : t('document.upload.web.addFailed')
+      const errorMessage = mapKnowledgeDocumentErrorMessage(err, t, 'document.upload.web.addFailed')
       // Check for specific error codes in the message
       if (errorMessage.includes('FETCH_FAILED')) {
         setWebError(t('document.upload.web.fetchFailed'))

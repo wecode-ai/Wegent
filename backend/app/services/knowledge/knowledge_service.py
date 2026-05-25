@@ -43,6 +43,7 @@ from app.schemas.knowledge import (
     KnowledgeDocumentUpdate,
     ResourceScope,
     TeamKnowledgeGroup,
+    TransferDocumentsResponse,
 )
 from app.schemas.namespace import GroupLevel, GroupRole
 from app.services.group_permission import (
@@ -50,6 +51,7 @@ from app.services.group_permission import (
     get_user_groups,
     get_view_role_in_group,
 )
+from app.services.knowledge.folder_policy import assert_document_can_be_placed_in_folder
 from app.services.knowledge.namespace_utils import is_organization_namespace
 from app.services.knowledge.permission_policy import (
     can_create_namespace_knowledge_base,
@@ -110,6 +112,7 @@ class DocumentDeleteResult:
 
     success: bool
     kb_id: Optional[int] = None
+    error: Optional[str] = None
 
 
 @dataclass
@@ -296,7 +299,6 @@ class KnowledgeService:
             - Kind: The knowledge base Kind if found, None otherwise
             - has_access: True if user has access to the knowledge base, False otherwise
         """
-        from app.services.share import knowledge_share_service
 
         kb = KnowledgeService._get_knowledge_base_record(db, knowledge_base_id)
 
@@ -1072,20 +1074,14 @@ class KnowledgeService:
                     f"Current count: {current_count}"
                 )
 
+        validated_folder_id = data.folder_id
+
         # Validate that the folder belongs to this knowledge base (if a non-root folder is specified)
         if data.folder_id and data.folder_id != 0:
-            folder = (
-                db.query(KnowledgeFolder)
-                .filter(
-                    KnowledgeFolder.id == data.folder_id,
-                    KnowledgeFolder.kind_id == knowledge_base_id,
-                )
-                .first()
+            target_folder = assert_document_can_be_placed_in_folder(
+                db, knowledge_base_id, data.folder_id
             )
-            if not folder:
-                raise ValueError(
-                    f"Folder {data.folder_id} not found in this knowledge base"
-                )
+            validated_folder_id = target_folder.id
 
         document = KnowledgeDocument(
             kind_id=knowledge_base_id,
@@ -1094,7 +1090,7 @@ class KnowledgeService:
             file_extension=data.file_extension,
             file_size=data.file_size,
             user_id=user_id,
-            folder_id=data.folder_id,
+            folder_id=validated_folder_id,
             splitter_config=(
                 data.splitter_config.model_dump(exclude_none=True)
                 if data.splitter_config
@@ -1241,8 +1237,9 @@ class KnowledgeService:
             .filter(Kind.id == doc.kind_id, Kind.kind == "KnowledgeBase")
             .first()
         )
-        if kb:
-            KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
+        if not kb:
+            raise ValueError("Knowledge base not found for document")
+        KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
 
         if data.name is not None:
             doc.name = data.name
@@ -1277,7 +1274,6 @@ class KnowledgeService:
         Raises:
             ValueError: If permission denied
         """
-        import asyncio
         import logging
 
         from app.services.context import context_service
@@ -1296,8 +1292,11 @@ class KnowledgeService:
             .filter(Kind.id == doc.kind_id, Kind.kind == "KnowledgeBase")
             .first()
         )
-        if kb:
-            KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
+        if not kb:
+            return DocumentDeleteResult(
+                success=False, kb_id=None, error="Knowledge base not found for document"
+            )
+        KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
 
         # Store document_id (used as doc_ref in RAG), kind_id, and attachment_id before deletion for cleanup
         doc_ref = str(doc.id)  # document_id is used as doc_ref in RAG indexing
@@ -1507,8 +1506,9 @@ class KnowledgeService:
             .filter(Kind.id == doc.kind_id, Kind.kind == "KnowledgeBase")
             .first()
         )
-        if kb:
-            KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
+        if not kb:
+            raise ValueError("Knowledge base not found for document")
+        KnowledgeService._assert_can_manage_document(db, kb, doc, user_id)
 
         if not doc.attachment_id:
             raise ValueError("Document has no attachment to update")
@@ -1527,11 +1527,11 @@ class KnowledgeService:
         filename = context.original_filename or _build_attachment_filename(
             doc.name, doc.file_extension
         )
-        context_service.overwrite_attachment(
+        context_service.overwrite_attachment_internal(
             db=db,
             context_id=context.id,
-            user_id=user_id,
             filename=filename,
+            reason="knowledge_manage",
             binary_data=binary_content,
         )
 
@@ -2199,7 +2199,7 @@ class KnowledgeService:
         db: Session,
     ) -> list[KnowledgeBaseWithGroupInfo]:
         """Aggregate multi-source permission info into shared_with_me responses."""
-        from dataclasses import dataclass, field
+        from dataclasses import dataclass
 
         @dataclass
         class KbSourceInfo:
@@ -2509,7 +2509,7 @@ class KnowledgeService:
         ]
 
         # 3. Get all accessible groups with roles (single query)
-        from app.services.group_permission import get_user_groups_with_roles
+        from app.services.group_member_helper import get_user_groups_with_roles
 
         accessible_groups_with_roles = get_user_groups_with_roles(db, user_id)
         accessible_group_names = [g[0] for g in accessible_groups_with_roles]
@@ -2565,7 +2565,6 @@ class KnowledgeService:
         entity_result = KnowledgeService._collect_entity_authorized_kbs(
             db, user_id, accessible_groups
         )
-        entity_kbs = entity_result.entity_kbs
         entity_personal_kb_ids = entity_result.entity_personal_kb_ids
         entity_shared_to_me_kbs = entity_result.entity_shared_to_me_kbs
         shared_into_group_kbs = entity_result.shared_into_group_kbs
@@ -3084,7 +3083,7 @@ class KnowledgeService:
 
         return doc
 
-    # ============== Knowledge Base Migration ==============
+    # ============== Knowledge Base Migration and Transfer Delegates ==============
 
     @staticmethod
     def migrate_knowledge_base_to_group(
@@ -3093,102 +3092,33 @@ class KnowledgeService:
         user_id: int,
         target_group_name: str,
     ) -> dict:
-        """
-        Migrate a personal knowledge base to a group.
+        """Migrate a personal knowledge base to a group."""
+        from app.services.knowledge.knowledge_transfer import KnowledgeTransferService
 
-        Args:
-            db: Database session
-            knowledge_base_id: Knowledge base ID to migrate
-            user_id: Requesting user ID (must be the creator of the KB)
-            target_group_name: Target group name (namespace) to migrate to
-
-        Returns:
-            Dict with migration result information
-
-        Raises:
-            ValueError: If validation fails or permission denied
-        """
-        from sqlalchemy.orm.attributes import flag_modified
-
-        # Get the knowledge base
-        kb = (
-            db.query(Kind)
-            .filter(
-                Kind.id == knowledge_base_id,
-                Kind.kind == "KnowledgeBase",
-            )
-            .first()
+        return KnowledgeTransferService.migrate_knowledge_base_to_group(
+            db=db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=user_id,
+            target_group_name=target_group_name,
         )
 
-        if not kb:
-            raise ValueError("Knowledge base not found")
+    @staticmethod
+    def transfer_documents_to_kb(
+        db: Session,
+        source_kb_id: int,
+        target_kb_id: int,
+        document_ids: list[int],
+        folder_ids: list[int],
+        user_id: int,
+    ) -> TransferDocumentsResponse:
+        """Transfer documents and/or folders from one KB to another."""
+        from app.services.knowledge.knowledge_transfer import KnowledgeTransferService
 
-        # Only personal knowledge bases (namespace='default') can be migrated
-        if kb.namespace != "default":
-            raise ValueError("Only personal knowledge bases can be migrated to groups")
-
-        # Only the creator can migrate
-        if kb.user_id != user_id:
-            raise ValueError("Only the creator can migrate this knowledge base")
-
-        # Check if user has access to the target group
-        target_role = get_effective_role_in_group(db, user_id, target_group_name)
-        if target_role is None:
-            raise ValueError(f"You don't have access to group '{target_group_name}'")
-
-        # Check if user has Maintainer+ permission in target group
-        if target_role not in {GroupRole.Owner, GroupRole.Maintainer}:
-            raise ValueError(
-                "You need Maintainer or Owner permission in the target group to migrate knowledge bases"
-            )
-
-        # Check for duplicate name in target group
-        kb_spec = kb.json.get("spec", {})
-        kb_name = kb_spec.get("name", "")
-
-        existing_in_target = (
-            db.query(Kind)
-            .filter(
-                Kind.kind == "KnowledgeBase",
-                Kind.namespace == target_group_name,
-            )
-            .all()
+        return KnowledgeTransferService.transfer_documents_to_kb(
+            db=db,
+            source_kb_id=source_kb_id,
+            target_kb_id=target_kb_id,
+            document_ids=document_ids,
+            folder_ids=folder_ids,
+            user_id=user_id,
         )
-
-        for existing_kb in existing_in_target:
-            existing_spec = existing_kb.json.get("spec", {})
-            if existing_spec.get("name") == kb_name:
-                raise ValueError(
-                    f"A knowledge base with name '{kb_name}' already exists in the target group"
-                )
-
-        # Store old namespace for response
-        old_namespace = kb.namespace
-
-        # Update the namespace
-        kb.namespace = target_group_name
-
-        # Update the name in Kind record to reflect new namespace
-        # Format: kb-{user_id}-{namespace}-{name}
-        new_kb_name = f"kb-{user_id}-{target_group_name}-{kb_name}"
-        kb.name = new_kb_name
-
-        # Update the namespace in the JSON spec as well
-        kb_json = kb.json
-        if "metadata" not in kb_json:
-            kb_json["metadata"] = {}
-        kb_json["metadata"]["namespace"] = target_group_name
-        kb_json["metadata"]["name"] = new_kb_name
-        kb.json = kb_json
-        flag_modified(kb, "json")
-
-        db.commit()
-        db.refresh(kb)
-
-        return {
-            "success": True,
-            "message": f"Knowledge base '{kb_name}' migrated to group '{target_group_name}' successfully",
-            "knowledge_base_id": kb.id,
-            "old_namespace": old_namespace,
-            "new_namespace": target_group_name,
-        }

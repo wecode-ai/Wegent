@@ -164,7 +164,7 @@ export interface ChatStreamHandlers {
     subtaskId?: number
   }) => Promise<boolean>
   handleRetryWithModel: (message: { subtaskId?: number }, model: UnifiedModel) => Promise<boolean>
-  handleCancelTask: () => Promise<void>
+  handleCancelTask: () => Promise<boolean>
   stopStream: () => Promise<void>
   resetStreamingState: () => void
 
@@ -490,6 +490,11 @@ export function useChatStreamHandlers({
   // Helper: handle send errors
   const handleSendError = useCallback(
     (error: Error, message: string) => {
+      if (selectedTaskDetail?.status === 'PENDING') {
+        refreshSelectedTaskDetail(false)
+        return
+      }
+
       resetStreamingState()
       const parsedError = parseError(error)
       lastFailedMessageRef.current = message
@@ -509,7 +514,14 @@ export function useChatStreamHandlers({
           : undefined,
       })
     },
-    [resetStreamingState, toast, t, createRetryButton]
+    [
+      selectedTaskDetail?.status,
+      refreshSelectedTaskDetail,
+      resetStreamingState,
+      toast,
+      t,
+      createRetryButton,
+    ]
   )
 
   const prepareChatSend = useCallback(
@@ -1612,7 +1624,7 @@ export function useChatStreamHandlers({
 
   // Handle cancel task
   const handleCancelTask = useCallback(async () => {
-    if (!selectedTaskDetail?.id || isCancelling) return
+    if (!selectedTaskDetail?.id || isCancelling) return false
 
     setIsCancelling(true)
 
@@ -1630,6 +1642,7 @@ export function useChatStreamHandlers({
 
       refreshTasks()
       refreshSelectedTaskDetail(false)
+      return true
     } catch (err: unknown) {
       const errorMessage =
         err instanceof Error && err.message === 'Cancel operation timed out'
@@ -1659,6 +1672,7 @@ export function useChatStreamHandlers({
         refreshTasks()
         refreshSelectedTaskDetail(false)
       }
+      return false
     } finally {
       setIsCancelling(false)
     }

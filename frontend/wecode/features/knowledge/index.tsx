@@ -15,8 +15,8 @@ import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { registerAuthSection } from '@/features/knowledge/document/auth-section-registry'
 import { registerPermissionTab } from '@/features/knowledge/permission/permission-tab-registry'
-import { DepartmentAuthSearch } from './components/DepartmentAuthSearch'
-import { AddDepartmentDialog } from './components/AddDepartmentDialog'
+import { DepartmentAuthSearch, AddDepartmentDialog } from '@wecode/components/department-auth'
+import { knowledgePermissionExtensionApi } from '@wecode/apis/knowledge-permission-extension'
 
 // Register department auth section in KB creation dialog
 registerAuthSection({
@@ -35,7 +35,14 @@ function DepartmentAddButton({ kbId, onSuccess }: { kbId: number; onSuccess: () 
         <Building2 className="w-4 h-4 mr-2" />
         {label}
       </Button>
-      <AddDepartmentDialog open={open} onOpenChange={setOpen} kbId={kbId} onSuccess={onSuccess} />
+      <AddDepartmentDialog
+        open={open}
+        onOpenChange={setOpen}
+        resourceType="KnowledgeBase"
+        resourceId={kbId}
+        apiCaller={knowledgePermissionExtensionApi.batchAddDepartmentPermission}
+        onSuccess={onSuccess}
+      />
     </>
   )
 }
