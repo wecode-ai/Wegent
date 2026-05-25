@@ -1,10 +1,10 @@
-import { AppLayout } from '@/components/layout/AppLayout'
-import { HomePage } from '@/pages/HomePage'
+import { WorkbenchProvider } from '@/features/workbench/WorkbenchProvider'
+import { WorkbenchPage } from '@/pages/WorkbenchPage'
 
 export default function App() {
   return (
-    <AppLayout>
-      <HomePage />
-    </AppLayout>
+    <WorkbenchProvider>
+      <WorkbenchPage />
+    </WorkbenchProvider>
   )
 }
