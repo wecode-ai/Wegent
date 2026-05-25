@@ -19,6 +19,7 @@ import {
 import { Card } from '@/components/ui/card'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { KnowledgeBase } from '@/types/knowledge'
+import { getKnowledgeBasePreviewSummary } from '../utils/summarySelectors'
 
 interface KnowledgeBaseCardProps {
   knowledgeBase: KnowledgeBase
@@ -65,8 +66,7 @@ export function KnowledgeBaseCard({
   // Determine knowledge base type (default to 'notebook' for backward compatibility)
   const kbType = knowledgeBase.kb_type || 'notebook'
   const isNotebook = kbType === 'notebook'
-  const effectiveShortSummary =
-    knowledgeBase.summary?.manual_long_summary || knowledgeBase.summary?.short_summary
+  const effectiveShortSummary = getKnowledgeBasePreviewSummary(knowledgeBase.summary)
 
   return (
     <Card

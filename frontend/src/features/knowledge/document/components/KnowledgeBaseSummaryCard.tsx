@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/badge'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { EditKnowledgeBaseSummaryDialog } from './EditKnowledgeBaseSummaryDialog'
 import { useKnowledgeBaseSummaryActions } from '../hooks/useKnowledgeBaseSummaryActions'
+import { getEffectiveKnowledgeBaseLongSummary } from '../utils/summarySelectors'
 
 interface KnowledgeBaseSummaryCardProps {
   knowledgeBase: KnowledgeBase
@@ -45,9 +46,7 @@ export function KnowledgeBaseSummaryCard({
     onRefresh,
   })
 
-  const longSummary = knowledgeBase.summary?.long_summary
-  const manualLongSummary = knowledgeBase.summary?.manual_long_summary
-  const effectiveLongSummary = manualLongSummary || longSummary
+  const effectiveLongSummary = getEffectiveKnowledgeBaseLongSummary(knowledgeBase.summary)
   const shortSummary = knowledgeBase.summary?.short_summary
   const topics = knowledgeBase.summary?.topics
   const summaryStatus = knowledgeBase.summary?.status

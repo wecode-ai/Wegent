@@ -55,6 +55,7 @@ import { useUser } from '@/features/common/UserContext'
 import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import { EditKnowledgeBaseSummaryDialog } from './EditKnowledgeBaseSummaryDialog'
 import { useKnowledgeBaseSummaryActions } from '../hooks/useKnowledgeBaseSummaryActions'
+import { getEffectiveKnowledgeBaseLongSummary } from '../utils/summarySelectors'
 
 /**
  * Inner component that uses useSearchParams (must be inside Suspense boundary).
@@ -227,8 +228,7 @@ export function DocumentList({
   const isSummaryFailed = knowledgeBase.summary?.status === 'failed'
   const summaryError = knowledgeBase.summary?.error
   const summaryEnabled = knowledgeBase.summary_enabled
-  const effectiveSummary =
-    knowledgeBase.summary?.manual_long_summary || knowledgeBase.summary?.long_summary
+  const effectiveSummary = getEffectiveKnowledgeBaseLongSummary(knowledgeBase.summary)
   const hasManualSummary = !!knowledgeBase.summary?.manual_long_summary
   const hasVisibleSummary = !!effectiveSummary && (!isSummaryFailed || hasManualSummary)
   const showRetry = summaryEnabled && isSummaryFailed

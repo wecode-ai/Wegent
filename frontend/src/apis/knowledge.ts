@@ -15,6 +15,7 @@ import type {
   KnowledgeBase,
   KnowledgeBaseCreate,
   KnowledgeBaseListResponse,
+  KnowledgeBaseSummaryResponse,
   KnowledgeBaseUpdate,
   KnowledgeDocument,
   KnowledgeDocumentCreate,
@@ -292,15 +293,6 @@ export interface KnowledgeBaseSummaryRefreshResponse {
   status: string
 }
 
-export interface KnowledgeBaseSummaryUpdateResponse {
-  kb_id: number
-  summary: {
-    long_summary?: string
-    manual_long_summary?: string | null
-    has_manual_override?: boolean
-  } | null
-}
-
 /**
  * Refresh knowledge base summary by re-aggregating document summaries
  * @param kbId The knowledge base ID to refresh summary for
@@ -317,18 +309,16 @@ export async function refreshKnowledgeBaseSummary(
 export async function updateKnowledgeBaseSummary(
   kbId: number,
   longSummary: string
-): Promise<KnowledgeBaseSummaryUpdateResponse> {
-  return apiClient.put<KnowledgeBaseSummaryUpdateResponse>(`/knowledge-bases/${kbId}/summary`, {
+): Promise<KnowledgeBaseSummaryResponse> {
+  return apiClient.put<KnowledgeBaseSummaryResponse>(`/knowledge-bases/${kbId}/summary`, {
     long_summary: longSummary,
   })
 }
 
 export async function resetKnowledgeBaseSummary(
   kbId: number
-): Promise<KnowledgeBaseSummaryUpdateResponse> {
-  return apiClient.post<KnowledgeBaseSummaryUpdateResponse>(
-    `/knowledge-bases/${kbId}/summary/reset`
-  )
+): Promise<KnowledgeBaseSummaryResponse> {
+  return apiClient.post<KnowledgeBaseSummaryResponse>(`/knowledge-bases/${kbId}/summary/reset`)
 }
 
 // ============== Configuration APIs ==============
