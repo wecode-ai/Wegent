@@ -73,9 +73,7 @@ export function MoveDocumentDialog({
       <DialogContent className="sm:max-w-[400px]">
         <DialogHeader>
           <DialogTitle>
-            {batchMode
-              ? t('document.folder.batchMoveDocument')
-              : t('document.folder.moveDocument')}
+            {batchMode ? t('document.folder.batchMoveDocument') : t('document.folder.moveDocument')}
           </DialogTitle>
         </DialogHeader>
 
@@ -89,7 +87,10 @@ export function MoveDocumentDialog({
           <div className="space-y-1.5">
             <Label className="text-sm font-medium">{t('document.folder.selectFolder')}</Label>
             <Select value={targetFolderId} onValueChange={setTargetFolderId}>
-              <SelectTrigger className="h-9" data-testid={batchMode ? 'batch-move-folder-select' : undefined}>
+              <SelectTrigger
+                className="h-11 min-w-[44px]"
+                data-testid={batchMode ? 'batch-move-folder-select' : undefined}
+              >
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -101,7 +102,9 @@ export function MoveDocumentDialog({
                   <SelectItem key={folder.id} value={String(folder.id)}>
                     {'\u00A0'.repeat(folder.depth * 2)}
                     {folder.name}
-                    {!batchMode && folder.id === currentFolderId ? ` (${t('document.folder.current')})` : ''}
+                    {!batchMode && folder.id === currentFolderId
+                      ? ` (${t('document.folder.current')})`
+                      : ''}
                   </SelectItem>
                 ))}
               </SelectContent>

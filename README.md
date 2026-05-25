@@ -474,12 +474,20 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/cocowh">
+            <img src="https://avatars.githubusercontent.com/u/17496282?v=4" width="80;" alt="cocowh"/>
+            <br />
+            <sub><b>Birch</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/graindt">
             <img src="https://avatars.githubusercontent.com/u/3962041?v=4" width="80;" alt="graindt"/>
             <br />
             <sub><b>Graindt</b></sub>
         </a>
-    </td>
+    </td></tr>
+<tr>
     <td align="center">
         <a href="https://github.com/qingchengliu">
             <img src="https://avatars.githubusercontent.com/u/20255838?v=4" width="80;" alt="qingchengliu"/>

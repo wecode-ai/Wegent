@@ -105,9 +105,14 @@ def downgrade() -> None:
         column["name"] for column in inspector.get_columns("background_executions")
     }
     if "inbox_message_id" in be_columns:
-        op.drop_index(
-            "idx_bg_exec_inbox_message_id", table_name="background_executions"
-        )
+        # Check if the index exists before attempting to drop it
+        be_indexes = {
+            idx["name"] for idx in inspector.get_indexes("background_executions")
+        }
+        if "idx_bg_exec_inbox_message_id" in be_indexes:
+            op.drop_index(
+                "idx_bg_exec_inbox_message_id", table_name="background_executions"
+            )
         op.drop_column("background_executions", "inbox_message_id")
 
     # --- queue_messages ---
