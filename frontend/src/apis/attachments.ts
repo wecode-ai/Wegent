@@ -302,7 +302,6 @@ export function getFileIcon(extension: string): string {
     case '.webp':
       return '🖼️'
     case '.mp4':
-    case '.webm':
     case '.mov':
     case '.avi':
     case '.mkv':
