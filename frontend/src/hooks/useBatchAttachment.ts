@@ -13,6 +13,8 @@ import {
   deleteAttachment,
   isSupportedExtension,
   isValidFileSize,
+  isVideoExtension,
+  getFileExtension,
   getErrorMessageFromCode,
 } from '@/apis/attachments'
 import type { Attachment } from '@/types/api'
@@ -114,7 +116,8 @@ export function useBatchAttachment(): UseBatchAttachmentReturn {
         }
 
         // Validate file size
-        if (!isValidFileSize(file.size)) {
+        const isVideo = isVideoExtension(getFileExtension(file.name))
+        if (!isValidFileSize(file.size, isVideo)) {
           validationErrors.push(`${file.name}: ${t('common:attachment.errors.file_too_large')}`)
           continue
         }

@@ -14,6 +14,9 @@ import {
   isSupportedExtension,
   isValidFileSize,
   MAX_FILE_SIZE,
+  MAX_VIDEO_FILE_SIZE,
+  isVideoExtension,
+  getFileExtension,
   getErrorMessageFromCode,
 } from '@/apis/attachments'
 import type { MultiAttachmentUploadState, TruncationInfo } from '@/types/api'
@@ -94,12 +97,16 @@ export function useMultiAttachment(options?: {
         }
 
         // Validate file size
-        if (!isValidFileSize(file.size)) {
+        const isVideo = isVideoExtension(getFileExtension(file.name))
+        if (!isValidFileSize(file.size, isVideo)) {
+          const limitMB = isVideo
+            ? MAX_VIDEO_FILE_SIZE / (1024 * 1024)
+            : MAX_FILE_SIZE / (1024 * 1024)
           setState(prev => {
             const newErrors = new Map(prev.errors)
             newErrors.set(
               fileId,
-              `${t('common:attachment.errors.file_too_large')}: ${t('common:attachment.errors.file_too_large_hint', { size: Math.round(MAX_FILE_SIZE / (1024 * 1024)) })}`
+              `${t('common:attachment.errors.file_too_large')}: ${t('common:attachment.errors.file_too_large_hint', { size: Math.round(limitMB) })}`
             )
             return { ...prev, errors: newErrors }
           })

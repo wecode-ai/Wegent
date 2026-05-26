@@ -231,9 +231,10 @@ export const SUPPORTED_MIME_TYPES = [
 ]
 
 /**
- * Maximum file size (100 MB)
+ * Maximum file size (100 MB for general files, 1 GB for video)
  */
 export const MAX_FILE_SIZE = 100 * 1024 * 1024
+export const MAX_VIDEO_FILE_SIZE = 1024 * 1024 * 1024
 
 /**
  * Check if a file extension is supported
@@ -248,8 +249,9 @@ export function isSupportedExtension(_filename: string): boolean {
 /**
  * Check if file size is within limits
  */
-export function isValidFileSize(size: number): boolean {
-  return size <= MAX_FILE_SIZE
+export function isValidFileSize(size: number, isVideo: boolean = false): boolean {
+  const limit = isVideo ? MAX_VIDEO_FILE_SIZE : MAX_FILE_SIZE
+  return size <= limit
 }
 
 /**
@@ -392,8 +394,10 @@ export async function uploadAttachment(
   const token = getToken()
 
   // Validate file size before upload
-  if (!isValidFileSize(file.size)) {
-    throw new Error(`文件大小超过 ${MAX_FILE_SIZE / (1024 * 1024)} MB 限制`)
+  const isVideo = isVideoExtension(getFileExtension(file.name))
+  if (!isValidFileSize(file.size, isVideo)) {
+    const limitMB = isVideo ? MAX_VIDEO_FILE_SIZE / (1024 * 1024) : MAX_FILE_SIZE / (1024 * 1024)
+    throw new Error(`文件大小超过 ${limitMB} MB 限制`)
   }
 
   const formData = new FormData()

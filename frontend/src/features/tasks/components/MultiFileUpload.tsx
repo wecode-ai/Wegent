@@ -284,7 +284,7 @@ export default function MultiFileUpload({
   const acceptString = SUPPORTED_EXTENSIONS.join(',')
 
   // Tooltip content
-  const tooltipContent = `支持的文件类型: PDF, Word, PPT, Excel, XMind, TXT, Markdown, 图片(JPG, PNG, GIF, BMP, WebP), 视频(MP4, MOV, AVI, MKV)\n最大文件大小: ${MAX_FILE_SIZE / (1024 * 1024)} MB\n支持多文件同时上传`
+  const tooltipContent = `支持的文件类型: PDF, Word, PPT, Excel, XMind, TXT, Markdown, 图片(JPG, PNG, GIF, BMP, WebP), 视频(MP4, MOV, AVI, MKV)\n最大文件大小: ${MAX_FILE_SIZE / (1024 * 1024)} MB（视频最大 1 GB）\n支持多文件同时上传`
 
   const hasAttachments = state.attachments.length > 0
   const isUploading = state.uploadingFiles.size > 0

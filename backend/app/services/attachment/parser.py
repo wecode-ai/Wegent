@@ -292,8 +292,14 @@ class DocumentParser:
         self.truncation_manager = SmartTruncationManager(truncation_config)
 
     @classmethod
-    def get_max_file_size(cls) -> int:
-        """Get maximum file size from configuration (in bytes)."""
+    def get_max_file_size(cls, extension: str | None = None) -> int:
+        """Get maximum file size from configuration (in bytes).
+
+        Video files use a larger limit (MAX_UPLOAD_VIDEO_FILE_SIZE_MB)
+        when the extension is known; all other files use the default.
+        """
+        if extension and extension.lower() in cls.VIDEO_EXTENSIONS:
+            return settings.MAX_UPLOAD_VIDEO_FILE_SIZE_MB * 1024 * 1024
         return settings.MAX_UPLOAD_FILE_SIZE_MB * 1024 * 1024
 
     @classmethod
@@ -314,9 +320,9 @@ class DocumentParser:
         )
 
     @classmethod
-    def validate_file_size(cls, size: int) -> bool:
+    def validate_file_size(cls, size: int, extension: str | None = None) -> bool:
         """Check if file size is within limits."""
-        return size <= cls.get_max_file_size()
+        return size <= cls.get_max_file_size(extension)
 
     @classmethod
     def validate_text_length(cls, text: str) -> bool:

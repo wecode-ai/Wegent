@@ -443,6 +443,7 @@ class Settings(BaseSettings):
 
     # File upload configuration
     MAX_UPLOAD_FILE_SIZE_MB: int = 100  # Maximum file size in MB
+    MAX_UPLOAD_VIDEO_FILE_SIZE_MB: int = 1024  # Maximum video file size in MB
     MAX_EXTRACTED_TEXT_LENGTH: int = 500000  # Maximum extracted text length
 
     # Attachment storage backend configuration

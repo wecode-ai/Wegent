@@ -153,8 +153,8 @@ class ContextService:
             )
 
         file_size = len(binary_data)
-        if not self.parser.validate_file_size(file_size):
-            max_size_mb = DocumentParser.get_max_file_size() / (1024 * 1024)
+        if not self.parser.validate_file_size(file_size, extension):
+            max_size_mb = DocumentParser.get_max_file_size(extension) / (1024 * 1024)
             raise ValueError(f"File size exceeds maximum limit ({max_size_mb} MB)")
 
         mime_type = self.parser.get_mime_type(extension)
