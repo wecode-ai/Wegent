@@ -32,6 +32,8 @@
     "images": "Images",
     "code": "Code",
     "more": "More",
-    "recent": "Recent"
+    "recent": "Recent",
+    "collapse_sidebar": "Collapse sidebar",
+    "expand_sidebar": "Expand sidebar"
   }
 }
