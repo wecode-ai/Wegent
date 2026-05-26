@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 import { DesktopWorkbenchLayout } from './DesktopWorkbenchLayout'
@@ -39,6 +39,21 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByText('github_wegent')).toBeInTheDocument()
     expect(screen.getByText('远程连接 Claude Code')).toBeInTheDocument()
     expect(screen.getByText('我们该做什么？')).toBeInTheDocument()
+  })
+
+  test('restores and stores sidebar width in localStorage', () => {
+    localStorage.setItem('wework.desktop.sidebar.width', '320')
+
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(document.querySelector('aside')).toHaveStyle({ width: '320px' })
+
+    fireEvent.pointerDown(screen.getByTestId('sidebar-resize-handle'))
+    fireEvent.pointerMove(document, { clientX: 360 })
+    fireEvent.pointerUp(document)
+
+    expect(document.querySelector('aside')).toHaveStyle({ width: '360px' })
+    expect(localStorage.getItem('wework.desktop.sidebar.width')).toBe('360')
   })
 
   test('collapses and expands the sidebar', async () => {
