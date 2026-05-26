@@ -12,6 +12,7 @@ attachments as subtask contexts.
 """
 
 import logging
+import os
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
@@ -22,6 +23,7 @@ from app.core.security import AuthContext, get_auth_context
 from app.models.subtask_context import SubtaskContext
 from app.schemas.subtask_context import AttachmentResponse, TruncationInfo
 from app.services.attachment.parser import DocumentParseError, DocumentParser
+from app.services.attachment.storage_factory import is_external_storage_configured
 from app.services.context import context_service
 from app.services.context.context_service import NotFoundException
 from shared.telemetry.decorators import trace_async
@@ -134,8 +136,25 @@ async def upload_attachment_open(
     )
 
     # Stream file content with bounded size check
+    # Determine extension early for video-aware size limit and S3 validation
+    _, extension = os.path.splitext(file.filename or "")
+    extension = extension.lower()
+
+    # Video files require an external storage backend (S3/MinIO)
+    if (
+        extension in DocumentParser.VIDEO_EXTENSIONS
+        and not is_external_storage_configured()
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Video file uploads require an external storage backend "
+                "(S3 or MinIO). Please configure ATTACHMENT_STORAGE_BACKEND."
+            ),
+        )
+
     binary_data = bytearray()
-    max_file_size = DocumentParser.get_max_file_size()
+    max_file_size = DocumentParser.get_max_file_size(extension)
 
     try:
         while chunk := await file.read(UPLOAD_CHUNK_SIZE_BYTES):

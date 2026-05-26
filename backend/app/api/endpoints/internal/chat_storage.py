@@ -387,42 +387,56 @@ def _build_user_message_content(
     total_attachment_text_length = 0
 
     for idx, attachment in enumerate(attachments, start=1):
-        # Check if it's an image
+        # Compute presigned File URL for external storage backends
+        file_url = None
+        if attachment.storage_backend != "mysql":
+            file_url = context_service.get_attachment_url(db, attachment)
+
+        # Image attachment
         if context_service.is_image_context(attachment) and attachment.image_base64:
-            # Build image attachment metadata header
-            attachment_id = attachment.id
-            filename = attachment.original_filename or attachment.name
-            mime_type = attachment.mime_type or "unknown"
-            file_size = attachment.file_size or 0
-            formatted_size = context_service.format_file_size(file_size)
-            url = context_service.build_attachment_url(attachment_id)
-
-            # Build image metadata header
-            image_header = (
-                f"[Image Attachment: {filename} | ID: {attachment_id} | "
-                f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]"
+            image_header = context_service.build_attachment_metadata_header(
+                attachment,
+                file_url=file_url,
+                label="Image Attachment",
+                suffix="",
             )
-
-            # Add text header to content
             attachment_text_parts.append(f"{image_header}\n")
             total_attachment_text_length += len(image_header) + 1
 
-            # Add vision part for image rendering
             vision_parts.append(
                 {
                     "type": "image_url",
                     "image_url": {
-                        "url": f"data:{mime_type};base64,{attachment.image_base64}",
+                        "url": f"data:{attachment.mime_type or 'image/png'};base64,{attachment.image_base64}",
                     },
                 }
             )
             logger.debug(
                 f"[history] Loaded image attachment with metadata: id={attachment.id}, "
-                f"name={filename}, mime_type={mime_type}"
+                f"name={attachment.original_filename or attachment.name}"
             )
+        # Video attachment — no text content, inject metadata + File URL
+        elif context_service.is_video_context(attachment):
+            media_prefix = context_service.build_attachment_metadata_header(
+                attachment,
+                file_url=file_url,
+            )
+            if not file_url:
+                media_prefix += (
+                    "(Note: This video file is not directly accessible via URL. "
+                    "Video analysis requires an external storage backend such as S3 or MinIO.)\n"
+                )
+            attachment_text_parts.append(f"[Attachment {idx}]\n{media_prefix}")
+            total_attachment_text_length += len(media_prefix) + 16
+            logger.debug(
+                f"[history] Loaded video attachment with metadata: id={attachment.id}, "
+                f"name={attachment.original_filename or attachment.name}"
+            )
+        # Document attachment
         else:
-            # Document attachment - use context_service to build metadata-rich prefix
-            doc_prefix = context_service.build_document_text_prefix(attachment)
+            doc_prefix = context_service.build_document_text_prefix(
+                attachment, file_url=file_url
+            )
             if doc_prefix:
                 attachment_text_parts.append(doc_prefix)
                 total_attachment_text_length += len(doc_prefix)

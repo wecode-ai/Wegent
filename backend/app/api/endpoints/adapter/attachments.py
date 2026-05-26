@@ -9,6 +9,7 @@ Uses the unified context service for managing attachments as subtask contexts.
 """
 
 import logging
+import os
 from typing import List, Optional
 from urllib.parse import quote
 
@@ -38,6 +39,7 @@ from app.schemas.subtask_context import (
     TruncationInfo,
 )
 from app.services.attachment.parser import DocumentParseError, DocumentParser
+from app.services.attachment.storage_factory import is_external_storage_configured
 from app.services.auth.task_token import extract_token_from_header, verify_task_token
 from app.services.context import context_service
 from app.services.context.context_service import NotFoundException
@@ -379,8 +381,24 @@ async def upload_attachment(
         ) from e
 
     # Validate file size before processing
-    if not DocumentParser.validate_file_size(len(binary_data)):
-        max_size_mb = DocumentParser.get_max_file_size() / (1024 * 1024)
+    _, extension = os.path.splitext(file.filename or "")
+    extension = extension.lower()
+
+    # Video files require an external storage backend (S3/MinIO)
+    if (
+        extension in DocumentParser.VIDEO_EXTENSIONS
+        and not is_external_storage_configured()
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Video file uploads require an external storage backend "
+                "(S3 or MinIO). Please configure ATTACHMENT_STORAGE_BACKEND."
+            ),
+        )
+
+    if not DocumentParser.validate_file_size(len(binary_data), extension):
+        max_size_mb = DocumentParser.get_max_file_size(extension) / (1024 * 1024)
         raise HTTPException(
             status_code=400,
             detail=f"File size exceeds maximum limit ({max_size_mb} MB)",

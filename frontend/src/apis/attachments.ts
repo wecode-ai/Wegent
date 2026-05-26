@@ -76,7 +76,6 @@ const ERROR_CODE_MAPPING: Record<
   file_too_large: {
     titleKey: 'attachment.errors.file_too_large',
     hintKey: 'attachment.errors.file_too_large_hint',
-    hintParams: { size: 100 },
   },
   parse_failed: {
     titleKey: 'attachment.errors.parse_failed',
@@ -109,7 +108,9 @@ const ERROR_CODE_MAPPING: Record<
 export function getErrorMessageFromCode(
   errorCode: string | null | undefined,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  t: (key: string, params?: Record<string, any>) => string
+  t: (key: string, params?: Record<string, any>) => string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  overrideParams?: Record<string, any>
 ): string | undefined {
   if (!errorCode) return undefined
 
@@ -117,7 +118,9 @@ export function getErrorMessageFromCode(
   if (!mapping) return undefined
 
   const title = t(mapping.titleKey)
-  const hint = t(mapping.hintKey, mapping.hintParams || { types: t('attachment.supported_types') })
+  const params = overrideParams ||
+    mapping.hintParams || { types: t('attachment.supported_types'), size: 100 }
+  const hint = t(mapping.hintKey, params)
   return `${title}: ${hint}`
 }
 
