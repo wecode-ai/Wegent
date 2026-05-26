@@ -17,6 +17,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getPublicApiBaseUrl } from '@/lib/runtime-config'
@@ -24,7 +25,26 @@ import type { Team } from '@/types/api'
 
 const API_KEYS_PATH = '/settings?section=api-keys&tab=api-keys'
 const RESPONSES_PATH = '/v1/responses'
-const DEFAULT_INPUT = '帮我总结今天的待办'
+const DEFAULT_INPUT = '你好，你都能做什么？'
+const API_KEY_PLACEHOLDER = '<your-api-key>'
+const WEGENT_CHAT_BOT_TOOL_TYPE = 'wegent_chat_bot'
+
+export const TEAM_API_CODE_SAMPLE_LANGUAGES = [
+  'curl',
+  'javascript',
+  'python',
+  'java',
+  'go',
+  'rust',
+] as const
+
+export type TeamApiCodeSampleLanguage = (typeof TEAM_API_CODE_SAMPLE_LANGUAGES)[number]
+
+export interface TeamApiCodeSample {
+  language: TeamApiCodeSampleLanguage
+  code: string
+  isCommunitySdk?: boolean
+}
 
 export function buildTeamApiModel(team: Team): string {
   const namespace = team.namespace?.trim() || 'default'
@@ -65,14 +85,219 @@ export function buildTeamApiCurl(
   return [
     `curl -X POST ${JSON.stringify(responsesEndpoint)} \\`,
     '  -H "Content-Type: application/json" \\',
-    '  -H "X-API-Key: <your-api-key>" \\',
+    `  -H "X-API-Key: ${API_KEY_PLACEHOLDER}" \\`,
     "  -d '{",
     `    "model": ${JSON.stringify(model)},`,
     `    "input": ${JSON.stringify(input)},`,
     '    "stream": true,',
-    '    "tools": [{"type": "wegent_chat_bot"}]',
+    `    "tools": [{"type": ${JSON.stringify(WEGENT_CHAT_BOT_TOOL_TYPE)}}]`,
     "  }'",
   ].join('\n')
+}
+
+export function buildTeamApiSdkBaseUrl(responsesEndpoint: string): string {
+  return responsesEndpoint.trim().replace(/\/responses\/?$/, '')
+}
+
+function buildSingleQuotedString(value: string): string {
+  return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
+}
+
+export function buildTeamApiCodeSamples(
+  team: Team,
+  input: string = DEFAULT_INPUT,
+  responsesEndpoint: string = buildTeamApiResponsesEndpoint(getPublicApiBaseUrl())
+): TeamApiCodeSample[] {
+  const model = buildTeamApiModel(team)
+  const sdkBaseUrl = buildTeamApiSdkBaseUrl(responsesEndpoint)
+  const quotedApiKey = JSON.stringify(API_KEY_PLACEHOLDER)
+  const quotedBaseUrl = JSON.stringify(sdkBaseUrl)
+  const quotedInput = JSON.stringify(input)
+  const quotedModel = JSON.stringify(model)
+  const quotedToolType = JSON.stringify(WEGENT_CHAT_BOT_TOOL_TYPE)
+  const jsApiKey = buildSingleQuotedString(API_KEY_PLACEHOLDER)
+  const jsBaseUrl = buildSingleQuotedString(sdkBaseUrl)
+  const jsInput = buildSingleQuotedString(input)
+  const jsModel = buildSingleQuotedString(model)
+  const jsToolType = buildSingleQuotedString(WEGENT_CHAT_BOT_TOOL_TYPE)
+
+  return [
+    {
+      language: 'curl',
+      code: buildTeamApiCurl(team, input, responsesEndpoint),
+    },
+    {
+      language: 'javascript',
+      code: [
+        "import OpenAI from 'openai'",
+        '',
+        'const client = new OpenAI({',
+        `  apiKey: ${jsApiKey},`,
+        `  baseURL: ${jsBaseUrl},`,
+        '})',
+        '',
+        'const stream = await client.responses.create({',
+        `  model: ${jsModel},`,
+        `  input: ${jsInput},`,
+        '  stream: true,',
+        `  tools: [{ type: ${jsToolType} }],`,
+        '})',
+        '',
+        'for await (const event of stream) {',
+        "  if (event.type === 'response.output_text.delta') {",
+        '    process.stdout.write(event.delta)',
+        '  }',
+        '}',
+      ].join('\n'),
+    },
+    {
+      language: 'python',
+      code: [
+        'from openai import OpenAI',
+        '',
+        'client = OpenAI(',
+        `    api_key=${quotedApiKey},`,
+        `    base_url=${quotedBaseUrl},`,
+        ')',
+        '',
+        'stream = client.responses.create(',
+        `    model=${quotedModel},`,
+        `    input=${quotedInput},`,
+        '    stream=True,',
+        `    tools=[{"type": ${quotedToolType}}],`,
+        ')',
+        '',
+        'for event in stream:',
+        '    if event.type == "response.output_text.delta":',
+        '        print(event.delta, end="")',
+      ].join('\n'),
+    },
+    {
+      language: 'java',
+      code: [
+        'import com.openai.client.OpenAIClient;',
+        'import com.openai.client.okhttp.OpenAIOkHttpClient;',
+        'import com.openai.core.JsonValue;',
+        'import com.openai.core.http.StreamResponse;',
+        'import com.openai.helpers.ResponseAccumulator;',
+        'import com.openai.models.ChatModel;',
+        'import com.openai.models.responses.ResponseCreateParams;',
+        'import com.openai.models.responses.ResponseStreamEvent;',
+        'import java.util.List;',
+        'import java.util.Map;',
+        '',
+        'public class Main {',
+        '    public static void main(String[] args) throws Exception {',
+        '        OpenAIClient client = OpenAIOkHttpClient.builder()',
+        `            .apiKey(${quotedApiKey})`,
+        '            .build()',
+        '            .withOptions(options ->',
+        `                options.baseUrl(${quotedBaseUrl})`,
+        '            );',
+        '',
+        '        ResponseCreateParams params = ResponseCreateParams.builder()',
+        `            .model(ChatModel.of(${quotedModel}))`,
+        `            .input(${quotedInput})`,
+        '            .putAdditionalBodyProperty(',
+        '                "tools",',
+        `                JsonValue.from(List.of(Map.of("type", ${quotedToolType})))`,
+        '            )',
+        '            .build();',
+        '',
+        '        ResponseAccumulator accumulator = ResponseAccumulator.create();',
+        '        try (StreamResponse<ResponseStreamEvent> stream =',
+        '                client.responses().createStreaming(params)) {',
+        '            stream.stream()',
+        '                .peek(accumulator::accumulate)',
+        '                .flatMap(event -> event.outputTextDelta().stream())',
+        '                .forEach(textEvent -> System.out.print(textEvent.delta()));',
+        '        }',
+        '    }',
+        '}',
+      ].join('\n'),
+    },
+    {
+      language: 'go',
+      code: [
+        'package main',
+        '',
+        'import (',
+        '\t"context"',
+        '\t"fmt"',
+        '',
+        '\t"github.com/openai/openai-go/v3"',
+        '\t"github.com/openai/openai-go/v3/option"',
+        '\t"github.com/openai/openai-go/v3/responses"',
+        ')',
+        '',
+        'func main() {',
+        '\tctx := context.Background()',
+        '\tclient := openai.NewClient(',
+        `\t\toption.WithAPIKey(${quotedApiKey}),`,
+        `\t\toption.WithBaseURL(${quotedBaseUrl}),`,
+        '\t)',
+        '',
+        '\tparams := responses.ResponseNewParams{',
+        `\t\tModel: openai.ChatModel(${quotedModel}),`,
+        '\t\tInput: responses.ResponseNewParamsInputUnion{',
+        `\t\t\tOfString: openai.String(${quotedInput}),`,
+        '\t\t},',
+        '\t}',
+        '\tparams.SetExtraFields(map[string]any{',
+        `\t\t"tools": []map[string]string{{"type": ${quotedToolType}}},`,
+        '\t})',
+        '',
+        '\tstream := client.Responses.NewStreaming(ctx, params)',
+        '\tfor stream.Next() {',
+        '\t\tfmt.Print(stream.Current().Delta)',
+        '\t}',
+        '\tif err := stream.Err(); err != nil {',
+        '\t\tpanic(err)',
+        '\t}',
+        '}',
+      ].join('\n'),
+    },
+    {
+      language: 'rust',
+      isCommunitySdk: true,
+      code: [
+        'use async_openai::{config::OpenAIConfig, Client};',
+        'use futures_util::StreamExt;',
+        'use serde_json::{json, Value};',
+        '',
+        '#[tokio::main]',
+        'async fn main() -> Result<(), Box<dyn std::error::Error>> {',
+        '    let config = OpenAIConfig::new()',
+        `        .with_api_key(${quotedApiKey})`,
+        `        .with_api_base(${quotedBaseUrl});`,
+        '    let client = Client::with_config(config);',
+        '',
+        '    let request = json!({',
+        `        "model": ${quotedModel},`,
+        `        "input": ${quotedInput},`,
+        '        "stream": true,',
+        `        "tools": [{ "type": ${quotedToolType} }],`,
+        '    });',
+        '',
+        '    let mut stream = client',
+        '        .responses()',
+        '        .create_stream_byot::<_, Value>(request)',
+        '        .await?;',
+        '',
+        '    while let Some(event) = stream.next().await {',
+        '        let event = event?;',
+        '        if event["type"].as_str() == Some("response.output_text.delta") {',
+        '            if let Some(delta) = event["delta"].as_str() {',
+        '                print!("{delta}");',
+        '            }',
+        '        }',
+        '    }',
+        '',
+        '    Ok(())',
+        '}',
+      ].join('\n'),
+    },
+  ]
 }
 
 interface TeamApiCallButtonProps {
@@ -84,25 +309,40 @@ export function TeamApiCallButton({ team }: TeamApiCallButtonProps) {
   const { toast } = useToast()
   const router = useRouter()
   const [open, setOpen] = useState(false)
+  const [activeSampleLanguage, setActiveSampleLanguage] =
+    useState<TeamApiCodeSampleLanguage>('curl')
 
   const teamDisplayName = team.displayName?.trim() || team.name
   const model = useMemo(() => buildTeamApiModel(team), [team])
   const responsesEndpoint = useMemo(() => buildTeamApiResponsesEndpoint(getPublicApiBaseUrl()), [])
-  const curl = useMemo(
-    () => buildTeamApiCurl(team, DEFAULT_INPUT, responsesEndpoint),
+  const codeSamples = useMemo(
+    () => buildTeamApiCodeSamples(team, DEFAULT_INPUT, responsesEndpoint),
     [team, responsesEndpoint]
   )
+  const activeSample =
+    codeSamples.find(sample => sample.language === activeSampleLanguage) ?? codeSamples[0]!
+  const activeLanguageLabel = t(`teams.api_call.languages.${activeSample.language}`)
   const docsLanguage = i18n.language?.startsWith('zh') ? 'zh' : 'en'
   const docsUrl = `https://github.com/wecode-ai/wegent/blob/main/docs/${docsLanguage}/reference/openapi-responses-api.md`
 
-  const handleCopyCurl = async () => {
+  const handleSampleLanguageChange = (value: string) => {
+    if ((TEAM_API_CODE_SAMPLE_LANGUAGES as readonly string[]).includes(value)) {
+      setActiveSampleLanguage(value as TeamApiCodeSampleLanguage)
+    }
+  }
+
+  const handleCopySample = async () => {
+    const isCurl = activeSample.language === 'curl'
+
     try {
-      await navigator.clipboard.writeText(curl)
-      toast({ title: t('teams.api_call.copy_success') })
+      await navigator.clipboard.writeText(activeSample.code)
+      toast({
+        title: t(isCurl ? 'teams.api_call.copy_success' : 'teams.api_call.copy_code_success'),
+      })
     } catch {
       toast({
         variant: 'destructive',
-        title: t('teams.api_call.copy_failed'),
+        title: t(isCurl ? 'teams.api_call.copy_failed' : 'teams.api_call.copy_code_failed'),
       })
     }
   }
@@ -131,7 +371,7 @@ export function TeamApiCallButton({ team }: TeamApiCallButtonProps) {
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-3xl">
           <DialogHeader>
             <DialogTitle>{t('teams.api_call.title', { name: teamDisplayName })}</DialogTitle>
             <DialogDescription>{t('teams.api_call.description')}</DialogDescription>
@@ -157,11 +397,34 @@ export function TeamApiCallButton({ team }: TeamApiCallButtonProps) {
 
             <div>
               <div className="mb-2 text-xs font-medium text-text-muted">
-                {t('teams.api_call.curl_example')}
+                {t('teams.api_call.code_examples')}
               </div>
-              <pre className="max-h-[320px] overflow-auto rounded-md border border-border bg-surface p-3 text-xs leading-5 text-text-primary">
-                <code>{curl}</code>
-              </pre>
+              <Tabs value={activeSample.language} onValueChange={handleSampleLanguageChange}>
+                <TabsList className="mb-2 h-auto max-w-full flex-wrap justify-start">
+                  {codeSamples.map(sample => (
+                    <TabsTrigger
+                      key={sample.language}
+                      value={sample.language}
+                      onClick={() => setActiveSampleLanguage(sample.language)}
+                      data-testid={`team-api-language-tab-${sample.language}-${team.id}`}
+                    >
+                      {t(`teams.api_call.languages.${sample.language}`)}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+                {activeSample.isCommunitySdk && (
+                  <div className="mb-2 text-xs text-text-muted">
+                    {t('teams.api_call.rust_community_sdk')}
+                  </div>
+                )}
+                {codeSamples.map(sample => (
+                  <TabsContent key={sample.language} value={sample.language} className="mt-0">
+                    <pre className="max-h-[360px] overflow-auto rounded-md border border-border bg-surface p-3 text-xs leading-5 text-text-primary">
+                      <code>{sample.code}</code>
+                    </pre>
+                  </TabsContent>
+                ))}
+              </Tabs>
             </div>
           </div>
 
@@ -186,12 +449,14 @@ export function TeamApiCallButton({ team }: TeamApiCallButtonProps) {
             </Button>
             <Button
               variant="primary"
-              onClick={handleCopyCurl}
+              onClick={handleCopySample}
               className="gap-2"
               data-testid={`copy-team-api-curl-button-${team.id}`}
             >
               <Copy className="h-4 w-4" />
-              {t('teams.api_call.copy_curl')}
+              {activeSample.language === 'curl'
+                ? t('teams.api_call.copy_curl')
+                : t('teams.api_call.copy_sample', { language: activeLanguageLabel })}
             </Button>
           </DialogFooter>
         </DialogContent>

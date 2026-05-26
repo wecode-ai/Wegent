@@ -9,7 +9,6 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfmSafe from '@/lib/remark-gfm-safe'
 import { autolinkUrls } from '@/lib/autolink-urls'
 import remarkMath from 'remark-math'
-import remarkFrontmatter from 'remark-frontmatter'
 import rehypeKatex from 'rehype-katex'
 import rehypeRaw from 'rehype-raw'
 import dynamic from 'next/dynamic'
@@ -159,10 +158,14 @@ function FrontmatterBlock({ yaml }: { yaml: string }) {
  */
 function extractFrontmatter(source: string): { frontmatter: string | null; body: string } {
   const match = source.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/)
-  if (match) {
+  if (match && isLikelyYamlFrontmatter(match[1])) {
     return { frontmatter: match[1], body: match[2] }
   }
   return { frontmatter: null, body: source }
+}
+
+function isLikelyYamlFrontmatter(value: string): boolean {
+  return value.split(/\r?\n/).some(line => /^[A-Za-z0-9_-]+:\s*.*$/.test(line.trim()))
 }
 
 /**
@@ -652,7 +655,7 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   // Configure remark/rehype plugins based on content
   const remarkPlugins = useMemo(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const plugins: any[] = [remarkGfmSafe, remarkFrontmatter]
+    const plugins: any[] = [remarkGfmSafe]
     if (hasMath) {
       // Enable singleDollarTextMath to support $...$ inline math
       plugins.push([remarkMath, { singleDollarTextMath: true }])

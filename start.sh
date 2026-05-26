@@ -42,6 +42,21 @@ load_config() {
             fi
         done < "$CONFIG_FILE"
         echo ""
+
+        # Backfill any missing port variables added after initial config was created
+        local needs_save=false
+        if ! grep -q "^KNOWLEDGE_RUNTIME_PORT=" "$CONFIG_FILE" 2>/dev/null; then
+            echo -e "  ${YELLOW}↳${NC} Adding missing KNOWLEDGE_RUNTIME_PORT=$DEFAULT_KNOWLEDGE_RUNTIME_PORT to .env"
+            needs_save=true
+        fi
+        if ! grep -q "^WEWORK_PORT=" "$CONFIG_FILE" 2>/dev/null; then
+            echo -e "  ${YELLOW}↳${NC} Adding missing WEWORK_PORT=$DEFAULT_WEWORK_PORT to .env"
+            needs_save=true
+        fi
+        if [ "$needs_save" = true ]; then
+            save_config
+            echo ""
+        fi
     fi
 }
 
@@ -57,6 +72,7 @@ save_config() {
         grep -v "^EXECUTOR_MANAGER_PORT=" | \
         grep -v "^KNOWLEDGE_RUNTIME_PORT=" | \
         grep -v "^WEGENT_FRONTEND_PORT=" | \
+        grep -v "^WEWORK_PORT=" | \
         grep -v "^EXECUTOR_IMAGE=" | \
         grep -v "^WEGENT_SOCKET_URL=" > "$temp_file" || true
     fi
@@ -84,6 +100,7 @@ CHAT_SHELL_PORT=$CHAT_SHELL_PORT
 EXECUTOR_MANAGER_PORT=$EXECUTOR_MANAGER_PORT
 KNOWLEDGE_RUNTIME_PORT=$KNOWLEDGE_RUNTIME_PORT
 WEGENT_FRONTEND_PORT=$WEGENT_FRONTEND_PORT
+WEWORK_PORT=$WEWORK_PORT
 
 # Executor Docker image
 EXECUTOR_IMAGE=$EXECUTOR_IMAGE
@@ -100,6 +117,7 @@ EOF
         echo "EXECUTOR_MANAGER_PORT=$EXECUTOR_MANAGER_PORT" >> "$temp_file"
         echo "KNOWLEDGE_RUNTIME_PORT=$KNOWLEDGE_RUNTIME_PORT" >> "$temp_file"
         echo "WEGENT_FRONTEND_PORT=$WEGENT_FRONTEND_PORT" >> "$temp_file"
+        echo "WEWORK_PORT=$WEWORK_PORT" >> "$temp_file"
         echo "EXECUTOR_IMAGE=$EXECUTOR_IMAGE" >> "$temp_file"
         echo "WEGENT_SOCKET_URL=$WEGENT_SOCKET_URL" >> "$temp_file"
     fi
@@ -183,19 +201,26 @@ init_config() {
     WEGENT_FRONTEND_PORT=${input_frontend_port:-$DEFAULT_WEGENT_FRONTEND_PORT}
     echo ""
 
+    # WeWork Port
+    echo -e "${CYAN}6. WeWork Port${NC}"
+    echo -e "   The port for WeWork multi-platform workspace app."
+    read -p "   WeWork Port [$DEFAULT_WEWORK_PORT]: " input_wework_port
+    WEWORK_PORT=${input_wework_port:-$DEFAULT_WEWORK_PORT}
+    echo ""
+
     # === Other Settings ===
     echo -e "${BLUE}━━━ Other Settings ━━━${NC}"
     echo ""
 
     # Executor Image
-    echo -e "${CYAN}6. Executor Docker Image${NC}"
+    echo -e "${CYAN}7. Executor Docker Image${NC}"
     echo -e "   The Docker image used for task execution."
     read -p "   Executor Image [$DEFAULT_EXECUTOR_IMAGE]: " input_image
     EXECUTOR_IMAGE=${input_image:-$DEFAULT_EXECUTOR_IMAGE}
     echo ""
 
     # Socket URL
-    echo -e "${CYAN}7. Socket URL${NC}"
+    echo -e "${CYAN}8. Socket URL${NC}"
     echo -e "   The WebSocket URL for real-time communication."
     echo -e "   For remote access, use your machine's IP address."
     echo -e "   Detected local IP: ${GREEN}$local_ip${NC}"
@@ -213,6 +238,7 @@ init_config() {
     echo -e "    Executor Mgr Port:   ${CYAN}$EXECUTOR_MANAGER_PORT${NC}"
     echo -e "    Knowledge Rtm Port:  ${CYAN}$KNOWLEDGE_RUNTIME_PORT${NC}"
     echo -e "    Frontend Port:       ${CYAN}$WEGENT_FRONTEND_PORT${NC}"
+    echo -e "    WeWork Port:         ${CYAN}$WEWORK_PORT${NC}"
     echo -e "  ${YELLOW}Other Settings:${NC}"
     echo -e "    Executor Image:      ${CYAN}$EXECUTOR_IMAGE${NC}"
     echo -e "    Socket URL:          ${CYAN}$WEGENT_SOCKET_URL${NC}"
@@ -727,6 +753,7 @@ DEFAULT_CHAT_SHELL_PORT=8100
 DEFAULT_EXECUTOR_MANAGER_PORT=8001
 DEFAULT_KNOWLEDGE_RUNTIME_PORT=8200
 DEFAULT_WEGENT_FRONTEND_PORT=3000
+DEFAULT_WEWORK_PORT=1420
 
 # Other settings
 DEFAULT_EXECUTOR_IMAGE="ghcr.io/wecode-ai/wegent-executor:latest"
@@ -737,6 +764,7 @@ CHAT_SHELL_PORT=$DEFAULT_CHAT_SHELL_PORT
 EXECUTOR_MANAGER_PORT=$DEFAULT_EXECUTOR_MANAGER_PORT
 KNOWLEDGE_RUNTIME_PORT=$DEFAULT_KNOWLEDGE_RUNTIME_PORT
 WEGENT_FRONTEND_PORT=$DEFAULT_WEGENT_FRONTEND_PORT
+WEWORK_PORT=$DEFAULT_WEWORK_PORT
 EXECUTOR_IMAGE=$DEFAULT_EXECUTOR_IMAGE
 
 # These will be computed after ports are loaded from config
@@ -822,6 +850,7 @@ CLI_CHAT_SHELL_PORT=""
 CLI_EXECUTOR_MANAGER_PORT=""
 CLI_KNOWLEDGE_RUNTIME_PORT=""
 CLI_WEGENT_FRONTEND_PORT=""
+CLI_WEWORK_PORT=""
 CLI_EXECUTOR_IMAGE=""
 CLI_WEGENT_SOCKET_URL=""
 CLI_CLEAN_FRONTEND_CACHE=""
@@ -847,6 +876,10 @@ case $1 in
         ;;
     -p|--port)
         CLI_WEGENT_FRONTEND_PORT="$2"
+        shift 2
+        ;;
+    -w|--wework-port)
+        CLI_WEWORK_PORT="$2"
         shift 2
         ;;
     -e|--executor-image)
@@ -916,6 +949,7 @@ load_config
 [ -n "$CLI_EXECUTOR_MANAGER_PORT" ] && EXECUTOR_MANAGER_PORT="$CLI_EXECUTOR_MANAGER_PORT"
 [ -n "$CLI_KNOWLEDGE_RUNTIME_PORT" ] && KNOWLEDGE_RUNTIME_PORT="$CLI_KNOWLEDGE_RUNTIME_PORT"
 [ -n "$CLI_WEGENT_FRONTEND_PORT" ] && WEGENT_FRONTEND_PORT="$CLI_WEGENT_FRONTEND_PORT"
+[ -n "$CLI_WEWORK_PORT" ] && WEWORK_PORT="$CLI_WEWORK_PORT"
 [ -n "$CLI_EXECUTOR_IMAGE" ] && EXECUTOR_IMAGE="$CLI_EXECUTOR_IMAGE"
 [ -n "$CLI_WEGENT_SOCKET_URL" ] && WEGENT_SOCKET_URL="$CLI_WEGENT_SOCKET_URL"
 [ -n "$CLI_CLEAN_FRONTEND_CACHE" ] && CLEAN_FRONTEND_CACHE="$CLI_CLEAN_FRONTEND_CACHE"
@@ -940,6 +974,16 @@ check_port() {
     local port=$1
     local service=$2
     if lsof -Pi :$port -sTCP:LISTEN -t >/dev/null 2>&1; then
+        # Port in use - check if it's our own process
+        if [ -n "$service" ] && [ -f "$PID_DIR/$service.pid" ]; then
+            local our_pid
+            our_pid=$(cat "$PID_DIR/$service.pid" 2>/dev/null)
+            local port_pid
+            port_pid=$(lsof -Pi :$port -sTCP:LISTEN -t 2>/dev/null | head -1)
+            if [ -n "$our_pid" ] && [ "$our_pid" = "$port_pid" ]; then
+                return 0
+            fi
+        fi
         return 1
     fi
     return 0
@@ -1038,8 +1082,8 @@ stop_services() {
     shift
 
     # Define all services and their ports
-    local all_services=("backend" "frontend" "chat_shell" "executor_manager" "knowledge_runtime")
-    local all_ports=("$BACKEND_PORT" "$WEGENT_FRONTEND_PORT" "$CHAT_SHELL_PORT" "$EXECUTOR_MANAGER_PORT" "$KNOWLEDGE_RUNTIME_PORT")
+    local all_services=("backend" "frontend" "chat_shell" "executor_manager" "knowledge_runtime" "wework")
+    local all_ports=("$BACKEND_PORT" "$WEGENT_FRONTEND_PORT" "$CHAT_SHELL_PORT" "$EXECUTOR_MANAGER_PORT" "$KNOWLEDGE_RUNTIME_PORT" "$WEWORK_PORT")
 
     # Determine which services to stop
     local services=()
@@ -1073,9 +1117,13 @@ stop_services() {
                     services+=("knowledge_runtime")
                     service_ports+=("$KNOWLEDGE_RUNTIME_PORT")
                     ;;
+                wework|ww)
+                    services+=("wework")
+                    service_ports+=("$WEWORK_PORT")
+                    ;;
                 *)
                     echo -e "${RED}Unknown service: $svc${NC}"
-                    echo -e "Valid services: backend|be|api, frontend|fe|ui, chat_shell|cs|chat, executor_manager|em|executor, knowledge_runtime|kr|knowledge"
+                    echo -e "Valid services: backend|be|api, frontend|fe|ui, chat_shell|cs|chat, executor_manager|em|executor, knowledge_runtime|kr|knowledge, wework|ww"
                     return 1
                     ;;
             esac
@@ -1272,7 +1320,7 @@ show_status() {
     echo -e "${BLUE}Wegent Service Status:${NC}"
     echo ""
 
-    local services=("backend:$BACKEND_PORT" "frontend:$WEGENT_FRONTEND_PORT" "chat_shell:$CHAT_SHELL_PORT" "executor_manager:$EXECUTOR_MANAGER_PORT" "knowledge_runtime:$KNOWLEDGE_RUNTIME_PORT")
+    local services=("backend:$BACKEND_PORT" "frontend:$WEGENT_FRONTEND_PORT" "chat_shell:$CHAT_SHELL_PORT" "executor_manager:$EXECUTOR_MANAGER_PORT" "knowledge_runtime:$KNOWLEDGE_RUNTIME_PORT" "wework:$WEWORK_PORT")
 
     for item in "${services[@]}"; do
         local service="${item%%:*}"
@@ -1378,6 +1426,7 @@ start_services() {
     local start_chat_shell=false
     local start_executor_manager=false
     local start_knowledge_runtime=false
+    local start_wework=false
 
     if [ $# -eq 0 ]; then
         # No specific services, start all
@@ -1386,6 +1435,7 @@ start_services() {
         start_chat_shell=true
         start_executor_manager=true
         start_knowledge_runtime=true
+        start_wework=true
     else
         # Parse specified services
         for svc in "$@"; do
@@ -1409,6 +1459,10 @@ start_services() {
                 knowledge_runtime|kr|knowledge)
                     start_knowledge_runtime=true
                     specified_services+=("knowledge_runtime")
+                    ;;
+                wework|ww)
+                    start_wework=true
+                    specified_services+=("wework")
                     ;;
             esac
         done
@@ -1478,6 +1532,7 @@ start_services() {
     echo -e "  Executor Mgr Port:   $EXECUTOR_MANAGER_PORT"
     echo -e "  Knowledge Rtm Port:  $KNOWLEDGE_RUNTIME_PORT"
     echo -e "  Frontend Port:       $WEGENT_FRONTEND_PORT"
+    echo -e "  WeWork Port:         $WEWORK_PORT"
     echo -e "  Executor Image:      $EXECUTOR_IMAGE"
     echo -e "  Socket URL:          $WEGENT_SOCKET_URL"
     echo -e "  Task API Domain:     $TASK_API_DOMAIN"
@@ -1511,6 +1566,10 @@ start_services() {
     if [ "$start_frontend" = true ] && ! check_port "$WEGENT_FRONTEND_PORT" "frontend"; then
         port_conflict=true
         echo -e "  ${RED}●${NC} Port $WEGENT_FRONTEND_PORT (Frontend) is already in use"
+    fi
+    if [ "$start_wework" = true ] && ! check_port "$WEWORK_PORT" "wework"; then
+        port_conflict=true
+        echo -e "  ${RED}●${NC} Port $WEWORK_PORT (WeWork) is already in use"
     fi
 
     if [ "$port_conflict" = true ]; then
@@ -1572,6 +1631,20 @@ start_services() {
             clean_frontend_cache
             echo ""
         fi
+    fi
+
+    # Check wework dependencies
+    if [ "$start_wework" = true ]; then
+        if [ ! -d "$SCRIPT_DIR/wework/node_modules" ]; then
+            echo -e "${YELLOW}WeWork dependencies not installed. Installing...${NC}"
+            cd "$SCRIPT_DIR/wework"
+            npm install --ignore-scripts
+            cd "$SCRIPT_DIR"
+            echo -e "${GREEN}✓ WeWork dependencies installed${NC}"
+        else
+            echo -e "${GREEN}✓ WeWork dependencies are up to date${NC}"
+        fi
+        echo ""
     fi
 
     echo -e "${BLUE}Starting services...${NC}"
@@ -1663,6 +1736,39 @@ start_services() {
         cd "$SCRIPT_DIR"
     fi
 
+    # 6. Start WeWork (run in background)
+    if [ "$start_wework" = true ]; then
+        echo -e "  Starting ${BLUE}wework${NC}..."
+        cd "$SCRIPT_DIR/wework"
+
+        export VITE_API_PROXY_TARGET=http://localhost:$BACKEND_PORT
+        export VITE_SOCKET_PROXY_TARGET=$WEGENT_SOCKET_URL
+
+        local wework_cmd="npm run dev -- --port $WEWORK_PORT"
+
+        if is_wsl; then
+            local node_path=$(command -v node)
+            if [ -n "$node_path" ]; then
+                local node_dir=$(dirname "$node_path")
+                wework_cmd="PATH=$node_dir:\$PATH $wework_cmd"
+            fi
+        fi
+
+        nohup bash -c "$wework_cmd" > "$PID_DIR/wework.log" 2>&1 &
+        local wework_pid=$!
+        echo $wework_pid > "$PID_DIR/wework.pid"
+
+        sleep 3
+
+        if kill -0 "$wework_pid" 2>/dev/null; then
+            echo -e "    ${GREEN}✓${NC} wework started (PID: $wework_pid)"
+        else
+            echo -e "    ${RED}✗${NC} wework failed to start, check log: $PID_DIR/wework.log"
+        fi
+
+        cd "$SCRIPT_DIR"
+    fi
+
     echo ""
     echo -e "${BLUE}Performing health checks...${NC}"
 
@@ -1683,6 +1789,9 @@ start_services() {
     if [ "$start_frontend" = true ]; then
         check_service_health "frontend" $WEGENT_FRONTEND_PORT "" || failed=1
     fi
+    if [ "$start_wework" = true ]; then
+        check_service_health "wework" $WEWORK_PORT "" || failed=1
+    fi
 
     echo ""
     if [ $failed -eq 1 ]; then
@@ -1690,11 +1799,12 @@ start_services() {
         echo -e "${YELLOW}⚠️  Some services failed to start properly${NC}"
         echo ""
         echo -e "${YELLOW}Please check the log files for details:${NC}"
-        echo -e "  Backend:          $PID_DIR/backend.log"
-        echo -e "  Frontend:         $PID_DIR/frontend.log"
-        echo -e "  Chat Shell:       $PID_DIR/chat_shell.log"
-        echo -e "  Executor Manager: $PID_DIR/executor_manager.log"
+        echo -e "  Backend:           $PID_DIR/backend.log"
+        echo -e "  Frontend:          $PID_DIR/frontend.log"
+        echo -e "  Chat Shell:        $PID_DIR/chat_shell.log"
+        echo -e "  Executor Manager:  $PID_DIR/executor_manager.log"
         echo -e "  Knowledge Runtime: $PID_DIR/knowledge_runtime.log"
+        echo -e "  WeWork:            $PID_DIR/wework.log"
         echo -e "${YELLOW}════════════════════════════════════════════════════════${NC}"
         exit 1
     fi
@@ -1719,6 +1829,12 @@ start_services() {
         echo -e "  Socket URL:   ${BLUE}$WEGENT_SOCKET_URL${NC}"
         echo ""
     fi
+    if [ "$start_wework" = true ]; then
+        echo -e "${GREEN}🌐 WeWork URL:${NC}"
+        echo -e "  Local:  ${BLUE}http://localhost:$WEWORK_PORT${NC}"
+        echo -e "  Remote: ${BLUE}http://$(get_local_ip):$WEWORK_PORT${NC}"
+        echo ""
+    fi
 
     echo -e "${YELLOW}Common Commands:${NC}"
     echo -e "  $0 --status    Check service status"
@@ -1731,6 +1847,7 @@ start_services() {
     echo -e "  Chat Shell:        $PID_DIR/chat_shell.log"
     echo -e "  Executor Manager:  $PID_DIR/executor_manager.log"
     echo -e "  Knowledge Runtime: $PID_DIR/knowledge_runtime.log"
+    echo -e "  WeWork:            $PID_DIR/wework.log"
     echo -e "${GREEN}════════════════════════════════════════════════════════${NC}"
 }
 
