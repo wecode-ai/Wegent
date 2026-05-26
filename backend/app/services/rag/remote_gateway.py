@@ -67,7 +67,7 @@ class RemoteRagGateway:
         self,
         *,
         base_url: str | None = None,
-        timeout: float = 600.0,
+        timeout: float = 30.0,
         auth_token: str | None = None,
     ) -> None:
         self._base_url = (base_url or settings.KNOWLEDGE_RUNTIME_URL).rstrip("/")
@@ -75,13 +75,17 @@ class RemoteRagGateway:
         # Priority: 1. explicit auth_token, 2. INTERNAL_SERVICE_TOKEN
         self._auth_token = auth_token or settings.INTERNAL_SERVICE_TOKEN
 
-    async def _post_model(self, path: str, payload: Any) -> dict[str, Any]:
+    async def _post_model(
+        self, path: str, payload: Any, *, timeout: float | None = None
+    ) -> dict[str, Any]:
         headers = {}
         if self._auth_token:
             headers["Authorization"] = f"Bearer {self._auth_token}"
 
+        effective_timeout = timeout if timeout is not None else self._timeout
+
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
+            async with httpx.AsyncClient(timeout=effective_timeout) as client:
                 response = await client.post(
                     f"{self._base_url}{path}",
                     json=payload.model_dump(mode="json", exclude_none=True),
@@ -155,7 +159,7 @@ class RemoteRagGateway:
                 attachment_id=spec.source.attachment_id,
             ),
         )
-        return await self._post_model("/internal/rag/index", payload)
+        return await self._post_model("/internal/rag/index", payload, timeout=600.0)
 
     async def query(
         self,
