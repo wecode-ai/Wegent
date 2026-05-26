@@ -1,5 +1,6 @@
 import { ArrowUp, ChevronDown, Mic, Plus, Settings } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { DesktopModelSelector } from './DesktopModelSelector'
 
 interface DesktopComposerToolbarProps {
   canSend: boolean
@@ -10,7 +11,7 @@ export function DesktopComposerToolbar({ canSend }: DesktopComposerToolbarProps)
 
   return (
     <div className="mt-auto flex min-h-11 items-center justify-between gap-4">
-      <div className="flex min-w-0 items-center gap-2">
+      <div className="-ml-3 flex min-w-0 items-center gap-2">
         <button
           type="button"
           data-testid="add-context-button"
@@ -31,15 +32,7 @@ export function DesktopComposerToolbar({ canSend }: DesktopComposerToolbarProps)
         </button>
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        <button
-          type="button"
-          data-testid="model-selector-button"
-          className="flex h-11 min-w-[44px] items-center gap-1 rounded-full px-2 text-sm font-medium text-text-primary hover:bg-muted"
-          aria-label={t('workbench.model_selector', '模型选择')}
-        >
-          <span>{t('workbench.default_model', '5.5 中')}</span>
-          <ChevronDown className="h-4 w-4 text-text-secondary" />
-        </button>
+        <DesktopModelSelector />
         <button
           type="button"
           data-testid="voice-input-button"

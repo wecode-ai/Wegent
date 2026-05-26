@@ -26,6 +26,23 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('project-work-button')).toBeInTheDocument()
   })
 
+  test('opens the desktop model menu', async () => {
+    render(
+      <ChatInput value="" onChange={vi.fn()} onSubmit={vi.fn()} disabled={false} variant="desktop" />,
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+    expect(screen.getByText('智能')).toBeInTheDocument()
+    expect(screen.getByText('低')).toBeInTheDocument()
+    expect(screen.getByText('中')).toBeInTheDocument()
+    expect(screen.getByText('高')).toBeInTheDocument()
+    expect(screen.getByText('超高')).toBeInTheDocument()
+    expect(screen.getByText('GPT-5.5')).toBeInTheDocument()
+    expect(screen.getByText('速度')).toBeInTheDocument()
+  })
+
   test('submits typed content', async () => {
     const onChange = vi.fn()
     const onSubmit = vi.fn()

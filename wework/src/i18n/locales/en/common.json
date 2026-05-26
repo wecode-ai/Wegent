@@ -55,6 +55,13 @@
     "account_fallback": "Current account",
     "personal_account": "Personal account",
     "remaining_usage": "Remaining usage",
-    "logout": "Log out"
+    "logout": "Log out",
+    "intelligence": "Intelligence",
+    "intelligence_low": "Low",
+    "intelligence_medium": "Medium",
+    "intelligence_high": "High",
+    "intelligence_ultra": "Ultra",
+    "model_family_gpt55": "GPT-5.5",
+    "speed": "Speed"
   }
 }

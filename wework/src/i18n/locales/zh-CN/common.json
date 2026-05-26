@@ -55,6 +55,13 @@
     "account_fallback": "当前账号",
     "personal_account": "个人账户",
     "remaining_usage": "剩余用量",
-    "logout": "退出登录"
+    "logout": "退出登录",
+    "intelligence": "智能",
+    "intelligence_low": "低",
+    "intelligence_medium": "中",
+    "intelligence_high": "高",
+    "intelligence_ultra": "超高",
+    "model_family_gpt55": "GPT-5.5",
+    "speed": "速度"
   }
 }
