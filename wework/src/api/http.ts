@@ -1,3 +1,6 @@
+import { removeToken } from './auth'
+import { redirectToLogin } from '@/features/auth/redirect'
+
 export class ApiError extends Error {
   status: number
   errorCode?: string | number
@@ -64,7 +67,12 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     })
 
     if (!response.ok) {
-      throw await parseError(response)
+      const error = await parseError(response)
+      if (response.status === 401) {
+        removeToken()
+        redirectToLogin()
+      }
+      throw error
     }
 
     if (response.status === 204) {

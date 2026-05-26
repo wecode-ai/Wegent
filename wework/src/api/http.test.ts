@@ -49,4 +49,23 @@ describe('createHttpClient', () => {
       status: 500,
     })
   })
+
+  test('clears token and redirects to login on 401', async () => {
+    localStorage.setItem('auth_token', 'token-1')
+    window.history.pushState({}, '', '/current?x=1')
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      text: async () => JSON.stringify({ detail: 'Unauthorized' }),
+    })
+
+    const client = createHttpClient({ baseUrl: '/api' })
+
+    await expect(client.get('/users/me')).rejects.toMatchObject<ApiError>({
+      status: 401,
+    })
+    expect(localStorage.getItem('auth_token')).toBeNull()
+    expect(sessionStorage.getItem('postLoginRedirectPath')).toBe('/current?x=1')
+    expect(window.location.pathname).toBe('/login')
+  })
 })
