@@ -10,6 +10,7 @@ interface DesktopWorkbenchLayoutProps {
   onOpenTask: (taskId: number) => void
   onInputChange: (value: string) => void
   onSend: () => void
+  onLogout: () => void
 }
 
 export function DesktopWorkbenchLayout({
@@ -19,6 +20,7 @@ export function DesktopWorkbenchLayout({
   onOpenTask,
   onInputChange,
   onSend,
+  onLogout,
 }: DesktopWorkbenchLayoutProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
@@ -33,6 +35,7 @@ export function DesktopWorkbenchLayout({
           onCollapse={() => setSidebarCollapsed(true)}
           onSelectProject={onSelectProject}
           onOpenTask={onOpenTask}
+          onLogout={onLogout}
         />
       )}
 

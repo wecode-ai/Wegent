@@ -30,6 +30,7 @@ describe('DesktopWorkbenchLayout', () => {
     onOpenTask: vi.fn(),
     onInputChange: vi.fn(),
     onSend: vi.fn(),
+    onLogout: vi.fn(),
   }
 
   test('renders projects, recent tasks, and empty prompt', () => {

@@ -22,6 +22,7 @@ interface DesktopSidebarProps {
   onCollapse: () => void
   onSelectProject: (projectId: number) => void
   onOpenTask: (taskId: number) => void
+  onLogout: () => void
 }
 
 function SidebarButton({
@@ -92,6 +93,7 @@ export function DesktopSidebar({
   onCollapse,
   onSelectProject,
   onOpenTask,
+  onLogout,
 }: DesktopSidebarProps) {
   const { t } = useTranslation('common')
   const { sidebarWidth, handleResizeStart } = useResizableSidebar()
@@ -174,7 +176,7 @@ export function DesktopSidebar({
         <Settings className="h-4 w-4" />
         {t('workbench.settings', '设置')}
       </button>
-      {settingsMenuOpen && <DesktopSettingsMenu user={user} />}
+      {settingsMenuOpen && <DesktopSettingsMenu user={user} onLogout={onLogout} />}
 
       <button
         type="button"

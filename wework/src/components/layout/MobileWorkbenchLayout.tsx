@@ -13,6 +13,7 @@ interface MobileWorkbenchLayoutProps {
   onOpenTask: (taskId: number) => void
   onInputChange: (value: string) => void
   onSend: () => void
+  onLogout: () => void
 }
 
 function QuickEntry({

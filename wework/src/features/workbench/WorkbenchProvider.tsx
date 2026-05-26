@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer } from 'react'
 import type { ReactNode } from 'react'
-import { createAuthApi } from '@/api/auth'
 import { createHttpClient } from '@/api/http'
 import { createProjectApi } from '@/api/projects'
 import { createTaskApi } from '@/api/tasks'
@@ -8,7 +7,7 @@ import { createTeamApi } from '@/api/teams'
 import { getRuntimeConfig } from '@/config/runtime'
 import { createChatStream } from '@/stream/chatStream'
 import { createSocketClient } from '@/stream/socketClient'
-import type { ChatSendPayload, Subtask, Task } from '@/types/api'
+import type { ChatSendPayload, Subtask, Task, User } from '@/types/api'
 import type { WorkbenchMessage, WorkbenchState } from '@/types/workbench'
 import { messageReducer } from './messageReducer'
 import {
@@ -18,7 +17,6 @@ import {
 import { WorkbenchContext } from './useWorkbench'
 
 export interface WorkbenchServices {
-  authApi: ReturnType<typeof createAuthApi>
   teamApi: ReturnType<typeof createTeamApi>
   projectApi: ReturnType<typeof createProjectApi>
   taskApi: ReturnType<typeof createTaskApi>
@@ -36,6 +34,7 @@ export interface WorkbenchContextValue {
 
 interface WorkbenchProviderProps {
   children: ReactNode
+  user: User
   services?: WorkbenchServices
 }
 
@@ -45,7 +44,6 @@ function createDefaultServices(): WorkbenchServices {
   const socket = createSocketClient()
 
   return {
-    authApi: createAuthApi(client),
     teamApi: createTeamApi(client),
     projectApi: createProjectApi(client),
     taskApi: createTaskApi(client),
@@ -67,6 +65,7 @@ function subtaskToMessage(subtask: Subtask): WorkbenchMessage {
 
 export function WorkbenchProvider({
   children,
+  user,
   services,
 }: WorkbenchProviderProps) {
   const resolvedServices = useMemo(
@@ -84,8 +83,7 @@ export function WorkbenchProvider({
 
     async function bootstrap() {
       try {
-        const [user, defaultTeam, projects, recentTasks] = await Promise.all([
-          resolvedServices.authApi.getCurrentUser(),
+        const [defaultTeam, projects, recentTasks] = await Promise.all([
           resolvedServices.teamApi.getDefaultWorkbenchTeam(),
           resolvedServices.projectApi.listProjects(),
           resolvedServices.taskApi.listRecentTasks({ limit: 20 }),
@@ -114,7 +112,7 @@ export function WorkbenchProvider({
     return () => {
       cancelled = true
     }
-  }, [resolvedServices])
+  }, [resolvedServices, user])
 
   useEffect(() => {
     return resolvedServices.chatStream.subscribe({

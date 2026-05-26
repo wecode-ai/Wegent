@@ -16,12 +16,8 @@ describe('WorkbenchProvider', () => {
   test('bootstraps current user, default team, projects, and recent tasks', async () => {
     render(
       <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
         services={{
-          authApi: {
-            getCurrentUser: vi
-              .fn()
-              .mockResolvedValue({ id: 1, user_name: 'alice', email: 'a@b.c' }),
-          },
           teamApi: {
             getDefaultWorkbenchTeam: vi
               .fn()
