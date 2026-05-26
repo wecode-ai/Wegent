@@ -1,5 +1,7 @@
-import { ArrowUp, ChevronDown, Mic, Plus, Settings } from 'lucide-react'
+import { ArrowUp, Mic } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { DesktopContextMenu } from './DesktopContextMenu'
+import { DesktopModeSelector } from './DesktopModeSelector'
 import { DesktopModelSelector } from './DesktopModelSelector'
 
 interface DesktopComposerToolbarProps {
@@ -12,24 +14,8 @@ export function DesktopComposerToolbar({ canSend }: DesktopComposerToolbarProps)
   return (
     <div className="mt-auto flex min-h-11 items-center justify-between gap-4">
       <div className="-ml-3 flex min-w-0 items-center gap-2">
-        <button
-          type="button"
-          data-testid="add-context-button"
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full p-0 text-text-secondary hover:bg-muted"
-          aria-label={t('workbench.add_context', '添加上下文')}
-        >
-          <Plus className="h-6 w-6" />
-        </button>
-        <button
-          type="button"
-          data-testid="custom-mode-button"
-          className="flex h-11 min-w-[44px] items-center gap-2 rounded-full px-2 text-sm font-medium text-text-secondary hover:bg-muted"
-          aria-label={t('workbench.custom_mode', '自定义')}
-        >
-          <Settings className="h-5 w-5" />
-          <span>{t('workbench.custom_mode', '自定义')}</span>
-          <ChevronDown className="h-4 w-4" />
-        </button>
+        <DesktopContextMenu />
+        <DesktopModeSelector />
       </div>
       <div className="flex shrink-0 items-center gap-2">
         <DesktopModelSelector />

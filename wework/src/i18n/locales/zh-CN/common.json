@@ -62,6 +62,14 @@
     "intelligence_high": "高",
     "intelligence_ultra": "超高",
     "model_family_gpt55": "GPT-5.5",
-    "speed": "速度"
+    "speed": "速度",
+    "default_permission": "默认权限",
+    "auto_review": "自动审查",
+    "full_access_permission": "完全访问权限",
+    "custom_config_mode": "自定义 (config.toml)",
+    "add_photos_files": "添加照片和文件",
+    "attach_chrome": "Attach Google Chrome",
+    "plan_mode": "计划模式",
+    "pursue_goal": "追求目标"
   }
 }

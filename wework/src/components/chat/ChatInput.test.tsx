@@ -43,6 +43,35 @@ describe('ChatInput', () => {
     expect(screen.getByText('速度')).toBeInTheDocument()
   })
 
+  test('opens the desktop custom mode menu', async () => {
+    render(
+      <ChatInput value="" onChange={vi.fn()} onSubmit={vi.fn()} disabled={false} variant="desktop" />,
+    )
+
+    await userEvent.click(screen.getByTestId('custom-mode-button'))
+
+    expect(screen.getByTestId('custom-mode-menu')).toBeInTheDocument()
+    expect(screen.getByText('默认权限')).toBeInTheDocument()
+    expect(screen.getByText('自动审查')).toBeInTheDocument()
+    expect(screen.getByText('完全访问权限')).toBeInTheDocument()
+    expect(screen.getByText('自定义 (config.toml)')).toBeInTheDocument()
+  })
+
+  test('opens the desktop add context menu', async () => {
+    render(
+      <ChatInput value="" onChange={vi.fn()} onSubmit={vi.fn()} disabled={false} variant="desktop" />,
+    )
+
+    await userEvent.click(screen.getByTestId('add-context-button'))
+
+    expect(screen.getByTestId('add-context-menu')).toBeInTheDocument()
+    expect(screen.getByText('添加照片和文件')).toBeInTheDocument()
+    expect(screen.getByText('Attach Google Chrome')).toBeInTheDocument()
+    expect(screen.getByText('计划模式')).toBeInTheDocument()
+    expect(screen.getByText('追求目标')).toBeInTheDocument()
+    expect(screen.getByText('插件')).toBeInTheDocument()
+  })
+
   test('submits typed content', async () => {
     const onChange = vi.fn()
     const onSubmit = vi.fn()

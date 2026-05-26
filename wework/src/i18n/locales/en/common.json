@@ -62,6 +62,14 @@
     "intelligence_high": "High",
     "intelligence_ultra": "Ultra",
     "model_family_gpt55": "GPT-5.5",
-    "speed": "Speed"
+    "speed": "Speed",
+    "default_permission": "Default permission",
+    "auto_review": "Auto review",
+    "full_access_permission": "Full access permission",
+    "custom_config_mode": "Custom (config.toml)",
+    "add_photos_files": "Add photos and files",
+    "attach_chrome": "Attach Google Chrome",
+    "plan_mode": "Plan mode",
+    "pursue_goal": "Pursue goal"
   }
 }
