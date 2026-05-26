@@ -5,7 +5,7 @@ import { MessageList } from '@/components/chat/MessageList'
 import type { Task } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 
-const DESKTOP_COMPOSER_FRAME_CLASS = 'mx-auto w-[min(76vw,62rem)] max-w-full'
+const DESKTOP_COMPOSER_FRAME_CLASS = 'mx-auto w-[min(58%,62rem)] max-w-full'
 
 interface DesktopWorkbenchMainProps {
   sidebarCollapsed: boolean

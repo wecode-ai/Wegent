@@ -45,7 +45,7 @@ describe('DesktopWorkbenchLayout', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.getByTestId('desktop-empty-composer-frame')).toHaveClass(
-      'w-[min(76vw,62rem)]',
+      'w-[min(58%,62rem)]',
       'max-w-full',
     )
   })
