@@ -1,6 +1,8 @@
 export interface RuntimeConfig {
   apiBaseUrl: string
   socketBaseUrl: string
+  loginMode: 'password' | 'oidc' | 'all'
+  oidcLoginText: string
 }
 
 function trimTrailingSlash(value: string): string {
@@ -15,5 +17,8 @@ export function getRuntimeConfig(): RuntimeConfig {
   return {
     apiBaseUrl: trimTrailingSlash(apiBaseUrl),
     socketBaseUrl: trimTrailingSlash(socketBaseUrl),
+    loginMode:
+      (import.meta.env.VITE_LOGIN_MODE as RuntimeConfig['loginMode'] | undefined) || 'all',
+    oidcLoginText: import.meta.env.VITE_OIDC_LOGIN_TEXT || '',
   }
 }

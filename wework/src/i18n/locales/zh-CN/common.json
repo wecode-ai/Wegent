@@ -71,5 +71,17 @@
     "attach_chrome": "Attach Google Chrome",
     "plan_mode": "计划模式",
     "pursue_goal": "追求目标"
+    ,
+    "login_title": "登录 Wework",
+    "login_subtitle": "使用 Wegent 账号继续",
+    "login_username": "用户名",
+    "login_password": "密码",
+    "login_action": "登录",
+    "logging_in": "登录中...",
+    "login_failed": "登录失败",
+    "toggle_password_visibility": "切换密码可见性",
+    "login_or_continue": "或继续使用",
+    "oidc_login": "使用 OpenID Connect 登录",
+    "oidc_processing": "正在处理 OpenID Connect 登录..."
   }
 }

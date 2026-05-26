@@ -71,5 +71,17 @@
     "attach_chrome": "Attach Google Chrome",
     "plan_mode": "Plan mode",
     "pursue_goal": "Pursue goal"
+    ,
+    "login_title": "Log in to Wework",
+    "login_subtitle": "Continue with your Wegent account",
+    "login_username": "Username",
+    "login_password": "Password",
+    "login_action": "Log in",
+    "logging_in": "Logging in...",
+    "login_failed": "Login failed",
+    "toggle_password_visibility": "Toggle password visibility",
+    "login_or_continue": "Or continue with",
+    "oidc_login": "Login with OpenID Connect",
+    "oidc_processing": "Processing OpenID Connect login..."
   }
 }
