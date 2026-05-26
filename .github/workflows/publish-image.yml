@@ -642,6 +642,44 @@ jobs:
           path: executor/dist/wegent-executor-linux-amd64
           retention-days: 1
 
+  build-executor-local-linux-amd64-no-claude:
+    needs: prepare-release
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GIT_REF }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies and build without bundled Claude CLI
+        working-directory: executor
+        env:
+          GITHUB_REPO: ${{ github.repository }}
+        run: |
+          uv sync --group build
+          uv run python scripts/build_local.py --version ${{ needs.prepare-release.outputs.new_version }} --no-bundle-claude
+
+      - name: Rename binary with platform suffix
+        run: |
+          mv executor/dist/wegent-executor executor/dist/wegent-executor-linux-amd64-no-claude
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wegent-executor-linux-amd64-no-claude
+          path: executor/dist/wegent-executor-linux-amd64-no-claude
+          retention-days: 1
+
   build-executor-local-linux-arm64:
     needs: prepare-release
     runs-on: ubuntu-22.04-arm
@@ -801,6 +839,7 @@ jobs:
       - build-executor-local-macos-arm64
       - build-executor-local-macos-amd64
       - build-executor-local-linux-amd64
+      - build-executor-local-linux-amd64-no-claude
       - build-executor-local-linux-arm64
       - build-executor-local-windows-amd64
     runs-on: ubuntu-latest
@@ -878,6 +917,7 @@ jobs:
             ./executor-binaries/wegent-executor-macos-arm64
             ./executor-binaries/wegent-executor-macos-amd64
             ./executor-binaries/wegent-executor-linux-amd64
+            ./executor-binaries/wegent-executor-linux-amd64-no-claude
             ./executor-binaries/wegent-executor-linux-arm64
             ./executor-binaries/wegent-executor-windows-amd64.exe
             ./executor/scripts/local_executor_install.sh
