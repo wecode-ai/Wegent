@@ -54,6 +54,7 @@ export function DesktopWorkbenchMain({
               onSubmit={onSend}
               disabled={isSending}
               placeholder={t('workbench.input_placeholder', '尽管问')}
+              variant="desktop"
             />
           </div>
         </>
@@ -72,6 +73,7 @@ export function DesktopWorkbenchMain({
               onSubmit={onSend}
               disabled={isSending}
               placeholder={t('workbench.input_placeholder', '尽管问')}
+              variant="desktop"
             />
           </div>
         </div>

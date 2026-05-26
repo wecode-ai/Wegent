@@ -15,6 +15,17 @@ function ControlledChatInput({
 }
 
 describe('ChatInput', () => {
+  test('renders the desktop composer sections', () => {
+    render(
+      <ChatInput value="" onChange={vi.fn()} onSubmit={vi.fn()} disabled={false} variant="desktop" />,
+    )
+
+    expect(screen.getByTestId('chat-message-input')).toHaveAttribute('rows', '3')
+    expect(screen.getByTestId('custom-mode-button')).toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-button')).toBeInTheDocument()
+    expect(screen.getByTestId('project-work-button')).toBeInTheDocument()
+  })
+
   test('submits typed content', async () => {
     const onChange = vi.fn()
     const onSubmit = vi.fn()
