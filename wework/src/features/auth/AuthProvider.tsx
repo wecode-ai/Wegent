@@ -12,7 +12,6 @@ import type { User } from '@/types/api'
 import {
   LOGIN_PATH,
   OIDC_CALLBACK_PATH,
-  getCurrentRedirectTarget,
   redirectToLogin,
 } from './redirect'
 import { AuthContext, type AuthContextValue } from './useAuth'
@@ -69,7 +68,7 @@ export function AuthProvider({ children, authApi }: AuthProviderProps) {
   }, [resolvedAuthApi])
 
   useEffect(() => {
-    refresh()
+    void Promise.resolve().then(() => refresh())
 
     const interval = window.setInterval(() => {
       if (!isAuthenticated() && userRef.current) {
@@ -119,5 +118,3 @@ export function AuthProvider({ children, authApi }: AuthProviderProps) {
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
-
-export { getCurrentRedirectTarget }
