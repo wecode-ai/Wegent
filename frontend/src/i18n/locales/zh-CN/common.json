@@ -1452,7 +1452,7 @@
     "click_to_preview": "点击预览",
     "click_to_download": "点击下载",
     "characters": "字符",
-    "upload_tooltip": "支持的文件类型: 文档(PDF, Word, PPT, Excel, XMind), 图片, HTML, Markdown, 代码文件及各类文本文件\nHTML 和 Markdown 文件支持预览渲染\n最大文件大小: {{size}} MB",
+    "upload_tooltip": "支持的文件类型: 文档(PDF, Word, PPT, Excel, XMind), 图片, 视频(MP4, WebM, MOV, AVI, MKV), HTML, Markdown, 代码文件及各类文本文件\nHTML 和 Markdown 文件支持预览渲染\n最大文件大小: {{size}} MB",
     "share": {
       "link_copied_title": "分享链接已复制",
       "copy_failed_title": "复制到剪贴板失败",

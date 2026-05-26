@@ -366,7 +366,7 @@
   },
   "upload": {
     "attachment": "附件",
-    "tooltip": "支持的文件类型: PDF, Word, PPT, Excel, XMind, TXT, Markdown, 图片(JPG, PNG, GIF, BMP, WebP)\n最大文件大小: {{maxSize}} MB\n支持多文件同时上传",
+    "tooltip": "支持的文件类型: PDF, Word, PPT, Excel, XMind, TXT, Markdown, 图片(JPG, PNG, GIF, BMP, WebP), 视频(MP4, WebM, MOV, AVI, MKV)\n最大文件大小: {{maxSize}} MB\n支持多文件同时上传",
     "image_tooltip": "支持的文件类型: 图片 (JPG, PNG, GIF, BMP, WebP)\n最大文件大小: {{maxSize}} MB\n上传参考图片用于生成",
     "wait_for_upload": "请等待文件上传完成"
   },

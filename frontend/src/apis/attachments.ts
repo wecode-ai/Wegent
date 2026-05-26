@@ -301,6 +301,12 @@ export function getFileIcon(extension: string): string {
     case '.bmp':
     case '.webp':
       return '🖼️'
+    case '.mp4':
+    case '.webm':
+    case '.mov':
+    case '.avi':
+    case '.mkv':
+      return '🎬'
     case '.html':
     case '.htm':
     case '.html5':
