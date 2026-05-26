@@ -11,7 +11,6 @@ export function useIsDesktop(): boolean {
     const mql = window.matchMedia(`(min-width: ${DESKTOP_BREAKPOINT}px)`)
     const handler = (e: MediaQueryListEvent) => setIsDesktop(e.matches)
     mql.addEventListener('change', handler)
-    setIsDesktop(mql.matches)
     return () => mql.removeEventListener('change', handler)
   }, [])
 
