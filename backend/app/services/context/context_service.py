@@ -704,7 +704,8 @@ class ContextService:
         if file_url:
             header += f" | File URL: {file_url}"
 
-        header += "]"
+        if not suffix.startswith("]"):
+            header += "]"
         header += suffix
 
         return header
