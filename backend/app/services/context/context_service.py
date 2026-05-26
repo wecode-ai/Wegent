@@ -32,7 +32,10 @@ from app.services.attachment.parser import (
     ParseResult,
 )
 from app.services.attachment.storage_backend import StorageError, generate_storage_key
-from app.services.attachment.storage_factory import get_storage_backend
+from app.services.attachment.storage_factory import (
+    get_storage_backend,
+    is_external_storage_configured,
+)
 from shared.telemetry.decorators import trace_sync
 from shared.utils.crypto import decrypt_attachment, encrypt_attachment
 
@@ -150,6 +153,16 @@ class ContextService:
             raise ValueError(
                 f"Unsupported file type: {extension}. "
                 f"Supported types: {', '.join(self.parser.SUPPORTED_EXTENSIONS.keys())}"
+            )
+
+        # Video files require an external storage backend (S3/MinIO)
+        if (
+            extension in DocumentParser.VIDEO_EXTENSIONS
+            and not is_external_storage_configured()
+        ):
+            raise ValueError(
+                "Video file uploads require an external storage backend "
+                "(S3 or MinIO). Please configure ATTACHMENT_STORAGE_BACKEND."
             )
 
         file_size = len(binary_data)
