@@ -5,6 +5,8 @@ import { MessageList } from '@/components/chat/MessageList'
 import type { Task } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 
+const DESKTOP_COMPOSER_FRAME_CLASS = 'mx-auto w-[min(76vw,62rem)] max-w-full'
+
 interface DesktopWorkbenchMainProps {
   sidebarCollapsed: boolean
   currentTask: Task | null
@@ -47,20 +49,22 @@ export function DesktopWorkbenchMain({
           <div className="flex-1 overflow-auto">
             <MessageList messages={messages} />
           </div>
-          <div className="mx-auto w-full max-w-4xl px-6 pb-8">
-            <ChatInput
-              value={input}
-              onChange={onInputChange}
-              onSubmit={onSend}
-              disabled={isSending}
-              placeholder={t('workbench.input_placeholder', '尽管问')}
-              variant="desktop"
-            />
+          <div className="px-6 pb-8">
+            <div className={DESKTOP_COMPOSER_FRAME_CLASS}>
+              <ChatInput
+                value={input}
+                onChange={onInputChange}
+                onSubmit={onSend}
+                disabled={isSending}
+                placeholder={t('workbench.input_placeholder', '尽管问')}
+                variant="desktop"
+              />
+            </div>
           </div>
         </>
       ) : (
         <div className="flex flex-1 items-center justify-center px-10">
-          <div className="w-full max-w-4xl">
+          <div className={DESKTOP_COMPOSER_FRAME_CLASS} data-testid="desktop-empty-composer-frame">
             <div className="mb-8 flex justify-center">
               <Bot className="h-8 w-8 text-text-muted" />
             </div>

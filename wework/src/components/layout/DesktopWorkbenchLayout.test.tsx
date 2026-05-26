@@ -41,6 +41,15 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByText('我们该做什么？')).toBeInTheDocument()
   })
 
+  test('keeps the empty composer at the intended desktop proportion', () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(screen.getByTestId('desktop-empty-composer-frame')).toHaveClass(
+      'w-[min(76vw,62rem)]',
+      'max-w-full',
+    )
+  })
+
   test('restores and stores sidebar width in localStorage', () => {
     localStorage.setItem('wework.desktop.sidebar.width', '320')
 
