@@ -31,7 +31,7 @@ export function ChatInput({
       <button
         type="button"
         data-testid="add-context-button"
-        className="flex h-11 min-w-[44px] items-center justify-center rounded-full text-text-secondary hover:bg-muted"
+        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full p-0 text-text-secondary hover:bg-muted"
         aria-label={t('workbench.add_context', '添加上下文')}
       >
         <Plus className="h-6 w-6" />
@@ -46,7 +46,7 @@ export function ChatInput({
       <button
         type="button"
         data-testid="voice-input-button"
-        className="flex h-11 min-w-[44px] items-center justify-center rounded-full text-text-secondary hover:bg-muted"
+        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full p-0 text-text-secondary hover:bg-muted"
         aria-label={t('workbench.voice_input', '语音输入')}
       >
         <Mic className="h-5 w-5" />
@@ -55,7 +55,7 @@ export function ChatInput({
         type="submit"
         data-testid="send-message-button"
         disabled={!canSend}
-        className="flex h-11 min-w-[44px] items-center justify-center rounded-full bg-[#242424] text-white disabled:bg-[#9a9a9a]"
+        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#242424] p-0 text-white disabled:bg-[#9a9a9a]"
         aria-label={t('workbench.send_message', '发送消息')}
       >
         <ArrowUp className="h-5 w-5" />
