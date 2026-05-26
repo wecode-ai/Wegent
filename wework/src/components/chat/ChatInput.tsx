@@ -1,4 +1,5 @@
 import { ArrowUp, Mic, Plus } from 'lucide-react'
+import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 interface ChatInputProps {
@@ -17,8 +18,17 @@ export function ChatInput({
   placeholder,
 }: ChatInputProps) {
   const { t } = useTranslation('common')
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const canSend = value.trim().length > 0 && !disabled
   const inputPlaceholder = placeholder ?? t('workbench.input_placeholder', '尽管问')
+
+  useEffect(() => {
+    const textarea = textareaRef.current
+    if (!textarea) return
+
+    textarea.style.height = 'auto'
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 128)}px`
+  }, [value])
 
   return (
     <form
@@ -36,12 +46,20 @@ export function ChatInput({
       >
         <Plus className="h-6 w-6" />
       </button>
-      <input
+      <textarea
+        ref={textareaRef}
         data-testid="chat-message-input"
+        rows={1}
         value={value}
         onChange={event => onChange(event.target.value)}
+        onKeyDown={event => {
+          if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
+
+          event.preventDefault()
+          if (canSend) onSubmit()
+        }}
         placeholder={inputPlaceholder}
-        className="min-w-0 flex-1 bg-transparent text-base text-text-primary outline-none placeholder:text-text-muted"
+        className="max-h-32 min-h-6 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent py-2 text-base leading-6 text-text-primary outline-none placeholder:text-text-muted"
       />
       <button
         type="button"
