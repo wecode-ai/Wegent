@@ -84,6 +84,18 @@ describe('DesktopWorkbenchLayout', () => {
     expect(document.querySelector('aside')).toBeInTheDocument()
   })
 
+  test('opens the settings menu from the sidebar', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await userEvent.click(screen.getByTestId('settings-button'))
+
+    expect(screen.getByTestId('settings-menu')).toBeInTheDocument()
+    expect(screen.getByText('个人账户')).toBeInTheDocument()
+    expect(screen.getAllByText('设置')).toHaveLength(2)
+    expect(screen.getByText('剩余用量')).toBeInTheDocument()
+    expect(screen.getByText('退出登录')).toBeInTheDocument()
+  })
+
   test('opens and resizes the right workspace panel', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 

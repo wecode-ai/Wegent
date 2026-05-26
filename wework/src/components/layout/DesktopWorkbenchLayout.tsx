@@ -26,6 +26,7 @@ export function DesktopWorkbenchLayout({
     <div className="flex h-screen overflow-hidden bg-base text-text-primary">
       {!sidebarCollapsed && (
         <DesktopSidebar
+          user={state.user}
           projects={state.projects}
           recentTasks={state.recentTasks}
           currentProjectId={state.currentProject?.id}

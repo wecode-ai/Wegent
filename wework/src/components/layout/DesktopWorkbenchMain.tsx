@@ -89,7 +89,7 @@ export function DesktopWorkbenchMain({
             </div>
           </div>
         )}
-        {bottomPanelOpen && <BottomWorkspacePanel onClose={() => setBottomPanelOpen(false)} />}
+        {bottomPanelOpen && <BottomWorkspacePanel />}
       </div>
       <WorkspacePanelActions
         rightPanelOpen={rightPanelOpen}
@@ -97,9 +97,7 @@ export function DesktopWorkbenchMain({
         onToggleRightPanel={() => setRightPanelOpen(open => !open)}
         onToggleBottomPanel={() => setBottomPanelOpen(open => !open)}
       />
-      {rightPanelOpen && (
-        <RightWorkspacePanel onClose={() => setRightPanelOpen(false)} />
-      )}
+      {rightPanelOpen && <RightWorkspacePanel />}
     </main>
   )
 }

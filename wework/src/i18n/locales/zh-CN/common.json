@@ -51,6 +51,10 @@
     "browser": "浏览器",
     "open_website": "打开网站",
     "terminal": "终端",
-    "start_shell": "启动交互式 shell"
+    "start_shell": "启动交互式 shell",
+    "account_fallback": "当前账号",
+    "personal_account": "个人账户",
+    "remaining_usage": "剩余用量",
+    "logout": "退出登录"
   }
 }

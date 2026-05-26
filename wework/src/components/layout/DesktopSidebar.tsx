@@ -8,11 +8,14 @@ import {
   Sparkles,
   Workflow,
 } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { ProjectWithTasks, Task } from '@/types/api'
+import type { ProjectWithTasks, Task, User as UserProfile } from '@/types/api'
+import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 import { useResizableSidebar } from './useResizableSidebar'
 
 interface DesktopSidebarProps {
+  user: UserProfile | null
   projects: ProjectWithTasks[]
   recentTasks: Task[]
   currentProjectId?: number
@@ -82,6 +85,7 @@ function TaskItem({ task, onClick }: { task: Task; onClick: () => void }) {
 }
 
 export function DesktopSidebar({
+  user,
   projects,
   recentTasks,
   currentProjectId,
@@ -91,6 +95,7 @@ export function DesktopSidebar({
 }: DesktopSidebarProps) {
   const { t } = useTranslation('common')
   const { sidebarWidth, handleResizeStart } = useResizableSidebar()
+  const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
 
   return (
     <aside
@@ -162,11 +167,14 @@ export function DesktopSidebar({
       <button
         type="button"
         data-testid="settings-button"
+        onClick={() => setSettingsMenuOpen(open => !open)}
         className="mt-4 flex h-10 items-center gap-3 rounded-md px-3 text-sm font-medium text-[#333] hover:bg-white/70"
+        aria-expanded={settingsMenuOpen}
       >
         <Settings className="h-4 w-4" />
         {t('workbench.settings', '设置')}
       </button>
+      {settingsMenuOpen && <DesktopSettingsMenu user={user} />}
 
       <button
         type="button"

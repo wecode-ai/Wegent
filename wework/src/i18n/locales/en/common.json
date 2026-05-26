@@ -51,6 +51,10 @@
     "browser": "Browser",
     "open_website": "Open website",
     "terminal": "Terminal",
-    "start_shell": "Start interactive shell"
+    "start_shell": "Start interactive shell",
+    "account_fallback": "Current account",
+    "personal_account": "Personal account",
+    "remaining_usage": "Remaining usage",
+    "logout": "Log out"
   }
 }
