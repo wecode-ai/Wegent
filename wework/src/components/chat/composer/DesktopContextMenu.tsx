@@ -1,13 +1,18 @@
 import { Blocks, ChevronRight, Globe, ListChecks, Paperclip, Plus, Target } from 'lucide-react'
-import { useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useOutsideClick } from './useOutsideClick'
 
 export function DesktopContextMenu() {
   const { t } = useTranslation('common')
+  const containerRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
+  const closeMenu = useCallback(() => setOpen(false), [])
+
+  useOutsideClick(containerRef, open, closeMenu)
 
   return (
-    <div className="relative">
+    <div ref={containerRef} className="relative">
       {open && (
         <div
           data-testid="add-context-menu"

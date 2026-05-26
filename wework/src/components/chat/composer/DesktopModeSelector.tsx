@@ -1,6 +1,7 @@
 import { Check, ChevronDown, Hand, Search, Settings, Shield } from 'lucide-react'
-import { useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useOutsideClick } from './useOutsideClick'
 
 const permissionModes = [
   {
@@ -29,11 +30,15 @@ type PermissionModeKey = (typeof permissionModes)[number]['key']
 
 export function DesktopModeSelector() {
   const { t } = useTranslation('common')
+  const containerRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
   const [selectedMode, setSelectedMode] = useState<PermissionModeKey>('custom_config_mode')
+  const closeMenu = useCallback(() => setOpen(false), [])
+
+  useOutsideClick(containerRef, open, closeMenu)
 
   return (
-    <div className="relative">
+    <div ref={containerRef} className="relative">
       {open && (
         <div
           data-testid="custom-mode-menu"

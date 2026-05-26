@@ -1,6 +1,7 @@
 import { Check, ChevronDown, ChevronRight } from 'lucide-react'
-import { useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useOutsideClick } from './useOutsideClick'
 
 const intelligenceOptions = [
   ['low', '低'],
@@ -11,10 +12,14 @@ const intelligenceOptions = [
 
 export function DesktopModelSelector() {
   const { t } = useTranslation('common')
+  const containerRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
+  const closeMenu = useCallback(() => setOpen(false), [])
+
+  useOutsideClick(containerRef, open, closeMenu)
 
   return (
-    <div className="relative">
+    <div ref={containerRef} className="relative">
       {open && (
         <div
           data-testid="model-selector-menu"

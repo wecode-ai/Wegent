@@ -72,6 +72,23 @@ describe('ChatInput', () => {
     expect(screen.getByText('插件')).toBeInTheDocument()
   })
 
+  test.each([
+    ['model selector', 'model-selector-button', 'model-selector-menu'],
+    ['custom mode selector', 'custom-mode-button', 'custom-mode-menu'],
+    ['add context menu', 'add-context-button', 'add-context-menu'],
+  ])('closes the desktop %s when clicking outside the dropdown', async (_, buttonTestId, menuTestId) => {
+    render(
+      <ChatInput value="" onChange={vi.fn()} onSubmit={vi.fn()} disabled={false} variant="desktop" />,
+    )
+
+    await userEvent.click(screen.getByTestId(buttonTestId))
+    expect(screen.getByTestId(menuTestId)).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('chat-message-input'))
+
+    expect(screen.queryByTestId(menuTestId)).not.toBeInTheDocument()
+  })
+
   test('submits typed content', async () => {
     const onChange = vi.fn()
     const onSubmit = vi.fn()
