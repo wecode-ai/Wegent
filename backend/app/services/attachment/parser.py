@@ -421,6 +421,15 @@ class DocumentParser:
             truncation_info = None
             max_length = self.get_max_text_length()
 
+            # Video files — binary media with no text to extract
+            if extension in self.VIDEO_EXTENSIONS:
+                return ParseResult(
+                    text="",
+                    text_length=0,
+                    image_base64=None,
+                    truncation_info=None,
+                )
+
             # Check if this is a known special format with dedicated parser
             if extension in self.SPECIAL_FORMAT_EXTENSIONS:
                 return self._parse_special_format(
