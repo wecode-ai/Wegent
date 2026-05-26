@@ -38,7 +38,7 @@ export function DesktopWorkbenchMain({
   const hasConversation = messages.length > 0 || currentTask
 
   return (
-    <main className="flex min-w-0 flex-1 overflow-hidden">
+    <main className="relative flex min-w-0 flex-1 overflow-hidden">
       <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
         {sidebarCollapsed && (
           <button
@@ -51,12 +51,6 @@ export function DesktopWorkbenchMain({
             <ChevronRight className="h-4 w-4" />
           </button>
         )}
-        <WorkspacePanelActions
-          rightPanelOpen={rightPanelOpen}
-          bottomPanelOpen={bottomPanelOpen}
-          onToggleRightPanel={() => setRightPanelOpen(open => !open)}
-          onToggleBottomPanel={() => setBottomPanelOpen(open => !open)}
-        />
         {hasConversation ? (
           <>
             <div className="flex-1 overflow-auto">
@@ -97,6 +91,12 @@ export function DesktopWorkbenchMain({
         )}
         {bottomPanelOpen && <BottomWorkspacePanel onClose={() => setBottomPanelOpen(false)} />}
       </div>
+      <WorkspacePanelActions
+        rightPanelOpen={rightPanelOpen}
+        bottomPanelOpen={bottomPanelOpen}
+        onToggleRightPanel={() => setRightPanelOpen(open => !open)}
+        onToggleBottomPanel={() => setBottomPanelOpen(open => !open)}
+      />
       {rightPanelOpen && (
         <RightWorkspacePanel onClose={() => setRightPanelOpen(false)} />
       )}

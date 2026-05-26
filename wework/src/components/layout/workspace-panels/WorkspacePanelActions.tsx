@@ -17,7 +17,7 @@ export function WorkspacePanelActions({
   const { t } = useTranslation('common')
 
   return (
-    <div className="absolute right-5 top-4 z-20 flex items-center gap-3">
+    <div className="absolute right-5 top-4 z-50 flex items-center gap-3">
       <button
         type="button"
         data-testid="toggle-bottom-workspace-panel-button"

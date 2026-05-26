@@ -91,6 +91,8 @@ describe('DesktopWorkbenchLayout', () => {
 
     const panel = screen.getByTestId('right-workspace-panel')
     expect(panel).toBeInTheDocument()
+    expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
+    expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
     expect(screen.getByText('浏览器')).toBeInTheDocument()
     expect(screen.getByText('终端')).toBeInTheDocument()
 
@@ -108,6 +110,8 @@ describe('DesktopWorkbenchLayout', () => {
 
     const panel = screen.getByTestId('bottom-workspace-panel')
     expect(panel).toBeInTheDocument()
+    expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
+    expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
     expect(screen.getByText('浏览器')).toBeInTheDocument()
     expect(screen.getByText('终端')).toBeInTheDocument()
 
