@@ -67,6 +67,9 @@ class ContextService:
     # Image file extensions supported for vision models
     IMAGE_EXTENSIONS = frozenset([".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"])
 
+    # Video file extensions — derived from DocumentParser to ensure consistency
+    VIDEO_EXTENSIONS = DocumentParser.VIDEO_EXTENSIONS
+
     # ==================== Helper Methods ====================
 
     @staticmethod
@@ -629,6 +632,83 @@ class ContextService:
             return False
         return context.file_extension.lower() in self.IMAGE_EXTENSIONS
 
+    def is_video_context(self, context: SubtaskContext) -> bool:
+        """
+        Check if context is a video attachment.
+
+        Video attachments cannot be text-extracted, but their metadata and
+        presigned File URL are still injected so the LLM can pass the URL
+        to downstream tools (e.g., media-analysis Skill).
+
+        Args:
+            context: SubtaskContext record
+
+        Returns:
+            True if the context is a video attachment
+        """
+        if context.context_type != ContextType.ATTACHMENT.value:
+            return False
+        return context.file_extension.lower() in self.VIDEO_EXTENSIONS
+
+    def build_attachment_metadata_header(
+        self,
+        context: SubtaskContext,
+        task_id: Optional[int] = None,
+        subtask_id: Optional[int] = None,
+        file_url: Optional[str] = None,
+        label: str = "Attachment",
+        suffix: str = "]\n",
+    ) -> str:
+        """
+        Build a metadata header string for an attachment context.
+
+        Shared by all attachment types (document, image, video) to produce a
+        consistent ``[<label>: ...]`` header that includes id, filename,
+        mime type, size, internal URL, optional sandbox path, and optional
+        presigned File URL.
+
+        Args:
+            context: SubtaskContext record
+            task_id: Optional task ID for building sandbox path
+            subtask_id: Optional subtask ID for building sandbox path
+            file_url: Optional presigned URL for S3/MinIO-backed attachments
+            label: Header label prefix (e.g. "Attachment" or "Image Attachment")
+            suffix: String appended after the closing ``]`` — ``"]\\n"`` for
+                text-based contexts (document, video), ``"]"`` for image headers
+                that will be concatenated with other text inside ``<attachment>``.
+
+        Returns:
+            Formatted metadata header string including trailing ``]`` and suffix
+        """
+        attachment_id = context.id
+        filename = context.original_filename
+        mime_type = context.mime_type or "unknown"
+        file_size = context.file_size or 0
+        formatted_size = self.format_file_size(file_size)
+        url = self.build_attachment_url(attachment_id)
+
+        sandbox_path = self.build_sandbox_path(task_id, subtask_id, filename)
+
+        if sandbox_path:
+            header = (
+                f"[{label}: {filename} | ID: {attachment_id} | "
+                f"Type: {mime_type} | Size: {formatted_size} | URL: {url} | "
+                f"File Path(already in sandbox): {sandbox_path}"
+            )
+        else:
+            header = (
+                f"[{label}: {filename} | ID: {attachment_id} | "
+                f"Type: {mime_type} | Size: {formatted_size} | URL: {url}"
+            )
+
+        if file_url:
+            header += f" | File URL: {file_url}"
+
+        header += "]"
+        header += suffix
+
+        return header
+
     def build_vision_content_block(
         self,
         context: SubtaskContext,
@@ -657,16 +737,21 @@ class ContextService:
         context: SubtaskContext,
         task_id: Optional[int] = None,
         subtask_id: Optional[int] = None,
+        file_url: Optional[str] = None,
     ) -> Optional[str]:
         """
         Build a text prefix containing document content for prepending to messages.
 
         Includes attachment metadata (id, filename, mime_type, file_size, url, sandbox_path).
+        When the attachment is stored in an external backend (S3/MinIO), a presigned
+        ``file_url`` can be injected so the LLM can access the file directly without
+        an extra tool call.
 
         Args:
             context: SubtaskContext record with extracted_text
             task_id: Optional task ID for building sandbox path
             subtask_id: Optional subtask ID for building sandbox path
+            file_url: Optional presigned URL for S3/MinIO-backed attachments
         Returns:
             Formatted text prefix without XML tags, or None if no extracted text
         """
@@ -678,28 +763,9 @@ class ContextService:
         is_truncated = context.text_length >= max_text_length
 
         # Build attachment metadata header
-        attachment_id = context.id
-        filename = context.original_filename
-        mime_type = context.mime_type or "unknown"
-        file_size = context.file_size or 0
-        formatted_size = self.format_file_size(file_size)
-        url = self.build_attachment_url(attachment_id)
-
-        # Build sandbox path if task_id and subtask_id are provided
-        sandbox_path = self.build_sandbox_path(task_id, subtask_id, filename)
-
-        # Build the prefix with metadata and optional truncation notice
-        if sandbox_path:
-            prefix = (
-                f"[Attachment: {filename} | ID: {attachment_id} | "
-                f"Type: {mime_type} | Size: {formatted_size} | URL: {url} | "
-                f"File Path(already in sandbox): {sandbox_path}]\n"
-            )
-        else:
-            prefix = (
-                f"[Attachment: {filename} | ID: {attachment_id} | "
-                f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]\n"
-            )
+        prefix = self.build_attachment_metadata_header(
+            context, task_id=task_id, subtask_id=subtask_id, file_url=file_url
+        )
 
         if is_truncated:
             prefix += (

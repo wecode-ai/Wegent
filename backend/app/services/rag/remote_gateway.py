@@ -67,7 +67,7 @@ class RemoteRagGateway:
         self,
         *,
         base_url: str | None = None,
-        timeout: float = 30.0,
+        timeout: float = 600.0,
         auth_token: str | None = None,
     ) -> None:
         self._base_url = (base_url or settings.KNOWLEDGE_RUNTIME_URL).rstrip("/")

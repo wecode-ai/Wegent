@@ -243,6 +243,11 @@ class DocumentParser:
         ".gif": "image/gif",
         ".bmp": "image/bmp",
         ".webp": "image/webp",
+        # Video formats (binary, no text extraction; metadata injected via File URL)
+        ".mp4": "video/mp4",
+        ".mov": "video/quicktime",
+        ".avi": "video/x-msvideo",
+        ".mkv": "video/x-matroska",
         # Archive formats (binary, no text extraction)
         ".zip": "application/zip",
     }
@@ -270,6 +275,11 @@ class DocumentParser:
 
     # Known text format extensions (no MIME detection needed)
     KNOWN_TEXT_EXTENSIONS = {".txt", ".md"}
+
+    # Video file extensions — binary media that cannot be text-extracted
+    VIDEO_EXTENSIONS = frozenset(
+        ext for ext, mime in SUPPORTED_EXTENSIONS.items() if mime.startswith("video/")
+    )
 
     def __init__(self, truncation_config: Optional[SmartTruncationConfig] = None):
         """

@@ -41,7 +41,34 @@ from shared.prompts import (
 
 logger = logging.getLogger(__name__)
 
-# Table context prompt template - will be dynamically generated with table info
+
+def _get_presigned_file_url(
+    db: Session,
+    context: SubtaskContext,
+    expires: int = 3600,
+) -> Optional[str]:
+    """
+    Generate a presigned URL for an attachment stored in an external backend (S3/MinIO).
+
+    Returns None for MySQL-backed attachments or when URL generation is not possible.
+    The underlying ``get_attachment_url()`` guarantees no exceptions are raised —
+    MinIO/S3 backends catch errors internally and return None, so no try/except
+    is needed here.
+
+    Args:
+        db: Database session
+        context: SubtaskContext attachment record
+        expires: Presigned URL validity period in seconds (default: 3600)
+
+    Returns:
+        Presigned URL string, or None if not applicable / generation failed
+    """
+    if context.storage_backend == "mysql":
+        return None
+
+    return context_service.get_attachment_url(db, context, expires=expires)
+
+
 TABLE_PROMPT_TEMPLATE = """
 
 <table_context>
@@ -140,9 +167,16 @@ async def process_contexts(
                 logger.warning(f"Context {context_id} is not ready: {context.status}")
                 continue
 
+            # Pre-compute presigned URL for external storage backends (S3/MinIO)
+            file_url: Optional[str] = None
+            if context.context_type == ContextType.ATTACHMENT.value:
+                file_url = _get_presigned_file_url(db, context)
+
             # Process based on context type
             if context.context_type == ContextType.ATTACHMENT.value:
-                _process_attachment_context(context, idx, text_contents, image_contents)
+                _process_attachment_context(
+                    context, idx, text_contents, image_contents, file_url=file_url
+                )
             elif context.context_type == ContextType.KNOWLEDGE_BASE.value:
                 # Knowledge base contexts are handled via RAG tools, not here
                 logger.debug(
@@ -264,6 +298,7 @@ def _process_attachment_context(
     image_contents: List[dict],
     task_id: Optional[int] = None,
     subtask_id: Optional[int] = None,
+    file_url: Optional[str] = None,
 ) -> None:
     """
     Process an attachment context and add to appropriate list.
@@ -275,32 +310,22 @@ def _process_attachment_context(
         image_contents: List to append image content to
         task_id: Optional task ID for building sandbox path
         subtask_id: Optional subtask ID for building sandbox path
+        file_url: Optional presigned URL for S3/MinIO-backed attachments
     """
     # Check if it's an image attachment
     if context_service.is_image_context(context) and context.image_base64:
         # Build image attachment metadata
         attachment_id = context.id
-        filename = context.original_filename
-        mime_type = context.mime_type or "unknown"
-        file_size = context.file_size or 0
-        formatted_size = context_service.format_file_size(file_size)
         url = context_service.build_attachment_url(attachment_id)
 
-        # Build sandbox path if task_id and subtask_id are provided
-        sandbox_path = context_service.build_sandbox_path(task_id, subtask_id, filename)
-
-        # Build image metadata header with optional sandbox path
-        if sandbox_path:
-            image_header = (
-                f"[Image Attachment: {filename} | ID: {attachment_id} | "
-                f"Type: {mime_type} | Size: {formatted_size} | URL: {url} | "
-                f"File Path(already in sandbox): {sandbox_path}]"
-            )
-        else:
-            image_header = (
-                f"[Image Attachment: {filename} | ID: {attachment_id} | "
-                f"Type: {mime_type} | Size: {formatted_size} | URL: {url}]"
-            )
+        image_header = context_service.build_attachment_metadata_header(
+            context,
+            task_id=task_id,
+            subtask_id=subtask_id,
+            file_url=file_url,
+            label="Image Attachment",
+            suffix="",
+        )
 
         image_contents.append(
             {
@@ -312,6 +337,26 @@ def _process_attachment_context(
                 "image_header": image_header,
             }
         )
+    elif context_service.is_video_context(context):
+        # Video attachment — no text content to extract.
+        # Inject metadata header (including presigned File URL when available)
+        # so the LLM can pass the URL to downstream tools such as media-analysis Skill.
+        media_prefix = context_service.build_attachment_metadata_header(
+            context,
+            task_id=task_id,
+            subtask_id=subtask_id,
+            file_url=file_url,
+        )
+        # When no presigned File URL is available (e.g. MySQL storage backend),
+        # the video is not directly accessible by LLM or downstream Skills.
+        # Append a hint so the LLM can inform the user instead of silently
+        # attempting to call a Skill that cannot reach the file.
+        if not file_url:
+            media_prefix += (
+                "(Note: This video file is not directly accessible via URL. "
+            )
+            media_prefix += "Video analysis requires an external storage backend such as S3 or MinIO.)\n"
+        text_contents.append(f"[Attachment {idx}]\n{media_prefix}")
     else:
         # Text document - get formatted content with attachment index
         # The content is wrapped in <attachment> XML tags by context_service
@@ -319,6 +364,7 @@ def _process_attachment_context(
             context,
             task_id=task_id,
             subtask_id=subtask_id,
+            file_url=file_url,
         )
         if doc_prefix:
             text_contents.append(f"[Attachment {idx}]\n{doc_prefix}")
@@ -1018,6 +1064,7 @@ async def prepare_contexts_for_chat(
         message,
         task_id=task_id,
         subtask_id=user_subtask_id,
+        db=db,
     )
 
     # 2. Process knowledge base contexts - create tools
@@ -1139,6 +1186,7 @@ async def _process_attachment_contexts_for_message(
     message: str,
     task_id: Optional[int] = None,
     subtask_id: Optional[int] = None,
+    db: Optional[Session] = None,
 ) -> str | list[dict[str, Any]]:
     """
     Process attachment contexts and build message with content.
@@ -1148,6 +1196,7 @@ async def _process_attachment_contexts_for_message(
         message: Original user message
         task_id: Optional task ID for building sandbox path
         subtask_id: Optional subtask ID for building sandbox path
+        db: Optional database session for generating presigned URLs
     Returns:
         Message with attachment contents prepended, or OpenAI Responses API
         format vision content list for images
@@ -1160,6 +1209,11 @@ async def _process_attachment_contexts_for_message(
 
     for idx, context in enumerate(attachment_contexts, start=1):
         try:
+            # Pre-compute presigned URL for external storage backends (S3/MinIO)
+            file_url: Optional[str] = None
+            if db is not None:
+                file_url = _get_presigned_file_url(db, context)
+
             _process_attachment_context(
                 context,
                 idx,
@@ -1167,6 +1221,7 @@ async def _process_attachment_contexts_for_message(
                 image_contents,
                 task_id=task_id,
                 subtask_id=subtask_id,
+                file_url=file_url,
             )
         except Exception as e:
             logger.exception(f"Error processing attachment context {context.id}: {e}")

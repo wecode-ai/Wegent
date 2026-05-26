@@ -146,6 +146,11 @@ export const SUPPORTED_EXTENSIONS = [
   '.gif',
   '.bmp',
   '.webp',
+  // Video formats (no text extraction; File URL injected for media-analysis Skill)
+  '.mp4',
+  '.mov',
+  '.avi',
+  '.mkv',
 ]
 
 /**
@@ -325,6 +330,11 @@ export const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp
 export const HTML_EXTENSIONS = ['.html', '.htm', '.html5']
 
 /**
+ * Video file extensions supported for media-analysis Skill
+ */
+export const VIDEO_EXTENSIONS = ['.mp4', '.mov', '.avi', '.mkv']
+
+/**
  * Check if a file extension is an image type
  */
 export function isImageExtension(extension: string): boolean {
@@ -338,6 +348,14 @@ export function isImageExtension(extension: string): boolean {
 export function isHtmlExtension(extension: string): boolean {
   const ext = extension.toLowerCase()
   return HTML_EXTENSIONS.includes(ext)
+}
+
+/**
+ * Check if a file extension is a video type
+ */
+export function isVideoExtension(extension: string): boolean {
+  const ext = extension.startsWith('.') ? extension.toLowerCase() : `.${extension.toLowerCase()}`
+  return VIDEO_EXTENSIONS.includes(ext)
 }
 
 /**

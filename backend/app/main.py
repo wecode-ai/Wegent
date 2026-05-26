@@ -401,7 +401,7 @@ async def lifespan(app: FastAPI):
     await stop_device_monitor_async()
     logger.info("✓ Device heartbeat monitor stopped")
 
-    # Step 7: Shutdown OpenTelemetry
+    # Step 8: Shutdown OpenTelemetry
     from shared.telemetry.config import get_otel_config
     from shared.telemetry.core import is_telemetry_enabled, shutdown_telemetry
 
