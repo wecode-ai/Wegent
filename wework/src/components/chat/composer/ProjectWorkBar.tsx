@@ -5,7 +5,7 @@ export function ProjectWorkBar() {
   const { t } = useTranslation('common')
 
   return (
-    <div className="flex min-h-16 items-center px-6">
+    <div className="flex min-h-[56px] items-center px-6">
       <button
         type="button"
         data-testid="project-work-button"
