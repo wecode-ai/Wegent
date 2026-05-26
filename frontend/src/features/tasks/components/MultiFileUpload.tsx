@@ -9,6 +9,7 @@ import { Paperclip, X, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   SUPPORTED_EXTENSIONS,
   MAX_FILE_SIZE,
@@ -238,6 +239,7 @@ export default function MultiFileUpload({
   showButtonOnly = false,
   showPreviewOnly = false,
 }: MultiFileUploadProps) {
+  const { t } = useTranslation('chat')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const handleClick = useCallback(() => {
@@ -284,7 +286,7 @@ export default function MultiFileUpload({
   const acceptString = SUPPORTED_EXTENSIONS.join(',')
 
   // Tooltip content
-  const tooltipContent = `支持的文件类型: PDF, Word, PPT, Excel, XMind, TXT, Markdown, 图片(JPG, PNG, GIF, BMP, WebP), 视频(MP4, MOV, AVI, MKV)\n最大文件大小: ${MAX_FILE_SIZE / (1024 * 1024)} MB（视频最大 1 GB）\n支持多文件同时上传`
+  const tooltipContent = t('upload.tooltip', { maxSize: MAX_FILE_SIZE / (1024 * 1024) })
 
   const hasAttachments = state.attachments.length > 0
   const isUploading = state.uploadingFiles.size > 0
