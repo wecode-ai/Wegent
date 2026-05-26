@@ -20,7 +20,7 @@ describe('ChatInput', () => {
       <ChatInput value="" onChange={vi.fn()} onSubmit={vi.fn()} disabled={false} variant="desktop" />,
     )
 
-    expect(screen.getByTestId('chat-message-input')).toHaveAttribute('rows', '3')
+    expect(screen.getByTestId('chat-message-input')).toHaveAttribute('rows', '2')
     expect(screen.getByTestId('custom-mode-button')).toBeInTheDocument()
     expect(screen.getByTestId('model-selector-button')).toBeInTheDocument()
     expect(screen.getByTestId('project-work-button')).toBeInTheDocument()
