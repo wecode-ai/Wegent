@@ -39,6 +39,18 @@
     "recent": "Recent",
     "collapse_sidebar": "Collapse sidebar",
     "expand_sidebar": "Expand sidebar",
-    "resize_sidebar": "Resize sidebar"
+    "resize_sidebar": "Resize sidebar",
+    "toggle_right_workspace_panel": "Open right panel",
+    "toggle_bottom_workspace_panel": "Open bottom panel",
+    "resize_right_workspace_panel": "Resize right panel",
+    "resize_bottom_workspace_panel": "Resize bottom panel",
+    "add_workspace_item": "Add workspace item",
+    "expand_workspace_panel": "Expand workspace panel",
+    "close_right_workspace_panel": "Close right panel",
+    "close_bottom_workspace_panel": "Close bottom panel",
+    "browser": "Browser",
+    "open_website": "Open website",
+    "terminal": "Terminal",
+    "start_shell": "Start interactive shell"
   }
 }

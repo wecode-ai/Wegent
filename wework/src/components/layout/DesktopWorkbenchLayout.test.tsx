@@ -83,4 +83,38 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByText('新对话')).toBeInTheDocument()
     expect(document.querySelector('aside')).toBeInTheDocument()
   })
+
+  test('opens and resizes the right workspace panel', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+
+    const panel = screen.getByTestId('right-workspace-panel')
+    expect(panel).toBeInTheDocument()
+    expect(screen.getByText('浏览器')).toBeInTheDocument()
+    expect(screen.getByText('终端')).toBeInTheDocument()
+
+    fireEvent.pointerDown(screen.getByTestId('right-workspace-resize-handle'), { clientX: 700 })
+    fireEvent.pointerMove(document, { clientX: 640 })
+    fireEvent.pointerUp(document)
+
+    expect(panel).toHaveStyle({ width: '480px' })
+  })
+
+  test('opens and resizes the bottom workspace panel', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
+
+    const panel = screen.getByTestId('bottom-workspace-panel')
+    expect(panel).toBeInTheDocument()
+    expect(screen.getByText('浏览器')).toBeInTheDocument()
+    expect(screen.getByText('终端')).toBeInTheDocument()
+
+    fireEvent.pointerDown(screen.getByTestId('bottom-workspace-resize-handle'), { clientY: 700 })
+    fireEvent.pointerMove(document, { clientY: 620 })
+    fireEvent.pointerUp(document)
+
+    expect(panel).toHaveStyle({ height: '400px' })
+  })
 })

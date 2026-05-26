@@ -39,6 +39,18 @@
     "recent": "最近",
     "collapse_sidebar": "收起侧边栏",
     "expand_sidebar": "展开侧边栏",
-    "resize_sidebar": "调整侧边栏宽度"
+    "resize_sidebar": "调整侧边栏宽度",
+    "toggle_right_workspace_panel": "打开右侧栏",
+    "toggle_bottom_workspace_panel": "打开底部栏",
+    "resize_right_workspace_panel": "调整右侧栏宽度",
+    "resize_bottom_workspace_panel": "调整底部栏高度",
+    "add_workspace_item": "添加工作项",
+    "expand_workspace_panel": "放大工作栏",
+    "close_right_workspace_panel": "关闭右侧栏",
+    "close_bottom_workspace_panel": "关闭底部栏",
+    "browser": "浏览器",
+    "open_website": "打开网站",
+    "terminal": "终端",
+    "start_shell": "启动交互式 shell"
   }
 }
