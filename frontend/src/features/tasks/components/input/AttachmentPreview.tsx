@@ -337,8 +337,9 @@ export default function AttachmentPreview({
               variant="ghost"
               size="icon"
               onClick={handleDownload}
-              className="h-4 w-4 p-0 hover:bg-transparent"
+              className="h-11 min-w-[44px] hover:bg-transparent"
               title={t('actions.download')}
+              data-testid="attachment-download"
             >
               <Download className="h-3 w-3 text-text-muted" />
             </Button>
@@ -360,7 +361,8 @@ export default function AttachmentPreview({
               <button
                 type="button"
                 onClick={handleDownload}
-                className="ml-2 text-link hover:underline"
+                className="ml-2 text-link hover:underline py-2 px-1"
+                data-testid="attachment-download-link"
               >
                 {t('attachment.click_to_download')}
               </button>
