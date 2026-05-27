@@ -121,9 +121,7 @@ class SummaryService:
         if not summary_data:
             return None
 
-        payload = dict(summary_data)
-        payload.pop("has_manual_override", None)
-        return payload
+        return dict(summary_data)
 
     def _persist_kb_summary(
         self, kb: Kind, summary_data: Optional[dict[str, Any]]
