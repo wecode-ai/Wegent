@@ -24,6 +24,7 @@ from app.models.user import User
 from wecode.config.nevis_config import nevis_settings
 from wecode.schemas.cloud_device import (
     CloudDeviceFileConfigResponse,
+    CloudDeviceMetricsResponse,
     CloudDeviceResponse,
     CreateCloudDeviceRequest,
     NevisSandboxStatus,
@@ -57,6 +58,7 @@ def _get_backend_url(request: Request) -> str:
     scheme = request.url.scheme
     host = request.headers.get("host", request.url.netloc)
     return f"{scheme}://{host}"
+
 
 def _get_bearer_token(request: Request) -> str:
     """Extract the raw Bearer token from the incoming request."""
@@ -447,6 +449,79 @@ async def get_cloud_device_file_config(
         ip_address=ip_address,
         files_url=files_url,
         available=available,
+    )
+
+
+@router.post("/{device_id}/metrics", response_model=CloudDeviceMetricsResponse)
+async def get_cloud_device_metrics(
+    device_id: str,
+    user_id: int | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Get CPU, memory, and disk usage metrics for a cloud device.
+
+    Queries Nevis raw_query API for sandbox resource utilization.
+    Does not require the device to be online.
+
+    Args:
+        device_id: Cloud device ID
+
+    Returns:
+        CloudDeviceMetricsResponse with cpu_usage, memory_usage, disk_usage
+    """
+    if not cloud_device_provider.is_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cloud device provider is not configured",
+        )
+
+    device_status = await _get_accessible_cloud_device_status(
+        device_id, db, current_user, user_id
+    )
+    sandbox_id = _resolve_sandbox_id(device_id, device_status)
+
+    import time
+
+    from wecode.service.nevis_client import nevis_client
+
+    now = int(time.time())
+    start = now - 300  # last 5 minutes
+    queries = {
+        "cpu": "max_over_time(syscpuidle:busy{cpu='cpu'})",
+        "memory": "max_over_time(sysmeminfo:memused_percentage)",
+        "disk": "max_over_time(sysdiskinfo:used_size_percentage)",
+    }
+
+    results: dict[str, float | None] = {"cpu": None, "memory": None, "disk": None}
+
+    async def _fetch_metric(key: str, query: str):
+        try:
+            resp = await nevis_client.query_metrics(
+                sandbox_id=sandbox_id,
+                query=query,
+                start=start,
+                end=now,
+                step="1m",
+            )
+            data = resp.get("data", {}).get("result", [])
+            if data and len(data) > 0:
+                values = data[0].get("values", [])
+                if values:
+                    results[key] = float(values[-1][1])
+        except Exception as e:
+            logger.warning(f"Failed to fetch {key} metric for {sandbox_id}: {e}")
+
+    await asyncio.gather(
+        _fetch_metric("cpu", queries["cpu"]),
+        _fetch_metric("memory", queries["memory"]),
+        _fetch_metric("disk", queries["disk"]),
+    )
+
+    return CloudDeviceMetricsResponse(
+        cpu_usage=results["cpu"],
+        memory_usage=results["memory"],
+        disk_usage=results["disk"],
     )
 
 

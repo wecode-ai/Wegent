@@ -119,3 +119,15 @@ class CloudDeviceLimitError(BaseModel):
     detail: str = Field(..., description="Error message")
     max_devices: int = Field(..., description="Maximum allowed cloud devices")
     current_count: int = Field(..., description="Current cloud device count")
+
+
+class CloudDeviceMetricsResponse(BaseModel):
+    """Response schema for cloud device resource metrics."""
+
+    cpu_usage: Optional[float] = Field(None, description="CPU usage percentage (0-100)")
+    memory_usage: Optional[float] = Field(
+        None, description="Memory usage percentage (0-100)"
+    )
+    disk_usage: Optional[float] = Field(
+        None, description="Disk usage percentage (0-100)"
+    )

@@ -3,7 +3,8 @@
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@wecode/*": ["./wecode/*"]
     },
     "ignoreDeprecations": "6.0",
     "target": "es2023",
@@ -26,6 +27,6 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"],
+  "include": ["src", "wecode"],
   "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
 }

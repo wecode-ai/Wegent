@@ -3,17 +3,21 @@ import {
   BookOpen,
   Cloud,
   Code2,
-  Cpu,
   Folder,
   Globe2,
-  HardDrive,
-  MemoryStick,
-  Monitor,
   Plus,
   Terminal,
 } from 'lucide-react'
 import type { ComponentType } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { createHttpClient } from '@/api/http'
+import { createDeviceApi } from '@/api/devices'
+import { getRuntimeConfig } from '@/config/runtime'
+import type { DeviceInfo } from '@/types/devices'
+import { DeviceMetrics } from '@wecode/components/DeviceMetrics'
+import { VncDesktopButton } from '@wecode/components/VncDesktopButton'
+import { AddCloudDeviceDialog } from './AddCloudDeviceDialog'
 
 interface ConnectionsSettingsPageProps {
   onBack: () => void
@@ -27,16 +31,6 @@ interface SettingsNavItem {
   active?: boolean
 }
 
-interface DeviceRow {
-  name: string
-  id: string
-  status: 'online' | 'offline'
-  version?: string
-  cpuUsage: number
-  memoryUsage: number
-  diskUsage: number
-}
-
 const settingsNavItems: SettingsNavItem[] = [
   {
     key: 'connections',
@@ -48,19 +42,7 @@ const settingsNavItems: SettingsNavItem[] = [
   { key: 'projects', icon: Folder, label: 'settings_nav_projects', fallback: '项目' },
 ]
 
-const cloudDevices: DeviceRow[] = [
-  {
-    name: 'yunpeng7-executor-372706c30fcd',
-    id: '24a59054-4638-4744-983d-372706c30fcd',
-    status: 'online',
-    version: 'v1.712',
-    cpuUsage: 42,
-    memoryUsage: 68,
-    diskUsage: 57,
-  },
-]
-
-function StatusPill({ status }: { status: DeviceRow['status'] }) {
+function StatusPill({ status }: { status: DeviceInfo['status'] }) {
   const { t } = useTranslation('common')
   const isOnline = status === 'online'
 
@@ -77,18 +59,71 @@ function StatusPill({ status }: { status: DeviceRow['status'] }) {
   )
 }
 
-function DeviceCard({ device }: { device: DeviceRow }) {
-  const { t } = useTranslation('common')
+function DeviceActionButton({
+  testId,
+  icon: Icon,
+  label,
+  onClick,
+  disabled,
+}: {
+  testId: string
+  icon: ComponentType<{ className?: string }>
+  label: string
+  onClick?: () => void
+  disabled?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      data-testid={testId}
+      onClick={onClick}
+      disabled={disabled}
+      className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[#dedede] bg-white px-2.5 text-xs font-medium text-[#3c4043] hover:bg-[#f7f7f8] disabled:opacity-50"
+    >
+      <Icon className="h-3.5 w-3.5" />
+      <span>{label}</span>
+    </button>
+  )
+}
+
+function DeviceCard({ device }: { device: DeviceInfo }) {
+  const [sessionLoading, setSessionLoading] = useState<string | null>(null)
+
+  const handleStartSession = useCallback(
+    async (type: 'terminal' | 'code-server') => {
+      if (device.status !== 'online') return
+      setSessionLoading(type)
+      try {
+        const { apiBaseUrl } = getRuntimeConfig()
+        const client = createHttpClient({ baseUrl: apiBaseUrl })
+        const deviceApi = createDeviceApi(client)
+        const result =
+          type === 'terminal'
+            ? await deviceApi.startTerminal(device.device_id)
+            : await deviceApi.startCodeServer(device.device_id)
+        if (result.url) {
+          window.open(result.url, '_blank', 'noopener')
+        }
+      } catch (e) {
+        console.error(`Failed to start ${type}:`, e)
+      } finally {
+        setSessionLoading(null)
+      }
+    },
+    [device.device_id, device.status],
+  )
+
+  const isOnline = device.status === 'online'
 
   return (
     <div
-      data-testid={`connection-device-${device.id}`}
+      data-testid={`connection-device-${device.device_id}`}
       className="rounded-lg border border-[#e2e2e2] bg-white p-3"
     >
       <div className="flex items-start justify-between gap-4">
         <div className="flex min-w-0 items-start gap-3">
           <div
-            data-testid={`connection-device-icon-${device.id}`}
+            data-testid={`connection-device-icon-${device.device_id}`}
             className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center text-[#3c4043]"
           >
             <Cloud className="h-4 w-4" />
@@ -97,7 +132,7 @@ function DeviceCard({ device }: { device: DeviceRow }) {
             <div className="flex min-w-0 items-center gap-2">
               <h3 className="truncate text-sm font-semibold text-[#2d2d2d]">{device.name}</h3>
               <span className="shrink-0 rounded-full bg-[#f7f7f8] px-2 py-0.5 text-xs text-[#6b6f76]">
-                {device.version || '-'}
+                {device.executor_version ? `v${device.executor_version}` : '-'}
               </span>
             </div>
             <div className="mt-1">
@@ -108,89 +143,29 @@ function DeviceCard({ device }: { device: DeviceRow }) {
 
         <div className="flex shrink-0 gap-2">
           <DeviceActionButton
-            testId={`connection-terminal-button-${device.id}`}
+            testId={`connection-terminal-button-${device.device_id}`}
             icon={Terminal}
             label="终端"
+            onClick={() => handleStartSession('terminal')}
+            disabled={!isOnline || sessionLoading === 'terminal'}
           />
           <DeviceActionButton
-            testId={`connection-code-server-button-${device.id}`}
+            testId={`connection-code-server-button-${device.device_id}`}
             icon={Code2}
             label="IDE"
+            onClick={() => handleStartSession('code-server')}
+            disabled={!isOnline || sessionLoading === 'code-server'}
           />
-          <DeviceActionButton
-            testId={`connection-vnc-button-${device.id}`}
-            icon={Monitor}
-            label="桌面"
-          />
+          <VncDesktopButton deviceId={device.device_id} />
         </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-md bg-[#fafafa] px-3 py-2">
-        <ResourceMetric
-          icon={Cpu}
-          label={t('workbench.connection_resource_cpu', 'CPU')}
-          value={device.cpuUsage}
-        />
-        <ResourceMetric
-          icon={MemoryStick}
-          label={t('workbench.connection_resource_memory', 'MEM')}
-          value={device.memoryUsage}
-        />
-        <ResourceMetric
-          icon={HardDrive}
-          label={t('workbench.connection_resource_disk', '磁盘')}
-          value={device.diskUsage}
-        />
-      </div>
+      <DeviceMetrics deviceId={device.device_id} />
     </div>
   )
 }
 
-function DeviceActionButton({
-  testId,
-  icon: Icon,
-  label,
-}: {
-  testId: string
-  icon: ComponentType<{ className?: string }>
-  label: string
-}) {
-  return (
-    <button
-      type="button"
-      data-testid={testId}
-      className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[#dedede] bg-white px-2.5 text-xs font-medium text-[#3c4043] hover:bg-[#f7f7f8]"
-    >
-      <Icon className="h-3.5 w-3.5" />
-      <span>{label}</span>
-    </button>
-  )
-}
-
-function ResourceMetric({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: ComponentType<{ className?: string }>
-  label: string
-  value: number
-}) {
-  return (
-    <div className="flex min-w-[150px] items-center gap-2 text-xs text-[#6b6f76]">
-      <span className="inline-flex w-12 shrink-0 items-center gap-1.5">
-        <Icon className="h-3.5 w-3.5" />
-        {label}
-      </span>
-      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#e8eaed]">
-        <div className="h-full rounded-full bg-[#3c4043]" style={{ width: `${value}%` }} />
-      </div>
-      <span className="w-8 shrink-0 text-right font-medium text-[#3c4043]">{value}%</span>
-    </div>
-  )
-}
-
-function DeviceSection({ title, devices }: { title: string; devices: DeviceRow[] }) {
+function DeviceSection({ title, devices }: { title: string; devices: DeviceInfo[] }) {
   const { t } = useTranslation('common')
 
   return (
@@ -204,7 +179,7 @@ function DeviceSection({ title, devices }: { title: string; devices: DeviceRow[]
       </div>
       <div className="space-y-3">
         {devices.map(device => (
-          <DeviceCard key={device.id} device={device} />
+          <DeviceCard key={device.device_id} device={device} />
         ))}
         <div
           data-testid="connection-scale-wiki"
@@ -232,6 +207,30 @@ function DeviceSection({ title, devices }: { title: string; devices: DeviceRow[]
 
 export function ConnectionsSettingsPage({ onBack }: ConnectionsSettingsPageProps) {
   const { t } = useTranslation('common')
+  const [devices, setDevices] = useState<DeviceInfo[]>([])
+  const [loading, setLoading] = useState(true)
+  const [addDialogOpen, setAddDialogOpen] = useState(false)
+
+  const fetchDevices = useCallback(async () => {
+    try {
+      const { apiBaseUrl } = getRuntimeConfig()
+      const client = createHttpClient({ baseUrl: apiBaseUrl })
+      const deviceApi = createDeviceApi(client)
+      const allDevices = await deviceApi.getAllDevices()
+      const cloudClaudeDevices = allDevices.filter(
+        d => d.device_type === 'cloud' && d.bind_shell === 'claudecode',
+      )
+      setDevices(cloudClaudeDevices)
+    } catch (e) {
+      console.error('Failed to fetch devices:', e)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchDevices()
+  }, [fetchDevices])
 
   return (
     <div
@@ -304,6 +303,7 @@ export function ConnectionsSettingsPage({ onBack }: ConnectionsSettingsPageProps
                 <button
                   type="button"
                   data-testid="connection-add-device-button"
+                  onClick={() => setAddDialogOpen(true)}
                   className="inline-flex h-8 items-center gap-1.5 rounded-full bg-[#f5f5f5] px-3 text-sm text-[#2d2d2d] hover:bg-[#ececec]"
                 >
                   <Plus className="h-4 w-4" />
@@ -312,15 +312,27 @@ export function ConnectionsSettingsPage({ onBack }: ConnectionsSettingsPageProps
               </div>
 
               <div className="space-y-5">
-                <DeviceSection
-                  title={t('workbench.connection_cloud_devices', '云设备')}
-                  devices={cloudDevices}
-                />
+                {loading ? (
+                  <div className="py-8 text-center text-sm text-[#6b6f76]">加载中...</div>
+                ) : devices.length === 0 ? (
+                  <div className="py-8 text-center text-sm text-[#6b6f76]">暂无云设备</div>
+                ) : (
+                  <DeviceSection
+                    title={t('workbench.connection_cloud_devices', '云设备')}
+                    devices={devices}
+                  />
+                )}
               </div>
             </div>
           </section>
         </div>
       </main>
+
+      <AddCloudDeviceDialog
+        open={addDialogOpen}
+        onClose={() => setAddDialogOpen(false)}
+        onCreated={fetchDevices}
+      />
     </div>
   )
 }
