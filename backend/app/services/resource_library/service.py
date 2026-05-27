@@ -12,18 +12,42 @@ from sqlalchemy.orm import Session
 from app.models.resource_library import (
     RESOURCE_LIBRARY_STATUS_ARCHIVED,
     RESOURCE_LIBRARY_STATUS_PUBLISHED,
+    RESOURCE_TYPE_MCP,
+    RESOURCE_TYPE_SKILL,
     ResourceLibraryListing,
     ResourceLibraryVersion,
 )
 from app.schemas.resource_library import ResourceLibraryListingCreate
+from app.services.resource_library.installers import (
+    McpResourceInstaller,
+    SkillResourceInstaller,
+)
 from app.services.resource_library.manifest_builders import ResourceManifestBuilder
 
 
 class ResourceLibraryService:
     """Application service for resource library listings and versions."""
 
-    def __init__(self, manifest_builder: ResourceManifestBuilder | None = None):
+    def __init__(
+        self,
+        manifest_builder: ResourceManifestBuilder | None = None,
+        installers: dict[str, object] | None = None,
+    ):
         self.manifest_builder = manifest_builder or ResourceManifestBuilder()
+        self.installers = installers or {
+            RESOURCE_TYPE_SKILL: SkillResourceInstaller(),
+            RESOURCE_TYPE_MCP: McpResourceInstaller(),
+        }
+
+    def get_installer(self, resource_type: str) -> object:
+        """Return the installer registered for a resource type."""
+        installer = self.installers.get(resource_type)
+        if not installer:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Unsupported resource type",
+            )
+        return installer
 
     def create_listing(
         self,
