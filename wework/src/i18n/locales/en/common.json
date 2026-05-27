@@ -15,6 +15,7 @@
     "history": "Chats",
     "settings": "Settings",
     "empty_title": "What should we do?",
+    "project_empty_title": "What should we build in {{projectName}}?",
     "input_placeholder": "Ask anything",
     "mobile_input_placeholder": "Ask Wework",
     "quick_new_task": "New task",

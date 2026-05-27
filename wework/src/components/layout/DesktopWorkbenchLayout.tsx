@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { WorkbenchMessage, WorkbenchState } from '@/types/workbench'
+import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
 import { DesktopSidebar } from './DesktopSidebar'
 import { DesktopWorkbenchMain } from './DesktopWorkbenchMain'
 import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
@@ -7,6 +8,8 @@ import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettin
 interface DesktopWorkbenchLayoutProps {
   state: WorkbenchState
   messages: WorkbenchMessage[]
+  projectChat: ProjectChatControls
+  projectWork: ProjectWorkControls
   onSelectProject: (projectId: number) => void
   onOpenTask: (taskId: number) => void
   onInputChange: (value: string) => void
@@ -17,6 +20,8 @@ interface DesktopWorkbenchLayoutProps {
 export function DesktopWorkbenchLayout({
   state,
   messages,
+  projectChat,
+  projectWork,
   onSelectProject,
   onOpenTask,
   onInputChange,
@@ -48,7 +53,10 @@ export function DesktopWorkbenchLayout({
         <DesktopWorkbenchMain
           sidebarCollapsed={sidebarCollapsed}
           currentTask={state.currentTask}
+          currentProject={state.currentProject}
           messages={messages}
+          projectChat={projectChat}
+          projectWork={projectWork}
           input={state.input}
           isSending={state.isSending}
           onExpandSidebar={() => setSidebarCollapsed(false)}

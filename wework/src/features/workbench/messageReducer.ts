@@ -1,4 +1,4 @@
-import type { WorkbenchMessage } from '@/types/workbench'
+import type { ToolBlock, ToolBlockStatus, WorkbenchMessage } from '@/types/workbench'
 
 export type MessageAction =
   | { type: 'reset'; messages: WorkbenchMessage[] }
@@ -7,6 +7,8 @@ export type MessageAction =
   | { type: 'assistant_chunk'; subtaskId: number; content: string }
   | { type: 'assistant_done'; subtaskId: number; content?: string }
   | { type: 'assistant_error'; subtaskId: number; error: string }
+  | { type: 'block_created'; subtaskId: number; block: ToolBlock }
+  | { type: 'block_updated'; subtaskId: number; blockId: string; updates: Partial<Pick<ToolBlock, 'toolInput' | 'toolOutput' | 'status'>> }
 
 export function messageReducer(
   state: WorkbenchMessage[],
@@ -27,6 +29,7 @@ export function messageReducer(
           role: 'assistant',
           content: '',
           status: 'streaming',
+          blocks: [],
           createdAt: new Date().toISOString(),
         },
       ]
@@ -36,7 +39,7 @@ export function messageReducer(
           ? {
               ...message,
               content: message.content + action.content,
-              status: 'streaming',
+              status: 'streaming' as const,
             }
           : message
       )
@@ -46,15 +49,39 @@ export function messageReducer(
           ? {
               ...message,
               content: action.content ?? message.content,
-              status: 'done',
+              status: 'done' as const,
             }
           : message
       )
     case 'assistant_error':
       return state.map(message =>
         message.subtaskId === action.subtaskId
-          ? { ...message, status: 'failed', error: action.error }
+          ? { ...message, status: 'failed' as const, error: action.error }
+          : message
+      )
+    case 'block_created':
+      return state.map(message =>
+        message.subtaskId === action.subtaskId
+          ? { ...message, blocks: [...(message.blocks ?? []), action.block] }
+          : message
+      )
+    case 'block_updated':
+      return state.map(message =>
+        message.subtaskId === action.subtaskId
+          ? {
+              ...message,
+              blocks: (message.blocks ?? []).map(block =>
+                block.id === action.blockId
+                  ? { ...block, ...action.updates }
+                  : block
+              ),
+            }
           : message
       )
   }
+}
+
+export function normalizeBlockStatus(status?: string): ToolBlockStatus {
+  if (status === 'running') return 'pending'
+  return (status as ToolBlockStatus) ?? 'pending'
 }

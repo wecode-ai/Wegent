@@ -42,6 +42,22 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByText('我们该做什么？')).toBeInTheDocument()
   })
 
+  test('renders project-specific empty prompt after selecting a project', () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentProject: { id: 1, name: 'gitlab-wegent', tasks: [] },
+        }}
+      />
+    )
+
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
+      '我们应该在 gitlab-wegent 中构建什么？'
+    )
+  })
+
   test('keeps the empty composer at the intended desktop proportion', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
