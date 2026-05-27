@@ -42,6 +42,8 @@ interface TeamSelectorButtonProps {
   currentMode?: TaskType
   /** Callback to refresh teams list after creation */
   onTeamsRefresh?: () => Promise<void>
+  /** Render style for the selector trigger */
+  triggerVariant?: 'button' | 'menu-item'
 }
 
 export default function TeamSelectorButton({
@@ -52,6 +54,7 @@ export default function TeamSelectorButton({
   hideSettingsLink = false,
   currentMode = 'chat',
   onTeamsRefresh,
+  triggerVariant = 'button',
 }: TeamSelectorButtonProps) {
   const { t } = useTranslation(['common', 'wizard'])
   const router = useRouter()
@@ -115,119 +118,144 @@ export default function TeamSelectorButton({
 
   if (!selectedTeam || teams.length === 0) return null
 
+  const popoverContent = (
+    <PopoverContent align="start" side="top" className={TEAM_SELECTOR_POPOVER_CLASS_NAME}>
+      <div className="px-2 pb-2 text-sm font-medium text-text-primary">
+        {t('common:teams.select_team')}
+      </div>
+
+      {/* Search input */}
+      <div className="px-2 pb-2">
+        <div className="relative">
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
+          <Input
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder={t('common:teams.search_team')}
+            className="h-8 pl-7 text-sm"
+          />
+        </div>
+      </div>
+
+      {/* Teams list */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar">
+        <TeamSelectorList
+          teams={filteredTeams}
+          selectedTeam={selectedTeam}
+          onTeamSelect={handleSelectTeam}
+          emptyText={t('common:teams.no_match')}
+          favoriteTeamIdSet={favoriteTeamIdSet}
+          systemRecommendedTeamIdSet={systemRecommendedTeamIdSet}
+          quickAccessMetaLoaded={quickAccessMetaLoaded}
+          favoriteUpdatingTeamId={favoriteUpdatingTeamId}
+          onToggleFavorite={handleToggleFavorite}
+        />
+      </div>
+
+      {/* Footer with create and settings buttons */}
+      {!hideSettingsLink && (
+        <div className="border-t border-primary/10 bg-base mt-2 flex items-center gap-1 p-1">
+          {/* Quick Create Button - Left */}
+          <div
+            className={cn(
+              'cursor-pointer group flex-1',
+              'flex items-center justify-center space-x-1.5 text-xs text-text-secondary',
+              'hover:bg-hover active:bg-hover transition-colors duration-150',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+              'px-2 py-2 rounded-md'
+            )}
+            onClick={handleCreateClick}
+            role="button"
+            tabIndex={0}
+            onKeyDown={e => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                handleCreateClick()
+              }
+            }}
+          >
+            <SparklesIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
+            <span className="font-medium group-hover:text-text-primary">
+              {t('wizard:wizard_button')}
+            </span>
+          </div>
+
+          {/* Settings Button - Right */}
+          <div
+            className={cn(
+              'cursor-pointer group flex-1',
+              'flex items-center justify-center space-x-1.5 text-xs text-text-secondary',
+              'hover:bg-hover active:bg-hover transition-colors duration-150',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+              'px-2 py-2 rounded-md'
+            )}
+            onClick={() => {
+              setOpen(false)
+              router.push(paths.settings.team.getHref())
+            }}
+            role="button"
+            tabIndex={0}
+            onKeyDown={e => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                setOpen(false)
+                router.push(paths.settings.team.getHref())
+              }
+            }}
+          >
+            <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
+            <span className="font-medium group-hover:text-text-primary">
+              {t('common:teams.manage')}
+            </span>
+          </div>
+        </div>
+      )}
+    </PopoverContent>
+  )
+
+  const trigger =
+    triggerVariant === 'menu-item' ? (
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          disabled={disabled}
+          className="w-full flex items-center justify-between px-3 py-2.5 text-left transition-colors hover:bg-hover active:bg-hover disabled:opacity-50 disabled:cursor-not-allowed"
+          data-testid="team-selector"
+        >
+          <span className="flex items-center gap-3 min-w-0">
+            <AgentIcon className="h-4 w-4 flex-shrink-0 text-text-muted" />
+            <span className="text-sm">{t('common:teamSelector.agent_label', '智能体')}</span>
+          </span>
+          <span className="ml-3 max-w-28 truncate text-xs text-text-muted">
+            {getTeamDisplayName(selectedTeam)}
+          </span>
+        </button>
+      </PopoverTrigger>
+    ) : (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <div data-testid="team-selector">
+              <ActionButton
+                onClick={() => setOpen(!open)}
+                disabled={disabled}
+                icon={<AgentIcon className="h-4 w-4" />}
+                label={t('common:teamSelector.agent_label', '智能体')}
+              />
+            </div>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="top">
+          <p className="text-xs">{t('common:teamSelector.select_agent_tooltip', '选择智能体')}</p>
+        </TooltipContent>
+      </Tooltip>
+    )
+
   return (
     <TooltipProvider>
       <Popover open={open} onOpenChange={handleOpenChange}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <PopoverTrigger asChild>
-              <div data-testid="team-selector">
-                <ActionButton
-                  onClick={() => setOpen(!open)}
-                  disabled={disabled}
-                  icon={<AgentIcon className="h-4 w-4" />}
-                  label={t('common:teamSelector.agent_label', '智能体')}
-                />
-              </div>
-            </PopoverTrigger>
-          </TooltipTrigger>
-          <TooltipContent side="top">
-            <p className="text-xs">{t('common:teamSelector.select_agent_tooltip', '选择智能体')}</p>
-          </TooltipContent>
-        </Tooltip>
-
-        <PopoverContent align="start" side="top" className={TEAM_SELECTOR_POPOVER_CLASS_NAME}>
-          <div className="px-2 pb-2 text-sm font-medium text-text-primary">
-            {t('common:teams.select_team')}
-          </div>
-
-          {/* Search input */}
-          <div className="px-2 pb-2">
-            <div className="relative">
-              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
-              <Input
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                placeholder={t('common:teams.search_team')}
-                className="h-8 pl-7 text-sm"
-              />
-            </div>
-          </div>
-
-          {/* Teams list */}
-          <div className="flex-1 overflow-y-auto custom-scrollbar">
-            <TeamSelectorList
-              teams={filteredTeams}
-              selectedTeam={selectedTeam}
-              onTeamSelect={handleSelectTeam}
-              emptyText={t('common:teams.no_match')}
-              favoriteTeamIdSet={favoriteTeamIdSet}
-              systemRecommendedTeamIdSet={systemRecommendedTeamIdSet}
-              quickAccessMetaLoaded={quickAccessMetaLoaded}
-              favoriteUpdatingTeamId={favoriteUpdatingTeamId}
-              onToggleFavorite={handleToggleFavorite}
-            />
-          </div>
-
-          {/* Footer with create and settings buttons */}
-          {!hideSettingsLink && (
-            <div className="border-t border-primary/10 bg-base mt-2 flex items-center gap-1 p-1">
-              {/* Quick Create Button - Left */}
-              <div
-                className={cn(
-                  'cursor-pointer group flex-1',
-                  'flex items-center justify-center space-x-1.5 text-xs text-text-secondary',
-                  'hover:bg-hover active:bg-hover transition-colors duration-150',
-                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
-                  'px-2 py-2 rounded-md'
-                )}
-                onClick={handleCreateClick}
-                role="button"
-                tabIndex={0}
-                onKeyDown={e => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault()
-                    handleCreateClick()
-                  }
-                }}
-              >
-                <SparklesIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
-                <span className="font-medium group-hover:text-text-primary">
-                  {t('wizard:wizard_button')}
-                </span>
-              </div>
-
-              {/* Settings Button - Right */}
-              <div
-                className={cn(
-                  'cursor-pointer group flex-1',
-                  'flex items-center justify-center space-x-1.5 text-xs text-text-secondary',
-                  'hover:bg-hover active:bg-hover transition-colors duration-150',
-                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
-                  'px-2 py-2 rounded-md'
-                )}
-                onClick={() => {
-                  setOpen(false)
-                  router.push(paths.settings.team.getHref())
-                }}
-                role="button"
-                tabIndex={0}
-                onKeyDown={e => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault()
-                    setOpen(false)
-                    router.push(paths.settings.team.getHref())
-                  }
-                }}
-              >
-                <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
-                <span className="font-medium group-hover:text-text-primary">
-                  {t('common:teams.manage')}
-                </span>
-              </div>
-            </div>
-          )}
-        </PopoverContent>
+        {trigger}
+        {popoverContent}
       </Popover>
 
       {/* Team Creation Wizard Dialog */}
