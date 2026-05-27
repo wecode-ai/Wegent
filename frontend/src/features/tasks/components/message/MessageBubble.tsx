@@ -59,6 +59,7 @@ import { useMessageFeedback } from '@/hooks/useMessageFeedback'
 import { ShareTokenProvider } from '@/contexts/ShareTokenContext'
 import { SmartLink, SmartImage, SmartTextLine } from '@/components/common/SmartUrlRenderer'
 import { formatDateTime } from '@/utils/dateTime'
+import { getTeamDisplayName } from '@/utils/team'
 import { ErrorCard } from './ErrorCard'
 export interface Message {
   type: 'user' | 'ai'
@@ -540,8 +541,18 @@ const MessageBubble = memo(
     }
 
     const timestampLabel = formatTimestamp(msg.timestamp)
-    const headerIcon = isUserTypeMessage ? null : msg.botName ===
-      t('chat:correction.result_title') ? (
+    const correctionResultTitle = t('chat:correction.result_title')
+    const isCorrectionResultMessage = !isUserTypeMessage && msg.botName === correctionResultTitle
+    const agentDisplayName = selectedTeam ? getTeamDisplayName(selectedTeam) : undefined
+    const botDisplayName = msg.botName?.trim()
+    const selectedTeamBotCount = selectedTeam?.bots?.length ?? 0
+    const shouldShowBotName =
+      selectedTeamBotCount > 1 && Boolean(botDisplayName) && botDisplayName !== agentDisplayName
+    const messageHeaderLabel =
+      shouldShowBotName && agentDisplayName
+        ? `${agentDisplayName} · ${botDisplayName}`
+        : agentDisplayName || botDisplayName || t('messages.bot') || 'Bot'
+    const headerIcon = isUserTypeMessage ? null : isCorrectionResultMessage ? (
       <svg
         xmlns="http://www.w3.org/2000/svg"
         width="24"
@@ -561,7 +572,11 @@ const MessageBubble = memo(
     ) : (
       <Bot className="w-4 h-4" data-testid="ai-message-icon" />
     )
-    const headerLabel = isUserTypeMessage ? '' : msg.botName || t('messages.bot') || 'Bot'
+    const headerLabel = isUserTypeMessage
+      ? ''
+      : isCorrectionResultMessage
+        ? msg.botName || correctionResultTitle
+        : messageHeaderLabel
 
     // Determine if message is currently streaming (to disable URL metadata fetching)
     // During streaming, we show simple links to avoid excessive API calls
@@ -1816,6 +1831,7 @@ const MessageBubble = memo(
 
     const shouldSkipRender =
       prevProps.msg.content === nextProps.msg.content &&
+      prevProps.msg.botName === nextProps.msg.botName &&
       prevProps.msg.subtaskStatus === nextProps.msg.subtaskStatus &&
       prevProps.msg.subtaskId === nextProps.msg.subtaskId &&
       prevProps.msg.timestamp === nextProps.msg.timestamp &&
@@ -1845,7 +1861,10 @@ const MessageBubble = memo(
       prevProps.onUseAsReference === nextProps.onUseAsReference &&
       prevProps.onRetryWithModel === nextProps.onRetryWithModel &&
       prevProps.onReEdit === nextProps.onReEdit &&
-      prevProps.taskType === nextProps.taskType
+      prevProps.taskType === nextProps.taskType &&
+      prevProps.selectedTeam?.name === nextProps.selectedTeam?.name &&
+      prevProps.selectedTeam?.displayName === nextProps.selectedTeam?.displayName &&
+      (prevProps.selectedTeam?.bots?.length ?? 0) === (nextProps.selectedTeam?.bots?.length ?? 0)
 
     return shouldSkipRender
   }
