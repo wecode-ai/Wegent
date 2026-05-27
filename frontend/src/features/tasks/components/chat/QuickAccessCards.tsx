@@ -666,17 +666,19 @@ export function QuickAccessCards({
         {renderQuickCreateCard()}
       </div>
 
-      <TeamEditDialog
-        open={createAgentOpen}
-        onClose={() => void handleCreateAgentClose()}
-        teams={dialogTeams}
-        setTeams={handleDialogTeamsChange}
-        editingTeamId={0}
-        bots={dialogBots}
-        setBots={setDialogBots}
-        toast={toast}
-        scope="personal"
-      />
+      {createAgentOpen && (
+        <TeamEditDialog
+          open={createAgentOpen}
+          onClose={() => void handleCreateAgentClose()}
+          teams={dialogTeams}
+          setTeams={handleDialogTeamsChange}
+          editingTeamId={0}
+          bots={dialogBots}
+          setBots={setDialogBots}
+          toast={toast}
+          scope="personal"
+        />
+      )}
     </>
   )
 }
