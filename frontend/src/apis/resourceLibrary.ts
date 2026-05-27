@@ -5,14 +5,12 @@
 import apiClient from '@/apis/client'
 import type {
   ResourceLibraryCreateListingRequest,
-  ResourceLibraryInstall,
   ResourceLibraryInstallApiRequest,
   ResourceLibraryInstallRequest,
-  ResourceLibraryInstallResponse,
+  ResourceLibraryInstall,
   ResourceLibraryListListingsParams,
   ResourceLibraryListResponse,
   ResourceLibraryListing,
-  ResourceLibraryPublishListingRequest,
 } from '@/features/resource-library/types'
 
 const RESOURCE_LIBRARY_BASE_PATH = '/resource-library'
@@ -52,6 +50,7 @@ function toInstallApiRequest(
   request: ResourceLibraryInstallRequest
 ): ResourceLibraryInstallApiRequest {
   return {
+    version_id: request.versionId,
     target_namespace: request.targetNamespace,
     install_options: request.installOptions,
   }
@@ -72,17 +71,10 @@ export const resourceLibraryApi = {
     return apiClient.post(`${RESOURCE_LIBRARY_BASE_PATH}/listings`, request)
   },
 
-  publishListing(
-    listingId: number,
-    request: ResourceLibraryPublishListingRequest
-  ): Promise<ResourceLibraryListing> {
-    return apiClient.post(`${RESOURCE_LIBRARY_BASE_PATH}/listings/${listingId}/publish`, request)
-  },
-
   installListing(
     listingId: number,
     request: ResourceLibraryInstallRequest
-  ): Promise<ResourceLibraryInstallResponse> {
+  ): Promise<ResourceLibraryInstall> {
     return apiClient.post(
       `${RESOURCE_LIBRARY_BASE_PATH}/listings/${listingId}/install`,
       toInstallApiRequest(request)

@@ -41,9 +41,17 @@ describe('resourceLibraryApi', () => {
 
   it('installs a listing with target namespace and install options', async () => {
     mockedApiClient.post.mockResolvedValue({
+      id: 1,
+      listing_id: 7,
+      version_id: 3,
+      user_id: 2,
+      resource_type: 'skill',
+      installed_kind_id: 8,
       installed_reference: { namespace: 'default', name: 'summary' },
       install_status: 'installed',
       requires_configuration: false,
+      installed_at: '2026-05-27T00:00:00',
+      updated_at: '2026-05-27T00:00:00',
     })
 
     await resourceLibraryApi.installListing(7, {

@@ -6,9 +6,9 @@ export type ResourceLibraryResourceType = 'agent' | 'skill' | 'mcp'
 
 export type ResourceLibraryTypeFilter = 'all' | ResourceLibraryResourceType
 
-export type ResourceLibraryListingStatus = 'draft' | 'published' | 'archived'
+export type ResourceLibraryListingStatus = 'published' | 'archived'
 
-export type ResourceLibraryInstallStatus = 'installed' | 'pending_configuration' | 'failed'
+export type ResourceLibraryInstallStatus = 'installed' | 'removed' | 'failed'
 
 export interface ResourceLibraryVersion {
   id: number
@@ -50,57 +50,61 @@ export interface ResourceLibraryListListingsParams {
 export interface ResourceLibraryListResponse<T> {
   items: T[]
   total: number
-  page: number
-  limit: number
+  page?: number
+  limit?: number
 }
 
 export interface ResourceLibraryCreateListingRequest {
   resource_type: ResourceLibraryResourceType
+  source_id: number
   name: string
   display_name: string
-  description?: string
-  icon?: string
-  tags?: string[]
-  source_reference?: Record<string, unknown>
-}
-
-export interface ResourceLibraryPublishListingRequest {
-  version?: string
-  changelog?: string
-  package_url?: string
-  source_reference?: Record<string, unknown>
+  description?: string | null
+  icon?: string | null
+  tags: string[]
+  version: string
+  manifest_options?: Record<string, unknown>
 }
 
 export interface ResourceLibraryInstallRequest {
   targetNamespace: string
+  versionId?: number
   installOptions?: Record<string, unknown>
 }
 
 export interface ResourceLibraryInstallApiRequest {
   target_namespace: string
+  version_id?: number
   install_options?: Record<string, unknown>
 }
 
 export interface ResourceLibraryInstalledReference {
-  namespace: string
-  name: string
+  namespace?: string
+  name?: string
   kind?: string
+  team_id?: number
+  skill_id?: number
+  service_id?: string
+  provider_id?: string
+  server_name?: string
   resource_type?: ResourceLibraryResourceType
-}
-
-export interface ResourceLibraryInstallResponse {
-  installed_reference: ResourceLibraryInstalledReference
-  install_status: ResourceLibraryInstallStatus | string
-  requires_configuration: boolean
+  [key: string]: unknown
 }
 
 export interface ResourceLibraryInstall {
   id: number
   listing_id: number
+  version_id: number
+  user_id: number
+  resource_type: ResourceLibraryResourceType
   listing?: ResourceLibraryListing
+  installed_kind_id?: number | null
   installed_reference: ResourceLibraryInstalledReference
-  install_status: ResourceLibraryInstallStatus | string
+  install_status: ResourceLibraryInstallStatus
+  error_message?: string | null
   requires_configuration: boolean
-  created_at: string
+  installed_at: string
   updated_at: string
 }
+
+export type ResourceLibraryInstallResponse = ResourceLibraryInstall
