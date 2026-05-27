@@ -8,7 +8,7 @@ Device schemas for request/response validation.
 
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -235,6 +235,41 @@ class DeviceHeartbeatPayload(BaseModel):
         max_length=50,
         description="Executor version (e.g., '1.0.0')",
     )
+    capabilities: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Sanitized local global capability state reported by executor",
+    )
+
+
+class DeviceCapabilitySyncRequest(BaseModel):
+    """Request model for syncing selected global local executor capabilities."""
+
+    skill_ids: List[int] = Field(default_factory=list, description="Skill Kind IDs")
+    mcp_ids: List[str] = Field(
+        default_factory=list,
+        description="Deprecated. MCP capability sync is temporarily disabled.",
+    )
+    mode: Literal["merge", "replace"] = Field(default="merge", description="Sync mode")
+
+
+class DeviceCapabilityItemResult(BaseModel):
+    """Per-item capability sync result."""
+
+    id: Optional[Union[int, str]] = None
+    name: Optional[str] = None
+    server_name: Optional[str] = None
+    status: str
+    error: Optional[str] = None
+
+
+class DeviceCapabilitySyncResponse(BaseModel):
+    """Response model for device capability sync."""
+
+    success: bool
+    device_id: str
+    mode: Literal["merge", "replace"]
+    skills: List[DeviceCapabilityItemResult] = Field(default_factory=list)
+    errors: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class DeviceStatusPayload(BaseModel):

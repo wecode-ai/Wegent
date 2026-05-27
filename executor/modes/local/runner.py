@@ -26,6 +26,7 @@ from typing import Any, Dict, Optional
 
 from executor.config import config
 from executor.config.device_config import DeviceConfig
+from executor.modes.local.capabilities import CapabilitySyncHandler
 from executor.modes.local.command_handler import CommandHandler
 from executor.modes.local.events import ChatEvents, DeviceEvents, TaskEvents
 from executor.modes.local.extension_handler import DeviceExtensionHandler
@@ -81,6 +82,10 @@ class LocalRunner:
         # Event handlers
         self.task_handler = TaskHandler(self)
         self.command_handler = CommandHandler()
+        self.capability_sync_handler = CapabilitySyncHandler(
+            auth_token=self.websocket_client.auth_token,
+            reporter=self.websocket_client.capability_reporter,
+        )
         self.session_handler = LocalSessionHandler()
         self.upgrade_handler = UpgradeHandler(self)
         self.extension_handler = DeviceExtensionHandler(self)
@@ -251,6 +256,10 @@ class LocalRunner:
         self.websocket_client.on(
             DeviceEvents.EXECUTE_COMMAND,
             self.command_handler.handle_execute_command,
+        )
+        self.websocket_client.on(
+            DeviceEvents.SYNC_CAPABILITIES,
+            self.capability_sync_handler.handle_sync_capabilities,
         )
         self.websocket_client.on(
             DeviceEvents.START_TERMINAL_SESSION,
