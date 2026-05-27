@@ -78,6 +78,7 @@ class ResourceLibraryInstallResponse(BaseModel):
     installed_reference: Dict[str, Any]
     install_status: ResourceLibraryInstallStatus
     error_message: Optional[str] = None
+    listing: Optional[ResourceLibraryListingResponse] = None
     requires_configuration: bool = False
     installed_at: datetime
     updated_at: datetime

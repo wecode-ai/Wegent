@@ -6,7 +6,7 @@ import sys
 import types
 
 from app.models.kind import Kind
-from app.models.resource_library import ResourceLibraryVersion
+from app.models.resource_library import ResourceLibraryInstall, ResourceLibraryVersion
 
 try:
     import magic  # noqa: F401
@@ -140,6 +140,85 @@ def test_get_resource_library_listing(test_client, test_db, test_user, test_toke
     assert get_response.json()["id"] == listing_id
 
 
+def test_list_resource_library_listings_marks_installed(
+    test_client,
+    test_db,
+    test_user,
+    test_token,
+):
+    source = _create_kind(test_db, user_id=test_user.id)
+    create_response = _create_listing(
+        test_client,
+        test_token,
+        source_id=source.id,
+    )
+    listing_id = create_response.json()["id"]
+    version_id = create_response.json()["current_version_id"]
+    test_db.add(
+        ResourceLibraryInstall(
+            listing_id=listing_id,
+            version_id=version_id,
+            user_id=test_user.id,
+            resource_type="skill",
+            installed_kind_id=source.id,
+            installed_reference={"kind_id": source.id},
+            install_status="installed",
+        )
+    )
+    test_db.commit()
+
+    list_response = test_client.get(
+        "/api/resource-library/listings?resource_type=skill&keyword=summary",
+        headers=auth_headers(test_token),
+    )
+
+    assert list_response.status_code == 200
+    body = list_response.json()
+    assert body["total"] == 1
+    assert body["items"][0]["id"] == listing_id
+    assert body["items"][0]["is_installed"] is True
+
+
+def test_list_my_resource_library_installs_returns_listing(
+    test_client,
+    test_db,
+    test_user,
+    test_token,
+):
+    source = _create_kind(test_db, user_id=test_user.id)
+    create_response = _create_listing(
+        test_client,
+        test_token,
+        source_id=source.id,
+    )
+    listing_id = create_response.json()["id"]
+    version_id = create_response.json()["current_version_id"]
+    test_db.add(
+        ResourceLibraryInstall(
+            listing_id=listing_id,
+            version_id=version_id,
+            user_id=test_user.id,
+            resource_type="skill",
+            installed_kind_id=source.id,
+            installed_reference={"kind_id": source.id},
+            install_status="installed",
+        )
+    )
+    test_db.commit()
+
+    response = test_client.get(
+        "/api/resource-library/users/me/installs",
+        headers=auth_headers(test_token),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert body["items"][0]["listing_id"] == listing_id
+    assert body["items"][0]["listing"]["id"] == listing_id
+    assert body["items"][0]["listing"]["is_installed"] is True
+
+
 def test_archive_resource_library_listing(test_client, test_db, test_user, test_token):
     source = _create_kind(test_db, user_id=test_user.id)
     create_response = _create_listing(
@@ -167,3 +246,34 @@ def test_archive_resource_library_listing(test_client, test_db, test_user, test_
     assert legacy_delete_response.status_code == 405
     assert list_response.status_code == 200
     assert list_response.json()["total"] == 0
+
+
+def test_list_my_published_resource_library_listings_includes_archived(
+    test_client,
+    test_db,
+    test_user,
+    test_token,
+):
+    source = _create_kind(test_db, user_id=test_user.id)
+    create_response = _create_listing(
+        test_client,
+        test_token,
+        source_id=source.id,
+    )
+    listing_id = create_response.json()["id"]
+
+    archive_response = test_client.post(
+        f"/api/resource-library/listings/{listing_id}/archive",
+        headers=auth_headers(test_token),
+    )
+    my_published_response = test_client.get(
+        "/api/resource-library/users/me/published?resource_type=skill",
+        headers=auth_headers(test_token),
+    )
+
+    assert archive_response.status_code == 200
+    assert my_published_response.status_code == 200
+    body = my_published_response.json()
+    assert body["total"] == 1
+    assert body["items"][0]["id"] == listing_id
+    assert body["items"][0]["status"] == "archived"

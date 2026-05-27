@@ -168,6 +168,92 @@ class ResourceLibraryService:
         )
         return items, total
 
+    def list_user_published(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        resource_type: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 20,
+    ) -> tuple[list[ResourceLibraryListing], int]:
+        query = db.query(ResourceLibraryListing).filter(
+            ResourceLibraryListing.publisher_user_id == user_id
+        )
+        if resource_type:
+            query = query.filter(ResourceLibraryListing.resource_type == resource_type)
+
+        total = query.count()
+        items = (
+            query.order_by(ResourceLibraryListing.updated_at.desc())
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+        return items, total
+
+    def list_user_installs(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        resource_type: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 20,
+    ) -> tuple[list[ResourceLibraryInstall], int]:
+        query = db.query(ResourceLibraryInstall).filter(
+            ResourceLibraryInstall.user_id == user_id,
+            ResourceLibraryInstall.install_status == INSTALL_STATUS_INSTALLED,
+        )
+        if resource_type:
+            query = query.filter(ResourceLibraryInstall.resource_type == resource_type)
+
+        total = query.count()
+        items = (
+            query.order_by(ResourceLibraryInstall.updated_at.desc())
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+        return items, total
+
+    def get_installed_listing_ids(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        listing_ids: list[int],
+    ) -> set[int]:
+        if not listing_ids:
+            return set()
+
+        rows = (
+            db.query(ResourceLibraryInstall.listing_id)
+            .filter(
+                ResourceLibraryInstall.user_id == user_id,
+                ResourceLibraryInstall.listing_id.in_(listing_ids),
+                ResourceLibraryInstall.install_status == INSTALL_STATUS_INSTALLED,
+            )
+            .all()
+        )
+        return {row[0] for row in rows}
+
+    def get_listings_by_ids(
+        self,
+        db: Session,
+        *,
+        listing_ids: list[int],
+    ) -> dict[int, ResourceLibraryListing]:
+        if not listing_ids:
+            return {}
+
+        listings = (
+            db.query(ResourceLibraryListing)
+            .filter(ResourceLibraryListing.id.in_(listing_ids))
+            .all()
+        )
+        return {listing.id: listing for listing in listings}
+
     def get_listing(
         self,
         db: Session,
