@@ -29,6 +29,7 @@ import { projectApis } from '@/apis/projects'
 import { useDevices } from '@/contexts/DeviceContext'
 import type { ProjectConfig } from '@/types/api'
 import { isVersionAtLeast } from '@/lib/utils'
+import { DeviceDirectoryPicker } from './DeviceDirectoryPicker'
 
 const PROJECT_COLORS = [
   { id: 'red', value: '#EF4444' },
@@ -119,6 +120,11 @@ export function ProjectCreateDialog({
 
   const projectName = localPath.trim() ? getNameFromPath(localPath) : ''
 
+  const handleDeviceChange = (nextDeviceId: string) => {
+    setDeviceId(nextDeviceId)
+    setLocalPath('')
+  }
+
   const handleCreateGroup = async () => {
     if (!name.trim()) return
 
@@ -189,7 +195,7 @@ export function ProjectCreateDialog({
   }
 
   const canCreate = isWorkspaceMode
-    ? Boolean(deviceId) && selectedDeviceSupportsWorkspaceProject
+    ? Boolean(deviceId && localPath.trim()) && selectedDeviceSupportsWorkspaceProject
     : Boolean(name.trim())
 
   return (
@@ -210,7 +216,7 @@ export function ProjectCreateDialog({
                 {onlineDevices.length === 0 ? (
                   <p className="text-sm text-destructive">{t('workspace.noOnlineDevices')}</p>
                 ) : (
-                  <Select value={deviceId} onValueChange={setDeviceId} disabled={isCreating}>
+                  <Select value={deviceId} onValueChange={handleDeviceChange} disabled={isCreating}>
                     <SelectTrigger data-testid="workspace-device-select">
                       <SelectValue placeholder={t('workspace.devicePlaceholder')} />
                     </SelectTrigger>
@@ -250,25 +256,13 @@ export function ProjectCreateDialog({
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="workspace-local-path">
-                  {t('workspace.directoryPath')}
-                  <span className="text-text-muted font-normal ml-1">({t('common:optional')})</span>
-                </Label>
-                <Input
-                  data-testid="workspace-local-path-input"
-                  id="workspace-local-path"
-                  placeholder={t('workspace.directoryPathPlaceholder')}
+                <Label>{t('workspace.directoryPath')}</Label>
+                <DeviceDirectoryPicker
+                  deviceId={deviceId}
                   value={localPath}
-                  onChange={e => setLocalPath(e.target.value)}
-                  disabled={isCreating}
+                  onChange={setLocalPath}
+                  disabled={isCreating || !selectedDeviceSupportsWorkspaceProject}
                 />
-                {projectName ? (
-                  <p className="text-xs text-text-secondary">
-                    {t('workspace.projectNamePreview', { name: projectName })}
-                  </p>
-                ) : (
-                  <p className="text-xs text-text-muted">{t('workspace.defaultPathHint')}</p>
-                )}
               </div>
             </>
           ) : (

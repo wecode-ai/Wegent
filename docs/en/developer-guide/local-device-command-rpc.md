@@ -64,7 +64,7 @@ When command startup fails, the command exits non-zero, or the command times out
 
 ## Security And Limits
 
-This feature follows a trusted Backend and restricted API model. The HTTP API does not accept raw commands; it accepts only configured keys. The real command must be configured by the Backend through the command registry or `LOCAL_DEVICE_COMMANDS`. The `pwd`, `ls_a`, and `git_clone` command keys are built in by default. `ls_a` uses the `file_list` post processor to filter `.` and `..` and return a file name array in `stdout`. To add a built-in command, add one entry to `DEFAULT_LOCAL_DEVICE_COMMANDS` in `backend/app/services/device/command_registry.py`.
+This feature follows a trusted Backend and restricted API model. The HTTP API does not accept raw commands; it accepts only configured keys. The real command must be configured by the Backend through the command registry or `LOCAL_DEVICE_COMMANDS`. The `pwd`, `ls_a`, `list_directories`, and `git_clone` command keys are built in by default. `ls_a` uses the `file_list` post processor to filter `.` and `..` and return a file name array in `stdout`; `list_directories` uses the `directory_list` post processor to return only directory names under the current path in `stdout`. To add a built-in command, add one entry to `DEFAULT_LOCAL_DEVICE_COMMANDS` in `backend/app/services/device/command_registry.py`.
 
 At runtime, add or override command definitions with a single environment variable. Simple commands can use string values; commands that need post processing can use object values:
 

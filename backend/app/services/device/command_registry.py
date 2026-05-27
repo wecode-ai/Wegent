@@ -27,6 +27,10 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
         command="ls -a",
         post_processor="file_list",
     ),
+    "list_directories": LocalDeviceCommandDefinition(
+        command="ls -1Ap",
+        post_processor="directory_list",
+    ),
     "git_clone": LocalDeviceCommandDefinition(command="git clone"),
 }
 

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import type { DeviceInfo } from '@/apis/devices'
 import { ProjectCreateDialog } from '@/features/projects/components/ProjectCreateDialog'
@@ -60,6 +60,25 @@ jest.mock('@/apis/projects', () => ({
   },
 }))
 
+jest.mock('@/features/projects/components/DeviceDirectoryPicker', () => ({
+  DeviceDirectoryPicker: ({
+    onChange,
+    disabled,
+  }: {
+    onChange: (path: string) => void
+    disabled?: boolean
+  }) => (
+    <button
+      type="button"
+      data-testid="workspace-local-path-input"
+      disabled={disabled}
+      onClick={() => onChange('/Users/me/demo')}
+    >
+      workspace.directoryPickerPlaceholder
+    </button>
+  ),
+}))
+
 jest.mock('@/components/ui/dialog', () => ({
   Dialog: ({ open, children }: { open: boolean; children: React.ReactNode }) =>
     open ? <div>{children}</div> : null,
@@ -108,10 +127,23 @@ describe('ProjectCreateDialog', () => {
 
     render(<ProjectCreateDialog open={true} onOpenChange={jest.fn()} mode="workspace" />)
 
+    fireEvent.click(screen.getByTestId('workspace-local-path-input'))
+
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'workspaceCreate.submit' })).not.toBeDisabled()
     })
     expect(screen.queryByTestId('workspace-device-version-warning')).not.toBeInTheDocument()
+  })
+
+  test('requires a selected directory before workspace project creation', async () => {
+    devicesMock = [baseDevice]
+
+    render(<ProjectCreateDialog open={true} onOpenChange={jest.fn()} mode="workspace" />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('workspace-local-path-input')).not.toBeDisabled()
+    })
+    expect(screen.getByRole('button', { name: 'workspaceCreate.submit' })).toBeDisabled()
   })
 
   test('allows workspace project creation when the selected device version is v1.7.11 or newer', async () => {
@@ -123,6 +155,8 @@ describe('ProjectCreateDialog', () => {
     ]
 
     render(<ProjectCreateDialog open={true} onOpenChange={jest.fn()} mode="workspace" />)
+
+    fireEvent.click(screen.getByTestId('workspace-local-path-input'))
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'workspaceCreate.submit' })).not.toBeDisabled()
