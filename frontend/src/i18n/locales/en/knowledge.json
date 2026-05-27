@@ -531,7 +531,32 @@
       "namespaceMembers": "Group Permissions",
       "addNamespace": "Add group",
       "noNamespacePermissions": "No group permissions yet",
-      "namespace": "Group"
+      "namespace": "Group",
+      "permissionManagement": "Permission Management",
+      "allCollaborators": "All Collaborators ({{count}})",
+      "addCollaborator": "Add Collaborator",
+      "removeMember": "Remove Member",
+      "addedBy": "Added by {{name}}",
+      "pendingApprovals": "Pending Approvals",
+      "searchCollaborators": "Search collaborators...",
+      "collaboratorType": {
+        "user": "User",
+        "group": "Group",
+        "department": "Department"
+      },
+      "search": {
+        "users": "Search username or email...",
+        "groups": "Search groups...",
+        "departments": "Search departments..."
+      },
+      "selectRole": "Select Role",
+      "defaultRole": "View Only",
+      "noCollaborators": "No collaborators",
+      "noPendingApprovals": "No pending approvals",
+      "approve": "Approve",
+      "reject": "Reject",
+      "entitySectionCount": "{{label}} ({{count}})",
+      "userMetaInfo": "({{content}})"
     },
     "advancedSettings": {
       "title": "Advanced Settings",

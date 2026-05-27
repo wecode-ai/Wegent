@@ -28,7 +28,7 @@ import { useKnowledgeBaseDetail } from '@/features/knowledge/document/hooks'
 import { useNamespaceRoleMap } from '@/features/knowledge/document/hooks/useNamespaceRoleMap'
 import { useKnowledgePermissions } from '@/features/knowledge/permission/hooks/useKnowledgePermissions'
 import { DocumentList } from '@/features/knowledge/document/components'
-import { PermissionManagementTab } from '@/features/knowledge/permission/components/PermissionManagementTab'
+import { KnowledgePermissionDialog } from '@wecode/features/knowledge-permission-ui'
 import {
   canManageKnowledgeBase,
   canManageKnowledgeBaseDocuments,
@@ -246,7 +246,7 @@ export function KnowledgeBaseClassicPageDesktop({ knowledgeBaseId, initialDocPat
                   <FileText className="w-4 h-4" />
                   {t('chatPage.documents')}
                 </TabsTrigger>
-                <TabsTrigger value="permissions" className="gap-1.5">
+                <TabsTrigger value="permissions" className="gap-1.5" data-testid="permission-management-tab">
                   <Shield className="w-4 h-4" />
                   {t('document.permission.management')}
                 </TabsTrigger>
@@ -261,9 +261,12 @@ export function KnowledgeBaseClassicPageDesktop({ knowledgeBaseId, initialDocPat
                 />
               </TabsContent>
               <TabsContent value="permissions" className="flex-1 mt-0">
-                <PermissionManagementTab
+                <KnowledgePermissionDialog
+                  open={true}
+                  onOpenChange={open => {
+                    if (!open) setActiveTab('documents')
+                  }}
                   kbId={knowledgeBase.id}
-                  kbNamespace={knowledgeBase.namespace}
                 />
               </TabsContent>
             </Tabs>

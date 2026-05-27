@@ -13,7 +13,28 @@
       "add": "添加",
       "searchFailed": "搜索失败",
       "partialFailure": "{{count}} 个部门添加失败：{{names}}",
-      "departmentLimitReached": "已达部门上限（{{limit}}），请减少选择数量"
+      "departmentLimitReached": "已达部门上限（{{limit}}），请减少选择数量",
+      "roles": {
+        "Maintainer": "可管理",
+        "Developer": "可编辑",
+        "Reporter": "可查看",
+        "RestrictedAnalyst": "仅访问",
+        "Owner": "创建者"
+      },
+      "roleUpdateFailed": "角色更新失败",
+      "removeFailed": "移除成员失败",
+      "addFailed": "添加失败",
+      "loading": "加载中...",
+      "noMatchingResults": "无匹配结果",
+      "searching": "搜索中...",
+      "memberCount": "（{{count}} 成员）",
+      "addSucceeded": "添加成功：{{names}}",
+      "selectedCount": "已选择 {{count}} 项",
+      "adding": "添加中...",
+      "addWithCount": "添加 ({{count}})",
+      "separator": "、",
+      "colon": "：",
+      "semicolon": "；"
     }
   }
 }

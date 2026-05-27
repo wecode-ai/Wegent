@@ -531,7 +531,32 @@
       "namespaceMembers": "群组权限",
       "addNamespace": "添加群组",
       "noNamespacePermissions": "暂无群组权限",
-      "namespace": "群组"
+      "namespace": "群组",
+      "permissionManagement": "权限管理",
+      "allCollaborators": "所有协作者（{{count}}）",
+      "addCollaborator": "添加协作者",
+      "removeMember": "移除成员",
+      "addedBy": "由 {{name}} 添加",
+      "pendingApprovals": "待审批协作者",
+      "searchCollaborators": "搜索协作者...",
+      "collaboratorType": {
+        "user": "用户",
+        "group": "群组",
+        "department": "部门"
+      },
+      "search": {
+        "users": "搜索用户名或邮箱...",
+        "groups": "搜索群组...",
+        "departments": "搜索部门..."
+      },
+      "selectRole": "选择角色",
+      "defaultRole": "可查看",
+      "noCollaborators": "暂无协作者",
+      "noPendingApprovals": "暂无待审批协作者",
+      "approve": "通过",
+      "reject": "拒绝",
+      "entitySectionCount": "{{label}}（{{count}}）",
+      "userMetaInfo": "（{{content}}）"
     },
     "advancedSettings": {
       "title": "高级设置",
