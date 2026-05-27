@@ -12,6 +12,7 @@ Common logging module, configures and provides logging functionality for the app
 Supports automatic request_id injection into log messages via ContextVar.
 """
 
+import atexit
 import logging
 import multiprocessing
 import os
@@ -119,8 +120,15 @@ def setup_logger(
     formatter = logging.Formatter(format, datefmt)
     handler_configured = False
 
-    # If multiprocessing-safe logging is requested and we're in a multiprocessing context
-    if use_multiprocessing_safe and hasattr(os, "getppid") and os.getppid() != 1:
+    # If multiprocessing-safe logging is requested and we're in a multiprocessing context.
+    # Skip for PyInstaller frozen binaries: they are single-process and QueueListener
+    # daemon threads cause Fatal Python error (SIGABRT) on shutdown.
+    if (
+        use_multiprocessing_safe
+        and not getattr(sys, "frozen", False)
+        and hasattr(os, "getppid")
+        and os.getppid() != 1
+    ):
         try:
             log_queue = multiprocessing.Queue()
             queue_handler = QueueHandler(log_queue)
@@ -136,6 +144,7 @@ def setup_logger(
 
             listener = QueueListener(log_queue, listener_handler)
             listener.start()
+            atexit.register(listener.stop)
 
             logger.addHandler(queue_handler)
             logger._queue_listener = listener

@@ -319,10 +319,33 @@ def _download_claude_binary_from_pypi(target_platform: str) -> tuple[str, str] |
         return None
 
 
+def append_claude_cli_binary(
+    cmd: list[str],
+    effective_platform: str,
+    bundle_claude_cli: bool,
+) -> None:
+    """Append the bundled Claude CLI binary to a PyInstaller command if enabled."""
+    if not bundle_claude_cli:
+        print("Skipping bundled Claude CLI binary")
+        return
+
+    # Add Claude CLI binary for Linux and Windows (macOS uses system-installed)
+    claude_binary = find_claude_agent_sdk_binary(target_platform=effective_platform)
+    if claude_binary:
+        src_path, dest_dir = claude_binary
+        cmd.append(f"--add-binary={src_path}{os.pathsep}{dest_dir}")
+        print(f"Adding Claude CLI binary to build: {src_path} -> {dest_dir}")
+    elif effective_platform in ["Windows", "Linux"]:
+        print(
+            f"Warning: Claude CLI binary not found for {effective_platform}, executor may fail"
+        )
+
+
 def build_executable(
     target_arch: str | None = None,
     target_platform: str | None = None,
     version: str | None = None,
+    bundle_claude_cli: bool = True,
 ):
     """Build the executable using PyInstaller.
 
@@ -332,6 +355,7 @@ def build_executable(
         target_platform: Target platform for cross-compilation (e.g., 'Windows', 'Darwin', 'Linux').
                         If None, builds for the current platform.
         version: Version string to embed in the binary. If None, reads from pyproject.toml.
+        bundle_claude_cli: Whether to embed Claude CLI binary into the executable.
     """
     project_root = get_project_root()
     executor_root = get_executor_root()
@@ -501,16 +525,11 @@ def build_executable(
             "--collect-data=tiktoken_ext",
         ]
 
-        # Add Claude CLI binary for Linux and Windows (macOS uses system-installed)
-        claude_binary = find_claude_agent_sdk_binary(target_platform=effective_platform)
-        if claude_binary:
-            src_path, dest_dir = claude_binary
-            cmd.append(f"--add-binary={src_path}{os.pathsep}{dest_dir}")
-            print(f"Adding Claude CLI binary to build: {src_path} -> {dest_dir}")
-        elif effective_platform in ["Windows", "Linux"]:
-            print(
-                f"Warning: Claude CLI binary not found for {effective_platform}, executor may fail"
-            )
+        append_claude_cli_binary(
+            cmd,
+            effective_platform=effective_platform,
+            bundle_claude_cli=bundle_claude_cli,
+        )
 
         # Continue with remaining options
         cmd += [
@@ -604,6 +623,11 @@ def main():
         "--version",
         help="Override version number (defaults to pyproject.toml version)",
     )
+    parser.add_argument(
+        "--no-bundle-claude",
+        action="store_true",
+        help="Do not embed the Claude CLI binary. Use for images that provide claude externally.",
+    )
     args = parser.parse_args()
 
     print("=" * 60)
@@ -625,6 +649,7 @@ def main():
         target_arch=args.target_arch,
         target_platform=args.target_platform,
         version=args.version,
+        bundle_claude_cli=not args.no_bundle_claude,
     )
 
     print()
