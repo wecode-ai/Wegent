@@ -22,6 +22,7 @@ interface DesktopSidebarProps {
   onCollapse: () => void
   onSelectProject: (projectId: number) => void
   onOpenTask: (taskId: number) => void
+  onOpenSettings: () => void
   onLogout: () => void
 }
 
@@ -93,6 +94,7 @@ export function DesktopSidebar({
   onCollapse,
   onSelectProject,
   onOpenTask,
+  onOpenSettings,
   onLogout,
 }: DesktopSidebarProps) {
   const { t } = useTranslation('common')
@@ -176,7 +178,16 @@ export function DesktopSidebar({
         <Settings className="h-4 w-4" />
         {t('workbench.settings', '设置')}
       </button>
-      {settingsMenuOpen && <DesktopSettingsMenu user={user} onLogout={onLogout} />}
+      {settingsMenuOpen && (
+        <DesktopSettingsMenu
+          user={user}
+          onOpenSettings={() => {
+            setSettingsMenuOpen(false)
+            onOpenSettings()
+          }}
+          onLogout={onLogout}
+        />
+      )}
 
       <button
         type="button"
