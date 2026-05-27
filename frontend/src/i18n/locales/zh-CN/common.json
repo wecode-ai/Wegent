@@ -603,6 +603,8 @@
     "new_task": "新任务",
     "new_conversation": "新对话",
     "no_tasks": "没有任务",
+    "unknown_agent": "未知智能体",
+    "unknown_device": "未知设备",
     "today": "今天",
     "this_week": "本周",
     "earlier": "更早",

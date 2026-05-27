@@ -13,7 +13,7 @@ import React, {
   useRef,
   useCallback,
 } from 'react'
-import { Task, TaskDetail, TaskStatus } from '@/types/api'
+import { Task, TaskDetail, TaskHistoryGroup, TaskStatus } from '@/types/api'
 import { taskApis } from '@/apis/tasks'
 import { ApiError } from '@/apis/client'
 import { notifyTaskCompletion } from '@/utils/notification'
@@ -37,6 +37,7 @@ type TaskContextType = {
   tasks: Task[]
   groupTasks: Task[]
   personalTasks: Task[]
+  personalTaskGroups: TaskHistoryGroup[]
   taskLoading: boolean
   selectedTask: Task | null
   selectedTaskDetail: TaskDetail | null
@@ -75,10 +76,93 @@ const TaskContext = createContext<TaskContextType | undefined>(undefined)
 // Export the context so it can be used with useContext directly
 export { TaskContext }
 
+const flattenTaskHistoryGroups = (groups: TaskHistoryGroup[]): Task[] =>
+  groups.flatMap(group => group.items)
+
+const mergeTaskHistoryGroups = (groups: TaskHistoryGroup[]): TaskHistoryGroup[] => {
+  const mergedGroups: TaskHistoryGroup[] = []
+  const groupByKey = new Map<string, TaskHistoryGroup>()
+
+  groups.forEach(group => {
+    const existingGroup = groupByKey.get(group.group_key)
+    if (!existingGroup) {
+      const nextGroup = { ...group, items: [...group.items] }
+      groupByKey.set(group.group_key, nextGroup)
+      mergedGroups.push(nextGroup)
+      return
+    }
+
+    const existingTaskIds = new Set(existingGroup.items.map(task => task.id))
+    const newItems = group.items.filter(task => !existingTaskIds.has(task.id))
+    existingGroup.items = [...existingGroup.items, ...newItems]
+  })
+
+  return mergedGroups
+}
+
+const buildTaskHistoryGroupFromTask = (task: Task): TaskHistoryGroup => {
+  if (task.device_id) {
+    return {
+      group_type: 'device',
+      group_key: `device:${task.device_id}`,
+      team_id: null,
+      team_name: null,
+      team_namespace: null,
+      team_display_name: null,
+      device_id: task.device_id,
+      device_name: task.device_name ?? task.device_id,
+      items: [task],
+    }
+  }
+
+  const teamKey = task.team_id ? `team:${task.team_id}` : `team:${task.team_name ?? 'unknown'}`
+  return {
+    group_type: 'team',
+    group_key: teamKey,
+    team_id: task.team_id,
+    team_name: task.team_name ?? null,
+    team_namespace: task.team_namespace ?? null,
+    team_display_name: task.team_display_name ?? task.team_name ?? null,
+    device_id: null,
+    device_name: null,
+    items: [task],
+  }
+}
+
+const prependTaskHistoryGroupItem = (
+  groups: TaskHistoryGroup[],
+  task: Task
+): TaskHistoryGroup[] => {
+  const taskGroup = buildTaskHistoryGroupFromTask(task)
+  const groupIndex = groups.findIndex(group => group.group_key === taskGroup.group_key)
+  if (groupIndex === -1) {
+    return [taskGroup, ...groups]
+  }
+
+  const nextGroups = [...groups]
+  const existingGroup = nextGroups[groupIndex]
+  nextGroups[groupIndex] = {
+    ...existingGroup,
+    items: [task, ...existingGroup.items.filter(item => item.id !== task.id)],
+  }
+  return nextGroups
+}
+
+const updateTaskHistoryGroups = (
+  groups: TaskHistoryGroup[],
+  taskId: number,
+  updateTask: (task: Task) => Task
+): TaskHistoryGroup[] =>
+  groups.map(group => ({
+    ...group,
+    items: group.items.map(task => (task.id === taskId ? updateTask(task) : task)),
+  }))
+
 export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const [tasks, setTasks] = useState<Task[]>([])
   const [groupTasks, setGroupTasks] = useState<Task[]>([])
   const [personalTasks, setPersonalTasks] = useState<Task[]>([])
+  const [personalTaskGroups, setPersonalTaskGroups] = useState<TaskHistoryGroup[]>([])
   const [taskLoading, setTaskLoading] = useState<boolean>(false)
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
   const [selectedTaskDetail, setSelectedTaskDetail] = useState<TaskDetail | null>(null)
@@ -167,13 +251,15 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   // Load personal task pages
   const loadPersonalPages = async (pagesArr: number[]) => {
     if (pagesArr.length === 0) return { items: [], hasMore: false, error: false }
-    const requests = pagesArr.map(p => taskApis.getPersonalTasksLite({ page: p, limit }))
+    const requests = pagesArr.map(p => taskApis.getPersonalTaskGroupsLite({ page: p, limit }))
     try {
       const results = await Promise.all(requests)
-      const allItems = results.flatMap(res => res.items || [])
-      const lastPageItems = results[results.length - 1]?.items || []
+      const groups = mergeTaskHistoryGroups(results.flatMap(res => res.items || []))
+      const allItems = flattenTaskHistoryGroups(groups)
+      const lastPageItems = flattenTaskHistoryGroups(results[results.length - 1]?.items || [])
       return {
         items: allItems,
+        groups,
         hasMore: lastPageItems.length > 0,
         pages: pagesArr,
         error: false,
@@ -241,6 +327,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         const newItems = result.items.filter(t => !existingIds.has(t.id))
         return [...prev, ...newItems]
       })
+      setPersonalTaskGroups(prev => mergeTaskHistoryGroups([...prev, ...(result.groups || [])]))
       setLoadedPersonalPages(prev =>
         Array.from(new Set([...prev, ...(result.pages || [])])).sort((a, b) => a - b)
       )
@@ -269,6 +356,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     // Update personal tasks
     if (!personalResult.error) {
       setPersonalTasks(personalResult.items)
+      setPersonalTaskGroups(personalResult.groups || [])
       setLoadedPersonalPages(personalResult.pages || [1])
       setHasMorePersonalTasks(personalResult.hasMore)
     }
@@ -311,6 +399,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     const result = await loadPersonalPages([1])
     if (!result.error) {
       setPersonalTasks(result.items)
+      setPersonalTaskGroups(result.groups || [])
       setLoadedPersonalPages([1])
       setHasMorePersonalTasks(result.hasMore)
       // Update combined tasks
@@ -419,6 +508,9 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
       error_message: '',
       user_id: 0,
       user_name: '',
+      team_name: data.team_name,
+      team_namespace: 'default',
+      team_display_name: data.team_name,
       created_at: data.created_at,
       updated_at: data.created_at,
       completed_at: '',
@@ -443,6 +535,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         if (exists) return prev
         return [newTask, ...prev]
       })
+      setPersonalTaskGroups(prev => prependTaskHistoryGroupItem(prev, newTask))
     }
 
     // Also update combined tasks list for backward compatibility
@@ -474,6 +567,9 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
       error_message: '',
       user_id: 0,
       user_name: '',
+      team_name: data.team_name,
+      team_namespace: 'default',
+      team_display_name: data.team_name,
       created_at: data.created_at,
       updated_at: data.created_at,
       completed_at: '',
@@ -496,6 +592,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         if (exists) return prev
         return [newTask, ...prev]
       })
+      setPersonalTaskGroups(prev => prependTaskHistoryGroupItem(prev, newTask))
     }
 
     // Also update combined tasks list for backward compatibility
@@ -546,6 +643,15 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
 
       // Update personal tasks (in place)
       setPersonalTasks(prev => updateTaskInList(prev, false))
+      setPersonalTaskGroups(prev =>
+        updateTaskHistoryGroups(prev, data.task_id, existingTask => ({
+          ...existingTask,
+          status: data.status as TaskStatus,
+          progress: data.progress ?? existingTask.progress,
+          updated_at: now,
+          ...(completedAt && { completed_at: completedAt }),
+        }))
+      )
 
       // Update combined tasks list
       setTasks(prev => {
@@ -808,6 +914,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         tasks,
         groupTasks,
         personalTasks,
+        personalTaskGroups,
         taskLoading,
         selectedTask,
         selectedTaskDetail,

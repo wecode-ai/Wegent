@@ -75,6 +75,7 @@ export default function TaskSidebar({
     tasks,
     groupTasks,
     personalTasks,
+    personalTaskGroups,
     loadMore,
     loadMoreGroupTasks,
     loadMorePersonalTasks,
@@ -575,6 +576,7 @@ export default function TaskSidebar({
                 <TaskHistorySection
                   groupTasks={groupTasks}
                   personalTasks={personalTasks}
+                  personalTaskGroups={personalTaskGroups}
                   isCollapsed={isCollapsed}
                   isGroupChatsExpanded={isGroupChatsExpanded}
                   setIsGroupChatsExpanded={setIsGroupChatsExpanded}
@@ -654,6 +656,7 @@ export default function TaskSidebar({
 interface TaskHistorySectionProps {
   groupTasks: Task[]
   personalTasks: Task[]
+  personalTaskGroups: TaskHistoryGroup[]
   isCollapsed: boolean
   isGroupChatsExpanded: boolean
   setIsGroupChatsExpanded: (expanded: boolean) => void
@@ -679,11 +682,12 @@ interface TaskHistorySectionProps {
 }
 
 // Import Task type for the component
-import type { Task } from '@/types/api'
+import type { Task, TaskHistoryGroup } from '@/types/api'
 
 function TaskHistorySection({
   groupTasks,
   personalTasks,
+  personalTaskGroups,
   isCollapsed,
   isGroupChatsExpanded,
   setIsGroupChatsExpanded,
@@ -713,6 +717,20 @@ function TaskHistorySection({
   const filteredPersonalTasks = React.useMemo(
     () => personalTasks.filter(task => !projectTaskIds.has(task.id)),
     [personalTasks, projectTaskIds]
+  )
+  const filteredPersonalTaskIdSet = React.useMemo(
+    () => new Set(filteredPersonalTasks.map(task => task.id)),
+    [filteredPersonalTasks]
+  )
+  const filteredPersonalTaskGroups = React.useMemo(
+    () =>
+      personalTaskGroups
+        .map(group => ({
+          ...group,
+          items: group.items.filter(task => filteredPersonalTaskIdSet.has(task.id)),
+        }))
+        .filter(group => group.items.length > 0),
+    [personalTaskGroups, filteredPersonalTaskIdSet]
   )
   const filteredGroupTasks = React.useMemo(
     () => groupTasks.filter(task => !projectTaskIds.has(task.id)),
@@ -757,6 +775,14 @@ function TaskHistorySection({
   const maxReadSlotsWhenCollapsed = Math.max(0, maxVisibleGroupChats - unreadGroupChats.length)
   const shouldShowExpandCollapseButton =
     readGroupChats.length > maxReadSlotsWhenCollapsed || hasMoreGroupTasks
+
+  const getHistoryGroupTitle = (group: TaskHistoryGroup) => {
+    if (group.group_type === 'device') {
+      return group.device_name || group.device_id || t('common:tasks.unknown_device')
+    }
+
+    return group.team_display_name || group.team_name || t('common:tasks.unknown_agent')
+  }
 
   return (
     <>
@@ -922,16 +948,31 @@ function TaskHistorySection({
           {isCollapsed && filteredGroupTasks.length > 0 && (
             <div className="border-t border-border-light my-2" />
           )}
-          <TaskListSection
-            tasks={filteredPersonalTasks}
-            title=""
-            unreadCount={getUnreadCount(filteredPersonalTasks)}
-            onTaskClick={() => setIsMobileSidebarOpen(false)}
-            isCollapsed={isCollapsed}
-            showTitle={false}
-            enableDrag={true}
-            key={`regular-tasks-${viewStatusVersion}`}
-          />
+          {!isCollapsed && filteredPersonalTaskGroups.length > 0 ? (
+            filteredPersonalTaskGroups.map(group => (
+              <TaskListSection
+                key={`regular-task-group-${group.group_key}-${viewStatusVersion}`}
+                tasks={group.items}
+                title={getHistoryGroupTitle(group)}
+                unreadCount={getUnreadCount(group.items)}
+                onTaskClick={() => setIsMobileSidebarOpen(false)}
+                isCollapsed={isCollapsed}
+                showTitle={true}
+                enableDrag={true}
+              />
+            ))
+          ) : (
+            <TaskListSection
+              tasks={filteredPersonalTasks}
+              title=""
+              unreadCount={getUnreadCount(filteredPersonalTasks)}
+              onTaskClick={() => setIsMobileSidebarOpen(false)}
+              isCollapsed={isCollapsed}
+              showTitle={false}
+              enableDrag={true}
+              key={`regular-tasks-${viewStatusVersion}`}
+            />
+          )}
           {hasMorePersonalTasks && !isCollapsed && (
             <button
               onClick={loadMorePersonalTasks}
