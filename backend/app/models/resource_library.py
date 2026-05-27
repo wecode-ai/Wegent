@@ -36,8 +36,8 @@ class ResourceLibraryListing(Base):
 
     __tablename__ = "resource_library_listings"
 
-    id = Column(Integer, primary_key=True, index=True)
-    resource_type = Column(String(20), nullable=False, index=True)
+    id = Column(Integer, primary_key=True)
+    resource_type = Column(String(20), nullable=False)
     name = Column(String(100), nullable=False)
     display_name = Column(String(200), nullable=True)
     description = Column(Text, nullable=True)
@@ -48,11 +48,10 @@ class ResourceLibraryListing(Base):
         String(20),
         nullable=False,
         default=RESOURCE_LIBRARY_STATUS_PUBLISHED,
-        index=True,
     )
     current_version_id = Column(Integer, nullable=True)
     install_count = Column(Integer, nullable=False, default=0)
-    created_at = Column(DateTime, nullable=False, default=datetime.now, index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
     updated_at = Column(
         DateTime,
         nullable=False,
@@ -87,18 +86,17 @@ class ResourceLibraryVersion(Base):
 
     __tablename__ = "resource_library_versions"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     listing_id = Column(
         Integer,
         ForeignKey("resource_library_listings.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     version = Column(String(50), nullable=False)
     manifest = Column(JSON, nullable=False)
     source_kind_id = Column(Integer, nullable=True)
     source_binary_id = Column(Integer, nullable=True)
-    is_current = Column(Boolean, nullable=False, default=False, index=True)
+    is_current = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, nullable=False, default=datetime.now)
     updated_at = Column(
         DateTime,
@@ -132,12 +130,11 @@ class ResourceLibraryInstall(Base):
 
     __tablename__ = "resource_library_installs"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     listing_id = Column(
         Integer,
         ForeignKey("resource_library_listings.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     version_id = Column(
         Integer,
@@ -145,15 +142,14 @@ class ResourceLibraryInstall(Base):
         nullable=False,
         index=True,
     )
-    user_id = Column(Integer, nullable=False, index=True)
-    resource_type = Column(String(20), nullable=False, index=True)
+    user_id = Column(Integer, nullable=False)
+    resource_type = Column(String(20), nullable=False)
     installed_kind_id = Column(Integer, nullable=True)
     installed_reference = Column(JSON, nullable=False, default=dict)
     install_status = Column(
         String(20),
         nullable=False,
         default=INSTALL_STATUS_INSTALLED,
-        index=True,
     )
     error_message = Column(Text, nullable=True)
     installed_at = Column(DateTime, nullable=False, default=datetime.now)

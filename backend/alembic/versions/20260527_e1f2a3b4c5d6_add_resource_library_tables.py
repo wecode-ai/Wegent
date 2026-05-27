@@ -125,9 +125,18 @@ def upgrade() -> None:
         "resource_library_installs",
         ["user_id", "resource_type", "install_status"],
     )
+    op.create_index(
+        "ix_resource_library_installs_version_id",
+        "resource_library_installs",
+        ["version_id"],
+    )
 
 
 def downgrade() -> None:
+    op.drop_index(
+        "ix_resource_library_installs_version_id",
+        table_name="resource_library_installs",
+    )
     op.drop_index(
         "ix_resource_library_installs_user_type_status",
         table_name="resource_library_installs",

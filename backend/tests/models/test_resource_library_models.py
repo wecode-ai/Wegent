@@ -7,6 +7,33 @@ from app.models.resource_library import (
 )
 
 
+def test_resource_library_model_indexes_match_migration_contract():
+    expected_indexes = {
+        ResourceLibraryListing.__tablename__: {
+            "ix_resource_library_listings_discovery",
+            "ix_resource_library_listings_publisher_user_id",
+        },
+        ResourceLibraryVersion.__tablename__: {
+            "ix_resource_library_versions_current",
+        },
+        ResourceLibraryInstall.__tablename__: {
+            "ix_resource_library_installs_user_type_status",
+            "ix_resource_library_installs_version_id",
+        },
+    }
+
+    model_indexes = {
+        model.__tablename__: {index.name for index in model.__table__.indexes}
+        for model in (
+            ResourceLibraryListing,
+            ResourceLibraryVersion,
+            ResourceLibraryInstall,
+        )
+    }
+
+    assert model_indexes == expected_indexes
+
+
 def test_resource_library_listing_version_and_install_persist(test_db, test_user):
     listing = ResourceLibraryListing(
         resource_type=RESOURCE_TYPE_AGENT,
