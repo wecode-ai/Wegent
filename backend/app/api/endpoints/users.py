@@ -23,10 +23,6 @@ from app.schemas.admin import (
 from app.schemas.subscription import NotificationChannelInfo
 from app.schemas.user import UserCreate, UserInDB, UserUpdate
 from app.services.kind import kind_service
-from app.services.mcp_provider_registry import (
-    get_mcp_provider,
-    get_mcp_provider_service,
-)
 from app.services.subscription.notification_service import (
     subscription_notification_service,
 )
@@ -162,8 +158,10 @@ async def list_mcp_provider_services(
     current_user: User = Depends(security.get_current_user),
 ):
     """List MCP provider services merged with the current user's configuration."""
-    provider = get_mcp_provider(provider_id)
-    if not provider:
+    if not user_mcp_service.has_provider_services(
+        current_user.preferences,
+        provider_id,
+    ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Unsupported MCP provider: {provider_id}",
@@ -187,7 +185,11 @@ async def get_mcp_provider_service_config(
     current_user: User = Depends(security.get_current_user),
 ):
     """Get the current user's MCP provider service configuration."""
-    service = get_mcp_provider_service(provider_id, service_id)
+    service = user_mcp_service.get_provider_service_definition(
+        current_user.preferences,
+        provider_id,
+        service_id,
+    )
     if not service:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -214,7 +216,11 @@ async def update_mcp_provider_service_config(
     current_user: User = Depends(security.get_current_user),
 ):
     """Update the current user's MCP provider service configuration."""
-    service = get_mcp_provider_service(provider_id, service_id)
+    service = user_mcp_service.get_provider_service_definition(
+        current_user.preferences,
+        provider_id,
+        service_id,
+    )
     if not service:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

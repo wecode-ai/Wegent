@@ -23,6 +23,7 @@ from app.models.kind import Kind
 from app.models.resource_library import ResourceLibraryInstall, ResourceLibraryVersion
 from app.schemas.resource_library import ResourceLibraryListingCreate
 from app.services.resource_library.service import resource_library_service
+from app.services.user_mcp_service import user_mcp_service
 
 
 def auth_headers(token: str) -> dict[str, str]:
@@ -66,6 +67,29 @@ def _create_agent_listing(test_db, *, test_user, team: Kind):
             description="Collects sources",
             tags=[],
             version="1.0.0",
+        ),
+    )
+
+
+def _create_mcp_listing(test_db, *, test_user):
+    return resource_library_service.create_listing(
+        db=test_db,
+        user_id=test_user.id,
+        payload=ResourceLibraryListingCreate(
+            resource_type="mcp",
+            source_id=1,
+            name="docs-mcp",
+            display_name="Docs MCP",
+            description="Connects to docs",
+            tags=[],
+            version="1.0.0",
+            manifest_options={
+                "server_name": "docs",
+                "server_config": {
+                    "type": "streamable-http",
+                    "url": "https://example.com/mcp",
+                },
+            },
         ),
     )
 
@@ -182,3 +206,139 @@ def test_failed_install_records_failure_without_creating_team(
     assert response.status_code == 400
     assert failed_install.error_message
     assert test_db.query(Kind).filter(Kind.namespace == "team-a").count() == 0
+
+
+def test_failed_install_can_be_retried_after_source_version_is_fixed(
+    test_client,
+    test_db,
+    test_user,
+    test_token,
+):
+    team = _create_team(test_db, user_id=test_user.id)
+    listing = _create_agent_listing(test_db, test_user=test_user, team=team)
+    version = test_db.get(ResourceLibraryVersion, listing.current_version_id)
+    broken_manifest = dict(version.manifest)
+    team_snapshot = broken_manifest.pop("team")
+    version.manifest = broken_manifest
+    test_db.add(version)
+    test_db.commit()
+
+    failed_response = test_client.post(
+        f"/api/resource-library/listings/{listing.id}/install",
+        headers=auth_headers(test_token),
+        json={"target_namespace": "team-a"},
+    )
+
+    version = test_db.get(ResourceLibraryVersion, listing.current_version_id)
+    fixed_manifest = dict(version.manifest)
+    fixed_manifest["team"] = team_snapshot
+    version.manifest = fixed_manifest
+    test_db.add(version)
+    test_db.commit()
+
+    retry_response = test_client.post(
+        f"/api/resource-library/listings/{listing.id}/install",
+        headers=auth_headers(test_token),
+        json={"target_namespace": "team-a"},
+    )
+
+    install = (
+        test_db.query(ResourceLibraryInstall)
+        .filter_by(listing_id=listing.id, user_id=test_user.id)
+        .one()
+    )
+    assert failed_response.status_code == 400
+    assert retry_response.status_code == 201
+    assert install.install_status == "installed"
+    assert install.error_message is None
+
+
+def test_failed_install_record_update_preserves_original_http_error(
+    test_client,
+    test_db,
+    test_user,
+    test_token,
+):
+    team = _create_team(test_db, user_id=test_user.id)
+    listing = _create_agent_listing(test_db, test_user=test_user, team=team)
+    version = test_db.get(ResourceLibraryVersion, listing.current_version_id)
+    manifest = dict(version.manifest)
+    manifest.pop("team")
+    version.manifest = manifest
+    test_db.add(version)
+    test_db.add(
+        ResourceLibraryInstall(
+            listing_id=listing.id,
+            version_id=version.id,
+            user_id=test_user.id,
+            resource_type="agent",
+            installed_reference={},
+            install_status="failed",
+            error_message="previous failure",
+        )
+    )
+    test_db.commit()
+
+    response = test_client.post(
+        f"/api/resource-library/listings/{listing.id}/install",
+        headers=auth_headers(test_token),
+        json={"target_namespace": "team-a"},
+    )
+
+    install = (
+        test_db.query(ResourceLibraryInstall)
+        .filter_by(listing_id=listing.id, user_id=test_user.id)
+        .one()
+    )
+    assert response.status_code == 400
+    assert install.install_status == "failed"
+    assert install.error_message == "Source Team snapshot not found"
+
+
+def test_mcp_install_that_requires_configuration_can_be_configured(
+    test_client,
+    test_db,
+    test_user,
+    test_token,
+):
+    listing = _create_mcp_listing(test_db, test_user=test_user)
+
+    install_response = test_client.post(
+        f"/api/resource-library/listings/{listing.id}/install",
+        headers=auth_headers(test_token),
+        json={"target_namespace": "default"},
+    )
+    get_response = test_client.get(
+        "/api/users/me/mcps/providers/resource-library/services/docs-mcp",
+        headers=auth_headers(test_token),
+    )
+    update_response = test_client.put(
+        "/api/users/me/mcps/providers/resource-library/services/docs-mcp",
+        headers=auth_headers(test_token),
+        json={"enabled": True, "url": "https://example.com/mcp"},
+    )
+
+    test_db.refresh(test_user)
+    server = user_mcp_service.get_enabled_mcp_server(
+        test_user.preferences,
+        "resource-library",
+        "docs-mcp",
+    )
+    assert install_response.status_code == 201
+    assert install_response.json()["requires_configuration"] is True
+    assert get_response.status_code == 200
+    assert get_response.json() == {
+        "provider_id": "resource-library",
+        "service_id": "docs-mcp",
+        "server_name": "docs",
+        "detail_url": "",
+        "enabled": False,
+        "url": "",
+    }
+    assert update_response.status_code == 200
+    assert update_response.json()["enabled"] is True
+    assert server == {
+        "name": "docs",
+        "url": "https://example.com/mcp",
+        "type": "streamable-http",
+    }

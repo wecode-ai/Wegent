@@ -20,11 +20,10 @@ from app.services.user_mcp_service import (
     MCP_ROOT_KEY,
     MCP_SERVICES_KEY,
     MCP_URL_KEY,
+    RESOURCE_LIBRARY_MCP_PROVIDER_ID,
     user_mcp_service,
 )
 from shared.utils.crypto import encrypt_sensitive_data, is_data_encrypted
-
-RESOURCE_LIBRARY_MCP_PROVIDER_ID = "resource-library"
 
 
 @dataclass

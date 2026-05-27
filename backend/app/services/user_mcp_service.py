@@ -26,6 +26,7 @@ MCP_ROOT_KEY = "mcps"
 MCP_SERVICES_KEY = "services"
 MCP_CREDENTIALS_KEY = "credentials"
 MCP_URL_KEY = "url"
+RESOURCE_LIBRARY_MCP_PROVIDER_ID = "resource-library"
 
 
 class UserMCPService:
@@ -79,13 +80,96 @@ class UserMCPService:
         }
 
     @staticmethod
+    def get_provider_service_definition(
+        preferences: str | dict[str, Any] | None,
+        provider_id: str,
+        service_id: str,
+    ) -> dict[str, Any] | None:
+        """Return static or installed dynamic MCP service metadata."""
+        service = get_mcp_provider_service(provider_id, service_id)
+        if service:
+            return dict(service)
+
+        return UserMCPService.get_dynamic_provider_service(
+            preferences,
+            provider_id,
+            service_id,
+        )
+
+    @staticmethod
+    def get_dynamic_provider_service(
+        preferences: str | dict[str, Any] | None,
+        provider_id: str,
+        service_id: str,
+    ) -> dict[str, Any] | None:
+        """Return metadata for an installed dynamic provider service."""
+        for service in UserMCPService.list_dynamic_provider_services(
+            preferences,
+            provider_id,
+        ):
+            if service["service_id"] == service_id:
+                return service
+        return None
+
+    @staticmethod
+    def list_dynamic_provider_services(
+        preferences: str | dict[str, Any] | None,
+        provider_id: str,
+    ) -> list[dict[str, Any]]:
+        """Return dynamic MCP services installed from user preferences."""
+        if provider_id != RESOURCE_LIBRARY_MCP_PROVIDER_ID:
+            return []
+
+        prefs = UserMCPService.load_preferences(preferences)
+        provider = ((prefs.get(MCP_ROOT_KEY) or {}).get(provider_id) or {}).copy()
+        services = provider.get(MCP_SERVICES_KEY) or {}
+        if not isinstance(services, dict):
+            return []
+
+        dynamic_services = []
+        for service_id, service in services.items():
+            if not isinstance(service, dict):
+                continue
+            server_name = str(service.get("server_name") or service_id)
+            dynamic_services.append(
+                {
+                    "service_id": service_id,
+                    "server_name": server_name,
+                    "detail_url": str(service.get("detail_url") or ""),
+                    "skill_name": None,
+                    "display_name": str(service.get("display_name") or server_name),
+                    "message_keywords": tuple(),
+                }
+            )
+        return dynamic_services
+
+    @staticmethod
+    def has_provider_services(
+        preferences: str | dict[str, Any] | None,
+        provider_id: str,
+    ) -> bool:
+        """Return whether a provider has static or installed dynamic services."""
+        if get_mcp_provider(provider_id):
+            return True
+        return bool(
+            UserMCPService.list_dynamic_provider_services(preferences, provider_id)
+        )
+
+    @staticmethod
     def list_provider_service_configs(
         preferences: str | dict[str, Any] | None,
         provider_id: str,
     ) -> list[dict[str, Any]]:
         """Return all registered provider services merged with user config."""
         configs = []
-        for service in list_mcp_provider_services(provider_id):
+        services = list_mcp_provider_services(provider_id)
+        if not services:
+            services = UserMCPService.list_dynamic_provider_services(
+                preferences,
+                provider_id,
+            )
+
+        for service in services:
             config = UserMCPService.get_provider_service_config(
                 preferences, provider_id, service["service_id"]
             )
@@ -165,7 +249,11 @@ class UserMCPService:
         server_name: str | None = None,
     ) -> dict[str, Any] | None:
         """Build a concrete MCP server config for an enabled provider service."""
-        service = get_mcp_provider_service(provider_id, service_id)
+        service = UserMCPService.get_provider_service_definition(
+            preferences,
+            provider_id,
+            service_id,
+        )
         if not service:
             return None
 
@@ -194,7 +282,11 @@ class UserMCPService:
         url: str,
     ) -> dict[str, Any]:
         """Update a provider MCP service config inside user preferences."""
-        if not get_mcp_provider_service(provider_id, service_id):
+        if not UserMCPService.get_provider_service_definition(
+            preferences,
+            provider_id,
+            service_id,
+        ):
             raise ValueError(
                 f"Unsupported MCP provider service: {provider_id}/{service_id}"
             )
@@ -239,10 +331,13 @@ class UserMCPService:
         provider_ids = (
             [provider_id]
             if provider_id
-            else [provider["provider_id"] for provider in list_mcp_providers()]
+            else UserMCPService._configured_provider_ids(preferences)
         )
         for current_provider_id in provider_ids:
-            if not get_mcp_provider(current_provider_id):
+            if not UserMCPService.has_provider_services(
+                preferences,
+                current_provider_id,
+            ):
                 continue
 
             for service in UserMCPService.list_provider_service_configs(
@@ -257,6 +352,21 @@ class UserMCPService:
                     servers.append(server)
 
         return servers
+
+    @staticmethod
+    def _configured_provider_ids(
+        preferences: str | dict[str, Any] | None,
+    ) -> list[str]:
+        provider_ids = [provider["provider_id"] for provider in list_mcp_providers()]
+        prefs = UserMCPService.load_preferences(preferences)
+        mcps = prefs.get(MCP_ROOT_KEY) or {}
+        if not isinstance(mcps, dict):
+            return provider_ids
+
+        for provider_id in mcps:
+            if provider_id == RESOURCE_LIBRARY_MCP_PROVIDER_ID:
+                provider_ids.append(provider_id)
+        return list(dict.fromkeys(provider_ids))
 
 
 user_mcp_service = UserMCPService()

@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from datetime import datetime
 from typing import Optional
 
 from fastapi import HTTPException, status
@@ -230,7 +231,7 @@ class ResourceLibraryService:
         payload: ResourceLibraryInstallCreate,
     ) -> ResourceLibraryInstall:
         listing = self.get_listing(db, listing_id=listing_id, user_id=user_id)
-        self._ensure_listing_not_installed(
+        existing_install = self._ensure_listing_not_installed(
             db,
             listing_id=listing.id,
             user_id=user_id,
@@ -251,14 +252,13 @@ class ResourceLibraryService:
                 target_namespace=payload.target_namespace or "default",
                 options=payload.install_options,
             )
-            install = ResourceLibraryInstall(
-                listing_id=listing.id,
-                version_id=version.id,
+            install = self._success_install_record(
+                existing_install,
+                listing=listing,
+                version=version,
                 user_id=user_id,
-                resource_type=listing.resource_type,
                 installed_kind_id=install_result.installed_kind_id,
                 installed_reference=install_result.installed_reference,
-                install_status=INSTALL_STATUS_INSTALLED,
             )
             listing.install_count = (listing.install_count or 0) + 1
             db.add(install)
@@ -295,8 +295,24 @@ class ResourceLibraryService:
         *,
         listing_id: int,
         user_id: int,
-    ) -> None:
-        existing = (
+    ) -> ResourceLibraryInstall | None:
+        existing = self._get_install_record(
+            db,
+            listing_id=listing_id,
+            user_id=user_id,
+        )
+        if existing and existing.install_status == INSTALL_STATUS_INSTALLED:
+            raise self._install_conflict()
+        return existing
+
+    def _get_install_record(
+        self,
+        db: Session,
+        *,
+        listing_id: int,
+        user_id: int,
+    ) -> ResourceLibraryInstall | None:
+        return (
             db.query(ResourceLibraryInstall)
             .filter(
                 ResourceLibraryInstall.listing_id == listing_id,
@@ -304,8 +320,29 @@ class ResourceLibraryService:
             )
             .first()
         )
-        if existing:
-            raise self._install_conflict()
+
+    def _success_install_record(
+        self,
+        existing_install: ResourceLibraryInstall | None,
+        *,
+        listing: ResourceLibraryListing,
+        version: ResourceLibraryVersion,
+        user_id: int,
+        installed_kind_id: int | None,
+        installed_reference: dict,
+    ) -> ResourceLibraryInstall:
+        install = existing_install or ResourceLibraryInstall(
+            listing_id=listing.id,
+            user_id=user_id,
+        )
+        install.version_id = version.id
+        install.resource_type = listing.resource_type
+        install.installed_kind_id = installed_kind_id
+        install.installed_reference = installed_reference
+        install.install_status = INSTALL_STATUS_INSTALLED
+        install.error_message = None
+        install.installed_at = datetime.now()
+        return install
 
     def _install_conflict(self) -> HTTPException:
         return HTTPException(
@@ -352,16 +389,86 @@ class ResourceLibraryService:
         version_id = version.id
         resource_type = listing.resource_type
         db.rollback()
-        failed_install = ResourceLibraryInstall(
+        existing_install = self._get_install_record(
+            db,
             listing_id=listing_id,
-            version_id=version_id,
             user_id=user_id,
+        )
+        if existing_install:
+            if existing_install.install_status == INSTALL_STATUS_INSTALLED:
+                return
+            self._apply_failed_install(
+                existing_install,
+                version_id=version_id,
+                resource_type=resource_type,
+                error_message=error_message,
+            )
+            db.add(existing_install)
+        else:
+            failed_install = ResourceLibraryInstall(
+                listing_id=listing_id,
+                version_id=version_id,
+                user_id=user_id,
+                resource_type=resource_type,
+                installed_reference={},
+                install_status=INSTALL_STATUS_FAILED,
+                error_message=error_message,
+            )
+            db.add(failed_install)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            self._update_failed_install_if_present(
+                db,
+                listing_id=listing_id,
+                version_id=version_id,
+                user_id=user_id,
+                resource_type=resource_type,
+                error_message=error_message,
+            )
+
+    def _apply_failed_install(
+        self,
+        install: ResourceLibraryInstall,
+        *,
+        version_id: int,
+        resource_type: str,
+        error_message: str,
+    ) -> None:
+        install.version_id = version_id
+        install.resource_type = resource_type
+        install.installed_kind_id = None
+        install.installed_reference = {}
+        install.install_status = INSTALL_STATUS_FAILED
+        install.error_message = error_message
+
+    def _update_failed_install_if_present(
+        self,
+        db: Session,
+        *,
+        listing_id: int,
+        version_id: int,
+        user_id: int,
+        resource_type: str,
+        error_message: str,
+    ) -> None:
+        existing_install = self._get_install_record(
+            db,
+            listing_id=listing_id,
+            user_id=user_id,
+        )
+        if not existing_install:
+            return
+        if existing_install.install_status == INSTALL_STATUS_INSTALLED:
+            return
+        self._apply_failed_install(
+            existing_install,
+            version_id=version_id,
             resource_type=resource_type,
-            installed_reference={},
-            install_status=INSTALL_STATUS_FAILED,
             error_message=error_message,
         )
-        db.add(failed_install)
+        db.add(existing_install)
         db.commit()
 
 
