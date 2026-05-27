@@ -29,6 +29,8 @@ import { projectApis } from '@/apis/projects'
 import { useDevices } from '@/contexts/DeviceContext'
 import type { ProjectConfig } from '@/types/api'
 import { isVersionAtLeast } from '@/lib/utils'
+import { ProjectDirectoryPickerDialog } from './ProjectDirectoryPickerDialog'
+import { FolderOpen } from 'lucide-react'
 
 const PROJECT_COLORS = [
   { id: 'red', value: '#EF4444' },
@@ -93,6 +95,7 @@ export function ProjectCreateDialog({
   // Workspace mode state
   const [deviceId, setDeviceId] = useState('')
   const [localPath, setLocalPath] = useState('')
+  const [directoryPickerOpen, setDirectoryPickerOpen] = useState(false)
 
   const [isCreating, setIsCreating] = useState(false)
 
@@ -137,7 +140,7 @@ export function ProjectCreateDialog({
   }
 
   const handleCreateWorkspace = async () => {
-    if (!deviceId || !selectedDeviceSupportsWorkspaceProject) return
+    if (!deviceId || !localPath.trim() || !selectedDeviceSupportsWorkspaceProject) return
 
     setIsCreating(true)
     try {
@@ -148,21 +151,15 @@ export function ProjectCreateDialog({
           deviceId,
         },
       }
-      if (localPath.trim()) {
-        config.workspace = {
-          source: 'local_path',
-          localPath: localPath.trim(),
-        }
+      config.workspace = {
+        source: 'local_path',
+        localPath: localPath.trim(),
       }
       const tempName = projectName || 'project'
-      const created = await projectApis.createProject({
+      await projectApis.createProject({
         name: tempName,
         config,
       })
-      // If no path was specified, rename to project{id} based on default folder name
-      if (!localPath.trim() && created.id) {
-        await projectApis.updateProject(created.id, { name: `project${created.id}` })
-      }
       await refreshProjects()
       resetForm()
       onOpenChange(false)
@@ -186,154 +183,186 @@ export function ProjectCreateDialog({
     setSelectedColor(null)
     setDeviceId('')
     setLocalPath('')
+    setDirectoryPickerOpen(false)
   }
 
   const canCreate = isWorkspaceMode
-    ? Boolean(deviceId) && selectedDeviceSupportsWorkspaceProject
+    ? Boolean(deviceId) && Boolean(localPath.trim()) && selectedDeviceSupportsWorkspaceProject
     : Boolean(name.trim())
 
+  const handleDeviceChange = (nextDeviceId: string) => {
+    setDeviceId(nextDeviceId)
+    setLocalPath('')
+  }
+
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-[425px]">
-        <DialogHeader>
-          <DialogTitle>{t(isWorkspaceMode ? 'workspaceCreate.title' : 'create.title')}</DialogTitle>
-          <DialogDescription>
-            {t(isWorkspaceMode ? 'workspaceCreate.description' : 'create.description')}
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <Dialog open={open} onOpenChange={handleClose}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>
+              {t(isWorkspaceMode ? 'workspaceCreate.title' : 'create.title')}
+            </DialogTitle>
+            <DialogDescription>
+              {t(isWorkspaceMode ? 'workspaceCreate.description' : 'create.description')}
+            </DialogDescription>
+          </DialogHeader>
 
-        <div className="space-y-4 py-4">
-          {isWorkspaceMode ? (
-            <>
-              <div className="space-y-2">
-                <Label>{t('workspace.device')}</Label>
-                {onlineDevices.length === 0 ? (
-                  <p className="text-sm text-destructive">{t('workspace.noOnlineDevices')}</p>
-                ) : (
-                  <Select value={deviceId} onValueChange={setDeviceId} disabled={isCreating}>
-                    <SelectTrigger data-testid="workspace-device-select">
-                      <SelectValue placeholder={t('workspace.devicePlaceholder')} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {onlineDevices.map(device => (
-                        <SelectItem key={device.device_id} value={device.device_id}>
-                          <span className="flex items-center gap-2">
-                            <span
-                              className={`inline-block w-2 h-2 rounded-full ${
-                                device.status === 'online' ? 'bg-green-500' : 'bg-yellow-500'
-                              }`}
-                            />
-                            {device.name || device.device_id}
-                            {device.device_type === 'cloud' && (
-                              <span className="text-xs text-text-muted ml-1">
-                                ({t('workspace.cloud')})
-                              </span>
-                            )}
-                          </span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-                {showDeviceVersionUnsupported && (
-                  <p
-                    className="text-sm text-destructive"
-                    data-testid="workspace-device-version-warning"
-                  >
-                    {t('workspace.deviceVersionUnsupported', {
-                      version:
-                        selectedDevice?.executor_version || t('workspace.unknownDeviceVersion'),
-                      requiredVersion: MIN_WORKSPACE_PROJECT_DEVICE_VERSION,
-                    })}
-                  </p>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="workspace-local-path">
-                  {t('workspace.directoryPath')}
-                  <span className="text-text-muted font-normal ml-1">({t('common:optional')})</span>
-                </Label>
-                <Input
-                  data-testid="workspace-local-path-input"
-                  id="workspace-local-path"
-                  placeholder={t('workspace.directoryPathPlaceholder')}
-                  value={localPath}
-                  onChange={e => setLocalPath(e.target.value)}
-                  disabled={isCreating}
-                />
-                {projectName ? (
-                  <p className="text-xs text-text-secondary">
-                    {t('workspace.projectNamePreview', { name: projectName })}
-                  </p>
-                ) : (
-                  <p className="text-xs text-text-muted">{t('workspace.defaultPathHint')}</p>
-                )}
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="space-y-2">
-                <Label htmlFor="name">{t('create.nameLabel')}</Label>
-                <Input
-                  id="name"
-                  placeholder={t('create.namePlaceholder')}
-                  value={name}
-                  onChange={e => setName(e.target.value)}
-                  maxLength={100}
-                  disabled={isCreating}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="description">{t('create.descriptionLabel')}</Label>
-                <Textarea
-                  id="description"
-                  placeholder={t('create.descriptionPlaceholder')}
-                  value={description}
-                  onChange={e => setDescription(e.target.value)}
-                  rows={3}
-                  disabled={isCreating}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label>{t('create.colorLabel')}</Label>
-                <div className="flex flex-wrap gap-2">
-                  {PROJECT_COLORS.map(color => (
-                    <button
-                      key={color.id}
-                      type="button"
-                      onClick={() =>
-                        setSelectedColor(selectedColor === color.value ? null : color.value)
-                      }
-                      className={`w-8 h-8 rounded-full border-2 transition-all ${
-                        selectedColor === color.value
-                          ? 'border-text-primary scale-110'
-                          : 'border-transparent hover:scale-105'
-                      }`}
-                      style={{ backgroundColor: color.value }}
-                      title={t(`colors.${color.id}`)}
+          <div className="space-y-4 py-4">
+            {isWorkspaceMode ? (
+              <>
+                <div className="space-y-2">
+                  <Label>{t('workspace.device')}</Label>
+                  {onlineDevices.length === 0 ? (
+                    <p className="text-sm text-destructive">{t('workspace.noOnlineDevices')}</p>
+                  ) : (
+                    <Select
+                      value={deviceId}
+                      onValueChange={handleDeviceChange}
                       disabled={isCreating}
-                    />
-                  ))}
+                    >
+                      <SelectTrigger data-testid="workspace-device-select">
+                        <SelectValue placeholder={t('workspace.devicePlaceholder')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {onlineDevices.map(device => (
+                          <SelectItem key={device.device_id} value={device.device_id}>
+                            <span className="flex items-center gap-2">
+                              <span
+                                className={`inline-block w-2 h-2 rounded-full ${
+                                  device.status === 'online' ? 'bg-green-500' : 'bg-yellow-500'
+                                }`}
+                              />
+                              {device.name || device.device_id}
+                              {device.device_type === 'cloud' && (
+                                <span className="text-xs text-text-muted ml-1">
+                                  ({t('workspace.cloud')})
+                                </span>
+                              )}
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                  {showDeviceVersionUnsupported && (
+                    <p
+                      className="text-sm text-destructive"
+                      data-testid="workspace-device-version-warning"
+                    >
+                      {t('workspace.deviceVersionUnsupported', {
+                        version:
+                          selectedDevice?.executor_version || t('workspace.unknownDeviceVersion'),
+                        requiredVersion: MIN_WORKSPACE_PROJECT_DEVICE_VERSION,
+                      })}
+                    </p>
+                  )}
                 </div>
-              </div>
-            </>
-          )}
-        </div>
 
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" onClick={handleClose} disabled={isCreating}>
-            {t('create.cancel')}
-          </Button>
-          <Button variant="primary" onClick={handleCreate} disabled={isCreating || !canCreate}>
-            {isCreating
-              ? t('common:actions.creating')
-              : t(isWorkspaceMode ? 'workspaceCreate.submit' : 'create.submit')}
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
+                <div className="space-y-2">
+                  <Label>{t('workspace.directoryPath')}</Label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-10 w-full justify-start gap-2 px-3 font-normal"
+                    onClick={() => setDirectoryPickerOpen(true)}
+                    disabled={
+                      isCreating ||
+                      !deviceId ||
+                      !selectedDeviceSupportsWorkspaceProject ||
+                      onlineDevices.length === 0
+                    }
+                    data-testid="workspace-directory-picker-trigger"
+                  >
+                    <FolderOpen className="h-4 w-4 flex-none text-text-muted" />
+                    <span
+                      className={`min-w-0 flex-1 truncate text-left ${
+                        localPath ? 'text-text-primary' : 'text-text-muted'
+                      }`}
+                    >
+                      {localPath || t('workspace.selectDirectory')}
+                    </span>
+                  </Button>
+                  {projectName ? (
+                    <p className="text-xs text-text-secondary">
+                      {t('workspace.projectNamePreview', { name: projectName })}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-text-muted">{t('workspace.selectDirectoryHint')}</p>
+                  )}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="name">{t('create.nameLabel')}</Label>
+                  <Input
+                    id="name"
+                    placeholder={t('create.namePlaceholder')}
+                    value={name}
+                    onChange={e => setName(e.target.value)}
+                    maxLength={100}
+                    disabled={isCreating}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="description">{t('create.descriptionLabel')}</Label>
+                  <Textarea
+                    id="description"
+                    placeholder={t('create.descriptionPlaceholder')}
+                    value={description}
+                    onChange={e => setDescription(e.target.value)}
+                    rows={3}
+                    disabled={isCreating}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>{t('create.colorLabel')}</Label>
+                  <div className="flex flex-wrap gap-2">
+                    {PROJECT_COLORS.map(color => (
+                      <button
+                        key={color.id}
+                        type="button"
+                        onClick={() =>
+                          setSelectedColor(selectedColor === color.value ? null : color.value)
+                        }
+                        className={`w-8 h-8 rounded-full border-2 transition-all ${
+                          selectedColor === color.value
+                            ? 'border-text-primary scale-110'
+                            : 'border-transparent hover:scale-105'
+                        }`}
+                        style={{ backgroundColor: color.value }}
+                        title={t(`colors.${color.id}`)}
+                        disabled={isCreating}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={handleClose} disabled={isCreating}>
+              {t('create.cancel')}
+            </Button>
+            <Button variant="primary" onClick={handleCreate} disabled={isCreating || !canCreate}>
+              {isCreating
+                ? t('common:actions.creating')
+                : t(isWorkspaceMode ? 'workspaceCreate.submit' : 'create.submit')}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      <ProjectDirectoryPickerDialog
+        open={directoryPickerOpen}
+        deviceId={deviceId}
+        initialPath={localPath}
+        onOpenChange={setDirectoryPickerOpen}
+        onConfirm={setLocalPath}
+      />
+    </>
   )
 }
