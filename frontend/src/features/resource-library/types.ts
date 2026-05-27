@@ -67,7 +67,7 @@ export interface ResourceLibraryCreateListingRequest {
 }
 
 export interface ResourceLibraryInstallRequest {
-  targetNamespace: string
+  targetNamespace?: string
   versionId?: number
   installOptions?: Record<string, unknown>
 }

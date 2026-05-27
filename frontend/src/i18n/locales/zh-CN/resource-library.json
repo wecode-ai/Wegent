@@ -2,7 +2,9 @@
   "title": "资源库",
   "tabs": {
     "discover": "发现",
-    "mine": "我的"
+    "mine": "我的",
+    "installed": "已安装",
+    "published": "我发布的"
   },
   "filters": {
     "all": "全部",
@@ -12,10 +14,13 @@
   },
   "actions": {
     "install": "安装",
+    "installed": "已安装",
     "publish": "发布资源",
+    "upgrade": "升级",
     "archive": "归档",
     "configure": "配置",
-    "view_detail": "查看详情"
+    "view_detail": "查看详情",
+    "details": "详情"
   },
   "status": {
     "installed": "已安装",
@@ -36,5 +41,10 @@
   "empty": {
     "discover": "暂无可发现资源",
     "mine": "暂无我的资源"
+  },
+  "states": {
+    "loading": "正在加载资源",
+    "empty": "暂无资源",
+    "requiresConfiguration": "需要配置"
   }
 }

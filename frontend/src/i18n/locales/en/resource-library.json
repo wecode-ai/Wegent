@@ -2,7 +2,9 @@
   "title": "Resource Library",
   "tabs": {
     "discover": "Discover",
-    "mine": "Mine"
+    "mine": "Mine",
+    "installed": "Installed",
+    "published": "Published by me"
   },
   "filters": {
     "all": "All",
@@ -12,10 +14,13 @@
   },
   "actions": {
     "install": "Install",
+    "installed": "Installed",
     "publish": "Publish Resource",
+    "upgrade": "Upgrade",
     "archive": "Archive",
     "configure": "Configure",
-    "view_detail": "View Details"
+    "view_detail": "View Details",
+    "details": "Details"
   },
   "status": {
     "installed": "Installed",
@@ -36,5 +41,10 @@
   "empty": {
     "discover": "No resources to discover",
     "mine": "No resources yet"
+  },
+  "states": {
+    "loading": "Loading resources",
+    "empty": "No resources",
+    "requiresConfiguration": "Configuration required"
   }
 }

@@ -64,4 +64,35 @@ describe('resourceLibraryApi', () => {
       install_options: {},
     })
   })
+
+  it('defaults install request namespace and options', async () => {
+    mockedApiClient.post.mockResolvedValue({
+      id: 1,
+      listing_id: 7,
+      version_id: 3,
+      user_id: 2,
+      resource_type: 'agent',
+      installed_kind_id: 8,
+      installed_reference: { namespace: 'default', name: 'agent' },
+      install_status: 'installed',
+      requires_configuration: false,
+      installed_at: '2026-05-27T00:00:00',
+      updated_at: '2026-05-27T00:00:00',
+    })
+
+    await resourceLibraryApi.installListing(7, {})
+
+    expect(mockedApiClient.post).toHaveBeenCalledWith('/resource-library/listings/7/install', {
+      target_namespace: 'default',
+      install_options: {},
+    })
+  })
+
+  it('loads published resources for current user', async () => {
+    mockedApiClient.get.mockResolvedValue({ items: [], total: 0 })
+
+    await resourceLibraryApi.listMyPublished()
+
+    expect(mockedApiClient.get).toHaveBeenCalledWith('/resource-library/users/me/published')
+  })
 })

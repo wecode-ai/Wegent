@@ -51,8 +51,8 @@ function toInstallApiRequest(
 ): ResourceLibraryInstallApiRequest {
   return {
     version_id: request.versionId,
-    target_namespace: request.targetNamespace,
-    install_options: request.installOptions,
+    target_namespace: request.targetNamespace || 'default',
+    install_options: request.installOptions || {},
   }
 }
 
@@ -90,7 +90,7 @@ export const resourceLibraryApi = {
   },
 
   listMyPublished(): Promise<ResourceLibraryListResponse<ResourceLibraryListing>> {
-    return apiClient.get(`${RESOURCE_LIBRARY_BASE_PATH}/users/me/listings`)
+    return apiClient.get(`${RESOURCE_LIBRARY_BASE_PATH}/users/me/published`)
   },
 }
 
