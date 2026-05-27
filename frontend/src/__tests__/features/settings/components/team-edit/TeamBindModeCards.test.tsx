@@ -43,4 +43,23 @@ describe('TeamBindModeCards', () => {
 
     expect(onChange).toHaveBeenCalledWith(['chat', 'code'])
   })
+
+  it('toggles a bind mode when the card is clicked', () => {
+    const onChange = jest.fn()
+
+    render(<TeamBindModeCards value={['chat'] as TaskType[]} onChange={onChange} />)
+    fireEvent.click(screen.getByTestId('simple-bind-mode-code-card'))
+
+    expect(onChange).toHaveBeenCalledWith(['chat', 'code'])
+  })
+
+  it('keeps unselected choices visually framed as cards', () => {
+    render(<TeamBindModeCards value={['chat']} onChange={jest.fn()} />)
+
+    expect(screen.getByTestId('simple-bind-mode-code-card')).toHaveClass('border-border', 'bg-base')
+    expect(screen.getByTestId('simple-bind-mode-code-card')).not.toHaveClass(
+      'border-transparent',
+      'bg-transparent'
+    )
+  })
 })

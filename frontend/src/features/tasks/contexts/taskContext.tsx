@@ -373,20 +373,48 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const loadMorePersonalTasks = async () => {
     if (loadingMorePersonalTasks || !hasMorePersonalTasks) return
     setLoadingMorePersonalTasks(true)
-    const nextPage = (loadedPersonalPages[loadedPersonalPages.length - 1] || 1) + 1
-    const result = await loadPersonalPages([nextPage])
+    let nextPage = (loadedPersonalPages[loadedPersonalPages.length - 1] || 1) + 1
+    let reachedEnd = false
+    let hasError = false
+    const loadedPagesToAdd: number[] = []
+    const loadedGroups: TaskHistoryGroup[] = []
+    const loadedItems: Task[] = []
+    const existingIds = new Set(personalTasks.map(task => task.id))
 
-    if (!result.error) {
+    while (!reachedEnd && !hasError && loadedItems.length === 0) {
+      const result = await loadPersonalPages([nextPage])
+
+      if (result.error) {
+        hasError = true
+        break
+      }
+
+      loadedPagesToAdd.push(...(result.pages || [nextPage]))
+      const newItems = result.items.filter(task => !existingIds.has(task.id))
+      newItems.forEach(task => existingIds.add(task.id))
+
+      if (newItems.length > 0) {
+        loadedItems.push(...newItems)
+        loadedGroups.push(...(result.groups || []))
+      }
+
+      reachedEnd = !result.hasMore
+      nextPage += 1
+    }
+
+    if (!hasError) {
       setPersonalTasks(prev => {
         const existingIds = new Set(prev.map(t => t.id))
-        const newItems = result.items.filter(t => !existingIds.has(t.id))
+        const newItems = loadedItems.filter(t => !existingIds.has(t.id))
         return [...prev, ...newItems]
       })
-      setPersonalTaskGroups(prev => mergeTaskHistoryGroups([...prev, ...(result.groups || [])]))
+      if (loadedGroups.length > 0) {
+        setPersonalTaskGroups(prev => mergeTaskHistoryGroups([...prev, ...loadedGroups]))
+      }
       setLoadedPersonalPages(prev =>
-        Array.from(new Set([...prev, ...(result.pages || [])])).sort((a, b) => a - b)
+        Array.from(new Set([...prev, ...loadedPagesToAdd])).sort((a, b) => a - b)
       )
-      setHasMorePersonalTasks(result.hasMore)
+      setHasMorePersonalTasks(!reachedEnd)
     }
     setLoadingMorePersonalTasks(false)
   }

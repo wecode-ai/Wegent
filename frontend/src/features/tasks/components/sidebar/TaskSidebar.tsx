@@ -1000,7 +1000,6 @@ function TaskHistorySection({
                 title={getHistoryGroupTitle(group)}
                 titleIcon={getHistoryGroupIcon(group)}
                 titleClassName={group.group_type === 'team' ? 'pl-px pr-2' : undefined}
-                initialVisibleCount={group.group_type === 'team' ? 5 : undefined}
                 unreadCount={getUnreadCount(group.items)}
                 onTaskClick={() => setIsMobileSidebarOpen(false)}
                 isCollapsed={isCollapsed}
@@ -1022,9 +1021,13 @@ function TaskHistorySection({
           )}
           {hasMorePersonalTasks && !isCollapsed && (
             <button
-              onClick={loadMorePersonalTasks}
+              type="button"
+              data-testid="load-more-personal-tasks-button"
+              onClick={() => {
+                void loadMorePersonalTasks()
+              }}
               disabled={loadingMorePersonalTasks}
-              className="flex items-center gap-1 px-1 py-1.5 text-xs text-text-muted hover:text-text-primary transition-colors w-full"
+              className="flex h-11 min-w-[44px] w-full items-center gap-1 rounded-xl px-3 text-xs font-medium text-text-muted transition-colors hover:bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
             >
               <ChevronDown className="h-3.5 w-3.5" />
               <span>

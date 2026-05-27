@@ -132,6 +132,7 @@
       },
       "execution": {
         "bind_mode_description": "决定这个智能体可以在哪些入口和任务类型中使用。",
+        "requires_workspace_description": "开启后，编码任务必须先选择仓库。",
         "executor_description": "决定智能体处理任务时使用的运行环境。"
       },
       "bind_mode": {

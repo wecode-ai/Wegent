@@ -432,7 +432,7 @@ describe('TaskSidebar scroll structure', () => {
     expect(screen.getAllByText('Device conversation')[0]).toBeInTheDocument()
   })
 
-  it('limits each agent history group to five conversations before more', () => {
+  it('shows all loaded conversations in each agent history group without a nested more action', () => {
     const agentTasks = Array.from({ length: 6 }, (_, index) =>
       createTask({ id: index + 1, title: `Agent conversation ${index + 1}` })
     )
@@ -473,8 +473,39 @@ describe('TaskSidebar scroll structure', () => {
 
     const sections = screen.getAllByTestId('task-list-section')
 
-    expect(sections[0]).toHaveAttribute('data-initial-visible-count', '5')
+    expect(sections[0]).toHaveAttribute('data-initial-visible-count', '')
     expect(sections[0]).toHaveAttribute('data-title-class-name', 'pl-px pr-2')
+    expect(within(sections[0]).getByText('Agent conversation 6')).toBeInTheDocument()
     expect(sections[1]).toHaveAttribute('data-initial-visible-count', '')
+  })
+
+  it('loads more personal history from the global load more button', () => {
+    const agentTask = createTask({ id: 1, title: 'Agent conversation' })
+    const loadMorePersonalTasks = jest.fn()
+    mockTaskContext.personalTasks = [agentTask]
+    mockTaskContext.personalTaskGroups = [
+      {
+        group_type: 'team',
+        group_key: 'team:1',
+        team_id: 1,
+        team_name: 'code-agent',
+        team_namespace: 'default',
+        team_display_name: 'Code Agent',
+        team_icon: 'sparkles',
+        device_id: null,
+        device_name: null,
+        items: [agentTask],
+      },
+    ]
+    mockTaskContext.hasMorePersonalTasks = true
+    mockTaskContext.loadMorePersonalTasks = loadMorePersonalTasks
+
+    render(
+      <TaskSidebar isMobileSidebarOpen={false} setIsMobileSidebarOpen={jest.fn()} pageType="chat" />
+    )
+
+    fireEvent.click(screen.getAllByTestId('load-more-personal-tasks-button')[0])
+
+    expect(loadMorePersonalTasks).toHaveBeenCalledTimes(1)
   })
 })

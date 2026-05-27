@@ -132,6 +132,7 @@
       },
       "execution": {
         "bind_mode_description": "Controls which entry points and task types can use this agent.",
+        "requires_workspace_description": "When enabled, code tasks must start with a repository.",
         "executor_description": "Controls the runtime environment used to handle tasks."
       },
       "bind_mode": {

@@ -74,7 +74,7 @@ describe('simple team edit utils', () => {
     expect(resolveShellForExecutor(shells, 'custom')).toBeNull()
   })
 
-  it('normalizes incompatible executor to complex for code and device bind modes', () => {
+  it('normalizes simple executor to complex for code and device bind modes', () => {
     const bindMode = ['chat', 'code'] as TaskType[]
 
     expect(normalizeExecutorForBindMode('simple', bindMode, shells)).toEqual({
@@ -87,6 +87,24 @@ describe('simple team edit utils', () => {
     const bindMode = ['task'] as TaskType[]
 
     expect(normalizeExecutorForBindMode('custom', bindMode, shells, 'custom-code')).toEqual({
+      mode: 'custom',
+      reason: null,
+    })
+  })
+
+  it('keeps custom executor selectable even when the selected shell needs validation', () => {
+    const bindMode = ['code'] as TaskType[]
+
+    expect(normalizeExecutorForBindMode('custom', bindMode, shells, 'custom-chat')).toEqual({
+      mode: 'custom',
+      reason: null,
+    })
+  })
+
+  it('keeps custom executor selectable before a custom shell is chosen', () => {
+    const bindMode = ['code'] as TaskType[]
+
+    expect(normalizeExecutorForBindMode('custom', bindMode, shells, '')).toEqual({
       mode: 'custom',
       reason: null,
     })

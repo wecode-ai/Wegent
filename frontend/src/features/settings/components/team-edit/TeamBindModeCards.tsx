@@ -10,6 +10,11 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { TaskType } from '@/types/api'
+import {
+  simpleChoiceCardBaseClass,
+  simpleChoiceCardSelectedClass,
+  simpleChoiceCardUnselectedClass,
+} from './simple-choice-card-styles'
 import { getSimpleBindModeOptions } from './simple-team-edit-utils'
 
 interface TeamBindModeCardsProps {
@@ -45,10 +50,8 @@ export default function TeamBindModeCards({ value, onChange }: TeamBindModeCards
           <label
             key={option.value}
             className={cn(
-              'flex min-h-[76px] cursor-pointer gap-2.5 rounded-md border border-transparent px-3 py-2.5 transition-colors',
-              checked
-                ? 'border-primary bg-primary/5 text-text-primary ring-1 ring-primary/20'
-                : 'bg-transparent hover:bg-surface'
+              simpleChoiceCardBaseClass,
+              checked ? simpleChoiceCardSelectedClass : simpleChoiceCardUnselectedClass
             )}
             data-testid={`simple-bind-mode-${option.value}-card`}
           >

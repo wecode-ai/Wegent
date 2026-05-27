@@ -47,7 +47,7 @@ jest.mock('@/hooks/useTranslation', () => ({
         'common:team.name_placeholder': 'Agent name',
         'common:team.name_required': 'Agent name is required',
         'common:team.requires_workspace': 'Requires repository',
-        'common:team.requires_workspace_hint': 'Requires repository for code tasks.',
+        'common:team.requires_workspace_hint': 'Common repository hint.',
         'settings:team.simple.advanced_toggle': 'Advanced mode',
         'settings:team.simple.advanced_toggle_description': 'Use full configuration.',
         'settings:team.simple.advanced_title': 'Advanced',
@@ -59,6 +59,8 @@ jest.mock('@/hooks/useTranslation', () => ({
         'settings:team.simple.core.skills_description': 'Adds tool capabilities.',
         'settings:team.simple.execution.bind_mode_description': 'Controls entry points.',
         'settings:team.simple.execution.executor_description': 'Controls runtime.',
+        'settings:team.simple.execution.requires_workspace_description':
+          'Settings repository hint.',
         'settings:team.simple.sections.basic': 'Basic settings',
         'settings:team.simple.sections.capability': 'Capabilities',
         'settings:team.simple.sections.execution': 'Mode settings',
@@ -329,6 +331,26 @@ describe('Simple TeamEditDialog', () => {
     expect(screen.getByRole('checkbox', { name: /code/i })).not.toBeChecked()
     expect(screen.getByRole('checkbox', { name: /device/i })).not.toBeChecked()
     expect(screen.getByRole('radio', { name: /simple/i })).toBeChecked()
+  })
+
+  it('uses settings-scoped text for the simple requires repository hint', async () => {
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    fireEvent.click(await screen.findByRole('checkbox', { name: /code/i }))
+
+    expect(await screen.findByText('Settings repository hint.')).toBeInTheDocument()
+    expect(screen.queryByText('Common repository hint.')).not.toBeInTheDocument()
   })
 
   it('saves a new simple solo agent through bot and team payloads', async () => {

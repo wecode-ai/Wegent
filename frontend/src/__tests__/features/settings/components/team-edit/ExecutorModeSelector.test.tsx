@@ -85,4 +85,44 @@ describe('ExecutorModeSelector', () => {
     expect(screen.getByText('Team Shell')).toBeInTheDocument()
     expect(onCustomShellChange).toHaveBeenCalledWith('team-shell')
   })
+
+  it('selects custom executor when the custom card is clicked', () => {
+    const onChange = jest.fn()
+
+    render(
+      <ExecutorModeSelector
+        value="complex"
+        onChange={onChange}
+        shells={shells}
+        customShellName=""
+        onCustomShellChange={jest.fn()}
+        disabledModes={['simple']}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('simple-executor-custom-card'))
+
+    expect(onChange).toHaveBeenCalledWith('custom')
+  })
+
+  it('keeps unselected choices visually framed as cards', () => {
+    render(
+      <ExecutorModeSelector
+        value="complex"
+        onChange={jest.fn()}
+        shells={shells}
+        customShellName=""
+        onCustomShellChange={jest.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('simple-executor-custom-card')).toHaveClass(
+      'border-border',
+      'bg-base'
+    )
+    expect(screen.getByTestId('simple-executor-custom-card')).not.toHaveClass(
+      'border-transparent',
+      'bg-transparent'
+    )
+  })
 })

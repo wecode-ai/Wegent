@@ -115,6 +115,10 @@ export function normalizeExecutorForBindMode(
     return { mode, reason: null }
   }
 
+  if (mode === 'custom') {
+    return { mode, reason: null }
+  }
+
   const selectedShell = resolveShellForExecutor(shells, mode, customShellName)
   if (isClaudeCodeShell(selectedShell)) {
     return { mode, reason: null }

@@ -261,7 +261,7 @@ export default function SimpleTeamEditForm({
           {showRequiresWorkspace && (
             <SimpleConfigRow
               label={t('common:team.requires_workspace')}
-              description={t('common:team.requires_workspace_hint')}
+              description={t('settings:team.simple.execution.requires_workspace_description')}
             >
               <div className="flex justify-end">
                 <Switch

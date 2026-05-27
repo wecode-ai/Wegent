@@ -73,6 +73,16 @@ const createGroupTask = (id: number): Task => ({
   is_group_chat: true,
 })
 
+const createPersonalTask = (id: number, teamId = 1): Task => ({
+  ...createGroupTask(id),
+  title: `Personal task ${id}`,
+  team_id: teamId,
+  team_name: `team-${teamId}`,
+  team_namespace: 'default',
+  team_display_name: `Team ${teamId}`,
+  is_group_chat: false,
+})
+
 const createGroupPage = (startId: number, count: number) =>
   Array.from({ length: count }, (_, index) => createGroupTask(startId + index))
 
@@ -177,6 +187,158 @@ describe('TaskContext group task loading', () => {
     await waitFor(() => {
       expect(contextProbe.current?.personalTasks).toHaveLength(1)
     })
+    expect(contextProbe.current?.hasMorePersonalTasks).toBe(false)
+  })
+
+  it('appends the next grouped personal history page when load more is requested', async () => {
+    const firstPageTasks = Array.from({ length: 50 }, (_, index) =>
+      createPersonalTask(index + 1, 1)
+    )
+    const secondPageTask = createPersonalTask(51, 2)
+
+    mockedTaskApis.getPersonalTaskGroupsLite
+      .mockResolvedValueOnce({
+        total: 51,
+        items: [
+          {
+            group_type: 'team',
+            group_key: 'team:1',
+            team_id: 1,
+            team_name: 'team-1',
+            team_namespace: 'default',
+            team_display_name: 'Team 1',
+            team_icon: null,
+            device_id: null,
+            device_name: null,
+            items: firstPageTasks,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        total: 51,
+        items: [
+          {
+            group_type: 'team',
+            group_key: 'team:2',
+            team_id: 2,
+            team_name: 'team-2',
+            team_namespace: 'default',
+            team_display_name: 'Team 2',
+            team_icon: null,
+            device_id: null,
+            device_name: null,
+            items: [secondPageTask],
+          },
+        ],
+      })
+
+    render(
+      <TaskContextProvider>
+        <ContextProbe />
+      </TaskContextProvider>
+    )
+
+    await waitFor(() => {
+      expect(contextProbe.current?.personalTasks).toHaveLength(50)
+    })
+
+    await act(async () => {
+      await contextProbe.current?.loadMorePersonalTasks()
+    })
+
+    await waitFor(() => {
+      expect(contextProbe.current?.personalTasks).toHaveLength(51)
+    })
+    expect(mockedTaskApis.getPersonalTaskGroupsLite).toHaveBeenCalledWith({ page: 2, limit: 50 })
+    expect(contextProbe.current?.personalTaskGroups.map(group => group.group_key)).toEqual([
+      'team:1',
+      'team:2',
+    ])
+    expect(contextProbe.current?.hasMorePersonalTasks).toBe(false)
+  })
+
+  it('keeps fetching personal history until load more finds non-duplicate tasks', async () => {
+    const firstPageTasks = Array.from({ length: 50 }, (_, index) =>
+      createPersonalTask(index + 1, 1)
+    )
+    const thirdPageTask = createPersonalTask(101, 2)
+
+    mockedTaskApis.getPersonalTaskGroupsLite
+      .mockResolvedValueOnce({
+        total: 101,
+        items: [
+          {
+            group_type: 'team',
+            group_key: 'team:1',
+            team_id: 1,
+            team_name: 'team-1',
+            team_namespace: 'default',
+            team_display_name: 'Team 1',
+            team_icon: null,
+            device_id: null,
+            device_name: null,
+            items: firstPageTasks,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        total: 101,
+        items: [
+          {
+            group_type: 'team',
+            group_key: 'team:1',
+            team_id: 1,
+            team_name: 'team-1',
+            team_namespace: 'default',
+            team_display_name: 'Team 1',
+            team_icon: null,
+            device_id: null,
+            device_name: null,
+            items: firstPageTasks,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        total: 101,
+        items: [
+          {
+            group_type: 'team',
+            group_key: 'team:2',
+            team_id: 2,
+            team_name: 'team-2',
+            team_namespace: 'default',
+            team_display_name: 'Team 2',
+            team_icon: null,
+            device_id: null,
+            device_name: null,
+            items: [thirdPageTask],
+          },
+        ],
+      })
+
+    render(
+      <TaskContextProvider>
+        <ContextProbe />
+      </TaskContextProvider>
+    )
+
+    await waitFor(() => {
+      expect(contextProbe.current?.personalTasks).toHaveLength(50)
+    })
+
+    await act(async () => {
+      await contextProbe.current?.loadMorePersonalTasks()
+    })
+
+    await waitFor(() => {
+      expect(contextProbe.current?.personalTasks).toHaveLength(51)
+    })
+    expect(mockedTaskApis.getPersonalTaskGroupsLite).toHaveBeenCalledWith({ page: 2, limit: 50 })
+    expect(mockedTaskApis.getPersonalTaskGroupsLite).toHaveBeenCalledWith({ page: 3, limit: 50 })
+    expect(contextProbe.current?.personalTaskGroups.map(group => group.group_key)).toEqual([
+      'team:1',
+      'team:2',
+    ])
     expect(contextProbe.current?.hasMorePersonalTasks).toBe(false)
   })
 })

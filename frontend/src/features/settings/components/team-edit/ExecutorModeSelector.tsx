@@ -19,6 +19,11 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { UnifiedShell } from '@/apis/shells'
 import {
+  simpleChoiceCardBaseClass,
+  simpleChoiceCardSelectedClass,
+  simpleChoiceCardUnselectedClass,
+} from './simple-choice-card-styles'
+import {
   getCustomShells,
   getSimpleExecutorOptions,
   type SimpleExecutorMode,
@@ -72,10 +77,8 @@ export default function ExecutorModeSelector({
               <label
                 key={option.value}
                 className={cn(
-                  'flex min-h-[78px] cursor-pointer gap-2.5 rounded-md border border-transparent px-3 py-2.5 transition-colors',
-                  checked
-                    ? 'border-primary bg-primary/5 text-text-primary ring-1 ring-primary/20'
-                    : 'bg-transparent hover:bg-surface',
+                  simpleChoiceCardBaseClass,
+                  checked ? simpleChoiceCardSelectedClass : simpleChoiceCardUnselectedClass,
                   disabled && 'cursor-not-allowed opacity-50'
                 )}
                 data-testid={`simple-executor-${option.value}-card`}

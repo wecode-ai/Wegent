@@ -4,7 +4,7 @@
 
 import type { Team, TaskType } from '@/types/api'
 
-export type TeamModeFilter = 'all' | Extract<TaskType, 'chat' | 'code' | 'task'>
+export type TeamModeFilter = 'all' | TaskType
 export type TeamTargetPage = 'chat' | 'code' | 'knowledge' | 'devices/chat' | 'generate'
 
 export type SelectableTeam = Team & {
