@@ -21,9 +21,11 @@ import {
   Workflow,
   ChevronDown,
   ChevronUp,
+  ChevronRight,
   Settings2,
   Monitor,
   Inbox,
+  LayoutGrid,
 } from 'lucide-react'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
@@ -41,6 +43,12 @@ import {
   DroppableHistory,
 } from '@/features/projects'
 import { useInboxUnreadCount } from '@/features/inbox'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown'
 
 export const SIDEBAR_NAV_CONFIG = {
   keepSecondaryNavFixed: true,
@@ -76,7 +84,7 @@ export default function TaskSidebar({
     groupTasks,
     personalTasks,
     loadMore,
-    loadMoreGroupTasks,
+    loadAllGroupTasks,
     loadMorePersonalTasks,
     loadingMore,
     loadingMoreGroupTasks,
@@ -96,6 +104,7 @@ export default function TaskSidebar({
   } = useTaskContext()
   const desktopScrollRef = useRef<HTMLDivElement>(null)
   const mobileScrollRef = useRef<HTMLDivElement>(null)
+  const moreNavCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Inbox unread count
   const { unreadCount: inboxUnreadCount } = useInboxUnreadCount()
@@ -105,7 +114,9 @@ export default function TaskSidebar({
 
   // Group chats collapse/expand state
   const [isGroupChatsExpanded, setIsGroupChatsExpanded] = useState(false)
-  const maxVisibleGroupChats = 5
+  const [openMoreNavigationId, setOpenMoreNavigationId] = useState<'desktop' | 'mobile' | null>(
+    null
+  )
 
   // History manage dialog state
   const [isHistoryManageDialogOpen, setIsHistoryManageDialogOpen] = useState(false)
@@ -117,6 +128,26 @@ export default function TaskSidebar({
   const handleClearSearch = () => {
     setSearchTerm('')
     searchTasks('')
+  }
+
+  const clearMoreNavCloseTimer = () => {
+    if (moreNavCloseTimerRef.current) {
+      clearTimeout(moreNavCloseTimerRef.current)
+      moreNavCloseTimerRef.current = null
+    }
+  }
+
+  const openMoreNavigation = (menuId: 'desktop' | 'mobile') => {
+    clearMoreNavCloseTimer()
+    setOpenMoreNavigationId(menuId)
+  }
+
+  const scheduleCloseMoreNavigation = () => {
+    clearMoreNavCloseTimer()
+    moreNavCloseTimerRef.current = setTimeout(() => {
+      setOpenMoreNavigationId(null)
+      moreNavCloseTimerRef.current = null
+    }, 160)
   }
 
   // Open search dialog (controlled by parent)
@@ -251,18 +282,28 @@ export default function TaskSidebar({
     return () => el.removeEventListener('scroll', handleScroll)
   }, [loadMore])
 
+  useEffect(() => {
+    return () => clearMoreNavCloseTimer()
+  }, [])
+
   const fixedNavigationButtons = navigationButtons.filter(
-    btn => btn.buttonPageType === 'flow' || btn.buttonPageType === 'code'
+    btn =>
+      btn.buttonPageType === 'flow' ||
+      btn.buttonPageType === 'code' ||
+      btn.buttonPageType === 'knowledge'
   )
-  const secondaryNavigationButtons = navigationButtons.filter(
-    btn => btn.buttonPageType !== 'flow' && btn.buttonPageType !== 'code'
+  const moreNavigationButtons = navigationButtons.filter(
+    btn =>
+      btn.buttonPageType !== 'flow' &&
+      btn.buttonPageType !== 'code' &&
+      btn.buttonPageType !== 'knowledge'
   )
   const fixedSecondaryNavigationButtons = SIDEBAR_NAV_CONFIG.keepSecondaryNavFixed
-    ? secondaryNavigationButtons
+    ? moreNavigationButtons
     : []
   const scrollableNavigationButtons = SIDEBAR_NAV_CONFIG.keepSecondaryNavFixed
     ? []
-    : secondaryNavigationButtons
+    : moreNavigationButtons
 
   const renderNavigationButtons = (buttons: NavigationButton[]) => {
     if (isCollapsed || buttons.length === 0) return null
@@ -274,7 +315,8 @@ export default function TaskSidebar({
             <Button
               variant="ghost"
               onClick={() => handleNavigationClick(btn.path, btn.isActive, btn.buttonPageType)}
-              className={`w-full justify-between px-3 h-9 text-sm rounded-md transition-all duration-200 ${
+              data-testid={`task-sidebar-nav-${btn.buttonPageType}-button`}
+              className={`w-full justify-between px-3 h-8 text-sm rounded-md transition-all duration-200 ${
                 btn.isActive
                   ? 'bg-primary/10 text-primary font-medium hover:bg-primary/15'
                   : 'text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 hover:scale-[1.02]'
@@ -328,6 +370,101 @@ export default function TaskSidebar({
     )
   }
 
+  const renderMoreNavigationButton = (
+    buttons: NavigationButton[],
+    menuId: 'desktop' | 'mobile'
+  ) => {
+    if (isCollapsed || buttons.length === 0) return null
+
+    const hasActiveItem = buttons.some(btn => btn.isActive)
+    const unreadCount = buttons.reduce((total, btn) => total + (btn.unreadCount ?? 0), 0)
+
+    return (
+      <DropdownMenu
+        modal={false}
+        open={openMoreNavigationId === menuId}
+        onOpenChange={open => setOpenMoreNavigationId(open ? menuId : null)}
+      >
+        <div
+          onMouseEnter={() => openMoreNavigation(menuId)}
+          onMouseLeave={scheduleCloseMoreNavigation}
+        >
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              data-testid="task-sidebar-more-button"
+              onFocus={() => openMoreNavigation(menuId)}
+              className={`w-full justify-between px-3 h-8 text-sm rounded-md transition-all duration-200 ${
+                hasActiveItem
+                  ? 'bg-primary/10 text-primary font-medium hover:bg-primary/15'
+                  : 'text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 hover:scale-[1.02]'
+              }`}
+              size="sm"
+            >
+              <span className="flex items-center">
+                <LayoutGrid
+                  aria-label="More navigation"
+                  className={`h-4 w-4 flex-shrink-0 ${hasActiveItem ? 'text-primary' : ''}`}
+                />
+                <span
+                  className={`ml-1.5 text-[14px] leading-5 font-medium ${
+                    hasActiveItem ? 'text-primary' : 'text-[#444746]'
+                  }`}
+                >
+                  {t('common:navigation.more')}
+                </span>
+              </span>
+              <span className="flex items-center gap-1">
+                {unreadCount > 0 && (
+                  <span className="flex items-center justify-center min-w-[18px] h-[18px] px-1.5 text-[11px] font-medium bg-red-500 text-white rounded-full">
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                  </span>
+                )}
+                <ChevronRight
+                  className={`h-3.5 w-3.5 flex-shrink-0 ${hasActiveItem ? 'text-primary' : 'text-text-muted'}`}
+                />
+              </span>
+            </Button>
+          </DropdownMenuTrigger>
+        </div>
+        <DropdownMenuContent
+          side="right"
+          align="start"
+          sideOffset={8}
+          className="w-44 bg-base p-1"
+          data-testid="task-sidebar-more-flyout"
+          onMouseEnter={() => openMoreNavigation(menuId)}
+          onMouseLeave={scheduleCloseMoreNavigation}
+          onCloseAutoFocus={event => event.preventDefault()}
+        >
+          {buttons.map(btn => (
+            <DropdownMenuItem
+              key={btn.path}
+              data-testid={`task-sidebar-more-${btn.buttonPageType}-button`}
+              className={`h-8 gap-2 px-2 text-sm ${
+                btn.isActive
+                  ? 'bg-primary/10 text-primary font-medium focus:bg-primary/15'
+                  : 'text-text-primary focus:bg-[rgb(238,238,238)] dark:focus:bg-white/10'
+              }`}
+              onSelect={() => {
+                handleNavigationClick(btn.path, btn.isActive, btn.buttonPageType)
+                setOpenMoreNavigationId(null)
+              }}
+            >
+              <btn.icon className={`h-4 w-4 flex-shrink-0 ${btn.isActive ? 'text-primary' : ''}`} />
+              <span className="flex-1 text-[14px] leading-5 font-medium">{btn.label}</span>
+              {btn.unreadCount !== undefined && btn.unreadCount > 0 && (
+                <span className="flex items-center justify-center min-w-[18px] h-[18px] px-1.5 text-[11px] font-medium bg-red-500 text-white rounded-full">
+                  {btn.unreadCount > 99 ? '99+' : btn.unreadCount}
+                </span>
+              )}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    )
+  }
+
   const createFixedSectionWheelHandler =
     (scrollContainerRef: React.RefObject<HTMLDivElement | null>) =>
     (event: React.WheelEvent<HTMLDivElement>) => {
@@ -338,123 +475,129 @@ export default function TaskSidebar({
       event.preventDefault()
     }
 
-  const renderSidebarContent = (scrollContainerRef: React.RefObject<HTMLDivElement | null>) => (
+  const renderSidebarContent = (
+    scrollContainerRef: React.RefObject<HTMLDivElement | null>,
+    menuId: 'desktop' | 'mobile'
+  ) => (
     <>
-      <div
-        className="flex-1 min-h-0 overflow-y-auto task-list-scrollbar"
-        ref={scrollContainerRef}
-        data-testid="task-sidebar-scroll-container"
-      >
+      <TaskDndProvider>
         <div
-          className="sticky top-0 z-20 bg-base"
-          data-testid="task-sidebar-fixed-section"
-          onWheel={createFixedSectionWheelHandler(scrollContainerRef)}
+          className="flex-1 min-h-0 overflow-y-auto task-list-scrollbar"
+          ref={scrollContainerRef}
+          data-testid="task-sidebar-scroll-container"
         >
-          {/* Logo and Mode Indicator - matches Figma: left-[20px] top-[12px] */}
-          <div className={`${isCollapsed ? 'px-2' : 'px-5'} pt-3 pb-4`}>
-            {isCollapsed ? (
-              /* Collapsed mode: Combined button with expand and add icons - matches Figma */
-              <TooltipProvider>
-                <Tooltip delayDuration={300}>
-                  <TooltipTrigger asChild>
-                    <div
-                      className="flex items-center gap-3 px-4 py-2.5 rounded-3xl border border-border bg-base shadow-sm cursor-pointer hover:bg-hover transition-colors"
-                      onClick={onToggleCollapsed}
-                    >
-                      <PanelLeftOpen className="h-4 w-4 text-text-primary flex-shrink-0" />
-                      <button
-                        onClick={e => {
-                          e.stopPropagation()
-                          handleNewAgentClick()
-                        }}
-                        className="flex-shrink-0"
-                        aria-label={t('common:tasks.new_conversation')}
-                      >
-                        <Plus className="h-4 w-4 text-text-primary" />
-                      </button>
-                    </div>
-                  </TooltipTrigger>
-                  <TooltipContent side="right">
-                    <p>{t('common:sidebar.expand')}</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            ) : (
-              /* Expanded mode: Logo and collapse button */
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <Image
-                    src="/weibo-logo.png"
-                    alt="Weibo Logo"
-                    width={36}
-                    height={35}
-                    className="object-contain"
-                  />
-                  <span className="text-base font-semibold text-text-primary">Wegent</span>
-                </div>
-                {onToggleCollapsed && (
-                  <TooltipProvider>
-                    <Tooltip delayDuration={300}>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={onToggleCollapsed}
-                          className="h-8 w-8 p-0 text-text-muted hover:text-text-primary hover:bg-hover rounded-lg"
-                          aria-label={t('common:sidebar.collapse')}
-                        >
-                          <PanelLeftClose className="h-4 w-4" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="right">
-                        <p>{t('common:sidebar.collapse')}</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* New Conversation Button and Fixed Navigation Buttons */}
-          <div data-tour="mode-toggle" className="px-2.5">
-            {!isCollapsed && (
-              <div className="mb-1">
-                <Button
-                  variant="ghost"
-                  onClick={handleNewAgentClick}
-                  className="w-full justify-between px-3 h-9 text-sm text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 rounded-md group transition-all duration-200 hover:scale-[1.02]"
-                  size="sm"
-                >
-                  <span className="flex items-center">
-                    <Plus className="h-4 w-4 flex-shrink-0" />
-                    <span className="ml-1.5 text-[14px] leading-5 font-medium text-[#444746]">
-                      {t('common:tasks.new_conversation')}
-                    </span>
-                  </span>
-                  <span className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity">
-                    ›
-                  </span>
-                </Button>
-              </div>
-            )}
-            {renderNavigationButtons(fixedNavigationButtons)}
-            {fixedSecondaryNavigationButtons.length > 0 &&
-              renderNavigationButtons(fixedSecondaryNavigationButtons)}
-          </div>
-        </div>
-
-        <div data-testid="task-sidebar-scroll-content">
-          {!isCollapsed && scrollableNavigationButtons.length > 0 && (
-            <div className="px-2.5 pt-0.5">
-              {renderNavigationButtons(scrollableNavigationButtons)}
-            </div>
-          )}
-
-          {/* Tasks Section - matches Figma: left-[20px] top-[198px] with border */}
-          <TaskDndProvider>
+          <div
+            className="sticky top-0 z-20 bg-base"
+            data-testid="task-sidebar-fixed-section"
+            onWheel={createFixedSectionWheelHandler(scrollContainerRef)}
+          >
+            {/* Logo and Mode Indicator - matches Figma: left-[20px] top-[12px] */}
             <div
-              className={`${isCollapsed ? 'px-0' : 'px-2.5'} pt-4 border-t border-border-light mt-3`}
+              className={`${isCollapsed ? 'px-2' : 'px-5'} pt-2 pb-3`}
+              data-testid="task-sidebar-logo-section"
+            >
+              {isCollapsed ? (
+                /* Collapsed mode: Combined button with expand and add icons - matches Figma */
+                <TooltipProvider>
+                  <Tooltip delayDuration={300}>
+                    <TooltipTrigger asChild>
+                      <div
+                        className="flex items-center gap-3 px-4 py-2.5 rounded-3xl border border-border bg-base shadow-sm cursor-pointer hover:bg-hover transition-colors"
+                        onClick={onToggleCollapsed}
+                      >
+                        <PanelLeftOpen className="h-4 w-4 text-text-primary flex-shrink-0" />
+                        <button
+                          onClick={e => {
+                            e.stopPropagation()
+                            handleNewAgentClick()
+                          }}
+                          className="flex-shrink-0"
+                          aria-label={t('common:tasks.new_conversation')}
+                        >
+                          <Plus className="h-4 w-4 text-text-primary" />
+                        </button>
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="right">
+                      <p>{t('common:sidebar.expand')}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              ) : (
+                /* Expanded mode: Logo and collapse button */
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Image
+                      src="/weibo-logo.png"
+                      alt="Weibo Logo"
+                      width={36}
+                      height={35}
+                      className="object-contain"
+                    />
+                    <span className="text-base font-semibold text-text-primary">Wegent</span>
+                  </div>
+                  {onToggleCollapsed && (
+                    <TooltipProvider>
+                      <Tooltip delayDuration={300}>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={onToggleCollapsed}
+                            className="h-8 w-8 p-0 text-text-muted hover:text-text-primary hover:bg-hover rounded-lg"
+                            aria-label={t('common:sidebar.collapse')}
+                          >
+                            <PanelLeftClose className="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="right">
+                          <p>{t('common:sidebar.collapse')}</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* New Conversation Button and Fixed Navigation Buttons */}
+            <div data-tour="mode-toggle" className="px-2.5">
+              {!isCollapsed && (
+                <div className="mb-0.5">
+                  <Button
+                    variant="ghost"
+                    onClick={handleNewAgentClick}
+                    className="w-full justify-between px-3 h-8 text-sm text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 rounded-md group transition-all duration-200 hover:scale-[1.02]"
+                    size="sm"
+                  >
+                    <span className="flex items-center">
+                      <Plus className="h-4 w-4 flex-shrink-0" />
+                      <span className="ml-1.5 text-[14px] leading-5 font-medium text-[#444746]">
+                        {t('common:tasks.new_conversation')}
+                      </span>
+                    </span>
+                    <span className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity">
+                      ›
+                    </span>
+                  </Button>
+                </div>
+              )}
+              {renderNavigationButtons(fixedNavigationButtons)}
+              {fixedSecondaryNavigationButtons.length > 0 &&
+                renderMoreNavigationButton(fixedSecondaryNavigationButtons, menuId)}
+            </div>
+          </div>
+
+          <div data-testid="task-sidebar-scroll-content">
+            {!isCollapsed && scrollableNavigationButtons.length > 0 && (
+              <div className="px-2.5 pt-0.5">
+                {renderNavigationButtons(scrollableNavigationButtons)}
+              </div>
+            )}
+
+            {/* Tasks Section - matches Figma: left-[20px] top-[198px] with border */}
+            <div
+              className={`${isCollapsed ? 'px-0' : 'px-2.5'} pt-1.5 border-t border-border-light mt-1`}
             >
               {/* Auto-refresh indicator - shows when refreshing after page visibility or reconnect */}
               {isRefreshing && !isCollapsed && (
@@ -576,14 +719,8 @@ export default function TaskSidebar({
                   groupTasks={groupTasks}
                   personalTasks={personalTasks}
                   isCollapsed={isCollapsed}
-                  isGroupChatsExpanded={isGroupChatsExpanded}
-                  setIsGroupChatsExpanded={setIsGroupChatsExpanded}
-                  maxVisibleGroupChats={maxVisibleGroupChats}
-                  hasMoreGroupTasks={hasMoreGroupTasks}
                   hasMorePersonalTasks={hasMorePersonalTasks}
-                  loadMoreGroupTasks={loadMoreGroupTasks}
                   loadMorePersonalTasks={loadMorePersonalTasks}
-                  loadingMoreGroupTasks={loadingMoreGroupTasks}
                   loadingMorePersonalTasks={loadingMorePersonalTasks}
                   viewStatusVersion={viewStatusVersion}
                   getUnreadCount={getUnreadCount}
@@ -605,9 +742,24 @@ export default function TaskSidebar({
                 </div>
               )}
             </div>
-          </TaskDndProvider>
+          </div>
         </div>
-      </div>
+        {!isSearchResult && (
+          <FixedGroupChatsSection
+            groupTasks={groupTasks}
+            isCollapsed={isCollapsed}
+            isGroupChatsExpanded={isGroupChatsExpanded}
+            setIsGroupChatsExpanded={setIsGroupChatsExpanded}
+            hasMoreGroupTasks={hasMoreGroupTasks}
+            loadAllGroupTasks={loadAllGroupTasks}
+            loadingMoreGroupTasks={loadingMoreGroupTasks}
+            viewStatusVersion={viewStatusVersion}
+            getUnreadCount={getUnreadCount}
+            setIsMobileSidebarOpen={setIsMobileSidebarOpen}
+            t={t}
+          />
+        )}
+      </TaskDndProvider>
 
       {/* User Menu */}
       <div className="px-2.5 py-3 border-t border-border-light shrink-0" data-tour="settings-link">
@@ -624,7 +776,7 @@ export default function TaskSidebar({
         style={{ height: 'calc(100% - 24px)' }}
         data-tour="task-sidebar"
       >
-        {renderSidebarContent(desktopScrollRef)}
+        {renderSidebarContent(desktopScrollRef, 'desktop')}
       </div>
 
       {/* Mobile Sidebar */}
@@ -635,7 +787,9 @@ export default function TaskSidebar({
         hideTitle={true}
         data-tour="task-sidebar"
       >
-        <div className="h-full flex flex-col">{renderSidebarContent(mobileScrollRef)}</div>
+        <div className="h-full flex flex-col">
+          {renderSidebarContent(mobileScrollRef, 'mobile')}
+        </div>
       </MobileSidebar>
 
       {/* History Manage Dialog */}
@@ -655,14 +809,8 @@ interface TaskHistorySectionProps {
   groupTasks: Task[]
   personalTasks: Task[]
   isCollapsed: boolean
-  isGroupChatsExpanded: boolean
-  setIsGroupChatsExpanded: (expanded: boolean) => void
-  maxVisibleGroupChats: number
-  hasMoreGroupTasks: boolean
   hasMorePersonalTasks: boolean
-  loadMoreGroupTasks: () => void
   loadMorePersonalTasks: () => void
-  loadingMoreGroupTasks: boolean
   loadingMorePersonalTasks: boolean
   viewStatusVersion: number
   getUnreadCount: (tasks: Task[]) => number
@@ -685,14 +833,8 @@ function TaskHistorySection({
   groupTasks,
   personalTasks,
   isCollapsed,
-  isGroupChatsExpanded,
-  setIsGroupChatsExpanded,
-  maxVisibleGroupChats,
-  hasMoreGroupTasks,
   hasMorePersonalTasks,
-  loadMoreGroupTasks,
   loadMorePersonalTasks,
-  loadingMoreGroupTasks,
   loadingMorePersonalTasks,
   viewStatusVersion,
   getUnreadCount,
@@ -733,134 +875,16 @@ function TaskHistorySection({
     )
   }
 
-  // Sort group chats: unread first, then by updated_at
-  const unreadGroupChats = filteredGroupTasks.filter(isTaskUnread)
-  const readGroupChats = filteredGroupTasks.filter(task => !isTaskUnread(task))
-  const orderedGroupChats = [...unreadGroupChats, ...readGroupChats]
-
-  // Calculate visible group chats based on collapse state
-  let visibleGroupChats: typeof orderedGroupChats
-  if (unreadGroupChats.length === 0) {
-    visibleGroupChats = isGroupChatsExpanded
-      ? orderedGroupChats
-      : orderedGroupChats.slice(0, maxVisibleGroupChats)
-  } else {
-    const remainingSlots = maxVisibleGroupChats - unreadGroupChats.length
-    visibleGroupChats = isGroupChatsExpanded
-      ? orderedGroupChats
-      : [...unreadGroupChats, ...readGroupChats.slice(0, Math.max(0, remainingSlots))]
-  }
-
-  const collapsedReadCount =
-    readGroupChats.length - (visibleGroupChats.length - unreadGroupChats.length)
-
-  const maxReadSlotsWhenCollapsed = Math.max(0, maxVisibleGroupChats - unreadGroupChats.length)
-  const shouldShowExpandCollapseButton =
-    readGroupChats.length > maxReadSlotsWhenCollapsed || hasMoreGroupTasks
-
   return (
     <>
-      {/* Group Chats Section */}
-      {filteredGroupTasks.length > 0 && (
-        <div className="mb-4">
-          {!isCollapsed && (
-            <div className="px-1 pb-1 text-xs font-medium text-text-muted mb-2">
-              {t('common:tasks.group_chats')}
-            </div>
-          )}
-          <TaskListSection
-            tasks={visibleGroupChats}
-            title=""
-            unreadCount={getUnreadCount(visibleGroupChats)}
-            onTaskClick={() => setIsMobileSidebarOpen(false)}
-            isCollapsed={isCollapsed}
-            showTitle={false}
-            enableDrag={true}
-            key={`group-chats-${viewStatusVersion}`}
-          />
-          {shouldShowExpandCollapseButton && !isCollapsed && (
-            <button
-              onClick={() => {
-                if (!isGroupChatsExpanded && hasMoreGroupTasks) {
-                  loadMoreGroupTasks()
-                }
-                setIsGroupChatsExpanded(!isGroupChatsExpanded)
-              }}
-              className="flex items-center gap-1 px-1 py-1.5 text-xs text-text-muted hover:text-text-primary transition-colors w-full"
-            >
-              {isGroupChatsExpanded ? (
-                <>
-                  <ChevronUp className="h-3.5 w-3.5" />
-                  <span>{t('common:tasks.group_chats_collapse')}</span>
-                </>
-              ) : (
-                <>
-                  <ChevronDown className="h-3.5 w-3.5" />
-                  <span>
-                    {t('common:tasks.group_chats_expand', {
-                      count: collapsedReadCount,
-                      suffix: hasMoreGroupTasks ? '+' : '',
-                    })}
-                  </span>
-                </>
-              )}
-            </button>
-          )}
-          {shouldShowExpandCollapseButton && isCollapsed && (
-            <TooltipProvider>
-              <Tooltip delayDuration={300}>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={() => {
-                      if (!isGroupChatsExpanded && hasMoreGroupTasks) {
-                        loadMoreGroupTasks()
-                      }
-                      setIsGroupChatsExpanded(!isGroupChatsExpanded)
-                    }}
-                    className="flex items-center justify-center w-full py-1.5 text-text-muted hover:text-text-primary transition-colors"
-                  >
-                    {isGroupChatsExpanded ? (
-                      <ChevronUp className="h-3.5 w-3.5" />
-                    ) : (
-                      <ChevronDown className="h-3.5 w-3.5" />
-                    )}
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="right">
-                  <p>
-                    {isGroupChatsExpanded
-                      ? t('common:tasks.group_chats_collapse')
-                      : t('common:tasks.group_chats_expand', {
-                          count: collapsedReadCount,
-                          suffix: '',
-                        })}
-                  </p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
-          {loadingMoreGroupTasks && (
-            <div className="text-center py-2 text-xs text-text-muted">
-              {t('common:tasks.loading')}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Projects Section - displayed between group chats and history */}
-      {!isCollapsed && !isSearchResult && (
-        <div
-          className={filteredGroupTasks.length > 0 ? 'pt-3 mt-2 border-t border-border-light' : ''}
-        >
-          <ProjectSection onTaskSelect={onTaskSelect} />
-        </div>
-      )}
+      {/* Projects Section */}
+      {!isCollapsed && !isSearchResult && <ProjectSection onTaskSelect={onTaskSelect} />}
 
       {/* History Section (Personal Tasks) */}
       {filteredPersonalTasks.length > 0 && (
         <DroppableHistory>
           {!isCollapsed && (
-            <div className="px-1 pb-2 pt-4 mt-3 border-t border-border-light text-xs font-medium text-text-muted flex items-center justify-between">
+            <div className="px-1 pb-1 pt-2 mt-1.5 border-t border-border-light text-xs font-medium text-text-muted flex items-center justify-between">
               <div className="flex items-center gap-1">
                 {setIsHistoryManageDialogOpen ? (
                   <TooltipProvider>
@@ -919,9 +943,6 @@ function TaskHistorySection({
               </div>
             </div>
           )}
-          {isCollapsed && filteredGroupTasks.length > 0 && (
-            <div className="border-t border-border-light my-2" />
-          )}
           <TaskListSection
             tasks={filteredPersonalTasks}
             title=""
@@ -952,5 +973,148 @@ function TaskHistorySection({
         </DroppableHistory>
       )}
     </>
+  )
+}
+
+interface FixedGroupChatsSectionProps {
+  groupTasks: Task[]
+  isCollapsed: boolean
+  isGroupChatsExpanded: boolean
+  setIsGroupChatsExpanded: (expanded: boolean) => void
+  hasMoreGroupTasks: boolean
+  loadAllGroupTasks: () => Promise<void>
+  loadingMoreGroupTasks: boolean
+  viewStatusVersion: number
+  getUnreadCount: (tasks: Task[]) => number
+  setIsMobileSidebarOpen: (open: boolean) => void
+  t: (key: string, options?: Record<string, unknown>) => string
+}
+
+function FixedGroupChatsSection({
+  groupTasks,
+  isCollapsed,
+  isGroupChatsExpanded,
+  setIsGroupChatsExpanded,
+  hasMoreGroupTasks,
+  loadAllGroupTasks,
+  loadingMoreGroupTasks,
+  viewStatusVersion,
+  getUnreadCount,
+  setIsMobileSidebarOpen,
+  t,
+}: FixedGroupChatsSectionProps) {
+  const { projectTaskIds } = useProjectContext()
+
+  const filteredGroupTasks = React.useMemo(
+    () => groupTasks.filter(task => !projectTaskIds.has(task.id)),
+    [groupTasks, projectTaskIds]
+  )
+
+  const unreadGroupChats = filteredGroupTasks.filter(isTaskUnread)
+  const readGroupChats = filteredGroupTasks.filter(task => !isTaskUnread(task))
+  const orderedGroupChats = [...unreadGroupChats, ...readGroupChats]
+  const collapsedGroupChatCount = orderedGroupChats.length
+  const shouldShowGroupChats = orderedGroupChats.length > 0 || hasMoreGroupTasks
+
+  if (!shouldShowGroupChats) return null
+
+  const toggleLabel = isGroupChatsExpanded
+    ? t('common:tasks.group_chats_collapse')
+    : t('common:tasks.group_chats_expand', {
+        count: collapsedGroupChatCount,
+        suffix: hasMoreGroupTasks ? '+' : '',
+      })
+
+  const handleToggleGroupChats = () => {
+    if (!isGroupChatsExpanded && hasMoreGroupTasks) {
+      void loadAllGroupTasks()
+    }
+    setIsGroupChatsExpanded(!isGroupChatsExpanded)
+  }
+
+  return (
+    <div
+      className={`${isCollapsed ? 'px-0' : 'px-2.5'} py-1 border-t border-border-light shrink-0`}
+      data-testid="task-sidebar-group-chat-dock"
+    >
+      {!isCollapsed ? (
+        <>
+          <button
+            type="button"
+            data-testid="task-sidebar-group-chat-toggle"
+            aria-label={toggleLabel}
+            onClick={handleToggleGroupChats}
+            className="flex items-center justify-between w-full h-7 px-1 text-xs font-medium rounded-md text-text-muted hover:text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 transition-colors"
+          >
+            <span className="truncate">{t('common:tasks.group_chats')}</span>
+            {isGroupChatsExpanded ? (
+              <ChevronUp
+                data-testid="task-sidebar-group-chat-chevron"
+                className="h-3.5 w-3.5 flex-shrink-0"
+              />
+            ) : (
+              <ChevronDown
+                data-testid="task-sidebar-group-chat-chevron"
+                className="h-3.5 w-3.5 flex-shrink-0"
+              />
+            )}
+          </button>
+          {isGroupChatsExpanded && orderedGroupChats.length > 0 && (
+            <div className="mt-1 max-h-52 overflow-y-auto task-list-scrollbar">
+              <TaskListSection
+                tasks={orderedGroupChats}
+                title=""
+                unreadCount={getUnreadCount(orderedGroupChats)}
+                onTaskClick={() => setIsMobileSidebarOpen(false)}
+                isCollapsed={isCollapsed}
+                showTitle={false}
+                enableDrag={true}
+                key={`group-chats-${viewStatusVersion}`}
+              />
+            </div>
+          )}
+        </>
+      ) : (
+        <TooltipProvider>
+          <Tooltip delayDuration={300}>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                data-testid="task-sidebar-group-chat-toggle"
+                aria-label={toggleLabel}
+                onClick={handleToggleGroupChats}
+                className="flex items-center justify-center w-full py-1.5 text-text-muted hover:text-text-primary transition-colors"
+              >
+                {isGroupChatsExpanded ? (
+                  <ChevronUp className="h-3.5 w-3.5" />
+                ) : (
+                  <ChevronDown className="h-3.5 w-3.5" />
+                )}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right">
+              <p>{toggleLabel}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )}
+      {isGroupChatsExpanded && orderedGroupChats.length > 0 && isCollapsed && (
+        <div className="max-h-52 overflow-y-auto task-list-scrollbar">
+          <TaskListSection
+            tasks={orderedGroupChats}
+            title=""
+            unreadCount={getUnreadCount(orderedGroupChats)}
+            onTaskClick={() => setIsMobileSidebarOpen(false)}
+            isCollapsed={isCollapsed}
+            showTitle={false}
+            enableDrag={true}
+            key={`group-chats-collapsed-${viewStatusVersion}`}
+          />
+        </div>
+      )}
+      {loadingMoreGroupTasks && (
+        <div className="text-center py-2 text-xs text-text-muted">{t('common:tasks.loading')}</div>
+      )}
+    </div>
   )
 }
