@@ -289,62 +289,67 @@ export default function TaskSidebar({
 
     return (
       <div className="space-y-0.5">
-        {buttons.map(btn => (
-          <div key={btn.path} className="relative group">
-            <Button
-              variant="ghost"
-              onClick={() => handleNavigationClick(btn.path, btn.isActive, btn.buttonPageType)}
-              data-testid={btn.testId}
-              className={`w-full justify-between px-3 h-9 text-sm rounded-md transition-all duration-200 ${
-                btn.isActive
-                  ? 'bg-primary/10 text-primary font-medium hover:bg-primary/15'
-                  : 'text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 hover:scale-[1.02]'
-              }`}
-              size="sm"
-            >
-              <span className="flex items-center">
-                <btn.icon
-                  className={`h-4 w-4 flex-shrink-0 ${btn.isActive ? 'text-primary' : ''}`}
-                />
-                <span
-                  className={`ml-1.5 text-[14px] leading-5 font-medium ${
-                    btn.isActive ? 'text-primary' : 'text-[#444746]'
-                  }`}
-                >
-                  {btn.label}
+        {buttons.map(btn => {
+          const sizeClass =
+            btn.buttonPageType === 'resource-library' ? 'h-11 min-w-[44px] lg:h-9' : 'h-9'
+
+          return (
+            <div key={btn.path} className="relative group">
+              <Button
+                variant="ghost"
+                onClick={() => handleNavigationClick(btn.path, btn.isActive, btn.buttonPageType)}
+                data-testid={btn.testId}
+                className={`w-full justify-between px-3 ${sizeClass} text-sm rounded-md transition-all duration-200 ${
+                  btn.isActive
+                    ? 'bg-primary/10 text-primary font-medium hover:bg-primary/15'
+                    : 'text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 hover:scale-[1.02]'
+                }`}
+                size="sm"
+              >
+                <span className="flex items-center">
+                  <btn.icon
+                    className={`h-4 w-4 flex-shrink-0 ${btn.isActive ? 'text-primary' : ''}`}
+                  />
+                  <span
+                    className={`ml-1.5 text-[14px] leading-5 font-medium ${
+                      btn.isActive ? 'text-primary' : 'text-[#444746]'
+                    }`}
+                  >
+                    {btn.label}
+                  </span>
                 </span>
-              </span>
-              {btn.unreadCount !== undefined && btn.unreadCount > 0 && (
-                <span className="flex items-center justify-center min-w-[18px] h-[18px] px-1.5 text-[11px] font-medium bg-red-500 text-white rounded-full">
-                  {btn.unreadCount > 99 ? '99+' : btn.unreadCount}
-                </span>
+                {btn.unreadCount !== undefined && btn.unreadCount > 0 && (
+                  <span className="flex items-center justify-center min-w-[18px] h-[18px] px-1.5 text-[11px] font-medium bg-red-500 text-white rounded-full">
+                    {btn.unreadCount > 99 ? '99+' : btn.unreadCount}
+                  </span>
+                )}
+              </Button>
+              {btn.isActive && btn.tooltip && (
+                <div className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                  <TooltipProvider>
+                    <Tooltip delayDuration={0}>
+                      <TooltipTrigger asChild>
+                        <button
+                          onClick={e => {
+                            e.stopPropagation()
+                            handleNavigationClick(btn.path, btn.isActive, btn.buttonPageType)
+                          }}
+                          className="flex items-center gap-1 px-1.5 py-0.5 text-xs bg-primary text-white rounded-md hover:bg-primary/90 transition-colors"
+                        >
+                          <Plus className="h-3 w-3" />
+                          <span>{t('common:tasks.new_task')}</span>
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="right">
+                        <p>{btn.tooltip}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
               )}
-            </Button>
-            {btn.isActive && btn.tooltip && (
-              <div className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                <TooltipProvider>
-                  <Tooltip delayDuration={0}>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={e => {
-                          e.stopPropagation()
-                          handleNavigationClick(btn.path, btn.isActive, btn.buttonPageType)
-                        }}
-                        className="flex items-center gap-1 px-1.5 py-0.5 text-xs bg-primary text-white rounded-md hover:bg-primary/90 transition-colors"
-                      >
-                        <Plus className="h-3 w-3" />
-                        <span>{t('common:tasks.new_task')}</span>
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent side="right">
-                      <p>{btn.tooltip}</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              </div>
-            )}
-          </div>
-        ))}
+            </div>
+          )
+        })}
       </div>
     )
   }

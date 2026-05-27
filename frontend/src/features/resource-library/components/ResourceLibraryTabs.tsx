@@ -29,7 +29,7 @@ export function ResourceLibraryTabs({ value, onValueChange }: ResourceLibraryTab
             key={tab}
             type="button"
             variant={isActive ? 'primary' : 'outline'}
-            size="sm"
+            className="h-11 min-w-[44px] px-4 lg:h-9"
             aria-pressed={isActive}
             data-testid={`resource-library-${tab}-tab`}
             onClick={() => onValueChange(tab)}
