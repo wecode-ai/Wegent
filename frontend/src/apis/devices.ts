@@ -79,6 +79,27 @@ export interface UpgradeDeviceResponse {
   message: string
 }
 
+export interface DeviceCommandRequest {
+  command_key: string
+  path?: string
+  args?: string[]
+  env?: Record<string, string>
+  timeout_seconds?: number
+  max_output_bytes?: number
+}
+
+export interface DeviceCommandResponse {
+  success: boolean
+  exit_code?: number | null
+  stdout: string | string[]
+  stderr: string
+  duration: number
+  timed_out?: boolean
+  error?: string | null
+  stdout_truncated?: boolean
+  stderr_truncated?: boolean
+}
+
 /**
  * Device API services
  */
@@ -157,5 +178,17 @@ export const deviceApis = {
     alias: string
   ): Promise<{ message: string; alias: string }> {
     return apiClient.put(`/devices/${encodeURIComponent(deviceId)}/alias`, { alias })
+  },
+
+  /**
+   * Execute a configured command on an online device.
+   *
+   * The backend only accepts command keys registered in its command registry.
+   */
+  async executeCommand(
+    deviceId: string,
+    request: DeviceCommandRequest
+  ): Promise<DeviceCommandResponse> {
+    return apiClient.post(`/devices/${encodeURIComponent(deviceId)}/commands`, request)
   },
 }

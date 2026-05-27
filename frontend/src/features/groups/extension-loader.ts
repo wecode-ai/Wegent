@@ -22,6 +22,8 @@ import type { ComponentType } from 'react'
 export interface GroupExtensionProps {
   groupName: string
   onSuccess: () => void
+  onCancel?: () => void
+  userRole?: string
 }
 
 export interface GroupExtensionListProps {
