@@ -43,7 +43,8 @@ export function getSimpleBotName(botName: string, teamName: string): string {
     return trimmedBotName
   }
 
-  return `${teamName.trim()}-bot`
+  const trimmedTeamName = teamName.trim()
+  return trimmedTeamName ? `${trimmedTeamName}-bot` : 'agent-bot'
 }
 
 export function buildSimpleBotRequest(

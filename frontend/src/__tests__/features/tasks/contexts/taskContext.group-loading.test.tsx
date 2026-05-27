@@ -144,4 +144,39 @@ describe('TaskContext group task loading', () => {
     expect(mockedTaskApis.getGroupTasksLite).not.toHaveBeenCalledWith({ page: 4, limit: 50 })
     expect(contextProbe.current?.hasMoreGroupTasks).toBe(false)
   })
+
+  it('stops personal grouped history pagination when the last page is partial', async () => {
+    mockedTaskApis.getPersonalTaskGroupsLite.mockResolvedValueOnce({
+      total: 1,
+      items: [
+        {
+          group_type: 'team',
+          group_key: 'team:1',
+          team_id: 1,
+          team_name: 'support-agent',
+          team_namespace: 'default',
+          team_display_name: 'Support Agent',
+          team_icon: null,
+          device_id: null,
+          device_name: null,
+          items: [createGroupTask(1)],
+        },
+      ],
+    })
+
+    render(
+      <TaskContextProvider>
+        <ContextProbe />
+      </TaskContextProvider>
+    )
+
+    await waitFor(() => {
+      expect(mockedTaskApis.getPersonalTaskGroupsLite).toHaveBeenCalledWith({ page: 1, limit: 50 })
+    })
+
+    await waitFor(() => {
+      expect(contextProbe.current?.personalTasks).toHaveLength(1)
+    })
+    expect(contextProbe.current?.hasMorePersonalTasks).toBe(false)
+  })
 })

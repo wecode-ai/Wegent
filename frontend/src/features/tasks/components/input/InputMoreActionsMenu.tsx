@@ -74,7 +74,6 @@ export function InputMoreActionsMenu({
             <PopoverTrigger asChild>
               <div className="relative">
                 <ActionButton
-                  onClick={() => setOpen(current => !current)}
                   disabled={disabled}
                   icon={<MoreHorizontal className="h-4 w-4" />}
                   title={t('common:teams.more_actions', '更多操作')}

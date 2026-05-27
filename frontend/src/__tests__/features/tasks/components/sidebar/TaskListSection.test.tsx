@@ -100,6 +100,7 @@ describe('TaskListSection', () => {
 
     const moreButton = screen.getByTestId('task-list-section-show-more')
     expect(moreButton).toHaveTextContent('common:tasks.show_more')
+    expect(moreButton).toHaveClass('h-11', 'min-w-[44px]')
 
     fireEvent.click(moreButton)
 

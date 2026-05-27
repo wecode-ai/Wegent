@@ -88,6 +88,15 @@ function normalizeSimpleBindMode(team: Team): TaskType[] {
   return getDefaultSimpleBindMode()
 }
 
+function getInitialBindMode(team: Team): TaskType[] {
+  if (team.bind_mode && Array.isArray(team.bind_mode) && team.bind_mode.length > 0) {
+    const hasNonSimpleMode = team.bind_mode.some(mode => !SIMPLE_BIND_MODES.has(mode))
+    return hasNonSimpleMode ? team.bind_mode : normalizeSimpleBindMode(team)
+  }
+
+  return normalizeSimpleBindMode(team)
+}
+
 function resolveSimpleExecutorFromBot(bot: Bot | undefined): {
   mode: SimpleExecutorMode
   customShellName: string
@@ -284,7 +293,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       const m = (formTeam.workflow?.mode as TeamMode) || 'solo'
       setMode(m)
       setAdvancedOpen(m !== 'solo')
-      setBindMode(normalizeSimpleBindMode(formTeam))
+      setBindMode(getInitialBindMode(formTeam))
       const ids = formTeam.bots.map(b => String(b.bot_id))
       setSelectedBotKeys(ids)
       const leaderBot = formTeam.bots.find(b => b.role === 'leader') || formTeam.bots[0]

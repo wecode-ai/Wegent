@@ -76,7 +76,7 @@ export function SettingsTabNav({
   onGroupChange,
   refreshTrigger,
 }: SettingsTabNavProps) {
-  const { t } = useTranslation(['common', 'groups', 'pet'])
+  const { t } = useTranslation('settings')
   const isMobile = useIsMobile()
   const indicatorContainerRef = useRef<HTMLDivElement | null>(null)
   const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({})
@@ -111,31 +111,31 @@ export function SettingsTabNav({
         key: 'team',
         personalId: 'personal-team',
         groupId: 'group-team',
-        label: t('settings.team'),
+        label: t('navigation.team'),
       },
       {
         key: 'models',
         personalId: 'personal-models',
         groupId: 'group-models',
-        label: t('settings.models'),
+        label: t('navigation.models'),
       },
       {
         key: 'shells',
         personalId: 'personal-shells',
         groupId: 'group-shells',
-        label: t('settings.shells'),
+        label: t('navigation.shells'),
       },
       {
         key: 'skills',
         personalId: 'personal-skills',
         groupId: 'group-skills',
-        label: t('settings.skills'),
+        label: t('navigation.skills'),
       },
       {
         key: 'retrievers',
         personalId: 'personal-retrievers',
         groupId: 'group-retrievers',
-        label: t('settings.retrievers'),
+        label: t('navigation.retrievers'),
       },
     ],
     [t]
@@ -145,9 +145,9 @@ export function SettingsTabNav({
   // Note: group-manager is now accessed via the group dropdown menu
   const otherTabs: TabItem[] = useMemo(
     () => [
-      { id: 'general', label: t('settings.sections.general'), category: 'other' },
-      { id: 'integrations', label: t('settings.integrations'), category: 'other' },
-      { id: 'api-keys', label: t('settings.api_keys'), category: 'other' },
+      { id: 'general', label: t('sections.general'), category: 'other' },
+      { id: 'integrations', label: t('navigation.integrations'), category: 'other' },
+      { id: 'api-keys', label: t('navigation.apiKeys'), category: 'other' },
       { id: 'pet', label: t('pet:title'), category: 'other' },
     ],
     [t]
@@ -180,12 +180,12 @@ export function SettingsTabNav({
     }
   }
   // Determine current scope based on active tab
-  const getCurrentScope = (): ResourceScope => {
+  const getCurrentScope = useCallback((): ResourceScope => {
     if (activeTab.startsWith('group-') && activeTab !== 'group-manager') {
       return 'group'
     }
     return 'personal'
-  }
+  }, [activeTab])
 
   const [currentScope, setCurrentScope] = useState<ResourceScope>(getCurrentScope())
 
@@ -195,7 +195,7 @@ export function SettingsTabNav({
     if (newScope !== currentScope) {
       setCurrentScope(newScope)
     }
-  }, [activeTab, currentScope, getCurrentScope])
+  }, [currentScope, getCurrentScope])
 
   // Get the current resource tab key
   const getCurrentResourceKey = (): string | null => {
@@ -239,6 +239,24 @@ export function SettingsTabNav({
     return activeTab === tab.personalId || activeTab === tab.groupId
   }
 
+  const selectedGroupLabel =
+    selectedGroup &&
+    (groups.find(group => group.name === selectedGroup)?.display_name || selectedGroup)
+
+  const scopeDescription = (() => {
+    if (activeTab === 'group-manager') {
+      return t('navigation.groupManagerDescription')
+    }
+
+    if (currentScope === 'group') {
+      return selectedGroupLabel
+        ? t('navigation.groupResourcesDescriptionWithName', { groupName: selectedGroupLabel })
+        : t('navigation.groupResourcesDescription')
+    }
+
+    return t('navigation.personalResourcesDescription')
+  })()
+
   // Update the indicator position when the active tab changes
   useEffect(() => {
     const updateIndicator = () => {
@@ -277,35 +295,42 @@ export function SettingsTabNav({
           <button
             type="button"
             onClick={() => handleScopeChange('personal')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+            data-testid="settings-scope-personal"
+            aria-pressed={currentScope === 'personal' && activeTab !== 'group-manager'}
+            className={`flex h-11 min-w-[44px] items-center gap-1.5 rounded-md px-4 text-sm font-medium transition-colors ${
               currentScope === 'personal' && activeTab !== 'group-manager'
                 ? 'bg-primary text-white'
                 : 'bg-muted text-text-secondary hover:text-text-primary'
             }`}
           >
             <User className="w-3.5 h-3.5" />
-            {t('settings.personal')}
+            {t('navigation.personalResources')}
           </button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                data-testid="settings-scope-group"
+                aria-pressed={currentScope === 'group' || activeTab === 'group-manager'}
+                className={`flex h-11 min-w-[44px] items-center gap-1.5 rounded-md px-4 text-sm font-medium transition-colors ${
                   currentScope === 'group' || activeTab === 'group-manager'
                     ? 'bg-primary text-white'
                     : 'bg-muted text-text-secondary hover:text-text-primary'
                 }`}
               >
                 <Users className="w-3.5 h-3.5" />
-                {currentScope === 'group' && selectedGroup
-                  ? groups.find(g => g.name === selectedGroup)?.display_name || selectedGroup
-                  : t('settings.groups')}
+                <span>{t('navigation.groupResources')}</span>
+                {currentScope === 'group' && selectedGroup && (
+                  <span className="max-w-[120px] truncate text-xs opacity-80">
+                    {groups.find(g => g.name === selectedGroup)?.display_name || selectedGroup}
+                  </span>
+                )}
                 <ChevronDown className="w-3.5 h-3.5 ml-1" />
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="min-w-[160px]">
               {groupsLoading ? (
-                <DropdownMenuItem disabled>{t('actions.loading')}</DropdownMenuItem>
+                <DropdownMenuItem disabled>{t('common:actions.loading')}</DropdownMenuItem>
               ) : groups.length === 0 ? (
                 <DropdownMenuItem disabled>{t('groups:groupManager.noGroups')}</DropdownMenuItem>
               ) : (
@@ -325,7 +350,7 @@ export function SettingsTabNav({
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleGroupManagerClick}>
                 <Settings className="w-4 h-4 mr-2" />
-                {t('settings.groupManager')}
+                {t('navigation.groupManager')}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -334,12 +359,14 @@ export function SettingsTabNav({
         {/* Tab selector */}
         <Select value={activeTab} onValueChange={value => onTabChange(value as SettingsTabId)}>
           <SelectTrigger className="w-full">
-            <SelectValue placeholder={t('settings.sections.general')} />
+            <SelectValue placeholder={t('sections.general')} />
           </SelectTrigger>
           <SelectContent>
             <SelectGroup>
               <SelectLabel>
-                {currentScope === 'personal' ? t('settings.personal') : t('settings.groups')}
+                {currentScope === 'personal'
+                  ? t('navigation.personalResources')
+                  : t('navigation.groupResources')}
               </SelectLabel>
               {resourceTabs.map(tab => (
                 <SelectItem
@@ -351,7 +378,7 @@ export function SettingsTabNav({
               ))}
             </SelectGroup>
             <SelectGroup>
-              <SelectLabel>{t('settings.sections.general')}</SelectLabel>
+              <SelectLabel>{t('sections.general')}</SelectLabel>
               {otherTabs.map(tab => (
                 <SelectItem key={tab.id} value={tab.id}>
                   {tab.label}
@@ -364,57 +391,49 @@ export function SettingsTabNav({
     )
   }
 
-  // Desktop: Horizontal tab navigation with scope toggle
+  // Desktop: Two-level navigation with prominent scope switching
   return (
-    <div
-      ref={indicatorContainerRef}
-      className="relative flex items-center gap-1 px-4 py-2 border-t border-border bg-surface overflow-x-auto"
-    >
-      {/* Sliding indicator */}
-      <span
-        className="pointer-events-none absolute bottom-0 left-0 h-0.5 rounded-full bg-primary transition-all duration-300 ease-out"
-        style={{
-          width: indicatorStyle.width,
-          left: indicatorStyle.left,
-          opacity: indicatorStyle.width ? 1 : 0,
-        }}
-        aria-hidden="true"
-      />
-
-      {/* Scope toggle */}
-      <div className="flex items-center bg-muted rounded-lg p-0.5 mr-2">
+    <div className="border-t border-border bg-surface">
+      <div className="flex items-center gap-2 px-4 py-3">
         <button
           type="button"
           onClick={() => handleScopeChange('personal')}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md transition-all duration-200 ${
+          data-testid="settings-scope-personal"
+          aria-pressed={currentScope === 'personal' && activeTab !== 'group-manager'}
+          className={`flex h-10 items-center gap-2 rounded-md border px-4 text-sm font-medium transition-colors duration-200 ${
             currentScope === 'personal' && activeTab !== 'group-manager'
-              ? 'bg-surface text-primary shadow-sm'
-              : 'text-text-muted hover:text-text-secondary'
+              ? 'border-primary bg-primary text-white'
+              : 'border-border bg-base text-text-secondary hover:border-primary/40 hover:text-text-primary'
           }`}
         >
-          <User className="w-3.5 h-3.5" />
-          {t('settings.personal')}
+          <User className="w-4 h-4" />
+          {t('navigation.personalResources')}
         </button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
               type="button"
-              className={`flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md transition-all duration-200 ${
+              data-testid="settings-scope-group"
+              aria-pressed={currentScope === 'group' || activeTab === 'group-manager'}
+              className={`flex h-10 items-center gap-2 rounded-md border px-4 text-sm font-medium transition-colors duration-200 ${
                 currentScope === 'group' || activeTab === 'group-manager'
-                  ? 'bg-surface text-primary shadow-sm'
-                  : 'text-text-muted hover:text-text-secondary'
+                  ? 'border-primary bg-primary text-white'
+                  : 'border-border bg-base text-text-secondary hover:border-primary/40 hover:text-text-primary'
               }`}
             >
-              <Users className="w-3.5 h-3.5" />
-              {currentScope === 'group' && selectedGroup
-                ? groups.find(g => g.name === selectedGroup)?.display_name || selectedGroup
-                : t('settings.groups')}
-              <ChevronDown className="w-3 h-3 ml-0.5" />
+              <Users className="w-4 h-4" />
+              <span>{t('navigation.groupResources')}</span>
+              {currentScope === 'group' && selectedGroup && (
+                <span className="max-w-[140px] truncate text-xs opacity-80">
+                  {groups.find(g => g.name === selectedGroup)?.display_name || selectedGroup}
+                </span>
+              )}
+              <ChevronDown className="w-3.5 h-3.5 ml-0.5" />
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="min-w-[160px]">
+          <DropdownMenuContent align="start" className="min-w-[180px]">
             {groupsLoading ? (
-              <DropdownMenuItem disabled>{t('actions.loading')}</DropdownMenuItem>
+              <DropdownMenuItem disabled>{t('common:actions.loading')}</DropdownMenuItem>
             ) : groups.length === 0 ? (
               <DropdownMenuItem disabled>{t('groups:groupManager.noGroups')}</DropdownMenuItem>
             ) : (
@@ -434,54 +453,72 @@ export function SettingsTabNav({
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={handleGroupManagerClick}>
               <Settings className="w-4 h-4 mr-2" />
-              {t('settings.groupManager')}
+              {t('navigation.groupManager')}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        <div className="ml-auto min-w-0 text-right">
+          <div className="text-xs font-medium text-text-muted">{t('navigation.scopeLabel')}</div>
+          <div className="truncate text-sm text-text-secondary" title={scopeDescription}>
+            {scopeDescription}
+          </div>
+        </div>
       </div>
 
-      {/* Resource tabs */}
-      {resourceTabs.map(tab => (
-        <button
-          key={tab.key}
-          type="button"
-          ref={element => {
-            itemRefs.current[currentScope === 'personal' ? tab.personalId : tab.groupId] = element
+      <div
+        ref={indicatorContainerRef}
+        className="relative flex items-center gap-1 overflow-x-auto border-t border-border/70 px-4 py-2"
+      >
+        <span
+          className="pointer-events-none absolute bottom-0 left-0 h-0.5 rounded-full bg-primary transition-all duration-300 ease-out"
+          style={{
+            width: indicatorStyle.width,
+            left: indicatorStyle.left,
+            opacity: indicatorStyle.width ? 1 : 0,
           }}
-          onClick={() => handleResourceTabClick(tab)}
-          className={`relative px-3 py-2 text-sm font-medium whitespace-nowrap rounded-md transition-colors duration-200 ${
-            isResourceTabActive(tab)
-              ? 'text-primary bg-primary/10'
-              : 'text-text-secondary hover:text-text-primary hover:bg-muted'
-          }`}
-          aria-current={isResourceTabActive(tab) ? 'page' : undefined}
-        >
-          {tab.label}
-        </button>
-      ))}
+          aria-hidden="true"
+        />
 
-      {/* Separator */}
-      <div className="h-5 w-px bg-border mx-2" aria-hidden="true" />
+        {resourceTabs.map(tab => (
+          <button
+            key={tab.key}
+            type="button"
+            ref={element => {
+              itemRefs.current[currentScope === 'personal' ? tab.personalId : tab.groupId] = element
+            }}
+            onClick={() => handleResourceTabClick(tab)}
+            className={`relative px-3 py-2 text-sm font-medium whitespace-nowrap rounded-md transition-colors duration-200 ${
+              isResourceTabActive(tab)
+                ? 'text-primary bg-primary/10'
+                : 'text-text-secondary hover:text-text-primary hover:bg-muted'
+            }`}
+            aria-current={isResourceTabActive(tab) ? 'page' : undefined}
+          >
+            {tab.label}
+          </button>
+        ))}
 
-      {/* Other tabs */}
-      {otherTabs.map(tab => (
-        <button
-          key={tab.id}
-          type="button"
-          ref={element => {
-            itemRefs.current[tab.id] = element
-          }}
-          onClick={() => onTabChange(tab.id)}
-          className={`relative px-3 py-2 text-sm font-medium whitespace-nowrap rounded-md transition-colors duration-200 ${
-            activeTab === tab.id
-              ? 'text-primary bg-primary/10'
-              : 'text-text-secondary hover:text-text-primary hover:bg-muted'
-          }`}
-          aria-current={activeTab === tab.id ? 'page' : undefined}
-        >
-          {tab.label}
-        </button>
-      ))}
+        <div className="h-5 w-px bg-border mx-2" aria-hidden="true" />
+
+        {otherTabs.map(tab => (
+          <button
+            key={tab.id}
+            type="button"
+            ref={element => {
+              itemRefs.current[tab.id] = element
+            }}
+            onClick={() => onTabChange(tab.id)}
+            className={`relative px-3 py-2 text-sm font-medium whitespace-nowrap rounded-md transition-colors duration-200 ${
+              activeTab === tab.id
+                ? 'text-primary bg-primary/10'
+                : 'text-text-secondary hover:text-text-primary hover:bg-muted'
+            }`}
+            aria-current={activeTab === tab.id ? 'page' : undefined}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
     </div>
   )
 }

@@ -730,7 +730,7 @@ export default function TaskListSection({
           type="button"
           data-testid="task-list-section-show-more"
           onClick={() => setIsExpanded(current => !current)}
-          className="mt-0.5 flex h-8 w-full items-center gap-1 rounded-xl px-3 text-xs font-medium text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
+          className="mt-0.5 flex h-11 min-w-[44px] w-full items-center gap-1 rounded-xl px-3 text-xs font-medium text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
         >
           {isExpanded ? (
             <ChevronUp className="h-3.5 w-3.5 flex-shrink-0" />

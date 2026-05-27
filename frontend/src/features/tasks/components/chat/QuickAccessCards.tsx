@@ -345,17 +345,13 @@ export function QuickAccessCards({
     const createdTeam = createdTeamRef.current
     createdTeamRef.current = null
 
-    if (_onRefreshTeams) {
+    if (_onRefreshTeams && createdTeam) {
       try {
         const refreshedTeams = await _onRefreshTeams()
-        if (createdTeam) {
-          onTeamSelect(refreshedTeams.find(t => t.id === createdTeam.id) || createdTeam)
-        }
+        onTeamSelect(refreshedTeams.find(t => t.id === createdTeam.id) || createdTeam)
       } catch (error) {
         console.error('Failed to refresh teams after creating agent:', error)
-        if (createdTeam) {
-          onTeamSelect(createdTeam)
-        }
+        onTeamSelect(createdTeam)
       }
       return
     }
@@ -489,7 +485,9 @@ export function QuickAccessCards({
     if (!_showWizardButton) return null
 
     return (
-      <div
+      <button
+        type="button"
+        data-testid="quick-create-agent"
         onClick={handleOpenCreateAgent}
         className="group relative flex flex-col justify-center items-center cursor-pointer transition-all duration-200 border border-dashed border-border bg-base hover:border-primary hover:bg-primary/5 hover:shadow-[0_2px_12px_0_rgba(0,0,0,0.1)]"
         style={{
@@ -505,7 +503,7 @@ export function QuickAccessCards({
         <span className="text-[10px] font-medium text-text-primary group-hover:text-primary transition-colors text-center leading-tight">
           {t('teams.create_first_team')}
         </span>
-      </div>
+      </button>
     )
   }
 

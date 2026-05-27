@@ -317,9 +317,10 @@ describe('TaskSidebar scroll structure', () => {
     const moreButton = screen.getAllByTestId('task-sidebar-more-button')[0]
 
     expect(logoSection).toHaveClass('pt-2', 'pb-3')
-    expect(newConversationButton).toHaveClass('h-8')
-    expect(automationButton).toHaveClass('h-8')
-    expect(moreButton).toHaveClass('h-8')
+    expect(newConversationButton).toHaveClass('h-11', 'min-w-[44px]')
+    expect(automationButton).toHaveClass('h-11', 'min-w-[44px]')
+    expect(moreButton).toHaveClass('h-11', 'min-w-[44px]')
+    expect(newConversationButton).toHaveAttribute('data-testid', 'new-agent-button')
   })
 
   it('keeps the user menu outside of the scroll container', () => {
@@ -368,6 +369,7 @@ describe('TaskSidebar scroll structure', () => {
 
     const groupToggle = within(groupDock).getByTestId('task-sidebar-group-chat-toggle')
     expect(groupToggle).toHaveTextContent('common:tasks.group_chats')
+    expect(groupToggle).toHaveClass('h-11', 'min-w-[44px]')
     expect(groupToggle).not.toHaveTextContent('(+2)')
     expect(within(groupToggle).getByTestId('task-sidebar-group-chat-chevron')).toHaveClass(
       'lucide-chevron-down'

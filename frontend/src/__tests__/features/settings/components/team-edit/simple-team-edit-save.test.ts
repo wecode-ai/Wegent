@@ -51,6 +51,7 @@ const teamForm: SimpleTeamFormValue = {
 describe('simple team edit save helpers', () => {
   it('derives a bot name from team name when bot name is empty', () => {
     expect(getSimpleBotName('', 'support-agent')).toBe('support-agent-bot')
+    expect(getSimpleBotName('', '   ')).toBe('agent-bot')
     expect(getSimpleBotName('Helper', 'support-agent')).toBe('Helper')
   })
 

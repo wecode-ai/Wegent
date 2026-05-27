@@ -26,6 +26,7 @@ import { RichSkillSelector } from '@/features/settings/components/skills/RichSki
 import { useTranslation } from '@/hooks/useTranslation'
 import type { KnowledgeBaseDefaultRef } from '@/types/api'
 import { SimpleConfigGroup, SimpleConfigRow } from './SimpleConfigLayout'
+import { parseModelSelectValue, toModelSelectValue } from './model-select-utils'
 
 interface SimpleBotCoreConfigFormProps {
   modelName: string
@@ -47,28 +48,6 @@ interface SimpleBotCoreConfigFormProps {
   onPromptChange: (value: string) => void
   scope?: 'personal' | 'group' | 'all' | 'public'
   groupName?: string
-}
-
-function toModelSelectValue(name: string, type?: ModelTypeEnum, namespace?: string): string {
-  if (!name) return '__none__'
-  return `${name}:${type || ''}:${namespace || 'default'}`
-}
-
-function parseModelSelectValue(value: string): {
-  name: string
-  type?: ModelTypeEnum
-  namespace?: string
-} {
-  if (value === '__none__') {
-    return { name: '', type: undefined, namespace: undefined }
-  }
-
-  const [name, type, namespace] = value.split(':')
-  return {
-    name,
-    type: (type as ModelTypeEnum) || undefined,
-    namespace: namespace || 'default',
-  }
 }
 
 export default function SimpleBotCoreConfigForm({

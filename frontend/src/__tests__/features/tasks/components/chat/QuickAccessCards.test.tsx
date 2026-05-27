@@ -46,8 +46,15 @@ jest.mock('@/hooks/use-toast', () => ({
 
 jest.mock('@/features/settings/components/TeamEditDialog', () => ({
   __esModule: true,
-  default: ({ open }: { open: boolean }) =>
-    open ? <div data-testid="simple-team-edit-dialog">Simple Team Edit Dialog</div> : null,
+  default: ({ open, onClose }: { open: boolean; onClose: () => void }) =>
+    open ? (
+      <div data-testid="simple-team-edit-dialog">
+        Simple Team Edit Dialog
+        <button type="button" onClick={onClose}>
+          Close dialog
+        </button>
+      </div>
+    ) : null,
 }))
 
 const mockGetQuickAccess = userApis.getQuickAccess as jest.MockedFunction<
@@ -252,9 +259,44 @@ describe('QuickAccessCards', () => {
       { showWizardButton: true }
     )
 
-    fireEvent.click(await screen.findByText('Create Agent'))
+    const quickCreate = await screen.findByTestId('quick-create-agent')
+    expect(quickCreate.tagName).toBe('BUTTON')
+    expect(quickCreate).toHaveAttribute('type', 'button')
+
+    fireEvent.click(quickCreate)
 
     expect(screen.getByTestId('simple-team-edit-dialog')).toBeInTheDocument()
+  })
+
+  test('does not refresh teams when the create dialog closes without a created agent', async () => {
+    const onRefreshTeams = jest.fn().mockResolvedValue([])
+    renderQuickAccessCards(
+      [makeTeam({ id: 2, name: 'system-team', description: 'System description' })],
+      {
+        system_version: 2,
+        system_team_ids: [2],
+        user_version: 2,
+        show_system_recommended: false,
+        teams: [
+          {
+            id: 2,
+            name: 'system-team',
+            display_name: 'System Team Display',
+            is_system: true,
+            recommended_mode: 'chat',
+          },
+        ],
+      },
+      { showWizardButton: true, onRefreshTeams }
+    )
+
+    fireEvent.click(await screen.findByTestId('quick-create-agent'))
+    fireEvent.click(screen.getByRole('button', { name: 'Close dialog' }))
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('simple-team-edit-dialog')).not.toBeInTheDocument()
+    })
+    expect(onRefreshTeams).not.toHaveBeenCalled()
   })
 
   test('reorders quick access teams by dragging a hidden team in the more popover', async () => {

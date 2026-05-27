@@ -54,6 +54,23 @@
     "discard_changes": "放弃更改",
     "reset_to_default": "恢复默认"
   },
+  "navigation": {
+    "team": "智能体",
+    "models": "模型",
+    "shells": "执行器",
+    "skills": "技能",
+    "retrievers": "检索引擎",
+    "integrations": "集成",
+    "apiKeys": "API 密钥",
+    "groupManager": "组管理",
+    "personalResources": "个人资源",
+    "groupResources": "组资源",
+    "scopeLabel": "当前范围",
+    "personalResourcesDescription": "正在管理你个人名下的智能体、模型、执行器、技能和检索引擎。",
+    "groupResourcesDescription": "选择一个组后，可管理该组内的共享资源。",
+    "groupResourcesDescriptionWithName": "正在管理「{{groupName}}」组内的共享资源。",
+    "groupManagerDescription": "管理组、成员和权限。"
+  },
   "skills": {
     "search_skills": "在市场搜索",
     "search_skills_title": "从技能市场搜索",
@@ -89,6 +106,10 @@
     }
   },
   "team": {
+    "list": {
+      "filterDevice": "设备",
+      "goToDevice": "去设备"
+    },
     "simple": {
       "advanced_title": "高级配置",
       "advanced_description": "协作模式、多机器人编排和更细的角色设置都在这里。",

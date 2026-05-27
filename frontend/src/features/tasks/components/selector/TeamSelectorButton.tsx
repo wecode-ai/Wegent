@@ -62,7 +62,7 @@ export default function TeamSelectorButton({
   iconOnly = false,
   triggerTestId = 'team-selector',
 }: TeamSelectorButtonProps) {
-  const { t } = useTranslation(['common', 'wizard'])
+  const { t } = useTranslation('tasks')
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -163,6 +163,7 @@ export default function TeamSelectorButton({
         <div className="border-t border-primary/10 bg-base mt-2 flex items-center gap-1 p-1">
           {/* Quick Create Button - Left */}
           <div
+            data-testid="quick-create-button"
             className={cn(
               'cursor-pointer group flex-1',
               'flex items-center justify-center space-x-1.5 text-xs text-text-secondary',
@@ -188,6 +189,7 @@ export default function TeamSelectorButton({
 
           {/* Settings Button - Right */}
           <div
+            data-testid="settings-button"
             className={cn(
               'cursor-pointer group flex-1',
               'flex items-center justify-center space-x-1.5 text-xs text-text-secondary',

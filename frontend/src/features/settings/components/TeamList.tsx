@@ -14,6 +14,7 @@ import {
   ChatBubbleLeftEllipsisIcon,
   ShareIcon,
   CodeBracketIcon,
+  CpuChipIcon,
   LinkSlashIcon,
   SparklesIcon,
 } from '@heroicons/react/24/outline'
@@ -64,6 +65,12 @@ import {
 } from '@/components/ui/dropdown'
 import { listGroups } from '@/apis/groups'
 import type { Group } from '@/types/group'
+import {
+  filterTeamsByMode,
+  getTeamTargetPage,
+  type TeamModeFilter,
+  type TeamTargetPage,
+} from '@/features/tasks/components/selector/team-selector-utils'
 
 interface TeamListProps {
   scope?: 'personal' | 'group' | 'all'
@@ -71,9 +78,6 @@ interface TeamListProps {
   groupRoleMap?: Map<string, BaseRole>
   onEditResource?: (namespace: string) => void
 }
-
-// Mode filter type
-type ModeFilter = 'all' | 'chat' | 'code'
 
 export default function TeamList({
   scope = 'personal',
@@ -100,7 +104,7 @@ export default function TeamList({
   const [isDeleting, setIsDeleting] = useState(false)
   const [botListVisible, setBotListVisible] = useState(false)
   const [editDialogOpen, setEditDialogOpen] = useState(false)
-  const [modeFilter, setModeFilter] = useState<ModeFilter>('all')
+  const [modeFilter, setModeFilter] = useState<TeamModeFilter>('all')
   const [wizardOpen, setWizardOpen] = useState(false)
   const [copyingTeamId, setCopyingTeamId] = useState<number | null>(null)
   const [skillsDialogOpen, setSkillsDialogOpen] = useState(false)
@@ -290,37 +294,28 @@ export default function TeamList({
     setWizardOpen(true)
   }
 
-  // Get target page based on team's bind_mode and current filter
-  const getTargetPage = (team: Team): 'chat' | 'code' | 'knowledge' | 'task' | 'video' => {
-    const bindMode = team.bind_mode || ['chat', 'code']
-    // If team only supports one mode, use that
-    if (bindMode.length === 1) {
-      return bindMode[0] as 'chat' | 'code' | 'knowledge' | 'task' | 'video'
+  const getActionTitle = (targetPage: TeamTargetPage) => {
+    if (targetPage === 'code') {
+      return t('teams.go_to_code')
     }
-    // If team supports both, use current filter (default to 'chat' if filter is 'all')
-    if (modeFilter !== 'all') {
-      return modeFilter
+
+    if (targetPage === 'devices/chat') {
+      return t('settings:team.list.goToDevice')
     }
-    // Default to 'chat' when filter is 'all' and team supports both
-    return 'chat'
+
+    return t('teams.go_to_chat')
   }
 
   const handleChatTeam = (team: Team) => {
     const params = new URLSearchParams()
     params.set('teamId', String(team.id))
-    const targetPage = getTargetPage(team)
+    const targetPage = getTeamTargetPage(team, modeFilter)
     router.push(`/${targetPage}?${params.toString()}`)
   }
 
   // Filter teams based on mode filter
   const filteredTeams = useMemo(() => {
-    if (modeFilter === 'all') {
-      return teams
-    }
-    return teams.filter(team => {
-      const bindMode = team.bind_mode || ['chat', 'code']
-      return bindMode.includes(modeFilter)
-    })
+    return filterTeamsByMode(teams, modeFilter)
   }, [teams, modeFilter])
 
   // Helper function to check permissions for a specific group resource
@@ -515,6 +510,7 @@ export default function TeamList({
             <button
               type="button"
               onClick={() => setModeFilter('all')}
+              data-testid="team-mode-filter-all"
               className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
                 modeFilter === 'all'
                   ? 'bg-primary text-white'
@@ -526,6 +522,7 @@ export default function TeamList({
             <button
               type="button"
               onClick={() => setModeFilter('chat')}
+              data-testid="team-mode-filter-chat"
               className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
                 modeFilter === 'chat'
                   ? 'bg-primary text-white'
@@ -538,6 +535,7 @@ export default function TeamList({
             <button
               type="button"
               onClick={() => setModeFilter('code')}
+              data-testid="team-mode-filter-code"
               className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
                 modeFilter === 'code'
                   ? 'bg-primary text-white'
@@ -546,6 +544,19 @@ export default function TeamList({
             >
               <CodeBracketIcon className="w-4 h-4" />
               {t('teams.filter_code')}
+            </button>
+            <button
+              type="button"
+              onClick={() => setModeFilter('task')}
+              data-testid="team-mode-filter-device"
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                modeFilter === 'task'
+                  ? 'bg-primary text-white'
+                  : 'bg-muted text-text-secondary hover:text-text-primary hover:bg-hover'
+              }`}
+            >
+              <CpuChipIcon className="w-4 h-4" />
+              {t('settings:team.list.filterDevice')}
             </button>
           </div>
           {isLoading ? (
@@ -642,15 +653,13 @@ export default function TeamList({
                             variant="ghost"
                             size="icon"
                             onClick={() => handleChatTeam(team)}
-                            title={
-                              getTargetPage(team) === 'code'
-                                ? t('teams.go_to_code')
-                                : t('teams.go_to_chat')
-                            }
+                            title={getActionTitle(getTeamTargetPage(team, modeFilter))}
                             className="h-7 w-7 sm:h-8 sm:w-8"
                           >
-                            {getTargetPage(team) === 'code' ? (
+                            {getTeamTargetPage(team, modeFilter) === 'code' ? (
                               <CodeBracketIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                            ) : getTeamTargetPage(team, modeFilter) === 'devices/chat' ? (
+                              <CpuChipIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                             ) : (
                               <ChatBubbleLeftEllipsisIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                             )}

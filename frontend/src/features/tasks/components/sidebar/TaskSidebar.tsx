@@ -318,7 +318,7 @@ export default function TaskSidebar({
               variant="ghost"
               onClick={() => handleNavigationClick(btn.path, btn.isActive, btn.buttonPageType)}
               data-testid={`task-sidebar-nav-${btn.buttonPageType}-button`}
-              className={`w-full justify-between px-3 h-8 text-sm rounded-md transition-all duration-200 ${
+              className={`w-full justify-between px-3 h-11 min-w-[44px] text-sm rounded-md transition-all duration-200 ${
                 btn.isActive
                   ? 'bg-primary/10 text-primary font-medium hover:bg-primary/15'
                   : 'text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 hover:scale-[1.02]'
@@ -349,11 +349,13 @@ export default function TaskSidebar({
                   <Tooltip delayDuration={0}>
                     <TooltipTrigger asChild>
                       <button
+                        type="button"
+                        data-testid={`new-${btn.buttonPageType}-button`}
                         onClick={e => {
                           e.stopPropagation()
                           handleNavigationClick(btn.path, btn.isActive, btn.buttonPageType)
                         }}
-                        className="flex items-center gap-1 px-1.5 py-0.5 text-xs bg-primary text-white rounded-md hover:bg-primary/90 transition-colors"
+                        className="flex h-11 min-w-[44px] items-center gap-1 px-2 text-xs bg-primary text-white rounded-md hover:bg-primary/90 transition-colors"
                       >
                         <Plus className="h-3 w-3" />
                         <span>{t('common:tasks.new_task')}</span>
@@ -396,7 +398,7 @@ export default function TaskSidebar({
               variant="ghost"
               data-testid="task-sidebar-more-button"
               onFocus={() => openMoreNavigation(menuId)}
-              className={`w-full justify-between px-3 h-8 text-sm rounded-md transition-all duration-200 ${
+              className={`w-full justify-between px-3 h-11 min-w-[44px] text-sm rounded-md transition-all duration-200 ${
                 hasActiveItem
                   ? 'bg-primary/10 text-primary font-medium hover:bg-primary/15'
                   : 'text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 hover:scale-[1.02]'
@@ -443,7 +445,7 @@ export default function TaskSidebar({
             <DropdownMenuItem
               key={btn.path}
               data-testid={`task-sidebar-more-${btn.buttonPageType}-button`}
-              className={`h-8 gap-2 px-2 text-sm ${
+              className={`h-11 min-w-[44px] gap-2 px-2 text-sm ${
                 btn.isActive
                   ? 'bg-primary/10 text-primary font-medium focus:bg-primary/15'
                   : 'text-text-primary focus:bg-[rgb(238,238,238)] dark:focus:bg-white/10'
@@ -509,11 +511,13 @@ export default function TaskSidebar({
                       >
                         <PanelLeftOpen className="h-4 w-4 text-text-primary flex-shrink-0" />
                         <button
+                          type="button"
+                          data-testid="new-agent-button"
                           onClick={e => {
                             e.stopPropagation()
                             handleNewAgentClick()
                           }}
-                          className="flex-shrink-0"
+                          className="flex h-11 min-w-[44px] flex-shrink-0 items-center justify-center"
                           aria-label={t('common:tasks.new_conversation')}
                         >
                           <Plus className="h-4 w-4 text-text-primary" />
@@ -546,7 +550,8 @@ export default function TaskSidebar({
                             variant="ghost"
                             size="icon"
                             onClick={onToggleCollapsed}
-                            className="h-8 w-8 p-0 text-text-muted hover:text-text-primary hover:bg-hover rounded-lg"
+                            data-testid="collapse-sidebar-button"
+                            className="h-11 min-w-[44px] w-11 p-0 text-text-muted hover:text-text-primary hover:bg-hover rounded-lg"
                             aria-label={t('common:sidebar.collapse')}
                           >
                             <PanelLeftClose className="h-4 w-4" />
@@ -569,7 +574,8 @@ export default function TaskSidebar({
                   <Button
                     variant="ghost"
                     onClick={handleNewAgentClick}
-                    className="w-full justify-between px-3 h-8 text-sm text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 rounded-md group transition-all duration-200 hover:scale-[1.02]"
+                    data-testid="new-agent-button"
+                    className="w-full justify-between px-3 h-11 min-w-[44px] text-sm text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 rounded-md group transition-all duration-200 hover:scale-[1.02]"
                     size="sm"
                   >
                     <span className="flex items-center">
@@ -1105,7 +1111,7 @@ function FixedGroupChatsSection({
             data-testid="task-sidebar-group-chat-toggle"
             aria-label={toggleLabel}
             onClick={handleToggleGroupChats}
-            className="flex items-center justify-between w-full h-7 px-1 text-xs font-medium rounded-md text-text-muted hover:text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 transition-colors"
+            className="flex items-center justify-between w-full h-11 min-w-[44px] px-1 text-xs font-medium rounded-md text-text-muted hover:text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 transition-colors"
           >
             <span className="truncate">{t('common:tasks.group_chats')}</span>
             {isGroupChatsExpanded ? (
@@ -1144,7 +1150,7 @@ function FixedGroupChatsSection({
                 data-testid="task-sidebar-group-chat-toggle"
                 aria-label={toggleLabel}
                 onClick={handleToggleGroupChats}
-                className="flex items-center justify-center w-full py-1.5 text-text-muted hover:text-text-primary transition-colors"
+                className="flex h-11 min-w-[44px] w-full items-center justify-center text-text-muted hover:text-text-primary transition-colors"
               >
                 {isGroupChatsExpanded ? (
                   <ChevronUp className="h-3.5 w-3.5" />

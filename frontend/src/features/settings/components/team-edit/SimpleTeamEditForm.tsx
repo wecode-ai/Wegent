@@ -37,6 +37,7 @@ import { TeamIconPicker } from '../teams/TeamIconPicker'
 import ExecutorModeSelector from './ExecutorModeSelector'
 import { SimpleConfigGroup, SimpleConfigRow } from './SimpleConfigLayout'
 import TeamBindModeCards from './TeamBindModeCards'
+import { parseModelSelectValue, toModelSelectValue } from './model-select-utils'
 import type { SimpleExecutorMode } from './simple-team-edit-utils'
 
 interface SimpleTeamEditFormProps {
@@ -85,28 +86,6 @@ interface SimpleTeamEditFormProps {
   toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast']
   scope?: 'personal' | 'group' | 'all'
   groupName?: string
-}
-
-function toModelSelectValue(name: string, type?: ModelTypeEnum, namespace?: string): string {
-  if (!name) return '__none__'
-  return `${name}:${type || ''}:${namespace || 'default'}`
-}
-
-function parseModelSelectValue(value: string): {
-  name: string
-  type?: ModelTypeEnum
-  namespace?: string
-} {
-  if (value === '__none__') {
-    return { name: '', type: undefined, namespace: undefined }
-  }
-
-  const [name, type, namespace] = value.split(':')
-  return {
-    name,
-    type: (type as ModelTypeEnum) || undefined,
-    namespace: namespace || 'default',
-  }
 }
 
 function SimpleSection({ title, children }: { title: string; children: ReactNode }) {

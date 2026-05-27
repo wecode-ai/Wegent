@@ -54,6 +54,23 @@
     "discard_changes": "Discard Changes",
     "reset_to_default": "Reset to Default"
   },
+  "navigation": {
+    "team": "Team",
+    "models": "Models",
+    "shells": "Shells",
+    "skills": "Skills",
+    "retrievers": "Retrievers",
+    "integrations": "Integrations",
+    "apiKeys": "API Keys",
+    "groupManager": "Group Manager",
+    "personalResources": "Personal Resources",
+    "groupResources": "Group Resources",
+    "scopeLabel": "Current Scope",
+    "personalResourcesDescription": "Managing agents, models, executors, skills, and retrievers owned by you.",
+    "groupResourcesDescription": "Select a group to manage shared resources in that group.",
+    "groupResourcesDescriptionWithName": "Managing shared resources in \"{{groupName}}\".",
+    "groupManagerDescription": "Manage groups, members, and permissions."
+  },
   "skills": {
     "search_skills": "Search in Market",
     "search_skills_title": "Search Skills from Market",
@@ -89,6 +106,10 @@
     }
   },
   "team": {
+    "list": {
+      "filterDevice": "Device",
+      "goToDevice": "Go to Device"
+    },
     "simple": {
       "advanced_title": "Advanced configuration",
       "advanced_description": "Collaboration modes, multi-bot orchestration, and detailed role settings live here.",
