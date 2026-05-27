@@ -113,6 +113,8 @@ export function EditKnowledgeBaseSummaryDialog({
             variant="outline"
             onClick={() => onOpenChange(false)}
             disabled={saving || resetting}
+            data-testid="kb-summary-cancel-button"
+            className="h-11 min-w-[44px]"
           >
             {t('common:actions.cancel')}
           </Button>
@@ -122,6 +124,7 @@ export function EditKnowledgeBaseSummaryDialog({
             onClick={handleReset}
             disabled={saving || resetting || !knowledgeBase.summary?.manual_long_summary}
             data-testid="kb-summary-reset-button"
+            className="h-11 min-w-[44px]"
           >
             {resetting ? t('chatPage.summaryResetting') : t('chatPage.summaryReset')}
           </Button>
@@ -131,6 +134,7 @@ export function EditKnowledgeBaseSummaryDialog({
             onClick={handleSave}
             disabled={saving || resetting || !value.trim()}
             data-testid="kb-summary-save-button"
+            className="h-11 min-w-[44px]"
           >
             {saving ? t('common:actions.saving') : t('common:actions.save')}
           </Button>

@@ -60,6 +60,7 @@ import { EditKnowledgeBaseSummaryDialog } from './EditKnowledgeBaseSummaryDialog
 import { useKnowledgeBaseSummaryEditor } from '../hooks/useKnowledgeBaseSummaryEditor'
 import {
   getEffectiveKnowledgeBaseLongSummary,
+  getKnowledgeBasePreviewSummary,
   hasManualSummaryOverride,
   shouldShowSummaryContent,
   shouldShowRetryButton,
@@ -645,7 +646,7 @@ export function DocumentList({
     }
   }
 
-  const longSummary = effectiveSummary
+  const longSummary = effectiveSummary || getKnowledgeBasePreviewSummary(knowledgeBase.summary)
 
   // Folder CRUD handlers
   const handleCreateFolder = async (parentId: number) => {
@@ -816,7 +817,10 @@ export function DocumentList({
                 <TooltipProvider>
                   <Tooltip delayDuration={200}>
                     <TooltipTrigger asChild>
-                      <button className="flex-shrink-0 p-0.5 rounded text-text-muted hover:text-primary hover:bg-surface transition-colors">
+                      <button
+                        className="flex-shrink-0 h-11 min-w-[44px] inline-flex items-center justify-center rounded text-text-muted hover:text-primary hover:bg-surface transition-colors"
+                        data-testid="summary-info-button"
+                      >
                         <Info className="w-4 h-4" />
                       </button>
                     </TooltipTrigger>
@@ -843,7 +847,7 @@ export function DocumentList({
                     variant="ghost"
                     size="sm"
                     onClick={openSummaryEditor}
-                    className="h-6 px-2 text-xs"
+                    className="h-11 min-w-[44px] px-2 text-xs"
                     data-testid="kb-summary-inline-edit-button"
                   >
                     <Pencil className="w-3 h-3 mr-1" />

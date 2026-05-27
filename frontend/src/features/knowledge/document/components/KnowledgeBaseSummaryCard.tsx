@@ -113,7 +113,7 @@ export function KnowledgeBaseSummaryCard({
                     variant="ghost"
                     size="sm"
                     onClick={openEditor}
-                    className="h-8 px-2 text-xs"
+                    className="h-11 min-w-[44px] px-2 text-xs"
                     data-testid="kb-summary-edit-button"
                   >
                     <Pencil className="w-3.5 h-3.5 mr-1.5" />
@@ -157,7 +157,8 @@ export function KnowledgeBaseSummaryCard({
                   size="sm"
                   onClick={retrySummary}
                   disabled={isRetrying}
-                  className="h-8 text-xs"
+                  className="h-11 min-w-[44px] text-xs"
+                  data-testid="kb-summary-retry-button"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isRetrying ? 'animate-spin' : ''}`} />
                   {isRetrying ? t('chatPage.summaryRetrying') : t('chatPage.summaryRetry')}
