@@ -12,6 +12,8 @@ from app.core import security
 from app.models.resource_library import ResourceLibraryListing
 from app.models.user import User
 from app.schemas.resource_library import (
+    ResourceLibraryInstallCreate,
+    ResourceLibraryInstallResponse,
     ResourceLibraryListingCreate,
     ResourceLibraryListingResponse,
     ResourceLibraryListResponse,
@@ -89,6 +91,26 @@ def get_resource_library_listing(
         user_id=current_user.id,
     )
     return _to_listing_response(listing)
+
+
+@router.post(
+    "/listings/{listing_id}/install",
+    response_model=ResourceLibraryInstallResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def install_resource_library_listing(
+    listing_id: int,
+    payload: ResourceLibraryInstallCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> ResourceLibraryInstallResponse:
+    install = resource_library_service.install_listing(
+        db,
+        listing_id=listing_id,
+        user_id=current_user.id,
+        payload=payload,
+    )
+    return ResourceLibraryInstallResponse.model_validate(install)
 
 
 @router.post(

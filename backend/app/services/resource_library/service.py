@@ -10,15 +10,23 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.resource_library import (
+    INSTALL_STATUS_FAILED,
+    INSTALL_STATUS_INSTALLED,
     RESOURCE_LIBRARY_STATUS_ARCHIVED,
     RESOURCE_LIBRARY_STATUS_PUBLISHED,
+    RESOURCE_TYPE_AGENT,
     RESOURCE_TYPE_MCP,
     RESOURCE_TYPE_SKILL,
+    ResourceLibraryInstall,
     ResourceLibraryListing,
     ResourceLibraryVersion,
 )
-from app.schemas.resource_library import ResourceLibraryListingCreate
+from app.schemas.resource_library import (
+    ResourceLibraryInstallCreate,
+    ResourceLibraryListingCreate,
+)
 from app.services.resource_library.installers import (
+    AgentResourceInstaller,
     McpResourceInstaller,
     SkillResourceInstaller,
 )
@@ -35,6 +43,7 @@ class ResourceLibraryService:
     ):
         self.manifest_builder = manifest_builder or ResourceManifestBuilder()
         self.installers = installers or {
+            RESOURCE_TYPE_AGENT: AgentResourceInstaller(),
             RESOURCE_TYPE_SKILL: SkillResourceInstaller(),
             RESOURCE_TYPE_MCP: McpResourceInstaller(),
         }
@@ -211,6 +220,149 @@ class ResourceLibraryService:
         db.commit()
         db.refresh(listing)
         return listing
+
+    def install_listing(
+        self,
+        db: Session,
+        *,
+        listing_id: int,
+        user_id: int,
+        payload: ResourceLibraryInstallCreate,
+    ) -> ResourceLibraryInstall:
+        listing = self.get_listing(db, listing_id=listing_id, user_id=user_id)
+        self._ensure_listing_not_installed(
+            db,
+            listing_id=listing.id,
+            user_id=user_id,
+        )
+        version = self._resolve_install_version(
+            db,
+            listing=listing,
+            version_id=payload.version_id,
+        )
+        installer = self.get_installer(listing.resource_type)
+
+        try:
+            install_result = installer.install(
+                db,
+                user_id=user_id,
+                listing=listing,
+                version=version,
+                target_namespace=payload.target_namespace or "default",
+                options=payload.install_options,
+            )
+            install = ResourceLibraryInstall(
+                listing_id=listing.id,
+                version_id=version.id,
+                user_id=user_id,
+                resource_type=listing.resource_type,
+                installed_kind_id=install_result.installed_kind_id,
+                installed_reference=install_result.installed_reference,
+                install_status=INSTALL_STATUS_INSTALLED,
+            )
+            listing.install_count = (listing.install_count or 0) + 1
+            db.add(install)
+            db.add(listing)
+            db.commit()
+            db.refresh(install)
+            install.requires_configuration = install_result.requires_configuration
+            return install
+        except HTTPException as exc:
+            self._record_failed_install(
+                db,
+                listing=listing,
+                version=version,
+                user_id=user_id,
+                error_message=str(exc.detail),
+            )
+            raise
+        except IntegrityError as exc:
+            db.rollback()
+            raise self._install_conflict() from exc
+        except Exception as exc:
+            self._record_failed_install(
+                db,
+                listing=listing,
+                version=version,
+                user_id=user_id,
+                error_message=str(exc),
+            )
+            raise
+
+    def _ensure_listing_not_installed(
+        self,
+        db: Session,
+        *,
+        listing_id: int,
+        user_id: int,
+    ) -> None:
+        existing = (
+            db.query(ResourceLibraryInstall)
+            .filter(
+                ResourceLibraryInstall.listing_id == listing_id,
+                ResourceLibraryInstall.user_id == user_id,
+            )
+            .first()
+        )
+        if existing:
+            raise self._install_conflict()
+
+    def _install_conflict(self) -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Resource listing already installed",
+        )
+
+    def _resolve_install_version(
+        self,
+        db: Session,
+        listing: ResourceLibraryListing,
+        version_id: int | None,
+    ) -> ResourceLibraryVersion:
+        query = db.query(ResourceLibraryVersion).filter(
+            ResourceLibraryVersion.listing_id == listing.id
+        )
+        if version_id is not None:
+            version = query.filter(ResourceLibraryVersion.id == version_id).first()
+        elif listing.current_version_id is not None:
+            version = query.filter(
+                ResourceLibraryVersion.id == listing.current_version_id,
+                ResourceLibraryVersion.is_current.is_(True),
+            ).first()
+        else:
+            version = query.filter(ResourceLibraryVersion.is_current.is_(True)).first()
+
+        if not version:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Resource version not found",
+            )
+        return version
+
+    def _record_failed_install(
+        self,
+        db: Session,
+        *,
+        listing: ResourceLibraryListing,
+        version: ResourceLibraryVersion,
+        user_id: int,
+        error_message: str,
+    ) -> None:
+        listing_id = listing.id
+        version_id = version.id
+        resource_type = listing.resource_type
+        db.rollback()
+        failed_install = ResourceLibraryInstall(
+            listing_id=listing_id,
+            version_id=version_id,
+            user_id=user_id,
+            resource_type=resource_type,
+            installed_reference={},
+            install_status=INSTALL_STATUS_FAILED,
+            error_message=error_message,
+        )
+        db.add(failed_install)
+        db.commit()
 
 
 resource_library_service = ResourceLibraryService()

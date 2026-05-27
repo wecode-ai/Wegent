@@ -36,6 +36,138 @@ class ResourceInstallResult:
     requires_configuration: bool = False
 
 
+def _available_kind_name(
+    db: Session,
+    *,
+    user_id: int,
+    kind: str,
+    namespace: str,
+    base_name: str,
+) -> str:
+    candidate = base_name
+    suffix = 2
+    while _kind_name_exists(
+        db,
+        user_id=user_id,
+        kind=kind,
+        namespace=namespace,
+        name=candidate,
+    ):
+        candidate = f"{base_name}-{suffix}"
+        suffix += 1
+    return candidate
+
+
+def _kind_name_exists(
+    db: Session,
+    *,
+    user_id: int,
+    kind: str,
+    namespace: str,
+    name: str,
+) -> bool:
+    return (
+        db.query(Kind)
+        .filter(
+            Kind.user_id == user_id,
+            Kind.kind == kind,
+            Kind.namespace == namespace,
+            Kind.name == name,
+            Kind.is_active.is_(True),
+        )
+        .first()
+        is not None
+    )
+
+
+class AgentResourceInstaller:
+    """Install Agent resources by copying Team CRD snapshots."""
+
+    def install(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        listing: ResourceLibraryListing,
+        version: ResourceLibraryVersion,
+        target_namespace: str,
+        options: dict[str, Any],
+    ) -> ResourceInstallResult:
+        manifest = version.manifest or {}
+        team_snapshot = self._team_snapshot(manifest)
+        target_name = _available_kind_name(
+            db,
+            user_id=user_id,
+            kind="Team",
+            namespace=target_namespace,
+            base_name=self._base_name(listing, manifest, team_snapshot),
+        )
+        team_json = self._target_team_json(
+            team_snapshot,
+            target_name=target_name,
+            target_namespace=target_namespace,
+        )
+
+        new_team = Kind(
+            user_id=user_id,
+            kind="Team",
+            name=target_name,
+            namespace=target_namespace,
+            json=team_json,
+            is_active=True,
+        )
+        db.add(new_team)
+        db.flush()
+        return ResourceInstallResult(
+            installed_kind_id=new_team.id,
+            installed_reference={
+                "team_id": new_team.id,
+                "namespace": target_namespace,
+                "name": target_name,
+            },
+        )
+
+    def _team_snapshot(self, manifest: dict[str, Any]) -> dict[str, Any]:
+        snapshot = manifest.get("team")
+        if isinstance(snapshot, dict) and snapshot:
+            return deepcopy(snapshot)
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Source Team snapshot not found",
+        )
+
+    def _base_name(
+        self,
+        listing: ResourceLibraryListing,
+        manifest: dict[str, Any],
+        team_snapshot: dict[str, Any],
+    ) -> str:
+        metadata = team_snapshot.get("metadata")
+        if isinstance(metadata, dict) and metadata.get("name"):
+            return str(metadata["name"])
+
+        source = manifest.get("source") or {}
+        if source.get("name"):
+            return str(source["name"])
+
+        return listing.name
+
+    def _target_team_json(
+        self,
+        team_snapshot: dict[str, Any],
+        *,
+        target_name: str,
+        target_namespace: str,
+    ) -> dict[str, Any]:
+        team_json = deepcopy(team_snapshot)
+        metadata = team_json.setdefault("metadata", {})
+        metadata["name"] = target_name
+        metadata["namespace"] = target_namespace
+        team_json["kind"] = "Team"
+        return team_json
+
+
 class SkillResourceInstaller:
     """Install Skill resources into the current user's namespace."""
 
@@ -226,37 +358,12 @@ class SkillResourceInstaller:
         namespace: str,
         base_name: str,
     ) -> str:
-        candidate = base_name
-        suffix = 2
-        while self._skill_name_exists(
+        return _available_kind_name(
             db,
             user_id=user_id,
+            kind="Skill",
             namespace=namespace,
-            name=candidate,
-        ):
-            candidate = f"{base_name}-{suffix}"
-            suffix += 1
-        return candidate
-
-    def _skill_name_exists(
-        self,
-        db: Session,
-        *,
-        user_id: int,
-        namespace: str,
-        name: str,
-    ) -> bool:
-        return (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.kind == "Skill",
-                Kind.namespace == namespace,
-                Kind.name == name,
-                Kind.is_active.is_(True),
-            )
-            .first()
-            is not None
+            base_name=base_name,
         )
 
 
