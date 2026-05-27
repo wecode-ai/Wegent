@@ -91,7 +91,10 @@ def get_resource_library_listing(
     return _to_listing_response(listing)
 
 
-@router.delete("/listings/{listing_id}", response_model=ResourceLibraryListingResponse)
+@router.post(
+    "/listings/{listing_id}/archive",
+    response_model=ResourceLibraryListingResponse,
+)
 def archive_resource_library_listing(
     listing_id: int,
     db: Session = Depends(get_db),

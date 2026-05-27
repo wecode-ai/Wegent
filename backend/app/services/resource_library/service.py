@@ -6,15 +6,25 @@ from typing import Optional
 
 from fastapi import HTTPException, status
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.models.kind import Kind
 from app.models.resource_library import (
     RESOURCE_LIBRARY_STATUS_ARCHIVED,
     RESOURCE_LIBRARY_STATUS_PUBLISHED,
+    RESOURCE_TYPE_AGENT,
+    RESOURCE_TYPE_MCP,
+    RESOURCE_TYPE_SKILL,
     ResourceLibraryListing,
     ResourceLibraryVersion,
 )
 from app.schemas.resource_library import ResourceLibraryListingCreate
+
+SOURCE_KIND_BY_RESOURCE_TYPE = {
+    RESOURCE_TYPE_AGENT: "Team",
+    RESOURCE_TYPE_SKILL: "Skill",
+}
 
 
 class ResourceLibraryService:
@@ -27,10 +37,10 @@ class ResourceLibraryService:
         user_id: int,
         payload: ResourceLibraryListingCreate,
     ) -> ResourceLibraryListing:
-        manifest = payload.manifest_options.get("manifest") or {
-            "resource_type": payload.resource_type,
-            "source_id": payload.source_id,
-        }
+        self._ensure_listing_name_available(db, user_id=user_id, payload=payload)
+        source = self._get_publish_source(db, user_id=user_id, payload=payload)
+        manifest = self._build_minimal_manifest(payload, source)
+
         listing = ResourceLibraryListing(
             resource_type=payload.resource_type,
             name=payload.name,
@@ -41,23 +51,99 @@ class ResourceLibraryService:
             publisher_user_id=user_id,
             status=RESOURCE_LIBRARY_STATUS_PUBLISHED,
         )
-        db.add(listing)
-        db.flush()
+        try:
+            db.add(listing)
+            db.flush()
 
-        version = ResourceLibraryVersion(
-            listing_id=listing.id,
-            version=payload.version,
-            manifest=manifest,
-            source_kind_id=payload.source_id,
-            is_current=True,
+            version = ResourceLibraryVersion(
+                listing_id=listing.id,
+                version=payload.version,
+                manifest=manifest,
+                source_kind_id=source.id if source else None,
+                is_current=True,
+            )
+            db.add(version)
+            db.flush()
+
+            listing.current_version_id = version.id
+            db.commit()
+            db.refresh(listing)
+            return listing
+        except IntegrityError as exc:
+            db.rollback()
+            raise self._listing_conflict() from exc
+
+    def _ensure_listing_name_available(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        payload: ResourceLibraryListingCreate,
+    ) -> None:
+        existing = (
+            db.query(ResourceLibraryListing)
+            .filter(
+                ResourceLibraryListing.resource_type == payload.resource_type,
+                ResourceLibraryListing.name == payload.name,
+                ResourceLibraryListing.publisher_user_id == user_id,
+            )
+            .first()
         )
-        db.add(version)
-        db.flush()
+        if existing:
+            raise self._listing_conflict()
 
-        listing.current_version_id = version.id
-        db.commit()
-        db.refresh(listing)
-        return listing
+    def _get_publish_source(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        payload: ResourceLibraryListingCreate,
+    ) -> Optional[Kind]:
+        if payload.resource_type == RESOURCE_TYPE_MCP:
+            return None
+
+        source_kind = SOURCE_KIND_BY_RESOURCE_TYPE[payload.resource_type]
+        source = (
+            db.query(Kind)
+            .filter(
+                Kind.id == payload.source_id,
+                Kind.kind == source_kind,
+                Kind.user_id == user_id,
+                Kind.is_active.is_(True),
+            )
+            .first()
+        )
+        if not source:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Source resource not found",
+            )
+        return source
+
+    def _build_minimal_manifest(
+        self,
+        payload: ResourceLibraryListingCreate,
+        source: Optional[Kind],
+    ) -> dict:
+        source_kind_id = source.id if source else None
+        source_info = {
+            "id": payload.source_id,
+            "kind": source.kind if source else payload.resource_type,
+            "name": source.name if source else payload.name,
+            "namespace": source.namespace if source else None,
+        }
+        return {
+            "resource_type": payload.resource_type,
+            "source_id": payload.source_id,
+            "source_kind_id": source_kind_id,
+            "source": source_info,
+        }
+
+    def _listing_conflict(self) -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Resource listing already exists",
+        )
 
     def list_listings(
         self,
