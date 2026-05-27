@@ -56,6 +56,7 @@ export function KnowledgeBaseClassicPageDesktop({ knowledgeBaseId, initialDocPat
     knowledgeBase,
     loading: kbLoading,
     error: kbError,
+    refresh: refreshKnowledgeBase,
   } = useKnowledgeBaseDetail({
     knowledgeBaseId,
     autoLoad: true,
@@ -257,6 +258,7 @@ export function KnowledgeBaseClassicPageDesktop({ knowledgeBaseId, initialDocPat
                   onBack={handleBack}
                   canUpload={canUploadDocuments}
                   canManageAllDocuments={canManageKb}
+                  onRefreshKnowledgeBase={refreshKnowledgeBase}
                   initialDocPath={initialDocPath}
                 />
               </TabsContent>

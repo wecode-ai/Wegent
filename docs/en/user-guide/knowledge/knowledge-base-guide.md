@@ -148,6 +148,21 @@ Generate an aggregate summary of the entire Knowledge Base:
 2. Click **Generate Summary**
 3. View combined summary of all documents
 
+#### Manually Editing Knowledge Base Summary
+
+Knowledge base summaries can be edited manually to correct AI-generated content, add missing context, or rewrite the summary in a form that better fits team usage.
+
+- Manual summary takes priority in UI display
+- Manual summary takes priority when injected into knowledge-base chat context
+- AI summary generation continues running in the background
+- Use **Restore AI Summary** to switch back to the latest AI-generated summary
+
+**Notes:**
+
+- The current version only supports manual editing of the knowledge base long summary
+- Document summaries are still generated automatically
+- If **Auto Generate Summary** is disabled, new AI summaries stop updating, but saved manual summary content can still be displayed
+
 ### Summary Retry
 
 If summary generation fails:

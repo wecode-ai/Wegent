@@ -83,8 +83,23 @@ RUN set -e; \
 # the packaged OSS build does not include them. Provide a no-op implementation
 # so those optional static requests return 200 instead of noisy 404s.
 RUN set -e; \
-    vsda_dir="/usr/lib/code-server/lib/vscode/node_modules/vsda/rust/web"; \
+    vsda_root="/usr/lib/code-server/lib/vscode/node_modules/vsda"; \
+    vsda_dir="$vsda_root/rust/web"; \
     mkdir -p "$vsda_dir"; \
+    printf '%s\n' \
+        '{"name":"vsda","version":"0.0.0","main":"index.js"}' \
+        >"$vsda_root/package.json"; \
+    printf '%s\n' \
+        'class signer {' \
+        '  sign(value) { return value; }' \
+        '}' \
+        'class validator {' \
+        '  createNewMessage(value) { return value; }' \
+        '  validate() { return "ok"; }' \
+        '  free() {}' \
+        '}' \
+        'module.exports = { signer, validator };' \
+        >"$vsda_root/index.js"; \
     printf '%s\n' \
         '(function (root) {' \
         '  var api = {' \

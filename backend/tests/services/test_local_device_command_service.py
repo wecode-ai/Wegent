@@ -19,6 +19,9 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
 
     pwd_definition = resolve_local_device_command("pwd", settings.LOCAL_DEVICE_COMMANDS)
     ls_definition = resolve_local_device_command("ls_a", settings.LOCAL_DEVICE_COMMANDS)
+    ls_dirs_definition = resolve_local_device_command(
+        "ls_dirs", settings.LOCAL_DEVICE_COMMANDS
+    )
     git_clone_definition = resolve_local_device_command(
         "git_clone", settings.LOCAL_DEVICE_COMMANDS
     )
@@ -29,6 +32,9 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert ls_definition is not None
     assert ls_definition.command == "ls -a"
     assert ls_definition.post_processor == "file_list"
+    assert ls_dirs_definition is not None
+    assert ls_dirs_definition.command == "ls -a -p"
+    assert ls_dirs_definition.post_processor == "directory_list"
     assert git_clone_definition is not None
     assert git_clone_definition.command == "git clone"
     assert git_clone_definition.post_processor is None
@@ -104,6 +110,23 @@ def test_file_list_post_processor_filters_special_entries():
     processed = apply_command_post_processor(result, "file_list")
 
     assert processed["stdout"] == [".env", "backend"]
+
+
+def test_directory_list_post_processor_keeps_only_directories():
+    """directory_list post processor should return clean directory names."""
+    from app.services.device.command_post_processor import apply_command_post_processor
+
+    result = {
+        "success": True,
+        "exit_code": 0,
+        "stdout": "./\n../\n.env\nbackend/\nfrontend/\nREADME.md\n",
+        "stderr": "",
+        "duration": 0.01,
+    }
+
+    processed = apply_command_post_processor(result, "directory_list")
+
+    assert processed["stdout"] == ["backend", "frontend"]
 
 
 @pytest.mark.asyncio

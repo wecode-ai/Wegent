@@ -64,7 +64,7 @@ POST /api/devices/{device_id}/commands
 
 ## 安全与限制
 
-该能力按“Backend 可信、API 受限”模型设计。HTTP API 不接受原始命令，只接受配置 key；实际命令必须由 Backend 通过命令 registry 或 `LOCAL_DEVICE_COMMANDS` 预配置。默认内置 `pwd`、`ls_a` 和 `git_clone` 命令 key，其中 `ls_a` 会使用 `file_list` 后处理器过滤 `.`、`..` 并在 `stdout` 中返回文件名数组。新增内置命令只需要在 `backend/app/services/device/command_registry.py` 的 `DEFAULT_LOCAL_DEVICE_COMMANDS` 中增加一项。
+该能力按“Backend 可信、API 受限”模型设计。HTTP API 不接受原始命令，只接受配置 key；实际命令必须由 Backend 通过命令 registry 或 `LOCAL_DEVICE_COMMANDS` 预配置。默认内置 `pwd`、`ls_a`、`ls_dirs` 和 `git_clone` 命令 key，其中 `ls_a` 会使用 `file_list` 后处理器过滤 `.`、`..` 并在 `stdout` 中返回文件名数组，`ls_dirs` 会使用 `directory_list` 后处理器只返回当前目录下的子目录名称数组。新增内置命令只需要在 `backend/app/services/device/command_registry.py` 的 `DEFAULT_LOCAL_DEVICE_COMMANDS` 中增加一项。
 
 运行时可通过一个环境变量增加或覆盖配置。简单命令可以直接写字符串；需要后处理时写对象：
 

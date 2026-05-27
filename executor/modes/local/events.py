@@ -20,6 +20,7 @@ class DeviceEvents:
 
     REGISTER = "device:register"
     HEARTBEAT = "device:heartbeat"
+    SYNC_CAPABILITIES = "device:sync_capabilities"
     EXECUTE_COMMAND = "device:execute_command"
     START_TERMINAL_SESSION = "device:start_terminal_session"
     START_CODE_SERVER_SESSION = "device:start_code_server_session"

@@ -4,6 +4,7 @@
 
 export { ProjectSection } from './ProjectSection'
 export { ProjectCreateDialog } from './ProjectCreateDialog'
+export { ProjectDirectoryPickerDialog } from './ProjectDirectoryPickerDialog'
 export { ProjectEditDialog } from './ProjectEditDialog'
 export { ProjectDeleteDialog } from './ProjectDeleteDialog'
 export { DroppableProject } from './DroppableProject'

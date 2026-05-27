@@ -1479,7 +1479,11 @@ def _build_kb_meta_prompt(
             topics: list[str] = []
             try:
                 summary_data = kb_spec.get("summary", {})
-                if (
+                manual_summary = summary_data.get("manual_long_summary")
+                if manual_summary:
+                    summary_text = manual_summary
+                    topics = summary_data.get("topics", []) or []
+                elif (
                     kb_spec.get("summaryEnabled")
                     and summary_data.get("status") == "completed"
                 ):

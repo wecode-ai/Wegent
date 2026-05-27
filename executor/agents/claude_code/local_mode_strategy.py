@@ -23,6 +23,7 @@ Cross-platform support:
 
 import json
 import os
+import shutil
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
@@ -44,6 +45,13 @@ class LocalModeStrategy(ExecutionModeStrategy):
     - Applies restrictive file permissions
     - Preserves skills cache between tasks
     """
+
+    def __init__(self) -> None:
+        self._use_global_capabilities = False
+
+    def use_global_capabilities(self, enabled: bool) -> None:
+        """Enable global Skill reuse for project task execution."""
+        self._use_global_capabilities = enabled
 
     def get_config_directory(self, task_id: int) -> str:
         """Get task-specific configuration directory.
@@ -153,6 +161,8 @@ class LocalModeStrategy(ExecutionModeStrategy):
 
         # Set CLAUDE_CONFIG_DIR to redirect all config reads/writes
         # This affects settings.json, claude.json, and skills locations
+        if self._use_global_capabilities:
+            self._expose_global_skills_directory(config_dir)
         env["CLAUDE_CONFIG_DIR"] = config_dir
         env["SKILLS_DIR"] = self.get_skills_directory(config_dir)
 
@@ -168,6 +178,47 @@ class LocalModeStrategy(ExecutionModeStrategy):
         logger.debug(f"Local mode: Configured CLAUDE_CONFIG_DIR={config_dir}")
         return updated_options
 
+    def _expose_global_skills_directory(self, config_dir: str) -> None:
+        """Expose global Skills through the task Claude config directory."""
+        global_skills_dir = Path(os.path.expanduser("~/.claude/skills"))
+        task_skills_dir = Path(config_dir) / "skills"
+        permissions_manager = get_permissions_manager()
+
+        global_skills_dir.mkdir(parents=True, exist_ok=True)
+        permissions_manager.set_owner_only(str(global_skills_dir), is_directory=True)
+        task_skills_dir.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            if task_skills_dir.is_symlink():
+                if task_skills_dir.resolve() == global_skills_dir.resolve():
+                    return
+                task_skills_dir.unlink()
+            elif task_skills_dir.exists():
+                if task_skills_dir.samefile(global_skills_dir):
+                    return
+                shutil.rmtree(task_skills_dir)
+
+            os.symlink(global_skills_dir, task_skills_dir, target_is_directory=True)
+            logger.info(
+                "Local mode: exposed global Skills directory %s at %s",
+                global_skills_dir,
+                task_skills_dir,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to symlink global Skills directory %s to %s: %s. "
+                "Falling back to a directory copy.",
+                global_skills_dir,
+                task_skills_dir,
+                exc,
+            )
+            if task_skills_dir.exists() or task_skills_dir.is_symlink():
+                if task_skills_dir.is_symlink():
+                    task_skills_dir.unlink()
+                else:
+                    shutil.rmtree(task_skills_dir)
+            shutil.copytree(global_skills_dir, task_skills_dir, dirs_exist_ok=True)
+
     def get_skills_directory(self, config_dir: str = None) -> str:
         """Get task-specific skills directory.
 
@@ -180,6 +231,8 @@ class LocalModeStrategy(ExecutionModeStrategy):
         Returns:
             Path to skills directory within config_dir
         """
+        if self._use_global_capabilities:
+            return os.path.expanduser("~/.claude/skills")
         if config_dir:
             return os.path.join(config_dir, "skills")
         # Fallback to default location if config_dir not provided
