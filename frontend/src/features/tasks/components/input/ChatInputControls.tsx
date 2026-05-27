@@ -537,20 +537,23 @@ export function ChatInputControls({
             className={`flex items-center gap-1 ${hideSelectors ? 'opacity-50 pointer-events-none' : ''}`}
             data-testid="input-left-actions"
           >
-            <CodeModeButton />
-
-            {/* Project Selector - show when in project context */}
-            {projectId && <ProjectSelectorTab projectId={projectId} disabled={hasMessages} />}
-
             {/* File Upload Button - show for shells that support attachments (Chat, ClaudeCode) */}
             {supportsAttachments(selectedTeam) && (
               <AttachmentButton onFileSelect={onFileSelect} disabled={isLoading || isStreaming} />
             )}
 
             {/* Divider between attachment and other controls */}
-            {!projectId && supportsAttachments(selectedTeam) && selectedTeam && (
-              <div className="w-px h-4 bg-border mx-1 flex-shrink-0" />
+            {supportsAttachments(selectedTeam) && selectedTeam && (
+              <div
+                className="w-px h-4 bg-border mx-1 flex-shrink-0"
+                data-testid="attachment-actions-divider"
+              />
             )}
+
+            <CodeModeButton />
+
+            {/* Project Selector - show when in project context */}
+            {projectId && <ProjectSelectorTab projectId={projectId} disabled={hasMessages} />}
 
             {/* Repository and Branch Unified Selector - show when repository selector is enabled */}
             {/* Always show when showRepositorySelector is true, let component handle the display */}

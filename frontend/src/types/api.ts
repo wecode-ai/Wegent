@@ -404,6 +404,7 @@ export interface Task {
   team_name?: string | null
   team_namespace?: string | null
   team_display_name?: string | null
+  team_icon?: string | null
   device_id?: string | null
   device_name?: string | null
   git_url: string
@@ -434,6 +435,7 @@ export interface TaskHistoryGroup {
   team_name?: string | null
   team_namespace?: string | null
   team_display_name?: string | null
+  team_icon?: string | null
   device_id?: string | null
   device_name?: string | null
   items: Task[]

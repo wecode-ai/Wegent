@@ -348,6 +348,7 @@ def get_tasks_related_data_batch(
             task_team.namespace if task_team else task_crd.spec.teamRef.namespace
         )
         team_display_name = _get_team_display_name(task_team)
+        team_icon = _get_team_icon(task_team)
 
         device_id = getattr(task_crd.spec, "device_id", None)
         device_name = device_data.get(device_id) if device_id else None
@@ -376,6 +377,7 @@ def get_tasks_related_data_batch(
             "team_name": team_name,
             "team_namespace": team_namespace,
             "team_display_name": team_display_name,
+            "team_icon": team_icon,
             "device_id": device_id,
             "device_name": device_name,
             "user_name": user_name,
@@ -399,6 +401,17 @@ def _get_team_display_name(team: Kind | None) -> str | None:
         return team_crd.metadata.displayName
     except Exception:
         return team.json.get("metadata", {}).get("displayName")
+
+
+def _get_team_icon(team: Kind | None) -> str | None:
+    """Return a team's configured icon from CRD spec if available."""
+    if not team or not team.json:
+        return None
+    try:
+        team_crd = Team.model_validate(team.json)
+        return team_crd.spec.icon
+    except Exception:
+        return team.json.get("spec", {}).get("icon")
 
 
 def _batch_query_workspaces(
@@ -507,6 +520,28 @@ def _batch_query_teams(db: Session, team_refs: set, user_id: int) -> Dict[str, K
             for team in shared_team_kinds:
                 key = f"{team.name}:{team.namespace}"
                 team_data[key] = team
+
+    # Finally query public/system teams for still-missing refs.
+    missing_team_refs = [
+        ref for ref in team_refs if f"{ref[0]}:{ref[1]}" not in team_data
+    ]
+    if missing_team_refs:
+        missing_team_names, missing_team_namespaces = zip(*missing_team_refs)
+        public_team_kinds = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == 0,
+                Kind.kind == "Team",
+                Kind.name.in_(missing_team_names),
+                Kind.namespace.in_(missing_team_namespaces),
+                Kind.is_active.is_(True),
+            )
+            .all()
+        )
+
+        for team in public_team_kinds:
+            key = f"{team.name}:{team.namespace}"
+            team_data[key] = team
 
     return team_data
 
@@ -626,6 +661,7 @@ def build_lite_task_list(
         team_name = task_related_data.get("team_name")
         team_namespace = task_related_data.get("team_namespace")
         team_display_name = task_related_data.get("team_display_name")
+        team_icon = task_related_data.get("team_icon")
         device_id = task_related_data.get("device_id")
         device_name = task_related_data.get("device_name")
         git_repo = workspace_data.get("git_repo")
@@ -655,6 +691,7 @@ def build_lite_task_list(
                 "team_name": team_name,
                 "team_namespace": team_namespace,
                 "team_display_name": team_display_name,
+                "team_icon": team_icon,
                 "device_id": device_id,
                 "device_name": device_name,
                 "git_repo": git_repo,
@@ -710,6 +747,7 @@ def _create_lite_task_group(
             "team_name": None,
             "team_namespace": None,
             "team_display_name": None,
+            "team_icon": None,
             "device_id": item.get("device_id"),
             "device_name": item.get("device_name") or item.get("device_id"),
             "items": [],
@@ -722,6 +760,7 @@ def _create_lite_task_group(
         "team_name": item.get("team_name"),
         "team_namespace": item.get("team_namespace"),
         "team_display_name": item.get("team_display_name"),
+        "team_icon": item.get("team_icon"),
         "device_id": None,
         "device_name": None,
         "items": [],

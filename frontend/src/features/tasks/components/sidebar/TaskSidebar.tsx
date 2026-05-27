@@ -49,6 +49,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown'
+import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDisplay'
 
 export const SIDEBAR_NAV_CONFIG = {
   keepSecondaryNavFixed: true,
@@ -900,6 +901,23 @@ function TaskHistorySection({
 
     return group.team_display_name || group.team_name || t('common:tasks.unknown_agent')
   }
+
+  const getHistoryGroupIcon = (group: TaskHistoryGroup) => {
+    if (group.group_type !== 'team') {
+      return undefined
+    }
+
+    return (
+      <span
+        data-testid="task-history-agent-icon"
+        aria-hidden="true"
+        className="inline-flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
+      >
+        <TeamIconDisplay iconId={group.team_icon} size="sm" />
+      </span>
+    )
+  }
+
   return (
     <>
       {/* Projects Section */}
@@ -974,6 +992,9 @@ function TaskHistorySection({
                 key={`regular-task-group-${group.group_key}-${viewStatusVersion}`}
                 tasks={group.items}
                 title={getHistoryGroupTitle(group)}
+                titleIcon={getHistoryGroupIcon(group)}
+                titleClassName={group.group_type === 'team' ? 'pl-px pr-2' : undefined}
+                initialVisibleCount={group.group_type === 'team' ? 5 : undefined}
                 unreadCount={getUnreadCount(group.items)}
                 onTaskClick={() => setIsMobileSidebarOpen(false)}
                 isCollapsed={isCollapsed}

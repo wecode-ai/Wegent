@@ -611,6 +611,8 @@
     "earlier": "更早",
     "loading": "加载中...",
     "load_more": "加载更多",
+    "show_more": "更多",
+    "show_less": "收起",
     "no_more_tasks": "没有更多任务",
     "settings": "设置",
     "search_results": "搜索结果",

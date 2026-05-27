@@ -129,9 +129,30 @@ jest.mock('@/features/tasks/components/sidebar/HistoryManageDialog', () => ({
 
 jest.mock('@/features/tasks/components/sidebar/TaskListSection', () => ({
   __esModule: true,
-  default: ({ title, tasks }: { title?: string; tasks: Task[] }) => (
-    <section data-testid="task-list-section">
-      {title && <h4>{title}</h4>}
+  default: ({
+    title,
+    titleIcon,
+    titleClassName,
+    initialVisibleCount,
+    tasks,
+  }: {
+    title?: string
+    titleIcon?: React.ReactNode
+    titleClassName?: string
+    initialVisibleCount?: number
+    tasks: Task[]
+  }) => (
+    <section
+      data-testid="task-list-section"
+      data-initial-visible-count={initialVisibleCount ?? ''}
+      data-title-class-name={titleClassName ?? ''}
+    >
+      {title && (
+        <h4>
+          {titleIcon}
+          {title}
+        </h4>
+      )}
       {tasks.map(task => (
         <div key={task.id}>{task.title}</div>
       ))}
@@ -375,6 +396,7 @@ describe('TaskSidebar scroll structure', () => {
         team_name: 'code-agent',
         team_namespace: 'default',
         team_display_name: 'Code Agent',
+        team_icon: 'sparkles',
         device_id: null,
         device_name: null,
         items: [agentTask],
@@ -386,6 +408,7 @@ describe('TaskSidebar scroll structure', () => {
         team_name: null,
         team_namespace: null,
         team_display_name: null,
+        team_icon: null,
         device_id: 'mac-studio',
         device_name: 'Mac Studio',
         items: [deviceTask],
@@ -397,8 +420,59 @@ describe('TaskSidebar scroll structure', () => {
     )
 
     expect(screen.getAllByText('Code Agent')[0]).toBeInTheDocument()
+    expect(screen.getAllByTestId('task-history-agent-icon')[0]).toHaveClass(
+      'rounded-full',
+      'bg-primary/10',
+      'text-primary'
+    )
     expect(screen.getAllByText('Mac Studio')[0]).toBeInTheDocument()
     expect(screen.getAllByText('Agent conversation')[0]).toBeInTheDocument()
     expect(screen.getAllByText('Device conversation')[0]).toBeInTheDocument()
+  })
+
+  it('limits each agent history group to five conversations before more', () => {
+    const agentTasks = Array.from({ length: 6 }, (_, index) =>
+      createTask({ id: index + 1, title: `Agent conversation ${index + 1}` })
+    )
+    const deviceTasks = Array.from({ length: 6 }, (_, index) =>
+      createTask({ id: index + 101, title: `Device conversation ${index + 1}` })
+    )
+    mockTaskContext.personalTasks = [...agentTasks, ...deviceTasks]
+    mockTaskContext.personalTaskGroups = [
+      {
+        group_type: 'team',
+        group_key: 'team:1',
+        team_id: 1,
+        team_name: 'code-agent',
+        team_namespace: 'default',
+        team_display_name: 'Code Agent',
+        team_icon: 'sparkles',
+        device_id: null,
+        device_name: null,
+        items: agentTasks,
+      },
+      {
+        group_type: 'device',
+        group_key: 'device:mac-studio',
+        team_id: null,
+        team_name: null,
+        team_namespace: null,
+        team_display_name: null,
+        team_icon: null,
+        device_id: 'mac-studio',
+        device_name: 'Mac Studio',
+        items: deviceTasks,
+      },
+    ]
+
+    render(
+      <TaskSidebar isMobileSidebarOpen={false} setIsMobileSidebarOpen={jest.fn()} pageType="chat" />
+    )
+
+    const sections = screen.getAllByTestId('task-list-section')
+
+    expect(sections[0]).toHaveAttribute('data-initial-visible-count', '5')
+    expect(sections[0]).toHaveAttribute('data-title-class-name', 'pl-px pr-2')
+    expect(sections[1]).toHaveAttribute('data-initial-visible-count', '')
   })
 })

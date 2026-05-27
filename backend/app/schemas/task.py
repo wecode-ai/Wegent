@@ -210,6 +210,7 @@ class TaskLite(BaseModel):
     team_name: Optional[str] = None
     team_namespace: Optional[str] = None
     team_display_name: Optional[str] = None
+    team_icon: Optional[str] = None
     device_id: Optional[str] = None
     device_name: Optional[str] = None
     git_repo: Optional[str] = None
@@ -240,6 +241,7 @@ class TaskLiteGroup(BaseModel):
     team_name: Optional[str] = None
     team_namespace: Optional[str] = None
     team_display_name: Optional[str] = None
+    team_icon: Optional[str] = None
     device_id: Optional[str] = None
     device_name: Optional[str] = None
     items: list[TaskLite]

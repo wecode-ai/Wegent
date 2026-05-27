@@ -12,8 +12,10 @@ import {
 import type { Team } from '@/types/api'
 
 const routerPush = jest.fn()
+const mockUsePathname = jest.fn(() => '/chat')
 
 jest.mock('next/navigation', () => ({
+  usePathname: () => mockUsePathname(),
   useRouter: () => ({
     push: routerPush,
   }),
@@ -25,8 +27,13 @@ jest.mock('@/features/layout/hooks/useMediaQuery', () => ({
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (_key: string, fallback?: string | Record<string, unknown>) =>
-      typeof fallback === 'string' ? fallback : _key,
+    t: (key: string, fallback?: string | Record<string, unknown>) => {
+      const translations: Record<string, string> = {
+        'common:navigation.code': '编码',
+      }
+
+      return translations[key] ?? (typeof fallback === 'string' ? fallback : key)
+    },
   }),
 }))
 
@@ -190,19 +197,55 @@ function createProps(): ChatInputControlsProps {
 describe('ChatInputControls toolbar actions', () => {
   beforeEach(() => {
     routerPush.mockClear()
+    mockUsePathname.mockReturnValue('/chat')
   })
 
-  it('adds an icon-only code entry on the left that navigates to code mode', () => {
+  it('renders code mode as a text action after the attachment divider', () => {
     render(<ChatInputControls {...createProps()} />)
 
     const leftActions = screen.getByTestId('input-left-actions')
+    const attachmentButton = screen.getByTestId('attachment-button')
+    const divider = screen.getByTestId('attachment-actions-divider')
     const codeButton = screen.getByTestId('code-mode-button')
 
     expect(leftActions).toContainElement(codeButton)
+    expect(codeButton).toHaveTextContent('编码')
+    expect(
+      Array.from(
+        leftActions.querySelectorAll(
+          '[data-testid="attachment-button"], [data-testid="attachment-actions-divider"], [data-testid="code-mode-button"]'
+        )
+      ).map(element => element.getAttribute('data-testid'))
+    ).toEqual(['attachment-button', 'attachment-actions-divider', 'code-mode-button'])
+    expect(attachmentButton.compareDocumentPosition(divider)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(divider.compareDocumentPosition(codeButton)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
 
     fireEvent.click(codeButton)
 
     expect(routerPush).toHaveBeenCalledWith('/code')
+  })
+
+  it('highlights the code action on the code page', () => {
+    mockUsePathname.mockReturnValue('/code')
+
+    render(<ChatInputControls {...createProps()} />)
+
+    const codeButton = screen.getByTestId('code-mode-button')
+
+    expect(codeButton).toHaveAttribute('aria-current', 'page')
+    expect(codeButton).toHaveClass('bg-primary', 'text-white')
+  })
+
+  it('shows a close affordance for active code mode that returns to chat', () => {
+    mockUsePathname.mockReturnValue('/code')
+
+    render(<ChatInputControls {...createProps()} />)
+
+    const closeButton = screen.getByTestId('code-mode-close-button')
+
+    fireEvent.click(closeButton)
+
+    expect(routerPush).toHaveBeenCalledWith('/chat')
   })
 
   it('combines agent and skill selectors behind one visible desktop action', () => {

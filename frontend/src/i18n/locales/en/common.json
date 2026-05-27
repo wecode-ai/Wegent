@@ -611,6 +611,8 @@
     "earlier": "Earlier",
     "loading": "Loading...",
     "load_more": "Load more",
+    "show_more": "More",
+    "show_less": "Collapse",
     "no_more_tasks": "No more tasks",
     "settings": "Settings",
     "search_results": "Search Results",

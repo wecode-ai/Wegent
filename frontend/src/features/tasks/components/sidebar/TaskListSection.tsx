@@ -19,6 +19,8 @@ import {
   Users,
   BookOpen,
   Monitor,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react'
 
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
@@ -45,6 +47,9 @@ import { toast } from 'sonner'
 interface TaskListSectionProps {
   tasks: Task[]
   title: string
+  titleIcon?: React.ReactNode
+  titleClassName?: string
+  initialVisibleCount?: number
   unreadCount?: number
   onTaskClick?: () => void
   isCollapsed?: boolean
@@ -96,6 +101,9 @@ function DraggableTaskItem({
 export default function TaskListSection({
   tasks,
   title,
+  titleIcon,
+  titleClassName,
+  initialVisibleCount,
   unreadCount = 0,
   onTaskClick,
   isCollapsed = false,
@@ -120,6 +128,7 @@ export default function TaskListSection({
   const [hoveredTaskId, setHoveredTaskId] = useState<number | null>(null)
   const [longPressTaskId, setLongPressTaskId] = useState<number | null>(null)
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null)
+  const [isExpanded, setIsExpanded] = useState(false)
   // Local task titles for optimistic update during rename
   const [localTitles, setLocalTitles] = useState<Record<number, string>>({})
   // Click timer ref for distinguishing single-click from double-click
@@ -498,6 +507,13 @@ export default function TaskListSection({
     }
   }
 
+  const canToggleVisibleTasks =
+    typeof initialVisibleCount === 'number' &&
+    initialVisibleCount > 0 &&
+    tasks.length > initialVisibleCount
+  const shouldLimitTasks = canToggleVisibleTasks && !isExpanded
+  const visibleTasks = shouldLimitTasks ? tasks.slice(0, initialVisibleCount) : tasks
+
   return (
     <div className={`mb-2 w-full ${isCollapsed ? 'px-2' : ''}`}>
       {/* Section title with divider in collapsed mode */}
@@ -505,13 +521,21 @@ export default function TaskListSection({
         ? showTitle && <div className="border-t border-border my-2" />
         : showTitle &&
           title && (
-            <h3 className="text-sm text-text-primary tracking-wide mb-1 px-2">
-              {title}
-              {unreadCount > 0 && <span className="text-primary ml-1">({unreadCount})</span>}
+            <h3
+              className={cn(
+                'flex items-center gap-1.5 text-sm text-text-primary tracking-wide mb-1 px-2 min-w-0',
+                titleClassName
+              )}
+            >
+              {titleIcon && <span className="flex-shrink-0 text-text-muted">{titleIcon}</span>}
+              <span className="truncate">{title}</span>
+              {unreadCount > 0 && (
+                <span className="flex-shrink-0 text-primary">({unreadCount})</span>
+              )}
             </h3>
           )}
       <div className="space-y-0.5">
-        {tasks.map(task => {
+        {visibleTasks.map(task => {
           const showMenu = hoveredTaskId === task.id || longPressTaskId === task.id
 
           // Collapsed mode: Show only status icon with tooltip
@@ -701,6 +725,21 @@ export default function TaskListSection({
           )
         })}
       </div>
+      {canToggleVisibleTasks && !isCollapsed && (
+        <button
+          type="button"
+          data-testid="task-list-section-show-more"
+          onClick={() => setIsExpanded(current => !current)}
+          className="mt-0.5 flex h-8 w-full items-center gap-1 rounded-xl px-3 text-xs font-medium text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
+        >
+          {isExpanded ? (
+            <ChevronUp className="h-3.5 w-3.5 flex-shrink-0" />
+          ) : (
+            <ChevronDown className="h-3.5 w-3.5 flex-shrink-0" />
+          )}
+          <span>{isExpanded ? t('common:tasks.show_less') : t('common:tasks.show_more')}</span>
+        </button>
+      )}
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog
