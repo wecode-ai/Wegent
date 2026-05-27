@@ -45,6 +45,8 @@
     "devicePlaceholder": "Select a device",
     "directoryPath": "Directory Path",
     "directoryPathPlaceholder": "Enter local directory path",
+    "selectDirectory": "Select device directory",
+    "selectDirectoryHint": "Select the project directory from the chosen device",
     "projectNamePreview": "Project name: {{name}}",
     "newConversation": "New Conversation",
     "greeting": "What do you want to build in {{name}}?",
@@ -65,7 +67,20 @@
     "gitRepo": "Repository name (optional)",
     "gitBranch": "Branch, default main",
     "checkoutPath": "Checkout path (optional)",
-    "localPathPlaceholder": "Directory path"
+    "localPathPlaceholder": "Directory path",
+    "directoryPicker": {
+      "title": "Select Project Directory",
+      "description": "Click a directory to select it. Double-click to select and enter a subdirectory.",
+      "loading": "Loading directories...",
+      "error": "Failed to load directories",
+      "empty": "No subdirectories in the current directory",
+      "retry": "Retry",
+      "refresh": "Refresh",
+      "parent": "Parent directory",
+      "selected": "Selected: {{path}}",
+      "selectHint": "Select a directory",
+      "confirm": "Select Directory"
+    }
   },
   "edit": {
     "title": "Edit Project",

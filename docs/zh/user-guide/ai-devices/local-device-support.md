@@ -70,6 +70,68 @@ irm https://github.com/wecode-ai/Wegent/releases/latest/download/local_executor_
 - 下载适合您平台的二进制文件
 - 将二进制文件添加到系统 PATH
 
+#### Linux AMD64 无内置 Claude 版本
+
+GitHub Release 同时提供 `wegent-executor-linux-amd64-no-claude`。这个二进制不会把 Claude CLI 打包进 executor，适用于以下场景：
+
+- 云设备或本地设备 Docker 镜像已经通过 npm、基础镜像或其他方式安装 `claude` 命令
+- 希望减小 executor 二进制体积
+- 需要由镜像或宿主环境统一管理 Claude Code 版本
+
+如果选择这个版本，请确保运行环境中已经存在可执行的 `claude` 命令，并满足 Wegent 要求的 Claude Code 最低版本。标准 `wegent-executor-linux-amd64` 仍会内置 Claude CLI，适合直接下载安装到普通 Linux 主机。
+
+手动下载示例：
+
+```bash
+curl -fL -o wegent-executor \
+  https://github.com/wecode-ai/Wegent/releases/latest/download/wegent-executor-linux-amd64-no-claude
+chmod +x wegent-executor
+```
+
+### 构建设备镜像
+
+仓库提供 `docker/device/Dockerfile` 用于构建云设备或本地设备基础镜像。该镜像会安装 `code-server`、`weiboplat.wecoder-agent` 扩展、Claude Code CLI、`ttyd`、Node.js 22、Python、Git，并把 `executor/dist/wegent-executor` 放到 `/app/executor` 和 `~/.wegent-executor/bin/wegent-executor`。
+
+镜像内默认用户为 `wegent`，默认密码为 `wegent`。该账号用于容器内交互式终端或 code-server/ttyd 场景；生产部署时建议通过运行时配置、访问控制或上游平台认证限制访问范围。
+
+构建前请先准备与目标平台匹配的 Linux executor 二进制，并确认基础镜像也支持同一平台。例如构建 Linux AMD64 镜像时，`executor/dist/wegent-executor` 必须是 Linux x86-64 ELF 文件，不能使用 macOS 的 Mach-O 二进制；构建 Linux ARM64 镜像时，基础 Ubuntu 镜像的 rootfs 也必须是 arm64。
+
+```bash
+WECODE_CLI_CC_TOKEN=xxx \
+WECODE_CLI_CC_INSTALL_URL=xxx \
+docker buildx build --platform linux/amd64 \
+  -f docker/device/Dockerfile \
+  -t wegent-device:linux-amd64 \
+  --secret id=wecode_cli_cc_token,env=WECODE_CLI_CC_TOKEN \
+  --secret id=wecode_cli_cc_install_url,env=WECODE_CLI_CC_INSTALL_URL \
+  --load .
+```
+
+如果镜像中已经安装 Claude Code，建议使用 `wegent-executor-linux-amd64-no-claude` 作为 `executor/dist/wegent-executor` 的输入，避免在 executor 二进制和镜像中重复携带 Claude CLI。
+
+运行设备镜像时通过环境变量传入 executor 连接信息，不要把 token 写入镜像：
+
+```bash
+docker run -d --platform linux/amd64 \
+  --name wegent-device \
+  -p 17888:17888 \
+  -e CODE_SERVER_PASSWORD=wegent \
+  -e EXECUTOR_MODE=local \
+  -e WEGENT_BACKEND_URL=http://localhost:8000 \
+  -e WEGENT_AUTH_TOKEN="$WEGENT_AUTH_TOKEN" \
+  -e DEVICE_PUBLIC_BASE_URL=http://localhost:17888 \
+  wegent-device:linux-amd64
+```
+
+设备镜像默认只启动 `wegent-executor` 和交互式 session gateway。Backend 根据项目 ID 找到项目绑定的本地设备与项目路径后，可以调用：
+
+- `POST /api/projects/{project_id}/terminal`：在项目路径中启动可写 ttyd，返回带短期 token 的访问 URL。
+- `POST /api/projects/{project_id}/code-server`：返回带短期 token 的 code-server 访问 URL。设备镜像内的 code-server 使用固定密码运行，session gateway 会在服务端自动登录，浏览器不会看到 code-server 登录页或固定密码。
+
+两个入口都通过 `DEVICE_PUBLIC_BASE_URL` 下的 `/s/{session_id}/` 路径对外暴露；每个 terminal 或 code-server session 都有独立路径，因此同一用户可以同时打开多个项目，或在同一项目中打开多个 terminal/code-server。terminal 会话由设备侧动态创建，浏览器连接关闭后会销毁对应 ttyd 进程；code-server 是容器内持久进程，通过 gateway 按项目路径打开目录。若需要保留旧的固定 `8080` code-server 和 `7681` ttyd 入口，可在运行容器时添加 `-e START_DEVICE_UI=1` 并额外映射对应端口。
+
+如果项目配置了 `workspace.localPath` 或 `workspace.checkoutPath`，设备会在启动 terminal 或 code-server 前自动创建该目录。
+
 #### 安装指定版本
 
 **macOS / Linux：**
@@ -101,9 +163,9 @@ pip install -e .
 wegent-executor --mode local --token YOUR_JWT_TOKEN
 
 # 或使用环境变量
-export WEGENT_TOKEN=your_jwt_token
+export WEGENT_AUTH_TOKEN=your_jwt_token
 export WEGENT_BACKEND_URL=https://your-wegent-instance.com
-wegent-executor --mode local
+EXECUTOR_MODE=local wegent-executor
 ```
 
 ### 获取 JWT Token
