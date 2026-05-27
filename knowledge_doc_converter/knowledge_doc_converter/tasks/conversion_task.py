@@ -200,7 +200,7 @@ def convert_document_task(
             safe_filename = (
                 filename_without_ext.replace("..", "").replace("\\", "/").strip("/")
             )
-            s3_base_path = f"{safe_kb_name}/{document_id}/{safe_filename}"
+            s3_base_path = f"doc-converter/{safe_kb_name}/{document_id}/{safe_filename}"
 
             result = convert_document(
                 binary_data=binary_data,

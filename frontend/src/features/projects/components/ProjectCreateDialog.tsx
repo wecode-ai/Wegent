@@ -42,6 +42,14 @@ const PROJECT_COLORS = [
 ]
 
 const MIN_WORKSPACE_PROJECT_DEVICE_VERSION = 'v1.7.11'
+const LEGACY_WORKSPACE_PROJECT_DEVICE_VERSION = '1.0.0'
+
+function isLegacyWorkspaceProjectDeviceVersion(version: string): boolean {
+  return (
+    isVersionAtLeast(version, LEGACY_WORKSPACE_PROJECT_DEVICE_VERSION) &&
+    isVersionAtLeast(LEGACY_WORKSPACE_PROJECT_DEVICE_VERSION, version)
+  )
+}
 
 function getNameFromPath(path: string): string {
   const trimmed = path.replace(/\/+$/, '')
@@ -95,7 +103,8 @@ export function ProjectCreateDialog({
 
   const selectedDeviceSupportsWorkspaceProject = Boolean(
     selectedDevice?.executor_version &&
-    isVersionAtLeast(selectedDevice.executor_version, MIN_WORKSPACE_PROJECT_DEVICE_VERSION)
+    (isLegacyWorkspaceProjectDeviceVersion(selectedDevice.executor_version) ||
+      isVersionAtLeast(selectedDevice.executor_version, MIN_WORKSPACE_PROJECT_DEVICE_VERSION))
   )
 
   const showDeviceVersionUnsupported =

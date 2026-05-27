@@ -240,6 +240,21 @@ class ProjectWithTasksResponse(ProjectResponse):
     )
 
 
+class ProjectDeviceSessionResponse(BaseModel):
+    """Response model for a project-scoped local device session."""
+
+    session_id: str = Field(..., description="Session ID")
+    project_id: int = Field(..., description="Project ID")
+    device_id: str = Field(..., description="Bound local device ID")
+    type: Literal["terminal", "code_server"] = Field(..., description="Session type")
+    path: str = Field(..., description="Project path on the local device")
+    url: str = Field(..., description="Browser URL for the interactive session")
+    expires_at: Optional[datetime] = Field(
+        None,
+        description="Session expiration timestamp, if provided by the device",
+    )
+
+
 class ProjectListResponse(BaseModel):
     """Response model for project list with pagination."""
 

@@ -68,6 +68,68 @@ The installation script will:
 - Download the appropriate binary for your platform
 - Add the binary to your PATH
 
+#### Linux AMD64 Without Bundled Claude
+
+GitHub Releases also provide `wegent-executor-linux-amd64-no-claude`. This binary does not bundle the Claude CLI into the executor and is intended for these cases:
+
+- Cloud device or local device Docker images already install the `claude` command through npm, the base image, or another provisioning path
+- You want a smaller executor binary
+- The image or host environment should manage the Claude Code version centrally
+
+When using this variant, make sure the runtime environment already has an executable `claude` command that meets Wegent's minimum Claude Code version requirement. The standard `wegent-executor-linux-amd64` still bundles the Claude CLI and is better for direct installation on regular Linux hosts.
+
+Manual download example:
+
+```bash
+curl -fL -o wegent-executor \
+  https://github.com/wecode-ai/Wegent/releases/latest/download/wegent-executor-linux-amd64-no-claude
+chmod +x wegent-executor
+```
+
+### Building a Device Image
+
+The repository provides `docker/device/Dockerfile` for cloud device or local device base images. The image installs `code-server`, the `weiboplat.wecoder-agent` extension, Claude Code CLI, `ttyd`, Node.js 22, Python, Git, and copies `executor/dist/wegent-executor` to `/app/executor` and `~/.wegent-executor/bin/wegent-executor`.
+
+The default user inside the image is `wegent`, and the default password is `wegent`. This account is intended for interactive terminal, code-server, or ttyd access inside the container. For production deployments, restrict access through runtime configuration, access control, or upstream platform authentication.
+
+Before building, prepare a Linux executor binary that matches the target platform, and confirm the base image supports the same platform. For example, when building a Linux AMD64 image, `executor/dist/wegent-executor` must be a Linux x86-64 ELF file, not a macOS Mach-O binary. When building a Linux ARM64 image, the base Ubuntu image rootfs must also be arm64.
+
+```bash
+WECODE_CLI_CC_TOKEN=xxx \
+WECODE_CLI_CC_INSTALL_URL=xxx \
+docker buildx build --platform linux/amd64 \
+  -f docker/device/Dockerfile \
+  -t wegent-device:linux-amd64 \
+  --secret id=wecode_cli_cc_token,env=WECODE_CLI_CC_TOKEN \
+  --secret id=wecode_cli_cc_install_url,env=WECODE_CLI_CC_INSTALL_URL \
+  --load .
+```
+
+If the image already installs Claude Code, use `wegent-executor-linux-amd64-no-claude` as the input for `executor/dist/wegent-executor` to avoid carrying the Claude CLI in both the executor binary and the image.
+
+Pass executor connection settings as runtime environment variables when running the device image. Do not bake the token into the image:
+
+```bash
+docker run -d --platform linux/amd64 \
+  --name wegent-device \
+  -p 17888:17888 \
+  -e CODE_SERVER_PASSWORD=wegent \
+  -e EXECUTOR_MODE=local \
+  -e WEGENT_BACKEND_URL=http://localhost:8000 \
+  -e WEGENT_AUTH_TOKEN="$WEGENT_AUTH_TOKEN" \
+  -e DEVICE_PUBLIC_BASE_URL=http://localhost:17888 \
+  wegent-device:linux-amd64
+```
+
+By default, the device image only starts `wegent-executor` and the interactive session gateway. Backend resolves the project-bound local device and project path from the project ID, then calls:
+
+- `POST /api/projects/{project_id}/terminal`: starts a writable ttyd in the project path and returns a short-token URL.
+- `POST /api/projects/{project_id}/code-server`: returns a short-token code-server URL. The code-server process inside the device image runs with a fixed password, and the session gateway logs in server-side so the browser does not see the code-server login page or password.
+
+Both entrypoints are exposed under the `/s/{session_id}/` path on `DEVICE_PUBLIC_BASE_URL`. Each terminal or code-server session has an isolated path, so a user can open multiple projects at the same time or open multiple terminal/code-server sessions for one project. Terminal sessions are created dynamically on the device and the matching ttyd process is cleaned up when the browser disconnects. Code-server is a persistent in-container process, and the gateway opens the requested project path through it. To keep the legacy fixed `8080` code-server and `7681` ttyd entrypoints, add `-e START_DEVICE_UI=1` and map those ports at container runtime.
+
+When a project configures `workspace.localPath` or `workspace.checkoutPath`, the device creates that directory before starting terminal or code-server.
+
 #### Installing a Specific Version
 
 **macOS / Linux:**
@@ -99,9 +161,9 @@ Run the executor in local device mode:
 wegent-executor --mode local --token YOUR_JWT_TOKEN
 
 # Or with environment variables
-export WEGENT_TOKEN=your_jwt_token
+export WEGENT_AUTH_TOKEN=your_jwt_token
 export WEGENT_BACKEND_URL=https://your-wegent-instance.com
-wegent-executor --mode local
+EXECUTOR_MODE=local wegent-executor
 ```
 
 ### Getting JWT Token

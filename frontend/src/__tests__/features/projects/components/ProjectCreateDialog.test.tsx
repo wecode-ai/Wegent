@@ -23,8 +23,8 @@ const baseDevice: DeviceInfo = {
   slot_used: 0,
   slot_max: 1,
   running_tasks: [],
-  executor_version: 'v1.7.11',
-  latest_version: 'v1.7.11',
+  executor_version: '1.0.0',
+  latest_version: '1.0.0',
   update_available: false,
   bind_shell: 'claudecode',
 }
@@ -103,8 +103,24 @@ describe('ProjectCreateDialog', () => {
     expect(screen.getByRole('button', { name: 'workspaceCreate.submit' })).toBeDisabled()
   })
 
-  test('allows workspace project creation when the selected device version is v1.7.11 or newer', async () => {
+  test('allows workspace project creation when the selected device version is exactly 1.0.0', async () => {
     devicesMock = [baseDevice]
+
+    render(<ProjectCreateDialog open={true} onOpenChange={jest.fn()} mode="workspace" />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'workspaceCreate.submit' })).not.toBeDisabled()
+    })
+    expect(screen.queryByTestId('workspace-device-version-warning')).not.toBeInTheDocument()
+  })
+
+  test('allows workspace project creation when the selected device version is v1.7.11 or newer', async () => {
+    devicesMock = [
+      {
+        ...baseDevice,
+        executor_version: 'v1.7.11',
+      },
+    ]
 
     render(<ProjectCreateDialog open={true} onOpenChange={jest.fn()} mode="workspace" />)
 

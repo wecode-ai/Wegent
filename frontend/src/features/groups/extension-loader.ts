@@ -17,7 +17,6 @@ export interface GroupExtensionProps {
   onSuccess: () => void
   /** Optional cancel handler to close the add panel. */
   onCancel?: () => void
-  /** User's role in the group, for determining available role options. */
   userRole?: string
 }
 
