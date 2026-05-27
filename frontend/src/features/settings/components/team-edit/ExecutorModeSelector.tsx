@@ -32,6 +32,7 @@ interface ExecutorModeSelectorProps {
   onCustomShellChange: (value: string) => void
   disabledModes?: SimpleExecutorMode[]
   helperText?: string | null
+  hideLabel?: boolean
 }
 
 const iconMap = {
@@ -48,15 +49,18 @@ export default function ExecutorModeSelector({
   onCustomShellChange,
   disabledModes = [],
   helperText,
+  hideLabel = false,
 }: ExecutorModeSelectorProps) {
   const { t } = useTranslation()
   const customShells = getCustomShells(shells)
 
   return (
     <section className="space-y-2">
-      <Label className="text-sm font-medium text-text-primary">
-        {t('common:team.simple.executor.title')}
-      </Label>
+      {!hideLabel && (
+        <Label className="text-sm font-medium text-text-primary">
+          {t('settings:team.simple.executor.title')}
+        </Label>
+      )}
       <RadioGroup value={value} onValueChange={next => onChange(next as SimpleExecutorMode)}>
         <div className="grid gap-2 sm:grid-cols-3">
           {getSimpleExecutorOptions().map(option => {
@@ -68,10 +72,10 @@ export default function ExecutorModeSelector({
               <label
                 key={option.value}
                 className={cn(
-                  'flex min-h-[96px] cursor-pointer gap-3 rounded-md border p-3 transition-colors',
+                  'flex min-h-[78px] cursor-pointer gap-2.5 rounded-md border border-transparent px-3 py-2.5 transition-colors',
                   checked
-                    ? 'border-primary bg-primary/5 text-text-primary'
-                    : 'border-border bg-base hover:bg-surface',
+                    ? 'border-primary bg-primary/5 text-text-primary ring-1 ring-primary/20'
+                    : 'bg-transparent hover:bg-surface',
                   disabled && 'cursor-not-allowed opacity-50'
                 )}
                 data-testid={`simple-executor-${option.value}-card`}
@@ -87,7 +91,7 @@ export default function ExecutorModeSelector({
                     <Icon className="h-4 w-4 text-primary" />
                     <span>{t(option.titleKey)}</span>
                   </div>
-                  <p className="mt-1 text-xs leading-5 text-text-secondary">
+                  <p className="mt-0.5 text-xs leading-5 text-text-secondary">
                     {t(option.descriptionKey)}
                   </p>
                 </div>
@@ -102,7 +106,9 @@ export default function ExecutorModeSelector({
       {value === 'custom' && (
         <Select value={customShellName} onValueChange={onCustomShellChange}>
           <SelectTrigger className="bg-base">
-            <SelectValue placeholder={t('common:team.simple.executor.custom_shell_placeholder')} />
+            <SelectValue
+              placeholder={t('settings:team.simple.executor.custom_shell_placeholder')}
+            />
           </SelectTrigger>
           <SelectContent>
             {customShells.map(shell => (

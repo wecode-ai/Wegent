@@ -793,7 +793,7 @@ export default function TeamList({
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button
-                            variant="primary"
+                            variant="outline"
                             size="sm"
                             onClick={handleOpenWizard}
                             className="gap-2"

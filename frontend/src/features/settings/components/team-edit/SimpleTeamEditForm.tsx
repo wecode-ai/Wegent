@@ -4,22 +4,38 @@
 
 'use client'
 
-import { HelpCircle } from 'lucide-react'
+import { type ReactNode, useMemo, useState } from 'react'
+import { SettingsIcon, Wand2, XIcon } from 'lucide-react'
 
 import type { SkillRefMeta } from '@/apis/bots'
 import type { ModelTypeEnum, UnifiedModel } from '@/apis/models'
 import type { UnifiedShell } from '@/apis/shells'
 import type { UnifiedSkill } from '@/apis/skills'
+import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Textarea } from '@/components/ui/textarea'
+import PromptFineTuneDialog from '@/features/prompt-tune/components/PromptFineTuneDialog'
+import McpConfigSection from '@/features/settings/components/McpConfigSection'
+import { KnowledgeBaseMultiSelector } from '@/features/settings/components/knowledge/KnowledgeBaseMultiSelector'
+import SkillManagementModal from '@/features/settings/components/skills/SkillManagementModal'
+import { RichSkillSelector } from '@/features/settings/components/skills/RichSkillSelector'
+import type { AgentType as McpAgentType } from '@/features/settings/utils/mcpTypeAdapter'
 import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
 import type { KnowledgeBaseDefaultRef, TaskType } from '@/types/api'
 
 import { TeamIconPicker } from '../teams/TeamIconPicker'
 import ExecutorModeSelector from './ExecutorModeSelector'
-import SimpleBotCoreConfigForm from './SimpleBotCoreConfigForm'
+import { SimpleConfigGroup, SimpleConfigRow } from './SimpleConfigLayout'
 import TeamBindModeCards from './TeamBindModeCards'
 import type { SimpleExecutorMode } from './simple-team-edit-utils'
 
@@ -51,6 +67,9 @@ interface SimpleTeamEditFormProps {
   onModelChange: (value: { name: string; type?: ModelTypeEnum; namespace?: string }) => void
   selectedSkills: string[]
   selectedSkillRefs: Record<string, SkillRefMeta>
+  preloadSkills: string[]
+  onPreloadSkillsChange: (skills: string[]) => void
+  supportsPreloadSkills: boolean
   availableSkills: UnifiedSkill[]
   allSkills: UnifiedSkill[]
   loadingSkills: boolean
@@ -58,10 +77,48 @@ interface SimpleTeamEditFormProps {
   onReloadSkills: () => void
   defaultKnowledgeBaseRefs: KnowledgeBaseDefaultRef[]
   onDefaultKnowledgeBaseRefsChange: (value: KnowledgeBaseDefaultRef[]) => void
+  mcpConfig: string
+  onMcpConfigChange: (value: string) => void
+  mcpAgentType?: McpAgentType
   prompt: string
   onPromptChange: (value: string) => void
+  toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast']
   scope?: 'personal' | 'group' | 'all'
   groupName?: string
+}
+
+function toModelSelectValue(name: string, type?: ModelTypeEnum, namespace?: string): string {
+  if (!name) return '__none__'
+  return `${name}:${type || ''}:${namespace || 'default'}`
+}
+
+function parseModelSelectValue(value: string): {
+  name: string
+  type?: ModelTypeEnum
+  namespace?: string
+} {
+  if (value === '__none__') {
+    return { name: '', type: undefined, namespace: undefined }
+  }
+
+  const [name, type, namespace] = value.split(':')
+  return {
+    name,
+    type: (type as ModelTypeEnum) || undefined,
+    namespace: namespace || 'default',
+  }
+}
+
+function SimpleSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="space-y-4">
+      <div className="flex items-center gap-3">
+        <h3 className="shrink-0 text-sm font-semibold text-text-primary">{title}</h3>
+        <div className="h-px flex-1 bg-border" />
+      </div>
+      {children}
+    </section>
+  )
 }
 
 export default function SimpleTeamEditForm({
@@ -92,6 +149,9 @@ export default function SimpleTeamEditForm({
   onModelChange,
   selectedSkills,
   selectedSkillRefs,
+  preloadSkills,
+  onPreloadSkillsChange,
+  supportsPreloadSkills,
   availableSkills,
   allSkills,
   loadingSkills,
@@ -99,38 +159,66 @@ export default function SimpleTeamEditForm({
   onReloadSkills,
   defaultKnowledgeBaseRefs,
   onDefaultKnowledgeBaseRefsChange,
+  mcpConfig,
+  onMcpConfigChange,
+  mcpAgentType,
   prompt,
   onPromptChange,
+  toast,
   scope,
   groupName,
 }: SimpleTeamEditFormProps) {
   const { t } = useTranslation()
+  const [skillManagementModalOpen, setSkillManagementModalOpen] = useState(false)
+  const [promptFineTuneOpen, setPromptFineTuneOpen] = useState(false)
   const showRequiresWorkspace = bindMode.includes('code')
+  const modelSelectValue = toModelSelectValue(modelName, modelType, modelNamespace)
+  const togglePreloadSkill = (skillName: string, checked: boolean) => {
+    if (checked) {
+      onPreloadSkillsChange(Array.from(new Set([...preloadSkills, skillName])))
+      return
+    }
+
+    onPreloadSkillsChange(preloadSkills.filter(item => item !== skillName))
+  }
+
+  const selectedSkillItems = useMemo(
+    () =>
+      selectedSkills.map(skillName => {
+        const ref = selectedSkillRefs[skillName]
+        return (
+          allSkills.find(skill => skill.id === ref?.skill_id) ||
+          allSkills.find(skill => skill.name === skillName)
+        )
+      }),
+    [allSkills, selectedSkillRefs, selectedSkills]
+  )
 
   return (
     <div className="space-y-5">
-      <section className="space-y-4 rounded-md border border-border bg-surface p-4">
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="space-y-2">
-            <Label htmlFor="teamName" className="text-sm font-medium text-text-primary">
-              {t('common:team.name')} <span className="text-red-400">*</span>
-            </Label>
+      <SimpleSection title={t('settings:team.simple.sections.basic')}>
+        <SimpleConfigGroup>
+          <SimpleConfigRow
+            label={
+              <>
+                {t('common:team.name')} <span className="text-red-400">*</span>
+              </>
+            }
+          >
             <div className="flex items-center gap-2">
               <TeamIconPicker value={icon} onChange={setIcon} />
               <Input
                 id="teamName"
+                aria-label={t('common:team.name')}
                 value={name}
                 onChange={event => setName(event.target.value)}
                 placeholder={t('common:team.name_placeholder')}
                 className="bg-base"
               />
             </div>
-          </div>
+          </SimpleConfigRow>
 
-          <div className="space-y-2">
-            <Label htmlFor="teamDisplayName" className="text-sm font-medium text-text-primary">
-              {t('common:team.display_name')}
-            </Label>
+          <SimpleConfigRow label={t('common:team.display_name')}>
             <Input
               id="teamDisplayName"
               value={displayName}
@@ -139,85 +227,276 @@ export default function SimpleTeamEditForm({
               className="bg-base"
               data-testid="team-display-name-input"
             />
-          </div>
-        </div>
+          </SimpleConfigRow>
 
-        <div className="space-y-2">
-          <Label htmlFor="teamDescription" className="text-sm font-medium text-text-primary">
-            {t('common:team.description')}
-          </Label>
-          <Input
-            id="teamDescription"
-            value={description}
-            onChange={event => setDescription(event.target.value)}
-            placeholder={t('common:team.description_placeholder')}
-            className="bg-base"
-          />
-        </div>
-      </section>
+          <SimpleConfigRow label={t('common:team.description')}>
+            <Input
+              id="teamDescription"
+              value={description}
+              onChange={event => setDescription(event.target.value)}
+              placeholder={t('common:team.description_placeholder')}
+              className="bg-base"
+            />
+          </SimpleConfigRow>
 
-      <section className="space-y-4 rounded-md border border-border bg-surface p-4">
-        <TeamBindModeCards value={bindMode} onChange={setBindMode} />
+          <SimpleConfigRow
+            label={t('common:bot.agent_config')}
+            description={t('settings:team.simple.core.model_description')}
+          >
+            <Select
+              value={modelSelectValue}
+              onValueChange={value => onModelChange(parseModelSelectValue(value))}
+              disabled={loadingModels}
+            >
+              <SelectTrigger className="h-9 rounded-md bg-base" data-testid="simple-model-select">
+                <SelectValue placeholder={t('common:bot.model_select')} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">
+                  <span className="text-text-muted">{t('common:bot.no_model_binding')}</span>
+                </SelectItem>
+                {models.map(model => (
+                  <SelectItem
+                    key={`${model.name}:${model.type}:${model.namespace || 'default'}`}
+                    value={`${model.name}:${model.type}:${model.namespace || 'default'}`}
+                  >
+                    {model.displayName || model.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </SimpleConfigRow>
+        </SimpleConfigGroup>
+      </SimpleSection>
 
-        {showRequiresWorkspace && (
-          <div className="flex items-center justify-between rounded-md border border-border bg-base px-3 py-2">
-            <div className="flex items-center gap-2">
-              <Label htmlFor="requiresWorkspace" className="text-sm font-medium text-text-primary">
-                {t('common:team.requires_workspace')}
-              </Label>
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <HelpCircle className="h-4 w-4 cursor-help text-text-muted" />
-                  </TooltipTrigger>
-                  <TooltipContent side="top" className="max-w-xs">
-                    <p className="text-xs">{t('common:team.requires_workspace_hint')}</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
+      <SimpleSection title={t('settings:team.simple.sections.execution')}>
+        <SimpleConfigGroup>
+          <SimpleConfigRow
+            label={t('common:team.bind_mode')}
+            description={t('settings:team.simple.execution.bind_mode_description')}
+            align="start"
+          >
+            <TeamBindModeCards value={bindMode} onChange={setBindMode} />
+          </SimpleConfigRow>
+
+          {showRequiresWorkspace && (
+            <SimpleConfigRow
+              label={t('common:team.requires_workspace')}
+              description={t('common:team.requires_workspace_hint')}
+            >
+              <div className="flex justify-end">
+                <Switch
+                  id="requiresWorkspace"
+                  checked={requiresWorkspace === true}
+                  onCheckedChange={checked => setRequiresWorkspace(checked)}
+                />
+              </div>
+            </SimpleConfigRow>
+          )}
+
+          <SimpleConfigRow
+            label={t('settings:team.simple.executor.title')}
+            description={t('settings:team.simple.execution.executor_description')}
+            align="start"
+          >
+            <ExecutorModeSelector
+              value={executorMode}
+              onChange={setExecutorMode}
+              shells={shells}
+              customShellName={customShellName}
+              onCustomShellChange={setCustomShellName}
+              disabledModes={disabledExecutorModes}
+              helperText={executorHelperText}
+              hideLabel
+            />
+          </SimpleConfigRow>
+        </SimpleConfigGroup>
+      </SimpleSection>
+
+      <SimpleSection title={t('settings:team.simple.sections.prompt')}>
+        <SimpleConfigGroup>
+          <div className="space-y-2">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs leading-5 text-text-muted">
+                {t('settings:team.simple.core.prompt_description')}
+              </p>
+              {prompt.trim() && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="shrink-0 self-start sm:self-auto"
+                  onClick={() => setPromptFineTuneOpen(true)}
+                >
+                  <Wand2 className="mr-1 h-3.5 w-3.5" />
+                  {t('common:bot.fine_tune_prompt')}
+                </Button>
+              )}
             </div>
-            <Switch
-              id="requiresWorkspace"
-              checked={requiresWorkspace === true}
-              onCheckedChange={checked => setRequiresWorkspace(checked)}
+            <Textarea
+              value={prompt}
+              onChange={event => onPromptChange(event.target.value)}
+              placeholder={t('common:bot.prompt_placeholder')}
+              className="min-h-[120px] resize-y bg-base text-sm"
+              data-testid="simple-prompt-textarea"
             />
           </div>
-        )}
+        </SimpleConfigGroup>
+      </SimpleSection>
 
-        <ExecutorModeSelector
-          value={executorMode}
-          onChange={setExecutorMode}
-          shells={shells}
-          customShellName={customShellName}
-          onCustomShellChange={setCustomShellName}
-          disabledModes={disabledExecutorModes}
-          helperText={executorHelperText}
-        />
-      </section>
+      <SimpleSection title={t('settings:team.simple.sections.capability')}>
+        <SimpleConfigGroup>
+          <SimpleConfigRow
+            label={t('common:skills.skills_section')}
+            description={t('settings:team.simple.core.skills_description')}
+            align="start"
+          >
+            <div className="space-y-2">
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <div className="min-w-0 flex-1">
+                  {loadingSkills ? (
+                    <div className="flex h-9 items-center rounded-md border border-border bg-base px-3 text-sm text-text-muted">
+                      {t('common:skills.loading_skills')}
+                    </div>
+                  ) : (
+                    <RichSkillSelector
+                      skills={availableSkills}
+                      selectedSkillNames={selectedSkills}
+                      onSelectSkill={skill => {
+                        if (!skill || selectedSkills.includes(skill.name)) return
+                        onSkillsChange([...selectedSkills, skill.name], {
+                          ...selectedSkillRefs,
+                          [skill.name]: {
+                            skill_id: skill.id,
+                            namespace: skill.namespace || 'default',
+                            is_public: skill.is_public || false,
+                          },
+                        })
+                      }}
+                      placeholder={t('common:skills.select_skill_to_add')}
+                    />
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="shrink-0"
+                  onClick={() => setSkillManagementModalOpen(true)}
+                  data-testid="simple-manage-skills-button"
+                >
+                  <SettingsIcon className="mr-1 h-3.5 w-3.5" />
+                  {t('common:skills.manage_skills_button')}
+                </Button>
+              </div>
+              {selectedSkills.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {selectedSkills.map((skillName, index) => {
+                    const skill = selectedSkillItems[index]
+                    const skillDisplayName = skill?.displayName || skillName
+                    const isPreloaded = preloadSkills.includes(skillName)
+                    return (
+                      <span
+                        key={skillName}
+                        className={cn(
+                          'inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-sm',
+                          supportsPreloadSkills && isPreloaded
+                            ? 'bg-primary/10 text-primary'
+                            : 'bg-surface text-text-primary'
+                        )}
+                      >
+                        {supportsPreloadSkills && (
+                          <Checkbox
+                            checked={isPreloaded}
+                            onCheckedChange={checked =>
+                              togglePreloadSkill(skillName, checked === true)
+                            }
+                            title={t('common:skills.preload_skills_section')}
+                            aria-label={`${skillDisplayName} ${t('common:skills.preload_skills_section')}`}
+                            data-testid={`simple-skill-preload-${skillName}`}
+                            className="h-3.5 w-3.5"
+                          />
+                        )}
+                        <span>{skillDisplayName}</span>
+                        <button
+                          type="button"
+                          className="text-text-muted hover:text-text-primary"
+                          onClick={() => {
+                            const nextRefs = { ...selectedSkillRefs }
+                            delete nextRefs[skillName]
+                            onPreloadSkillsChange(preloadSkills.filter(item => item !== skillName))
+                            onSkillsChange(
+                              selectedSkills.filter(item => item !== skillName),
+                              nextRefs
+                            )
+                          }}
+                          aria-label={t('common:actions.remove')}
+                        >
+                          <XIcon className="h-3 w-3" />
+                        </button>
+                      </span>
+                    )
+                  })}
+                </div>
+              )}
+              {supportsPreloadSkills && selectedSkills.length > 0 && (
+                <p className="text-xs leading-5 text-text-muted">
+                  {t('common:skills.preload_hint')}
+                </p>
+              )}
+            </div>
+          </SimpleConfigRow>
 
-      <section className="rounded-md border border-border bg-surface p-4">
-        <SimpleBotCoreConfigForm
-          modelName={modelName}
-          modelType={modelType}
-          modelNamespace={modelNamespace}
-          models={models}
-          loadingModels={loadingModels}
-          onModelChange={onModelChange}
-          selectedSkills={selectedSkills}
-          selectedSkillRefs={selectedSkillRefs}
-          availableSkills={availableSkills}
-          allSkills={allSkills}
-          loadingSkills={loadingSkills}
-          onSkillsChange={onSkillsChange}
-          onReloadSkills={onReloadSkills}
-          defaultKnowledgeBaseRefs={defaultKnowledgeBaseRefs}
-          onDefaultKnowledgeBaseRefsChange={onDefaultKnowledgeBaseRefsChange}
-          prompt={prompt}
-          onPromptChange={onPromptChange}
-          scope={scope}
-          groupName={groupName}
-        />
-      </section>
+          <SimpleConfigRow
+            label={t('common:bot.default_knowledge_bases')}
+            description={t('settings:team.simple.core.knowledge_description')}
+          >
+            <KnowledgeBaseMultiSelector
+              value={defaultKnowledgeBaseRefs}
+              onChange={onDefaultKnowledgeBaseRefsChange}
+              helperText={null}
+              allowedSources={
+                scope === 'group'
+                  ? groupName
+                    ? ['group', 'organization']
+                    : ['organization']
+                  : ['personal', 'group', 'organization']
+              }
+              allowedGroupNamespaces={scope === 'group' && groupName ? [groupName] : undefined}
+            />
+          </SimpleConfigRow>
+
+          <SimpleConfigRow
+            label={t('common:bot.mcp_config')}
+            description={t('settings:team.simple.core.mcp_description')}
+            align="start"
+          >
+            <McpConfigSection
+              mcpConfig={mcpConfig}
+              onMcpConfigChange={onMcpConfigChange}
+              agentType={mcpAgentType}
+              toast={toast}
+              hideHeaderLabel
+              compact
+            />
+          </SimpleConfigRow>
+        </SimpleConfigGroup>
+      </SimpleSection>
+
+      <SkillManagementModal
+        open={skillManagementModalOpen}
+        onClose={() => setSkillManagementModalOpen(false)}
+        scope={scope}
+        groupName={groupName}
+        onSkillsChange={onReloadSkills}
+      />
+      <PromptFineTuneDialog
+        open={promptFineTuneOpen}
+        onOpenChange={setPromptFineTuneOpen}
+        initialPrompt={prompt}
+        onSave={onPromptChange}
+        modelName={modelName}
+      />
     </div>
   )
 }

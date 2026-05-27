@@ -87,5 +87,64 @@
       "default_model_required_when_restrict": "A default model must be selected when model restriction is enabled",
       "default_model_must_be_in_allowed": "The default model must be in the allowed models list"
     }
+  },
+  "team": {
+    "simple": {
+      "advanced_title": "Advanced configuration",
+      "advanced_description": "Collaboration modes, multi-bot orchestration, and detailed role settings live here.",
+      "open_advanced": "Open advanced",
+      "advanced_toggle": "Advanced mode",
+      "advanced_toggle_description": "Switch to the full configuration UI for collaboration modes and multi-bot orchestration.",
+      "non_solo_notice": "This agent uses an advanced collaboration mode, so the full configuration is shown.",
+      "sections": {
+        "basic": "Basic settings",
+        "prompt": "Prompt",
+        "capability": "Capabilities",
+        "execution": "Mode settings"
+      },
+      "core": {
+        "model_description": "Uses the system default when unset; choose one only when needed.",
+        "prompt_description": "Defines the agent role, goals, and response style.",
+        "skills_description": "Add common skills so the agent can call tools when needed.",
+        "knowledge_description": "New chats start with these knowledge bases; more can still be added in chat.",
+        "mcp_description": "Connect external MCP services to add tool capabilities."
+      },
+      "execution": {
+        "bind_mode_description": "Controls which entry points and task types can use this agent.",
+        "executor_description": "Controls the runtime environment used to handle tasks."
+      },
+      "bind_mode": {
+        "chat": {
+          "title": "Chat",
+          "description": "Use for Q&A, document discussion, and ongoing conversation."
+        },
+        "code": {
+          "title": "Code",
+          "description": "Use for development, fixes, and reviews inside a code repository."
+        },
+        "task": {
+          "title": "Device",
+          "description": "Use for tasks that need a local device or execution environment."
+        }
+      },
+      "executor": {
+        "title": "Executor",
+        "required": "Choose an available executor",
+        "requires_complex_hint": "Code and device modes need Claude Code capability, so the complex executor is preferred.",
+        "custom_shell_placeholder": "Choose custom Shell",
+        "simple": {
+          "title": "Simple",
+          "description": "Uses the Chat executor for conversation and lightweight Q&A."
+        },
+        "complex": {
+          "title": "Complex",
+          "description": "Complex executor for code tasks, device tasks, or multi-step complex tasks."
+        },
+        "custom": {
+          "title": "Custom",
+          "description": "Uses a Shell you created for a specialized runtime."
+        }
+      }
+    }
   }
 }

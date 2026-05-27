@@ -13,12 +13,12 @@ jest.mock('@/hooks/useTranslation', () => ({
     t: (key: string) =>
       ({
         'common:team.bind_mode': 'Bind mode',
-        'common:team.simple.bind_mode.chat.title': 'Chat',
-        'common:team.simple.bind_mode.chat.description': 'Use for conversation.',
-        'common:team.simple.bind_mode.code.title': 'Code',
-        'common:team.simple.bind_mode.code.description': 'Use for repository tasks.',
-        'common:team.simple.bind_mode.task.title': 'Device',
-        'common:team.simple.bind_mode.task.description': 'Use for device tasks.',
+        'settings:team.simple.bind_mode.chat.title': 'Chat',
+        'settings:team.simple.bind_mode.chat.description': 'Use for conversation.',
+        'settings:team.simple.bind_mode.code.title': 'Code',
+        'settings:team.simple.bind_mode.code.description': 'Use for repository tasks.',
+        'settings:team.simple.bind_mode.task.title': 'Device',
+        'settings:team.simple.bind_mode.task.description': 'Use for device tasks.',
       })[key] || key,
   }),
 }))

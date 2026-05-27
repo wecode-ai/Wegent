@@ -19,14 +19,15 @@ jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (key: string) =>
       ({
-        'common:team.simple.executor.title': 'Executor',
-        'common:team.simple.executor.simple.title': 'Simple',
-        'common:team.simple.executor.simple.description': 'Chat executor.',
-        'common:team.simple.executor.complex.title': 'Complex',
-        'common:team.simple.executor.complex.description': 'Code executor.',
-        'common:team.simple.executor.custom.title': 'Custom',
-        'common:team.simple.executor.custom.description': 'Choose a custom shell.',
-        'common:team.simple.executor.custom_shell_placeholder': 'Choose custom shell',
+        'settings:team.simple.executor.title': 'Executor',
+        'settings:team.simple.executor.simple.title': 'Simple',
+        'settings:team.simple.executor.simple.description': 'Chat executor.',
+        'settings:team.simple.executor.complex.title': 'Complex',
+        'settings:team.simple.executor.complex.description':
+          'Complex executor for code tasks, device tasks, or multi-step complex tasks.',
+        'settings:team.simple.executor.custom.title': 'Custom',
+        'settings:team.simple.executor.custom.description': 'Choose a custom shell.',
+        'settings:team.simple.executor.custom_shell_placeholder': 'Choose custom shell',
       })[key] || key,
   }),
 }))

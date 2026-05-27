@@ -27,12 +27,15 @@ jest.mock('@/hooks/useTranslation', () => ({
         'common:bot.agent_config': 'Model',
         'common:bot.default_knowledge_bases': 'Knowledge bases',
         'common:bot.fine_tune_prompt': 'Optimize',
+        'common:bot.mcp_config': 'MCP',
         'common:bot.model_select': 'Select model',
         'common:bot.no_model_binding': 'No model',
         'common:bot.prompt': 'Prompt',
         'common:bot.prompt_placeholder': 'Prompt',
         'common:skills.loading_skills': 'Loading skills',
         'common:skills.manage_skills_button': 'Manage',
+        'common:skills.preload_hint': 'Check skills to preload them.',
+        'common:skills.preload_skills_section': 'Preload Skills',
         'common:skills.select_skill_to_add': 'Select skill',
         'common:skills.skills_section': 'Skills',
         'common:team.bind_mode': 'Bind mode',
@@ -44,25 +47,41 @@ jest.mock('@/hooks/useTranslation', () => ({
         'common:team.name_placeholder': 'Agent name',
         'common:team.name_required': 'Agent name is required',
         'common:team.requires_workspace': 'Requires repository',
-        'common:team.simple.advanced_title': 'Advanced',
-        'common:team.simple.bind_mode.chat.description': 'Use for conversation.',
-        'common:team.simple.bind_mode.chat.title': 'Chat',
-        'common:team.simple.bind_mode.code.description': 'Use for repository tasks.',
-        'common:team.simple.bind_mode.code.title': 'Code',
-        'common:team.simple.bind_mode.task.description': 'Use for device tasks.',
-        'common:team.simple.bind_mode.task.title': 'Device',
-        'common:team.simple.executor.complex.description': 'Code executor.',
-        'common:team.simple.executor.complex.title': 'Complex',
-        'common:team.simple.executor.custom.description': 'Choose custom shell.',
-        'common:team.simple.executor.custom.title': 'Custom',
-        'common:team.simple.executor.custom_shell_placeholder': 'Choose custom shell',
-        'common:team.simple.executor.required': 'Choose executor',
-        'common:team.simple.executor.requires_complex_hint': 'Code requires complex.',
-        'common:team.simple.executor.simple.description': 'Chat executor.',
-        'common:team.simple.executor.simple.title': 'Simple',
-        'common:team.simple.executor.title': 'Executor',
-        'common:team.simple.non_solo_notice': 'This agent uses advanced collaboration.',
-        'common:team.simple.open_advanced': 'Open full configuration',
+        'common:team.requires_workspace_hint': 'Requires repository for code tasks.',
+        'settings:team.simple.advanced_toggle': 'Advanced mode',
+        'settings:team.simple.advanced_toggle_description': 'Use full configuration.',
+        'settings:team.simple.advanced_title': 'Advanced',
+        'settings:team.simple.core.mcp_description': 'Connect MCP services.',
+        'settings:team.simple.core.knowledge_description':
+          'New chats start with these knowledge bases.',
+        'settings:team.simple.core.model_description': 'Uses the default model when unset.',
+        'settings:team.simple.core.prompt_description': 'Defines the agent behavior.',
+        'settings:team.simple.core.skills_description': 'Adds tool capabilities.',
+        'settings:team.simple.execution.bind_mode_description': 'Controls entry points.',
+        'settings:team.simple.execution.executor_description': 'Controls runtime.',
+        'settings:team.simple.sections.basic': 'Basic settings',
+        'settings:team.simple.sections.capability': 'Capabilities',
+        'settings:team.simple.sections.execution': 'Mode settings',
+        'settings:team.simple.sections.prompt': 'Prompt',
+        'settings:team.simple.bind_mode.chat.description': 'Use for conversation.',
+        'settings:team.simple.bind_mode.chat.title': 'Chat',
+        'settings:team.simple.bind_mode.code.description': 'Use for repository tasks.',
+        'settings:team.simple.bind_mode.code.title': 'Code',
+        'settings:team.simple.bind_mode.task.description': 'Use for device tasks.',
+        'settings:team.simple.bind_mode.task.title': 'Device',
+        'settings:team.simple.executor.complex.description':
+          'Complex executor for code tasks, device tasks, or multi-step complex tasks.',
+        'settings:team.simple.executor.complex.title': 'Complex',
+        'settings:team.simple.executor.custom.description': 'Choose custom shell.',
+        'settings:team.simple.executor.custom.title': 'Custom',
+        'settings:team.simple.executor.custom_shell_placeholder': 'Choose custom shell',
+        'settings:team.simple.executor.required': 'Choose executor',
+        'settings:team.simple.executor.requires_complex_hint': 'Code requires complex.',
+        'settings:team.simple.executor.simple.description': 'Chat executor.',
+        'settings:team.simple.executor.simple.title': 'Simple',
+        'settings:team.simple.executor.title': 'Executor',
+        'settings:team.simple.non_solo_notice': 'This agent uses advanced collaboration.',
+        'settings:team.simple.open_advanced': 'Open full configuration',
         'common:teams.create_title': 'Create agent',
         'common:teams.description': 'Agent settings',
         'common:teams.edit_title': 'Edit agent',
@@ -206,6 +225,14 @@ jest.mock('@/features/settings/components/knowledge/KnowledgeBaseMultiSelector',
   ),
 }))
 
+jest.mock('@/features/settings/components/McpConfigSection', () => {
+  function MockMcpConfigSection() {
+    return <div data-testid="mcp-config-section" />
+  }
+
+  return MockMcpConfigSection
+})
+
 const mockedCreateBot = botApis.createBot as jest.Mock
 const mockedUpdateBot = botApis.updateBot as jest.Mock
 const mockedCreateTeam = createTeam as jest.Mock
@@ -321,7 +348,8 @@ describe('Simple TeamEditDialog', () => {
     await waitFor(() => expect(mockedGetUnifiedModels).toHaveBeenCalled())
 
     fireEvent.change(await screen.findByLabelText(/^Name/), { target: { value: 'new-agent' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Add skill' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Add skill' }))
+    fireEvent.click(await screen.findByTestId('simple-skill-preload-repo-reader'))
     fireEvent.click(screen.getByRole('button', { name: 'Add knowledge' }))
     fireEvent.change(screen.getByTestId('simple-prompt-textarea'), {
       target: { value: 'Answer with context.' },
@@ -335,6 +363,14 @@ describe('Simple TeamEditDialog', () => {
           shell_name: 'Chat',
           system_prompt: 'Answer with context.',
           skills: ['repo-reader'],
+          preload_skills: ['repo-reader'],
+          preload_skill_refs: {
+            'repo-reader': {
+              skill_id: 5,
+              namespace: 'default',
+              is_public: false,
+            },
+          },
           default_knowledge_base_refs: [{ id: 10, name: 'Product Docs' }],
         })
       )

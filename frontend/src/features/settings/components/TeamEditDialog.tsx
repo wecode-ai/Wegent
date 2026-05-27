@@ -14,6 +14,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
+import { Switch } from '@/components/ui/switch'
 import { AlertCircle, Loader2 } from 'lucide-react'
 
 import type { SkillRefMeta } from '@/apis/bots'
@@ -51,6 +52,8 @@ import {
   getModelTypeFromConfig,
 } from '../services/bots'
 import { getAllowedAgentsForBindMode } from '../utils/team-bind-mode-rules'
+import { normalizeMcpServers, parseMcpConfig, stringifyMcpConfig } from '../utils/mcpConfig'
+import type { AgentType as McpAgentType } from '../utils/mcpTypeAdapter'
 
 interface TeamEditDialogProps {
   open: boolean
@@ -178,6 +181,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [simpleSelectedSkillRefs, setSimpleSelectedSkillRefs] = useState<
     Record<string, SkillRefMeta>
   >({})
+  const [simplePreloadSkills, setSimplePreloadSkills] = useState<string[]>([])
   const [simpleAllSkills, setSimpleAllSkills] = useState<UnifiedSkill[]>([])
   const [simpleAvailableSkills, setSimpleAvailableSkills] = useState<UnifiedSkill[]>([])
   const [simpleLoadingSkills, setSimpleLoadingSkills] = useState(false)
@@ -186,6 +190,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [simpleDefaultKnowledgeBaseRefs, setSimpleDefaultKnowledgeBaseRefs] = useState<
     KnowledgeBaseDefaultRef[]
   >([])
+  const [simpleMcpConfig, setSimpleMcpConfig] = useState('')
 
   // Ref for BotEdit in solo mode
   const botEditRef = useRef<BotEditRef | null>(null)
@@ -251,9 +256,18 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     [shells, simpleCustomShellName, simpleExecutorMode]
   )
 
+  const simpleMcpAgentType = useMemo<McpAgentType | undefined>(() => {
+    const shellType = selectedSimpleShell?.shellType || selectedSimpleShell?.name
+    return shellType === 'ClaudeCode' || shellType === 'Agno' ? shellType : undefined
+  }, [selectedSimpleShell])
+  const simpleSupportsPreloadSkills = useMemo(() => {
+    const shellType = selectedSimpleShell?.shellType || selectedSimpleShell?.name
+    return shellType === 'Chat'
+  }, [selectedSimpleShell])
+
   const simpleExecutorNeedsComplex = bindModeRequiresClaudeCode(bindMode)
   const simpleExecutorHelperText = simpleExecutorNeedsComplex
-    ? t('common:team.simple.executor.requires_complex_hint')
+    ? t('settings:team.simple.executor.requires_complex_hint')
     : null
   const skillLoadingFailedTitle = t('common:skills.loading_failed')
   const modelLoadingFailedTitle = t('common:bot.errors.fetch_models_failed')
@@ -283,7 +297,9 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setSimplePrompt(fullLeaderBot?.system_prompt || '')
       setSimpleSelectedSkills(fullLeaderBot?.skills || [])
       setSimpleSelectedSkillRefs(fullLeaderBot?.skill_refs || {})
+      setSimplePreloadSkills(fullLeaderBot?.preload_skills || [])
       setSimpleDefaultKnowledgeBaseRefs(fullLeaderBot?.default_knowledge_base_refs || [])
+      setSimpleMcpConfig(stringifyMcpConfig(fullLeaderBot?.mcp_servers || {}))
       setSimpleModelName(
         fullLeaderBot?.agent_config ? getModelFromConfig(fullLeaderBot.agent_config) : ''
       )
@@ -326,7 +342,9 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setSimplePrompt('')
       setSimpleSelectedSkills([])
       setSimpleSelectedSkillRefs({})
+      setSimplePreloadSkills([])
       setSimpleDefaultKnowledgeBaseRefs([])
+      setSimpleMcpConfig('')
       // Default to true for new teams (requires workspace by default)
       setRequiresWorkspace(true)
     }
@@ -557,7 +575,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     if (!selectedShell) {
       toast({
         variant: 'destructive',
-        title: t('common:team.simple.executor.required'),
+        title: t('settings:team.simple.executor.required'),
       })
       return
     }
@@ -565,7 +583,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     if (bindModeRequiresClaudeCode(bindMode) && !isClaudeCodeShell(selectedShell)) {
       toast({
         variant: 'destructive',
-        title: t('common:team.simple.executor.requires_complex_hint'),
+        title: t('settings:team.simple.executor.requires_complex_hint'),
       })
       return
     }
@@ -573,6 +591,20 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     const namespace = scope === 'group' && groupName ? groupName : undefined
     const existingLeaderBotId =
       formTeam?.bots.find(bot => bot.role === 'leader')?.bot_id ?? formTeam?.bots[0]?.bot_id
+    let parsedMcpServers: Record<string, unknown> = {}
+
+    if (simpleMcpConfig.trim()) {
+      try {
+        parsedMcpServers = normalizeMcpServers(parseMcpConfig(simpleMcpConfig), simpleMcpAgentType)
+      } catch {
+        toast({
+          variant: 'destructive',
+          title: t('common:bot.errors.mcp_config_json'),
+        })
+        return
+      }
+    }
+
     const botRequest = {
       ...buildSimpleBotRequest(
         {
@@ -584,8 +616,10 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           prompt: simplePrompt,
           selectedSkills: simpleSelectedSkills,
           selectedSkillRefs: simpleSelectedSkillRefs,
+          preloadSkills: simpleSupportsPreloadSkills ? simplePreloadSkills : [],
           availableSkills: simpleAllSkills,
           defaultKnowledgeBaseRefs: simpleDefaultKnowledgeBaseRefs,
+          mcpServers: parsedMcpServers,
         },
         name,
         scope,
@@ -850,82 +884,89 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
             <DialogDescription>{t('common:teams.description')}</DialogDescription>
           </DialogHeader>
 
-          <div className="flex-1 overflow-y-auto space-y-5 py-4">
-            {useSimpleEditor ? (
-              <>
-                <SimpleTeamEditForm
-                  name={name}
-                  setName={setName}
-                  displayName={displayName}
-                  setDisplayName={setDisplayName}
-                  description={description}
-                  setDescription={setDescription}
-                  bindMode={bindMode}
-                  setBindMode={setBindMode}
-                  icon={icon}
-                  setIcon={setIcon}
-                  requiresWorkspace={requiresWorkspace}
-                  setRequiresWorkspace={setRequiresWorkspace}
-                  executorMode={simpleExecutorMode}
-                  setExecutorMode={setSimpleExecutorMode}
-                  shells={shells}
-                  customShellName={simpleCustomShellName}
-                  setCustomShellName={setSimpleCustomShellName}
-                  executorHelperText={simpleExecutorHelperText}
-                  disabledExecutorModes={simpleExecutorNeedsComplex ? ['simple'] : []}
-                  modelName={simpleModelName}
-                  modelType={simpleModelType}
-                  modelNamespace={simpleModelNamespace}
-                  models={simpleModels}
-                  loadingModels={simpleLoadingModels}
-                  onModelChange={value => {
-                    setSimpleModelName(value.name)
-                    setSimpleModelType(value.type)
-                    setSimpleModelNamespace(value.namespace)
-                  }}
-                  selectedSkills={simpleSelectedSkills}
-                  selectedSkillRefs={simpleSelectedSkillRefs}
-                  availableSkills={simpleAvailableSkills}
-                  allSkills={simpleAllSkills}
-                  loadingSkills={simpleLoadingSkills}
-                  onSkillsChange={(skills, refs) => {
-                    setSimpleSelectedSkills(skills)
-                    setSimpleSelectedSkillRefs(refs)
-                  }}
-                  onReloadSkills={reloadSimpleSkills}
-                  defaultKnowledgeBaseRefs={simpleDefaultKnowledgeBaseRefs}
-                  onDefaultKnowledgeBaseRefsChange={setSimpleDefaultKnowledgeBaseRefs}
-                  prompt={simplePrompt}
-                  onPromptChange={setSimplePrompt}
-                  scope={scope}
-                  groupName={groupName}
-                />
-
-                <div className="flex items-center justify-between rounded-md border border-border bg-base p-3">
-                  <div>
-                    <p className="text-sm font-medium text-text-primary">
-                      {t('common:team.simple.advanced_title')}
-                    </p>
-                    <p className="mt-1 text-xs text-text-secondary">
-                      {t('common:team.simple.advanced_description')}
-                    </p>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setAdvancedOpen(true)}
-                    data-testid="open-advanced-button"
-                  >
-                    {t('common:team.simple.open_advanced')}
-                  </Button>
+          <div className="min-h-0 flex-1 space-y-5 overflow-y-auto py-4 pr-4 [scrollbar-gutter:stable]">
+            {!isNonSoloTeam && (
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-text-primary">
+                    {t('settings:team.simple.advanced_toggle')}
+                  </p>
+                  <p className="mt-0.5 text-xs text-text-secondary">
+                    {t('settings:team.simple.advanced_toggle_description')}
+                  </p>
                 </div>
-              </>
+                <Switch
+                  checked={advancedOpen}
+                  onCheckedChange={checked => setAdvancedOpen(checked)}
+                  data-testid="advanced-mode-switch"
+                />
+              </div>
+            )}
+
+            {useSimpleEditor ? (
+              <SimpleTeamEditForm
+                name={name}
+                setName={setName}
+                displayName={displayName}
+                setDisplayName={setDisplayName}
+                description={description}
+                setDescription={setDescription}
+                bindMode={bindMode}
+                setBindMode={setBindMode}
+                icon={icon}
+                setIcon={setIcon}
+                requiresWorkspace={requiresWorkspace}
+                setRequiresWorkspace={setRequiresWorkspace}
+                executorMode={simpleExecutorMode}
+                setExecutorMode={setSimpleExecutorMode}
+                shells={shells}
+                customShellName={simpleCustomShellName}
+                setCustomShellName={setSimpleCustomShellName}
+                executorHelperText={simpleExecutorHelperText}
+                disabledExecutorModes={simpleExecutorNeedsComplex ? ['simple'] : []}
+                modelName={simpleModelName}
+                modelType={simpleModelType}
+                modelNamespace={simpleModelNamespace}
+                models={simpleModels}
+                loadingModels={simpleLoadingModels}
+                onModelChange={value => {
+                  setSimpleModelName(value.name)
+                  setSimpleModelType(value.type)
+                  setSimpleModelNamespace(value.namespace)
+                }}
+                selectedSkills={simpleSelectedSkills}
+                selectedSkillRefs={simpleSelectedSkillRefs}
+                preloadSkills={simplePreloadSkills}
+                onPreloadSkillsChange={setSimplePreloadSkills}
+                supportsPreloadSkills={simpleSupportsPreloadSkills}
+                availableSkills={simpleAvailableSkills}
+                allSkills={simpleAllSkills}
+                loadingSkills={simpleLoadingSkills}
+                onSkillsChange={(skills, refs) => {
+                  setSimpleSelectedSkills(skills)
+                  setSimpleSelectedSkillRefs(refs)
+                  setSimplePreloadSkills(prev =>
+                    prev.filter(skillName => skills.includes(skillName))
+                  )
+                }}
+                onReloadSkills={reloadSimpleSkills}
+                defaultKnowledgeBaseRefs={simpleDefaultKnowledgeBaseRefs}
+                onDefaultKnowledgeBaseRefsChange={setSimpleDefaultKnowledgeBaseRefs}
+                mcpConfig={simpleMcpConfig}
+                onMcpConfigChange={setSimpleMcpConfig}
+                mcpAgentType={simpleMcpAgentType}
+                prompt={simplePrompt}
+                onPromptChange={setSimplePrompt}
+                toast={toast}
+                scope={scope}
+                groupName={groupName}
+              />
             ) : (
               <>
                 {isNonSoloTeam && (
                   <div className="flex items-start gap-2 rounded-md border border-border bg-surface p-3 text-sm text-text-secondary">
                     <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                    <span>{t('common:team.simple.non_solo_notice')}</span>
+                    <span>{t('settings:team.simple.non_solo_notice')}</span>
                   </div>
                 )}
 

@@ -28,36 +28,36 @@ export interface NormalizedExecutor {
 const SIMPLE_BIND_MODE_OPTIONS: SimpleBindModeOption[] = [
   {
     value: 'chat',
-    titleKey: 'common:team.simple.bind_mode.chat.title',
-    descriptionKey: 'common:team.simple.bind_mode.chat.description',
+    titleKey: 'settings:team.simple.bind_mode.chat.title',
+    descriptionKey: 'settings:team.simple.bind_mode.chat.description',
   },
   {
     value: 'code',
-    titleKey: 'common:team.simple.bind_mode.code.title',
-    descriptionKey: 'common:team.simple.bind_mode.code.description',
+    titleKey: 'settings:team.simple.bind_mode.code.title',
+    descriptionKey: 'settings:team.simple.bind_mode.code.description',
   },
   {
     value: 'task',
-    titleKey: 'common:team.simple.bind_mode.task.title',
-    descriptionKey: 'common:team.simple.bind_mode.task.description',
+    titleKey: 'settings:team.simple.bind_mode.task.title',
+    descriptionKey: 'settings:team.simple.bind_mode.task.description',
   },
 ]
 
 const SIMPLE_EXECUTOR_OPTIONS: SimpleExecutorOption[] = [
   {
     value: 'simple',
-    titleKey: 'common:team.simple.executor.simple.title',
-    descriptionKey: 'common:team.simple.executor.simple.description',
+    titleKey: 'settings:team.simple.executor.simple.title',
+    descriptionKey: 'settings:team.simple.executor.simple.description',
   },
   {
     value: 'complex',
-    titleKey: 'common:team.simple.executor.complex.title',
-    descriptionKey: 'common:team.simple.executor.complex.description',
+    titleKey: 'settings:team.simple.executor.complex.title',
+    descriptionKey: 'settings:team.simple.executor.complex.description',
   },
   {
     value: 'custom',
-    titleKey: 'common:team.simple.executor.custom.title',
-    descriptionKey: 'common:team.simple.executor.custom.description',
+    titleKey: 'settings:team.simple.executor.custom.title',
+    descriptionKey: 'settings:team.simple.executor.custom.description',
   },
 ]
 

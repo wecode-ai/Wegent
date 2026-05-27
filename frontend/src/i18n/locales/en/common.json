@@ -479,45 +479,7 @@
     "bind_mode_required": "Please select at least one bind mode",
     "require_confirmation_tooltip": "When enabled, the task will pause after this stage completes, waiting for user confirmation before proceeding to the next stage",
     "requires_workspace": "Requires Repository",
-    "requires_workspace_hint": "When enabled, this agent requires a code repository to be selected in code mode before starting a task. When disabled, tasks can start without selecting a repository.",
-    "simple": {
-      "advanced_title": "Advanced configuration",
-      "advanced_description": "Collaboration modes, multi-bot orchestration, and detailed role settings live here.",
-      "open_advanced": "Open advanced",
-      "non_solo_notice": "This agent uses an advanced collaboration mode, so the full configuration is shown.",
-      "bind_mode": {
-        "chat": {
-          "title": "Chat",
-          "description": "Use for Q&A, document discussion, and ongoing conversation."
-        },
-        "code": {
-          "title": "Code",
-          "description": "Use for development, fixes, and reviews inside a code repository."
-        },
-        "task": {
-          "title": "Device",
-          "description": "Use for tasks that need a local device or execution environment."
-        }
-      },
-      "executor": {
-        "title": "Executor",
-        "required": "Choose an available executor",
-        "requires_complex_hint": "Code and device modes need Claude Code capability, so the complex executor is preferred.",
-        "custom_shell_placeholder": "Choose custom Shell",
-        "simple": {
-          "title": "Simple",
-          "description": "Uses the Chat executor for conversation and lightweight Q&A."
-        },
-        "complex": {
-          "title": "Complex",
-          "description": "Uses the Claude Code executor for repository and device tasks."
-        },
-        "custom": {
-          "title": "Custom",
-          "description": "Uses a Shell you created for a specialized runtime."
-        }
-      }
-    }
+    "requires_workspace_hint": "When enabled, this agent requires a code repository to be selected in code mode before starting a task. When disabled, tasks can start without selecting a repository."
   },
   "team_model": {
     "solo": "Solo",
@@ -1028,9 +990,9 @@
     "public_no_download": "System skills cannot be downloaded",
     "no_skills_hint": "Upload a skill ZIP package or use system skills",
     "preload_skills_section": "Preload Skills",
-    "preload_skills_description": "Preloaded skills will be automatically injected into the system prompt",
+    "preload_skills_description": "Preloaded skills are loaded directly when a conversation starts",
     "preload_only_public_hint": "Note: Only public skills can be preloaded",
-    "preload_hint": "Check the checkbox to preload a skill (it will be injected into the system prompt automatically)",
+    "preload_hint": "Check the checkbox to preload a skill (it will be loaded directly when a conversation starts)",
     "no_skills_selected": "Please select skills first",
     "delete_success": "Skill deleted successfully",
     "delete_failed": "Failed to delete skill",

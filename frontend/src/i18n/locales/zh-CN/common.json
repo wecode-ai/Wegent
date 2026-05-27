@@ -479,45 +479,7 @@
     "bind_mode_required": "请至少选择一个绑定模式",
     "require_confirmation_tooltip": "启用后，该阶段完成时任务将暂停，等待用户确认后再继续执行下一阶段",
     "requires_workspace": "需要仓库",
-    "requires_workspace_hint": "启用后，该智能体在编码模式下必须选择代码仓库才能开始任务。关闭后，无需选择仓库即可开始。",
-    "simple": {
-      "advanced_title": "高级配置",
-      "advanced_description": "协作模式、多机器人编排和更细的角色设置都在这里。",
-      "open_advanced": "打开高级",
-      "non_solo_notice": "这个智能体使用了高级协作模式，已切换到完整配置。",
-      "bind_mode": {
-        "chat": {
-          "title": "对话",
-          "description": "用于普通问答、资料讨论和持续对话。"
-        },
-        "code": {
-          "title": "编码",
-          "description": "用于代码仓库内的开发、修复和审查任务。"
-        },
-        "task": {
-          "title": "设备",
-          "description": "用于需要本地设备或执行环境参与的任务。"
-        }
-      },
-      "executor": {
-        "title": "执行器",
-        "required": "请选择一个可用执行器",
-        "requires_complex_hint": "编码和设备模式需要 Claude Code 能力，已优先使用复杂执行器。",
-        "custom_shell_placeholder": "选择自定义 Shell",
-        "simple": {
-          "title": "简单",
-          "description": "使用 Chat 执行器，适合对话和轻量问答。"
-        },
-        "complex": {
-          "title": "复杂",
-          "description": "使用 Claude Code 执行器，适合代码仓库和设备任务。"
-        },
-        "custom": {
-          "title": "自定义",
-          "description": "使用你创建的 Shell，适合特殊运行环境。"
-        }
-      }
-    }
+    "requires_workspace_hint": "启用后，该智能体在编码模式下必须选择代码仓库才能开始任务。关闭后，无需选择仓库即可开始。"
   },
   "team_model": {
     "solo": "独立",
@@ -1028,9 +990,9 @@
     "public_no_download": "系统技能无法下载",
     "no_skills_hint": "上传技能 ZIP 包或使用系统技能",
     "preload_skills_section": "预加载技能",
-    "preload_skills_description": "预加载的技能会自动注入到系统提示词中",
+    "preload_skills_description": "预加载的技能将在开始对话时直接加载",
     "preload_only_public_hint": "注意：只有公共技能才能被设置为预加载",
-    "preload_hint": "勾选复选框可将技能设为预加载（技能将自动注入到系统提示词中）",
+    "preload_hint": "勾选复选框可将技能设为预加载（技能将在开始对话时直接加载）",
     "no_skills_selected": "请先选择技能",
     "delete_success": "技能删除成功",
     "delete_failed": "删除技能失败",

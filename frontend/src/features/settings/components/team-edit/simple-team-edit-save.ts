@@ -19,8 +19,10 @@ export interface SimpleBotFormValue {
   prompt: string
   selectedSkills: string[]
   selectedSkillRefs: Record<string, SkillRefMeta>
+  preloadSkills?: string[]
   availableSkills: UnifiedSkill[]
   defaultKnowledgeBaseRefs: KnowledgeBaseDefaultRef[]
+  mcpServers?: Record<string, unknown>
 }
 
 export interface SimpleTeamFormValue {
@@ -53,13 +55,16 @@ export function buildSimpleBotRequest(
   const agentConfig =
     createPredefinedModelConfig(form.modelName, form.modelType, form.modelNamespace, undefined) ??
     {}
+  const preloadSkills = (form.preloadSkills || []).filter(skillName =>
+    form.selectedSkills.includes(skillName)
+  )
 
   return {
     name: getSimpleBotName(form.name, teamName),
     shell_name: form.shellName,
     agent_config: agentConfig,
     system_prompt: form.prompt.trim(),
-    mcp_servers: {},
+    mcp_servers: form.mcpServers || {},
     default_knowledge_base_refs: form.defaultKnowledgeBaseRefs,
     skills: form.selectedSkills,
     skill_refs: buildSkillRefsFromSelection(
@@ -69,8 +74,14 @@ export function buildSimpleBotRequest(
       scope,
       groupName
     ),
-    preload_skills: [],
-    preload_skill_refs: {},
+    preload_skills: preloadSkills,
+    preload_skill_refs: buildSkillRefsFromSelection(
+      preloadSkills,
+      form.selectedSkillRefs,
+      form.availableSkills,
+      scope,
+      groupName
+    ),
   }
 }
 

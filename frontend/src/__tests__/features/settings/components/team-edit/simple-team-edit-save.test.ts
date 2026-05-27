@@ -78,6 +78,47 @@ describe('simple team edit save helpers', () => {
     })
   })
 
+  it('builds preload skill refs for selected preloaded skills', () => {
+    const request = buildSimpleBotRequest(
+      {
+        ...botForm,
+        preloadSkills: ['repo-reader', 'unknown-skill'],
+      },
+      'support-agent'
+    )
+
+    expect(request.preload_skills).toEqual(['repo-reader'])
+    expect(request.preload_skill_refs).toEqual({
+      'repo-reader': {
+        skill_id: 5,
+        namespace: 'default',
+        is_public: false,
+      },
+    })
+  })
+
+  it('keeps MCP server config in the simple bot request', () => {
+    const request = buildSimpleBotRequest(
+      {
+        ...botForm,
+        mcpServers: {
+          docs: {
+            type: 'sse',
+            url: 'https://example.com/mcp',
+          },
+        },
+      },
+      'support-agent'
+    )
+
+    expect(request.mcp_servers).toEqual({
+      docs: {
+        type: 'sse',
+        url: 'https://example.com/mcp',
+      },
+    })
+  })
+
   it('builds a solo team request with a leader bot', () => {
     expect(buildSimpleTeamRequest(teamForm, 42)).toEqual({
       name: 'support-agent',

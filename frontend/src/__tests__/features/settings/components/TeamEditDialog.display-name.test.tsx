@@ -106,6 +106,11 @@ jest.mock('@/features/settings/components/team-edit/TeamModeChangeDialog', () =>
   default: () => null,
 }))
 
+jest.mock('@/features/settings/components/team-edit/SimpleTeamEditForm', () => ({
+  __esModule: true,
+  default: () => null,
+}))
+
 const mockedUpdateTeam = updateTeam as jest.MockedFunction<typeof updateTeam>
 
 const makeBot = (): Bot => ({
