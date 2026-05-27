@@ -40,6 +40,7 @@ import wecode.service.local_device_patch  # noqa: F401  register LocalDeviceProv
 import wecode.service.openclaw_token_monitor_patch  # noqa: F401  register OpenClaw token monitor background worker
 import wecode.service.request_builder_patch  # noqa: F401  patch TaskRequestBuilder.build to replace ${WECODE_USER_API_KEY} (new dispatcher flow)
 import wecode.service.storage_backend_patch  # noqa: F401  register MinIO/S3 storage backends for attachment service
+import wecode.api.share_service_patch  # noqa: F401  ERP name priority for share members
 from app.api.endpoints.admin.router import router as admin_router
 from app.api.router import api_router
 from wecode.api.admin_published_apps import router as admin_published_apps_router
@@ -56,6 +57,7 @@ from wecode.api.mail_devices import router as mail_devices_router
 from wecode.api.mail_token import router as mail_token_router
 from wecode.api.published_apps import router as published_apps_router
 from wecode.api.transition_page import router as transition_page_router
+from wecode.api.user_search_with_erp import router as user_search_with_erp_router
 
 api_router.include_router(apikey_router, prefix="/internal/apikey", tags=["internal"])
 api_router.include_router(auth_router, prefix="/internal/auth", tags=["internal"])
@@ -80,6 +82,11 @@ api_router.include_router(
 )
 api_router.include_router(
     transition_page_router, prefix="/v1", tags=["transition-pages"]
+)
+api_router.include_router(
+    user_search_with_erp_router,
+    prefix="/wecode/users",
+    tags=["wecode"],
 )
 
 admin_router.include_router(admin_published_apps_router, tags=["admin-published-apps"])

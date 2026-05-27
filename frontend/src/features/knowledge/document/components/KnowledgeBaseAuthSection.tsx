@@ -26,6 +26,7 @@ import {
 import type { MemberRole } from '@/types/knowledge'
 import type { SearchUser } from '@/types/api'
 import type { Group } from '@/types/group'
+import { getRoleDisplayName, getRoleDescription } from '@wecode/features/knowledge-permission-ui'
 
 export type { AuthEntry }
 
@@ -156,42 +157,38 @@ export function KnowledgeBaseAuthSection({
                   onValueChange={v => setRoleForType(section.type, v as MemberRole)}
                 >
                   <SelectTrigger className="w-28 h-11 min-w-[44px] flex-shrink-0">
-                    <span className="truncate">{t(`document.permission.role.${role}`)}</span>
+                    <span className="truncate">{getRoleDisplayName(role, t)}</span>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="Maintainer">
                       <div>
-                        <div className="font-medium">
-                          {t('document.permission.role.Maintainer')}
-                        </div>
+                        <div className="font-medium">{getRoleDisplayName('Maintainer', t)}</div>
                         <div className="text-xs text-text-muted">
-                          {t('document.permission.role.MaintainerDescription')}
+                          {getRoleDescription('Maintainer', t)}
                         </div>
                       </div>
                     </SelectItem>
                     <SelectItem value="Developer">
                       <div>
-                        <div className="font-medium">{t('document.permission.role.Developer')}</div>
+                        <div className="font-medium">{getRoleDisplayName('Developer', t)}</div>
                         <div className="text-xs text-text-muted">
-                          {t('document.permission.role.DeveloperDescription')}
+                          {getRoleDescription('Developer', t)}
                         </div>
                       </div>
                     </SelectItem>
                     <SelectItem value="Reporter">
                       <div>
-                        <div className="font-medium">{t('document.permission.role.Reporter')}</div>
+                        <div className="font-medium">{getRoleDisplayName('Reporter', t)}</div>
                         <div className="text-xs text-text-muted">
-                          {t('document.permission.role.ReporterDescription')}
+                          {getRoleDescription('Reporter', t)}
                         </div>
                       </div>
                     </SelectItem>
                     <SelectItem value="RestrictedAnalyst">
                       <div>
-                        <div className="font-medium">
-                          {t('document.permission.role.RestrictedAnalyst')}
-                        </div>
+                        <div className="font-medium">{getRoleDisplayName('RestrictedAnalyst', t)}</div>
                         <div className="text-xs text-text-muted">
-                          {t('document.permission.role.RestrictedAnalystDescription')}
+                          {getRoleDescription('RestrictedAnalyst', t)}
                         </div>
                       </div>
                     </SelectItem>

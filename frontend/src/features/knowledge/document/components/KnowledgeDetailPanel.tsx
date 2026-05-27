@@ -24,9 +24,9 @@ import { ChatArea } from '@/features/tasks/components/chat'
 import { DocumentList, type KbGroupInfo } from './DocumentList'
 import { DocumentPanel } from './DocumentPanel'
 import { KnowledgeBaseSummaryCard } from './KnowledgeBaseSummaryCard'
-import { PermissionManagementTab } from '../../permission/components/PermissionManagementTab'
 import { useKnowledgePermissions } from '../../permission/hooks/useKnowledgePermissions'
 import { useNamespaceRoleMap } from '../hooks/useNamespaceRoleMap'
+import { KnowledgePermissionDialog } from '@wecode/features/knowledge-permission-ui'
 import {
   canManageKnowledgeBase,
   canManageKnowledgeBaseDocuments,
@@ -225,7 +225,7 @@ export function KnowledgeDetailPanel({
             <FileText className="w-3.5 h-3.5" />
             {t('chatPage.documents')}
           </TabsTrigger>
-          <TabsTrigger value="permissions" className="gap-1 h-7 px-2 text-xs">
+          <TabsTrigger value="permissions" className="gap-1 h-7 px-2 text-xs" data-testid="permission-management-tab">
             <Shield className="w-3.5 h-3.5" />
             {t('document.permission.management')}
           </TabsTrigger>
@@ -251,18 +251,13 @@ export function KnowledgeDetailPanel({
               initialDocPath={initialDocPath}
             />
           ) : (
-            <>
-              {/* Show header with tabs when on permissions tab */}
-              <div className="flex items-center gap-3 mb-4">
-                <div className="flex-1 min-w-0">
-                  <h2 className="text-base font-medium text-text-primary truncate">
-                    {selectedKb.name}
-                  </h2>
-                </div>
-                {headerActions}
-              </div>
-              <PermissionManagementTab kbId={selectedKb.id} kbNamespace={selectedKb.namespace} />
-            </>
+            <KnowledgePermissionDialog
+              open={true}
+              onOpenChange={open => {
+                if (!open) setActiveTab('documents')
+              }}
+              kbId={selectedKb.id}
+            />
           )}
         </div>
       </div>
