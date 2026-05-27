@@ -1,0 +1,40 @@
+{
+  "title": "Resource Library",
+  "tabs": {
+    "discover": "Discover",
+    "mine": "Mine"
+  },
+  "filters": {
+    "all": "All",
+    "agent": "Agent",
+    "skill": "Skill",
+    "mcp": "MCP"
+  },
+  "actions": {
+    "install": "Install",
+    "publish": "Publish Resource",
+    "archive": "Archive",
+    "configure": "Configure",
+    "view_detail": "View Details"
+  },
+  "status": {
+    "installed": "Installed",
+    "requires_configuration": "Requires Configuration",
+    "draft": "Draft",
+    "published": "Published",
+    "archived": "Archived"
+  },
+  "fields": {
+    "name": "Name",
+    "display_name": "Display Name",
+    "description": "Description",
+    "tags": "Tags",
+    "publisher": "Publisher",
+    "install_count": "Installs",
+    "updated_at": "Updated"
+  },
+  "empty": {
+    "discover": "No resources to discover",
+    "mine": "No resources yet"
+  }
+}

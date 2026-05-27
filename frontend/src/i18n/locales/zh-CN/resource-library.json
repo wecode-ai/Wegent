@@ -1,0 +1,40 @@
+{
+  "title": "资源库",
+  "tabs": {
+    "discover": "发现",
+    "mine": "我的"
+  },
+  "filters": {
+    "all": "全部",
+    "agent": "智能体",
+    "skill": "Skill",
+    "mcp": "MCP"
+  },
+  "actions": {
+    "install": "安装",
+    "publish": "发布资源",
+    "archive": "归档",
+    "configure": "配置",
+    "view_detail": "查看详情"
+  },
+  "status": {
+    "installed": "已安装",
+    "requires_configuration": "需要配置",
+    "draft": "草稿",
+    "published": "已发布",
+    "archived": "已归档"
+  },
+  "fields": {
+    "name": "名称",
+    "display_name": "显示名称",
+    "description": "描述",
+    "tags": "标签",
+    "publisher": "发布者",
+    "install_count": "安装次数",
+    "updated_at": "更新时间"
+  },
+  "empty": {
+    "discover": "暂无可发现资源",
+    "mine": "暂无我的资源"
+  }
+}
