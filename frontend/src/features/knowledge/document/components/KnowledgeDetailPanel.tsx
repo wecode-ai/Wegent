@@ -32,12 +32,15 @@ import {
   canManageKnowledgeBaseDocuments,
   canManageKnowledgeBasePermissions,
 } from '@/utils/namespace-permissions'
+import { getKnowledgeBase } from '@/apis/knowledge'
 import type { KnowledgeBase } from '@/types/knowledge'
 import type { Team } from '@/types/api'
 
 interface KnowledgeDetailPanelProps {
   /** Currently selected knowledge base */
   selectedKb: KnowledgeBase | null
+  /** Sync updated KB data back into sidebar state */
+  onSyncKnowledgeBase?: (kb: KnowledgeBase) => void
   /** Whether the tree panel is collapsed */
   isTreeCollapsed?: boolean
   /** Callback to expand the tree panel */
@@ -54,6 +57,7 @@ interface KnowledgeDetailPanelProps {
 
 export function KnowledgeDetailPanel({
   selectedKb,
+  onSyncKnowledgeBase,
   isTreeCollapsed: _isTreeCollapsed,
   onExpandTree: _onExpandTree,
   onEditKb: _onEditKb,
@@ -106,6 +110,12 @@ export function KnowledgeDetailPanel({
   const handleRefreshTeams = useCallback(async (): Promise<Team[]> => {
     return await refreshTeams()
   }, [refreshTeams])
+
+  const handleRefreshKnowledgeBase = useCallback(async () => {
+    if (!selectedKb || !onSyncKnowledgeBase) return
+    const nextKb = await getKnowledgeBase(selectedKb.id)
+    onSyncKnowledgeBase(nextKb)
+  }, [selectedKb, onSyncKnowledgeBase])
 
   // Check if user can manage this knowledge base
   const canManageKb = useMemo(() => {
@@ -187,7 +197,13 @@ export function KnowledgeDetailPanel({
             selectedDocumentIds={selectedDocumentIds}
             guidedQuestions={selectedKb.guided_questions}
             inputAlwaysAtBottom={true}
-            emptyStateContent={<KnowledgeBaseSummaryCard knowledgeBase={selectedKb} />}
+            emptyStateContent={
+              <KnowledgeBaseSummaryCard
+                knowledgeBase={selectedKb}
+                onRefresh={handleRefreshKnowledgeBase}
+                canEditSummary={canManageKb}
+              />
+            }
             // Note: Knowledge base binding is handled by the backend when creating the task
             // via the knowledge_base_id parameter in the chat request. No need to call
             // bindKnowledgeBase API here as it would either fail (not a group chat) or
@@ -201,6 +217,7 @@ export function KnowledgeDetailPanel({
           canUpload={canUploadDocuments}
           canManageAllDocuments={canManageKb}
           canManagePermissions={canManagePermissions}
+          onRefreshKnowledgeBase={handleRefreshKnowledgeBase}
           onDocumentSelectionChange={setSelectedDocumentIds}
           onCollapsedChange={setIsDocumentPanelCollapsed}
           groupInfo={groupInfo}
@@ -245,6 +262,7 @@ export function KnowledgeDetailPanel({
               knowledgeBase={selectedKb}
               canUpload={canUploadDocuments}
               canManageAllDocuments={canManageKb}
+              onRefreshKnowledgeBase={handleRefreshKnowledgeBase}
               headerActions={headerActions}
               groupInfo={groupInfo}
               onGroupClick={onGroupClick}
