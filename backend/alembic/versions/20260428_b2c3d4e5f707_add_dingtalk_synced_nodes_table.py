@@ -26,6 +26,13 @@ depends_on = None
 
 
 def upgrade() -> None:
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+
+    # Skip table creation if it already exists (idempotent upgrade)
+    if "dingtalk_synced_nodes" in inspector.get_table_names():
+        return
+
     op.create_table(
         "dingtalk_synced_nodes",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),

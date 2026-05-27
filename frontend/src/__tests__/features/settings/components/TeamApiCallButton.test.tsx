@@ -7,6 +7,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import type { Team } from '@/types/api'
 import {
+  buildTeamApiCodeSamples,
   buildTeamApiCurl,
   buildTeamApiModel,
   TeamApiCallButton,
@@ -37,11 +38,22 @@ jest.mock('@/hooks/useTranslation', () => ({
         'teams.api_call.endpoint': 'Endpoint',
         'teams.api_call.model': 'Model',
         'teams.api_call.curl_example': 'curl example',
+        'teams.api_call.code_examples': 'Code examples',
         'teams.api_call.copy_curl': 'Copy curl',
+        'teams.api_call.copy_sample': `Copy ${options?.language ?? 'code'}`,
+        'teams.api_call.copy_code_success': 'Code copied',
         'teams.api_call.manage_api_keys': 'Manage API Keys',
         'teams.api_call.view_docs': 'View docs',
         'teams.api_call.copy_success': 'curl copied',
         'teams.api_call.copy_failed': 'Failed to copy curl',
+        'teams.api_call.copy_code_failed': 'Failed to copy code',
+        'teams.api_call.languages.curl': 'curl',
+        'teams.api_call.languages.javascript': 'JavaScript',
+        'teams.api_call.languages.python': 'Python',
+        'teams.api_call.languages.java': 'Java',
+        'teams.api_call.languages.go': 'Go',
+        'teams.api_call.languages.rust': 'Rust',
+        'teams.api_call.rust_community_sdk': 'Uses the community async-openai SDK.',
       }
 
       return translations[key] ?? key
@@ -114,6 +126,38 @@ describe('TeamApiCallButton', () => {
     expect(curl).toContain('"tools": [{"type": "wegent_chat_bot"}]')
   })
 
+  it('builds SDK code samples for all supported languages', () => {
+    const samples = buildTeamApiCodeSamples(
+      makeTeam({ namespace: 'dev-group', name: 'code-agent' }),
+      '帮我总结今天的待办',
+      'https://wegent.example.com/api/v1/responses'
+    )
+
+    expect(samples.map(sample => sample.language)).toEqual([
+      'curl',
+      'javascript',
+      'python',
+      'java',
+      'go',
+      'rust',
+    ])
+
+    for (const sample of samples) {
+      expect(sample.code).toContain('https://wegent.example.com/api/v1')
+      expect(sample.code).toContain('dev-group#code-agent')
+      expect(sample.code).toContain('<your-api-key>')
+      expect(sample.code).toContain('wegent_chat_bot')
+    }
+
+    expect(samples.find(sample => sample.language === 'javascript')?.code).toContain(
+      "baseURL: 'https://wegent.example.com/api/v1'"
+    )
+    expect(samples.find(sample => sample.language === 'python')?.code).toContain(
+      'base_url="https://wegent.example.com/api/v1"'
+    )
+    expect(samples.find(sample => sample.language === 'rust')?.isCommunitySdk).toBe(true)
+  })
+
   it('opens the dialog from the API call button', () => {
     render(<TeamApiCallButton team={makeTeam()} />)
 
@@ -133,6 +177,19 @@ describe('TeamApiCallButton', () => {
     expect(apiCallButton.querySelector('.lucide-code-xml')).not.toBeInTheDocument()
   })
 
+  it('renders language tabs in the API call dialog', () => {
+    render(<TeamApiCallButton team={makeTeam()} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'API Call' }))
+
+    for (const language of ['curl', 'javascript', 'python', 'java', 'go', 'rust']) {
+      expect(screen.getByTestId(`team-api-language-tab-${language}-17`)).toBeInTheDocument()
+    }
+
+    fireEvent.click(screen.getByTestId('team-api-language-tab-rust-17'))
+    expect(screen.getByText('Uses the community async-openai SDK.')).toBeInTheDocument()
+  })
+
   it('copies the generated curl command', async () => {
     render(<TeamApiCallButton team={makeTeam({ namespace: 'group-a' })} />)
 
@@ -148,6 +205,27 @@ describe('TeamApiCallButton', () => {
       expect.stringContaining('"model": "group-a#support-agent"')
     )
     expect(mockToast).toHaveBeenCalledWith({ title: 'curl copied' })
+  })
+
+  it('copies the selected language code sample', async () => {
+    render(<TeamApiCallButton team={makeTeam({ namespace: 'group-a' })} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'API Call' }))
+    fireEvent.click(screen.getByTestId('team-api-language-tab-javascript-17'))
+    fireEvent.click(screen.getByRole('button', { name: 'Copy JavaScript' }))
+
+    await waitFor(() => {
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+        expect.stringContaining("import OpenAI from 'openai'")
+      )
+    })
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      expect.stringContaining("baseURL: 'http://1.1.1.1:8000/api/v1'")
+    )
+    expect(navigator.clipboard.writeText).not.toHaveBeenCalledWith(
+      expect.stringContaining('curl -X POST')
+    )
+    expect(mockToast).toHaveBeenCalledWith({ title: 'Code copied' })
   })
 
   it('routes to API Key settings from the dialog', () => {
