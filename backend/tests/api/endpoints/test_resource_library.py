@@ -97,17 +97,19 @@ def test_create_and_list_resource_library_listing(
     version = test_db.get(
         ResourceLibraryVersion, create_response.json()["current_version_id"]
     )
+    assert version.source_kind_id == source.id
+    assert version.source_binary_id is None
     assert version.manifest == {
         "resource_type": "skill",
-        "source_id": source.id,
-        "source_kind_id": source.id,
+        "skill": source.json,
         "source": {
-            "id": source.id,
-            "kind": "Skill",
+            "binary_id": None,
+            "kind_id": source.id,
             "name": "doc-summary",
             "namespace": "default",
         },
     }
+    assert "client_supplied" not in version.manifest
 
     list_response = test_client.get(
         "/api/resource-library/listings?resource_type=skill&keyword=summary",

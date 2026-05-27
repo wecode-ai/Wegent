@@ -9,26 +9,21 @@ from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models.kind import Kind
 from app.models.resource_library import (
     RESOURCE_LIBRARY_STATUS_ARCHIVED,
     RESOURCE_LIBRARY_STATUS_PUBLISHED,
-    RESOURCE_TYPE_AGENT,
-    RESOURCE_TYPE_MCP,
-    RESOURCE_TYPE_SKILL,
     ResourceLibraryListing,
     ResourceLibraryVersion,
 )
 from app.schemas.resource_library import ResourceLibraryListingCreate
-
-SOURCE_KIND_BY_RESOURCE_TYPE = {
-    RESOURCE_TYPE_AGENT: "Team",
-    RESOURCE_TYPE_SKILL: "Skill",
-}
+from app.services.resource_library.manifest_builders import ResourceManifestBuilder
 
 
 class ResourceLibraryService:
     """Application service for resource library listings and versions."""
+
+    def __init__(self, manifest_builder: ResourceManifestBuilder | None = None):
+        self.manifest_builder = manifest_builder or ResourceManifestBuilder()
 
     def create_listing(
         self,
@@ -38,8 +33,14 @@ class ResourceLibraryService:
         payload: ResourceLibraryListingCreate,
     ) -> ResourceLibraryListing:
         self._ensure_listing_name_available(db, user_id=user_id, payload=payload)
-        source = self._get_publish_source(db, user_id=user_id, payload=payload)
-        manifest = self._build_minimal_manifest(payload, source)
+        manifest = self.manifest_builder.build(
+            db,
+            user_id=user_id,
+            resource_type=payload.resource_type,
+            source_id=payload.source_id,
+            options=payload.manifest_options,
+        )
+        source = manifest.get("source") or {}
 
         listing = ResourceLibraryListing(
             resource_type=payload.resource_type,
@@ -59,7 +60,8 @@ class ResourceLibraryService:
                 listing_id=listing.id,
                 version=payload.version,
                 manifest=manifest,
-                source_kind_id=source.id if source else None,
+                source_kind_id=source.get("kind_id"),
+                source_binary_id=source.get("binary_id"),
                 is_current=True,
             )
             db.add(version)
@@ -91,53 +93,6 @@ class ResourceLibraryService:
         )
         if existing:
             raise self._listing_conflict()
-
-    def _get_publish_source(
-        self,
-        db: Session,
-        *,
-        user_id: int,
-        payload: ResourceLibraryListingCreate,
-    ) -> Optional[Kind]:
-        if payload.resource_type == RESOURCE_TYPE_MCP:
-            return None
-
-        source_kind = SOURCE_KIND_BY_RESOURCE_TYPE[payload.resource_type]
-        source = (
-            db.query(Kind)
-            .filter(
-                Kind.id == payload.source_id,
-                Kind.kind == source_kind,
-                Kind.user_id == user_id,
-                Kind.is_active.is_(True),
-            )
-            .first()
-        )
-        if not source:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Source resource not found",
-            )
-        return source
-
-    def _build_minimal_manifest(
-        self,
-        payload: ResourceLibraryListingCreate,
-        source: Optional[Kind],
-    ) -> dict:
-        source_kind_id = source.id if source else None
-        source_info = {
-            "id": payload.source_id,
-            "kind": source.kind if source else payload.resource_type,
-            "name": source.name if source else payload.name,
-            "namespace": source.namespace if source else None,
-        }
-        return {
-            "resource_type": payload.resource_type,
-            "source_id": payload.source_id,
-            "source_kind_id": source_kind_id,
-            "source": source_info,
-        }
 
     def _listing_conflict(self) -> HTTPException:
         return HTTPException(

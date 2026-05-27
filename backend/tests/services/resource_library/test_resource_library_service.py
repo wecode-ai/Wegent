@@ -88,17 +88,18 @@ def test_create_listing_creates_current_version(test_db, test_user):
     assert created.name == "research-agent"
     assert created.current_version_id is not None
     version = test_db.get(ResourceLibraryVersion, created.current_version_id)
+    assert version.source_kind_id == source.id
+    assert version.source_binary_id is None
     assert version.manifest == {
         "resource_type": "agent",
-        "source_id": source.id,
-        "source_kind_id": source.id,
+        "team": source.json,
         "source": {
-            "id": source.id,
-            "kind": "Team",
+            "kind_id": source.id,
             "name": "research-agent",
             "namespace": "default",
         },
     }
+    assert "client_supplied" not in version.manifest
 
 
 def test_list_published_filters_by_type_and_keyword(test_db, test_user):
@@ -284,14 +285,11 @@ def test_create_listing_allows_mcp_minimal_server_manifest(test_db, test_user):
     )
 
     version = test_db.get(ResourceLibraryVersion, created.current_version_id)
+    assert version.source_kind_id is None
+    assert version.source_binary_id is None
     assert version.manifest == {
         "resource_type": "mcp",
-        "source_id": 42,
-        "source_kind_id": None,
-        "source": {
-            "id": 42,
-            "kind": "mcp",
-            "name": "browser-tools",
-            "namespace": None,
-        },
+        "server_name": "mcp-42",
+        "server_config_template": {"type": "streamable-http", "url": ""},
+        "required_fields": ["url"],
     }
