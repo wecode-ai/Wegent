@@ -91,8 +91,20 @@ describe('resourceLibraryApi', () => {
   it('loads published resources for current user', async () => {
     mockedApiClient.get.mockResolvedValue({ items: [], total: 0 })
 
-    await resourceLibraryApi.listMyPublished()
+    await resourceLibraryApi.listMyPublished({ resourceType: 'agent', page: 1, limit: 20 })
 
-    expect(mockedApiClient.get).toHaveBeenCalledWith('/resource-library/users/me/published')
+    expect(mockedApiClient.get).toHaveBeenCalledWith(
+      '/resource-library/users/me/published?resource_type=agent&page=1&limit=20'
+    )
+  })
+
+  it('loads installed resources for current user', async () => {
+    mockedApiClient.get.mockResolvedValue({ items: [], total: 0 })
+
+    await resourceLibraryApi.listMyInstalls({ resourceType: 'mcp', page: 1, limit: 20 })
+
+    expect(mockedApiClient.get).toHaveBeenCalledWith(
+      '/resource-library/users/me/installs?resource_type=mcp&page=1&limit=20'
+    )
   })
 })

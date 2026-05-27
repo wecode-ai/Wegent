@@ -23,7 +23,8 @@
     "details": "Details",
     "retry": "Retry",
     "search": "Search",
-    "close": "Close"
+    "close": "Close",
+    "cancel": "Cancel"
   },
   "status": {
     "installed": "Installed",
@@ -37,6 +38,9 @@
     "display_name": "Display Name",
     "description": "Description",
     "tags": "Tags",
+    "type": "Resource type",
+    "source_id": "Source resource ID",
+    "version": "Version",
     "publisher": "Publisher",
     "install_count": "Installs",
     "updated_at": "Updated"
@@ -57,6 +61,11 @@
   "messages": {
     "install_success": "Installed",
     "install_requires_configuration": "Installed, configuration required",
-    "install_failed": "Install failed"
+    "install_failed": "Install failed",
+    "publish_success": "Published",
+    "publish_failed": "Publish failed"
+  },
+  "publish": {
+    "description": "Publish an existing Agent, Skill, or MCP to the resource library"
   }
 }

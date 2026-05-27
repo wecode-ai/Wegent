@@ -23,7 +23,8 @@
     "details": "详情",
     "retry": "重试",
     "search": "搜索",
-    "close": "关闭"
+    "close": "关闭",
+    "cancel": "取消"
   },
   "status": {
     "installed": "已安装",
@@ -37,6 +38,9 @@
     "display_name": "显示名称",
     "description": "描述",
     "tags": "标签",
+    "type": "资源类型",
+    "source_id": "源资源 ID",
+    "version": "版本",
     "publisher": "发布者",
     "install_count": "安装次数",
     "updated_at": "更新时间"
@@ -57,6 +61,11 @@
   "messages": {
     "install_success": "安装成功",
     "install_requires_configuration": "安装成功，需要配置",
-    "install_failed": "安装失败"
+    "install_failed": "安装失败",
+    "publish_success": "发布成功",
+    "publish_failed": "发布失败"
+  },
+  "publish": {
+    "description": "将已有智能体、Skill 或 MCP 发布到资源库"
   }
 }

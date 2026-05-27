@@ -7,6 +7,7 @@
 import { useState } from 'react'
 
 import { DiscoverResources } from './components/DiscoverResources'
+import { MyResources } from './components/MyResources'
 import { ResourceLibraryTabs, type ResourceLibraryTab } from './components/ResourceLibraryTabs'
 import { ResourceTypeFilter } from './components/ResourceTypeFilter'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -34,9 +35,7 @@ export function ResourceLibraryPage() {
             {activeTab === 'discover' ? (
               <DiscoverResources resourceType={activeFilter} />
             ) : (
-              <div className="flex min-h-[360px] items-center justify-center rounded-lg border border-border bg-surface p-4 text-sm text-text-secondary">
-                {t('empty.mine')}
-              </div>
+              <MyResources resourceType={activeFilter} />
             )}
           </div>
         </section>

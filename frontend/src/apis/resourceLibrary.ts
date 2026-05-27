@@ -85,12 +85,20 @@ export const resourceLibraryApi = {
     return apiClient.post(`${RESOURCE_LIBRARY_BASE_PATH}/listings/${listingId}/archive`)
   },
 
-  listMyInstalls(): Promise<ResourceLibraryListResponse<ResourceLibraryInstall>> {
-    return apiClient.get(`${RESOURCE_LIBRARY_BASE_PATH}/users/me/installs`)
+  listMyInstalls(
+    params?: ResourceLibraryListListingsParams
+  ): Promise<ResourceLibraryListResponse<ResourceLibraryInstall>> {
+    return apiClient.get(
+      `${RESOURCE_LIBRARY_BASE_PATH}/users/me/installs${buildListingsQuery(params)}`
+    )
   },
 
-  listMyPublished(): Promise<ResourceLibraryListResponse<ResourceLibraryListing>> {
-    return apiClient.get(`${RESOURCE_LIBRARY_BASE_PATH}/users/me/published`)
+  listMyPublished(
+    params?: ResourceLibraryListListingsParams
+  ): Promise<ResourceLibraryListResponse<ResourceLibraryListing>> {
+    return apiClient.get(
+      `${RESOURCE_LIBRARY_BASE_PATH}/users/me/published${buildListingsQuery(params)}`
+    )
   },
 }
 
