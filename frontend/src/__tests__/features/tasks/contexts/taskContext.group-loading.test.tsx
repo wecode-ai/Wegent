@@ -117,7 +117,7 @@ describe('TaskContext group task loading', () => {
     mockedTaskApis.searchTasks.mockResolvedValue(taskListResponse([]))
   })
 
-  it('loads every remaining group task page when all group tasks are requested', async () => {
+  it('defers group task loading until all group tasks are requested', async () => {
     render(
       <TaskContextProvider>
         <ContextProbe />
@@ -125,8 +125,10 @@ describe('TaskContext group task loading', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByTestId('group-count')).toHaveTextContent('50')
+      expect(mockedTaskApis.getPersonalTaskGroupsLite).toHaveBeenCalledWith({ page: 1, limit: 50 })
     })
+    expect(screen.getByTestId('group-count')).toHaveTextContent('0')
+    expect(mockedTaskApis.getGroupTasksLite).not.toHaveBeenCalled()
 
     await act(async () => {
       await contextProbe.current?.loadAllGroupTasks()

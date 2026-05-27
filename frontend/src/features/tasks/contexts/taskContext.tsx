@@ -202,7 +202,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   // Pagination related - group tasks
   const [hasMoreGroupTasks, setHasMoreGroupTasks] = useState(true)
   const [loadingMoreGroupTasks, setLoadingMoreGroupTasks] = useState(false)
-  const [loadedGroupPages, setLoadedGroupPages] = useState([1])
+  const [loadedGroupPages, setLoadedGroupPages] = useState<number[]>([])
 
   // Pagination related - personal tasks
   const [hasMorePersonalTasks, setHasMorePersonalTasks] = useState(true)
@@ -310,7 +310,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const loadMoreGroupTasks = async () => {
     if (loadingMoreGroupTasks || !hasMoreGroupTasks) return
     setLoadingMoreGroupTasks(true)
-    const nextPage = (loadedGroupPages[loadedGroupPages.length - 1] || 1) + 1
+    const nextPage = (loadedGroupPages[loadedGroupPages.length - 1] || 0) + 1
     const result = await loadGroupPages([nextPage])
 
     if (!result.error) {
@@ -334,7 +334,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     setLoadingMoreGroupTasks(true)
     const loadedItems: Task[] = []
     const loadedPagesToAdd: number[] = []
-    let nextPage = Math.max(...loadedGroupPages, 1) + 1
+    let nextPage = loadedGroupPages.length > 0 ? Math.max(...loadedGroupPages) + 1 : 1
     let reachedEnd = false
     let hasError = false
 
@@ -395,16 +395,23 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const refreshTasks = async () => {
     setTaskLoading(true)
 
-    // Load group and personal tasks in parallel
+    const shouldRefreshGroupTasks = loadedGroupPages.length > 0
     const [groupResult, personalResult] = await Promise.all([
-      loadGroupPages(loadedGroupPages),
+      shouldRefreshGroupTasks
+        ? loadGroupPages(loadedGroupPages)
+        : Promise.resolve({
+            items: groupTasks,
+            hasMore: hasMoreGroupTasks,
+            pages: loadedGroupPages,
+            error: false,
+          }),
       loadPersonalPages(loadedPersonalPages),
     ])
 
     // Update group tasks
-    if (!groupResult.error) {
+    if (shouldRefreshGroupTasks && !groupResult.error) {
       setGroupTasks(groupResult.items)
-      setLoadedGroupPages(groupResult.pages || [1])
+      setLoadedGroupPages(groupResult.pages || [])
       setHasMoreGroupTasks(groupResult.hasMore)
     }
 

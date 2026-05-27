@@ -6,9 +6,12 @@ from datetime import datetime
 from unittest.mock import Mock, patch
 
 import pytest
+from sqlalchemy import event
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.services.adapters.task_kinds.helpers import (
     _batch_query_teams,
@@ -233,3 +236,106 @@ def test_batch_query_teams_includes_public_system_team_metadata(test_db):
     assert team.user_id == 0
     assert _get_team_display_name(team) == "Wegent Chat"
     assert _get_team_icon(team) == "users"
+
+
+@pytest.mark.unit
+def test_batch_query_teams_loads_accessible_scopes_with_one_select_and_priority(
+    test_db,
+):
+    user_id = 7
+    personal_team = Kind(
+        user_id=user_id,
+        kind="Team",
+        name="priority-team",
+        namespace="default",
+        json=_team_json("priority-team", "Personal Priority", "user"),
+        is_active=True,
+    )
+    shared_priority_team = Kind(
+        user_id=88,
+        kind="Team",
+        name="priority-team",
+        namespace="default",
+        json=_team_json("priority-team", "Shared Priority", "users"),
+        is_active=True,
+    )
+    public_priority_team = Kind(
+        user_id=0,
+        kind="Team",
+        name="priority-team",
+        namespace="default",
+        json=_team_json("priority-team", "Public Priority", "sparkles"),
+        is_active=True,
+    )
+    shared_only_team = Kind(
+        user_id=88,
+        kind="Team",
+        name="shared-only",
+        namespace="default",
+        json=_team_json("shared-only", "Shared Only", "bot"),
+        is_active=True,
+    )
+    public_only_team = Kind(
+        user_id=0,
+        kind="Team",
+        name="public-only",
+        namespace="default",
+        json=_team_json("public-only", "Public Only", "globe"),
+        is_active=True,
+    )
+    test_db.add_all(
+        [
+            personal_team,
+            shared_priority_team,
+            public_priority_team,
+            shared_only_team,
+            public_only_team,
+        ]
+    )
+    test_db.flush()
+    test_db.add_all(
+        [
+            ResourceMember(
+                resource_type=ResourceType.TEAM,
+                resource_id=shared_priority_team.id,
+                entity_type="user",
+                entity_id=str(user_id),
+                status=MemberStatus.APPROVED,
+            ),
+            ResourceMember(
+                resource_type=ResourceType.TEAM,
+                resource_id=shared_only_team.id,
+                entity_type="user",
+                entity_id=str(user_id),
+                status=MemberStatus.APPROVED,
+            ),
+        ]
+    )
+    test_db.commit()
+
+    select_count = 0
+
+    def count_selects(_conn, _cursor, statement, _parameters, _context, _executemany):
+        nonlocal select_count
+        if statement.lstrip().upper().startswith("SELECT"):
+            select_count += 1
+
+    connection = test_db.connection()
+    event.listen(connection, "before_cursor_execute", count_selects)
+    try:
+        teams = _batch_query_teams(
+            test_db,
+            {
+                ("priority-team", "default"),
+                ("shared-only", "default"),
+                ("public-only", "default"),
+            },
+            user_id=user_id,
+        )
+    finally:
+        event.remove(connection, "before_cursor_execute", count_selects)
+
+    assert select_count == 1
+    assert teams["priority-team:default"].id == personal_team.id
+    assert teams["shared-only:default"].id == shared_only_team.id
+    assert teams["public-only:default"].id == public_only_team.id

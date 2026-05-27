@@ -14,10 +14,12 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 from fastapi import HTTPException
-from sqlalchemy import func
+from sqlalchemy import and_, exists, func, or_, tuple_
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.models.resource_member import MemberStatus, ResourceMember
+from app.models.share_link import ResourceType
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.schemas.kind import Task, Team, Workspace
@@ -469,81 +471,52 @@ def _batch_query_workspaces(
 
 def _batch_query_teams(db: Session, team_refs: set, user_id: int) -> Dict[str, Kind]:
     """Batch query teams (including shared teams) and return data dict."""
-    team_data = {}
     if not team_refs:
-        return team_data
+        return {}
 
-    team_names, team_namespaces = zip(*team_refs)
-
-    # First query user's own teams
-    teams = (
+    shared_team_exists = exists().where(
+        and_(
+            ResourceMember.resource_type == ResourceType.TEAM,
+            ResourceMember.resource_id == Kind.id,
+            ResourceMember.entity_type == "user",
+            ResourceMember.entity_id == str(user_id),
+            ResourceMember.status == MemberStatus.APPROVED,
+        )
+    )
+    accessible_teams = (
         db.query(Kind)
         .filter(
-            Kind.user_id == user_id,
             Kind.kind == "Team",
-            Kind.name.in_(team_names),
-            Kind.namespace.in_(team_namespaces),
+            tuple_(Kind.name, Kind.namespace).in_(team_refs),
             Kind.is_active.is_(True),
+            or_(
+                Kind.user_id == user_id,
+                Kind.user_id == 0,
+                shared_team_exists,
+            ),
         )
         .all()
     )
 
-    for team in teams:
+    team_data: Dict[str, Kind] = {}
+    team_priorities: Dict[str, int] = {}
+    for team in accessible_teams:
         key = f"{team.name}:{team.namespace}"
-        team_data[key] = team
-
-    # Then query shared teams for missing team refs
-    missing_team_refs = [
-        ref for ref in team_refs if f"{ref[0]}:{ref[1]}" not in team_data
-    ]
-    if missing_team_refs:
-        # Get all shared team_ids for this user
-        from app.services.readers.shared_teams import sharedTeamReader
-
-        shared_team_ids = sharedTeamReader.get_shared_team_ids(db, user_id)
-
-        if shared_team_ids:
-            # Query teams from shared team ids
-            missing_team_names, missing_team_namespaces = zip(*missing_team_refs)
-            shared_team_kinds = (
-                db.query(Kind)
-                .filter(
-                    Kind.id.in_(shared_team_ids),
-                    Kind.kind == "Team",
-                    Kind.name.in_(missing_team_names),
-                    Kind.namespace.in_(missing_team_namespaces),
-                    Kind.is_active.is_(True),
-                )
-                .all()
-            )
-
-            for team in shared_team_kinds:
-                key = f"{team.name}:{team.namespace}"
-                team_data[key] = team
-
-    # Finally query public/system teams for still-missing refs.
-    missing_team_refs = [
-        ref for ref in team_refs if f"{ref[0]}:{ref[1]}" not in team_data
-    ]
-    if missing_team_refs:
-        missing_team_names, missing_team_namespaces = zip(*missing_team_refs)
-        public_team_kinds = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == 0,
-                Kind.kind == "Team",
-                Kind.name.in_(missing_team_names),
-                Kind.namespace.in_(missing_team_namespaces),
-                Kind.is_active.is_(True),
-            )
-            .all()
-        )
-
-        for team in public_team_kinds:
-            key = f"{team.name}:{team.namespace}"
+        priority = _get_team_scope_priority(team, user_id)
+        if key not in team_data or priority < team_priorities[key]:
             team_data[key] = team
+            team_priorities[key] = priority
 
     return team_data
+
+
+def _get_team_scope_priority(team: Kind, user_id: int) -> int:
+    """Return lower priority for the preferred team scope."""
+    if team.user_id == user_id:
+        return 0
+    if team.user_id == 0:
+        return 2
+    return 1
 
 
 def _batch_query_devices(
