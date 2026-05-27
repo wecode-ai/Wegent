@@ -45,6 +45,24 @@ def _file_list_processor(result: CommandResult) -> CommandResult:
     return result
 
 
+def _directory_list_processor(result: CommandResult) -> CommandResult:
+    if not result.get("success"):
+        return result
+
+    entries = [
+        line.strip()
+        for line in str(result.get("stdout") or "").splitlines()
+        if line.strip()
+    ]
+    result["stdout"] = [
+        entry.rstrip("/")
+        for entry in entries
+        if entry.endswith("/") and entry.rstrip("/") not in {".", ".."}
+    ]
+    return result
+
+
 COMMAND_POST_PROCESSORS: dict[str, CommandPostProcessor] = {
     "file_list": _file_list_processor,
+    "directory_list": _directory_list_processor,
 }
