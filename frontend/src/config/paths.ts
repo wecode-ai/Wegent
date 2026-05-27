@@ -40,6 +40,9 @@ export const paths = {
   inbox: {
     getHref: () => '/inbox',
   },
+  resourceLibrary: {
+    getHref: () => '/resource-library',
+  },
   feedSubscriptions: {
     getHref: () => '/feed/subscriptions',
   },
