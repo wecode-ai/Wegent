@@ -248,7 +248,7 @@ def test_archive_resource_library_listing(test_client, test_db, test_user, test_
     assert list_response.json()["total"] == 0
 
 
-def test_list_my_published_resource_library_listings_includes_archived(
+def test_list_my_published_resource_library_listings_excludes_archived(
     test_client,
     test_db,
     test_user,
@@ -274,6 +274,5 @@ def test_list_my_published_resource_library_listings_includes_archived(
     assert archive_response.status_code == 200
     assert my_published_response.status_code == 200
     body = my_published_response.json()
-    assert body["total"] == 1
-    assert body["items"][0]["id"] == listing_id
-    assert body["items"][0]["status"] == "archived"
+    assert body["total"] == 0
+    assert body["items"] == []

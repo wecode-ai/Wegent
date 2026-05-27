@@ -188,6 +188,7 @@ export function MyResources({ resourceType }: MyResourcesProps) {
           variant="primary"
           className="h-11 min-w-[44px] px-4 lg:h-9"
           onClick={() => setIsPublishDialogOpen(true)}
+          data-testid="publish-resource-button"
         >
           <Plus className="h-4 w-4" aria-hidden="true" />
           {t('actions.publish')}

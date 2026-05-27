@@ -74,6 +74,7 @@ export function ResourceDetailDrawer({
                 variant="ghost"
                 className="h-11 min-w-[44px] px-3 lg:h-9"
                 aria-label={t('actions.close')}
+                data-testid="resource-detail-close-button"
               >
                 <X className="h-4 w-4" aria-hidden="true" />
               </Button>

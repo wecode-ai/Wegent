@@ -119,7 +119,7 @@ export function PublishResourceDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-h-[90vh] overflow-y-auto" data-testid="publish-resource-dialog">
         <form className="space-y-5" onSubmit={handleSubmit}>
           <DialogHeader>
             <DialogTitle>{t('actions.publish')}</DialogTitle>
@@ -135,6 +135,7 @@ export function PublishResourceDialog({
                 className={cn('h-11 min-w-[44px]', selectedType === type && 'border-primary')}
                 onClick={() => setSelectedType(type)}
                 aria-pressed={selectedType === type}
+                data-testid={`publish-resource-type-${type}-button`}
               >
                 {t(`filters.${type}`)}
               </Button>
@@ -150,6 +151,7 @@ export function PublishResourceDialog({
                 onChange={event => setSourceId(event.target.value)}
                 inputMode="numeric"
                 className="h-11"
+                data-testid="publish-resource-source-id-input"
               />
             </div>
             <div className="space-y-2">
@@ -159,6 +161,7 @@ export function PublishResourceDialog({
                 value={version}
                 onChange={event => setVersion(event.target.value)}
                 className="h-11"
+                data-testid="publish-resource-version-input"
               />
             </div>
           </div>
@@ -170,6 +173,7 @@ export function PublishResourceDialog({
               value={name}
               onChange={event => setName(event.target.value)}
               className="h-11"
+              data-testid="publish-resource-name-input"
             />
           </div>
 
@@ -180,6 +184,7 @@ export function PublishResourceDialog({
               value={displayName}
               onChange={event => setDisplayName(event.target.value)}
               className="h-11"
+              data-testid="publish-resource-display-name-input"
             />
           </div>
 
@@ -189,6 +194,7 @@ export function PublishResourceDialog({
               id="resource-library-description"
               value={description}
               onChange={event => setDescription(event.target.value)}
+              data-testid="publish-resource-description-textarea"
             />
           </div>
 
@@ -199,12 +205,18 @@ export function PublishResourceDialog({
               value={tags}
               onChange={event => setTags(event.target.value)}
               className="h-11"
+              data-testid="publish-resource-tags-input"
             />
           </div>
 
           <DialogFooter className="gap-2 sm:space-x-0">
             <DialogClose asChild>
-              <Button type="button" variant="outline" className="h-11 min-w-[44px]">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 min-w-[44px]"
+                data-testid="publish-resource-cancel-button"
+              >
                 {t('actions.cancel')}
               </Button>
             </DialogClose>
@@ -213,6 +225,7 @@ export function PublishResourceDialog({
               variant="primary"
               className="h-11 min-w-[44px]"
               disabled={!canPublish || isPublishing}
+              data-testid="publish-resource-submit-button"
             >
               {t('actions.publish')}
             </Button>

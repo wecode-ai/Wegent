@@ -178,7 +178,8 @@ class ResourceLibraryService:
         limit: int = 20,
     ) -> tuple[list[ResourceLibraryListing], int]:
         query = db.query(ResourceLibraryListing).filter(
-            ResourceLibraryListing.publisher_user_id == user_id
+            ResourceLibraryListing.publisher_user_id == user_id,
+            ResourceLibraryListing.status == RESOURCE_LIBRARY_STATUS_PUBLISHED,
         )
         if resource_type:
             query = query.filter(ResourceLibraryListing.resource_type == resource_type)

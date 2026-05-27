@@ -187,17 +187,31 @@ describe('MyResources', () => {
     render(<MyResources resourceType="agent" />)
 
     expect(await screen.findByText('Doc Summary')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '发布资源' }))
-    const dialog = screen.getByRole('dialog')
-    fireEvent.change(within(dialog).getByLabelText('源资源 ID'), { target: { value: '42' } })
-    fireEvent.change(within(dialog).getByLabelText('名称'), { target: { value: 'new-agent' } })
-    fireEvent.change(within(dialog).getByLabelText('显示名称'), { target: { value: 'New Agent' } })
-    fireEvent.change(within(dialog).getByLabelText('描述'), {
+    fireEvent.click(screen.getByTestId('publish-resource-button'))
+    const dialog = screen.getByTestId('publish-resource-dialog')
+    expect(within(dialog).getByTestId('publish-resource-type-agent-button')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    fireEvent.change(within(dialog).getByTestId('publish-resource-source-id-input'), {
+      target: { value: '42' },
+    })
+    fireEvent.change(within(dialog).getByTestId('publish-resource-name-input'), {
+      target: { value: 'new-agent' },
+    })
+    fireEvent.change(within(dialog).getByTestId('publish-resource-display-name-input'), {
+      target: { value: 'New Agent' },
+    })
+    fireEvent.change(within(dialog).getByTestId('publish-resource-description-textarea'), {
       target: { value: 'Handles research' },
     })
-    fireEvent.change(within(dialog).getByLabelText('标签'), { target: { value: 'research,agent' } })
-    fireEvent.change(within(dialog).getByLabelText('版本'), { target: { value: '1.0.0' } })
-    fireEvent.click(within(dialog).getByRole('button', { name: '发布资源' }))
+    fireEvent.change(within(dialog).getByTestId('publish-resource-tags-input'), {
+      target: { value: 'research,agent' },
+    })
+    fireEvent.change(within(dialog).getByTestId('publish-resource-version-input'), {
+      target: { value: '1.0.0' },
+    })
+    fireEvent.click(within(dialog).getByTestId('publish-resource-submit-button'))
 
     await waitFor(() => {
       expect(mockResourceLibraryApi.createListing).toHaveBeenCalledWith({
@@ -213,5 +227,15 @@ describe('MyResources', () => {
       })
     })
     expect(mockToast).toHaveBeenCalledWith({ title: '发布成功' })
+  })
+
+  it('opens resource details with a close control', async () => {
+    render(<MyResources resourceType="skill" />)
+
+    expect(await screen.findByText('Doc Summary')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('view-resource-1-button'))
+
+    expect(await screen.findByTestId('resource-detail-drawer')).toBeInTheDocument()
+    expect(screen.getByTestId('resource-detail-close-button')).toBeInTheDocument()
   })
 })
