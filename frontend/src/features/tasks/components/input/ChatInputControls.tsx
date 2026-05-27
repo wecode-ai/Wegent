@@ -38,7 +38,6 @@ import {
 import type { GenerateMode } from '../selector'
 import { ProjectSelectorTab } from '@/features/projects/components/ProjectSelectorTab'
 import { getChatSendState } from './chatSendState'
-import CodeModeButton from './CodeModeButton'
 import AgentSkillSelectorMenu from './AgentSkillSelectorMenu'
 import InputMoreActionsMenu from './InputMoreActionsMenu'
 
@@ -550,7 +549,47 @@ export function ChatInputControls({
               />
             )}
 
-            <CodeModeButton />
+            <AgentSkillSelectorMenu
+              selectedTeam={selectedTeam}
+              teams={teams}
+              onTeamChange={onTeamChange}
+              onTeamsRefresh={onTeamsRefresh}
+              selectedTaskDetail={selectedTaskDetail}
+              taskType={taskType}
+              hasMessages={hasMessages}
+              isLoading={isLoading}
+              isStreaming={isStreaming}
+              hasNoTeams={hasNoTeams}
+            />
+
+            {showChatContexts && (
+              <ChatContextInput
+                selectedContexts={selectedContexts}
+                onContextsChange={setSelectedContexts}
+                excludeKnowledgeBaseId={knowledgeBaseId}
+                iconOnly
+              />
+            )}
+
+            <InputMoreActionsMenu
+              showClarification={showClarificationAction}
+              enableClarification={enableClarification}
+              setEnableClarification={setEnableClarification}
+              showCorrection={showCorrectionAction}
+              enableCorrectionMode={enableCorrectionMode}
+              onCorrectionModeToggle={onCorrectionModeToggle}
+              correctionModelName={correctionModelName}
+              taskId={selectedTaskDetail?.id ?? null}
+              disabled={selectorsDisabled}
+              selectedTeam={selectedTeam}
+              hasMessages={hasMessages}
+              availableSkills={availableSkills}
+              teamSkillNames={teamSkillNames}
+              preloadedSkillNames={preloadedSkillNames}
+              selectedSkillNames={selectedSkillNames}
+              onToggleSkill={onToggleSkill}
+              skillSelectorRef={skillSelectorRef}
+            />
 
             {/* Project Selector - show when in project context */}
             {projectId && <ProjectSelectorTab projectId={projectId} disabled={hasMessages} />}
@@ -582,46 +621,6 @@ export function ChatInputControls({
           <div
             className={`flex items-center gap-1.5 ${hideSelectors ? 'opacity-50 pointer-events-none' : ''}`}
           >
-            <AgentSkillSelectorMenu
-              selectedTeam={selectedTeam}
-              teams={teams}
-              onTeamChange={onTeamChange}
-              onTeamsRefresh={onTeamsRefresh}
-              selectedTaskDetail={selectedTaskDetail}
-              taskType={taskType}
-              hasMessages={hasMessages}
-              isLoading={isLoading}
-              isStreaming={isStreaming}
-              hasNoTeams={hasNoTeams}
-              availableSkills={availableSkills}
-              teamSkillNames={teamSkillNames}
-              preloadedSkillNames={preloadedSkillNames}
-              selectedSkillNames={selectedSkillNames}
-              onToggleSkill={onToggleSkill}
-              skillSelectorRef={skillSelectorRef}
-            />
-
-            {showChatContexts && (
-              <ChatContextInput
-                selectedContexts={selectedContexts}
-                onContextsChange={setSelectedContexts}
-                excludeKnowledgeBaseId={knowledgeBaseId}
-                iconOnly
-              />
-            )}
-
-            <InputMoreActionsMenu
-              showClarification={showClarificationAction}
-              enableClarification={enableClarification}
-              setEnableClarification={setEnableClarification}
-              showCorrection={showCorrectionAction}
-              enableCorrectionMode={enableCorrectionMode}
-              onCorrectionModeToggle={onCorrectionModeToggle}
-              correctionModelName={correctionModelName}
-              taskId={selectedTaskDetail?.id ?? null}
-              disabled={selectorsDisabled}
-            />
-
             {selectedTeam && (
               <ModelSelector
                 selectedModel={selectedModel}

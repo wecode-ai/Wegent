@@ -21,6 +21,7 @@ jest.mock('@/apis/tasks', () => ({
     getTasksLite: jest.fn(),
     getGroupTasksLite: jest.fn(),
     getPersonalTasksLite: jest.fn(),
+    getPersonalTaskGroupsLite: jest.fn(),
     searchTasks: jest.fn(),
     getTaskDetail: jest.fn(),
   },
@@ -111,6 +112,7 @@ describe('TaskContext group task loading', () => {
       }
     })
     mockedTaskApis.getPersonalTasksLite.mockResolvedValue(taskListResponse([]))
+    mockedTaskApis.getPersonalTaskGroupsLite.mockResolvedValue({ total: 0, items: [] })
     mockedTaskApis.getTasksLite.mockResolvedValue(taskListResponse([]))
     mockedTaskApis.searchTasks.mockResolvedValue(taskListResponse([]))
   })

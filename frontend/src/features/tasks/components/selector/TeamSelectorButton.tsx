@@ -44,6 +44,10 @@ interface TeamSelectorButtonProps {
   onTeamsRefresh?: () => Promise<void>
   /** Render style for the selector trigger */
   triggerVariant?: 'button' | 'menu-item'
+  /** Render the default trigger as an icon-only action */
+  iconOnly?: boolean
+  /** Optional test id for the selector trigger */
+  triggerTestId?: string
 }
 
 export default function TeamSelectorButton({
@@ -55,6 +59,8 @@ export default function TeamSelectorButton({
   currentMode = 'chat',
   onTeamsRefresh,
   triggerVariant = 'button',
+  iconOnly = false,
+  triggerTestId = 'team-selector',
 }: TeamSelectorButtonProps) {
   const { t } = useTranslation(['common', 'wizard'])
   const router = useRouter()
@@ -235,12 +241,13 @@ export default function TeamSelectorButton({
       <Tooltip>
         <TooltipTrigger asChild>
           <PopoverTrigger asChild>
-            <div data-testid="team-selector">
+            <div data-testid={triggerTestId}>
               <ActionButton
                 onClick={() => setOpen(!open)}
                 disabled={disabled}
                 icon={<AgentIcon className="h-4 w-4" />}
-                label={t('common:teamSelector.agent_label', '智能体')}
+                label={iconOnly ? undefined : t('common:teamSelector.agent_label', '智能体')}
+                title={t('common:teamSelector.select_agent_tooltip', '选择智能体')}
               />
             </div>
           </PopoverTrigger>

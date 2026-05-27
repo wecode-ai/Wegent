@@ -12,10 +12,20 @@ import {
 import type { Team } from '@/types/api'
 
 const routerPush = jest.fn()
-const mockUsePathname = jest.fn(() => '/chat')
+const mockTeamSelectorButton = jest.fn(
+  ({ iconOnly, triggerTestId }: { iconOnly?: boolean; triggerTestId?: string }) => (
+    <button
+      type="button"
+      data-testid={triggerTestId ?? 'team-selector'}
+      data-icon-only={iconOnly ? 'true' : 'false'}
+    >
+      Team
+    </button>
+  )
+)
 
 jest.mock('next/navigation', () => ({
-  usePathname: () => mockUsePathname(),
+  usePathname: () => '/chat',
   useRouter: () => ({
     push: routerPush,
   }),
@@ -30,6 +40,8 @@ jest.mock('@/hooks/useTranslation', () => ({
     t: (key: string, fallback?: string | Record<string, unknown>) => {
       const translations: Record<string, string> = {
         'common:navigation.code': '编码',
+        'common:teamSelector.agent_label': '智能体',
+        'common:teams.more_actions': '更多操作',
       }
 
       return translations[key] ?? (typeof fallback === 'string' ? fallback : key)
@@ -74,7 +86,7 @@ jest.mock('@/features/tasks/components/AttachmentButton', () => ({
 
 jest.mock('@/features/tasks/components/selector/TeamSelectorButton', () => ({
   __esModule: true,
-  default: () => <button type="button" data-testid="team-selector" />,
+  default: (props: { iconOnly?: boolean; triggerTestId?: string }) => mockTeamSelectorButton(props),
 }))
 
 jest.mock('@/features/tasks/components/selector/SkillSelectorPopover', () => ({
@@ -197,80 +209,70 @@ function createProps(): ChatInputControlsProps {
 describe('ChatInputControls toolbar actions', () => {
   beforeEach(() => {
     routerPush.mockClear()
-    mockUsePathname.mockReturnValue('/chat')
+    mockTeamSelectorButton.mockClear()
   })
 
-  it('renders code mode as a text action after the attachment divider', () => {
+  it('removes code mode and keeps agent, knowledge, and more actions after the attachment divider', () => {
     render(<ChatInputControls {...createProps()} />)
 
     const leftActions = screen.getByTestId('input-left-actions')
     const attachmentButton = screen.getByTestId('attachment-button')
     const divider = screen.getByTestId('attachment-actions-divider')
-    const codeButton = screen.getByTestId('code-mode-button')
-
-    expect(leftActions).toContainElement(codeButton)
-    expect(codeButton).toHaveTextContent('编码')
-    expect(
-      Array.from(
-        leftActions.querySelectorAll(
-          '[data-testid="attachment-button"], [data-testid="attachment-actions-divider"], [data-testid="code-mode-button"]'
-        )
-      ).map(element => element.getAttribute('data-testid'))
-    ).toEqual(['attachment-button', 'attachment-actions-divider', 'code-mode-button'])
-    expect(attachmentButton.compareDocumentPosition(divider)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-    expect(divider.compareDocumentPosition(codeButton)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-
-    fireEvent.click(codeButton)
-
-    expect(routerPush).toHaveBeenCalledWith('/code')
-  })
-
-  it('highlights the code action on the code page', () => {
-    mockUsePathname.mockReturnValue('/code')
-
-    render(<ChatInputControls {...createProps()} />)
-
-    const codeButton = screen.getByTestId('code-mode-button')
-
-    expect(codeButton).toHaveAttribute('aria-current', 'page')
-    expect(codeButton).toHaveClass('bg-primary', 'text-white')
-  })
-
-  it('shows a close affordance for active code mode that returns to chat', () => {
-    mockUsePathname.mockReturnValue('/code')
-
-    render(<ChatInputControls {...createProps()} />)
-
-    const closeButton = screen.getByTestId('code-mode-close-button')
-
-    fireEvent.click(closeButton)
-
-    expect(routerPush).toHaveBeenCalledWith('/chat')
-  })
-
-  it('combines agent and skill selectors behind one visible desktop action', () => {
-    render(<ChatInputControls {...createProps()} />)
-
-    expect(screen.getByTestId('agent-skill-selector-button')).toBeInTheDocument()
-    expect(screen.queryByTestId('team-selector')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('skill-selector')).not.toBeInTheDocument()
-  })
-
-  it('keeps knowledge visible as an icon action and moves clarification/correction into more actions', () => {
-    render(<ChatInputControls {...createProps()} />)
-
-    const rightActions = screen.getByTestId('input-right-actions')
+    const agentButton = screen.getByTestId('agent-skill-selector-button')
     const knowledgeButton = screen.getByTestId('chat-context-input')
     const moreButton = screen.getByTestId('desktop-input-more-actions-button')
 
-    expect(rightActions).toContainElement(knowledgeButton)
+    expect(screen.queryByTestId('code-mode-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('code-mode-close-button')).not.toBeInTheDocument()
+    expect(leftActions).toContainElement(agentButton)
+    expect(leftActions).toContainElement(knowledgeButton)
+    expect(leftActions).toContainElement(moreButton)
+    expect(
+      Array.from(
+        leftActions.querySelectorAll(
+          '[data-testid="attachment-button"], [data-testid="attachment-actions-divider"], [data-testid="agent-skill-selector-button"], [data-testid="chat-context-input"], [data-testid="desktop-input-more-actions-button"]'
+        )
+      ).map(element => element.getAttribute('data-testid'))
+    ).toEqual([
+      'attachment-button',
+      'attachment-actions-divider',
+      'agent-skill-selector-button',
+      'chat-context-input',
+      'desktop-input-more-actions-button',
+    ])
+    expect(attachmentButton.compareDocumentPosition(divider)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(divider.compareDocumentPosition(agentButton)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(agentButton.compareDocumentPosition(knowledgeButton)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(knowledgeButton.compareDocumentPosition(moreButton)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(agentButton).toHaveAttribute('data-icon-only', 'true')
+    expect(mockTeamSelectorButton).toHaveBeenCalledWith(
+      expect.objectContaining({
+        iconOnly: true,
+        triggerTestId: 'agent-skill-selector-button',
+      })
+    )
+  })
+
+  it('keeps skill selection inside the more actions menu', () => {
+    render(<ChatInputControls {...createProps()} />)
+
+    const knowledgeButton = screen.getByTestId('chat-context-input')
+    const moreButton = screen.getByTestId('desktop-input-more-actions-button')
+
     expect(knowledgeButton).toHaveAttribute('data-icon-only', 'true')
+    expect(screen.queryByTestId('team-selector')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('skill-selector')).not.toBeInTheDocument()
     expect(screen.queryByTestId('clarification-toggle')).not.toBeInTheDocument()
     expect(screen.queryByTestId('correction-toggle')).not.toBeInTheDocument()
 
     fireEvent.click(moreButton)
 
     expect(screen.getByTestId('desktop-input-more-actions-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('skill-selector')).toBeInTheDocument()
     expect(screen.getByTestId('clarification-toggle')).toBeInTheDocument()
     expect(screen.getByTestId('correction-toggle')).toBeInTheDocument()
   })
