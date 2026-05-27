@@ -12,7 +12,9 @@ i18n
       en: { common: enCommon },
       'zh-CN': { common: zhCommon },
     },
-    fallbackLng: 'en',
+    lng: 'zh-CN',
+    fallbackLng: 'zh-CN',
+    supportedLngs: ['zh-CN', 'en'],
     defaultNS: 'common',
     interpolation: { escapeValue: false },
   })

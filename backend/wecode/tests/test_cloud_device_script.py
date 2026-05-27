@@ -43,3 +43,20 @@ def test_simple_startup_script_logs_length_without_secrets(caplog):
     assert "Generated simple startup script" in log_text
     assert "device-api-key" not in log_text
     assert "jwt-token-for-alice" not in log_text
+
+
+def test_simple_startup_script_includes_sinawatch_install():
+    """Startup script must include Sinawatch monitoring agent installation."""
+    encoded = generate_simple_startup_script(
+        user_name="alice",
+        backend_url="https://backend.example.com",
+        auth_token="device-api-key",
+        install_script_url="https://example.com/install.sh",
+    )
+
+    script = base64.b64decode(encoded).decode("utf-8")
+
+    assert 'echo "asset_number=$(hostname)" | tee /etc/sinainstall.conf' in script
+    assert "sina-watchagent_latest_amd64.deb" in script
+    assert "/usr/bin/dpkg -i /tmp/sina-watchagent.deb" in script
+    assert "rm -f /tmp/sina-watchagent.deb" in script
