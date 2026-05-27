@@ -207,6 +207,11 @@ class TaskLite(BaseModel):
     updated_at: datetime
     completed_at: Optional[datetime] = None
     team_id: Optional[int] = None
+    team_name: Optional[str] = None
+    team_namespace: Optional[str] = None
+    team_display_name: Optional[str] = None
+    device_id: Optional[str] = None
+    device_name: Optional[str] = None
     git_repo: Optional[str] = None
     is_group_chat: bool = False  # Whether this is a group chat task
     knowledge_base_id: Optional[int] = (
@@ -224,6 +229,27 @@ class TaskLiteListResponse(BaseModel):
 
     total: int
     items: list[TaskLite]
+
+
+class TaskLiteGroup(BaseModel):
+    """A current-page task group for lightweight history display."""
+
+    group_type: str
+    group_key: str
+    team_id: Optional[int] = None
+    team_name: Optional[str] = None
+    team_namespace: Optional[str] = None
+    team_display_name: Optional[str] = None
+    device_id: Optional[str] = None
+    device_name: Optional[str] = None
+    items: list[TaskLite]
+
+
+class TaskLiteGroupedListResponse(BaseModel):
+    """Lightweight grouped task response for current-page history display."""
+
+    total: int
+    items: list[TaskLiteGroup]
 
 
 class ConfirmStageRequest(BaseModel):

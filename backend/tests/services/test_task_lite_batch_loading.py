@@ -9,7 +9,10 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.models.task import TaskResource
-from app.services.adapters.task_kinds.helpers import build_lite_task_list
+from app.services.adapters.task_kinds.helpers import (
+    build_lite_task_groups,
+    build_lite_task_list,
+)
 
 
 def _task_json(title: str) -> dict:
@@ -62,6 +65,11 @@ def test_build_lite_task_list_uses_batch_related_data_and_avoids_per_task_sql():
         "1": {
             "workspace_data": {"git_repo": "repo-a"},
             "team_id": 101,
+            "team_name": "team-a",
+            "team_namespace": "default",
+            "team_display_name": "Agent A",
+            "device_id": None,
+            "device_name": None,
             "created_at": now,
             "updated_at": now,
             "completed_at": None,
@@ -70,6 +78,11 @@ def test_build_lite_task_list_uses_batch_related_data_and_avoids_per_task_sql():
         "2": {
             "workspace_data": {"git_repo": "repo-b"},
             "team_id": 102,
+            "team_name": "team-b",
+            "team_namespace": "default",
+            "team_display_name": "Agent B",
+            "device_id": "device-1",
+            "device_name": "Mac Studio",
             "created_at": now,
             "updated_at": now,
             "completed_at": None,
@@ -85,10 +98,86 @@ def test_build_lite_task_list_uses_batch_related_data_and_avoids_per_task_sql():
 
     assert len(result) == 2
     assert result[0]["team_id"] == 101
+    assert result[0]["team_name"] == "team-a"
+    assert result[0]["team_namespace"] == "default"
+    assert result[0]["team_display_name"] == "Agent A"
+    assert result[0]["device_id"] is None
+    assert result[0]["device_name"] is None
     assert result[0]["git_repo"] == "repo-a"
     assert result[0]["is_group_chat"] is True
     assert result[1]["team_id"] == 102
+    assert result[1]["team_name"] == "team-b"
+    assert result[1]["team_namespace"] == "default"
+    assert result[1]["team_display_name"] == "Agent B"
+    assert result[1]["device_id"] == "device-1"
+    assert result[1]["device_name"] == "Mac Studio"
     assert result[1]["git_repo"] == "repo-b"
     assert result[1]["is_group_chat"] is False
     mock_batch.assert_called_once_with(db, tasks, 7)
     db.execute.assert_not_called()
+
+
+@pytest.mark.unit
+def test_build_lite_task_groups_groups_current_page_by_team_metadata():
+    db = Mock(spec=Session)
+    tasks = [
+        _build_task(1, "Task One"),
+        _build_task(2, "Task Two"),
+        _build_task(3, "Task Three"),
+    ]
+    now = datetime.now()
+    related_data = {
+        "1": {
+            "workspace_data": {"git_repo": "repo-a"},
+            "team_id": 101,
+            "team_name": "team-a",
+            "team_namespace": "default",
+            "team_display_name": "Agent A",
+            "device_id": None,
+            "device_name": None,
+            "created_at": now,
+            "updated_at": now,
+            "completed_at": None,
+            "is_group_chat": False,
+        },
+        "2": {
+            "workspace_data": {"git_repo": "repo-b"},
+            "team_id": 102,
+            "team_name": "team-b",
+            "team_namespace": "default",
+            "team_display_name": "Agent B",
+            "device_id": "device-1",
+            "device_name": "Mac Studio",
+            "created_at": now,
+            "updated_at": now,
+            "completed_at": None,
+            "is_group_chat": False,
+        },
+        "3": {
+            "workspace_data": {"git_repo": "repo-c"},
+            "team_id": 101,
+            "team_name": "team-a",
+            "team_namespace": "default",
+            "team_display_name": "Agent A",
+            "device_id": None,
+            "device_name": None,
+            "created_at": now,
+            "updated_at": now,
+            "completed_at": None,
+            "is_group_chat": False,
+        },
+    }
+
+    with patch(
+        "app.services.adapters.task_kinds.helpers.get_tasks_related_data_batch",
+        return_value=related_data,
+    ):
+        groups = build_lite_task_groups(db, tasks, user_id=7)
+
+    assert [group["group_type"] for group in groups] == ["team", "device"]
+    assert [group["team_id"] for group in groups] == [101, None]
+    assert groups[0]["team_display_name"] == "Agent A"
+    assert [item["id"] for item in groups[0]["items"]] == [1, 3]
+    assert groups[1]["device_id"] == "device-1"
+    assert groups[1]["device_name"] == "Mac Studio"
+    assert [item["id"] for item in groups[1]["items"]] == [2]

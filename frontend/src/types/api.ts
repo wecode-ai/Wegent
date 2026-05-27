@@ -401,6 +401,11 @@ export interface Task {
   id: number
   title: string
   team_id: number
+  team_name?: string | null
+  team_namespace?: string | null
+  team_display_name?: string | null
+  device_id?: string | null
+  device_name?: string | null
   git_url: string
   git_repo: string
   git_repo_id: number
@@ -420,6 +425,18 @@ export interface Task {
   completed_at: string
   is_group_chat?: boolean // Whether this task is a group chat
   knowledge_base_id?: number // Knowledge base ID for knowledge type tasks
+}
+
+export interface TaskHistoryGroup {
+  group_type: 'team' | 'device'
+  group_key: string
+  team_id: number | null
+  team_name?: string | null
+  team_namespace?: string | null
+  team_display_name?: string | null
+  device_id?: string | null
+  device_name?: string | null
+  items: Task[]
 }
 
 /** GitHub repository new structure */

@@ -604,6 +604,8 @@
     "new_task": "New Task",
     "new_conversation": "New Conversation",
     "no_tasks": "No tasks",
+    "unknown_agent": "Unknown agent",
+    "unknown_device": "Unknown device",
     "today": "Today",
     "this_week": "This Week",
     "earlier": "Earlier",

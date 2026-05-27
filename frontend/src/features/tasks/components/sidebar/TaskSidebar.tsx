@@ -83,6 +83,7 @@ export default function TaskSidebar({
     tasks,
     groupTasks,
     personalTasks,
+    personalTaskGroups,
     loadMore,
     loadAllGroupTasks,
     loadMorePersonalTasks,
@@ -718,6 +719,7 @@ export default function TaskSidebar({
                 <TaskHistorySection
                   groupTasks={groupTasks}
                   personalTasks={personalTasks}
+                  personalTaskGroups={personalTaskGroups}
                   isCollapsed={isCollapsed}
                   hasMorePersonalTasks={hasMorePersonalTasks}
                   loadMorePersonalTasks={loadMorePersonalTasks}
@@ -808,6 +810,7 @@ export default function TaskSidebar({
 interface TaskHistorySectionProps {
   groupTasks: Task[]
   personalTasks: Task[]
+  personalTaskGroups: TaskHistoryGroup[]
   isCollapsed: boolean
   hasMorePersonalTasks: boolean
   loadMorePersonalTasks: () => void
@@ -827,11 +830,12 @@ interface TaskHistorySectionProps {
 }
 
 // Import Task type for the component
-import type { Task } from '@/types/api'
+import type { Task, TaskHistoryGroup } from '@/types/api'
 
 function TaskHistorySection({
   groupTasks,
   personalTasks,
+  personalTaskGroups,
   isCollapsed,
   hasMorePersonalTasks,
   loadMorePersonalTasks,
@@ -856,6 +860,20 @@ function TaskHistorySection({
     () => personalTasks.filter(task => !projectTaskIds.has(task.id)),
     [personalTasks, projectTaskIds]
   )
+  const filteredPersonalTaskIdSet = React.useMemo(
+    () => new Set(filteredPersonalTasks.map(task => task.id)),
+    [filteredPersonalTasks]
+  )
+  const filteredPersonalTaskGroups = React.useMemo(
+    () =>
+      personalTaskGroups
+        .map(group => ({
+          ...group,
+          items: group.items.filter(task => filteredPersonalTaskIdSet.has(task.id)),
+        }))
+        .filter(group => group.items.length > 0),
+    [personalTaskGroups, filteredPersonalTaskIdSet]
+  )
   const filteredGroupTasks = React.useMemo(
     () => groupTasks.filter(task => !projectTaskIds.has(task.id)),
     [groupTasks, projectTaskIds]
@@ -875,6 +893,13 @@ function TaskHistorySection({
     )
   }
 
+  const getHistoryGroupTitle = (group: TaskHistoryGroup) => {
+    if (group.group_type === 'device') {
+      return group.device_name || group.device_id || t('common:tasks.unknown_device')
+    }
+
+    return group.team_display_name || group.team_name || t('common:tasks.unknown_agent')
+  }
   return (
     <>
       {/* Projects Section */}
@@ -943,16 +968,31 @@ function TaskHistorySection({
               </div>
             </div>
           )}
-          <TaskListSection
-            tasks={filteredPersonalTasks}
-            title=""
-            unreadCount={getUnreadCount(filteredPersonalTasks)}
-            onTaskClick={() => setIsMobileSidebarOpen(false)}
-            isCollapsed={isCollapsed}
-            showTitle={false}
-            enableDrag={true}
-            key={`regular-tasks-${viewStatusVersion}`}
-          />
+          {!isCollapsed && filteredPersonalTaskGroups.length > 0 ? (
+            filteredPersonalTaskGroups.map(group => (
+              <TaskListSection
+                key={`regular-task-group-${group.group_key}-${viewStatusVersion}`}
+                tasks={group.items}
+                title={getHistoryGroupTitle(group)}
+                unreadCount={getUnreadCount(group.items)}
+                onTaskClick={() => setIsMobileSidebarOpen(false)}
+                isCollapsed={isCollapsed}
+                showTitle={true}
+                enableDrag={true}
+              />
+            ))
+          ) : (
+            <TaskListSection
+              tasks={filteredPersonalTasks}
+              title=""
+              unreadCount={getUnreadCount(filteredPersonalTasks)}
+              onTaskClick={() => setIsMobileSidebarOpen(false)}
+              isCollapsed={isCollapsed}
+              showTitle={false}
+              enableDrag={true}
+              key={`regular-tasks-${viewStatusVersion}`}
+            />
+          )}
           {hasMorePersonalTasks && !isCollapsed && (
             <button
               onClick={loadMorePersonalTasks}

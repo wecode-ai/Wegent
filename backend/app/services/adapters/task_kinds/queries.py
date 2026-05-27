@@ -16,7 +16,11 @@ from app.schemas.kind import Task
 
 from .converters import convert_to_task_dict, convert_to_task_dict_optimized
 from .filters import filter_tasks_for_display, filter_tasks_with_title_match
-from .helpers import build_lite_task_list, get_tasks_related_data_batch
+from .helpers import (
+    build_lite_task_groups,
+    build_lite_task_list,
+    get_tasks_related_data_batch,
+)
 from .query_utils import (
     count_non_deleted_tasks_by_ids,
     get_accessible_task_ids_and_total,
@@ -158,6 +162,41 @@ class TaskQueryMixin:
         ordered_tasks = restore_task_order(task_ids, id_to_task, limit)
 
         result = build_lite_task_list(db, ordered_tasks, user_id)
+        return result, max(adjusted_total, len(ordered_tasks))
+
+    def get_user_personal_task_groups_lite(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        skip: int = 0,
+        limit: int = 50,
+        types: List[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """
+        Get user's personal task page grouped by device or team.
+
+        The database query is still the existing flat page query. Grouping is only
+        applied to the current page to avoid full-history grouping costs.
+        """
+        if types is None:
+            types = ["online", "offline"]
+
+        all_group_task_ids = get_group_task_ids_for_owned_tasks(db, user_id=user_id)
+        task_ids, total_owned = get_owned_task_ids_and_total(
+            db, user_id=user_id, skip=skip, limit=limit, extra_limit=200
+        )
+        adjusted_total = max(total_owned - len(all_group_task_ids), 0)
+
+        if not task_ids:
+            return [], adjusted_total
+
+        tasks = load_tasks_by_ids(db, task_ids)
+        valid_tasks = self._filter_personal_tasks(tasks, all_group_task_ids, types)
+        id_to_task = {task.id: task for task in valid_tasks}
+        ordered_tasks = restore_task_order(task_ids, id_to_task, limit)
+
+        result = build_lite_task_groups(db, ordered_tasks, user_id)
         return result, max(adjusted_total, len(ordered_tasks))
 
     def _filter_personal_tasks(

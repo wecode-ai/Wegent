@@ -22,6 +22,7 @@ from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.schemas.kind import Task, Team, Workspace
 from app.services.adapters.pipeline_stage import pipeline_stage_service
+from app.services.device.display_name import resolve_device_display_name
 from app.services.readers.kinds import KindType, kindReader
 from app.services.readers.users import userReader
 
@@ -283,6 +284,7 @@ def get_tasks_related_data_batch(
     # Extract workspace and team references from all tasks
     workspace_refs = set()
     team_refs = set()
+    device_ids = set()
     task_crd_map = {}
 
     for task in tasks:
@@ -300,11 +302,18 @@ def get_tasks_related_data_batch(
         if hasattr(task_crd.spec, "teamRef") and task_crd.spec.teamRef:
             team_refs.add((task_crd.spec.teamRef.name, task_crd.spec.teamRef.namespace))
 
+        device_id = getattr(task_crd.spec, "device_id", None)
+        if device_id:
+            device_ids.add(device_id)
+
     # Batch query workspaces
     workspace_data = _batch_query_workspaces(db, workspace_refs, user_id)
 
     # Batch query teams (including shared teams)
     team_data = _batch_query_teams(db, team_refs, user_id)
+
+    # Batch query device display names
+    device_data = _batch_query_devices(db, device_ids, user_id)
 
     # Get user info once
     user = userReader.get_by_id(db, user_id)
@@ -334,6 +343,14 @@ def get_tasks_related_data_batch(
         team_key = f"{task_crd.spec.teamRef.name}:{task_crd.spec.teamRef.namespace}"
         task_team = team_data.get(team_key)
         team_id = task_team.id if task_team else None
+        team_name = task_team.name if task_team else task_crd.spec.teamRef.name
+        team_namespace = (
+            task_team.namespace if task_team else task_crd.spec.teamRef.namespace
+        )
+        team_display_name = _get_team_display_name(task_team)
+
+        device_id = getattr(task_crd.spec, "device_id", None)
+        device_name = device_data.get(device_id) if device_id else None
 
         # Parse timestamps
         created_at = None
@@ -356,6 +373,11 @@ def get_tasks_related_data_batch(
         result[str(task.id)] = {
             "workspace_data": task_workspace_data,
             "team_id": team_id,
+            "team_name": team_name,
+            "team_namespace": team_namespace,
+            "team_display_name": team_display_name,
+            "device_id": device_id,
+            "device_name": device_name,
             "user_name": user_name,
             "created_at": created_at or task.created_at,
             "updated_at": updated_at or task.updated_at,
@@ -366,6 +388,17 @@ def get_tasks_related_data_batch(
     _add_group_chat_info(db, tasks, result)
 
     return result
+
+
+def _get_team_display_name(team: Kind | None) -> str | None:
+    """Return a team's display name from CRD metadata if available."""
+    if not team or not team.json:
+        return None
+    try:
+        team_crd = Team.model_validate(team.json)
+        return team_crd.metadata.displayName
+    except Exception:
+        return team.json.get("metadata", {}).get("displayName")
 
 
 def _batch_query_workspaces(
@@ -478,6 +511,33 @@ def _batch_query_teams(db: Session, team_refs: set, user_id: int) -> Dict[str, K
     return team_data
 
 
+def _batch_query_devices(
+    db: Session, device_ids: set[str], user_id: int
+) -> Dict[str, str]:
+    """Batch query device display names by device ID."""
+    if not device_ids:
+        return {}
+
+    devices = (
+        db.query(Kind)
+        .filter(
+            Kind.user_id == user_id,
+            Kind.kind == "Device",
+            Kind.namespace == "default",
+            Kind.name.in_(device_ids),
+            Kind.is_active.is_(True),
+        )
+        .all()
+    )
+
+    device_data = {}
+    for device in devices:
+        device_json = device.json or {}
+        device_data[device.name] = resolve_device_display_name(device_json, device.name)
+
+    return device_data
+
+
 def _add_group_chat_info(
     db: Session, tasks: List[Kind], result: Dict[str, Dict[str, Any]]
 ) -> None:
@@ -563,6 +623,11 @@ def build_lite_task_list(
         updated_at = task_related_data.get("updated_at", task.updated_at)
         completed_at = task_related_data.get("completed_at")
         team_id = task_related_data.get("team_id")
+        team_name = task_related_data.get("team_name")
+        team_namespace = task_related_data.get("team_namespace")
+        team_display_name = task_related_data.get("team_display_name")
+        device_id = task_related_data.get("device_id")
+        device_name = task_related_data.get("device_name")
         git_repo = workspace_data.get("git_repo")
         is_group_chat = task_related_data.get(
             "is_group_chat",
@@ -587,6 +652,11 @@ def build_lite_task_list(
                 "updated_at": updated_at,
                 "completed_at": completed_at,
                 "team_id": team_id,
+                "team_name": team_name,
+                "team_namespace": team_namespace,
+                "team_display_name": team_display_name,
+                "device_id": device_id,
+                "device_name": device_name,
                 "git_repo": git_repo,
                 "is_group_chat": is_group_chat,
                 "knowledge_base_id": knowledge_base_id,
@@ -594,3 +664,65 @@ def build_lite_task_list(
         )
 
     return result
+
+
+def build_lite_task_groups(
+    db: Session,
+    tasks: List[TaskResource],
+    user_id: int,
+) -> List[Dict[str, Any]]:
+    """Group the current lightweight task page by device or team."""
+    task_items = build_lite_task_list(db, tasks, user_id)
+    groups: Dict[str, Dict[str, Any]] = {}
+
+    for item in task_items:
+        device_id = item.get("device_id")
+        if device_id:
+            group_type = "device"
+            group_key = f"device:{device_id}"
+        else:
+            group_type = "team"
+            team_id = item.get("team_id")
+            team_name = item.get("team_name") or "unknown"
+            group_key = (
+                f"team:{team_id}" if team_id is not None else f"team:{team_name}"
+            )
+
+        if group_key not in groups:
+            groups[group_key] = _create_lite_task_group(
+                item, group_type=group_type, group_key=group_key
+            )
+
+        groups[group_key]["items"].append(item)
+
+    return list(groups.values())
+
+
+def _create_lite_task_group(
+    item: Dict[str, Any], *, group_type: str, group_key: str
+) -> Dict[str, Any]:
+    """Create group metadata from the first task item in that group."""
+    if group_type == "device":
+        return {
+            "group_type": group_type,
+            "group_key": group_key,
+            "team_id": None,
+            "team_name": None,
+            "team_namespace": None,
+            "team_display_name": None,
+            "device_id": item.get("device_id"),
+            "device_name": item.get("device_name") or item.get("device_id"),
+            "items": [],
+        }
+
+    return {
+        "group_type": group_type,
+        "group_key": group_key,
+        "team_id": item.get("team_id"),
+        "team_name": item.get("team_name"),
+        "team_namespace": item.get("team_namespace"),
+        "team_display_name": item.get("team_display_name"),
+        "device_id": None,
+        "device_name": None,
+        "items": [],
+    }
