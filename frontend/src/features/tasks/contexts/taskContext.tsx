@@ -254,8 +254,18 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   // Load personal task pages
   const loadPersonalPages = async (pagesArr: number[]) => {
     if (pagesArr.length === 0) return { items: [], hasMore: false, error: false }
-    const requests = pagesArr.map(p => taskApis.getPersonalTaskGroupsLite({ page: p, limit }))
     try {
+      const loadGroupedPage =
+        typeof taskApis.getPersonalTaskGroupsLite === 'function'
+          ? taskApis.getPersonalTaskGroupsLite
+          : async (params: { page: number; limit: number }) => {
+              const response = await taskApis.getPersonalTasksLite(params)
+              return {
+                total: response.total,
+                items: response.items.map(buildTaskHistoryGroupFromTask),
+              }
+            }
+      const requests = pagesArr.map(p => loadGroupedPage({ page: p, limit }))
       const results = await Promise.all(requests)
       const groups = mergeTaskHistoryGroups(results.flatMap(res => res.items || []))
       const allItems = flattenTaskHistoryGroups(groups)

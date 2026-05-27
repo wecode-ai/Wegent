@@ -84,7 +84,7 @@ export default function TaskSidebar({
     tasks,
     groupTasks,
     personalTasks,
-    personalTaskGroups,
+    personalTaskGroups = [],
     loadMore,
     loadAllGroupTasks,
     loadMorePersonalTasks,
@@ -836,7 +836,7 @@ import type { Task, TaskHistoryGroup } from '@/types/api'
 function TaskHistorySection({
   groupTasks,
   personalTasks,
-  personalTaskGroups,
+  personalTaskGroups = [],
   isCollapsed,
   hasMorePersonalTasks,
   loadMorePersonalTasks,
