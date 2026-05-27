@@ -20,7 +20,10 @@
     "archive": "归档",
     "configure": "配置",
     "view_detail": "查看详情",
-    "details": "详情"
+    "details": "详情",
+    "retry": "重试",
+    "search": "搜索",
+    "close": "关闭"
   },
   "status": {
     "installed": "已安装",
@@ -45,6 +48,15 @@
   "states": {
     "loading": "正在加载资源",
     "empty": "暂无资源",
+    "error": "加载失败",
     "requiresConfiguration": "需要配置"
+  },
+  "search": {
+    "placeholder": "搜索资源"
+  },
+  "messages": {
+    "install_success": "安装成功",
+    "install_requires_configuration": "安装成功，需要配置",
+    "install_failed": "安装失败"
   }
 }

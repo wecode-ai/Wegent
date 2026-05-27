@@ -20,7 +20,10 @@
     "archive": "Archive",
     "configure": "Configure",
     "view_detail": "View Details",
-    "details": "Details"
+    "details": "Details",
+    "retry": "Retry",
+    "search": "Search",
+    "close": "Close"
   },
   "status": {
     "installed": "Installed",
@@ -45,6 +48,15 @@
   "states": {
     "loading": "Loading resources",
     "empty": "No resources",
+    "error": "Failed to load resources",
     "requiresConfiguration": "Configuration required"
+  },
+  "search": {
+    "placeholder": "Search resources"
+  },
+  "messages": {
+    "install_success": "Installed",
+    "install_requires_configuration": "Installed, configuration required",
+    "install_failed": "Install failed"
   }
 }

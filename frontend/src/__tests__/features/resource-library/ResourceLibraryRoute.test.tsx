@@ -7,6 +7,20 @@ import { render, screen } from '@testing-library/react'
 
 import Page from '@/app/(tasks)/resource-library/page'
 
+jest.mock('@/apis/resourceLibrary', () => ({
+  resourceLibraryApi: {
+    listListings: jest.fn().mockResolvedValue({ items: [], total: 0 }),
+    getListing: jest.fn(),
+    installListing: jest.fn(),
+  },
+}))
+
+jest.mock('@/hooks/use-toast', () => ({
+  useToast: () => ({
+    toast: jest.fn(),
+  }),
+}))
+
 jest.mock('next/navigation', () => ({
   useRouter: () => ({
     replace: jest.fn(),
@@ -69,6 +83,10 @@ jest.mock('@/hooks/useTranslation', () => ({
         'filters.skill': 'Skill',
         'filters.mcp': 'MCP',
         'fields.tags': '标签',
+        'search.placeholder': '搜索资源',
+        'actions.search': '搜索',
+        'states.loading': '正在加载资源',
+        'states.empty': '暂无资源',
       }
 
       return translations[key] ?? key
@@ -77,7 +95,7 @@ jest.mock('@/hooks/useTranslation', () => ({
 }))
 
 describe('ResourceLibrary route page', () => {
-  it('renders with the task sidebar active on resource library', () => {
+  it('renders with the task sidebar active on resource library', async () => {
     render(<Page />)
 
     expect(screen.getByTestId('resource-library-task-sidebar')).toHaveAttribute(
@@ -86,5 +104,6 @@ describe('ResourceLibrary route page', () => {
     )
     expect(screen.getByTestId('resource-library-top-navigation')).toHaveTextContent('资源库')
     expect(screen.getByRole('heading', { name: '资源库' })).toBeInTheDocument()
+    expect(await screen.findByText('暂无资源')).toBeInTheDocument()
   })
 })

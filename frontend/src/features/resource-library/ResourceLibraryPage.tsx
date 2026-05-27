@@ -6,12 +6,13 @@
 
 import { useState } from 'react'
 
+import { DiscoverResources } from './components/DiscoverResources'
 import { ResourceLibraryTabs, type ResourceLibraryTab } from './components/ResourceLibraryTabs'
 import { ResourceTypeFilter } from './components/ResourceTypeFilter'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ResourceLibraryTypeFilter } from './types'
 
-export default function ResourceLibraryPage() {
+export function ResourceLibraryPage() {
   const { t } = useTranslation('resource-library')
   const [activeTab, setActiveTab] = useState<ResourceLibraryTab>('discover')
   const [activeFilter, setActiveFilter] = useState<ResourceLibraryTypeFilter>('all')
@@ -29,16 +30,19 @@ export default function ResourceLibraryPage() {
         <section className="flex flex-col gap-4">
           <ResourceTypeFilter value={activeFilter} onValueChange={setActiveFilter} />
 
-          <div
-            className="min-h-[360px] rounded-lg border border-border bg-surface p-4"
-            data-testid="resource-library-content"
-          >
-            <div className="text-sm text-text-secondary">
-              {t(`tabs.${activeTab}`)} / {t(`filters.${activeFilter}`)}
-            </div>
+          <div data-testid="resource-library-content">
+            {activeTab === 'discover' ? (
+              <DiscoverResources resourceType={activeFilter} />
+            ) : (
+              <div className="flex min-h-[360px] items-center justify-center rounded-lg border border-border bg-surface p-4 text-sm text-text-secondary">
+                {t('empty.mine')}
+              </div>
+            )}
           </div>
         </section>
       </div>
     </main>
   )
 }
+
+export default ResourceLibraryPage
