@@ -277,7 +277,7 @@ export function ConnectionsSettingsPage({ onBack }: ConnectionsSettingsPageProps
 
           <div className="mt-9 flex border-b border-[#e5e5e5]">
             {[
-              t('workbench.connections_tab_this_mac', '连接这台设备'),
+              t('workbench.connections_tab_this_mac', '连接设备'),
             ].map((tab, index) => (
               <button
                 key={tab}
