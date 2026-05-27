@@ -4,6 +4,9 @@
 
 import json
 
+import pytest
+from fastapi import HTTPException
+
 from app.models.kind import Kind
 from app.models.resource_library import ResourceLibraryListing, ResourceLibraryVersion
 from app.models.skill_binary import SkillBinary
@@ -52,6 +55,7 @@ def _create_skill_listing_and_version(
     source_skill: Kind,
     source_binary: SkillBinary | None = None,
     snapshot_name: str | None = None,
+    snapshot_status: dict | None = None,
 ) -> tuple[ResourceLibraryListing, ResourceLibraryVersion]:
     skill_snapshot = {
         **source_skill.json,
@@ -61,6 +65,9 @@ def _create_skill_listing_and_version(
             "namespace": source_skill.namespace,
         },
     }
+    if snapshot_status is not None:
+        skill_snapshot["status"] = snapshot_status
+
     listing = ResourceLibraryListing(
         resource_type="skill",
         name=source_skill.name,
@@ -94,6 +101,19 @@ def _create_skill_listing_and_version(
     test_db.commit()
     test_db.refresh(version)
     return listing, version
+
+
+def _remove_manifest_skill_snapshot(
+    test_db,
+    version: ResourceLibraryVersion,
+) -> ResourceLibraryVersion:
+    manifest = dict(version.manifest)
+    manifest.pop("skill", None)
+    version.manifest = manifest
+    test_db.add(version)
+    test_db.commit()
+    test_db.refresh(version)
+    return version
 
 
 def _create_skill_binary(test_db, *, source_skill: Kind) -> SkillBinary:
@@ -155,6 +175,10 @@ def test_skill_installer_copies_kind_and_binary(test_db, test_user):
         source_skill=source_skill,
         source_binary=source_binary,
         snapshot_name="snapshot-name",
+        snapshot_status={
+            "fileHash": source_binary.file_hash,
+            "fileSize": source_binary.file_size,
+        },
     )
 
     result = SkillResourceInstaller().install(
@@ -179,6 +203,10 @@ def test_skill_installer_copies_kind_and_binary(test_db, test_user):
     assert copied.json["metadata"]["name"] == "snapshot-name"
     assert copied.json["metadata"]["namespace"] == "team-a"
     assert copied.json["spec"]["description"] == "Summarize docs"
+    assert copied.json["status"] == {
+        "fileHash": source_binary.file_hash,
+        "fileSize": source_binary.file_size,
+    }
     assert copied_binary.binary_data == b"zip-content"
     assert copied_binary.file_size == len(b"zip-content")
     assert copied_binary.file_hash == "hash"
@@ -187,6 +215,97 @@ def test_skill_installer_copies_kind_and_binary(test_db, test_user):
         "namespace": "team-a",
         "name": "snapshot-name",
     }
+
+
+def test_skill_installer_fails_without_manifest_skill_snapshot(test_db, test_user):
+    source_skill = _create_skill_kind(
+        test_db,
+        user_id=test_user.id,
+        description="Live source must not be used",
+    )
+    listing, version = _create_skill_listing_and_version(
+        test_db,
+        test_user=test_user,
+        source_skill=source_skill,
+    )
+    _remove_manifest_skill_snapshot(test_db, version)
+
+    with pytest.raises(HTTPException) as exc_info:
+        SkillResourceInstaller().install(
+            db=test_db,
+            user_id=test_user.id,
+            listing=listing,
+            version=version,
+            target_namespace="team-a",
+            options={},
+        )
+
+    assert exc_info.value.status_code in {400, 404}
+    assert test_db.query(Kind).filter(Kind.namespace == "team-a").count() == 0
+
+
+def test_skill_installer_fails_when_manifest_binary_id_missing(test_db, test_user):
+    source_skill = _create_skill_kind(test_db, user_id=test_user.id)
+    fallback_binary = _create_skill_binary(test_db, source_skill=source_skill)
+    listing, version = _create_skill_listing_and_version(
+        test_db,
+        test_user=test_user,
+        source_skill=source_skill,
+        source_binary=fallback_binary,
+    )
+    manifest = dict(version.manifest)
+    manifest["source"] = {
+        **manifest["source"],
+        "binary_id": fallback_binary.id + 1000,
+    }
+    version.manifest = manifest
+    test_db.add(version)
+    test_db.commit()
+    test_db.refresh(version)
+
+    with pytest.raises(HTTPException) as exc_info:
+        SkillResourceInstaller().install(
+            db=test_db,
+            user_id=test_user.id,
+            listing=listing,
+            version=version,
+            target_namespace="team-a",
+            options={},
+        )
+
+    assert exc_info.value.status_code in {400, 404}
+    assert test_db.query(Kind).filter(Kind.namespace == "team-a").count() == 0
+
+
+def test_skill_installer_fails_when_snapshot_binary_metadata_mismatches(
+    test_db,
+    test_user,
+):
+    source_skill = _create_skill_kind(test_db, user_id=test_user.id)
+    source_binary = _create_skill_binary(test_db, source_skill=source_skill)
+    listing, version = _create_skill_listing_and_version(
+        test_db,
+        test_user=test_user,
+        source_skill=source_skill,
+        source_binary=source_binary,
+        snapshot_status={
+            "fileHash": "old-hash",
+            "fileSize": source_binary.file_size + 1,
+        },
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        SkillResourceInstaller().install(
+            db=test_db,
+            user_id=test_user.id,
+            listing=listing,
+            version=version,
+            target_namespace="team-a",
+            options={},
+        )
+
+    assert exc_info.value.status_code in {400, 404}
+    assert test_db.query(Kind).filter(Kind.namespace == "team-a").count() == 0
 
 
 def test_skill_installer_generates_available_name_for_duplicate_install(

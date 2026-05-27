@@ -50,7 +50,8 @@ class SkillResourceInstaller:
         options: dict[str, Any],
     ) -> ResourceInstallResult:
         manifest = version.manifest or {}
-        skill_snapshot = self._skill_snapshot(db, manifest)
+        skill_snapshot = self._skill_snapshot(manifest)
+        source_binary = self._source_binary(db, manifest, skill_snapshot)
         target_name = self._available_name(
             db,
             user_id=user_id,
@@ -74,7 +75,6 @@ class SkillResourceInstaller:
         db.add(new_skill)
         db.flush()
 
-        source_binary = self._source_binary(db, manifest)
         if source_binary:
             db.add(
                 SkillBinary(
@@ -95,23 +95,13 @@ class SkillResourceInstaller:
             },
         )
 
-    def _skill_snapshot(self, db: Session, manifest: dict[str, Any]) -> dict[str, Any]:
+    def _skill_snapshot(self, manifest: dict[str, Any]) -> dict[str, Any]:
         snapshot = manifest.get("skill")
         if isinstance(snapshot, dict):
             return deepcopy(snapshot)
 
-        source = manifest.get("source") or {}
-        source_kind_id = source.get("kind_id")
-        source_skill = (
-            db.query(Kind)
-            .filter(Kind.id == source_kind_id, Kind.kind == "Skill")
-            .first()
-        )
-        if source_skill:
-            return deepcopy(source_skill.json)
-
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="Source Skill snapshot not found",
         )
 
@@ -149,27 +139,84 @@ class SkillResourceInstaller:
         self,
         db: Session,
         manifest: dict[str, Any],
+        skill_snapshot: dict[str, Any],
     ) -> SkillBinary | None:
         source = manifest.get("source") or {}
         source_binary_id = source.get("binary_id")
         source_kind_id = source.get("kind_id")
+        expected_status = self._snapshot_binary_status(skill_snapshot)
 
-        if source_binary_id:
-            query = db.query(SkillBinary).filter(SkillBinary.id == source_binary_id)
-            if source_kind_id:
-                query = query.filter(SkillBinary.kind_id == source_kind_id)
-            binary = query.first()
-            if binary:
-                return binary
+        if source_binary_id is not None:
+            if source_kind_id is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Source Skill binary metadata is incomplete",
+                )
+            binary = (
+                db.query(SkillBinary)
+                .filter(
+                    SkillBinary.id == source_binary_id,
+                    SkillBinary.kind_id == source_kind_id,
+                )
+                .first()
+            )
+            if not binary:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Source Skill binary not found",
+                )
+            self._validate_binary_snapshot(expected_status, binary)
+            return binary
 
         if source_kind_id:
-            return (
+            binary = (
                 db.query(SkillBinary)
                 .filter(SkillBinary.kind_id == source_kind_id)
                 .first()
             )
+            if binary:
+                self._validate_binary_snapshot(expected_status, binary)
+                return binary
 
+        if expected_status:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Source Skill binary not found",
+            )
         return None
+
+    def _snapshot_binary_status(
+        self,
+        skill_snapshot: dict[str, Any],
+    ) -> dict[str, Any]:
+        snapshot_status = skill_snapshot.get("status")
+        if not isinstance(snapshot_status, dict):
+            return {}
+        return {
+            key: snapshot_status[key]
+            for key in ("fileHash", "fileSize")
+            if key in snapshot_status
+        }
+
+    def _validate_binary_snapshot(
+        self,
+        expected_status: dict[str, Any],
+        binary: SkillBinary,
+    ) -> None:
+        if not expected_status:
+            return
+
+        if (
+            "fileHash" in expected_status
+            and expected_status["fileHash"] != binary.file_hash
+        ) or (
+            "fileSize" in expected_status
+            and expected_status["fileSize"] != binary.file_size
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Source Skill binary does not match manifest snapshot",
+            )
 
     def _available_name(
         self,
