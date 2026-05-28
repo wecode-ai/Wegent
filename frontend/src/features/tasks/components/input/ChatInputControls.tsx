@@ -24,7 +24,11 @@ import type {
 } from '@/types/api'
 import type { ContextItem } from '@/types/context'
 import type { UnifiedSkill } from '@/apis/skills'
-import { canUseChatContexts, isChatShell } from '../../service/messageService'
+import {
+  canSwitchModelAfterMessages,
+  canUseChatContexts,
+  isChatShell,
+} from '../../service/messageService'
 import { supportsAttachments } from '../../service/attachmentService'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { MobileChatInputControls } from './MobileChatInputControls'
@@ -628,7 +632,11 @@ export function ChatInputControls({
                 forceOverride={forceOverride}
                 setForceOverride={setForceOverride}
                 selectedTeam={selectedTeam}
-                disabled={isLoading || isStreaming || (hasMessages && !isChatShell(selectedTeam))}
+                disabled={
+                  isLoading ||
+                  isStreaming ||
+                  (hasMessages && !canSwitchModelAfterMessages(selectedTeam))
+                }
                 compact={shouldCollapseSelectors}
                 teamId={teamId}
                 taskId={taskId}

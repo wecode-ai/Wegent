@@ -77,6 +77,16 @@ export function isClaudeCode(team: Team | null): boolean {
 }
 
 /**
+ * Check whether the model selector should stay enabled after a task has messages.
+ *
+ * Chat Shell already supports per-message model switching. ClaudeCode receives the selected
+ * model through the existing task override path and executor model configuration.
+ */
+export function canSwitchModelAfterMessages(team: Team | null): boolean {
+  return isChatShell(team) || isClaudeCode(team)
+}
+
+/**
  * Check if a task uses Chat Shell type based on team information.
  * Now relies solely on team.agent_type since subtasks are managed by TaskStateMachine.
  *
