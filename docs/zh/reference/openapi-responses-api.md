@@ -1,3 +1,7 @@
+---
+sidebar_position: 1
+---
+
 # OpenAPI v1/responses API
 
 本文档描述 OpenAPI v1/responses 端点，该端点提供与 OpenAI Responses API 兼容的接口，用于与 Wegent 智能体（Team）进行交互。
@@ -308,11 +312,19 @@ curl -X DELETE "https://your-domain/api/v1/responses/resp_123" \
 | `response.output_item.added` | 添加了新的输出项（消息） |
 | `response.content_part.added` | 向消息添加了新的内容部分 |
 | `response.output_text.delta` | 收到文本块 |
+| `response.reasoning_summary_part.added` | 添加了新的推理摘要输出项 |
+| `response.reasoning_summary_text.delta` | 收到推理摘要文本块 |
 | `response.output_text.done` | 文本输出完成 |
 | `response.content_part.done` | 内容部分完成 |
 | `response.output_item.done` | 输出项完成 |
 | `response.completed` | 响应完全完成 |
 | `response.failed` | 响应失败并带有错误 |
+
+### 推理输出顺序
+
+启用深度思考或模型返回推理摘要时，流式输出可能包含多个独立的 `reasoning` 输出项。工具调用或普通文本输出会结束当前推理块；之后如果继续产生推理内容，会创建新的 `reasoning` 输出项。
+
+最终的 `response.completed.response.output` 会保留这些输出项的时间顺序，例如 `reasoning -> shell_call -> reasoning -> message`。客户端应按 `output` 数组顺序渲染，不应把多个 `reasoning` 内容合并成一个块。
 
 ### SSE 流示例
 

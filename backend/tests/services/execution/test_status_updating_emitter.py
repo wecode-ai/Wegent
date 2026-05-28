@@ -158,3 +158,27 @@ async def test_tool_events_persist_mcp_protocol_metadata():
         tool_protocol="mcp_call",
         server_label="wegent-knowledge",
     )
+
+
+@pytest.mark.asyncio
+async def test_thinking_events_persist_thinking_blocks():
+    from app.services.execution.emitters import StatusUpdatingEmitter
+
+    wrapped = AsyncMock()
+    emitter = StatusUpdatingEmitter(wrapped=wrapped, task_id=101, subtask_id=202)
+    mock_session_manager = AsyncMock()
+
+    thinking_event = ExecutionEvent(
+        type=EventType.THINKING.value,
+        task_id=101,
+        subtask_id=202,
+        content="Reasoning chunk.",
+    )
+
+    with patch("app.services.chat.storage.session_manager", mock_session_manager):
+        await emitter.emit(thinking_event)
+
+    mock_session_manager.add_thinking_content.assert_awaited_once_with(
+        subtask_id=202,
+        content="Reasoning chunk.",
+    )

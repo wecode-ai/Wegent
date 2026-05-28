@@ -23,6 +23,10 @@ class FakeRedisClient:
         self.values[key] = value
         return True
 
+    async def append(self, key, value):
+        self.values[key] = self.values.get(key, "") + value
+        return len(self.values[key])
+
     async def delete(self, *keys):
         for key in keys:
             self.values.pop(key, None)
@@ -87,3 +91,23 @@ async def test_add_tool_block_is_idempotent_by_tool_use_id():
     assert blocks[0]["tool_input"] == {"command": "pwd"}
     assert blocks[0]["tool_protocol"] == "function_call"
     assert json.loads(redis_client.lists["chat:streaming:blocks:202"][0]) == blocks[0]
+
+
+@pytest.mark.asyncio
+async def test_thinking_blocks_are_split_by_text_boundaries():
+    manager = SessionManager()
+    redis_client = FakeRedisClient()
+    manager._cache = FakeCache(redis_client)
+
+    await manager.add_thinking_content(subtask_id=303, content="First ")
+    await manager.add_thinking_content(subtask_id=303, content="thought.")
+    await manager.add_text_content(subtask_id=303, content="Answer.")
+    await manager.add_thinking_content(subtask_id=303, content="Second thought.")
+
+    blocks = await manager.finalize_and_get_blocks(303)
+
+    assert [block["type"] for block in blocks] == ["thinking", "text", "thinking"]
+    assert blocks[0]["content"] == "First thought."
+    assert blocks[1]["content"] == "Answer."
+    assert blocks[2]["content"] == "Second thought."
+    assert [block["status"] for block in blocks] == ["done", "done", "done"]
