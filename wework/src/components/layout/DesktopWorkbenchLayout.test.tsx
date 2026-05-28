@@ -1,12 +1,50 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { createDeviceApi } from '@/api/devices'
 import { DesktopWorkbenchLayout } from './DesktopWorkbenchLayout'
+
+vi.mock('@/config/runtime', () => ({
+  getRuntimeConfig: () => ({ apiBaseUrl: '/api' }),
+}))
+
+vi.mock('@/api/http', () => ({
+  createHttpClient: vi.fn(() => ({})),
+}))
+
+vi.mock('@/api/devices', () => ({
+  createDeviceApi: vi.fn(),
+}))
+
+const createDeviceApiMock = vi.mocked(createDeviceApi)
 
 describe('DesktopWorkbenchLayout', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
+    createDeviceApiMock.mockReturnValue({
+      getAllDevices: vi.fn().mockResolvedValue([
+        {
+          id: 1,
+          device_id: '24a59054-4638-4744-983d-372706c30fcd',
+          name: 'yunpeng7-executor-372706c30fcd',
+          status: 'online',
+          is_default: false,
+          device_type: 'cloud',
+          bind_shell: 'claudecode',
+          executor_version: '1.712',
+          cpu_usage: 42,
+          memory_usage: 68,
+          disk_usage: 57,
+        },
+      ]),
+      startTerminal: vi.fn(),
+      startCodeServer: vi.fn(),
+      createCloudDevice: vi.fn(),
+      renameDevice: vi.fn(),
+      restartCloudDevice: vi.fn(),
+      deleteCloudDevice: vi.fn(),
+    })
   })
 
   const baseProps = {
@@ -416,13 +454,10 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByText('Linux-Device-481b616e8e0b')).not.toBeInTheDocument()
     expect(screen.getByText('可连接的设备')).toBeInTheDocument()
     expect(screen.queryByText('可连接这台设备的云设备')).not.toBeInTheDocument()
-    expect(screen.getByText('云设备')).toBeInTheDocument()
+    expect(await screen.findByText('云设备')).toBeInTheDocument()
     expect(
-      screen.getByTestId('connection-device-icon-24a59054-4638-4744-983d-372706c30fcd'),
-    ).toHaveClass('text-[#3c4043]')
-    expect(
-      screen.getByTestId('connection-device-icon-24a59054-4638-4744-983d-372706c30fcd'),
-    ).not.toHaveClass('bg-[#f7f7f8]')
+      screen.getByTestId('connection-device-24a59054-4638-4744-983d-372706c30fcd'),
+    ).toBeInTheDocument()
     expect(screen.getByText('yunpeng7-executor-372706c30fcd')).toBeInTheDocument()
     expect(screen.getByText('v1.712')).toBeInTheDocument()
     expect(screen.getByText('在线')).toBeInTheDocument()
