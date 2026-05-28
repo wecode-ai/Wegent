@@ -53,13 +53,18 @@ const mockTeam: TeamWithBotDetails = {
   id: 1,
   name: 'chat-team',
   namespace: 'default',
-  display_name: 'Chat Team',
+  displayName: 'Chat Team',
   description: '',
   icon: '',
   agent_type: 'chat',
   is_mix_team: false,
+  workflow: {},
+  is_active: true,
+  user_id: 1,
+  created_at: '2026-01-01T00:00:00.000Z',
+  updated_at: '2026-01-01T00:00:00.000Z',
   bots: [],
-} as TeamWithBotDetails
+}
 
 function mockDeferredModelLoad() {
   let resolveModels!: (value: { data: Model[] }) => void
