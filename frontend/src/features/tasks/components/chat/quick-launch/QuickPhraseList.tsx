@@ -13,7 +13,7 @@ interface QuickPhraseListProps {
 }
 
 export function QuickPhraseList({ launcher, onBack, onPhraseSelect }: QuickPhraseListProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation('chat')
 
   return (
     <div className="mx-auto mt-6 w-full max-w-[620px]" data-testid="quick-phrase-list">
@@ -43,7 +43,7 @@ export function QuickPhraseList({ launcher, onBack, onPhraseSelect }: QuickPhras
         </div>
       ) : (
         <div className="rounded-lg border border-border bg-base px-3 py-4 text-sm text-text-muted">
-          {t('common:teams.quick_launch_empty_phrases')}
+          {t('quick_launch.empty_phrases')}
         </div>
       )}
     </div>

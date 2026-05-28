@@ -250,6 +250,11 @@
   "send_shortcut": "回车发送，Shift+回车换行",
   "send_shortcut_cmd_enter_mac": "⌘+回车发送，回车换行",
   "send_shortcut_cmd_enter_win": "Ctrl+回车发送，回车换行",
+  "quick_launch": {
+    "system_functions": "系统功能",
+    "favorite_agents": "收藏智能体",
+    "empty_phrases": "暂无快捷短语"
+  },
   "errors": {
     "request_failed": "请求大模型接口失败",
     "request_failed_retry": "请求大模型接口失败, 请点击重试",

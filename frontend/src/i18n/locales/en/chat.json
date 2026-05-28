@@ -272,6 +272,11 @@
   "send_shortcut": "Enter to send, Shift+Enter for new line",
   "send_shortcut_cmd_enter_mac": "⌘+Enter to send, Enter for new line",
   "send_shortcut_cmd_enter_win": "Ctrl+Enter to send, Enter for new line",
+  "quick_launch": {
+    "system_functions": "System functions",
+    "favorite_agents": "Favorite agents",
+    "empty_phrases": "No quick phrases yet"
+  },
   "errors": {
     "request_failed": "LLM API request failed",
     "request_failed_retry": "LLM API request failed, please click retry",

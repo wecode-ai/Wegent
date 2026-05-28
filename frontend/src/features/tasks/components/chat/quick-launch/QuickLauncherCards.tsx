@@ -67,14 +67,14 @@ export function QuickLauncherCards({
   renderMoreButton,
   renderQuickCreateCard,
 }: QuickLauncherCardsProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation('chat')
 
   return (
     <div className="mx-auto mt-6 w-full max-w-[820px] space-y-3" data-testid="quick-launch-cards">
       {systemLaunchers.length > 0 && (
         <section className="space-y-2" data-testid="quick-launch-system-row">
           <h3 className="px-1 text-xs font-medium text-text-muted">
-            {t('common:teams.quick_launch_system_functions')}
+            {t('quick_launch.system_functions')}
           </h3>
           <div className="flex flex-wrap items-center justify-center gap-3">
             {systemLaunchers.map(launcher => (
@@ -92,7 +92,7 @@ export function QuickLauncherCards({
       {(favoriteLaunchers.length > 0 || renderMoreButton || renderQuickCreateCard) && (
         <section className="space-y-2" data-testid="quick-launch-favorites-row">
           <h3 className="px-1 text-xs font-medium text-text-muted">
-            {t('common:teams.quick_launch_favorite_agents')}
+            {t('quick_launch.favorite_agents')}
           </h3>
           <div className="flex flex-wrap items-center justify-center gap-3">
             {favoriteLaunchers.map(launcher => (
