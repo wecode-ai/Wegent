@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 
 import { useTranslation } from '@/hooks/useTranslation'
@@ -10,6 +10,7 @@ import type { QuickLauncher } from './types'
 const CARD_WIDTH = 154
 const CARD_GAP = 12
 const SCROLL_STEP = (CARD_WIDTH + CARD_GAP) * 2
+const SCROLL_TOLERANCE = 1
 
 interface QuickLauncherCardsProps {
   systemLaunchers: QuickLauncher[]
@@ -77,28 +78,66 @@ function LauncherScrollTrack({
   testId: string
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
+  const [canScrollLeft, setCanScrollLeft] = useState(false)
+  const [canScrollRight, setCanScrollRight] = useState(false)
+
+  const updateScrollButtons = useCallback(() => {
+    const element = scrollRef.current
+
+    if (!element) {
+      return
+    }
+
+    setCanScrollLeft(element.scrollLeft > SCROLL_TOLERANCE)
+    setCanScrollRight(
+      element.scrollLeft + element.clientWidth < element.scrollWidth - SCROLL_TOLERANCE
+    )
+  }, [])
+
+  useEffect(() => {
+    const element = scrollRef.current
+
+    if (!element) {
+      return undefined
+    }
+
+    updateScrollButtons()
+    element.addEventListener('scroll', updateScrollButtons, { passive: true })
+
+    const resizeObserver =
+      typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateScrollButtons)
+    resizeObserver?.observe(element)
+
+    return () => {
+      element.removeEventListener('scroll', updateScrollButtons)
+      resizeObserver?.disconnect()
+    }
+  }, [launchers.length, updateScrollButtons])
 
   const handleScroll = (direction: -1 | 1) => {
     scrollRef.current?.scrollBy({
       left: direction * SCROLL_STEP,
       behavior: 'smooth',
     })
+    window.requestAnimationFrame(updateScrollButtons)
   }
 
   return (
-    <div className="flex min-w-0 items-center gap-2" data-testid={`${testId}-track`}>
-      <button
-        type="button"
-        aria-label="Scroll left"
-        className="flex h-11 min-w-[44px] shrink-0 items-center justify-center rounded-full border border-border bg-base text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
-        onClick={() => handleScroll(-1)}
-        data-testid={`${testId}-scroll-left`}
-      >
-        <ChevronLeft className="h-4 w-4" />
-      </button>
+    <div className="relative min-w-0" data-testid={`${testId}-track`}>
+      {canScrollLeft && (
+        <button
+          type="button"
+          aria-label="Scroll left"
+          className="absolute left-0 top-0 z-10 flex h-full w-12 items-center justify-start bg-gradient-to-r from-base via-base/90 to-transparent pl-1 text-text-muted transition-colors hover:text-text-primary"
+          onClick={() => handleScroll(-1)}
+          data-testid={`${testId}-scroll-left`}
+        >
+          <ChevronLeft className="h-5 w-5" />
+        </button>
+      )}
       <div
         ref={scrollRef}
-        className="scrollbar-hide flex min-w-0 flex-1 flex-nowrap items-center justify-start gap-3 overflow-x-auto overscroll-x-contain"
+        className="scrollbar-hide flex min-w-0 w-full flex-nowrap items-center justify-start gap-3 overflow-x-auto overscroll-x-contain"
         data-testid={testId}
       >
         {launchers.map(launcher => (
@@ -110,15 +149,17 @@ function LauncherScrollTrack({
           />
         ))}
       </div>
-      <button
-        type="button"
-        aria-label="Scroll right"
-        className="flex h-11 min-w-[44px] shrink-0 items-center justify-center rounded-full border border-border bg-base text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
-        onClick={() => handleScroll(1)}
-        data-testid={`${testId}-scroll-right`}
-      >
-        <ChevronRight className="h-4 w-4" />
-      </button>
+      {canScrollRight && (
+        <button
+          type="button"
+          aria-label="Scroll right"
+          className="absolute right-0 top-0 z-10 flex h-full w-12 items-center justify-end bg-gradient-to-l from-base via-base/90 to-transparent pr-1 text-text-muted transition-colors hover:text-text-primary"
+          onClick={() => handleScroll(1)}
+          data-testid={`${testId}-scroll-right`}
+        >
+          <ChevronRight className="h-5 w-5" />
+        </button>
+      )}
     </div>
   )
 }

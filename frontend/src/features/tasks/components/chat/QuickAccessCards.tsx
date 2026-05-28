@@ -213,6 +213,7 @@ export function QuickAccessCards({
             quick_access: nextQuickAccess,
           },
         })
+        window.dispatchEvent(new Event('quick-access-updated'))
       } catch (error) {
         console.error('Failed to reorder quick access teams:', error)
         setQuickAccessTeams(previousTeams)

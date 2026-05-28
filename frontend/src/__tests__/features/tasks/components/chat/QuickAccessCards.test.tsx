@@ -81,6 +81,19 @@ const makeTeam = (overrides: Partial<Team>): Team => ({
   ...overrides,
 })
 
+const makeQuickLaunchFavoriteAgent = (
+  id: number,
+  name: string,
+  title: string
+): QuickLaunchResponse['favorite_agents'][number] => ({
+  type: 'favorite_agent',
+  id,
+  team_id: id,
+  name,
+  title,
+  quick_phrases: [],
+})
+
 const renderQuickAccessCards = (
   teams: Team[],
   quickAccess: QuickAccessResponse,
@@ -529,6 +542,88 @@ describe('QuickAccessCards', () => {
           },
         }),
       })
+    })
+  })
+
+  test('refreshes outside quick launch card order after reordering in the more popover', async () => {
+    const quickAccess = {
+      system_version: 2,
+      system_team_ids: [],
+      user_version: 2,
+      show_system_recommended: false,
+      teams: [
+        { id: 1, name: 'team-one', display_name: 'Team One', is_system: false },
+        { id: 2, name: 'team-two', display_name: 'Team Two', is_system: false },
+        { id: 3, name: 'team-three', display_name: 'Team Three', is_system: false },
+        { id: 4, name: 'team-four', display_name: 'Team Four', is_system: false },
+        { id: 5, name: 'team-five', display_name: 'Team Five', is_system: false },
+      ],
+    } satisfies QuickAccessResponse
+    const initialQuickLaunch = {
+      system_functions: [],
+      favorite_agents: [
+        makeQuickLaunchFavoriteAgent(1, 'team-one', 'Team One'),
+        makeQuickLaunchFavoriteAgent(2, 'team-two', 'Team Two'),
+        makeQuickLaunchFavoriteAgent(3, 'team-three', 'Team Three'),
+        makeQuickLaunchFavoriteAgent(4, 'team-four', 'Team Four'),
+        makeQuickLaunchFavoriteAgent(5, 'team-five', 'Team Five'),
+      ],
+    } satisfies QuickLaunchResponse
+    const reorderedQuickLaunch = {
+      system_functions: [],
+      favorite_agents: [
+        makeQuickLaunchFavoriteAgent(1, 'team-one', 'Team One'),
+        makeQuickLaunchFavoriteAgent(5, 'team-five', 'Team Five'),
+        makeQuickLaunchFavoriteAgent(2, 'team-two', 'Team Two'),
+        makeQuickLaunchFavoriteAgent(3, 'team-three', 'Team Three'),
+        makeQuickLaunchFavoriteAgent(4, 'team-four', 'Team Four'),
+      ],
+    } satisfies QuickLaunchResponse
+
+    mockGetQuickAccess.mockResolvedValue(quickAccess)
+    mockGetQuickLaunch.mockResolvedValue(reorderedQuickLaunch)
+    mockGetQuickLaunch.mockResolvedValueOnce(initialQuickLaunch)
+
+    renderQuickAccessCards(
+      [
+        makeTeam({ id: 1, name: 'team-one', description: 'Description one' }),
+        makeTeam({ id: 2, name: 'team-two', description: 'Description two' }),
+        makeTeam({ id: 3, name: 'team-three', description: 'Description three' }),
+        makeTeam({ id: 4, name: 'team-four', description: 'Description four' }),
+        makeTeam({ id: 5, name: 'team-five', description: 'Description five' }),
+      ],
+      quickAccess
+    )
+
+    const favoritesGrid = await screen.findByTestId('quick-launch-favorites-grid')
+    expect(favoritesGrid.textContent?.indexOf('Team Two')).toBeLessThan(
+      favoritesGrid.textContent?.indexOf('Team Five') ?? -1
+    )
+
+    fireEvent.click(screen.getByText('More'))
+    const draggedHandle = await screen.findByTestId('quick-access-sort-handle-5')
+    const targetTeamRow = await screen.findByTestId('quick-access-more-team-team-two')
+
+    fireEvent.dragStart(draggedHandle, {
+      dataTransfer: {
+        effectAllowed: '',
+        setData: jest.fn(),
+      },
+    })
+    fireEvent.dragOver(targetTeamRow, {
+      dataTransfer: {
+        dropEffect: '',
+      },
+    })
+    fireEvent.drop(targetTeamRow)
+
+    await waitFor(() => {
+      expect(mockGetQuickLaunch).toHaveBeenCalledTimes(2)
+    })
+    await waitFor(() => {
+      expect(favoritesGrid.textContent?.indexOf('Team Five')).toBeLessThan(
+        favoritesGrid.textContent?.indexOf('Team Two') ?? -1
+      )
     })
   })
 })

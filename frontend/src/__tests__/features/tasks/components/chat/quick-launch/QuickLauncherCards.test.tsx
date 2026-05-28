@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { QuickLauncherCards } from '@/features/tasks/components/chat/quick-launch/quick-launcher-cards'
 import type { QuickLauncher } from '@/features/tasks/components/chat/quick-launch/types'
@@ -96,7 +96,7 @@ describe('QuickLauncherCards', () => {
     expect(screen.queryByTestId('quick-launch-system-grid')).not.toHaveClass('justify-center')
   })
 
-  test('supports horizontal scrolling for both launcher rows', () => {
+  test('supports horizontal scrolling for both launcher rows without inline arrow slots', () => {
     render(
       <QuickLauncherCards
         systemLaunchers={[
@@ -131,10 +131,56 @@ describe('QuickLauncherCards', () => {
       expect(grid).not.toHaveClass('flex-wrap')
     }
 
-    expect(screen.getByTestId('quick-launch-system-grid-scroll-left')).toBeInTheDocument()
-    expect(screen.getByTestId('quick-launch-system-grid-scroll-right')).toBeInTheDocument()
-    expect(screen.getByTestId('quick-launch-favorites-grid-scroll-left')).toBeInTheDocument()
-    expect(screen.getByTestId('quick-launch-favorites-grid-scroll-right')).toBeInTheDocument()
+    expect(screen.getByTestId('quick-launch-system-grid-track')).toHaveClass('relative')
+    expect(screen.getByTestId('quick-launch-favorites-grid-track')).toHaveClass('relative')
+    expect(screen.queryByTestId('quick-launch-system-grid-scroll-left')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('quick-launch-favorites-grid-scroll-left')).not.toBeInTheDocument()
+  })
+
+  test('shows flat fade overlay arrows only for available scroll directions', async () => {
+    render(
+      <QuickLauncherCards
+        systemLaunchers={[
+          makeLauncher({ key: 'system:create_ppt', title: 'Create PPT' }),
+          makeLauncher({ key: 'system:create_skill', title: 'Create Skill' }),
+          makeLauncher({ key: 'system:create_task', title: 'Create Task' }),
+        ]}
+        favoriteLaunchers={[]}
+        onSelectLauncher={jest.fn()}
+      />
+    )
+
+    const grid = screen.getByTestId('quick-launch-system-grid')
+    Object.defineProperty(grid, 'scrollWidth', { configurable: true, value: 600 })
+    Object.defineProperty(grid, 'clientWidth', { configurable: true, value: 300 })
+    Object.defineProperty(grid, 'scrollLeft', { configurable: true, writable: true, value: 0 })
+
+    fireEvent.scroll(grid)
+
+    expect(screen.queryByTestId('quick-launch-system-grid-scroll-left')).not.toBeInTheDocument()
+    const rightButton = await screen.findByTestId('quick-launch-system-grid-scroll-right')
+    expect(rightButton).toHaveClass('absolute')
+    expect(rightButton).toHaveClass('right-0')
+    expect(rightButton).toHaveClass('h-full', 'w-12', 'bg-gradient-to-l')
+    expect(rightButton).not.toHaveClass('rounded-full')
+
+    Object.defineProperty(grid, 'scrollLeft', { configurable: true, writable: true, value: 120 })
+    fireEvent.scroll(grid)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('quick-launch-system-grid-scroll-left')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('quick-launch-system-grid-scroll-left')).toHaveClass('absolute')
+    expect(screen.getByTestId('quick-launch-system-grid-scroll-left')).toHaveClass(
+      'bg-gradient-to-r'
+    )
+
+    Object.defineProperty(grid, 'scrollLeft', { configurable: true, writable: true, value: 300 })
+    fireEvent.scroll(grid)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('quick-launch-system-grid-scroll-right')).not.toBeInTheDocument()
+    })
   })
 
   test('keeps more and create cards outside the horizontally scrolling favorites area', () => {
