@@ -170,6 +170,22 @@ describe('MyResources', () => {
     expect(screen.getByRole('menuitem', { name: '管理...' })).toBeInTheDocument()
   })
 
+  it('uses tablet-width layout for the managed resource toolbar', async () => {
+    render(<MyResources />)
+
+    const agentTab = screen.getByTestId('managed-resource-agent-tab')
+    const toolbar = agentTab.parentElement?.parentElement
+    const groupSelect = screen.getByTestId('resource-group-select')
+
+    expect(await screen.findByTestId('agent-resource-manager')).toBeInTheDocument()
+    expect(toolbar).toHaveClass('md:flex-row')
+    expect(toolbar).toHaveClass('md:items-center')
+    expect(toolbar).toHaveClass('md:justify-between')
+    expect(toolbar).not.toHaveClass('lg:flex-row')
+    expect(agentTab).toHaveClass('md:h-9')
+    expect(groupSelect).toHaveClass('md:h-9')
+  })
+
   it('switches between managed resource types', async () => {
     render(<MyResources />)
 

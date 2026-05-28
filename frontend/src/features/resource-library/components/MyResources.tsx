@@ -81,7 +81,7 @@ function ManagedResourceTabs({
             variant={isActive ? 'primary' : 'outline'}
             aria-pressed={isActive}
             data-testid={`managed-resource-${type}-tab`}
-            className="h-11 min-w-[44px] px-4 lg:h-9"
+            className="h-11 min-w-[44px] px-4 md:h-9"
             onClick={() => onValueChange(type)}
           >
             {t(`filters.${type}`)}
@@ -127,7 +127,7 @@ function ResourceScopeControls({
         type="button"
         variant={scope === 'personal' ? 'primary' : 'outline'}
         aria-pressed={scope === 'personal'}
-        className="h-11 min-w-[44px] px-4 lg:h-9"
+        className="h-11 min-w-[44px] px-4 md:h-9"
         onClick={() => onScopeChange('personal')}
         data-testid="resource-scope-personal-button"
       >
@@ -141,7 +141,7 @@ function ResourceScopeControls({
             variant={scope === 'group' ? 'primary' : 'outline'}
             aria-pressed={scope === 'group'}
             className={cn(
-              'h-11 min-w-[180px] max-w-full justify-between px-4 lg:h-9 lg:max-w-[260px]',
+              'h-11 min-w-[180px] max-w-full justify-between px-4 md:h-9 md:max-w-[260px]',
               scope === 'group' ? 'text-white' : 'text-text-primary'
             )}
             data-testid="resource-group-select"
@@ -276,7 +276,7 @@ export function MyResources() {
   return (
     <div className="flex flex-col gap-5" data-testid="my-resources">
       <div className="flex flex-col gap-3 border-b border-border pb-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <ManagedResourceTabs value={resourceType} onValueChange={setResourceType} />
           <ResourceScopeControls
             scope={scope}
