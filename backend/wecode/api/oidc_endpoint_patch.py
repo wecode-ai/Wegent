@@ -191,13 +191,13 @@ async def _patched_oidc_callback(
                 # Do not interrupt login flow, log error
                 logger.error(f"OIDC git_info initialization failed: {str(e)}")
 
-        # Sync ERP profile from OpenSearch API using username (email prefix)
+        # Sync ERP profile from OpenSearch API using email for unique match
         try:
             from wecode.service.erp_client import erp_client
             from wecode.service.erp_entity_resolver import ErpEntityResolver
             from wecode.service.erp_user_service import ErpUserService
 
-            erp_employee = erp_client.search_employee(user_name)
+            erp_employee = erp_client.search_employee(email)
             if erp_employee and erp_employee.ssn:
                 ErpUserService.upsert_profile(
                     db=db,
@@ -214,7 +214,7 @@ async def _patched_oidc_callback(
                 )
             else:
                 logger.info(
-                    f"No ERP employee found for OIDC user {user.id} with username={user_name}"
+                    f"No ERP employee found for OIDC user {user.id} with email={email}"
                 )
         except Exception as e:
             logger.warning(f"Failed to sync ERP profile for OIDC user {user.id}: {e}")
