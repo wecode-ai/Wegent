@@ -2,8 +2,9 @@ import { Bot, ChevronRight } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChatInput } from '@/components/chat/ChatInput'
+import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
 import { MessageList } from '@/components/chat/MessageList'
-import type { Task } from '@/types/api'
+import type { ProjectWithTasks, Task } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
 import { RightWorkspacePanel } from './workspace-panels/RightWorkspacePanel'
@@ -14,7 +15,10 @@ const DESKTOP_COMPOSER_FRAME_CLASS = 'mx-auto w-[min(90%,62rem)] max-w-full'
 interface DesktopWorkbenchMainProps {
   sidebarCollapsed: boolean
   currentTask: Task | null
+  currentProject: ProjectWithTasks | null
   messages: WorkbenchMessage[]
+  projectChat: ProjectChatControls
+  projectWork: ProjectWorkControls
   input: string
   isSending: boolean
   onExpandSidebar: () => void
@@ -25,7 +29,10 @@ interface DesktopWorkbenchMainProps {
 export function DesktopWorkbenchMain({
   sidebarCollapsed,
   currentTask,
+  currentProject,
   messages,
+  projectChat,
+  projectWork,
   input,
   isSending,
   onExpandSidebar,
@@ -36,6 +43,12 @@ export function DesktopWorkbenchMain({
   const [rightPanelOpen, setRightPanelOpen] = useState(false)
   const [bottomPanelOpen, setBottomPanelOpen] = useState(false)
   const hasConversation = messages.length > 0 || currentTask
+  const emptyTitle = currentProject
+    ? t('workbench.project_empty_title', {
+        defaultValue: `我们应该在 ${currentProject.name} 中构建什么？`,
+        projectName: currentProject.name,
+      })
+    : t('workbench.empty_title', '我们该做什么？')
 
   return (
     <main className="relative flex min-w-0 flex-1 overflow-hidden">
@@ -65,6 +78,8 @@ export function DesktopWorkbenchMain({
                   disabled={isSending}
                   placeholder={t('workbench.input_placeholder', '尽管问')}
                   variant="desktop"
+                  projectChat={projectChat}
+                  projectWork={projectWork}
                 />
               </div>
             </div>
@@ -76,7 +91,7 @@ export function DesktopWorkbenchMain({
                 <Bot className="h-8 w-8 text-text-muted" />
               </div>
               <h1 className="mb-10 text-center text-[34px] font-medium tracking-normal">
-                {t('workbench.empty_title', '我们该做什么？')}
+                {emptyTitle}
               </h1>
               <ChatInput
                 value={input}
@@ -85,6 +100,8 @@ export function DesktopWorkbenchMain({
                 disabled={isSending}
                 placeholder={t('workbench.input_placeholder', '尽管问')}
                 variant="desktop"
+                projectChat={projectChat}
+                projectWork={projectWork}
               />
             </div>
           </div>
