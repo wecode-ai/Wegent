@@ -11,7 +11,6 @@ import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import { paths } from '@/config/paths'
 import {
-  Search,
   Plus,
   X,
   PanelLeftClose,
@@ -19,10 +18,7 @@ import {
   Code,
   BookOpen,
   Workflow,
-  ChevronDown,
-  ChevronUp,
   ChevronRight,
-  Settings2,
   Monitor,
   Inbox,
   LayoutGrid,
@@ -30,18 +26,14 @@ import {
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
 import TaskListSection from './TaskListSection'
+import TaskHistorySection from './TaskHistorySection'
+import FixedGroupChatsSection from './FixedGroupChatsSection'
 import { useTranslation } from '@/hooks/useTranslation'
-import { isTaskUnread } from '@/utils/taskViewStatus'
 import MobileSidebar from '@/features/layout/MobileSidebar'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { UserFloatingMenu } from '@/features/layout/components/UserFloatingMenu'
 import HistoryManageDialog from './HistoryManageDialog'
-import {
-  ProjectSection,
-  TaskDndProvider,
-  useProjectContext,
-  DroppableHistory,
-} from '@/features/projects'
+import { TaskDndProvider } from '@/features/projects'
 import { useInboxUnreadCount } from '@/features/inbox'
 import {
   DropdownMenu,
@@ -735,10 +727,8 @@ export default function TaskSidebar({
                   handleOpenSearchDialog={handleOpenSearchDialog}
                   shortcutDisplayText={shortcutDisplayText}
                   setIsMobileSidebarOpen={setIsMobileSidebarOpen}
-                  t={t}
                   isSearchResult={isSearchResult}
                   onTaskSelect={() => setIsMobileSidebarOpen(false)}
-                  isHistoryManageDialogOpen={isHistoryManageDialogOpen}
                   setIsHistoryManageDialogOpen={setIsHistoryManageDialogOpen}
                 />
               )}
@@ -762,7 +752,6 @@ export default function TaskSidebar({
             viewStatusVersion={viewStatusVersion}
             getUnreadCount={getUnreadCount}
             setIsMobileSidebarOpen={setIsMobileSidebarOpen}
-            t={t}
           />
         )}
       </TaskDndProvider>
@@ -804,327 +793,5 @@ export default function TaskSidebar({
         onOpenChange={setIsHistoryManageDialogOpen}
       />
     </>
-  )
-}
-
-/**
- * TaskHistorySection - A component that uses useProjectContext to filter tasks
- * This component must be used within ProjectProvider
- */
-interface TaskHistorySectionProps {
-  groupTasks: Task[]
-  personalTasks: Task[]
-  isCollapsed: boolean
-  hasMorePersonalTasks: boolean
-  loadMorePersonalTasks: () => void
-  loadingMorePersonalTasks: boolean
-  viewStatusVersion: number
-  getUnreadCount: (tasks: Task[]) => number
-  totalUnreadCount: number
-  handleMarkAllAsViewed: () => void
-  handleOpenSearchDialog: () => void
-  shortcutDisplayText: string
-  setIsMobileSidebarOpen: (open: boolean) => void
-  t: (key: string, options?: Record<string, unknown>) => string
-  isSearchResult: boolean
-  onTaskSelect: () => void
-  isHistoryManageDialogOpen?: boolean
-  setIsHistoryManageDialogOpen?: (open: boolean) => void
-}
-
-// Import Task type for the component
-import type { Task } from '@/types/api'
-
-function TaskHistorySection({
-  groupTasks,
-  personalTasks,
-  isCollapsed,
-  hasMorePersonalTasks,
-  loadMorePersonalTasks,
-  loadingMorePersonalTasks,
-  viewStatusVersion,
-  getUnreadCount,
-  totalUnreadCount,
-  handleMarkAllAsViewed,
-  handleOpenSearchDialog,
-  shortcutDisplayText,
-  setIsMobileSidebarOpen,
-  t,
-  isSearchResult,
-  onTaskSelect,
-  isHistoryManageDialogOpen: _isHistoryManageDialogOpen,
-  setIsHistoryManageDialogOpen,
-}: TaskHistorySectionProps) {
-  const { projectTaskIds, projects } = useProjectContext()
-
-  // Filter out tasks that are already in projects from history lists
-  const filteredPersonalTasks = React.useMemo(
-    () => personalTasks.filter(task => !projectTaskIds.has(task.id)),
-    [personalTasks, projectTaskIds]
-  )
-  const filteredGroupTasks = React.useMemo(
-    () => groupTasks.filter(task => !projectTaskIds.has(task.id)),
-    [groupTasks, projectTaskIds]
-  )
-
-  // Check if there are any projects with tasks
-  const hasProjectsWithTasks = projects.some(p => p.tasks && p.tasks.length > 0)
-
-  // Only show "no tasks" if there are no filtered tasks AND no projects with tasks
-  if (
-    filteredGroupTasks.length === 0 &&
-    filteredPersonalTasks.length === 0 &&
-    !hasProjectsWithTasks
-  ) {
-    return (
-      <div className="text-center py-8 text-xs text-text-muted">{t('common:tasks.no_tasks')}</div>
-    )
-  }
-
-  return (
-    <>
-      {/* Projects Section */}
-      {!isCollapsed && !isSearchResult && <ProjectSection onTaskSelect={onTaskSelect} />}
-
-      {/* History Section (Personal Tasks) */}
-      {filteredPersonalTasks.length > 0 && (
-        <DroppableHistory>
-          {!isCollapsed && (
-            <div className="px-1 pb-1 pt-2 mt-1.5 border-t border-border-light text-xs font-medium text-text-muted flex items-center justify-between">
-              <div className="flex items-center gap-1">
-                {setIsHistoryManageDialogOpen ? (
-                  <TooltipProvider>
-                    <Tooltip delayDuration={300}>
-                      <TooltipTrigger asChild>
-                        <button
-                          onClick={() => setIsHistoryManageDialogOpen(true)}
-                          className="flex items-center gap-1 hover:text-text-primary transition-colors group"
-                        >
-                          <span className="group-hover:underline">
-                            {t('common:tasks.history_title')}
-                          </span>
-                          <Settings2 className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent side="right">
-                        <p>{t('history:actions.search')}</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                ) : (
-                  <span>{t('common:tasks.history_title')}</span>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                {totalUnreadCount > 0 && (
-                  <button
-                    onClick={handleMarkAllAsViewed}
-                    className="text-xs text-text-muted hover:text-text-primary transition-colors whitespace-nowrap"
-                  >
-                    {t('common:tasks.mark_all_read')}
-                  </button>
-                )}
-                <TooltipProvider>
-                  <Tooltip delayDuration={300}>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={handleOpenSearchDialog}
-                        className="p-0.5 text-text-muted hover:text-text-primary transition-colors rounded"
-                        aria-label={t('common:tasks.search_placeholder_chat')}
-                      >
-                        <Search className="h-3.5 w-3.5" />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent side="right">
-                      <p>
-                        {shortcutDisplayText
-                          ? t('common:tasks.search_hint_with_shortcut', {
-                              shortcut: shortcutDisplayText,
-                            })
-                          : t('common:tasks.search_placeholder_chat')}
-                      </p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              </div>
-            </div>
-          )}
-          <TaskListSection
-            tasks={filteredPersonalTasks}
-            title=""
-            unreadCount={getUnreadCount(filteredPersonalTasks)}
-            onTaskClick={() => setIsMobileSidebarOpen(false)}
-            isCollapsed={isCollapsed}
-            showTitle={false}
-            enableDrag={true}
-            key={`regular-tasks-${viewStatusVersion}`}
-          />
-          {hasMorePersonalTasks && !isCollapsed && (
-            <button
-              type="button"
-              data-testid="load-more-personal-tasks-button"
-              onClick={() => {
-                void loadMorePersonalTasks()
-              }}
-              disabled={loadingMorePersonalTasks}
-              className="flex h-11 min-w-[44px] w-full items-center gap-1 rounded-xl px-3 text-xs font-medium text-text-muted transition-colors hover:bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <ChevronDown className="h-3.5 w-3.5" />
-              <span>
-                {loadingMorePersonalTasks ? t('common:tasks.loading') : t('common:tasks.load_more')}
-              </span>
-            </button>
-          )}
-          {loadingMorePersonalTasks && (
-            <div className="text-center py-2 text-xs text-text-muted">
-              {t('common:tasks.loading')}
-            </div>
-          )}
-        </DroppableHistory>
-      )}
-    </>
-  )
-}
-
-interface FixedGroupChatsSectionProps {
-  groupTasks: Task[]
-  isCollapsed: boolean
-  isGroupChatsExpanded: boolean
-  setIsGroupChatsExpanded: (expanded: boolean) => void
-  hasMoreGroupTasks: boolean
-  loadAllGroupTasks: () => Promise<void>
-  loadingMoreGroupTasks: boolean
-  viewStatusVersion: number
-  getUnreadCount: (tasks: Task[]) => number
-  setIsMobileSidebarOpen: (open: boolean) => void
-  t: (key: string, options?: Record<string, unknown>) => string
-}
-
-function FixedGroupChatsSection({
-  groupTasks,
-  isCollapsed,
-  isGroupChatsExpanded,
-  setIsGroupChatsExpanded,
-  hasMoreGroupTasks,
-  loadAllGroupTasks,
-  loadingMoreGroupTasks,
-  viewStatusVersion,
-  getUnreadCount,
-  setIsMobileSidebarOpen,
-  t,
-}: FixedGroupChatsSectionProps) {
-  const { projectTaskIds } = useProjectContext()
-
-  const filteredGroupTasks = React.useMemo(
-    () => groupTasks.filter(task => !projectTaskIds.has(task.id)),
-    [groupTasks, projectTaskIds]
-  )
-
-  const unreadGroupChats = filteredGroupTasks.filter(isTaskUnread)
-  const readGroupChats = filteredGroupTasks.filter(task => !isTaskUnread(task))
-  const orderedGroupChats = [...unreadGroupChats, ...readGroupChats]
-  const collapsedGroupChatCount = orderedGroupChats.length
-  const shouldShowGroupChats = orderedGroupChats.length > 0 || hasMoreGroupTasks
-
-  if (!shouldShowGroupChats) return null
-
-  const toggleLabel = isGroupChatsExpanded
-    ? t('common:tasks.group_chats_collapse')
-    : t('common:tasks.group_chats_expand', {
-        count: collapsedGroupChatCount,
-        suffix: hasMoreGroupTasks ? '+' : '',
-      })
-
-  const handleToggleGroupChats = () => {
-    if (!isGroupChatsExpanded && hasMoreGroupTasks) {
-      void loadAllGroupTasks()
-    }
-    setIsGroupChatsExpanded(!isGroupChatsExpanded)
-  }
-
-  return (
-    <div
-      className={`${isCollapsed ? 'px-0' : 'px-2.5'} py-1 border-t border-border-light shrink-0`}
-      data-testid="task-sidebar-group-chat-dock"
-    >
-      {!isCollapsed ? (
-        <>
-          <button
-            type="button"
-            data-testid="task-sidebar-group-chat-toggle"
-            aria-label={toggleLabel}
-            onClick={handleToggleGroupChats}
-            className="flex items-center justify-between w-full h-11 min-w-[44px] px-1 text-xs font-medium rounded-md text-text-muted hover:text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 transition-colors"
-          >
-            <span className="truncate">{t('common:tasks.group_chats')}</span>
-            {isGroupChatsExpanded ? (
-              <ChevronUp
-                data-testid="task-sidebar-group-chat-chevron"
-                className="h-3.5 w-3.5 flex-shrink-0"
-              />
-            ) : (
-              <ChevronDown
-                data-testid="task-sidebar-group-chat-chevron"
-                className="h-3.5 w-3.5 flex-shrink-0"
-              />
-            )}
-          </button>
-          {isGroupChatsExpanded && orderedGroupChats.length > 0 && (
-            <div className="mt-1 max-h-52 overflow-y-auto task-list-scrollbar">
-              <TaskListSection
-                tasks={orderedGroupChats}
-                title=""
-                unreadCount={getUnreadCount(orderedGroupChats)}
-                onTaskClick={() => setIsMobileSidebarOpen(false)}
-                isCollapsed={isCollapsed}
-                showTitle={false}
-                enableDrag={true}
-                key={`group-chats-${viewStatusVersion}`}
-              />
-            </div>
-          )}
-        </>
-      ) : (
-        <TooltipProvider>
-          <Tooltip delayDuration={300}>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                data-testid="task-sidebar-group-chat-toggle"
-                aria-label={toggleLabel}
-                onClick={handleToggleGroupChats}
-                className="flex h-11 min-w-[44px] w-full items-center justify-center text-text-muted hover:text-text-primary transition-colors"
-              >
-                {isGroupChatsExpanded ? (
-                  <ChevronUp className="h-3.5 w-3.5" />
-                ) : (
-                  <ChevronDown className="h-3.5 w-3.5" />
-                )}
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="right">
-              <p>{toggleLabel}</p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-      )}
-      {isGroupChatsExpanded && orderedGroupChats.length > 0 && isCollapsed && (
-        <div className="max-h-52 overflow-y-auto task-list-scrollbar">
-          <TaskListSection
-            tasks={orderedGroupChats}
-            title=""
-            unreadCount={getUnreadCount(orderedGroupChats)}
-            onTaskClick={() => setIsMobileSidebarOpen(false)}
-            isCollapsed={isCollapsed}
-            showTitle={false}
-            enableDrag={true}
-            key={`group-chats-collapsed-${viewStatusVersion}`}
-          />
-        </div>
-      )}
-      {loadingMoreGroupTasks && (
-        <div className="text-center py-2 text-xs text-text-muted">{t('common:tasks.loading')}</div>
-      )}
-    </div>
   )
 }
