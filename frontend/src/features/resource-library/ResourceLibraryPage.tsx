@@ -47,10 +47,12 @@ export function ResourceLibraryPage() {
 
           <div data-testid="resource-library-content">
             {activeTab === 'discover' ? (
-              <div className="flex flex-col gap-4">
-                <ResourceTypeFilter value={resourceType} onValueChange={setResourceType} />
-                <DiscoverResources resourceType={resourceType} />
-              </div>
+              <DiscoverResources
+                resourceType={resourceType}
+                toolbarStart={
+                  <ResourceTypeFilter value={resourceType} onValueChange={setResourceType} />
+                }
+              />
             ) : (
               <MyResources />
             )}

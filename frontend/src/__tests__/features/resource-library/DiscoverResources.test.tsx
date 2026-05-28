@@ -131,6 +131,20 @@ describe('DiscoverResources', () => {
     expect(screen.getByRole('button', { name: '安装 Doc Summary' })).toBeEnabled()
   })
 
+  it('renders custom toolbar controls beside discover search', async () => {
+    render(
+      <DiscoverResources
+        resourceType="all"
+        toolbarStart={<div data-testid="resource-filter-slot">资源类型筛选</div>}
+      />
+    )
+
+    const toolbar = screen.getByTestId('discover-resources-toolbar')
+    expect(within(toolbar).getByTestId('resource-filter-slot')).toBeInTheDocument()
+    expect(within(toolbar).getByTestId('resource-library-search-input')).toBeInTheDocument()
+    expect(await screen.findByText('Doc Summary')).toBeInTheDocument()
+  })
+
   it('does not render MCP listings returned by the resource library API', async () => {
     mockResourceLibraryApi.listListings.mockResolvedValue({
       items: [

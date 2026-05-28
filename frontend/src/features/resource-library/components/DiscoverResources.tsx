@@ -4,7 +4,8 @@
 
 'use client'
 
-import { FormEvent, useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import type { FormEvent, ReactNode } from 'react'
 import { RefreshCw, Search } from 'lucide-react'
 
 import { resourceLibraryApi } from '@/apis/resourceLibrary'
@@ -19,6 +20,7 @@ import { ResourceListingCard } from './ResourceListingCard'
 
 interface DiscoverResourcesProps {
   resourceType: ResourceLibraryTypeFilter
+  toolbarStart?: ReactNode
 }
 
 const RESOURCE_LIBRARY_PAGE_SIZE = 50
@@ -27,7 +29,7 @@ function isVisibleListing(listing: ResourceLibraryListing) {
   return listing.resource_type !== 'mcp'
 }
 
-export function DiscoverResources({ resourceType }: DiscoverResourcesProps) {
+export function DiscoverResources({ resourceType, toolbarStart }: DiscoverResourcesProps) {
   const { t } = useTranslation('resource-library')
   const { toast } = useToast()
   const [listings, setListings] = useState<ResourceLibraryListing[]>([])
@@ -149,24 +151,32 @@ export function DiscoverResources({ resourceType }: DiscoverResourcesProps) {
 
   return (
     <div className="flex flex-col gap-4" data-testid="discover-resources">
-      <form className="flex flex-col gap-2 sm:flex-row" onSubmit={handleSearch}>
-        <Input
-          value={searchInput}
-          onChange={event => setSearchInput(event.target.value)}
-          placeholder={t('search.placeholder')}
-          className="h-11 sm:h-10"
-          data-testid="resource-library-search-input"
-        />
-        <Button
-          type="submit"
-          variant="outline"
-          className="h-11 min-w-[44px] px-4 sm:w-auto lg:h-10"
-          aria-label={t('actions.search')}
-          data-testid="resource-library-search-button"
-        >
-          <Search className="h-4 w-4" aria-hidden="true" />
-          {t('actions.search')}
-        </Button>
+      <form
+        className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between"
+        onSubmit={handleSearch}
+        data-testid="discover-resources-toolbar"
+      >
+        {toolbarStart && <div className="flex flex-wrap items-center gap-2">{toolbarStart}</div>}
+
+        <div className="flex flex-col gap-2 sm:flex-row lg:ml-auto lg:min-w-[360px] lg:max-w-xl lg:flex-1">
+          <Input
+            value={searchInput}
+            onChange={event => setSearchInput(event.target.value)}
+            placeholder={t('search.placeholder')}
+            className="h-11 flex-1 sm:h-10"
+            data-testid="resource-library-search-input"
+          />
+          <Button
+            type="submit"
+            variant="outline"
+            className="h-11 min-w-[44px] px-4 sm:w-auto lg:h-10"
+            aria-label={t('actions.search')}
+            data-testid="resource-library-search-button"
+          >
+            <Search className="h-4 w-4" aria-hidden="true" />
+            {t('actions.search')}
+          </Button>
+        </div>
       </form>
 
       {isLoading ? (
