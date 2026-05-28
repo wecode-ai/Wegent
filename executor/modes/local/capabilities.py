@@ -368,6 +368,16 @@ class CapabilitySyncHandler:
 
         skills = data.get("skills") or []
         mcps = data.get("mcps") or []
+        logger.info(
+            "Received capability sync: mode=%s skills=%s mcps=%s skill_names=%s mcp_names=%s manifest=%s skills_dir=%s",
+            mode,
+            len(skills),
+            len(mcps),
+            [item.get("name") for item in skills if isinstance(item, dict)],
+            [item.get("name") for item in mcps if isinstance(item, dict)],
+            self.store.manifest.path,
+            self.skills_dir,
+        )
         desired_skill_names = {
             item.get("name")
             for item in skills
@@ -381,6 +391,15 @@ class CapabilitySyncHandler:
         skill_results, skill_records = self._sync_skills(skills)
         mcp_results, mcp_records = self._sync_mcps(mcps)
 
+        before_manifest = self.store.manifest.load()
+        logger.info(
+            "Persisting capability manifest: mode=%s old_skills=%s new_skills=%s old_mcps=%s new_mcps=%s",
+            mode,
+            sorted((before_manifest.get("skills") or {}).keys()),
+            sorted(skill_records.keys()),
+            sorted((before_manifest.get("mcps") or {}).keys()),
+            sorted(mcp_records.keys()),
+        )
         if mode == "replace":
             self.store.replace_records(skills=skill_records, mcps=mcp_records)
         else:
@@ -394,6 +413,15 @@ class CapabilitySyncHandler:
 
         results = skill_results + mcp_results
         errors = [item for item in results if item.get("status") == "failed"]
+        logger.info(
+            "Capability sync applied: success=%s mode=%s installed_skills=%s configured_mcps=%s removed_skills=%s errors=%s",
+            not errors,
+            mode,
+            sorted(skill_records.keys()),
+            sorted(mcp_records.keys()),
+            removed,
+            errors,
+        )
         return {
             "success": not errors,
             "mode": mode,
@@ -411,8 +439,13 @@ class CapabilitySyncHandler:
         results: list[dict[str, Any]] = []
         records: dict[str, dict[str, Any]] = {}
         if not skills:
+            logger.info("No skills requested in capability sync")
             return results, records
         if not self.auth_token:
+            logger.warning(
+                "Cannot sync skills because no auth token is available: skill_names=%s",
+                [item.get("name") for item in skills if isinstance(item, dict)],
+            )
             return [
                 {
                     "id": item.get("id") or item.get("skill_id"),
@@ -437,6 +470,7 @@ class CapabilitySyncHandler:
             skill_id = skill.get("id") or skill.get("skill_id")
             namespace = skill.get("namespace", "default")
             if not name or not skill_id:
+                logger.warning("Invalid Skill entry in capability sync: %s", skill)
                 results.append(
                     {
                         "id": skill_id,
@@ -451,6 +485,12 @@ class CapabilitySyncHandler:
                 record = dict(skill)
                 record["id"] = skill_id
                 records[name] = self.store._skill_record(record)
+                logger.info(
+                    "Global skill already present: name=%s skill_id=%s namespace=%s",
+                    name,
+                    skill_id,
+                    namespace,
+                )
                 results.append({"id": skill_id, "name": name, "status": "skipped"})
                 continue
             ok = downloader._download_single_skill(
@@ -471,8 +511,21 @@ class CapabilitySyncHandler:
                     if before_digest and before_digest == after_digest
                     else "synced"
                 )
+                logger.info(
+                    "Installed global skill: name=%s skill_id=%s namespace=%s status=%s",
+                    name,
+                    skill_id,
+                    namespace,
+                    status,
+                )
                 results.append({"id": skill_id, "name": name, "status": status})
             else:
+                logger.warning(
+                    "Failed to install global skill: name=%s skill_id=%s namespace=%s",
+                    name,
+                    skill_id,
+                    namespace,
+                )
                 results.append(
                     {
                         "id": skill_id,
@@ -490,6 +543,9 @@ class CapabilitySyncHandler:
         records: dict[str, dict[str, Any]] = {}
         for item in mcps:
             if not isinstance(item, dict):
+                logger.warning(
+                    "Ignoring invalid MCP entry in capability sync: %s", item
+                )
                 continue
             name = item.get("name")
             if not name:
@@ -497,16 +553,23 @@ class CapabilitySyncHandler:
                     {"name": None, "status": "failed", "error": "Invalid MCP entry"}
                 )
                 continue
+            server = item.get("server") or {}
             records[name] = {
                 "name": name,
                 "installed_mcp_id": item.get("installed_mcp_id"),
                 "display_name": item.get("display_name") or item.get("displayName"),
                 "description": item.get("description", ""),
                 "source": item.get("source") or {},
-                "server": item.get("server") or {},
+                "server": server,
                 "managed": True,
                 "updated_at": utc_now_iso(),
             }
+            logger.info(
+                "Configured global MCP: name=%s installed_mcp_id=%s server=%s",
+                name,
+                item.get("installed_mcp_id"),
+                self._server_summary(server),
+            )
             results.append(
                 {
                     "id": item.get("installed_mcp_id"),
@@ -515,6 +578,13 @@ class CapabilitySyncHandler:
                 }
             )
         return results, records
+
+    def _server_summary(self, server: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: server.get(key)
+            for key in ("type", "url", "command")
+            if server.get(key) is not None
+        }
 
     def _skill_digest(self, name: str) -> str | None:
         path = self.skills_dir / name

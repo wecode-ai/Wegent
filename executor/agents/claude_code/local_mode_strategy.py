@@ -248,14 +248,24 @@ class LocalModeStrategy(ExecutionModeStrategy):
             store = GlobalCapabilityStore()
             manifest = store.load()
             os.makedirs(target_skills_dir, exist_ok=True)
+            copied = []
+            skipped = []
             for name, record in manifest.get("skills", {}).items():
                 if not isinstance(record, dict) or not record.get("managed", True):
                     continue
                 source = store.skills_dir / name
                 target = os.path.join(target_skills_dir, name)
                 if not source.is_dir() or os.path.exists(target):
+                    skipped.append(name)
                     continue
                 shutil.copytree(source, target)
+                copied.append(name)
+            logger.info(
+                "Copied global managed skills: copied=%s skipped=%s target=%s",
+                copied,
+                skipped,
+                target_skills_dir,
+            )
         except Exception as exc:
             logger.warning("Failed to copy global managed skills: %s", exc)
 

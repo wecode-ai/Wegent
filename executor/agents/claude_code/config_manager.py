@@ -361,6 +361,7 @@ def _append_global_mcp_servers(target: list[dict[str, Any]]) -> None:
         logger.warning("[MCP] Failed to load global MCP manifest: %s", exc)
         return
 
+    appended: list[str] = []
     for name, record in manifest.get("mcps", {}).items():
         if not isinstance(record, dict):
             continue
@@ -368,6 +369,8 @@ def _append_global_mcp_servers(target: list[dict[str, Any]]) -> None:
         if not isinstance(server, dict):
             continue
         target.append({"name": name, **server})
+        appended.append(name)
+    logger.info("[MCP] Appended global MCP servers: names=%s", appended)
 
 
 def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:

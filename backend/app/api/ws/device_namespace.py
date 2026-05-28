@@ -405,6 +405,7 @@ async def _store_device_capabilities_state(
                 "revision": revision,
                 "digest": digest,
                 "skills": capabilities.get("skills", []),
+                "mcps": capabilities.get("mcps", []),
                 "last_sync_at": capabilities.get("last_sync_at"),
             },
         )

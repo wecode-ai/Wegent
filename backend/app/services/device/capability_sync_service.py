@@ -109,6 +109,14 @@ class DeviceCapabilitySyncService:
         """Sync the user's full desired capability set to all online devices."""
         payload = self.build_desired_capabilities(db, user_id=user_id, mode=mode)
         devices = await device_service.get_online_devices(db, user_id)
+        logger.info(
+            "Syncing global capabilities: user_id=%s mode=%s skills=%s mcps=%s online_devices=%s",
+            user_id,
+            mode,
+            len(payload.get("skills") or []),
+            len(payload.get("mcps") or []),
+            len(devices),
+        )
         results: list[DeviceCapabilitySyncResult] = []
         skipped = 0
 
@@ -116,6 +124,11 @@ class DeviceCapabilitySyncService:
             device_id = self._extract_device_id(device)
             if not device_id:
                 skipped += 1
+                logger.warning(
+                    "Skipping capability sync for device without runtime id: user_id=%s device=%s",
+                    user_id,
+                    device,
+                )
                 continue
             results.append(
                 await self.sync_device_payload(
@@ -209,6 +222,15 @@ class DeviceCapabilitySyncService:
             )
 
         try:
+            logger.info(
+                "Sending capability sync: user_id=%s device_id=%s socket_id=%s mode=%s skill_names=%s mcp_names=%s",
+                user_id,
+                device_id,
+                socket_id,
+                payload.get("mode"),
+                [item.get("name") for item in payload.get("skills") or []],
+                [item.get("name") for item in payload.get("mcps") or []],
+            )
             response = await get_sio().call(
                 SYNC_EVENT,
                 payload,
@@ -230,12 +252,24 @@ class DeviceCapabilitySyncService:
             )
 
         if not isinstance(response, dict):
+            logger.warning(
+                "Capability sync returned invalid data: user_id=%s device_id=%s response=%s",
+                user_id,
+                device_id,
+                response,
+            )
             return DeviceCapabilitySyncResult(
                 device_id=device_id,
                 success=False,
                 error="Capability sync RPC returned invalid data",
             )
         if response.get("success") is False:
+            logger.warning(
+                "Capability sync rejected by device: user_id=%s device_id=%s response=%s",
+                user_id,
+                device_id,
+                response,
+            )
             return DeviceCapabilitySyncResult(
                 device_id=device_id,
                 success=False,
@@ -244,6 +278,13 @@ class DeviceCapabilitySyncService:
                 mcps=response.get("mcps", []),
                 errors=response.get("errors", []),
             )
+        logger.info(
+            "Capability sync delivered: user_id=%s device_id=%s skills=%s mcps=%s",
+            user_id,
+            device_id,
+            len(response.get("skills") or []),
+            len(response.get("mcps") or []),
+        )
         return DeviceCapabilitySyncResult(
             device_id=device_id,
             success=True,
@@ -290,7 +331,7 @@ class DeviceCapabilitySyncService:
             .all()
         )
         enabled_ids = [
-            row.id for row in rows if row.is_active and self._is_enabled_install(row)
+            row.id for row in rows if self._should_include_installed_skill(user_id, row)
         ]
         return self._resolve_skill_payloads(
             db,
@@ -316,7 +357,7 @@ class DeviceCapabilitySyncService:
             .all()
         )
         enabled_ids = [
-            row.id for row in rows if row.is_active and self._is_enabled_install(row)
+            row.id for row in rows if self._should_include_installed_mcp(user_id, row)
         ]
         return self._resolve_mcp_payloads(
             db,
@@ -356,6 +397,11 @@ class DeviceCapabilitySyncService:
                 kind_id=installed_id,
             )
             if not installed:
+                logger.warning(
+                    "InstalledSkill id not found while resolving sync payload: user_id=%s installed_id=%s",
+                    user_id,
+                    installed_id,
+                )
                 if strict:
                     raise DeviceCapabilityResolutionError(
                         f"InstalledSkill not found or access denied: {installed_id}",
@@ -364,6 +410,13 @@ class DeviceCapabilitySyncService:
                 continue
             skill = self._resolve_installed_skill_ref(db, installed)
             if not skill:
+                logger.warning(
+                    "InstalledSkill has no resolvable Skill ref: user_id=%s installed_id=%s name=%s skill_ref=%s",
+                    user_id,
+                    installed.id,
+                    installed.name,
+                    installed.json.get("spec", {}).get("skillRef"),
+                )
                 if strict:
                     raise DeviceCapabilityResolutionError(
                         f"InstalledSkill has no resolvable Skill ref: {installed_id}",
@@ -395,6 +448,11 @@ class DeviceCapabilitySyncService:
                 kind_id=installed_id,
             )
             if not installed:
+                logger.warning(
+                    "InstalledMCP id not found while resolving sync payload: user_id=%s installed_id=%s",
+                    user_id,
+                    installed_id,
+                )
                 if strict:
                     raise DeviceCapabilityResolutionError(
                         f"InstalledMCP not found or access denied: {installed_id}",
@@ -535,6 +593,38 @@ class DeviceCapabilitySyncService:
             spec.get("enabled", True)
             and spec.get("installState", "installed") == "installed"
         )
+
+    def _should_include_installed_skill(self, user_id: int, row: Kind) -> bool:
+        spec = row.json.get("spec", {})
+        include = row.is_active and self._is_enabled_install(row)
+        logger.info(
+            "Desired-state InstalledSkill candidate: user_id=%s installed_id=%s name=%s active=%s enabled=%s state=%s skill_ref=%s include=%s",
+            user_id,
+            row.id,
+            row.name,
+            row.is_active,
+            spec.get("enabled", True),
+            spec.get("installState", "installed"),
+            spec.get("skillRef"),
+            include,
+        )
+        return include
+
+    def _should_include_installed_mcp(self, user_id: int, row: Kind) -> bool:
+        spec = row.json.get("spec", {})
+        include = row.is_active and self._is_enabled_install(row)
+        logger.info(
+            "Desired-state InstalledMCP candidate: user_id=%s installed_id=%s name=%s active=%s enabled=%s state=%s source=%s include=%s",
+            user_id,
+            row.id,
+            row.name,
+            row.is_active,
+            spec.get("enabled", True),
+            spec.get("installState", "installed"),
+            spec.get("source"),
+            include,
+        )
+        return include
 
     def _validate_mode(self, mode: str) -> None:
         if mode not in {"merge", "replace"}:
