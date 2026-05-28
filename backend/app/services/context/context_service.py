@@ -292,6 +292,15 @@ class ContextService:
             context.image_base64 = (
                 parse_result.image_base64 if parse_result.image_base64 else ""
             )
+            # Sync mime_type when image was converted to a different format during parsing
+            if (
+                parse_result.image_mime_type
+                and parse_result.image_mime_type != context.mime_type
+            ):
+                context.type_data = {
+                    **context.type_data,
+                    "mime_type": parse_result.image_mime_type,
+                }
             context.status = ContextStatus.READY.value
 
             if parse_result.truncation_info:

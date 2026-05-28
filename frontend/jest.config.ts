@@ -21,6 +21,8 @@ const config: Config = {
     '^remark-math$': '<rootDir>/src/__mocks__/remark-stub.ts',
     '^remark-gfm$': '<rootDir>/src/__mocks__/remark-stub.ts',
     '^remark-frontmatter$': '<rootDir>/src/__mocks__/remark-stub.ts',
+    // Mock jsPDF to avoid ESM import issues
+    '^jspdf$': '<rootDir>/src/__mocks__/jspdf-stub.ts',
     '^rehype-katex$': '<rootDir>/src/__mocks__/rehype-stub.ts',
     '^rehype-raw$': '<rootDir>/src/__mocks__/rehype-stub.ts',
     '^micromark-util-combine-extensions$': '<rootDir>/src/__mocks__/micromark-stub.ts',

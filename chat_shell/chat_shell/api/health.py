@@ -25,6 +25,12 @@ router = APIRouter(tags=["health"])
 logger = logging.getLogger(__name__)
 
 
+@router.head("/health", include_in_schema=False)
+async def health_check_head():
+    """Support HEAD liveness probes."""
+    return Response(status_code=200)
+
+
 @router.get("/health")
 async def health_check():
     """

@@ -1,13 +1,19 @@
 import type { Team } from '@/types/api'
 import type { HttpClient } from './http'
 
+interface TeamListResponse {
+  total: number
+  items: Team[]
+}
+
 function isActive(team: Team): boolean {
   return team.is_active !== false
 }
 
 export function createTeamApi(client: HttpClient) {
   async function listTeams(): Promise<Team[]> {
-    return client.get('/teams')
+    const response = await client.get<TeamListResponse>('/teams?page=1&limit=100')
+    return response.items
   }
 
   return {

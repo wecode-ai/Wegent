@@ -2,6 +2,8 @@ import { describe, expect, test, vi } from 'vitest'
 import { createProjectApi } from './projects'
 import { createTaskApi } from './tasks'
 import { createTeamApi } from './teams'
+import { createModelApi } from './models'
+import { createSkillApi } from './skills'
 import type { HttpClient } from './http'
 
 function mockClient(): HttpClient {
@@ -42,5 +44,27 @@ describe('REST adapters', () => {
     const team = await createTeamApi(client).getDefaultWorkbenchTeam()
 
     expect(team.id).toBe(2)
+  })
+
+  test('loads unified llm models from existing backend endpoint', async () => {
+    const client = mockClient()
+    vi.mocked(client.get).mockResolvedValueOnce({ data: [] })
+
+    await createModelApi(client).listModels()
+
+    expect(client.get).toHaveBeenCalledWith(
+      '/models/unified?include_config=true&scope=all&model_category_type=llm'
+    )
+  })
+
+  test('loads unified skills and team skills from existing backend endpoints', async () => {
+    const client = mockClient()
+    vi.mocked(client.get).mockResolvedValue({ items: [] })
+
+    await createSkillApi(client).listSkills()
+    await createSkillApi(client).getTeamSkills(2)
+
+    expect(client.get).toHaveBeenNthCalledWith(1, '/v1/kinds/skills/unified?scope=all')
+    expect(client.get).toHaveBeenNthCalledWith(2, '/teams/2/skills')
   })
 })

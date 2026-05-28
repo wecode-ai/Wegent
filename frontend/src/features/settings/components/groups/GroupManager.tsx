@@ -77,7 +77,9 @@ export function GroupManager({ onGroupsChange }: GroupManagerProps) {
 
   // Navigate to group settings page
   const handleGroupClick = (group: Group) => {
-    router.push(`/settings?section=groups&tab=group-team&group=${encodeURIComponent(group.name)}`)
+    router.push(
+      `/resource-library?tab=mine&type=agent&scope=group&group=${encodeURIComponent(group.name)}`
+    )
   }
 
   const handleSuccess = () => {

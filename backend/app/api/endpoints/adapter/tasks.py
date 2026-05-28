@@ -43,6 +43,7 @@ from app.schemas.task import (
     TaskDetail,
     TaskInDB,
     TaskListResponse,
+    TaskLiteGroupedListResponse,
     TaskLiteListResponse,
     TaskSkillsResponse,
     TaskUpdate,
@@ -52,6 +53,7 @@ from app.services.adapters.executor_job import job_service
 from app.services.adapters.task_kinds import task_kinds_service
 from app.services.remote_workspace_service import remote_workspace_service
 from app.services.shared_task import shared_task_service
+from shared.telemetry.decorators import trace_sync
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -174,6 +176,31 @@ def get_personal_tasks_lite(
     skip = (page - 1) * limit
     type_list = [t.strip() for t in types.split(",") if t.strip()]
     items, total = task_kinds_service.get_user_personal_tasks_lite(
+        db=db, user_id=current_user.id, skip=skip, limit=limit, types=type_list
+    )
+    return {"total": total, "items": items}
+
+
+@router.get("/lite/personal/grouped", response_model=TaskLiteGroupedListResponse)
+@trace_sync("get_personal_task_groups_lite", "tasks.api")
+def get_personal_task_groups_lite(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(50, ge=1, le=100, description="Items per page"),
+    types: str = Query(
+        "online,offline",
+        description="Comma-separated task types to include: online (chat), offline (code), flow",
+    ),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get current user's personal task page grouped by device or agent.
+
+    This endpoint groups only the current flat page (default 50 items) to keep
+    query costs equivalent to the existing personal history pagination.
+    """
+    skip = (page - 1) * limit
+    type_list = [t.strip() for t in types.split(",") if t.strip()]
+    items, total = task_kinds_service.get_user_personal_task_groups_lite(
         db=db, user_id=current_user.id, skip=skip, limit=limit, types=type_list
     )
     return {"total": total, "items": items}

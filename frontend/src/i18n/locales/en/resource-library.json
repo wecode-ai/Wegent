@@ -1,0 +1,80 @@
+{
+  "title": "Resource Library",
+  "tabs": {
+    "discover": "Discover",
+    "mine": "Mine",
+    "installed": "Installed",
+    "published": "Published by me"
+  },
+  "filters": {
+    "all": "All",
+    "agent": "Agent",
+    "model": "Model",
+    "shell": "Executor",
+    "skill": "Skill",
+    "retriever": "Retriever"
+  },
+  "scopes": {
+    "personal": "Personal Resources",
+    "group": "Group Resources",
+    "group_placeholder": "Select group"
+  },
+  "actions": {
+    "install": "Install",
+    "installed": "Installed",
+    "publish": "Publish Resource",
+    "upgrade": "Upgrade",
+    "archive": "Archive",
+    "configure": "Configure",
+    "view_detail": "View Details",
+    "details": "Details",
+    "manage_groups": "Manage...",
+    "retry": "Retry",
+    "search": "Search",
+    "close": "Close",
+    "cancel": "Cancel"
+  },
+  "status": {
+    "installed": "Installed",
+    "requires_configuration": "Requires Configuration",
+    "draft": "Draft",
+    "published": "Published",
+    "archived": "Archived"
+  },
+  "fields": {
+    "name": "Name",
+    "display_name": "Display Name",
+    "description": "Description",
+    "tags": "Tags",
+    "type": "Resource type",
+    "source_id": "Source resource ID",
+    "version": "Version",
+    "publisher": "Publisher",
+    "install_count": "Installs",
+    "updated_at": "Updated"
+  },
+  "empty": {
+    "discover": "No resources to discover",
+    "mine": "No resources yet"
+  },
+  "states": {
+    "loading": "Loading resources",
+    "empty": "No resources",
+    "error": "Failed to load resources",
+    "requiresConfiguration": "Configuration required",
+    "no_groups": "No group resources"
+  },
+  "search": {
+    "placeholder": "Search resources"
+  },
+  "messages": {
+    "install_success": "Installed",
+    "install_requires_configuration": "Installed, configuration required",
+    "install_failed": "Install failed",
+    "publish_success": "Published",
+    "publish_failed": "Publish failed"
+  },
+  "publish": {
+    "description": "Publish an existing Agent or Skill to the resource library"
+  }
+}
