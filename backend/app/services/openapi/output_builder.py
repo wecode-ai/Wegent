@@ -20,7 +20,6 @@ from app.schemas.openapi_response import (
     ShellCallOutputItem,
 )
 from app.services.openapi.helpers import subtask_status_to_message_status
-from app.services.openapi.thinking_tags import wrap_thinking_content
 
 SHELL_TOOL_NAMES = {"exec", "command_tool"}
 
@@ -110,11 +109,7 @@ def _build_message_content(
     content: list[OutputTextContent] = []
     if reasoning:
         content.append(
-            OutputTextContent(
-                type="reasoning",
-                text=wrap_thinking_content(reasoning),
-                annotations=[],
-            )
+            OutputTextContent(type="reasoning", text=reasoning, annotations=[])
         )
     if text:
         content.append(OutputTextContent(type="output_text", text=text, annotations=[]))

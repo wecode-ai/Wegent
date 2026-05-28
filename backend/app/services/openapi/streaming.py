@@ -26,11 +26,6 @@ from app.schemas.openapi_response import (
     ShellCallOutputItem,
 )
 from app.services.openapi.output_builder import normalize_tool_output
-from app.services.openapi.thinking_tags import (
-    THINKING_CLOSE_TAG,
-    THINKING_OPEN_TAG,
-    wrap_thinking_content,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +187,6 @@ class OpenAPIStreamingService:
         sequence_number = 0
         reasoning_started = False
         reasoning_complete = False
-        reasoning_emitted = False
         next_output_index = 0
         message_started = False
         reasoning_output_index: Optional[int] = None
@@ -218,16 +212,6 @@ class OpenAPIStreamingService:
             if existing is not None:
                 return existing
             return allocate_output_index()
-
-        def build_reasoning_close_event() -> Dict[str, Any]:
-            return {
-                "content_index": 0,
-                "delta": THINKING_CLOSE_TAG,
-                "item_id": message_id,
-                "output_index": reasoning_output_index,
-                "sequence_number": sequence_number,
-                "type": "response.reasoning_summary_text.delta",
-            }
 
         try:
             # Event 1: response.created
@@ -300,22 +284,18 @@ class OpenAPIStreamingService:
 
                         # Accumulate reasoning content
                         if chunk.content and not reasoning_complete:
-                            delta = chunk.content
-                            if accumulated_reasoning == "":
-                                delta = f"{THINKING_OPEN_TAG}{delta}"
                             accumulated_reasoning += chunk.content
                             # Official OpenAI event: response.reasoning_summary_text.delta
                             yield _format_sse_event(
                                 {
                                     "content_index": 0,
-                                    "delta": delta,
+                                    "delta": chunk.content,
                                     "item_id": message_id,
                                     "output_index": reasoning_output_index,
                                     "sequence_number": sequence_number,
                                     "type": "response.reasoning_summary_text.delta",
                                 }
                             )
-                            reasoning_emitted = True
                             sequence_number += 1
 
                     elif chunk.type == "text":
@@ -324,11 +304,8 @@ class OpenAPIStreamingService:
                             # If we had reasoning before, close it first
                             if reasoning_started and not reasoning_complete:
                                 reasoning_complete = True
-                                if reasoning_emitted:
-                                    yield _format_sse_event(
-                                        build_reasoning_close_event()
-                                    )
-                                    sequence_number += 1
+                                # Note: OpenAI doesn't have explicit reasoning "done" event
+                                # We transition directly to text output
 
                             accumulated_text += chunk.content
 
@@ -618,12 +595,6 @@ class OpenAPIStreamingService:
                         sequence_number += 1
 
             # Close text output items
-            if reasoning_started and not reasoning_complete:
-                reasoning_complete = True
-                if reasoning_emitted:
-                    yield _format_sse_event(build_reasoning_close_event())
-                    sequence_number += 1
-
             if accumulated_text:
                 # Official OpenAI event: response.output_text.done
                 yield _format_sse_event(
@@ -684,12 +655,7 @@ class OpenAPIStreamingService:
                     id=_generate_message_id(),
                     status="completed",
                     role="assistant",
-                    content=[
-                        {
-                            "type": "reasoning",
-                            "text": wrap_thinking_content(accumulated_reasoning),
-                        }
-                    ],
+                    content=[{"type": "reasoning", "text": accumulated_reasoning}],
                 )
             if accumulated_text and message_output_index is not None:
                 completed_output_items[message_output_index] = OutputMessage(
