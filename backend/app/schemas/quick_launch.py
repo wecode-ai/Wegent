@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from collections.abc import Sequence
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
@@ -10,15 +11,26 @@ MAX_QUICK_PHRASES = 6
 MAX_QUICK_PHRASE_LENGTH = 120
 
 
-def normalize_quick_phrases(value: list[str] | None) -> list[str]:
+def normalize_quick_phrases(
+    value: Sequence[object] | None,
+    *,
+    max_items: int | None = MAX_QUICK_PHRASES,
+) -> list[str]:
     if not value:
         return []
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise ValueError("quick_phrases must be a list of strings")
 
     phrases: list[str] = []
-    for phrase in value:
+    for index, phrase in enumerate(value):
+        if not isinstance(phrase, str):
+            raise ValueError(f"quick_phrases[{index}] must be a string, got {phrase!r}")
+
         trimmed = phrase.strip()
         if trimmed:
             phrases.append(trimmed)
+            if max_items is not None and len(phrases) >= max_items:
+                break
     return phrases
 
 
@@ -33,7 +45,7 @@ class QuickPhraseMixin(BaseModel):
         if not isinstance(value, list):
             raise ValueError("quick_phrases must be a list")
 
-        phrases = normalize_quick_phrases(value)
+        phrases = normalize_quick_phrases(value, max_items=None)
         if len(phrases) > MAX_QUICK_PHRASES:
             raise ValueError(
                 f"quick_phrases supports at most {MAX_QUICK_PHRASES} items"

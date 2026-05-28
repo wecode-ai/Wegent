@@ -57,7 +57,7 @@ describe('ChatInput external focus', () => {
 
     const range = selection?.getRangeAt(0)
     expect(range?.collapsed).toBe(true)
-    expect(range?.startContainer).toBe(input)
-    expect(range?.startOffset).toBe(input.childNodes.length)
+    expect(range?.startContainer).toBe(input.firstChild)
+    expect(range?.startOffset).toBe('quick phrase'.length)
   })
 })

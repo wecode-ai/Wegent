@@ -3,11 +3,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { apiClient } from './client'
+import {
+  getQuickLaunchFunctionsConfig,
+  updateQuickLaunchFunctionsConfig,
+} from './admin-quick-launch'
 import { outboundTokenAdminApis } from './outboundTokens'
 import { RetrieverCRD } from './retrievers'
 
 // Re-export RetrieverCRD for backward compatibility
 export type { RetrieverCRD } from './retrievers'
+export type {
+  QuickLaunchFunctionConfig,
+  QuickLaunchFunctionsResponse,
+  QuickLaunchFunctionsUpdate,
+} from './admin-quick-launch'
 export type {
   SigningKey,
   SigningKeyCreateRequest,
@@ -128,26 +137,6 @@ export interface ChatSloganTipsResponse {
   version: number
   slogans: ChatSloganItem[]
   tips: ChatTipItem[]
-}
-
-export interface QuickLaunchFunctionConfig {
-  id: string
-  title: string
-  description?: string | null
-  icon?: string | null
-  team_id: number
-  enabled: boolean
-  order: number
-  quick_phrases: string[]
-}
-
-export interface QuickLaunchFunctionsResponse {
-  version: number
-  functions: QuickLaunchFunctionConfig[]
-}
-
-export interface QuickLaunchFunctionsUpdate {
-  functions: QuickLaunchFunctionConfig[]
 }
 
 // Service Key Types
@@ -576,6 +565,8 @@ export interface AdminTemplateUpdate {
 // Admin API Services
 export const adminApis = {
   ...outboundTokenAdminApis,
+  getQuickLaunchFunctionsConfig,
+  updateQuickLaunchFunctionsConfig,
 
   // ==================== User Management ====================
 
@@ -708,22 +699,6 @@ export const adminApis = {
    */
   async updateQuickAccessConfig(teams: number[]): Promise<{ version: number; teams: number[] }> {
     return apiClient.put('/admin/system-config/quick-access', { teams })
-  },
-
-  /**
-   * Get system function launcher configuration
-   */
-  async getQuickLaunchFunctionsConfig(): Promise<QuickLaunchFunctionsResponse> {
-    return apiClient.get('/admin/system-config/quick-launch-functions')
-  },
-
-  /**
-   * Update system function launcher configuration
-   */
-  async updateQuickLaunchFunctionsConfig(
-    data: QuickLaunchFunctionsUpdate
-  ): Promise<QuickLaunchFunctionsResponse> {
-    return apiClient.put('/admin/system-config/quick-launch-functions', data)
   },
 
   // ==================== Chat Slogan & Tips Config ====================

@@ -41,41 +41,45 @@ export function useQuickLaunchers({ teams, currentMode, defaultTeam }: UseQuickL
   const filteredTeams = useMemo(() => filterTeamsByMode(teams, currentMode), [teams, currentMode])
 
   const systemLaunchers = useMemo<QuickLauncher[]>(() => {
-    return (data?.system_functions ?? [])
-      .map(item => {
-        const team = findTeam(filteredTeams, item.team_id)
-        if (!team) return null
+    const launchers: QuickLauncher[] = []
 
-        return {
-          key: `system:${item.id}`,
-          type: 'system_function' as const,
-          title: item.title,
-          description: item.description,
-          icon: item.icon,
-          team,
-          quickPhrases: item.quick_phrases ?? [],
-        }
+    for (const item of data?.system_functions ?? []) {
+      const team = findTeam(filteredTeams, item.team_id)
+      if (!team) continue
+
+      launchers.push({
+        key: `system:${item.id}`,
+        type: 'system_function',
+        title: item.title,
+        description: item.description,
+        icon: item.icon,
+        team,
+        quickPhrases: item.quick_phrases ?? [],
       })
-      .filter((item): item is QuickLauncher => item !== null)
+    }
+
+    return launchers
   }, [data?.system_functions, filteredTeams])
 
   const favoriteLaunchers = useMemo<QuickLauncher[]>(() => {
-    return (data?.favorite_agents ?? [])
-      .map(item => {
-        const team = findTeam(filteredTeams, item.team_id)
-        if (!team || defaultTeam?.id === team.id) return null
+    const launchers: QuickLauncher[] = []
 
-        return {
-          key: `agent:${item.team_id}`,
-          type: 'favorite_agent' as const,
-          title: item.title,
-          description: item.description,
-          icon: item.icon,
-          team,
-          quickPhrases: item.quick_phrases ?? team.quick_phrases ?? [],
-        }
+    for (const item of data?.favorite_agents ?? []) {
+      const team = findTeam(filteredTeams, item.team_id)
+      if (!team || defaultTeam?.id === team.id) continue
+
+      launchers.push({
+        key: `agent:${item.team_id}`,
+        type: 'favorite_agent',
+        title: item.title,
+        description: item.description,
+        icon: item.icon,
+        team,
+        quickPhrases: item.quick_phrases ?? team.quick_phrases ?? [],
       })
-      .filter((item): item is QuickLauncher => item !== null)
+    }
+
+    return launchers
   }, [data?.favorite_agents, defaultTeam?.id, filteredTeams])
 
   return {

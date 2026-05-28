@@ -50,6 +50,10 @@ const tMock = (key: string) => {
     'system_config.quick_launch_function_empty': 'No system functions',
     'system_config.version': 'Version',
     'common.save': 'Save',
+    'common:actions.save': 'Save',
+    'common:actions.cancel': 'Cancel',
+    'common:actions.delete': 'Delete',
+    'system_config.errors.partial_save_failed': 'Some configuration changes failed to save',
   }
 
   return translations[normalizedKey] || normalizedKey
@@ -155,5 +159,42 @@ describe('SystemConfigPanel', () => {
         ],
       })
     })
+  })
+
+  test('keeps successful sections when saving partially fails', async () => {
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined)
+    mockedAdminApis.updateSloganTipsConfig.mockRejectedValueOnce(new Error('slogan save failed'))
+    mockedAdminApis.updateQuickLaunchFunctionsConfig.mockResolvedValueOnce({
+      version: 9,
+      functions: [
+        {
+          id: 'create_skill',
+          title: 'Create Skill',
+          description: 'Create skills',
+          icon: 'sparkles',
+          team_id: 42,
+          enabled: true,
+          order: 2,
+          quick_phrases: ['Help me create a skill'],
+        },
+      ],
+    })
+
+    render(<SystemConfigPanel />)
+
+    expect(await screen.findByTestId('quick-launch-functions-section')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Save'))
+
+    await waitFor(() => {
+      expect(screen.getByText('System functions version: 9')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('quick-launch-function-card-0')).toHaveTextContent('Create Skill')
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Some configuration changes failed to save',
+        variant: 'destructive',
+      })
+    )
+    consoleErrorSpy.mockRestore()
   })
 })

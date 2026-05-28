@@ -22,7 +22,7 @@ import {
   type SelectableTeam,
 } from '../selector/team-selector-utils'
 import { useTeamFavorites } from '../selector/useTeamFavorites'
-import { QuickLaunchPanel } from './quick-launch/QuickLaunchPanel'
+import { QuickLaunchPanel } from './quick-launch/quick-launch-panel'
 
 // Small button width (compact size for more/quick create buttons)
 const SMALL_BUTTON_WIDTH = 72

@@ -3,10 +3,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -37,6 +38,7 @@ from app.services.user import user_service
 from app.services.user_mcp_service import user_mcp_service
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 # ==================== Feature Flags ====================
@@ -391,6 +393,36 @@ def _build_system_function(
     )
 
 
+def _load_quick_launch_function_configs(
+    raw_functions: object,
+) -> list[QuickLaunchFunctionConfig]:
+    if not isinstance(raw_functions, list):
+        logger.warning(
+            "Skipping quick launch functions config because it is not a list"
+        )
+        return []
+
+    function_configs: list[QuickLaunchFunctionConfig] = []
+    for index, item in enumerate(raw_functions):
+        if not isinstance(item, dict):
+            logger.warning(
+                "Skipping invalid quick launch function config at index %s: expected object",
+                index,
+            )
+            continue
+
+        try:
+            function_configs.append(QuickLaunchFunctionConfig(**item))
+        except ValidationError as exc:
+            logger.warning(
+                "Skipping invalid quick launch function config at index %s: %s",
+                index,
+                exc,
+            )
+
+    return function_configs
+
+
 @router.get("/quick-access", response_model=QuickAccessResponse)
 async def get_user_quick_access(
     db: Session = Depends(get_db),
@@ -489,11 +521,7 @@ async def get_user_quick_launch(
     """
     _, function_config = _get_system_config_value(db, QUICK_LAUNCH_FUNCTIONS_CONFIG_KEY)
     raw_functions = function_config.get("functions", [])
-    function_configs = [
-        QuickLaunchFunctionConfig(**item)
-        for item in raw_functions
-        if isinstance(item, dict)
-    ]
+    function_configs = _load_quick_launch_function_configs(raw_functions)
     system_functions = [
         function
         for function in (

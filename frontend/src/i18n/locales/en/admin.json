@@ -342,6 +342,7 @@
     "errors": {
       "load_failed": "Failed to load configuration",
       "save_failed": "Failed to save configuration",
+      "partial_save_failed": "Some configuration changes were saved, but others failed. Please retry.",
       "quick_launch_functions_required": "System functions must include an ID, name, and target agent",
       "slogan_required": "Both Chinese and English slogan are required",
       "tip_required": "Both Chinese and English tip text are required"

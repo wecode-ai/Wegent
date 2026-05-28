@@ -19,7 +19,7 @@ interface QuickPhraseEditorProps {
 }
 
 export default function QuickPhraseEditor({ value, onChange }: QuickPhraseEditorProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation('settings')
   const rows = value.length > 0 ? value : ['']
 
   const updatePhrase = (index: number, phrase: string) => {
@@ -41,7 +41,7 @@ export default function QuickPhraseEditor({ value, onChange }: QuickPhraseEditor
               value={phrase}
               maxLength={MAX_QUICK_PHRASE_LENGTH}
               onChange={event => updatePhrase(index, event.target.value)}
-              placeholder={t('settings:team.quick_phrases.placeholder')}
+              placeholder={t('team.quick_phrases.placeholder')}
               className="h-9 bg-base"
               data-testid={`quick-phrase-input-${index}`}
             />
@@ -51,7 +51,7 @@ export default function QuickPhraseEditor({ value, onChange }: QuickPhraseEditor
               size="icon"
               aria-label={t('common:actions.remove')}
               onClick={() => removePhrase(index)}
-              className="h-9 w-9 shrink-0 rounded-md text-text-muted hover:text-text-primary"
+              className="h-11 min-w-[44px] shrink-0 rounded-md text-text-muted hover:text-text-primary"
               data-testid={`remove-quick-phrase-${index}`}
             >
               <X className="h-4 w-4" />
@@ -63,12 +63,13 @@ export default function QuickPhraseEditor({ value, onChange }: QuickPhraseEditor
         type="button"
         variant="outline"
         size="sm"
+        className="h-11 min-w-[44px]"
         onClick={() => onChange([...value, ''])}
         disabled={value.length >= MAX_QUICK_PHRASES}
         data-testid="add-quick-phrase"
       >
         <Plus className="h-4 w-4" />
-        {t('settings:team.quick_phrases.add')}
+        {t('team.quick_phrases.add')}
       </Button>
     </div>
   )

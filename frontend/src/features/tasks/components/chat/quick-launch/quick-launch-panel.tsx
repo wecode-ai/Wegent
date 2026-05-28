@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from 'react'
 import type { TaskType, Team } from '@/types/api'
-import { QuickLauncherCards } from './QuickLauncherCards'
+import { QuickLauncherCards } from './quick-launcher-cards'
 import { QuickPhraseList } from './QuickPhraseList'
 import type { QuickLauncher } from './types'
 import { useQuickLaunchers } from './useQuickLaunchers'

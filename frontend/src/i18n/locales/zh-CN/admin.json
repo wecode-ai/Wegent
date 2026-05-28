@@ -342,6 +342,7 @@
     "errors": {
       "load_failed": "加载配置失败",
       "save_failed": "保存配置失败",
+      "partial_save_failed": "部分配置已保存，另一些保存失败，请重试。",
       "quick_launch_functions_required": "系统功能必须填写 ID、名称并选择目标智能体",
       "slogan_required": "中英文 Slogan 均为必填项",
       "tip_required": "中英文提示内容均为必填项"

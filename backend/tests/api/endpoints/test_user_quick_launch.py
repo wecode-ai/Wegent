@@ -42,7 +42,23 @@ async def test_quick_launch_returns_system_functions_and_favorite_agents(monkeyp
                     "quick_phrases": ["帮我创建一个 xxx 的 PPT"],
                     "enabled": True,
                     "order": 10,
-                }
+                },
+                {
+                    "id": "disabled_function",
+                    "title": "Disabled function",
+                    "team_id": 303,
+                    "enabled": False,
+                    "order": 1,
+                },
+                {
+                    "id": "malformed_function",
+                    "title": "Malformed function",
+                    "team_id": 404,
+                    "quick_phrases": ["valid", {"bad": "item"}],
+                    "enabled": True,
+                    "order": 2,
+                },
+                "not-a-function",
             ]
         },
     )
@@ -77,6 +93,7 @@ async def test_quick_launch_returns_system_functions_and_favorite_agents(monkeyp
     )
 
     assert response.system_functions[0].id == "create_ppt"
+    assert [function.id for function in response.system_functions] == ["create_ppt"]
     assert response.system_functions[0].team_id == 101
     assert response.system_functions[0].name == "team-101"
     assert response.system_functions[0].quick_phrases == ["帮我创建一个 xxx 的 PPT"]

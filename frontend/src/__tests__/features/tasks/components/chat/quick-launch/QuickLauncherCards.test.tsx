@@ -5,7 +5,9 @@
 import '@testing-library/jest-dom'
 import { render, screen } from '@testing-library/react'
 
-import { QuickLauncherCards } from '@/features/tasks/components/chat/quick-launch/QuickLauncherCards'
+import { QuickLauncherCards } from '@/features/tasks/components/chat/quick-launch/quick-launcher-cards'
+import type { QuickLauncher } from '@/features/tasks/components/chat/quick-launch/types'
+import type { Team } from '@/types/api'
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: (namespace?: string) => ({
@@ -24,27 +26,48 @@ jest.mock('@/hooks/useTranslation', () => ({
   }),
 }))
 
+const makeTeam = (overrides: Partial<Team> = {}): Team => ({
+  id: 1,
+  name: 'team',
+  namespace: 'default',
+  description: 'Team description',
+  bots: [],
+  workflow: { mode: 'pipeline' },
+  is_active: true,
+  user_id: 1,
+  created_at: '2026-01-01T00:00:00Z',
+  updated_at: '2026-01-01T00:00:00Z',
+  bind_mode: ['chat'],
+  ...overrides,
+})
+
+const makeLauncher = (overrides: Partial<QuickLauncher>): QuickLauncher => ({
+  type: 'system_function',
+  key: 'system:create_ppt',
+  title: 'Create PPT',
+  quickPhrases: [],
+  team: makeTeam(),
+  ...overrides,
+})
+
 describe('QuickLauncherCards', () => {
   test('renders quick launch row titles from the chat namespace', () => {
     render(
       <QuickLauncherCards
         systemLaunchers={[
-          {
-            type: 'system_function',
+          makeLauncher({
             key: 'system:create_ppt',
-            teamId: 1,
+            team: makeTeam({ id: 1 }),
             title: 'Create PPT',
-            quickPhrases: [],
-          },
+          }),
         ]}
         favoriteLaunchers={[
-          {
+          makeLauncher({
             type: 'favorite_agent',
             key: 'agent:2',
-            teamId: 2,
+            team: makeTeam({ id: 2 }),
             title: 'Writing Agent',
-            quickPhrases: [],
-          },
+          }),
         ]}
         onSelectLauncher={jest.fn()}
       />
@@ -59,13 +82,10 @@ describe('QuickLauncherCards', () => {
     render(
       <QuickLauncherCards
         systemLaunchers={[
-          {
-            type: 'system_function',
+          makeLauncher({
             key: 'system:create_ppt',
-            teamId: 1,
             title: 'Create PPT',
-            quickPhrases: [],
-          },
+          }),
         ]}
         favoriteLaunchers={[]}
         onSelectLauncher={jest.fn()}
@@ -80,13 +100,10 @@ describe('QuickLauncherCards', () => {
     render(
       <QuickLauncherCards
         systemLaunchers={[
-          {
-            type: 'system_function',
+          makeLauncher({
             key: 'system:create_ppt',
-            teamId: 1,
             title: 'Create PPT',
-            quickPhrases: [],
-          },
+          }),
         ]}
         favoriteLaunchers={[]}
         onSelectLauncher={jest.fn()}
@@ -102,13 +119,10 @@ describe('QuickLauncherCards', () => {
     render(
       <QuickLauncherCards
         systemLaunchers={[
-          {
-            type: 'system_function',
+          makeLauncher({
             key: 'system:create_ppt',
-            teamId: 1,
             title: 'Create PPT',
-            quickPhrases: [],
-          },
+          }),
         ]}
         favoriteLaunchers={[]}
         onSelectLauncher={jest.fn()}
@@ -127,13 +141,10 @@ describe('QuickLauncherCards', () => {
     render(
       <QuickLauncherCards
         systemLaunchers={[
-          {
-            type: 'system_function',
+          makeLauncher({
             key: 'system:create_ppt',
-            teamId: 1,
             title: 'Create PPT',
-            quickPhrases: [],
-          },
+          }),
         ]}
         favoriteLaunchers={[]}
         selectedLauncherKey="system:create_ppt"

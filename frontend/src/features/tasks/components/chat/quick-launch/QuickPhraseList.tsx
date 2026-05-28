@@ -20,7 +20,7 @@ export function QuickPhraseList({ launcher, onBack, onPhraseSelect }: QuickPhras
       <button
         type="button"
         onClick={onBack}
-        className="mb-2 inline-flex min-h-8 items-center gap-1 rounded-md px-1 text-xs font-medium text-text-muted transition-colors hover:text-text-primary"
+        className="mb-2 inline-flex h-11 min-w-[44px] items-center gap-1 rounded-md px-2 text-xs font-medium text-text-muted transition-colors hover:text-text-primary"
         data-testid="quick-phrase-back"
       >
         <ArrowLeft className="h-3.5 w-3.5" />

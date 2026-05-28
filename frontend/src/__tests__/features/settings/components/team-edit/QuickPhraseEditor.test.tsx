@@ -11,8 +11,8 @@ jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (key: string) => {
       const translations: Record<string, string> = {
-        'settings:team.quick_phrases.add': 'Add phrase',
-        'settings:team.quick_phrases.placeholder': 'Enter phrase',
+        'team.quick_phrases.add': 'Add phrase',
+        'team.quick_phrases.placeholder': 'Enter phrase',
         'common:actions.remove': 'Remove',
       }
       return translations[key] || key

@@ -33,8 +33,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import {
-  adminApis,
+import { adminApis } from '@/apis/admin'
+import type {
   AdminPublicTeam,
   ChatSloganItem,
   ChatTipItem,
@@ -159,16 +159,37 @@ const SystemConfigPanel: React.FC = () => {
 
     setSaving(true)
     try {
-      const [response, quickLaunchFunctionsResponse] = await Promise.all([
+      const [sloganResult, quickLaunchFunctionsResult] = await Promise.allSettled([
         adminApis.updateSloganTipsConfig({
           slogans,
           tips,
         }),
         adminApis.updateQuickLaunchFunctionsConfig({ functions: normalizedQuickLaunchFunctions }),
-      ])
-      setVersion(response.version)
-      setQuickLaunchFunctionsVersion(quickLaunchFunctionsResponse.version)
-      setQuickLaunchFunctions(quickLaunchFunctionsResponse.functions)
+      ] as const)
+
+      if (sloganResult.status === 'fulfilled') {
+        setVersion(sloganResult.value.version)
+      }
+      if (quickLaunchFunctionsResult.status === 'fulfilled') {
+        setQuickLaunchFunctionsVersion(quickLaunchFunctionsResult.value.version)
+        setQuickLaunchFunctions(quickLaunchFunctionsResult.value.functions)
+      }
+
+      const failedResults = [sloganResult, quickLaunchFunctionsResult].filter(
+        result => result.status === 'rejected'
+      )
+      if (failedResults.length > 0) {
+        console.error('Failed to save system config sections:', failedResults)
+        toast({
+          title:
+            failedResults.length === 2
+              ? t('system_config.errors.save_failed')
+              : t('system_config.errors.partial_save_failed'),
+          variant: 'destructive',
+        })
+        return
+      }
+
       toast({
         title: t('system_config.success.updated'),
       })
@@ -408,7 +429,7 @@ const SystemConfigPanel: React.FC = () => {
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8"
+                className="h-11 min-w-[44px]"
                 onClick={() => onEdit(item, index)}
               >
                 <PencilIcon className="h-4 w-4" />
@@ -416,7 +437,7 @@ const SystemConfigPanel: React.FC = () => {
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 text-red-500 hover:text-red-600"
+                className="h-11 min-w-[44px] text-red-500 hover:text-red-600"
                 onClick={() => onDelete(item, index)}
               >
                 <TrashIcon className="h-4 w-4" />
@@ -489,10 +510,10 @@ const SystemConfigPanel: React.FC = () => {
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            {t('common.cancel')}
+            {t('common:actions.cancel')}
           </Button>
           <Button variant="primary" onClick={onSave}>
-            {t('common.save')}
+            {t('common:actions.save')}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -514,8 +535,8 @@ const SystemConfigPanel: React.FC = () => {
           <AlertDialogDescription>{message}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm}>{t('common.delete')}</AlertDialogAction>
+          <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>
+          <AlertDialogAction onClick={onConfirm}>{t('common:actions.delete')}</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
@@ -531,7 +552,7 @@ const SystemConfigPanel: React.FC = () => {
         </div>
         <Button onClick={handleSave} disabled={saving}>
           {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-          {t('common.save')}
+          {t('common:actions.save')}
         </Button>
       </div>
 
@@ -611,7 +632,7 @@ const SystemConfigPanel: React.FC = () => {
                       type="button"
                       variant="ghost"
                       size="icon"
-                      className="h-8 w-8 shrink-0 text-red-500 hover:text-red-600"
+                      className="h-11 min-w-[44px] shrink-0 text-red-500 hover:text-red-600"
                       onClick={() => removeQuickLaunchFunction(index)}
                       data-testid={`remove-quick-launch-function-${index}`}
                     >
@@ -733,6 +754,7 @@ const SystemConfigPanel: React.FC = () => {
                         type="button"
                         variant="outline"
                         size="sm"
+                        className="h-11 min-w-[44px]"
                         onClick={() => addQuickLaunchPhrase(index)}
                         disabled={(item.quick_phrases ?? []).length >= 6}
                         data-testid={`add-quick-launch-function-phrase-${index}`}
@@ -759,7 +781,7 @@ const SystemConfigPanel: React.FC = () => {
                             type="button"
                             variant="ghost"
                             size="icon"
-                            className="h-9 w-9 shrink-0 text-text-muted hover:text-text-primary"
+                            className="h-11 min-w-[44px] shrink-0 text-text-muted hover:text-text-primary"
                             onClick={() => removeQuickLaunchPhrase(index, phraseIndex)}
                             data-testid={`remove-quick-launch-function-phrase-${index}-${phraseIndex}`}
                           >
