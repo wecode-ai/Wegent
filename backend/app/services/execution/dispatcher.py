@@ -34,6 +34,7 @@ from app.core.async_utils import run_in_main_loop
 from app.db.session import SessionLocal
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
+from app.services.openapi.thinking_tags import unwrap_thinking_content
 from app.services.task_status import extract_task_error
 from shared.models import (
     EventType,
@@ -47,7 +48,6 @@ from shared.utils.http_client import traced_async_client
 from .emitters import (
     ResultEmitter,
     ResultEmitterFactory,
-    StatusUpdatingEmitter,
     WebSocketResultEmitter,
 )
 from .polling_dispatcher import dispatch_polling
@@ -118,16 +118,45 @@ def extract_completed_result(response_data: dict) -> dict:
     :class:`EmitterBridgeTransport` so the field list is maintained in one
     place.
     """
-    # Extract text content from response output
-    value = ""
+    # Extract text and reasoning content from response output.
+    value_parts: list[str] = []
+    reasoning_parts: list[str] = []
     for item in response_data.get("output", []):
-        if isinstance(item, dict):
-            for content_block in item.get("content", []):
-                if isinstance(content_block, dict) and content_block.get("text"):
-                    value += content_block["text"]
+        if not isinstance(item, dict):
+            continue
+
+        if item.get("type") == "reasoning":
+            for summary in item.get("summary") or []:
+                if not isinstance(summary, dict):
+                    continue
+                text = summary.get("text")
+                if isinstance(text, str) and text:
+                    reasoning_parts.append(unwrap_thinking_content(text))
+            for content_block in item.get("content") or []:
+                if not isinstance(content_block, dict):
+                    continue
+                text = content_block.get("text")
+                if isinstance(text, str) and text:
+                    reasoning_parts.append(unwrap_thinking_content(text))
+            continue
+
+        for content_block in item.get("content", []):
+            if not isinstance(content_block, dict):
+                continue
+            text = content_block.get("text")
+            if not isinstance(text, str) or not text:
+                continue
+            if content_block.get("type") == "reasoning":
+                reasoning_parts.append(unwrap_thinking_content(text))
+            else:
+                value_parts.append(text)
+
+    reasoning_content = response_data.get("reasoning_content")
+    if reasoning_content is None and reasoning_parts:
+        reasoning_content = "\n".join(reasoning_parts)
 
     return {
-        "value": value,
+        "value": "".join(value_parts),
         "usage": response_data.get("usage"),
         "sources": response_data.get("sources"),
         "blocks": response_data.get("blocks"),
@@ -136,7 +165,7 @@ def extract_completed_result(response_data: dict) -> dict:
         "loaded_skills": response_data.get("loaded_skills"),
         "stop_reason": response_data.get("stop_reason"),
         "messages_chain": response_data.get("messages_chain"),
-        "reasoning_content": response_data.get("reasoning_content"),
+        "reasoning_content": reasoning_content,
     }
 
 
@@ -336,6 +365,16 @@ class ResponsesAPIEventParser:
                     message_id=message_id,
                 )
             return None
+
+        elif event_type == ResponsesAPIStreamEvents.REASONING_SUMMARY_TEXT_DELTA.value:
+            # response.reasoning_summary_text.delta -> THINKING
+            return ExecutionEvent(
+                type=EventType.THINKING,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                content=data.get("delta", ""),
+                message_id=message_id,
+            )
 
         elif event_type == ResponsesAPIStreamEvents.OUTPUT_ITEM_ADDED.value:
             # response.output_item.added -> check if it's a function_call
@@ -700,6 +739,8 @@ class ExecutionDispatcher:
             # Wrap emitter with StatusUpdatingEmitter for unified status updates
             # This ensures task status is updated to COMPLETED/FAILED/CANCELLED
             # when terminal events are received, regardless of execution mode
+            from .emitters import StatusUpdatingEmitter
+
             wrapped_emitter = StatusUpdatingEmitter(
                 wrapped=emitter,
                 task_id=request.task_id,
@@ -1821,6 +1862,8 @@ class ExecutionDispatcher:
         # If emitter is provided, also emit error event to frontend
         if emitter is not None:
             # Wrap with StatusUpdatingEmitter for unified status updates
+            from .emitters import StatusUpdatingEmitter
+
             wrapped_emitter = StatusUpdatingEmitter(
                 wrapped=emitter,
                 task_id=request.task_id,
