@@ -256,13 +256,13 @@ class ErpEntityResolver(IExternalEntityResolver):
         if existing:
             return existing
 
-        # Resolve user_name BEFORE acquiring the lock so we don't hold the
+        # Resolve user email BEFORE acquiring the lock so we don't hold the
         # caller's db connection across network I/O / sleeps.
         user = db.query(User).filter(User.id == user_id).first()
-        user_name = user.user_name if user else None
-        if not user_name:
+        user_email = user.email if user else None
+        if not user_email:
             logger.info(
-                f"No user_name found for user_id={user_id}, cannot sync ERP profile"
+                f"No email found for user_id={user_id}, cannot sync ERP profile"
             )
             return None
 
@@ -285,7 +285,7 @@ class ErpEntityResolver(IExternalEntityResolver):
                 return existing
 
             try:
-                erp_employee = erp_client.search_employee(user_name)
+                erp_employee = erp_client.search_employee(user_email)
             except Exception as e:
                 logger.warning(
                     f"Failed to lazy-sync ERP profile for user_id={user_id}: {e}"
@@ -295,7 +295,7 @@ class ErpEntityResolver(IExternalEntityResolver):
             if not (erp_employee and erp_employee.ssn):
                 logger.info(
                     f"No ERP employee found for user_id={user_id} "
-                    f"with username={user_name}"
+                    f"with email={user_email}"
                 )
                 return None
 
