@@ -79,7 +79,85 @@ def select_kb_summary_text(summary_data: dict[str, Any], kb_count: int) -> str:
     return summary_text or ""
 
 
-def format_kb_meta_prompt(kb_meta_list: list[dict[str, Any]]) -> str:
+def _format_duckdb_schema_section(duckdb_files: list[dict] | None) -> str:
+    """Format DuckDB schema section appended to the KB meta prompt.
+
+    This section tells the Agent *what* data is available (schema, row count,
+    label distribution, filter suggestions). The query instructions (how to
+    connect and run SQL) are injected separately via prompt_enrichment.
+
+    Args:
+        duckdb_files: List of duckdb file metadata dicts, each containing
+            doc_id, kb_id, table_name, embedding_model, embedding_dim,
+            schema_description (optional), row_count (optional),
+            label_column (optional), label_distribution (optional).
+
+    Returns:
+        Formatted schema section string, or empty string if no DuckDB files.
+    """
+    if not duckdb_files:
+        return ""
+
+    lines: list[str] = ["\n\nDuckDB Schema Information:"]
+
+    # Group files by kb_id for cleaner output
+    kb_files: dict[int, list[dict]] = {}
+    for f in duckdb_files:
+        kb_id = int(f.get("kb_id", 0))
+        kb_files.setdefault(kb_id, []).append(f)
+
+    for kb_id, files in kb_files.items():
+        if len(files) == 1:
+            f = files[0]
+            lines.append(f"- DuckDB (KB ID: {kb_id}, doc_id: {f.get('doc_id')}):")
+            _append_duckdb_file_details(lines, f, indent="  ")
+        else:
+            lines.append(f"- DuckDB files (KB ID: {kb_id}):")
+            for idx, f in enumerate(files, 1):
+                lines.append(f"  - File {idx} (doc_id: {f.get('doc_id')}):")
+                _append_duckdb_file_details(lines, f, indent="    ")
+
+    return "\n".join(lines)
+
+
+def _append_duckdb_file_details(lines: list[str], f: dict, indent: str = "  ") -> None:
+    """Append per-file DuckDB detail lines to the lines list.
+
+    Args:
+        lines: Output list to append to.
+        f: Single duckdb file metadata dict.
+        indent: Indentation prefix string.
+    """
+    table_name = f.get("table_name", "raw_data")
+    row_count = f.get("row_count")
+    schema_description = f.get("schema_description", "")
+    embedding_model = f.get("embedding_model", "")
+    embedding_dim = f.get("embedding_dim", 0)
+    label_column = f.get("label_column", "")
+    label_distribution = f.get("label_distribution", "")
+
+    row_info = f" ({row_count:,} rows)" if row_count else ""
+    lines.append(f"{indent}- Table: {table_name}{row_info}")
+
+    if schema_description:
+        lines.append(f"{indent}- Schema: {schema_description}")
+
+    if label_column:
+        dist_note = f": {label_distribution}" if label_distribution else ""
+        lines.append(f"{indent}- Filter column: {label_column}{dist_note}")
+        lines.append(
+            f"{indent}- Suggestion: filter by {label_column} before semantic search"
+            " to reduce noise"
+        )
+
+    if embedding_model and embedding_dim:
+        lines.append(f"{indent}- Embedding: {embedding_model} {embedding_dim}d")
+
+
+def format_kb_meta_prompt(
+    kb_meta_list: list[dict[str, Any]],
+    duckdb_files: list[dict] | None = None,
+) -> str:
     """Format KB meta list into a dynamic_context prompt string.
 
     Expected item keys:
@@ -90,6 +168,10 @@ def format_kb_meta_prompt(kb_meta_list: list[dict[str, Any]]) -> str:
 
     Args:
         kb_meta_list: Pre-assembled KB meta list.
+        duckdb_files: Optional list of DuckDB file metadata dicts. Each entry should
+            contain: doc_id, kb_id, table_name, embedding_model, embedding_dim,
+            schema_description (optional), row_count (optional),
+            label_column (optional), label_distribution (optional).
 
     Returns:
         A single string for dynamic_context injection, or empty string.
@@ -152,7 +234,7 @@ def format_kb_meta_prompt(kb_meta_list: list[dict[str, Any]]) -> str:
         "Note:\n"
         "- This block is request-scoped metadata only.\n"
         "- Use KB tools to retrieve actual content when needed."
-    )
+    ) + _format_duckdb_schema_section(duckdb_files)
 
 
 def format_restricted_kb_meta_prompt(kb_meta_list: list[dict[str, Any]]) -> str:
