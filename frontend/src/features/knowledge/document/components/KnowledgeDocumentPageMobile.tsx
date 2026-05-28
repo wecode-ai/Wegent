@@ -211,8 +211,7 @@ export function KnowledgeDocumentPageMobile({
 
   // Handle open group settings
   const handleOpenGroupSettings = useCallback((group: Group) => {
-    // Navigate to group settings page
-    window.location.href = `/settings?section=groups&tab=group-team&group=${encodeURIComponent(group.name)}`
+    window.location.href = `/resource-library?tab=mine&type=agent&scope=group&group=${encodeURIComponent(group.name)}`
   }, [])
 
   const canManageGroup = useCallback(
