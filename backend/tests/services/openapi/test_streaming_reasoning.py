@@ -95,9 +95,10 @@ class TestStreamingServiceReasoning:
         reasoning_deltas = [
             e for e in events if e["type"] == "response.reasoning_summary_text.delta"
         ]
-        assert len(reasoning_deltas) == 2
-        assert reasoning_deltas[0]["delta"] == "Step 1: "
+        assert len(reasoning_deltas) == 3
+        assert reasoning_deltas[0]["delta"] == "<thinking>Step 1: "
         assert reasoning_deltas[1]["delta"] == "Analyze the problem"
+        assert reasoning_deltas[2]["delta"] == "</thinking>"
 
         # Check text events
         text_deltas = [
@@ -179,14 +180,16 @@ class TestStreamingServiceReasoning:
         reasoning_deltas = [
             e for e in events if e["type"] == "response.reasoning_summary_text.delta"
         ]
-        assert len(reasoning_deltas) == 1
-        assert reasoning_deltas[0]["delta"] == "Just thinking"
+        assert len(reasoning_deltas) == 2
+        assert reasoning_deltas[0]["delta"] == "<thinking>Just thinking"
+        assert reasoning_deltas[1]["delta"] == "</thinking>"
 
         # Check final response includes reasoning
         completed_event = [e for e in events if e["type"] == "response.completed"][0]
         output = completed_event["response"]["output"]
         assert len(output) == 1
         assert output[0]["content"][0]["type"] == "reasoning"
+        assert output[0]["content"][0]["text"] == "<thinking>Just thinking</thinking>"
 
     @pytest.mark.asyncio
     async def test_function_call_stream(self, streaming_service):

@@ -27,6 +27,44 @@ class TestExtractCompletedResult:
         result = extract_completed_result(response_data)
         assert result["value"] == "Hello world"
 
+    def test_separates_reasoning_content_from_output_text(self):
+        """Reasoning text is stored separately instead of leaking into value."""
+        response_data = {
+            "output": [
+                {
+                    "content": [
+                        {"type": "reasoning", "text": "<thinking>Think</thinking>"},
+                        {"type": "output_text", "text": "Answer"},
+                    ]
+                }
+            ]
+        }
+
+        result = extract_completed_result(response_data)
+
+        assert result["value"] == "Answer"
+        assert result["reasoning_content"] == "Think"
+
+    def test_extracts_official_reasoning_summary_output_item(self):
+        """OpenAI reasoning output items are converted to reasoning_content."""
+        response_data = {
+            "output": [
+                {
+                    "type": "reasoning",
+                    "summary": [
+                        {"type": "summary_text", "text": "Step 1"},
+                        {"type": "summary_text", "text": "Step 2"},
+                    ],
+                },
+                {"content": [{"type": "output_text", "text": "Answer"}]},
+            ]
+        }
+
+        result = extract_completed_result(response_data)
+
+        assert result["value"] == "Answer"
+        assert result["reasoning_content"] == "Step 1\nStep 2"
+
     def test_empty_output(self):
         """Empty output produces empty value."""
         result = extract_completed_result({"output": []})
