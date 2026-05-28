@@ -9,6 +9,9 @@ import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettin
 interface DesktopWorkbenchLayoutProps {
   state: WorkbenchState
   messages: WorkbenchMessage[]
+  activeItem?: 'chat' | 'plugins' | 'automation'
+  onNewChat: () => void
+  onOpenPlugins: () => void
   projectChat: ProjectChatControls
   projectWork: ProjectWorkControls
   onSelectProject: (projectId: number) => void
@@ -34,6 +37,9 @@ interface DesktopWorkbenchLayoutProps {
 export function DesktopWorkbenchLayout({
   state,
   messages,
+  activeItem = 'chat',
+  onNewChat,
+  onOpenPlugins,
   projectChat,
   projectWork,
   onSelectProject,
@@ -67,10 +73,13 @@ export function DesktopWorkbenchLayout({
           devices={state.devices}
           recentTasks={state.recentTasks}
           currentProjectId={state.currentProject?.id}
+          activeItem={activeItem}
           onCollapse={() => setSidebarCollapsed(true)}
+          onNewChat={onNewChat}
           onSelectProject={onSelectProject}
           onStartNewProjectChat={onStartNewProjectChat}
           onOpenTask={onOpenTask}
+          onOpenPlugins={onOpenPlugins}
           onCreateProject={onCreateProject}
           onUpdateProjectName={onUpdateProjectName}
           onRemoveProject={onRemoveProject}
