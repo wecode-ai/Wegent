@@ -52,7 +52,6 @@ from app.api.endpoints.adapter import (
     dify,
     model_runtime,
     models,
-    resource_library,
     retrievers,
     shells,
     subscription_follows,
@@ -141,11 +140,6 @@ api_router.include_router(
     model_runtime.router, prefix="/model-runtime", tags=["model-runtime"]
 )
 api_router.include_router(retrievers.router, prefix="/retrievers", tags=["retrievers"])
-api_router.include_router(
-    resource_library.router,
-    prefix="/resource-library",
-    tags=["resource-library"],
-)
 api_router.include_router(wiki.router, prefix="/wiki", tags=["wiki"])
 api_router.include_router(
     wiki.internal_router, prefix="/internal/wiki", tags=["wiki-internal"]

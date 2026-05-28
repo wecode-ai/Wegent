@@ -26,7 +26,6 @@ MCP_ROOT_KEY = "mcps"
 MCP_SERVICES_KEY = "services"
 MCP_CREDENTIALS_KEY = "credentials"
 MCP_URL_KEY = "url"
-RESOURCE_LIBRARY_MCP_PROVIDER_ID = "resource-library"
 
 
 class UserMCPService:
@@ -85,75 +84,20 @@ class UserMCPService:
         provider_id: str,
         service_id: str,
     ) -> dict[str, Any] | None:
-        """Return static or installed dynamic MCP service metadata."""
+        """Return static MCP service metadata."""
         service = get_mcp_provider_service(provider_id, service_id)
         if service:
             return dict(service)
 
-        return UserMCPService.get_dynamic_provider_service(
-            preferences,
-            provider_id,
-            service_id,
-        )
-
-    @staticmethod
-    def get_dynamic_provider_service(
-        preferences: str | dict[str, Any] | None,
-        provider_id: str,
-        service_id: str,
-    ) -> dict[str, Any] | None:
-        """Return metadata for an installed dynamic provider service."""
-        for service in UserMCPService.list_dynamic_provider_services(
-            preferences,
-            provider_id,
-        ):
-            if service["service_id"] == service_id:
-                return service
         return None
-
-    @staticmethod
-    def list_dynamic_provider_services(
-        preferences: str | dict[str, Any] | None,
-        provider_id: str,
-    ) -> list[dict[str, Any]]:
-        """Return dynamic MCP services installed from user preferences."""
-        if provider_id != RESOURCE_LIBRARY_MCP_PROVIDER_ID:
-            return []
-
-        prefs = UserMCPService.load_preferences(preferences)
-        provider = ((prefs.get(MCP_ROOT_KEY) or {}).get(provider_id) or {}).copy()
-        services = provider.get(MCP_SERVICES_KEY) or {}
-        if not isinstance(services, dict):
-            return []
-
-        dynamic_services = []
-        for service_id, service in services.items():
-            if not isinstance(service, dict):
-                continue
-            server_name = str(service.get("server_name") or service_id)
-            dynamic_services.append(
-                {
-                    "service_id": service_id,
-                    "server_name": server_name,
-                    "detail_url": str(service.get("detail_url") or ""),
-                    "skill_name": None,
-                    "display_name": str(service.get("display_name") or server_name),
-                    "message_keywords": tuple(),
-                }
-            )
-        return dynamic_services
 
     @staticmethod
     def has_provider_services(
         preferences: str | dict[str, Any] | None,
         provider_id: str,
     ) -> bool:
-        """Return whether a provider has static or installed dynamic services."""
-        if get_mcp_provider(provider_id):
-            return True
-        return bool(
-            UserMCPService.list_dynamic_provider_services(preferences, provider_id)
-        )
+        """Return whether a provider has static services."""
+        return bool(get_mcp_provider(provider_id))
 
     @staticmethod
     def list_provider_service_configs(
@@ -163,11 +107,6 @@ class UserMCPService:
         """Return all registered provider services merged with user config."""
         configs = []
         services = list_mcp_provider_services(provider_id)
-        if not services:
-            services = UserMCPService.list_dynamic_provider_services(
-                preferences,
-                provider_id,
-            )
 
         for service in services:
             config = UserMCPService.get_provider_service_config(
@@ -358,14 +297,6 @@ class UserMCPService:
         preferences: str | dict[str, Any] | None,
     ) -> list[str]:
         provider_ids = [provider["provider_id"] for provider in list_mcp_providers()]
-        prefs = UserMCPService.load_preferences(preferences)
-        mcps = prefs.get(MCP_ROOT_KEY) or {}
-        if not isinstance(mcps, dict):
-            return provider_ids
-
-        for provider_id in mcps:
-            if provider_id == RESOURCE_LIBRARY_MCP_PROVIDER_ID:
-                provider_ids.append(provider_id)
         return list(dict.fromkeys(provider_ids))
 
 
