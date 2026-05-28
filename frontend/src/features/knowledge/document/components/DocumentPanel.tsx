@@ -56,6 +56,8 @@ interface DocumentPanelProps {
   canManageAllDocuments?: boolean
   /** Whether the user can manage permissions (is creator or has manage permission) */
   canManagePermissions?: boolean
+  /** Callback to refresh knowledge base details after summary changes */
+  onRefreshKnowledgeBase?: () => void
   /** Callback when document selection changes */
   onDocumentSelectionChange?: (documentIds: number[]) => void
   /** Callback when new chat button is clicked */
@@ -90,6 +92,7 @@ export function DocumentPanel({
   canUpload = true,
   canManageAllDocuments = false,
   canManagePermissions = false,
+  onRefreshKnowledgeBase,
   onDocumentSelectionChange,
   onNewChat,
   onCollapsedChange,
@@ -300,6 +303,7 @@ export function DocumentPanel({
               canUpload={canUpload}
               canManageAllDocuments={canManageAllDocuments}
               compact={true}
+              onRefreshKnowledgeBase={onRefreshKnowledgeBase}
               onSelectionChange={onDocumentSelectionChange}
               groupInfo={groupInfo}
               onGroupClick={onGroupClick}
@@ -356,6 +360,7 @@ export function DocumentPanel({
               canUpload={canUpload}
               canManageAllDocuments={canManageAllDocuments}
               compact={true}
+              onRefreshKnowledgeBase={onRefreshKnowledgeBase}
               onSelectionChange={onDocumentSelectionChange}
               groupInfo={groupInfo}
               onGroupClick={onGroupClick}

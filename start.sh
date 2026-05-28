@@ -1741,6 +1741,9 @@ start_services() {
         echo -e "  Starting ${BLUE}wework${NC}..."
         cd "$SCRIPT_DIR/wework"
 
+        export VITE_API_PROXY_TARGET=http://localhost:$BACKEND_PORT
+        export VITE_SOCKET_PROXY_TARGET=$WEGENT_SOCKET_URL
+
         local wework_cmd="npm run dev -- --port $WEWORK_PORT"
 
         if is_wsl; then

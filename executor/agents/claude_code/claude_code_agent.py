@@ -190,6 +190,10 @@ class ClaudeCodeAgent(Agent):
 
         # Initialize execution mode strategy
         self._mode_strategy: ExecutionModeStrategy = ModeStrategyFactory.create()
+        if hasattr(self._mode_strategy, "use_global_capabilities"):
+            from executor.modes.local.capabilities import is_project_task
+
+            self._mode_strategy.use_global_capabilities(is_project_task(task_data))
 
         # Note: emitter is created in base class Agent.__init__()
         # using EmitterBuilder with CallbackTransport
@@ -525,7 +529,9 @@ class ClaudeCodeAgent(Agent):
 
         self.project_path = project_path
         self.options["cwd"] = project_path
-        SessionManager.set_task_session_root(self.task_id, project_path)
+        SessionManager.set_task_session_root(
+            self.task_id, os.path.join(config.WEGENT_EXECUTOR_HOME, "sessions")
+        )
         logger.info(
             "Using project workspace path for task %s: %s", self.task_id, project_path
         )
@@ -992,7 +998,11 @@ class ClaudeCodeAgent(Agent):
                             "[SDK-INIT]   %s -> type=%s, url=%s",
                             sname,
                             scfg.get("type", "?") if isinstance(scfg, dict) else "?",
-                            scfg.get("url", "?") if isinstance(scfg, dict) else "?",
+                            (
+                                "<configured>"
+                                if isinstance(scfg, dict) and scfg.get("url")
+                                else "<empty>"
+                            ),
                         )
                 elif isinstance(mcp_in_opts, str):
                     logger.info(

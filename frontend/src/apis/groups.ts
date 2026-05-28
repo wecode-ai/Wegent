@@ -193,3 +193,18 @@ export const removeGroupEntityMember = async (
     `/groups/${encodeURIComponent(groupName)}/entity-members/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`
   )
 }
+
+/**
+ * Update the role of an entity-type member
+ */
+export const updateGroupEntityMemberRole = async (
+  groupName: string,
+  entityType: string,
+  entityId: string,
+  role: string
+): Promise<GroupEntityMember> => {
+  return await apiClient.put<GroupEntityMember>(
+    `/groups/${encodeURIComponent(groupName)}/entity-members/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`,
+    { role }
+  )
+}

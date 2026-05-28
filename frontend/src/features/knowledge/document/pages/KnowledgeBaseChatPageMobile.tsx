@@ -63,6 +63,7 @@ export function KnowledgeBaseChatPageMobile({ knowledgeBaseId, initialDocPath }:
     knowledgeBase,
     loading: kbLoading,
     error: kbError,
+    refresh: refreshKnowledgeBase,
   } = useKnowledgeBaseDetail({
     knowledgeBaseId,
     autoLoad: true,
@@ -278,7 +279,13 @@ export function KnowledgeBaseChatPageMobile({ knowledgeBaseId, initialDocPath }:
             }}
             guidedQuestions={knowledgeBase.guided_questions}
             inputAlwaysAtBottom={true}
-            emptyStateContent={<KnowledgeBaseSummaryCard knowledgeBase={knowledgeBase} />}
+            emptyStateContent={
+              <KnowledgeBaseSummaryCard
+                knowledgeBase={knowledgeBase}
+                onRefresh={refreshKnowledgeBase}
+                canEditSummary={canManageKb}
+              />
+            }
             onTaskCreated={async (taskId: number) => {
               // Bind the knowledge base to the newly created task
               try {
@@ -314,6 +321,7 @@ export function KnowledgeBaseChatPageMobile({ knowledgeBaseId, initialDocPath }:
               knowledgeBase={knowledgeBase}
               canUpload={canUploadDocuments}
               canManageAllDocuments={canManageKb}
+              onRefreshKnowledgeBase={refreshKnowledgeBase}
               initialDocPath={initialDocPath}
             />
           </div>

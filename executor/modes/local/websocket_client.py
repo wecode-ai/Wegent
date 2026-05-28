@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 import socketio
 
 from executor.config import config
+from executor.modes.local.capabilities import GlobalCapabilityReporter
 from executor.platform_compat import get_permissions_manager
 from executor.version import get_version
 from shared.logger import setup_logger
@@ -146,6 +147,8 @@ class WebSocketClient:
 
         # Reconnect callback
         self._on_reconnect_callback: Optional[Callable] = None
+
+        self.capability_reporter = GlobalCapabilityReporter()
 
         # Event handlers storage
         self._handlers: Dict[str, Callable] = {}
@@ -536,6 +539,7 @@ class WebSocketClient:
                 "device_id": self.device_id,
                 "running_task_ids": running_task_ids,
                 "executor_version": get_version(),
+                "capabilities": self.capability_reporter.build_report(),
             }
             logger.info(
                 f"Sending device:heartbeat to /local-executor: {heartbeat_data}"
