@@ -192,6 +192,7 @@ class OpenAPIStreamingService:
         sequence_number = 0
         reasoning_started = False
         reasoning_complete = False
+        reasoning_emitted = False
         next_output_index = 0
         message_started = False
         reasoning_output_index: Optional[int] = None
@@ -314,6 +315,7 @@ class OpenAPIStreamingService:
                                     "type": "response.reasoning_summary_text.delta",
                                 }
                             )
+                            reasoning_emitted = True
                             sequence_number += 1
 
                     elif chunk.type == "text":
@@ -322,8 +324,11 @@ class OpenAPIStreamingService:
                             # If we had reasoning before, close it first
                             if reasoning_started and not reasoning_complete:
                                 reasoning_complete = True
-                                yield _format_sse_event(build_reasoning_close_event())
-                                sequence_number += 1
+                                if reasoning_emitted:
+                                    yield _format_sse_event(
+                                        build_reasoning_close_event()
+                                    )
+                                    sequence_number += 1
 
                             accumulated_text += chunk.content
 
@@ -615,8 +620,9 @@ class OpenAPIStreamingService:
             # Close text output items
             if reasoning_started and not reasoning_complete:
                 reasoning_complete = True
-                yield _format_sse_event(build_reasoning_close_event())
-                sequence_number += 1
+                if reasoning_emitted:
+                    yield _format_sse_event(build_reasoning_close_event())
+                    sequence_number += 1
 
             if accumulated_text:
                 # Official OpenAI event: response.output_text.done
