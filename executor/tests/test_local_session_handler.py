@@ -175,6 +175,7 @@ async def test_start_terminal_session_uses_writable_once_ttyd(tmp_path, monkeypa
     assert argv[:2] == ("ttyd", "-i")
     assert "-o" in argv
     assert "-m" in argv
+    assert "-W" in argv
     assert "-R" not in argv
     assert str(tmp_path) in argv
 
