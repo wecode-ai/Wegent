@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -40,6 +40,7 @@ export default function FixedGroupChatsSection({
 }: FixedGroupChatsSectionProps) {
   const { t } = useTranslation()
   const { projectTaskIds } = useProjectContext()
+  const [hasOpenedGroupChats, setHasOpenedGroupChats] = useState(false)
 
   const filteredGroupTasks = useMemo(
     () => groupTasks.filter(task => !projectTaskIds.has(task.id)),
@@ -51,7 +52,7 @@ export default function FixedGroupChatsSection({
   const orderedGroupChats = [...unreadGroupChats, ...readGroupChats]
   const collapsedGroupChatCount = orderedGroupChats.length
   const shouldShowGroupChats =
-    orderedGroupChats.length > 0 || hasMoreGroupTasks || isGroupChatsExpanded
+    orderedGroupChats.length > 0 || hasMoreGroupTasks || isGroupChatsExpanded || hasOpenedGroupChats
   const shouldShowEmptyState =
     isGroupChatsExpanded && orderedGroupChats.length === 0 && !loadingMoreGroupTasks
 
@@ -65,10 +66,14 @@ export default function FixedGroupChatsSection({
       })
 
   const handleToggleGroupChats = () => {
-    if (!isGroupChatsExpanded && hasMoreGroupTasks) {
-      void loadAllGroupTasks()
+    const nextExpanded = !isGroupChatsExpanded
+    if (nextExpanded) {
+      setHasOpenedGroupChats(true)
+      if (hasMoreGroupTasks) {
+        void loadAllGroupTasks()
+      }
     }
-    setIsGroupChatsExpanded(!isGroupChatsExpanded)
+    setIsGroupChatsExpanded(nextExpanded)
   }
 
   return (

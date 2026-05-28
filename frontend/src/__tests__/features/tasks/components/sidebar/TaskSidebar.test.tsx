@@ -425,6 +425,14 @@ describe('TaskSidebar scroll structure', () => {
       within(updatedGroupDock).getByTestId('task-sidebar-group-chat-toggle')
     ).toBeInTheDocument()
     expect(within(updatedGroupDock).getByText('common:tasks.no_group_chats')).toBeInTheDocument()
+
+    fireEvent.click(within(updatedGroupDock).getByTestId('task-sidebar-group-chat-toggle'))
+
+    const collapsedGroupDock = screen.getAllByTestId('task-sidebar-group-chat-dock')[0]
+    expect(within(collapsedGroupDock).getByText('common:tasks.group_chats')).toBeInTheDocument()
+    expect(
+      within(collapsedGroupDock).queryByText('common:tasks.no_group_chats')
+    ).not.toBeInTheDocument()
   })
 
   it('renders personal history as a flat list', () => {
