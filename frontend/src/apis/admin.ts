@@ -130,6 +130,26 @@ export interface ChatSloganTipsResponse {
   tips: ChatTipItem[]
 }
 
+export interface QuickLaunchFunctionConfig {
+  id: string
+  title: string
+  description?: string | null
+  icon?: string | null
+  team_id: number
+  enabled: boolean
+  order: number
+  quick_phrases: string[]
+}
+
+export interface QuickLaunchFunctionsResponse {
+  version: number
+  functions: QuickLaunchFunctionConfig[]
+}
+
+export interface QuickLaunchFunctionsUpdate {
+  functions: QuickLaunchFunctionConfig[]
+}
+
 // Service Key Types
 export interface ServiceKey {
   id: number
@@ -688,6 +708,22 @@ export const adminApis = {
    */
   async updateQuickAccessConfig(teams: number[]): Promise<{ version: number; teams: number[] }> {
     return apiClient.put('/admin/system-config/quick-access', { teams })
+  },
+
+  /**
+   * Get system function launcher configuration
+   */
+  async getQuickLaunchFunctionsConfig(): Promise<QuickLaunchFunctionsResponse> {
+    return apiClient.get('/admin/system-config/quick-launch-functions')
+  },
+
+  /**
+   * Update system function launcher configuration
+   */
+  async updateQuickLaunchFunctionsConfig(
+    data: QuickLaunchFunctionsUpdate
+  ): Promise<QuickLaunchFunctionsResponse> {
+    return apiClient.put('/admin/system-config/quick-launch-functions', data)
   },
 
   // ==================== Chat Slogan & Tips Config ====================

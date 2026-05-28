@@ -171,6 +171,7 @@ export interface Team {
   recommended_mode?: 'chat' | 'code' | 'both' // Recommended usage mode (for QuickAccess)
   bind_mode?: TaskType[] // Allowed modes for this team
   icon?: string // Icon ID from preset icon library
+  quick_phrases?: string[] // Launcher phrases that prefill the chat input
   requires_workspace?: boolean // Whether this team requires a workspace/repository (null = auto-infer from shell)
   /** Modes this team is the default for (e.g., ['chat', 'code']) - computed from env config */
   default_for_modes?: string[]
@@ -661,6 +662,37 @@ export interface QuickAccessResponse {
   user_version: number | null
   show_system_recommended: boolean // True if user_version < system_version
   teams: QuickAccessTeam[]
+}
+
+export interface QuickLaunchFunction {
+  type: 'system_function'
+  id: string
+  title: string
+  description?: string | null
+  icon?: string | null
+  team_id: number
+  name: string
+  enabled: boolean
+  order: number
+  quick_phrases: string[]
+}
+
+export interface QuickLaunchFavoriteAgent {
+  type: 'favorite_agent'
+  id: number
+  team_id: number
+  name: string
+  title: string
+  description?: string | null
+  icon?: string | null
+  recommended_mode?: 'chat' | 'code' | 'both'
+  agent_type?: string | null
+  quick_phrases: string[]
+}
+
+export interface QuickLaunchResponse {
+  system_functions: QuickLaunchFunction[]
+  favorite_agents: QuickLaunchFavoriteAgent[]
 }
 
 // Welcome Config Types (Slogan & Tips)
