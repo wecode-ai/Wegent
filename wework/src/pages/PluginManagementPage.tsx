@@ -24,6 +24,8 @@ export function PluginManagementPage() {
     unarchiveTask,
     deleteTask,
     deleteArchivedTasks,
+    getDeviceHomeDirectory,
+    getProjectWorkspaceRoot,
     listDeviceDirectories,
   } = useWorkbench()
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -50,6 +52,11 @@ export function PluginManagementPage() {
     )
   }
 
+  const handleStartNewProjectChat = (projectId: number) => {
+    navigateTo('/')
+    startNewProjectChat(projectId)
+  }
+
   return (
     <div className="flex h-screen overflow-hidden bg-base text-text-primary">
       <DesktopSidebar
@@ -58,11 +65,12 @@ export function PluginManagementPage() {
         devices={state.devices}
         recentTasks={state.recentTasks}
         currentProjectId={state.currentProject?.id}
+        currentTaskId={state.currentTask?.id}
         activeItem="plugins"
         onCollapse={() => {}}
         onNewChat={() => navigateTo('/')}
         onSelectProject={handleSelectProject}
-        onStartNewProjectChat={startNewProjectChat}
+        onStartNewProjectChat={handleStartNewProjectChat}
         onOpenTask={handleOpenTask}
         onOpenPlugins={() => navigateTo('/plugins')}
         onCreateProject={createProject}
@@ -72,6 +80,8 @@ export function PluginManagementPage() {
         onArchiveProjectChats={archiveProjectChats}
         onArchiveTask={archiveTask}
         onRenameTask={renameTask}
+        onGetDeviceHomeDirectory={getDeviceHomeDirectory}
+        onGetProjectWorkspaceRoot={getProjectWorkspaceRoot}
         onListDeviceDirectories={listDeviceDirectories}
         onOpenSettings={() => setSettingsOpen(true)}
         onLogout={logout}

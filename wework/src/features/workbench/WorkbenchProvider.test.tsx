@@ -62,6 +62,25 @@ function ProjectChatProbe() {
   )
 }
 
+function ArchiveProbe() {
+  const workbench = useWorkbench()
+
+  return (
+    <div>
+      <span data-testid="current-task-title">
+        {workbench.state.currentTask?.title ?? 'no-task'}
+      </span>
+      <span data-testid="message-count">{workbench.messages.length}</span>
+      <button type="button" onClick={() => void workbench.openTask(8)}>
+        open task
+      </button>
+      <button type="button" onClick={() => void workbench.archiveAllChats()}>
+        archive all
+      </button>
+    </div>
+  )
+}
+
 describe('WorkbenchProvider', () => {
   test('bootstraps current user, default team, projects, and recent tasks', async () => {
     render(
@@ -100,6 +119,8 @@ describe('WorkbenchProvider', () => {
           },
           deviceApi: {
             listDevices: vi.fn().mockResolvedValue([]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
             listDirectories: vi.fn(),
           },
           chatStream: {
@@ -173,6 +194,8 @@ describe('WorkbenchProvider', () => {
           },
           deviceApi: {
             listDevices: vi.fn().mockResolvedValue([]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
             listDirectories: vi.fn(),
           },
           chatStream: {
@@ -304,6 +327,8 @@ describe('WorkbenchProvider', () => {
           },
           deviceApi: {
             listDevices: vi.fn().mockResolvedValue([]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
             listDirectories: vi.fn(),
           },
           chatStream: {
@@ -403,6 +428,8 @@ describe('WorkbenchProvider', () => {
           },
           deviceApi: {
             listDevices: vi.fn().mockResolvedValue([]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
             listDirectories: vi.fn(),
           },
           chatStream: {
@@ -428,5 +455,88 @@ describe('WorkbenchProvider', () => {
         })
       )
     )
+  })
+
+  test('clears the open task and messages after archiving all chats', async () => {
+    const archiveAllChats = vi.fn().mockResolvedValue({ message: 'ok', count: 1 })
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: { listModels: vi.fn().mockResolvedValue({ data: [] }) },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({ items: [] }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail: vi.fn().mockResolvedValue({
+              id: 8,
+              title: 'Existing task',
+              status: 'SUCCESS',
+              task_type: 'code',
+              created_at: '2026-05-27T00:00:00.000Z',
+              subtasks: [
+                {
+                  id: 9,
+                  role: 'user',
+                  prompt: 'hello',
+                  status: 'SUCCESS',
+                  created_at: '2026-05-27T00:01:00.000Z',
+                },
+              ],
+            }),
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats,
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+          },
+          chatStream: {
+            joinTask: vi.fn(),
+            leaveTask: vi.fn(),
+            sendMessage: vi.fn(),
+            subscribe: vi.fn(() => vi.fn()),
+          },
+        }}
+      >
+        <ArchiveProbe />
+      </WorkbenchProvider>
+    )
+
+    await userEvent.click(await screen.findByText('open task'))
+    await waitFor(() =>
+      expect(screen.getByTestId('current-task-title')).toHaveTextContent('Existing task')
+    )
+    expect(screen.getByTestId('message-count')).toHaveTextContent('1')
+
+    await userEvent.click(screen.getByText('archive all'))
+
+    await waitFor(() => expect(archiveAllChats).toHaveBeenCalledTimes(1))
+    expect(screen.getByTestId('current-task-title')).toHaveTextContent('no-task')
+    expect(screen.getByTestId('message-count')).toHaveTextContent('0')
   })
 })

@@ -80,6 +80,8 @@ export interface WorkbenchContextValue {
   unarchiveTask: (taskId: number) => Promise<void>
   deleteTask: (taskId: number) => Promise<void>
   deleteArchivedTasks: () => Promise<void>
+  getDeviceHomeDirectory: (deviceId: string) => Promise<string>
+  getProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   listDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   setInput: (input: string) => void
   sendCurrentInput: () => Promise<void>
@@ -315,6 +317,7 @@ export function WorkbenchProvider({
   const archiveAllChats = useCallback(async () => {
     await resolvedServices.taskApi.archiveAllChats()
     await refreshWorkLists()
+    dispatch({ type: 'current_task_cleared' })
     dispatchMessages({ type: 'reset', messages: [] })
   }, [refreshWorkLists, resolvedServices])
 
@@ -322,6 +325,7 @@ export function WorkbenchProvider({
     async (projectId: number) => {
       await resolvedServices.projectApi.archiveProjectChats(projectId)
       await refreshWorkLists()
+      dispatch({ type: 'current_task_cleared' })
       dispatchMessages({ type: 'reset', messages: [] })
     },
     [refreshWorkLists, resolvedServices]
@@ -332,6 +336,7 @@ export function WorkbenchProvider({
       await resolvedServices.taskApi.archiveTask(taskId)
       await refreshWorkLists()
       if (state.currentTask?.id === taskId) {
+        dispatch({ type: 'current_task_cleared' })
         dispatchMessages({ type: 'reset', messages: [] })
       }
     },
@@ -371,6 +376,16 @@ export function WorkbenchProvider({
     await resolvedServices.taskApi.deleteArchivedTasks()
     await refreshWorkLists()
   }, [refreshWorkLists, resolvedServices])
+
+  const getDeviceHomeDirectory = useCallback(
+    (deviceId: string) => resolvedServices.deviceApi.getHomeDirectory(deviceId),
+    [resolvedServices]
+  )
+
+  const getProjectWorkspaceRoot = useCallback(
+    (deviceId: string) => resolvedServices.deviceApi.getProjectWorkspaceRoot(deviceId),
+    [resolvedServices]
+  )
 
   const listDeviceDirectories = useCallback(
     (deviceId: string, path: string) =>
@@ -492,6 +507,8 @@ export function WorkbenchProvider({
     unarchiveTask,
     deleteTask,
     deleteArchivedTasks,
+    getDeviceHomeDirectory,
+    getProjectWorkspaceRoot,
     listDeviceDirectories,
     setInput,
     sendCurrentInput,

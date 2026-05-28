@@ -97,6 +97,16 @@ def create_task_with_optional_id(
     return result
 
 
+@router.post("/archive", response_model=TaskArchiveBatchResponse)
+def archive_all_user_chats(
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Archive all active personal chat/code tasks owned by the current user."""
+    count = task_kinds_service.archive_all_user_chats(db=db, user_id=current_user.id)
+    return {"message": "Chats archived successfully", "count": count}
+
+
 @router.post("/{task_id}", response_model=TaskInDB, status_code=status.HTTP_201_CREATED)
 def create_task_with_id(
     task_create: TaskCreate,
@@ -248,16 +258,6 @@ def delete_archived_tasks(
     """Soft delete all archived chats owned by the current user."""
     count = task_kinds_service.delete_all_archived_tasks(db=db, user_id=current_user.id)
     return {"message": "Archived chats deleted successfully", "count": count}
-
-
-@router.post("/archive", response_model=TaskArchiveBatchResponse)
-def archive_all_user_chats(
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Archive all active personal chat/code tasks owned by the current user."""
-    count = task_kinds_service.archive_all_user_chats(db=db, user_id=current_user.id)
-    return {"message": "Chats archived successfully", "count": count}
 
 
 @router.get("/{task_id}", response_model=TaskDetail)

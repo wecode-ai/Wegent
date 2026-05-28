@@ -11,6 +11,9 @@ import { MobileDrawer } from './MobileDrawer'
 interface MobileWorkbenchLayoutProps {
   state: WorkbenchState
   messages: WorkbenchMessage[]
+  activeItem?: 'chat' | 'plugins' | 'automation'
+  onNewChat?: () => void
+  onOpenPlugins?: () => void
   projectChat: ProjectChatControls
   projectWork: ProjectWorkControls
   onSelectProject: (projectId: number) => void
@@ -27,6 +30,8 @@ interface MobileWorkbenchLayoutProps {
   onUnarchiveTask?: (taskId: number) => Promise<void>
   onDeleteTask?: (taskId: number) => Promise<void>
   onDeleteArchivedTasks?: () => Promise<void>
+  onGetDeviceHomeDirectory?: (deviceId: string) => Promise<string>
+  onGetProjectWorkspaceRoot?: (deviceId: string) => Promise<string>
   onListDeviceDirectories?: (deviceId: string, path: string) => Promise<string[]>
   onInputChange: (value: string) => void
   onSend: () => void
