@@ -8,7 +8,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import TaskListSection from '@/features/tasks/components/sidebar/TaskListSection'
 import type { Task } from '@/types/api'
 
-const createTask = (id: number): Task => ({
+const createTask = (id: number, overrides: Partial<Task> = {}): Task => ({
   id,
   title: `Conversation ${id}`,
   team_id: 1,
@@ -28,6 +28,7 @@ const createTask = (id: number): Task => ({
   created_at: '2026-01-01T00:00:00.000Z',
   updated_at: '2026-01-01T00:00:00.000Z',
   completed_at: '2026-01-01T00:00:00.000Z',
+  ...overrides,
 })
 
 const mockPush = jest.fn()
@@ -82,6 +83,12 @@ jest.mock('@/features/tasks/components/sidebar/TaskMenu', () => ({
   default: () => <div data-testid="task-menu" />,
 }))
 
+jest.mock('@/features/settings/components/teams/TeamIconDisplay', () => ({
+  TeamIconDisplay: ({ iconId }: { iconId?: string | null }) => (
+    <span data-testid="task-team-icon">{iconId}</span>
+  ),
+}))
+
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (key: string) => key,
@@ -89,6 +96,33 @@ jest.mock('@/hooks/useTranslation', () => ({
 }))
 
 describe('TaskListSection', () => {
+  it('uses the task team icon when available', () => {
+    const task = createTask(1, { team_icon: 'sparkles' })
+
+    render(<TaskListSection tasks={[task]} title="History" />)
+
+    expect(screen.getByTestId('task-team-icon')).toHaveTextContent('sparkles')
+  })
+
+  it('shows team information in the task hover tooltip', () => {
+    const task = createTask(1, {
+      team_name: 'code-agent',
+      team_display_name: 'Code Agent',
+    })
+
+    render(<TaskListSection tasks={[task]} title="History" />)
+
+    expect(screen.getByText('Code Agent')).toBeInTheDocument()
+  })
+
+  it('falls back to team id when task source names are missing', () => {
+    const task = createTask(1, { team_id: 42 })
+
+    render(<TaskListSection tasks={[task]} title="History" />)
+
+    expect(screen.getByText('common:teamSelector.agent_label #42')).toBeInTheDocument()
+  })
+
   it('limits visible tasks and expands remaining tasks from the more action', () => {
     const tasks = Array.from({ length: 6 }, (_, index) => createTask(index + 1))
 

@@ -6,7 +6,7 @@ import '@testing-library/jest-dom'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 
 import TaskSidebar, { SIDEBAR_NAV_CONFIG } from '@/features/tasks/components/sidebar/TaskSidebar'
-import type { Task, TaskHistoryGroup } from '@/types/api'
+import type { Task } from '@/types/api'
 
 const createTask = (overrides: Partial<Task>): Task => ({
   id: overrides.id ?? 1,
@@ -35,7 +35,6 @@ const mockTaskContext = {
   tasks: [] as Task[],
   groupTasks: [] as Task[],
   personalTasks: [] as Task[],
-  personalTaskGroups: [] as TaskHistoryGroup[],
   loadMore: jest.fn(),
   loadAllGroupTasks: jest.fn(),
   loadMoreGroupTasks: jest.fn(),
@@ -177,7 +176,6 @@ describe('TaskSidebar scroll structure', () => {
       tasks: [],
       groupTasks: [],
       personalTasks: [],
-      personalTaskGroups: [],
       loadMore: jest.fn(),
       loadAllGroupTasks: jest.fn(),
       loadMoreGroupTasks: jest.fn(),
@@ -386,53 +384,22 @@ describe('TaskSidebar scroll structure', () => {
     expect(within(groupDock).getByText('Group chat message')).toBeInTheDocument()
   })
 
-  it('renders personal history grouped by agent and device for the current page', () => {
+  it('renders personal history as a flat list', () => {
     const agentTask = createTask({ id: 1, title: 'Agent conversation' })
     const deviceTask = createTask({ id: 2, title: 'Device conversation' })
     mockTaskContext.personalTasks = [agentTask, deviceTask]
-    mockTaskContext.personalTaskGroups = [
-      {
-        group_type: 'team',
-        group_key: 'team:1',
-        team_id: 1,
-        team_name: 'code-agent',
-        team_namespace: 'default',
-        team_display_name: 'Code Agent',
-        team_icon: 'sparkles',
-        device_id: null,
-        device_name: null,
-        items: [agentTask],
-      },
-      {
-        group_type: 'device',
-        group_key: 'device:mac-studio',
-        team_id: null,
-        team_name: null,
-        team_namespace: null,
-        team_display_name: null,
-        team_icon: null,
-        device_id: 'mac-studio',
-        device_name: 'Mac Studio',
-        items: [deviceTask],
-      },
-    ]
 
     render(
       <TaskSidebar isMobileSidebarOpen={false} setIsMobileSidebarOpen={jest.fn()} pageType="chat" />
     )
 
-    expect(screen.getAllByText('Code Agent')[0]).toBeInTheDocument()
-    expect(screen.getAllByTestId('task-history-agent-icon')[0]).toHaveClass(
-      'rounded-full',
-      'bg-primary/10',
-      'text-primary'
-    )
-    expect(screen.getAllByText('Mac Studio')[0]).toBeInTheDocument()
-    expect(screen.getAllByText('Agent conversation')[0]).toBeInTheDocument()
-    expect(screen.getAllByText('Device conversation')[0]).toBeInTheDocument()
+    const sections = screen.getAllByTestId('task-list-section')
+
+    expect(within(sections[0]).getByText('Agent conversation')).toBeInTheDocument()
+    expect(within(sections[0]).getByText('Device conversation')).toBeInTheDocument()
   })
 
-  it('shows all loaded conversations in each agent history group without a nested more action', () => {
+  it('shows all loaded conversations in one personal history list', () => {
     const agentTasks = Array.from({ length: 6 }, (_, index) =>
       createTask({ id: index + 1, title: `Agent conversation ${index + 1}` })
     )
@@ -440,32 +407,6 @@ describe('TaskSidebar scroll structure', () => {
       createTask({ id: index + 101, title: `Device conversation ${index + 1}` })
     )
     mockTaskContext.personalTasks = [...agentTasks, ...deviceTasks]
-    mockTaskContext.personalTaskGroups = [
-      {
-        group_type: 'team',
-        group_key: 'team:1',
-        team_id: 1,
-        team_name: 'code-agent',
-        team_namespace: 'default',
-        team_display_name: 'Code Agent',
-        team_icon: 'sparkles',
-        device_id: null,
-        device_name: null,
-        items: agentTasks,
-      },
-      {
-        group_type: 'device',
-        group_key: 'device:mac-studio',
-        team_id: null,
-        team_name: null,
-        team_namespace: null,
-        team_display_name: null,
-        team_icon: null,
-        device_id: 'mac-studio',
-        device_name: 'Mac Studio',
-        items: deviceTasks,
-      },
-    ]
 
     render(
       <TaskSidebar isMobileSidebarOpen={false} setIsMobileSidebarOpen={jest.fn()} pageType="chat" />
@@ -474,29 +415,15 @@ describe('TaskSidebar scroll structure', () => {
     const sections = screen.getAllByTestId('task-list-section')
 
     expect(sections[0]).toHaveAttribute('data-initial-visible-count', '')
-    expect(sections[0]).toHaveAttribute('data-title-class-name', 'pl-px pr-2')
+    expect(sections[0]).toHaveAttribute('data-title-class-name', '')
     expect(within(sections[0]).getByText('Agent conversation 6')).toBeInTheDocument()
-    expect(sections[1]).toHaveAttribute('data-initial-visible-count', '')
+    expect(within(sections[0]).getByText('Device conversation 6')).toBeInTheDocument()
   })
 
   it('loads more personal history from the global load more button', () => {
     const agentTask = createTask({ id: 1, title: 'Agent conversation' })
     const loadMorePersonalTasks = jest.fn()
     mockTaskContext.personalTasks = [agentTask]
-    mockTaskContext.personalTaskGroups = [
-      {
-        group_type: 'team',
-        group_key: 'team:1',
-        team_id: 1,
-        team_name: 'code-agent',
-        team_namespace: 'default',
-        team_display_name: 'Code Agent',
-        team_icon: 'sparkles',
-        device_id: null,
-        device_name: null,
-        items: [agentTask],
-      },
-    ]
     mockTaskContext.hasMorePersonalTasks = true
     mockTaskContext.loadMorePersonalTasks = loadMorePersonalTasks
 

@@ -4,14 +4,7 @@
 
 import { apiClient } from './client'
 import { getToken } from './user'
-import {
-  Task,
-  PaginationParams,
-  TaskStatus,
-  SuccessMessage,
-  TaskDetail,
-  TaskHistoryGroup,
-} from '../types/api'
+import { Task, PaginationParams, TaskStatus, SuccessMessage, TaskDetail } from '../types/api'
 import { getApiBaseUrl } from '@/lib/runtime-config'
 
 // Task Request/Response Types
@@ -56,11 +49,6 @@ export interface UpdateTaskRequest {
 export interface TaskListResponse {
   total: number
   items: Task[]
-}
-
-export interface TaskHistoryGroupListResponse {
-  total: number
-  items: TaskHistoryGroup[]
 }
 
 // Diff related types
@@ -303,19 +291,6 @@ export const taskApis = {
       query.append('types', params.types.join(','))
     }
     return apiClient.get(`/tasks/lite/personal?${query}`)
-  },
-
-  getPersonalTaskGroupsLite: async (
-    params?: PaginationParams & { status?: TaskStatus; types?: string[] }
-  ): Promise<TaskHistoryGroupListResponse> => {
-    const query = new URLSearchParams()
-    if (params?.limit) query.append('limit', params.limit.toString())
-    if (params?.page) query.append('page', params.page.toString())
-    if (params?.status) query.append('status', params.status)
-    if (params?.types && params.types.length > 0) {
-      query.append('types', params.types.join(','))
-    }
-    return apiClient.get(`/tasks/lite/personal/grouped?${query}`)
   },
 
   searchTasks: async (title: string, params?: PaginationParams): Promise<TaskListResponse> => {

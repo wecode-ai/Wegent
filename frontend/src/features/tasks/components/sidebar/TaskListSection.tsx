@@ -32,6 +32,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { useDraggable } from '@dnd-kit/core'
 import { cn } from '@/lib/utils'
 import { useProjectContext } from '@/features/projects'
+import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDisplay'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -482,6 +483,10 @@ export default function TaskListSection({
   }
 
   const getTaskTypeIcon = (task: Task) => {
+    if (!task.device_id && task.team_id) {
+      return <TeamIconDisplay iconId={task.team_icon} size="sm" className="text-text-primary" />
+    }
+
     let taskType: TaskType | undefined = task.task_type
     if (!taskType) {
       if (task.git_repo && task.git_repo.trim() !== '') {
@@ -513,6 +518,19 @@ export default function TaskListSection({
     tasks.length > initialVisibleCount
   const shouldLimitTasks = canToggleVisibleTasks && !isExpanded
   const visibleTasks = shouldLimitTasks ? tasks.slice(0, initialVisibleCount) : tasks
+  const getTaskSourceLabel = (task: Task) => {
+    if (task.device_id) {
+      return task.device_name || task.device_id
+    }
+
+    return (
+      task.team_display_name ||
+      task.team_name ||
+      (task.team_id
+        ? `${t('common:teamSelector.agent_label')} #${task.team_id}`
+        : t('common:tasks.unknown_agent'))
+    )
+  }
 
   return (
     <div className={`mb-2 w-full ${isCollapsed ? 'px-2' : ''}`}>
@@ -537,6 +555,7 @@ export default function TaskListSection({
       <div className="space-y-0.5">
         {visibleTasks.map(task => {
           const showMenu = hoveredTaskId === task.id || longPressTaskId === task.id
+          const taskSourceLabel = getTaskSourceLabel(task)
 
           // Collapsed mode: Show only status icon with tooltip
           if (isCollapsed) {
@@ -584,6 +603,7 @@ export default function TaskListSection({
                   </TooltipTrigger>
                   <TooltipContent side="right" className="max-w-xs">
                     <p className="font-medium">{truncatedTitle}</p>
+                    {taskSourceLabel && <p className="text-xs">{taskSourceLabel}</p>}
                     <p className="text-xs text-text-muted">
                       {taskTypeLabel} · {formatTimeAgo(task.created_at)}
                     </p>
@@ -715,6 +735,7 @@ export default function TaskListSection({
                   </TooltipTrigger>
                   <TooltipContent side="left" className="max-w-xs">
                     <p className="font-medium">{localTitles[task.id] ?? task.title}</p>
+                    {taskSourceLabel && <p className="text-xs">{taskSourceLabel}</p>}
                     <p className="text-xs text-text-muted">
                       {taskTypeLabel} · {formatTimeAgo(task.created_at)}
                     </p>

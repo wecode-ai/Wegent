@@ -428,19 +428,6 @@ export interface Task {
   knowledge_base_id?: number // Knowledge base ID for knowledge type tasks
 }
 
-export interface TaskHistoryGroup {
-  group_type: 'team' | 'device'
-  group_key: string
-  team_id: number | null
-  team_name?: string | null
-  team_namespace?: string | null
-  team_display_name?: string | null
-  team_icon?: string | null
-  device_id?: string | null
-  device_name?: string | null
-  items: Task[]
-}
-
 /** GitHub repository new structure */
 export interface GitRepoInfo {
   git_repo_id: number

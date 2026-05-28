@@ -21,7 +21,6 @@ jest.mock('@/apis/tasks', () => ({
     getTasksLite: jest.fn(),
     getGroupTasksLite: jest.fn(),
     getPersonalTasksLite: jest.fn(),
-    getPersonalTaskGroupsLite: jest.fn(),
     searchTasks: jest.fn(),
     getTaskDetail: jest.fn(),
   },
@@ -122,7 +121,6 @@ describe('TaskContext group task loading', () => {
       }
     })
     mockedTaskApis.getPersonalTasksLite.mockResolvedValue(taskListResponse([]))
-    mockedTaskApis.getPersonalTaskGroupsLite.mockResolvedValue({ total: 0, items: [] })
     mockedTaskApis.getTasksLite.mockResolvedValue(taskListResponse([]))
     mockedTaskApis.searchTasks.mockResolvedValue(taskListResponse([]))
   })
@@ -135,7 +133,7 @@ describe('TaskContext group task loading', () => {
     )
 
     await waitFor(() => {
-      expect(mockedTaskApis.getPersonalTaskGroupsLite).toHaveBeenCalledWith({ page: 1, limit: 50 })
+      expect(mockedTaskApis.getPersonalTasksLite).toHaveBeenCalledWith({ page: 1, limit: 50 })
     })
     expect(screen.getByTestId('group-count')).toHaveTextContent('0')
     expect(mockedTaskApis.getGroupTasksLite).not.toHaveBeenCalled()
@@ -155,24 +153,9 @@ describe('TaskContext group task loading', () => {
     expect(contextProbe.current?.hasMoreGroupTasks).toBe(false)
   })
 
-  it('stops personal grouped history pagination when the last page is partial', async () => {
-    mockedTaskApis.getPersonalTaskGroupsLite.mockResolvedValueOnce({
-      total: 1,
-      items: [
-        {
-          group_type: 'team',
-          group_key: 'team:1',
-          team_id: 1,
-          team_name: 'support-agent',
-          team_namespace: 'default',
-          team_display_name: 'Support Agent',
-          team_icon: null,
-          device_id: null,
-          device_name: null,
-          items: [createGroupTask(1)],
-        },
-      ],
-    })
+  it('stops personal history pagination when the last page is partial', async () => {
+    const personalTask = createPersonalTask(1, 1)
+    mockedTaskApis.getPersonalTasksLite.mockResolvedValueOnce(taskListResponse([personalTask]))
 
     render(
       <TaskContextProvider>
@@ -181,56 +164,28 @@ describe('TaskContext group task loading', () => {
     )
 
     await waitFor(() => {
-      expect(mockedTaskApis.getPersonalTaskGroupsLite).toHaveBeenCalledWith({ page: 1, limit: 50 })
+      expect(mockedTaskApis.getPersonalTasksLite).toHaveBeenCalledWith({ page: 1, limit: 50 })
     })
 
     await waitFor(() => {
       expect(contextProbe.current?.personalTasks).toHaveLength(1)
     })
+    expect(contextProbe.current?.personalTasks[0]).toMatchObject({
+      team_name: personalTask.team_name,
+      team_display_name: personalTask.team_display_name,
+    })
     expect(contextProbe.current?.hasMorePersonalTasks).toBe(false)
   })
 
-  it('appends the next grouped personal history page when load more is requested', async () => {
+  it('appends the next personal history page when load more is requested', async () => {
     const firstPageTasks = Array.from({ length: 50 }, (_, index) =>
       createPersonalTask(index + 1, 1)
     )
     const secondPageTask = createPersonalTask(51, 2)
 
-    mockedTaskApis.getPersonalTaskGroupsLite
-      .mockResolvedValueOnce({
-        total: 51,
-        items: [
-          {
-            group_type: 'team',
-            group_key: 'team:1',
-            team_id: 1,
-            team_name: 'team-1',
-            team_namespace: 'default',
-            team_display_name: 'Team 1',
-            team_icon: null,
-            device_id: null,
-            device_name: null,
-            items: firstPageTasks,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({
-        total: 51,
-        items: [
-          {
-            group_type: 'team',
-            group_key: 'team:2',
-            team_id: 2,
-            team_name: 'team-2',
-            team_namespace: 'default',
-            team_display_name: 'Team 2',
-            team_icon: null,
-            device_id: null,
-            device_name: null,
-            items: [secondPageTask],
-          },
-        ],
-      })
+    mockedTaskApis.getPersonalTasksLite
+      .mockResolvedValueOnce(taskListResponse(firstPageTasks))
+      .mockResolvedValueOnce(taskListResponse([secondPageTask]))
 
     render(
       <TaskContextProvider>
@@ -249,11 +204,7 @@ describe('TaskContext group task loading', () => {
     await waitFor(() => {
       expect(contextProbe.current?.personalTasks).toHaveLength(51)
     })
-    expect(mockedTaskApis.getPersonalTaskGroupsLite).toHaveBeenCalledWith({ page: 2, limit: 50 })
-    expect(contextProbe.current?.personalTaskGroups.map(group => group.group_key)).toEqual([
-      'team:1',
-      'team:2',
-    ])
+    expect(mockedTaskApis.getPersonalTasksLite).toHaveBeenCalledWith({ page: 2, limit: 50 })
     expect(contextProbe.current?.hasMorePersonalTasks).toBe(false)
   })
 
@@ -263,58 +214,10 @@ describe('TaskContext group task loading', () => {
     )
     const thirdPageTask = createPersonalTask(101, 2)
 
-    mockedTaskApis.getPersonalTaskGroupsLite
-      .mockResolvedValueOnce({
-        total: 101,
-        items: [
-          {
-            group_type: 'team',
-            group_key: 'team:1',
-            team_id: 1,
-            team_name: 'team-1',
-            team_namespace: 'default',
-            team_display_name: 'Team 1',
-            team_icon: null,
-            device_id: null,
-            device_name: null,
-            items: firstPageTasks,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({
-        total: 101,
-        items: [
-          {
-            group_type: 'team',
-            group_key: 'team:1',
-            team_id: 1,
-            team_name: 'team-1',
-            team_namespace: 'default',
-            team_display_name: 'Team 1',
-            team_icon: null,
-            device_id: null,
-            device_name: null,
-            items: firstPageTasks,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({
-        total: 101,
-        items: [
-          {
-            group_type: 'team',
-            group_key: 'team:2',
-            team_id: 2,
-            team_name: 'team-2',
-            team_namespace: 'default',
-            team_display_name: 'Team 2',
-            team_icon: null,
-            device_id: null,
-            device_name: null,
-            items: [thirdPageTask],
-          },
-        ],
-      })
+    mockedTaskApis.getPersonalTasksLite
+      .mockResolvedValueOnce(taskListResponse(firstPageTasks))
+      .mockResolvedValueOnce(taskListResponse(firstPageTasks))
+      .mockResolvedValueOnce(taskListResponse([thirdPageTask]))
 
     render(
       <TaskContextProvider>
@@ -333,12 +236,8 @@ describe('TaskContext group task loading', () => {
     await waitFor(() => {
       expect(contextProbe.current?.personalTasks).toHaveLength(51)
     })
-    expect(mockedTaskApis.getPersonalTaskGroupsLite).toHaveBeenCalledWith({ page: 2, limit: 50 })
-    expect(mockedTaskApis.getPersonalTaskGroupsLite).toHaveBeenCalledWith({ page: 3, limit: 50 })
-    expect(contextProbe.current?.personalTaskGroups.map(group => group.group_key)).toEqual([
-      'team:1',
-      'team:2',
-    ])
+    expect(mockedTaskApis.getPersonalTasksLite).toHaveBeenCalledWith({ page: 2, limit: 50 })
+    expect(mockedTaskApis.getPersonalTasksLite).toHaveBeenCalledWith({ page: 3, limit: 50 })
     expect(contextProbe.current?.hasMorePersonalTasks).toBe(false)
   })
 })
