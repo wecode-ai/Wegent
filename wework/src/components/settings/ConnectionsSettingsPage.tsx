@@ -229,7 +229,7 @@ export function ConnectionsSettingsPage({ onBack }: ConnectionsSettingsPageProps
   }, [])
 
   useEffect(() => {
-    fetchDevices()
+    void Promise.resolve().then(fetchDevices)
   }, [fetchDevices])
 
   return (

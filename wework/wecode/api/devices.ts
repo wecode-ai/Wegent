@@ -1,4 +1,4 @@
-import type { CloudDeviceMetricsResponse, VncConfigResponse } from '@wecode/types/devices'
+import type { CloudDeviceMetricsResponse, MetricsHistoryResponse, VncConfigResponse } from '@wecode/types/devices'
 import { createHttpClient } from '@/api/http'
 import { getRuntimeConfig } from '@/config/runtime'
 
@@ -11,6 +11,12 @@ export const cloudDeviceInternalApis = {
   async getMetrics(deviceId: string): Promise<CloudDeviceMetricsResponse> {
     return getClient().post<CloudDeviceMetricsResponse>(
       `/cloud-devices/${deviceId}/metrics`,
+    )
+  },
+
+  async getMetricsHistory(deviceId: string): Promise<MetricsHistoryResponse> {
+    return getClient().post<MetricsHistoryResponse>(
+      `/cloud-devices/${deviceId}/metrics/history`,
     )
   },
 

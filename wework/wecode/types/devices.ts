@@ -4,6 +4,12 @@ export interface CloudDeviceMetricsResponse {
   disk_usage: number | null
 }
 
+export interface MetricsHistoryResponse {
+  cpu: [number, number][]
+  memory: [number, number][]
+  disk: [number, number][]
+}
+
 export interface VncConfigResponse {
   wss_url: string
   signature: string

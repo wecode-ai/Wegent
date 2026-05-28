@@ -504,7 +504,7 @@ async def get_cloud_device_metrics(
                 end=now,
                 step="1m",
             )
-            data = resp.get("data", {}).get("result", [])
+            data = resp.get("data", {}).get("data", {}).get("result", [])
             if data and len(data) > 0:
                 values = data[0].get("values", [])
                 if values:
@@ -523,6 +523,67 @@ async def get_cloud_device_metrics(
         memory_usage=results["memory"],
         disk_usage=results["disk"],
     )
+
+
+@router.post("/{device_id}/metrics/history")
+async def get_cloud_device_metrics_history(
+    device_id: str,
+    user_id: int | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Get 1-hour metrics history for a cloud device.
+
+    Returns time-series data points for CPU, memory, and disk usage.
+    """
+    if not cloud_device_provider.is_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cloud device provider is not configured",
+        )
+
+    device_status = await _get_accessible_cloud_device_status(
+        device_id, db, current_user, user_id
+    )
+    sandbox_id = _resolve_sandbox_id(device_id, device_status)
+
+    import time
+
+    from wecode.service.nevis_client import nevis_client
+
+    now = int(time.time())
+    start = now - 3600  # last 1 hour
+    queries = {
+        "cpu": "max_over_time(syscpuidle:busy{cpu='cpu'})",
+        "memory": "max_over_time(sysmeminfo:memused_percentage)",
+        "disk": "max_over_time(sysdiskinfo:used_size_percentage)",
+    }
+
+    results: dict[str, list] = {"cpu": [], "memory": [], "disk": []}
+
+    async def _fetch_series(key: str, query: str):
+        try:
+            resp = await nevis_client.query_metrics(
+                sandbox_id=sandbox_id,
+                query=query,
+                start=start,
+                end=now,
+                step="1m",
+            )
+            data = resp.get("data", {}).get("data", {}).get("result", [])
+            if data and len(data) > 0:
+                values = data[0].get("values", [])
+                results[key] = [[v[0], float(v[1])] for v in values]
+        except Exception as e:
+            logger.warning(f"Failed to fetch {key} history for {sandbox_id}: {e}")
+
+    await asyncio.gather(
+        _fetch_series("cpu", queries["cpu"]),
+        _fetch_series("memory", queries["memory"]),
+        _fetch_series("disk", queries["disk"]),
+    )
+
+    return results
 
 
 def _build_vnc_wss_url(sandbox_id: str) -> str:
