@@ -158,7 +158,7 @@ export function DiscoverResources({ resourceType, toolbarStart }: DiscoverResour
       >
         {toolbarStart && <div className="flex flex-wrap items-center gap-2">{toolbarStart}</div>}
 
-        <div className="flex flex-col gap-2 sm:flex-row lg:ml-auto lg:min-w-[360px] lg:max-w-xl lg:flex-1">
+        <div className="flex flex-col gap-2 sm:flex-row lg:ml-auto lg:w-full lg:min-w-[360px] lg:max-w-xl lg:flex-none">
           <Input
             value={searchInput}
             onChange={event => setSearchInput(event.target.value)}

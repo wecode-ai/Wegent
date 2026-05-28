@@ -145,6 +145,24 @@ describe('DiscoverResources', () => {
     expect(await screen.findByText('Doc Summary')).toBeInTheDocument()
   })
 
+  it('keeps desktop search controls aligned to the right side of the toolbar', async () => {
+    render(
+      <DiscoverResources
+        resourceType="all"
+        toolbarStart={<div data-testid="resource-filter-slot">资源类型筛选</div>}
+      />
+    )
+
+    const searchInput = screen.getByTestId('resource-library-search-input')
+    const searchControls = searchInput.closest('div')
+
+    expect(searchControls).toHaveClass('lg:ml-auto')
+    expect(searchControls).toHaveClass('lg:flex-none')
+    expect(searchControls).toHaveClass('lg:max-w-xl')
+    expect(searchControls).not.toHaveClass('lg:flex-1')
+    expect(await screen.findByText('Doc Summary')).toBeInTheDocument()
+  })
+
   it('does not render MCP listings returned by the resource library API', async () => {
     mockResourceLibraryApi.listListings.mockResolvedValue({
       items: [
