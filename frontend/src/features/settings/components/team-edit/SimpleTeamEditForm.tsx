@@ -36,6 +36,7 @@ import type { KnowledgeBaseDefaultRef, TaskType } from '@/types/api'
 import { TeamIconPicker } from '../teams/TeamIconPicker'
 import ExecutorModeSelector from './ExecutorModeSelector'
 import { SimpleConfigGroup, SimpleConfigRow } from './SimpleConfigLayout'
+import QuickPhraseEditor from './QuickPhraseEditor'
 import TeamBindModeCards from './TeamBindModeCards'
 import { parseModelSelectValue, toModelSelectValue } from './model-select-utils'
 import type { SimpleExecutorMode } from './simple-team-edit-utils'
@@ -47,6 +48,8 @@ interface SimpleTeamEditFormProps {
   setDisplayName: (value: string) => void
   description: string
   setDescription: (value: string) => void
+  quickPhrases: string[]
+  onQuickPhrasesChange: (value: string[]) => void
   bindMode: TaskType[]
   setBindMode: (value: TaskType[]) => void
   icon: string | null
@@ -135,6 +138,8 @@ export default function SimpleTeamEditForm({
   setDisplayName,
   description,
   setDescription,
+  quickPhrases,
+  onQuickPhrasesChange,
   bindMode,
   setBindMode,
   icon,
@@ -244,6 +249,14 @@ export default function SimpleTeamEditForm({
               placeholder={t('common:team.description_placeholder')}
               className="bg-base"
             />
+          </SimpleConfigRow>
+
+          <SimpleConfigRow
+            label={t('settings:team.quick_phrases.label')}
+            description={t('settings:team.quick_phrases.description')}
+            align="start"
+          >
+            <QuickPhraseEditor value={quickPhrases} onChange={onQuickPhrasesChange} />
           </SimpleConfigRow>
 
           <SimpleConfigRow
