@@ -1467,6 +1467,7 @@ function ChatAreaContent({
                   teams={teams}
                   selectedTeam={chatState.selectedTeam}
                   onTeamSelect={handleTeamSelect}
+                  onPhraseSelect={phrase => chatState.setTaskInputMessage(phrase)}
                   currentMode={taskType}
                   isLoading={isTeamsLoading}
                   isTeamsLoading={isTeamsLoading}
