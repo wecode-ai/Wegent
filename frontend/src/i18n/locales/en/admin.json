@@ -324,6 +324,9 @@
     "quick_access_selected": "Homepage Agents",
     "quick_access_name": "Name",
     "quick_access_version": "Homepage Agents Version",
+    "quick_launch_functions_title": "System Functions",
+    "quick_launch_functions_description": "Configure QuickCard system functions, target agents, and quick phrases as JSON.",
+    "quick_launch_functions_version": "System Functions Version",
     "version": "Version",
     "success": {
       "updated": "Configuration updated successfully"
@@ -331,6 +334,7 @@
     "errors": {
       "load_failed": "Failed to load configuration",
       "save_failed": "Failed to save configuration",
+      "quick_launch_functions_invalid": "System function configuration must be a valid JSON array",
       "slogan_required": "Both Chinese and English slogan are required",
       "tip_required": "Both Chinese and English tip text are required"
     }

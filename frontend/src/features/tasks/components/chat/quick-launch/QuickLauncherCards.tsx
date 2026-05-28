@@ -1,6 +1,9 @@
 'use client'
 
 import type { ReactNode } from 'react'
+
+import { useTranslation } from '@/hooks/useTranslation'
+
 import type { QuickLauncher } from './types'
 
 const CARD_WIDTH = 154
@@ -64,11 +67,15 @@ export function QuickLauncherCards({
   renderMoreButton,
   renderQuickCreateCard,
 }: QuickLauncherCardsProps) {
+  const { t } = useTranslation()
+
   return (
     <div className="mx-auto mt-6 w-full max-w-[820px] space-y-3" data-testid="quick-launch-cards">
       {systemLaunchers.length > 0 && (
         <section className="space-y-2" data-testid="quick-launch-system-row">
-          <h3 className="px-1 text-xs font-medium text-text-muted">系统功能</h3>
+          <h3 className="px-1 text-xs font-medium text-text-muted">
+            {t('common:teams.quick_launch_system_functions')}
+          </h3>
           <div className="flex flex-wrap items-center justify-center gap-3">
             {systemLaunchers.map(launcher => (
               <LauncherCard
@@ -84,7 +91,9 @@ export function QuickLauncherCards({
 
       {(favoriteLaunchers.length > 0 || renderMoreButton || renderQuickCreateCard) && (
         <section className="space-y-2" data-testid="quick-launch-favorites-row">
-          <h3 className="px-1 text-xs font-medium text-text-muted">收藏智能体</h3>
+          <h3 className="px-1 text-xs font-medium text-text-muted">
+            {t('common:teams.quick_launch_favorite_agents')}
+          </h3>
           <div className="flex flex-wrap items-center justify-center gap-3">
             {favoriteLaunchers.map(launcher => (
               <LauncherCard

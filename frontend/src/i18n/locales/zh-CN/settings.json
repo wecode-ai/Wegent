@@ -115,6 +115,12 @@
       "filterDevice": "设备",
       "goToDevice": "去设备"
     },
+    "quick_phrases": {
+      "label": "快捷短语",
+      "description": "点击 QuickCard 后展示给用户的提示词候选，点击短语会填入发送框。",
+      "placeholder": "例如：帮我创建一个产品路线图 PPT",
+      "add": "添加短语"
+    },
     "simple": {
       "advanced_title": "高级配置",
       "advanced_description": "协作模式、多机器人编排和更细的角色设置都在这里。",

@@ -324,6 +324,9 @@
     "quick_access_selected": "首页智能体",
     "quick_access_name": "名称",
     "quick_access_version": "首页智能体版本",
+    "quick_launch_functions_title": "系统功能",
+    "quick_launch_functions_description": "以 JSON 配置 QuickCard 中的系统功能、目标智能体和快捷短语。",
+    "quick_launch_functions_version": "系统功能版本",
     "version": "版本",
     "success": {
       "updated": "配置更新成功"
@@ -331,6 +334,7 @@
     "errors": {
       "load_failed": "加载配置失败",
       "save_failed": "保存配置失败",
+      "quick_launch_functions_invalid": "系统功能配置必须是合法的 JSON 数组",
       "slogan_required": "中英文 Slogan 均为必填项",
       "tip_required": "中英文提示内容均为必填项"
     }

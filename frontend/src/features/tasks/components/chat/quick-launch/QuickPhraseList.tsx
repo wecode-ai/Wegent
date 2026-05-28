@@ -1,6 +1,9 @@
 'use client'
 
 import { ArrowLeft } from 'lucide-react'
+
+import { useTranslation } from '@/hooks/useTranslation'
+
 import type { QuickLauncher } from './types'
 
 interface QuickPhraseListProps {
@@ -10,6 +13,8 @@ interface QuickPhraseListProps {
 }
 
 export function QuickPhraseList({ launcher, onBack, onPhraseSelect }: QuickPhraseListProps) {
+  const { t } = useTranslation()
+
   return (
     <div className="mx-auto mt-6 w-full max-w-[620px]" data-testid="quick-phrase-list">
       <button
@@ -38,7 +43,7 @@ export function QuickPhraseList({ launcher, onBack, onPhraseSelect }: QuickPhras
         </div>
       ) : (
         <div className="rounded-lg border border-border bg-base px-3 py-4 text-sm text-text-muted">
-          暂无快捷短语
+          {t('common:teams.quick_launch_empty_phrases')}
         </div>
       )}
     </div>
