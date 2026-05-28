@@ -5,7 +5,6 @@
 import '@testing-library/jest-dom'
 import { render, screen } from '@testing-library/react'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
-import { SANDBOXED_HTML_SEND_TO_CHAT_EVENT } from '@/components/common/SandboxedHtmlFrame'
 
 jest.mock('next/dynamic', () => () => {
   const DynamicComponent = () => null
@@ -52,12 +51,10 @@ title: Test
     expect(screen.getByText('# Body')).toBeInTheDocument()
   })
 
-  it('renders artifact HTML in a sandboxed iframe instead of the host markdown tree', () => {
-    const onSendMessage = jest.fn()
+  it('renders artifact HTML in a sandboxed iframe without exposing chat send APIs', () => {
     const { container } = render(
       <EnhancedMarkdown
         theme="light"
-        onSendMessage={onSendMessage}
         source={`Before
 
 <artifact title="午餐选择卡片">
@@ -87,18 +84,7 @@ After`}
     expect(iframe).toBeInTheDocument()
     expect(iframe).toHaveAttribute('sandbox', 'allow-scripts')
     expect(iframe).toHaveAttribute('srcdoc', expect.stringContaining('body { background: red; }'))
-    expect(iframe).toHaveAttribute('srcdoc', expect.stringContaining('window.sendToChat'))
-
-    window.dispatchEvent(
-      new MessageEvent('message', {
-        source: iframe?.contentWindow,
-        data: {
-          type: SANDBOXED_HTML_SEND_TO_CHAT_EVENT,
-          message: ' 我选择火锅 ',
-        },
-      })
-    )
-
-    expect(onSendMessage).toHaveBeenCalledWith('我选择火锅')
+    expect(iframe).not.toHaveAttribute('srcdoc', expect.stringContaining('window.sendToChat'))
+    expect(iframe).not.toHaveAttribute('srcdoc', expect.stringContaining('send-to-chat'))
   })
 })

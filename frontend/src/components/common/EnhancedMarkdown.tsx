@@ -39,7 +39,6 @@ const MermaidDiagram = dynamic(() => import('./MermaidDiagram'), {
 interface EnhancedMarkdownProps {
   source: string
   theme: 'light' | 'dark'
-  onSendMessage?: (content: string) => void
   /** Custom components to override default rendering */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   components?: Record<string, React.ComponentType<any>>
@@ -136,15 +135,7 @@ function splitSpecialMarkdownBlocks(markdown: string): ContentPart[] {
   return parts
 }
 
-function ArtifactPreview({
-  title,
-  html,
-  onSendMessage,
-}: {
-  title: string
-  html: string
-  onSendMessage?: (content: string) => void
-}) {
+function ArtifactPreview({ title, html }: { title: string; html: string }) {
   return (
     <div className="my-4 overflow-hidden rounded-lg border border-border bg-surface">
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
@@ -155,7 +146,6 @@ function ArtifactPreview({
         content={html}
         className="block h-[520px] max-h-[70vh] min-h-[320px] w-full border-0 bg-white"
         testId="artifact-preview-iframe"
-        onSendMessage={onSendMessage}
       />
     </div>
   )
@@ -646,7 +636,6 @@ function preprocessCjkBoldEdgeCases(text: string): string {
 export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   source,
   theme,
-  onSendMessage,
   components,
 }: EnhancedMarkdownProps) {
   // Extract frontmatter before processing
@@ -809,12 +798,7 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
 
         if (part.type === 'artifact') {
           return (
-            <ArtifactPreview
-              key={`artifact-${index}`}
-              title={part.title}
-              html={part.content}
-              onSendMessage={onSendMessage}
-            />
+            <ArtifactPreview key={`artifact-${index}`} title={part.title} html={part.content} />
           )
         }
 
