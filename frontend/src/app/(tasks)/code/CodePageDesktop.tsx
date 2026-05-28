@@ -5,6 +5,7 @@
 'use client'
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
+import dynamic from 'next/dynamic'
 import { useSearchParams } from 'next/navigation'
 import { useTeamContext } from '@/contexts/TeamContext'
 import TopNavigation from '@/features/layout/TopNavigation'
@@ -12,7 +13,6 @@ import {
   TaskSidebar,
   ResizableSidebar,
   CollapsedSidebarButtons,
-  SearchDialog,
 } from '@/features/tasks/components/sidebar'
 import WorkbenchToggle from '@/features/layout/WorkbenchToggle'
 import { OpenMenu } from '@/features/tasks/components/input'
@@ -26,10 +26,17 @@ import { saveLastTab } from '@/utils/userPreferences'
 import { calculateOpenLinks } from '@/utils/openLinks'
 import { useUser } from '@/features/common/UserContext'
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
-import { Workbench } from '@/features/tasks/components'
 import { ChatArea } from '@/features/tasks/components/chat'
 import { RemoteWorkspaceEntry } from '@/features/tasks/components/remote-workspace'
 import { paths } from '@/config/paths'
+
+const SearchDialog = dynamic(() => import('@/features/tasks/components/sidebar/SearchDialog'), {
+  ssr: false,
+})
+
+const Workbench = dynamic(() => import('@/features/tasks/components/workbench/Workbench'), {
+  ssr: false,
+})
 
 /**
  * Desktop-specific implementation of Code Page
@@ -295,12 +302,14 @@ export function CodePageDesktop() {
         </div>
       </div>
       {/* Search Dialog - rendered at page level for global shortcut support */}
-      <SearchDialog
-        open={isSearchDialogOpen}
-        onOpenChange={setIsSearchDialogOpen}
-        shortcutDisplayText={shortcutDisplayText}
-        pageType="code"
-      />
+      {isSearchDialogOpen && (
+        <SearchDialog
+          open={isSearchDialogOpen}
+          onOpenChange={setIsSearchDialogOpen}
+          shortcutDisplayText={shortcutDisplayText}
+          pageType="code"
+        />
+      )}
     </div>
   )
 }

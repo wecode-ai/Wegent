@@ -5,10 +5,11 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import dynamic from 'next/dynamic'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { useTeamContext } from '@/contexts/TeamContext'
 import TopNavigation from '@/features/layout/TopNavigation'
-import { TaskSidebar, SearchDialog } from '@/features/tasks/components/sidebar'
+import { TaskSidebar } from '@/features/tasks/components/sidebar'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
 import { Team } from '@/types/api'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
@@ -18,6 +19,10 @@ import { useUser } from '@/features/common/UserContext'
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
 import { ChatArea } from '@/features/tasks/components/chat'
 import { RemoteWorkspaceEntry } from '@/features/tasks/components/remote-workspace'
+
+const SearchDialog = dynamic(() => import('@/features/tasks/components/sidebar/SearchDialog'), {
+  ssr: false,
+})
 
 /**
  * Mobile-specific implementation of Code Page
@@ -162,12 +167,14 @@ export function CodePageMobile() {
         </div>
       </div>
       {/* Search Dialog - rendered at page level for global shortcut support */}
-      <SearchDialog
-        open={isSearchDialogOpen}
-        onOpenChange={setIsSearchDialogOpen}
-        shortcutDisplayText={shortcutDisplayText}
-        pageType="code"
-      />
+      {isSearchDialogOpen && (
+        <SearchDialog
+          open={isSearchDialogOpen}
+          onOpenChange={setIsSearchDialogOpen}
+          shortcutDisplayText={shortcutDisplayText}
+          pageType="code"
+        />
+      )}
     </div>
   )
 }
