@@ -172,7 +172,7 @@ export async function sendMessage(params: {
     user_id: 0,
     user_name: '',
     model_id: model_id,
-    force_override_bot_model: force_override_bot_model,
+    force_override_bot_model: Boolean(model_id) || force_override_bot_model,
   }
 
   try {
