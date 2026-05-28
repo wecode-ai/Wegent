@@ -20,7 +20,7 @@ from app.schemas.openapi_response import (
     ShellCallOutputItem,
 )
 from app.services.openapi.helpers import subtask_status_to_message_status
-from app.services.openapi.thinking_tags import wrap_thinking_content
+from app.services.openapi.thinking_tags import strip_legacy_thinking_tags
 
 SHELL_TOOL_NAMES = {"exec", "command_tool"}
 
@@ -112,7 +112,7 @@ def _build_message_content(
         content.append(
             OutputTextContent(
                 type="reasoning",
-                text=wrap_thinking_content(reasoning),
+                text=strip_legacy_thinking_tags(reasoning),
                 annotations=[],
             )
         )

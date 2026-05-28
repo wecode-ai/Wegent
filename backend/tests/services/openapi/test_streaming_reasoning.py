@@ -95,10 +95,9 @@ class TestStreamingServiceReasoning:
         reasoning_deltas = [
             e for e in events if e["type"] == "response.reasoning_summary_text.delta"
         ]
-        assert len(reasoning_deltas) == 3
-        assert reasoning_deltas[0]["delta"] == "<thinking>Step 1: "
+        assert len(reasoning_deltas) == 2
+        assert reasoning_deltas[0]["delta"] == "Step 1: "
         assert reasoning_deltas[1]["delta"] == "Analyze the problem"
-        assert reasoning_deltas[2]["delta"] == "</thinking>"
 
         # Check text events
         text_deltas = [
@@ -180,16 +179,50 @@ class TestStreamingServiceReasoning:
         reasoning_deltas = [
             e for e in events if e["type"] == "response.reasoning_summary_text.delta"
         ]
-        assert len(reasoning_deltas) == 2
-        assert reasoning_deltas[0]["delta"] == "<thinking>Just thinking"
-        assert reasoning_deltas[1]["delta"] == "</thinking>"
+        assert len(reasoning_deltas) == 1
+        assert reasoning_deltas[0]["delta"] == "Just thinking"
 
         # Check final response includes reasoning
         completed_event = [e for e in events if e["type"] == "response.completed"][0]
         output = completed_event["response"]["output"]
         assert len(output) == 1
         assert output[0]["content"][0]["type"] == "reasoning"
-        assert output[0]["content"][0]["text"] == "<thinking>Just thinking</thinking>"
+        assert output[0]["content"][0]["text"] == "Just thinking"
+
+    @pytest.mark.asyncio
+    async def test_reasoning_stream_strips_legacy_thinking_tags(
+        self, streaming_service
+    ):
+        """Reasoning summary deltas should not expose legacy thinking tags."""
+
+        async def reasoning_stream():
+            yield StreamingChunk(type="reasoning", content="<thinking>用户")
+            yield StreamingChunk(type="reasoning", content="正在分析</thinking>")
+            yield StreamingChunk(type="text", content="答案")
+
+        events = []
+        async for event in streaming_service.create_streaming_response(
+            response_id="resp_123",
+            model_string="gpt-4",
+            chat_stream=reasoning_stream(),
+            created_at=1234567890,
+        ):
+            events.append(json.loads(event.replace("data: ", "").strip()))
+
+        reasoning_deltas = [
+            e["delta"]
+            for e in events
+            if e["type"] == "response.reasoning_summary_text.delta"
+        ]
+        assert reasoning_deltas == ["用户", "正在分析"]
+
+        completed = next(e for e in events if e["type"] == "response.completed")
+        reasoning_items = [
+            item
+            for item in completed["response"]["output"]
+            if item["content"][0]["type"] == "reasoning"
+        ]
+        assert reasoning_items[0]["content"][0]["text"] == "用户正在分析"
 
     @pytest.mark.asyncio
     async def test_empty_reasoning_before_text_does_not_emit_close_tag(
