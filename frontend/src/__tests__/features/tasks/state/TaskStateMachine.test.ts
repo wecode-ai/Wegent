@@ -62,6 +62,42 @@ describe('TaskStateMachine', () => {
     })
   })
 
+  it('preserves new done text blocks when inline thinking blocks exist', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.handleChatChunk(42, '', { reasoning_chunk: 'Thought.' })
+    machine.handleChatChunk(42, 'First answer.')
+    machine.handleChatDone(42, 'First answer. Late answer.', {
+      blocks: [
+        {
+          id: 'done-duplicate-text',
+          type: 'text',
+          content: 'First answer.',
+          status: 'done',
+        },
+        {
+          id: 'done-late-text',
+          type: 'text',
+          content: 'Late answer.',
+          status: 'done',
+        },
+      ],
+    })
+
+    const message = machine.getState().messages.get('ai-42')
+    const blocks = message?.result?.blocks ?? []
+
+    expect(blocks.map(block => block.type)).toEqual(['thinking', 'text', 'text'])
+    expect(
+      blocks.map(block => (block.type === 'text' || block.type === 'thinking' ? block.content : ''))
+    ).toEqual(['Thought.', 'First answer.', 'Late answer.'])
+    expect(blocks.every(block => block.status === 'done')).toBe(true)
+  })
+
   it('does not debounce a recovery that exits before the socket is connected', async () => {
     const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1000)
     const consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
