@@ -152,13 +152,15 @@ export function DiscoverResources({ resourceType, toolbarStart }: DiscoverResour
   return (
     <div className="flex flex-col gap-4" data-testid="discover-resources">
       <form
-        className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between"
+        className="flex w-full flex-col gap-2 md:flex-row md:items-center md:justify-between"
         onSubmit={handleSearch}
         data-testid="discover-resources-toolbar"
       >
-        {toolbarStart && <div className="flex flex-wrap items-center gap-2">{toolbarStart}</div>}
+        {toolbarStart && (
+          <div className="flex flex-wrap items-center gap-2 md:min-w-0">{toolbarStart}</div>
+        )}
 
-        <div className="flex flex-col gap-2 sm:flex-row lg:ml-auto lg:w-full lg:min-w-[360px] lg:max-w-xl lg:flex-none">
+        <div className="flex flex-col gap-2 sm:flex-row md:ml-auto md:w-full md:min-w-[320px] md:max-w-xl md:flex-none">
           <Input
             value={searchInput}
             onChange={event => setSearchInput(event.target.value)}
@@ -169,7 +171,7 @@ export function DiscoverResources({ resourceType, toolbarStart }: DiscoverResour
           <Button
             type="submit"
             variant="outline"
-            className="h-11 min-w-[44px] px-4 sm:w-auto lg:h-10"
+            className="h-11 min-w-[44px] px-4 sm:w-auto md:h-10"
             aria-label={t('actions.search')}
             data-testid="resource-library-search-button"
           >

@@ -155,10 +155,14 @@ describe('DiscoverResources', () => {
 
     const searchInput = screen.getByTestId('resource-library-search-input')
     const searchControls = searchInput.closest('div')
+    const toolbar = screen.getByTestId('discover-resources-toolbar')
 
-    expect(searchControls).toHaveClass('lg:ml-auto')
-    expect(searchControls).toHaveClass('lg:flex-none')
-    expect(searchControls).toHaveClass('lg:max-w-xl')
+    expect(toolbar).toHaveClass('w-full')
+    expect(toolbar).toHaveClass('md:flex-row')
+    expect(toolbar).toHaveClass('md:justify-between')
+    expect(searchControls).toHaveClass('md:ml-auto')
+    expect(searchControls).toHaveClass('md:flex-none')
+    expect(searchControls).toHaveClass('md:max-w-xl')
     expect(searchControls).not.toHaveClass('lg:flex-1')
     expect(await screen.findByText('Doc Summary')).toBeInTheDocument()
   })
