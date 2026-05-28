@@ -20,6 +20,13 @@ from app.schemas.admin import (
     QuickAccessTeam,
     WelcomeConfigResponse,
 )
+from app.schemas.quick_launch import (
+    QuickLaunchFavoriteAgent,
+    QuickLaunchFunctionConfig,
+    QuickLaunchFunctionResponse,
+    QuickLaunchResponse,
+    normalize_quick_phrases,
+)
 from app.schemas.subscription import NotificationChannelInfo
 from app.schemas.user import UserCreate, UserInDB, UserUpdate
 from app.services.kind import kind_service
@@ -323,6 +330,65 @@ def create_user(
 
 
 QUICK_ACCESS_CONFIG_KEY = "quick_access_recommended"
+QUICK_LAUNCH_FUNCTIONS_CONFIG_KEY = "quick_launch_functions"
+
+
+def _get_system_config_value(db: Session, key: str) -> tuple[int, dict]:
+    config = db.query(SystemConfig).filter(SystemConfig.config_key == key).first()
+    if not config:
+        return 0, {}
+    return config.version, config.config_value or {}
+
+
+def _get_user_quick_access_team_ids(current_user: User) -> list[int]:
+    preferences = {}
+    if current_user.preferences:
+        try:
+            preferences = json.loads(current_user.preferences)
+        except (json.JSONDecodeError, TypeError):
+            preferences = {}
+
+    quick_access_config = preferences.get("quick_access", {})
+    return quick_access_config.get("teams", [])
+
+
+def _build_favorite_agent(team_id: int) -> Optional[QuickLaunchFavoriteAgent]:
+    team_data = kind_service.get_team_by_id(team_id)
+    if not team_data:
+        return None
+
+    metadata = team_data.get("metadata", {})
+    spec = team_data.get("spec", {})
+    title = metadata.get("displayName") or metadata.get("name", f"Team {team_id}")
+
+    return QuickLaunchFavoriteAgent(
+        id=team_data.get("id", team_id),
+        team_id=team_data.get("id", team_id),
+        name=metadata.get("name", f"team-{team_id}"),
+        title=title,
+        description=spec.get("description"),
+        icon=spec.get("icon"),
+        recommended_mode=spec.get("recommended_mode", "both"),
+        agent_type=team_data.get("agent_type"),
+        quick_phrases=normalize_quick_phrases(spec.get("quick_phrases")),
+    )
+
+
+def _build_system_function(
+    config: QuickLaunchFunctionConfig,
+) -> Optional[QuickLaunchFunctionResponse]:
+    if not config.enabled:
+        return None
+
+    team_data = kind_service.get_team_by_id(config.team_id)
+    if not team_data:
+        return None
+
+    metadata = team_data.get("metadata", {})
+    return QuickLaunchFunctionResponse(
+        **config.model_dump(),
+        name=metadata.get("name", f"team-{config.team_id}"),
+    )
 
 
 @router.get("/quick-access", response_model=QuickAccessResponse)
@@ -410,6 +476,45 @@ async def get_user_quick_access(
         user_version=user_version,
         show_system_recommended=show_system_recommended,
         teams=result_teams,
+    )
+
+
+@router.get("/quick-launch", response_model=QuickLaunchResponse)
+async def get_user_quick_launch(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get homepage launchers split into system functions and user favorite agents.
+    """
+    _, function_config = _get_system_config_value(db, QUICK_LAUNCH_FUNCTIONS_CONFIG_KEY)
+    raw_functions = function_config.get("functions", [])
+    function_configs = [
+        QuickLaunchFunctionConfig(**item)
+        for item in raw_functions
+        if isinstance(item, dict)
+    ]
+    system_functions = [
+        function
+        for function in (
+            _build_system_function(config)
+            for config in sorted(function_configs, key=lambda item: item.order)
+        )
+        if function is not None
+    ]
+
+    favorite_agents = [
+        agent
+        for agent in (
+            _build_favorite_agent(team_id)
+            for team_id in _get_user_quick_access_team_ids(current_user)
+        )
+        if agent is not None
+    ]
+
+    return QuickLaunchResponse(
+        system_functions=system_functions,
+        favorite_agents=favorite_agents,
     )
 
 
