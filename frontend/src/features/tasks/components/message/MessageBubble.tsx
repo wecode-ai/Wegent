@@ -787,6 +787,7 @@ const MessageBubble = memo(
         <EnhancedMarkdown
           source={normalizedResult}
           theme={theme}
+          onSendMessage={onSendMessage}
           components={
             paragraphAction
               ? {
@@ -1326,6 +1327,7 @@ const MessageBubble = memo(
                 <EnhancedMarkdown
                   source={prefixText}
                   theme={theme}
+                  onSendMessage={onSendMessage}
                   components={{
                     a: ({ href, children }) => {
                       if (!href) {
@@ -1355,6 +1357,7 @@ const MessageBubble = memo(
                   <EnhancedMarkdown
                     source={suffixText}
                     theme={theme}
+                    onSendMessage={onSendMessage}
                     components={{
                       a: ({ href, children }) => {
                         if (!href) {
@@ -1386,6 +1389,7 @@ const MessageBubble = memo(
                 <EnhancedMarkdown
                   source={prefixText}
                   theme={theme}
+                  onSendMessage={onSendMessage}
                   components={{
                     a: ({ href, children }) => {
                       if (!href) {
@@ -1418,6 +1422,7 @@ const MessageBubble = memo(
                   <EnhancedMarkdown
                     source={suffixText}
                     theme={theme}
+                    onSendMessage={onSendMessage}
                     components={{
                       a: ({ href, children }) => {
                         if (!href) {
@@ -1649,6 +1654,7 @@ const MessageBubble = memo(
                         subtaskId={msg.subtaskId}
                         currentMessageIndex={index}
                         onAskUserSubmit={onAskUserSubmit}
+                        onSendMessage={onSendMessage}
                       />
                       <SourceReferences sources={msg.sources || msg.result?.sources || []} />
                       <GeminiAnnotations annotations={msg.result?.annotations || []} />
