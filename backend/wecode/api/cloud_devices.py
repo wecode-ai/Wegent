@@ -69,15 +69,6 @@ def _get_bearer_token(request: Request) -> str:
     return token.strip()
 
 
-def _get_bearer_token(request: Request) -> str:
-    """Extract the raw Bearer token from the incoming request."""
-    authorization = request.headers.get("authorization", "")
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer":
-        return ""
-    return token.strip()
-
-
 def _resolve_target_user_id(
     current_user: User,
     target_user_id: int | None,
@@ -281,6 +272,64 @@ async def delete_cloud_device(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete cloud device",
+        )
+
+
+@router.post("/{device_id}/restart")
+async def restart_cloud_device(
+    device_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Restart a cloud device owned by the current user.
+
+    Args:
+        device_id: Cloud device ID.
+
+    Returns:
+        Success message with the resolved sandbox ID.
+
+    Raises:
+        HTTPException 404: If device not found
+        HTTPException 400: If the device cannot be restarted
+        HTTPException 500: If Nevis API call fails
+    """
+    try:
+        restart_result = await cloud_device_provider.restart_device(
+            db=db,
+            user_id=current_user.id,
+            device_id=device_id,
+        )
+        return {
+            "message": "Restart command sent successfully",
+            "device_id": restart_result["device_id"],
+            "sandbox_id": restart_result["sandbox_id"],
+        }
+
+    except ValueError as e:
+        message = str(e)
+        if "not found" in message.lower():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=message,
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=message,
+        )
+
+    except NevisClientError as e:
+        logger.error(f"Nevis API error restarting cloud device: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to restart cloud device: {str(e)}",
+        )
+
+    except Exception as e:
+        logger.exception(f"Unexpected error restarting cloud device: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to restart cloud device",
         )
 
 

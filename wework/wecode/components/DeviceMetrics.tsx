@@ -20,7 +20,7 @@ function getColor(value: number | null): string {
   if (value === null) return '#d1d5db'
   if (value >= 80) return '#f87171'
   if (value >= 60) return '#fbbf24'
-  return '#14B8A6'
+  return '#409eff'
 }
 
 function ResourceMetric({
@@ -50,7 +50,7 @@ function ResourceMetric({
 }
 
 const CHART_COLORS: Record<string, string> = {
-  cpu: '#14B8A6',
+  cpu: '#409eff',
   memory: '#6366f1',
   disk: '#f59e0b',
 }

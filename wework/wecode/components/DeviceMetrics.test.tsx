@@ -55,5 +55,7 @@ describe('DeviceMetrics', () => {
     charts.forEach(chart => {
       expect(chart).toHaveStyle({ height: '96px' })
     })
+    expect(document.querySelector('path[stroke="#409eff"]')).toBeInTheDocument()
+    expect(document.querySelector('path[stroke="#14B8A6"]')).not.toBeInTheDocument()
   })
 })

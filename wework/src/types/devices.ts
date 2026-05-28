@@ -19,7 +19,8 @@ export interface DeviceInfo {
 }
 
 export interface DeviceListResponse {
-  devices: DeviceInfo[]
+  items: DeviceInfo[]
+  total: number
 }
 
 export interface DeviceSessionResponse {
