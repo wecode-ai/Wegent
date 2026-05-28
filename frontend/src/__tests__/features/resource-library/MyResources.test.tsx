@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 
 import { listGroups } from '@/apis/groups'
 import { MyResources } from '@/features/resource-library/components/MyResources'
@@ -107,6 +108,13 @@ jest.mock('@/hooks/useTranslation', () => ({
 
 const mockListGroups = listGroups as jest.MockedFunction<typeof listGroups>
 
+async function openGroupMenu() {
+  const user = userEvent.setup()
+  const groupSelect = screen.getByTestId('resource-group-select')
+  await user.click(groupSelect)
+  return groupSelect
+}
+
 describe('MyResources', () => {
   beforeEach(() => {
     jest.clearAllMocks()
@@ -153,9 +161,13 @@ describe('MyResources', () => {
     expect(screen.queryByRole('link', { name: '组管理' })).not.toBeInTheDocument()
 
     const groupSelect = screen.getByTestId('resource-group-select')
-    expect(groupSelect).toHaveDisplayValue('组资源')
-    const options = within(groupSelect).getAllByRole('option')
-    expect(options.at(-1)).toHaveTextContent('管理...')
+    expect(groupSelect).toHaveRole('button')
+    expect(groupSelect).toHaveTextContent('组资源')
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
+
+    await openGroupMenu()
+    expect(await screen.findByRole('menuitem', { name: 'Platform' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: '管理...' })).toBeInTheDocument()
   })
 
   it('switches between managed resource types', async () => {
@@ -183,11 +195,10 @@ describe('MyResources', () => {
     render(<MyResources />)
 
     await waitFor(() => expect(mockListGroups).toHaveBeenCalled())
-    await screen.findByRole('option', { name: 'Platform' })
+    await openGroupMenu()
+    const platformOption = await screen.findByRole('menuitem', { name: 'Platform' })
 
-    fireEvent.change(screen.getByTestId('resource-group-select'), {
-      target: { value: 'platform' },
-    })
+    fireEvent.click(platformOption)
     await waitFor(() =>
       expect(screen.getByTestId('agent-resource-manager')).toHaveAttribute('data-scope', 'group')
     )
@@ -203,9 +214,8 @@ describe('MyResources', () => {
 
     await waitFor(() => expect(mockListGroups).toHaveBeenCalled())
 
-    fireEvent.change(screen.getByTestId('resource-group-select'), {
-      target: { value: '__manage_groups__' },
-    })
+    await openGroupMenu()
+    fireEvent.click(await screen.findByRole('menuitem', { name: '管理...' }))
 
     expect(mockPush).toHaveBeenCalledWith('/settings?tab=group-manager')
   })
