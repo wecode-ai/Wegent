@@ -15,10 +15,11 @@ export function VncDesktopButton({ deviceId }: VncDesktopButtonProps) {
     try {
       const config = await cloudDeviceInternalApis.getVncConfig(deviceId)
       const token = localStorage.getItem('auth_token') || ''
-      const backendUrl = import.meta.env.VITE_API_BASE_URL || ''
-      const baseOrigin = backendUrl.replace(/\/api$/, '')
-      const vncWsUrl = `${baseOrigin}/api/cloud-devices/${deviceId}/vnc-ws?token=${encodeURIComponent(token)}`
-      const vncPageUrl = `/vnc.html?wsUrl=${encodeURIComponent(vncWsUrl)}&sandboxId=${encodeURIComponent(config.sandbox_id)}`
+      const origin = window.location.origin
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+      const host = window.location.host
+      const vncWsUrl = `${protocol}//${host}/api/cloud-devices/${encodeURIComponent(deviceId)}/vnc-ws?token=${encodeURIComponent(token)}`
+      const vncPageUrl = `${origin}/vnc.html?wsUrl=${encodeURIComponent(vncWsUrl)}&sandboxId=${encodeURIComponent(config.sandbox_id)}`
       window.open(vncPageUrl, '_blank', 'noopener')
     } catch (e) {
       console.error('Failed to get VNC config:', e)

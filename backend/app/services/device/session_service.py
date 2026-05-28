@@ -8,8 +8,10 @@ import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
+from urllib.parse import urlsplit, urlunsplit
 
 from app.core.socketio import get_sio
+from app.schemas.device import DeviceType
 from app.services.device_service import device_service
 
 logger = logging.getLogger(__name__)
@@ -48,7 +50,8 @@ class LocalDeviceSessionService:
         ttl_seconds: int = DEFAULT_SESSION_TTL_SECONDS,
     ) -> dict[str, Any]:
         """Ask an online local device to start an interactive project session."""
-        if not device_service.get_device_by_device_id(db, user_id, device_id):
+        device_kind = device_service.get_device_by_device_id(db, user_id, device_id)
+        if not device_kind:
             raise DeviceSessionNotFoundError("Device not found or access denied")
 
         online_info = await device_service.get_device_online_info(user_id, device_id)
@@ -103,6 +106,7 @@ class LocalDeviceSessionService:
             error = result.get("error") or "Device failed to start session"
             raise DeviceSessionError(str(error))
 
+        result = await _rewrite_cloud_localhost_url(result, device_kind)
         result.setdefault("session_id", session_id)
         result.setdefault("project_id", project_id)
         result.setdefault("device_id", device_id)
@@ -128,3 +132,89 @@ class LocalDeviceSessionService:
 
 
 local_device_session_service = LocalDeviceSessionService()
+
+
+async def _rewrite_cloud_localhost_url(
+    result: dict[str, Any],
+    device_kind: Any,
+) -> dict[str, Any]:
+    """Rewrite cloud session URLs that point to device-local localhost."""
+    url = result.get("url")
+    if not isinstance(url, str) or not url:
+        return result
+    spec = getattr(device_kind, "json", {}).get("spec", {})
+    if spec.get("deviceType", DeviceType.LOCAL.value) != DeviceType.CLOUD.value:
+        return result
+
+    parsed = urlsplit(url)
+    if parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
+        return result
+
+    sandbox_id = (spec.get("cloudConfig") or {}).get("sandboxId")
+    if not sandbox_id:
+        return result
+
+    try:
+        vm_status = await _get_cloud_device_provider().get_vm_status(sandbox_id)
+    except Exception as exc:
+        logger.warning(
+            "[LocalDeviceSessionService] Failed to resolve cloud session host: "
+            "sandbox_id=%s, error=%s",
+            sandbox_id,
+            exc,
+        )
+        return result
+
+    host = _extract_cloud_session_host(vm_status.get("ip_address"))
+    if not host:
+        return result
+
+    rewritten = dict(result)
+    rewritten["url"] = urlunsplit(
+        (
+            parsed.scheme or "http",
+            _format_netloc(host, parsed.port),
+            parsed.path,
+            parsed.query,
+            parsed.fragment,
+        )
+    )
+    return rewritten
+
+
+def _get_cloud_device_provider() -> Any:
+    from wecode.service.cloud_device_provider import cloud_device_provider
+
+    return cloud_device_provider
+
+
+def _extract_cloud_session_host(value: Any) -> str:
+    """Extract a browser-reachable host from Nevis status URL metadata."""
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return ""
+        if "://" in text:
+            return urlsplit(text).hostname or ""
+        return text.split(",", 1)[0].split()[0].strip().strip("/")
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            host = _extract_cloud_session_host(item)
+            if host:
+                return host
+    if isinstance(value, dict):
+        for key in ("ip", "host", "hostname", "url", "http", "https"):
+            host = _extract_cloud_session_host(value.get(key))
+            if host:
+                return host
+        for item in value.values():
+            host = _extract_cloud_session_host(item)
+            if host:
+                return host
+    return ""
+
+
+def _format_netloc(host: str, port: int | None) -> str:
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    return f"{host}:{port}" if port else host

@@ -541,6 +541,7 @@ class LocalSessionHandler:
             "-m",
             "1",
             "-o",
+            "-W",
             "-b",
             f"/s/{session_id}",
             "bash",
