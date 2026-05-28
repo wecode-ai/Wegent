@@ -127,6 +127,7 @@ describe('DiscoverResources', () => {
       page: 1,
       limit: 50,
     })
+    expect(screen.getByText('Doc Summary')).toHaveClass('text-text-primary')
     expect(screen.getByTestId('resource-listing-card-1')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '安装 Doc Summary' })).toBeEnabled()
   })

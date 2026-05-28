@@ -50,7 +50,7 @@ export function ResourceListingCard({
             <TypeIcon className="h-5 w-5" aria-hidden="true" />
           </div>
           <div className="min-w-0">
-            <h3 className="truncate text-base font-semibold">{title}</h3>
+            <h3 className="truncate text-base font-semibold text-text-primary">{title}</h3>
             <div className="mt-1 flex flex-wrap items-center gap-2">
               <Badge variant="info">{t(`filters.${listing.resource_type}`)}</Badge>
               {listing.current_version?.version && (
