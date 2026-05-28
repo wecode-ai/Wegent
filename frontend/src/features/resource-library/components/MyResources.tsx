@@ -6,10 +6,17 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Boxes, ChevronDown, Users } from 'lucide-react'
+import { Boxes, Check, ChevronDown, Settings2, Users } from 'lucide-react'
 
 import { listGroups } from '@/apis/groups'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown'
 import { ModelListWithScope } from '@/features/settings/components/ModelListWithScope'
 import { RetrieverListWithScope } from '@/features/settings/components/RetrieverListWithScope'
 import { ShellListWithScope } from '@/features/settings/components/ShellListWithScope'
@@ -22,8 +29,6 @@ import type { Group } from '@/types/group'
 import type { ManagedResourceType } from '../types'
 
 type ResourceScope = 'personal' | 'group'
-
-const MANAGE_GROUPS_VALUE = '__manage_groups__'
 
 const managedResourceTypes: ManagedResourceType[] = [
   'agent',
@@ -38,6 +43,10 @@ function getInitialSearchParam(name: string): string | null {
     return null
   }
   return new URLSearchParams(window.location.search).get(name)
+}
+
+function getGroupDisplayName(group: Group): string {
+  return group.display_name || group.name
 }
 
 function getInitialResourceType(): ManagedResourceType {
@@ -98,17 +107,17 @@ function ResourceScopeControls({
 }) {
   const { t } = useTranslation('resource-library')
   const router = useRouter()
-  const groupSelectValue = scope === 'group' ? (selectedGroup ?? '') : ''
+  const selectedGroupInfo = groups.find(group => group.name === selectedGroup)
+  const selectedGroupLabel =
+    scope === 'group'
+      ? selectedGroupInfo
+        ? getGroupDisplayName(selectedGroupInfo)
+        : selectedGroup
+      : null
+  const groupButtonLabel = selectedGroupLabel || t('scopes.group')
 
-  const handleGroupSelectChange = (value: string) => {
-    if (value === MANAGE_GROUPS_VALUE) {
-      router.push(paths.settings.groupManager.getHref())
-      return
-    }
-    if (!value) {
-      return
-    }
-    onGroupChange(value)
+  const handleGroupSelect = (groupName: string) => {
+    onGroupChange(groupName)
     onScopeChange('group')
   }
 
@@ -125,42 +134,76 @@ function ResourceScopeControls({
         <Boxes className="h-4 w-4" aria-hidden="true" />
         {t('scopes.personal')}
       </Button>
-      <div
-        className={cn(
-          'relative inline-flex h-11 min-w-[180px] items-center rounded-lg border text-sm font-medium ring-offset-base transition-colors focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-2 lg:h-9',
-          scope === 'group'
-            ? 'border-primary bg-primary text-white'
-            : 'border-border bg-transparent text-text-primary hover:bg-surface'
-        )}
-      >
-        <Users className="pointer-events-none absolute left-4 h-4 w-4" aria-hidden="true" />
-        <select
-          value={groupSelectValue}
-          className="h-full w-full cursor-pointer appearance-none rounded-lg bg-transparent pl-10 pr-10 text-sm font-medium text-inherit outline-none"
-          onChange={event => handleGroupSelectChange(event.target.value)}
-          data-testid="resource-group-select"
-          aria-label={t('scopes.group')}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant={scope === 'group' ? 'primary' : 'outline'}
+            aria-pressed={scope === 'group'}
+            className={cn(
+              'h-11 min-w-[180px] max-w-full justify-between px-4 lg:h-9 lg:max-w-[260px]',
+              scope === 'group' ? 'text-white' : 'text-text-primary'
+            )}
+            data-testid="resource-group-select"
+          >
+            <span className="flex min-w-0 items-center gap-2">
+              <Users className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
+              <span className="truncate" title={groupButtonLabel}>
+                {groupButtonLabel}
+              </span>
+            </span>
+            <ChevronDown className="h-4 w-4 flex-shrink-0 opacity-70" aria-hidden="true" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="end"
+          sideOffset={6}
+          className="max-h-[320px] w-[var(--radix-dropdown-menu-trigger-width)] min-w-[220px] max-w-[min(320px,calc(100vw-2rem))] overflow-y-auto"
         >
-          <option value="" className="text-text-primary">
-            {t('scopes.group')}
-          </option>
           {groups.length === 0 ? (
-            <option value="__no_groups__" disabled className="text-text-primary">
+            <DropdownMenuItem
+              disabled
+              className="min-h-11 text-text-muted lg:min-h-9"
+              data-testid="resource-group-empty-option"
+            >
               {t('states.no_groups')}
-            </option>
+            </DropdownMenuItem>
           ) : (
-            groups.map(group => (
-              <option key={group.id} value={group.name} className="text-text-primary">
-                {group.display_name || group.name}
-              </option>
-            ))
+            groups.map(group => {
+              const isSelected = scope === 'group' && selectedGroup === group.name
+              const displayName = getGroupDisplayName(group)
+
+              return (
+                <DropdownMenuItem
+                  key={group.id}
+                  className={cn(
+                    'min-h-11 gap-2 lg:min-h-9',
+                    isSelected && 'bg-primary/10 text-primary focus:text-primary'
+                  )}
+                  data-testid={`resource-group-option-${group.id}`}
+                  onClick={() => handleGroupSelect(group.name)}
+                >
+                  <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
+                    {isSelected && <Check className="h-4 w-4" aria-hidden="true" />}
+                  </span>
+                  <span className="truncate" title={displayName}>
+                    {displayName}
+                  </span>
+                </DropdownMenuItem>
+              )
+            })
           )}
-          <option value={MANAGE_GROUPS_VALUE} className="text-text-primary">
-            {t('actions.manage_groups')}
-          </option>
-        </select>
-        <ChevronDown className="pointer-events-none absolute right-4 h-4 w-4 opacity-70" />
-      </div>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            className="min-h-11 gap-2 lg:min-h-9"
+            data-testid="resource-group-manage-option"
+            onClick={() => router.push(paths.settings.groupManager.getHref())}
+          >
+            <Settings2 className="h-4 w-4 flex-shrink-0 text-text-muted" aria-hidden="true" />
+            <span className="truncate">{t('actions.manage_groups')}</span>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   )
 }
