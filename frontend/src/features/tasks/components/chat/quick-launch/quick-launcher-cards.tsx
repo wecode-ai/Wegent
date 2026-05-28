@@ -7,6 +7,8 @@ import { useTranslation } from '@/hooks/useTranslation'
 import type { QuickLauncher } from './types'
 
 const CARD_WIDTH = 154
+const launcherRowClassName =
+  'flex flex-nowrap items-center justify-start gap-3 overflow-x-auto overscroll-x-contain pb-1'
 
 interface QuickLauncherCardsProps {
   systemLaunchers: QuickLauncher[]
@@ -79,10 +81,7 @@ export function QuickLauncherCards({
           <h3 className="px-1 text-xs font-medium text-text-muted">
             {t('quick_launch.system_functions')}
           </h3>
-          <div
-            className="flex flex-wrap items-center justify-start gap-3"
-            data-testid="quick-launch-system-grid"
-          >
+          <div className={launcherRowClassName} data-testid="quick-launch-system-grid">
             {systemLaunchers.map(launcher => (
               <LauncherCard
                 key={launcher.key}
@@ -100,10 +99,7 @@ export function QuickLauncherCards({
           <h3 className="px-1 text-xs font-medium text-text-muted">
             {t('quick_launch.favorite_agents')}
           </h3>
-          <div
-            className="flex flex-wrap items-center justify-start gap-3"
-            data-testid="quick-launch-favorites-grid"
-          >
+          <div className={launcherRowClassName} data-testid="quick-launch-favorites-grid">
             {favoriteLaunchers.map(launcher => (
               <LauncherCard
                 key={launcher.key}

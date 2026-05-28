@@ -96,6 +96,41 @@ describe('QuickLauncherCards', () => {
     expect(screen.queryByTestId('quick-launch-system-grid')).not.toHaveClass('justify-center')
   })
 
+  test('supports horizontal scrolling for both launcher rows', () => {
+    render(
+      <QuickLauncherCards
+        systemLaunchers={[
+          makeLauncher({ key: 'system:create_ppt', title: 'Create PPT' }),
+          makeLauncher({ key: 'system:create_skill', title: 'Create Skill' }),
+        ]}
+        favoriteLaunchers={[
+          makeLauncher({
+            type: 'favorite_agent',
+            key: 'agent:2',
+            team: makeTeam({ id: 2 }),
+            title: 'Writing Agent',
+          }),
+          makeLauncher({
+            type: 'favorite_agent',
+            key: 'agent:3',
+            team: makeTeam({ id: 3 }),
+            title: 'Docs Agent',
+          }),
+        ]}
+        onSelectLauncher={jest.fn()}
+      />
+    )
+
+    for (const grid of [
+      screen.getByTestId('quick-launch-system-grid'),
+      screen.getByTestId('quick-launch-favorites-grid'),
+    ]) {
+      expect(grid).toHaveClass('flex-nowrap')
+      expect(grid).toHaveClass('overflow-x-auto')
+      expect(grid).not.toHaveClass('flex-wrap')
+    }
+  })
+
   test('uses the main branch rounded card shape', () => {
     render(
       <QuickLauncherCards
