@@ -576,7 +576,8 @@ def join_shared_task(
         user_id=current_user.id,
         team_id=user_team.id,
         model_id=request.model_id,
-        force_override_bot_model=request.force_override_bot_model or False,
+        force_override_bot_model=bool(request.model_id)
+        or bool(request.force_override_bot_model),
         force_override_bot_model_type=request.force_override_bot_model_type,
         git_repo_id=request.git_repo_id,
         git_url=request.git_url,

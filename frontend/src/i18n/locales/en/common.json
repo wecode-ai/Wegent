@@ -607,6 +607,7 @@
     "new_task": "New Task",
     "new_conversation": "New Conversation",
     "no_tasks": "No tasks",
+    "no_group_chats": "No group chats",
     "unknown_agent": "Unknown agent",
     "unknown_device": "Unknown device",
     "today": "Today",
@@ -1209,10 +1210,7 @@
   "task_submit": {
     "select_model": "Select Model",
     "search_model": "Search model...",
-    "force_override_model": "Force override Bot's bound model",
-    "override_default_model": "Override default model",
     "show_advanced_models": "Show advanced models",
-    "override_short": "Override",
     "mixed_team_warning": "This team contains multiple executor types, cannot specify a unified model",
     "default_model": "Default",
     "use_bot_model": "Use Bot's predefined model",

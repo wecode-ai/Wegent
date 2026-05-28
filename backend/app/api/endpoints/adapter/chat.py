@@ -18,7 +18,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -69,6 +69,13 @@ class StreamChatRequest(BaseModel):
     offset: Optional[int] = None  # Character offset for resuming (0 = new stream)
     # Group chat flag
     is_group_chat: bool = False  # Whether this is a group chat
+
+    @model_validator(mode="after")
+    def default_model_selection_to_override(self) -> "StreamChatRequest":
+        """Treat an explicit model_id as an override selection."""
+        if self.model_id:
+            self.force_override_bot_model = True
+        return self
 
 
 @router.get("/check-direct-chat/{team_id}")
