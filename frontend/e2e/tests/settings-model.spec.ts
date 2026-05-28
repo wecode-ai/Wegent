@@ -1,17 +1,22 @@
 import { test, expect, TestData } from '../fixtures/test-fixtures'
 
+const MODEL_RESOURCES_URL = '/resource-library?tab=mine&type=model&scope=personal'
+
 test.describe('Settings - Model Management', () => {
   test.beforeEach(async ({ page }) => {
-    // Use the correct tab parameter format: personal-models
-    await page.goto('/settings?tab=personal-models')
+    // Model management moved into Resource Library.
+    await page.goto(MODEL_RESOURCES_URL)
     await page.waitForLoadState('domcontentloaded')
-    // Wait for page to fully load
-    await page.waitForTimeout(1000)
+    await expect(page.locator('[data-testid="my-resources"]')).toBeVisible({ timeout: 15000 })
+    await expect(page.locator('[data-testid="managed-resource-model-tab"]')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
   })
 
   test('should access model management page', async ({ page }) => {
-    // Verify we're on settings page
-    await expect(page).toHaveURL(/\/settings/)
+    // Verify we're on Resource Library.
+    await expect(page).toHaveURL(/\/resource-library/)
 
     // Wait for model management title to load using data-testid for reliability
     await expect(page.locator('[data-testid="model-management-title"]')).toBeVisible({
