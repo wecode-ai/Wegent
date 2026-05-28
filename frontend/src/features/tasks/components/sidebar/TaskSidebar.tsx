@@ -21,6 +21,7 @@ import {
   ChevronRight,
   Monitor,
   Inbox,
+  Library,
   LayoutGrid,
 } from 'lucide-react'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
@@ -49,7 +50,7 @@ export const SIDEBAR_NAV_CONFIG = {
 interface TaskSidebarProps {
   isMobileSidebarOpen: boolean
   setIsMobileSidebarOpen: (open: boolean) => void
-  pageType?: 'chat' | 'code' | 'flow' | 'knowledge' | 'devices' | 'inbox'
+  pageType?: 'chat' | 'code' | 'flow' | 'knowledge' | 'devices' | 'inbox' | 'resource-library'
   isCollapsed?: boolean
   onToggleCollapsed?: () => void
   // Search dialog control from parent (for global shortcut support)
@@ -148,7 +149,14 @@ export default function TaskSidebar({
   }
   // Navigation buttons - always show all buttons
   // Define type explicitly to include all possible buttonPageType values
-  type ButtonPageType = 'chat' | 'code' | 'flow' | 'knowledge' | 'devices' | 'inbox'
+  type ButtonPageType =
+    | 'chat'
+    | 'code'
+    | 'flow'
+    | 'knowledge'
+    | 'devices'
+    | 'inbox'
+    | 'resource-library'
   interface NavigationButton {
     label: string
     icon: typeof Workflow
@@ -157,7 +165,11 @@ export default function TaskSidebar({
     tooltip?: string
     buttonPageType: ButtonPageType
     unreadCount?: number
+    testId?: string
   }
+
+  const currentPath = typeof window === 'undefined' ? '' : window.location.pathname
+  const resourceLibraryPath = paths.resourceLibrary?.getHref?.() ?? '/resource-library'
 
   const navigationButtons: NavigationButton[] = [
     {
@@ -181,6 +193,14 @@ export default function TaskSidebar({
       path: paths.wiki.getHref(),
       isActive: pageType === 'knowledge',
       buttonPageType: 'knowledge',
+    },
+    {
+      label: t('resource-library:title'),
+      icon: Library,
+      path: resourceLibraryPath,
+      isActive: pageType === 'resource-library' || currentPath === resourceLibraryPath,
+      buttonPageType: 'resource-library',
+      testId: 'resource-library-sidebar-button',
     },
     {
       label: t('devices:my_devices'),
@@ -307,7 +327,7 @@ export default function TaskSidebar({
             <Button
               variant="ghost"
               onClick={() => handleNavigationClick(btn.path, btn.isActive, btn.buttonPageType)}
-              data-testid={`task-sidebar-nav-${btn.buttonPageType}-button`}
+              data-testid={btn.testId ?? `task-sidebar-nav-${btn.buttonPageType}-button`}
               className={`w-full justify-between px-3 h-11 min-w-[44px] text-sm rounded-md transition-all duration-200 ${
                 btn.isActive
                   ? 'bg-primary/10 text-primary font-medium hover:bg-primary/15'

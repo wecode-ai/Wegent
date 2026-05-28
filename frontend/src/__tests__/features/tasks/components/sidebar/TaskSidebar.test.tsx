@@ -80,6 +80,7 @@ jest.mock('@/config/paths', () => ({
     devices: { getHref: () => '/devices' },
     inbox: { getHref: () => '/inbox' },
     chat: { getHref: () => '/chat' },
+    resourceLibrary: { getHref: () => '/resource-library' },
   },
 }))
 
@@ -222,8 +223,12 @@ describe('TaskSidebar scroll structure', () => {
     expect(within(fixedSection).getByText('common:navigation.wiki')).toBeInTheDocument()
     expect(within(fixedSection).getByText('common:navigation.more')).toBeInTheDocument()
     expect(within(fixedSection).getByLabelText('More navigation')).toHaveClass('lucide-layout-grid')
+    expect(
+      within(fixedSection).queryByTestId('resource-library-sidebar-button')
+    ).not.toBeInTheDocument()
     expect(within(fixedSection).queryByText('devices:my_devices')).not.toBeInTheDocument()
     expect(within(fixedSection).queryByText('common:navigation.inbox')).not.toBeInTheDocument()
+    expect(within(fixedSection).queryByText('resource-library:title')).not.toBeInTheDocument()
 
     expect(within(scrollableSection).queryByText('common:navigation.wiki')).not.toBeInTheDocument()
     expect(within(scrollableSection).queryByText('devices:my_devices')).not.toBeInTheDocument()
@@ -242,6 +247,7 @@ describe('TaskSidebar scroll structure', () => {
     fireEvent.mouseEnter(within(fixedSection).getByTestId('task-sidebar-more-button'))
 
     const flyout = screen.getByTestId('task-sidebar-more-flyout')
+    expect(within(flyout).getByText('resource-library:title')).toBeInTheDocument()
     expect(within(flyout).getByText('devices:my_devices')).toBeInTheDocument()
     expect(within(flyout).getByText('common:navigation.inbox')).toBeInTheDocument()
   })
@@ -257,9 +263,11 @@ describe('TaskSidebar scroll structure', () => {
     const scrollableSection = screen.getAllByTestId('task-sidebar-scroll-content')[0]
 
     expect(within(fixedSection).getByText('common:navigation.wiki')).toBeInTheDocument()
+    expect(within(fixedSection).queryByText('resource-library:title')).not.toBeInTheDocument()
     expect(within(fixedSection).queryByText('devices:my_devices')).not.toBeInTheDocument()
     expect(within(fixedSection).queryByText('common:navigation.inbox')).not.toBeInTheDocument()
 
+    expect(within(scrollableSection).getByText('resource-library:title')).toBeInTheDocument()
     expect(within(scrollableSection).getByText('devices:my_devices')).toBeInTheDocument()
     expect(within(scrollableSection).getByText('common:navigation.inbox')).toBeInTheDocument()
   })

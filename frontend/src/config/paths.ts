@@ -40,6 +40,9 @@ export const paths = {
   inbox: {
     getHref: () => '/inbox',
   },
+  resourceLibrary: {
+    getHref: () => '/resource-library',
+  },
   feedSubscriptions: {
     getHref: () => '/feed/subscriptions',
   },
@@ -60,13 +63,13 @@ export const paths = {
       getHref: () => '/settings?tab=integrations',
     },
     bot: {
-      getHref: () => '/settings?tab=bot',
+      getHref: () => '/resource-library?tab=mine&type=agent&scope=personal',
     },
     team: {
-      getHref: () => '/settings?tab=team',
+      getHref: () => '/resource-library?tab=mine&type=agent&scope=personal',
     },
     models: {
-      getHref: () => '/settings?tab=models',
+      getHref: () => '/resource-library?tab=mine&type=model&scope=personal',
     },
     groupManager: {
       getHref: () => '/settings?tab=group-manager',
