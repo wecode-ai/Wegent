@@ -207,7 +207,6 @@ export interface GuidanceMessagePreview {
 export function useChatStreamHandlers({
   selectedTeam,
   selectedModel,
-  forceOverride,
   setSelectedModel,
   setForceOverride,
   selectedRepo,
@@ -684,7 +683,7 @@ export function useChatStreamHandlers({
         team_id: selectedTeam?.id ?? 0,
         task_id: selectedTaskDetail?.id,
         model_id: modelId,
-        force_override_bot_model: forceOverride,
+        force_override_bot_model: Boolean(modelId),
         force_override_bot_model_type: selectedModel?.type,
         attachment_ids: [...snapshotAttachments.map(a => a.id), ...queueAttachmentIds],
         enable_deep_thinking: enableDeepThinking,
@@ -779,7 +778,6 @@ export function useChatStreamHandlers({
       t,
       selectedTeam?.id,
       selectedTaskDetail,
-      forceOverride,
       enableDeepThinking,
       enableClarification,
       showRepositorySelector,
@@ -1539,7 +1537,7 @@ export function useChatStreamHandlers({
               message.subtaskId!,
               modelId,
               modelType,
-              forceOverride
+              Boolean(modelId)
             )
 
             if (result.error) {
@@ -1568,7 +1566,7 @@ export function useChatStreamHandlers({
         }
       )
     },
-    [retryMessage, selectedTaskDetail?.id, selectedModel, forceOverride, t, toast, traceAction]
+    [retryMessage, selectedTaskDetail?.id, selectedModel, t, toast, traceAction]
   )
 
   // Handle retry with a specific model (from error card recommendation)

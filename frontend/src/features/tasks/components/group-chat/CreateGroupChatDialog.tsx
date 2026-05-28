@@ -29,7 +29,7 @@ import {
 import { useTeamContext } from '@/contexts/TeamContext'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
-import { ModelSelector, type Model } from '@/features/tasks/components/selector'
+import { DEFAULT_MODEL_NAME, ModelSelector, type Model } from '@/features/tasks/components/selector'
 import { useUser } from '@/features/common/UserContext'
 
 interface CreateGroupChatDialogProps {
@@ -45,7 +45,6 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
   const [selectedTeamId, setSelectedTeamId] = useState<string>('')
   const [isCreating, setIsCreating] = useState(false)
   const [selectedModel, setSelectedModel] = useState<Model | null>(null)
-  const [forceOverride, setForceOverride] = useState(false)
 
   const { teams, isTeamsLoading } = useTeamContext()
   const { sendMessage } = useChatStreamContext()
@@ -101,8 +100,12 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
           task_id: undefined, // Let streaming API create the task
           title: title, // Pass custom title for the group chat
           model_id:
-            selectedModel?.name === '__default__' ? undefined : selectedModel?.name || undefined,
-          force_override_bot_model: forceOverride,
+            selectedModel?.name === DEFAULT_MODEL_NAME
+              ? undefined
+              : selectedModel?.name || undefined,
+          force_override_bot_model: Boolean(
+            selectedModel && selectedModel.name !== DEFAULT_MODEL_NAME
+          ),
           is_group_chat: true, // Mark this as a group chat
         },
         {
@@ -121,7 +124,6 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
             setTitle('')
             setSelectedTeamId('')
             setSelectedModel(null)
-            setForceOverride(false)
             setIsCreating(false)
 
             // Refresh task list to show the new group chat
@@ -219,8 +221,6 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
               <ModelSelector
                 selectedModel={selectedModel}
                 setSelectedModel={setSelectedModel}
-                forceOverride={forceOverride}
-                setForceOverride={setForceOverride}
                 selectedTeam={selectedTeam}
                 disabled={isCreating}
                 isLoading={false}

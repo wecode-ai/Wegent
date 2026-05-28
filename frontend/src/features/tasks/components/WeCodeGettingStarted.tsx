@@ -2,24 +2,22 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client';
+'use client'
 
-import React, { useEffect, useRef } from 'react';
-import { Card } from '@/components/ui/card';
+import React, { useEffect, useRef } from 'react'
+import { Card } from '@/components/ui/card'
 import {
   CodeBracketIcon,
   CloudIcon,
   ClipboardDocumentCheckIcon,
   PuzzlePieceIcon,
-} from '@heroicons/react/24/outline';
-import DiscountNotification from './DiscountNotification';
-
+} from '@heroicons/react/24/outline'
 interface WeCodeGettingStartedProps {
-  className?: string;
+  className?: string
 }
 
 export default function WeCodeGettingStarted({ className = '' }: WeCodeGettingStartedProps) {
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
 
   const gettingStartedItems = [
     {
@@ -46,31 +44,26 @@ export default function WeCodeGettingStarted({ className = '' }: WeCodeGettingSt
       description: '自动化代码审查，确保代码质量和团队协作',
       link: 'https://wiki.api.weibo.com/zh/weibo_rd/dev/wecode/agent/wecoder_agent',
     },
-  ];
+  ]
 
   const handleCardClick = (link: string) => {
     if (link && link !== '#') {
-      window.open(link, '_blank', 'noopener,noreferrer');
+      window.open(link, '_blank', 'noopener,noreferrer')
     }
-  };
+  }
 
   // 初始化时滚动到第一个卡片（左对齐）
   useEffect(() => {
-    const container = scrollContainerRef.current;
+    const container = scrollContainerRef.current
     if (container && window.innerWidth < 640) {
       // 只在移动端执行
       // 滚动到第一个卡片位置（左对齐）
-      container.scrollLeft = 0;
+      container.scrollLeft = 0
     }
-  }, []);
+  }, [])
 
   return (
     <div className={`w-full ${className}`}>
-      {/* 折扣通知 */}
-      <div className="mb-6">
-        <DiscountNotification />
-      </div>
-
       {/* 标题区域 - 移动端紧凑布局 */}
       <div className="text-center mb-6 sm:mb-8">
         <h2 className="text-base sm:text-lg font-medium text-text-primary">
@@ -172,5 +165,5 @@ export default function WeCodeGettingStarted({ className = '' }: WeCodeGettingSt
         </div>
       </div>
     </div>
-  );
+  )
 }

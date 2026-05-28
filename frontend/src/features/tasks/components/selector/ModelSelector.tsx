@@ -75,8 +75,8 @@ export interface TeamWithBotDetails extends Team {
 export interface ModelSelectorProps {
   selectedModel: Model | null
   setSelectedModel: (model: Model | null) => void
-  forceOverride: boolean
-  setForceOverride: (force: boolean) => void
+  forceOverride?: boolean
+  setForceOverride?: (force: boolean) => void
   selectedTeam: TeamWithBotDetails | null
   disabled: boolean
   isLoading?: boolean
@@ -120,8 +120,8 @@ function getModelSyncKey(model: Model | null): string | null {
 export default function ModelSelector({
   selectedModel: externalSelectedModel,
   setSelectedModel: externalSetSelectedModel,
-  forceOverride: externalForceOverride,
-  setForceOverride: externalSetForceOverride,
+  forceOverride: externalForceOverride = false,
+  setForceOverride: externalSetForceOverride = () => {},
   selectedTeam,
   disabled,
   isLoading: externalLoading,
@@ -147,6 +147,12 @@ export default function ModelSelector({
     disabled,
     modelCategoryType,
   })
+  const {
+    selectedModel: internalSelectedModel,
+    forceOverride: internalForceOverride,
+    selectModel: selectInternalModel,
+    setForceOverride: setInternalForceOverride,
+  } = modelSelection
 
   // Get icon based on model category type
   const IconComponent = useMemo(() => {
@@ -160,7 +166,7 @@ export default function ModelSelector({
     }
   }, [modelCategoryType])
 
-  const internalModelKey = getModelSyncKey(modelSelection.selectedModel)
+  const internalModelKey = getModelSyncKey(internalSelectedModel)
 
   // Sync selected model between external props and internal hook state.
   // Only the side that changed in this render cycle is allowed to drive the other side,
@@ -185,32 +191,28 @@ export default function ModelSelector({
 
     if (externalModelChanged) {
       if (externalSelectedModel && externalModelKey !== internalModelKey) {
-        modelSelection.selectModel(externalSelectedModel)
+        selectInternalModel(externalSelectedModel)
       } else if (!externalSelectedModel && previousExternalModelKey !== null && internalModelKey) {
-        modelSelection.selectModel(null)
+        selectInternalModel(null)
       }
       return
     }
 
-    if (
-      internalModelChanged &&
-      modelSelection.selectedModel &&
-      internalModelKey !== externalModelKey
-    ) {
-      externalSetSelectedModel(modelSelection.selectedModel)
+    if (internalModelChanged && internalSelectedModel && internalModelKey !== externalModelKey) {
+      externalSetSelectedModel(internalSelectedModel)
     }
   }, [
     externalModelKey,
     externalSelectedModel,
     internalModelKey,
-    modelSelection.selectedModel,
-    modelSelection.selectModel,
+    internalSelectedModel,
+    selectInternalModel,
     externalSetSelectedModel,
   ])
 
   // Apply the same one-direction-per-change rule for forceOverride to avoid update loops.
   const prevExternalForceOverrideRef = React.useRef(externalForceOverride)
-  const prevInternalForceOverrideRef = React.useRef(modelSelection.forceOverride)
+  const prevInternalForceOverrideRef = React.useRef(internalForceOverride)
   const hasSyncedForceOverrideRef = React.useRef(false)
 
   useEffect(() => {
@@ -220,27 +222,27 @@ export default function ModelSelector({
       ? previousExternalForceOverride !== externalForceOverride
       : externalForceOverride
     const internalForceOverrideChanged = hasSyncedForceOverrideRef.current
-      ? previousInternalForceOverride !== modelSelection.forceOverride
+      ? previousInternalForceOverride !== internalForceOverride
       : false
 
     prevExternalForceOverrideRef.current = externalForceOverride
-    prevInternalForceOverrideRef.current = modelSelection.forceOverride
+    prevInternalForceOverrideRef.current = internalForceOverride
     hasSyncedForceOverrideRef.current = true
 
     if (externalForceOverrideChanged) {
-      if (externalForceOverride !== modelSelection.forceOverride) {
-        modelSelection.setForceOverride(externalForceOverride)
+      if (externalForceOverride !== internalForceOverride) {
+        setInternalForceOverride(externalForceOverride)
       }
       return
     }
 
-    if (internalForceOverrideChanged && modelSelection.forceOverride !== externalForceOverride) {
-      externalSetForceOverride(modelSelection.forceOverride)
+    if (internalForceOverrideChanged && internalForceOverride !== externalForceOverride) {
+      externalSetForceOverride(internalForceOverride)
     }
   }, [
     externalForceOverride,
-    modelSelection.forceOverride,
-    modelSelection.setForceOverride,
+    internalForceOverride,
+    setInternalForceOverride,
     externalSetForceOverride,
   ])
 
@@ -294,11 +296,6 @@ export default function ModelSelector({
   const handleModelSelect = (value: string) => {
     modelSelection.selectModelByKey(value)
     setIsOpen(false)
-  }
-
-  // Handle force override checkbox
-  const handleForceOverrideChange = (checked: boolean | 'indeterminate') => {
-    modelSelection.setForceOverride(checked === true)
   }
 
   // Tooltip content for model selector
@@ -491,29 +488,8 @@ export default function ModelSelector({
                 </>
               )}
             </CommandList>
-            {/* Footer options - override and settings */}
+            {/* Footer options - advanced models and settings */}
             <div className="border-t border-border">
-              {/* Force override checkbox - always show when model is selected */}
-              {modelSelection.selectedModel && !modelSelection.isMixedTeam && (
-                <div
-                  className="flex items-center gap-2 px-3 py-2.5 cursor-pointer hover:bg-hover transition-colors duration-150"
-                  onClick={e => {
-                    e.stopPropagation()
-                    handleForceOverrideChange(!modelSelection.forceOverride)
-                  }}
-                >
-                  <Checkbox
-                    id="force-override-model-dropdown"
-                    checked={modelSelection.forceOverride}
-                    onCheckedChange={handleForceOverrideChange}
-                    disabled={disabled || externalLoading}
-                    className="h-4 w-4"
-                  />
-                  <span className="text-xs text-text-secondary">
-                    {t('common:task_submit.override_default_model', '覆盖默认模型')}
-                  </span>
-                </div>
-              )}
               {/* Show advanced models checkbox */}
               {modelSelection.hasAdvancedModels && (
                 <div

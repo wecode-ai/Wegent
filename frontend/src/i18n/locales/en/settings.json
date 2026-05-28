@@ -158,7 +158,9 @@
         "title": "Executor",
         "required": "Choose an available executor",
         "requires_complex_hint": "Code and device modes need Claude Code capability, so the complex executor is preferred.",
-        "custom_shell_placeholder": "Choose custom Shell",
+        "custom_shell_placeholder": "Choose custom executor",
+        "no_custom_shells": "No custom executors available",
+        "manage_custom_shells_hint": "Manage custom executors in Resource Library - Executors.",
         "simple": {
           "title": "Simple",
           "description": "Uses the Chat executor for conversation and lightweight Q&A."
@@ -169,7 +171,7 @@
         },
         "custom": {
           "title": "Custom",
-          "description": "Uses a Shell you created for a specialized runtime."
+          "description": "Uses an executor you created for a specialized runtime."
         }
       }
     }
