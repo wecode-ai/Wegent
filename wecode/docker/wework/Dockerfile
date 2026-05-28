@@ -14,7 +14,7 @@ COPY wework .
 RUN npm run build
 
 # ---- Production runtime stage ----
-FROM registry.api.weibo.com/wecode/nginx:1.27-alpine
+FROM registry.api.weibo.com/hongyu9/nginx:1.25-alpine
 
 COPY --from=builder /app/dist /usr/share/nginx/html
 
