@@ -15,6 +15,7 @@ interface ClarificationToggleProps {
   enabled: boolean
   onToggle: (enabled: boolean) => void
   disabled?: boolean
+  triggerVariant?: 'button' | 'menu-item'
 }
 
 /**
@@ -27,11 +28,35 @@ export default function ClarificationToggle({
   enabled,
   onToggle,
   disabled = false,
+  triggerVariant = 'button',
 }: ClarificationToggleProps) {
   const { t } = useTranslation()
 
   const handleToggle = () => {
     onToggle(!enabled)
+  }
+
+  if (triggerVariant === 'menu-item') {
+    return (
+      <button
+        type="button"
+        onClick={handleToggle}
+        disabled={disabled}
+        data-testid="clarification-toggle"
+        className={cn(
+          'w-full flex items-center justify-between px-3 py-2.5 text-left transition-colors hover:bg-hover active:bg-hover disabled:opacity-50 disabled:cursor-not-allowed',
+          enabled ? 'text-primary' : 'text-text-primary'
+        )}
+      >
+        <span className="flex items-center gap-3">
+          <MessageCircleQuestion
+            className={cn('h-4 w-4', enabled ? 'text-primary' : 'text-text-muted')}
+          />
+          <span className="text-sm">{t('chat:clarification_toggle.label')}</span>
+        </span>
+        {enabled && <span className="h-2 w-2 rounded-full bg-primary" />}
+      </button>
+    )
   }
 
   return (

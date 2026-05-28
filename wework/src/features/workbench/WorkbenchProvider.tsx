@@ -1,15 +1,30 @@
 import { useCallback, useEffect, useMemo, useReducer } from 'react'
 import type { ReactNode } from 'react'
+import { createDeviceApi } from '@/api/devices'
 import { createHttpClient } from '@/api/http'
+import { createModelApi } from '@/api/models'
 import { createProjectApi } from '@/api/projects'
+import { createSkillApi } from '@/api/skills'
 import { createTaskApi } from '@/api/tasks'
 import { createTeamApi } from '@/api/teams'
 import { getRuntimeConfig } from '@/config/runtime'
 import { createChatStream } from '@/stream/chatStream'
 import { createSocketClient } from '@/stream/socketClient'
-import type { ChatSendPayload, Subtask, Task, User } from '@/types/api'
+import type {
+  Attachment,
+  ChatSendPayload,
+  SkillRef,
+  Subtask,
+  Task,
+  UnifiedModel,
+  UnifiedSkill,
+  User,
+} from '@/types/api'
 import type { WorkbenchMessage, WorkbenchState } from '@/types/workbench'
-import { messageReducer } from './messageReducer'
+import { useWorkbenchAttachments } from './useWorkbenchAttachments'
+import { useWorkbenchModels } from './useWorkbenchModels'
+import { useWorkbenchSkills } from './useWorkbenchSkills'
+import { messageReducer, normalizeBlockStatus } from './messageReducer'
 import {
   initialWorkbenchState,
   workbenchReducer,
@@ -18,14 +33,35 @@ import { WorkbenchContext } from './useWorkbench'
 
 export interface WorkbenchServices {
   teamApi: ReturnType<typeof createTeamApi>
+  modelApi: ReturnType<typeof createModelApi>
+  skillApi: ReturnType<typeof createSkillApi>
   projectApi: ReturnType<typeof createProjectApi>
   taskApi: ReturnType<typeof createTaskApi>
+  deviceApi: ReturnType<typeof createDeviceApi>
   chatStream: ReturnType<typeof createChatStream>
 }
 
 export interface WorkbenchContextValue {
   state: WorkbenchState
   messages: WorkbenchMessage[]
+  projectChat: {
+    models: UnifiedModel[]
+    skills: UnifiedSkill[]
+    selectedModel: UnifiedModel | null
+    selectedSkills: SkillRef[]
+    attachments: Attachment[]
+    uploadingFiles: Map<string, { file: File; progress: number }>
+    errors: Map<string, string>
+    isOptionsLocked: boolean
+    isAttachmentReadyToSend: boolean
+    setSelectedModel: (model: UnifiedModel | null) => void
+    setSelectedSkills: (skills: SkillRef[]) => void
+    toggleSkill: (skill: SkillRef) => void
+    handleFileSelect: (files: File | File[]) => Promise<void>
+    addExistingAttachment: (attachment: Attachment) => void
+    removeAttachment: (attachmentId: number) => Promise<void>
+    resetAttachments: () => void
+  }
   selectProject: (projectId: number) => void
   openTask: (taskId: number) => Promise<void>
   setInput: (input: string) => void
@@ -45,8 +81,11 @@ function createDefaultServices(): WorkbenchServices {
 
   return {
     teamApi: createTeamApi(client),
+    modelApi: createModelApi(client),
+    skillApi: createSkillApi(client),
     projectApi: createProjectApi(client),
     taskApi: createTaskApi(client),
+    deviceApi: createDeviceApi(client),
     chatStream: createChatStream(socket),
   }
 }
@@ -77,35 +116,40 @@ export function WorkbenchProvider({
     initialWorkbenchState
   )
   const [messages, dispatchMessages] = useReducer(messageReducer, [])
+  const isOptionsLocked = Boolean(state.currentTask)
+  const modelSelection = useWorkbenchModels({
+    api: resolvedServices.modelApi,
+    locked: isOptionsLocked,
+  })
+  const skillSelection = useWorkbenchSkills({
+    api: resolvedServices.skillApi,
+    teamId: state.defaultTeam?.id,
+    locked: isOptionsLocked,
+  })
+  const attachmentSelection = useWorkbenchAttachments()
 
   useEffect(() => {
     let cancelled = false
 
     async function bootstrap() {
-      try {
-        const [defaultTeam, projects, recentTasks] = await Promise.all([
-          resolvedServices.teamApi.getDefaultWorkbenchTeam(),
-          resolvedServices.projectApi.listProjects(),
-          resolvedServices.taskApi.listRecentTasks({ limit: 20 }),
-        ])
+      const [defaultTeamResult, projectsResult, recentTasksResult, devicesResult] = await Promise.allSettled([
+        resolvedServices.teamApi.getDefaultWorkbenchTeam(),
+        resolvedServices.projectApi.listProjects(),
+        resolvedServices.taskApi.listRecentTasks({ limit: 20 }),
+        resolvedServices.deviceApi.listDevices(),
+      ])
 
-        if (!cancelled) {
-          dispatch({
-            type: 'bootstrapped',
-            user,
-            defaultTeam,
-            projects: projects.items,
-            recentTasks: recentTasks.items,
-          })
-        }
-      } catch (error) {
-        if (!cancelled) {
-          dispatch({
-            type: 'bootstrap_failed',
-            error: error instanceof Error ? error.message : '初始化失败',
-          })
-        }
-      }
+      if (cancelled) return
+
+      dispatch({
+        type: 'bootstrapped',
+        user,
+        defaultTeam: defaultTeamResult.status === 'fulfilled' ? defaultTeamResult.value : null,
+        projects: projectsResult.status === 'fulfilled' ? projectsResult.value.items : [],
+        devices: devicesResult.status === 'fulfilled' ? devicesResult.value : [],
+        recentTasks:
+          recentTasksResult.status === 'fulfilled' ? recentTasksResult.value.items : [],
+      })
     }
 
     bootstrap()
@@ -143,6 +187,34 @@ export function WorkbenchProvider({
           subtaskId: payload.subtask_id,
           error: payload.error,
         }),
+      onBlockCreated: payload => {
+        if (payload.block.type !== 'tool') return
+        dispatchMessages({
+          type: 'block_created',
+          subtaskId: payload.subtask_id,
+          block: {
+            id: payload.block.id,
+            subtaskId: payload.subtask_id,
+            toolName: payload.block.tool_name ?? 'unknown',
+            toolInput: payload.block.tool_input,
+            toolOutput: payload.block.tool_output,
+            status: normalizeBlockStatus(payload.block.status),
+            createdAt: payload.block.timestamp ?? Date.now(),
+          },
+        })
+      },
+      onBlockUpdated: payload => {
+        dispatchMessages({
+          type: 'block_updated',
+          subtaskId: payload.subtask_id,
+          blockId: payload.block_id,
+          updates: {
+            ...(payload.tool_input && { toolInput: payload.tool_input }),
+            ...(payload.tool_output !== undefined && { toolOutput: payload.tool_output }),
+            ...(payload.status && { status: normalizeBlockStatus(payload.status) }),
+          },
+        })
+      },
     })
   }, [resolvedServices])
 
@@ -172,8 +244,10 @@ export function WorkbenchProvider({
   }, [])
 
   const sendCurrentInput = useCallback(async () => {
-    const message = state.input.trim()
-    if (!message || !state.defaultTeam) return
+    const trimmedMessage = state.input.trim()
+    const hasAttachments = attachmentSelection.attachments.length > 0
+    if ((!trimmedMessage && !hasAttachments) || !state.defaultTeam) return
+    const message = trimmedMessage || '请参考附件'
 
     dispatch({ type: 'sending_started' })
     dispatch({ type: 'input_changed', input: '' })
@@ -192,9 +266,23 @@ export function WorkbenchProvider({
     const payload: ChatSendPayload = {
       task_id: state.currentTask?.id,
       team_id: state.defaultTeam.id,
-      project_id: state.currentProject?.id,
+      project_id: state.currentTask ? undefined : state.currentProject?.id,
+      device_id: state.currentProject?.config?.execution?.deviceId ?? state.currentProject?.config?.device_id,
       task_type: 'code',
       message,
+    }
+
+    if (!isOptionsLocked && modelSelection.selectedModel) {
+      payload.force_override_bot_model = modelSelection.selectedModel.name
+      payload.force_override_bot_model_type = modelSelection.selectedModel.type
+    }
+
+    if (!isOptionsLocked && skillSelection.selectedSkills.length > 0) {
+      payload.additional_skills = skillSelection.selectedSkills
+    }
+
+    if (attachmentSelection.attachments.length > 0) {
+      payload.attachment_ids = attachmentSelection.attachments.map(attachment => attachment.id)
     }
 
     const ack = await resolvedServices.chatStream.sendMessage(payload)
@@ -202,11 +290,32 @@ export function WorkbenchProvider({
 
     if (!ack.success) {
       dispatch({ type: 'error_set', error: ack.error ?? '发送失败' })
+      return
+    }
+
+    attachmentSelection.resetAttachments()
+
+    if (!state.currentTask && ack.task_id) {
+      dispatch({
+        type: 'task_opened',
+        task: {
+          id: ack.task_id,
+          title: message.substring(0, 100),
+          status: 'RUNNING',
+          task_type: 'code',
+          team_id: state.defaultTeam.id,
+          created_at: new Date().toISOString(),
+        },
+      })
     }
   }, [
+    attachmentSelection,
+    isOptionsLocked,
+    modelSelection.selectedModel,
     resolvedServices,
+    skillSelection.selectedSkills,
     state.currentProject?.id,
-    state.currentTask?.id,
+    state.currentTask,
     state.defaultTeam,
     state.input,
   ])
@@ -214,6 +323,24 @@ export function WorkbenchProvider({
   const value: WorkbenchContextValue = {
     state,
     messages,
+    projectChat: {
+      models: modelSelection.models,
+      skills: skillSelection.skills,
+      selectedModel: modelSelection.selectedModel,
+      selectedSkills: skillSelection.selectedSkills,
+      attachments: attachmentSelection.attachments,
+      uploadingFiles: attachmentSelection.uploadingFiles,
+      errors: attachmentSelection.errors,
+      isOptionsLocked,
+      isAttachmentReadyToSend: attachmentSelection.isAttachmentReadyToSend,
+      setSelectedModel: modelSelection.setSelectedModel,
+      setSelectedSkills: skillSelection.setSelectedSkills,
+      toggleSkill: skillSelection.toggleSkill,
+      handleFileSelect: attachmentSelection.handleFileSelect,
+      addExistingAttachment: attachmentSelection.addExistingAttachment,
+      removeAttachment: attachmentSelection.removeAttachment,
+      resetAttachments: attachmentSelection.resetAttachments,
+    },
     selectProject,
     openTask,
     setInput,

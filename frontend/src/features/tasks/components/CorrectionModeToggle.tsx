@@ -29,6 +29,7 @@ interface CorrectionModeToggleProps {
   disabled?: boolean
   correctionModelName?: string | null
   taskId: number | null
+  triggerVariant?: 'button' | 'menu-item'
 }
 
 export default function CorrectionModeToggle({
@@ -37,6 +38,7 @@ export default function CorrectionModeToggle({
   disabled = false,
   correctionModelName,
   taskId,
+  triggerVariant = 'button',
 }: CorrectionModeToggleProps) {
   const { t } = useTranslation()
   const [showModelSelector, setShowModelSelector] = useState(false)
@@ -144,6 +146,92 @@ export default function CorrectionModeToggle({
     return nameMatch || displayNameMatch
   })
 
+  const modelSelectionDialog = (
+    <Dialog open={showModelSelector} onOpenChange={handleDialogClose}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{t('chat:correction.select_model')}</DialogTitle>
+          <DialogDescription>{t('chat:correction.select_model_desc')}</DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          {/* Search Input */}
+          <Input
+            placeholder={t('chat:correction.search_model')}
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            className="w-full"
+          />
+
+          {/* Model List */}
+          <ScrollArea className="h-[300px] pr-4">
+            {isLoading ? (
+              <div className="flex items-center justify-center h-full">
+                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
+              </div>
+            ) : filteredModels.length === 0 ? (
+              <div className="flex items-center justify-center h-full text-text-muted">
+                {t('chat:correction.no_models')}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {filteredModels.map(model => (
+                  <Button
+                    key={`${model.type}-${model.name}`}
+                    variant="ghost"
+                    className="w-full justify-start text-left h-auto py-3 px-4 hover:bg-hover"
+                    onClick={() => handleModelSelect(model)}
+                  >
+                    <div className="flex flex-col items-start gap-1">
+                      <span className="font-medium">{model.displayName || model.name}</span>
+                      {model.displayName && model.displayName !== model.name && (
+                        <span className="text-xs text-text-muted">{model.name}</span>
+                      )}
+                      <span className="text-xs text-text-muted capitalize">
+                        {model.type === 'public'
+                          ? t('chat:correction.public_model')
+                          : t('chat:correction.user_model')}
+                      </span>
+                    </div>
+                  </Button>
+                ))}
+              </div>
+            )}
+          </ScrollArea>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+
+  if (triggerVariant === 'menu-item') {
+    return (
+      <>
+        <button
+          type="button"
+          onClick={handleToggle}
+          disabled={disabled}
+          data-testid="correction-toggle"
+          className={cn(
+            'w-full flex items-center justify-between px-3 py-2.5 text-left transition-colors hover:bg-hover active:bg-hover disabled:opacity-50 disabled:cursor-not-allowed',
+            enabled ? 'text-primary' : 'text-text-primary'
+          )}
+        >
+          <span className="flex min-w-0 items-center gap-3">
+            <CheckCircle className={cn('h-4 w-4', enabled ? 'text-primary' : 'text-text-muted')} />
+            <span className="text-sm">{t('chat:correction.label')}</span>
+          </span>
+          {enabled && correctionModelName && (
+            <span className="ml-3 max-w-24 truncate text-xs text-text-muted">
+              {correctionModelName}
+            </span>
+          )}
+        </button>
+
+        {modelSelectionDialog}
+      </>
+    )
+  }
+
   return (
     <>
       <TooltipProvider>
@@ -174,61 +262,7 @@ export default function CorrectionModeToggle({
         </Tooltip>
       </TooltipProvider>
 
-      {/* Model Selection Dialog */}
-      <Dialog open={showModelSelector} onOpenChange={handleDialogClose}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>{t('chat:correction.select_model')}</DialogTitle>
-            <DialogDescription>{t('chat:correction.select_model_desc')}</DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            {/* Search Input */}
-            <Input
-              placeholder={t('chat:correction.search_model')}
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              className="w-full"
-            />
-
-            {/* Model List */}
-            <ScrollArea className="h-[300px] pr-4">
-              {isLoading ? (
-                <div className="flex items-center justify-center h-full">
-                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
-                </div>
-              ) : filteredModels.length === 0 ? (
-                <div className="flex items-center justify-center h-full text-text-muted">
-                  {t('chat:correction.no_models')}
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {filteredModels.map(model => (
-                    <Button
-                      key={`${model.type}-${model.name}`}
-                      variant="ghost"
-                      className="w-full justify-start text-left h-auto py-3 px-4 hover:bg-hover"
-                      onClick={() => handleModelSelect(model)}
-                    >
-                      <div className="flex flex-col items-start gap-1">
-                        <span className="font-medium">{model.displayName || model.name}</span>
-                        {model.displayName && model.displayName !== model.name && (
-                          <span className="text-xs text-text-muted">{model.name}</span>
-                        )}
-                        <span className="text-xs text-text-muted capitalize">
-                          {model.type === 'public'
-                            ? t('chat:correction.public_model')
-                            : t('chat:correction.user_model')}
-                        </span>
-                      </div>
-                    </Button>
-                  ))}
-                </div>
-              )}
-            </ScrollArea>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {modelSelectionDialog}
     </>
   )
 }

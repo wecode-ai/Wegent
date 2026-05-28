@@ -17,6 +17,8 @@ interface ChatContextInputProps {
   excludeKnowledgeBaseId?: number
   /** Render style for the selector trigger */
   triggerVariant?: 'button' | 'menu-item'
+  /** Render compact icon-only desktop trigger */
+  iconOnly?: boolean
 }
 
 /**
@@ -32,6 +34,7 @@ export default function ChatContextInput({
   onContextsChange,
   excludeKnowledgeBaseId,
   triggerVariant = 'button',
+  iconOnly = false,
 }: ChatContextInputProps) {
   const [selectorOpen, setSelectorOpen] = useState(false)
 
@@ -88,6 +91,7 @@ export default function ChatContextInput({
           onClick={() => setSelectorOpen(true)}
           selectedCount={selectedContexts.length}
           triggerVariant={triggerVariant}
+          iconOnly={iconOnly}
         />
       </div>
     </ContextSelector>

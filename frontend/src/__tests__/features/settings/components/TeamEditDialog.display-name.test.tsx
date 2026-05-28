@@ -106,6 +106,11 @@ jest.mock('@/features/settings/components/team-edit/TeamModeChangeDialog', () =>
   default: () => null,
 }))
 
+jest.mock('@/features/settings/components/team-edit/SimpleTeamEditForm', () => ({
+  __esModule: true,
+  default: () => null,
+}))
+
 const mockedUpdateTeam = updateTeam as jest.MockedFunction<typeof updateTeam>
 
 const makeBot = (): Bot => ({
@@ -210,6 +215,36 @@ describe('TeamEditDialog display name', () => {
       expect(mockTeamModeEditor).toHaveBeenLastCalledWith(
         expect.objectContaining({
           allowedAgentsForMode: ['ClaudeCode'],
+        })
+      )
+    })
+  })
+
+  it('preserves existing non-simple bind modes when saving advanced teams', async () => {
+    const team = makeTeam()
+    team.bind_mode = ['knowledge']
+    mockedUpdateTeam.mockResolvedValue(team)
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot()]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedUpdateTeam).toHaveBeenCalledWith(
+        team.id,
+        expect.objectContaining({
+          bind_mode: ['knowledge'],
         })
       )
     })

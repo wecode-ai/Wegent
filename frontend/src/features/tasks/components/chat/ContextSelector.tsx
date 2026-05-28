@@ -415,6 +415,7 @@ export default function ContextSelector({
           'flex flex-col'
         )}
         align="start"
+        side="top"
         sideOffset={4}
         collisionPadding={8}
         avoidCollisions={true}

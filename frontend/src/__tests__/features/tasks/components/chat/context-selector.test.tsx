@@ -46,7 +46,11 @@ jest.mock('@/apis/table', () => ({
 jest.mock('@/components/ui/popover', () => ({
   Popover: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   PopoverTrigger: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  PopoverContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  PopoverContent: ({ children, side }: { children: React.ReactNode; side?: string }) => (
+    <div data-testid="context-selector-popover" data-side={side}>
+      {children}
+    </div>
+  ),
 }))
 
 jest.mock('@/components/ui/command', () => ({
@@ -116,5 +120,25 @@ describe('ContextSelector organization grouping', () => {
 
     expect(screen.queryByText('knowledge:document.tabs.group')).not.toBeInTheDocument()
     expect(screen.getByText('Org KB')).toBeInTheDocument()
+  })
+
+  it('opens above the input toolbar to match adjacent toolbar popovers', async () => {
+    render(
+      <ContextSelector
+        open={true}
+        onOpenChange={jest.fn()}
+        selectedContexts={[]}
+        onSelect={jest.fn()}
+        onDeselect={jest.fn()}
+      >
+        <button>trigger</button>
+      </ContextSelector>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('knowledge:document.tabs.organization')).toBeInTheDocument()
+    })
+
+    expect(screen.getByTestId('context-selector-popover')).toHaveAttribute('data-side', 'top')
   })
 })

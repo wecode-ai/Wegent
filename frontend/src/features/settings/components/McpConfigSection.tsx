@@ -24,6 +24,8 @@ interface McpConfigSectionProps {
   agentType?: AgentType
   readOnly?: boolean
   toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast']
+  hideHeaderLabel?: boolean
+  compact?: boolean
 }
 
 const McpConfigSection: React.FC<McpConfigSectionProps> = ({
@@ -32,6 +34,8 @@ const McpConfigSection: React.FC<McpConfigSectionProps> = ({
   agentType,
   readOnly = false,
   toast,
+  hideHeaderLabel = false,
+  compact = false,
 }) => {
   const { t } = useTranslation('common')
 
@@ -203,11 +207,13 @@ const McpConfigSection: React.FC<McpConfigSectionProps> = ({
   return (
     <div className="flex flex-col flex-grow">
       {/* Header */}
-      <div className="flex items-center justify-between mb-1">
+      <div className="mb-1 flex items-center justify-between">
         <div className="flex items-center gap-1.5">
-          <label className="block text-base font-medium leading-8 text-text-primary">
-            {t('common:bot.mcp_config')}
-          </label>
+          {!hideHeaderLabel && (
+            <label className="block text-base font-medium leading-8 text-text-primary">
+              {t('common:bot.mcp_config')}
+            </label>
+          )}
           <Button
             size="sm"
             variant="outline"
@@ -242,10 +248,22 @@ const McpConfigSection: React.FC<McpConfigSectionProps> = ({
       </div>
 
       {/* Server List */}
-      <div className="bg-base rounded-md border border-border min-h-[120px] flex-grow overflow-hidden p-2">
+      <div
+        className={
+          compact
+            ? 'overflow-hidden rounded-md border border-border bg-base'
+            : 'flex-grow overflow-hidden rounded-md border border-border bg-base p-2 min-h-[120px]'
+        }
+      >
         {mcpConfigState.parseError ? (
           <div className="px-4 py-3 text-sm text-red-500">
             {t('common:bot.errors.mcp_config_json')}
+          </div>
+        ) : compact && mcpServerNames.length === 0 ? (
+          <div className="flex h-10 items-center px-3">
+            <span className="truncate text-sm text-text-muted">
+              {t('common:bot.no_mcp_servers')}
+            </span>
           </div>
         ) : mcpServerNames.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-6 text-center">
@@ -261,7 +279,13 @@ const McpConfigSection: React.FC<McpConfigSectionProps> = ({
             </Button>
           </div>
         ) : (
-          <div className="max-h-44 overflow-y-auto custom-scrollbar space-y-1">
+          <div
+            className={
+              compact
+                ? 'max-h-32 space-y-1 overflow-y-auto p-1 custom-scrollbar'
+                : 'max-h-44 overflow-y-auto custom-scrollbar space-y-1'
+            }
+          >
             {mcpServerNames.map(serverName => {
               const serverConfig = mcpConfigState.config[serverName] as
                 | Record<string, unknown>

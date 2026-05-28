@@ -173,11 +173,18 @@ describe('project sidebar behavior', () => {
     isWorkspaceEnabledMock = true
   })
 
-  test('renders one project section containing pathless and workspace projects', () => {
+  test('renders the unified project section as one compact row by default', () => {
     render(<ProjectSection onTaskSelect={jest.fn()} />)
 
+    expect(screen.getByTestId('project-section-header')).toHaveClass('h-6')
     expect(screen.getByText('workspaceSection.title')).toBeInTheDocument()
     expect(screen.queryByText('section.title')).not.toBeInTheDocument()
+    expect(screen.queryByText('(2)')).not.toBeInTheDocument()
+    expect(screen.queryByText('pathless-project')).not.toBeInTheDocument()
+    expect(screen.queryByText('workspace-project')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('project-section-toggle'))
+
     expect(screen.getByText('pathless-project')).toBeInTheDocument()
     expect(screen.getByText('workspace-project')).toBeInTheDocument()
   })
@@ -187,12 +194,16 @@ describe('project sidebar behavior', () => {
 
     render(<ProjectSection onTaskSelect={jest.fn()} />)
 
+    fireEvent.click(screen.getByTestId('project-section-toggle'))
+
     expect(screen.getByText('pathless-project')).toBeInTheDocument()
     expect(screen.getByText('workspace-project')).toBeInTheDocument()
   })
 
   test('shows the new conversation shortcut only for projects with a workspace path', () => {
     render(<ProjectSection onTaskSelect={jest.fn()} />)
+
+    fireEvent.click(screen.getByTestId('project-section-toggle'))
 
     expect(screen.getAllByTestId('project-new-conversation-btn')).toHaveLength(1)
     expect(screen.getByText('pathless-project')).toBeInTheDocument()
@@ -202,6 +213,7 @@ describe('project sidebar behavior', () => {
   test('opens workspace project tasks in device chat from the unified section', () => {
     render(<ProjectSection onTaskSelect={jest.fn()} />)
 
+    fireEvent.click(screen.getByTestId('project-section-toggle'))
     fireEvent.click(screen.getByText('workspace task'))
 
     expect(pushMock).toHaveBeenCalledWith('/devices/chat?taskId=202&projectId=2&deviceId=device-1')
