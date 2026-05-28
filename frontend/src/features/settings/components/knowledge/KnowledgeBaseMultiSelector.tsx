@@ -27,6 +27,7 @@ interface KnowledgeBaseMultiSelectorProps {
   disabled?: boolean
   allowedSources?: KnowledgeBaseOptionSource[]
   allowedGroupNamespaces?: string[]
+  helperText?: string | null
 }
 
 interface GroupedKnowledgeBaseOption {
@@ -282,6 +283,7 @@ export function KnowledgeBaseMultiSelector({
   disabled = false,
   allowedSources,
   allowedGroupNamespaces,
+  helperText,
 }: KnowledgeBaseMultiSelectorProps) {
   const { t } = useTranslation()
   const { options, loading, error } = useKnowledgeBaseOptions()
@@ -482,18 +484,18 @@ export function KnowledgeBaseMultiSelector({
         ))}
       </div>
 
-      <p className="text-xs text-text-muted">
-        {t(
-          'common:bot.default_knowledge_bases_used_for_new_chats',
-          '用于初始化新聊天的默认知识库。'
-        )}
-      </p>
-      <p className="text-xs text-text-muted">
-        {t(
-          'common:bot.default_knowledge_bases_append_hint',
-          '聊天时手动选择的知识库会在后续追加，不会覆盖这里的默认配置。'
-        )}
-      </p>
+      {helperText === null ? null : (
+        <p className="text-xs text-text-muted">
+          {helperText ||
+            `${t(
+              'common:bot.default_knowledge_bases_used_for_new_chats',
+              '用于初始化新聊天的默认知识库。'
+            )} ${t(
+              'common:bot.default_knowledge_bases_append_hint',
+              '聊天时手动选择的知识库会在后续追加，不会覆盖这里的默认配置。'
+            )}`}
+        </p>
+      )}
     </div>
   )
 }

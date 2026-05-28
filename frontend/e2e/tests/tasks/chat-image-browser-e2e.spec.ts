@@ -54,6 +54,53 @@ interface CapturedRequest {
   }
 }
 
+function messageContainsText(message: CapturedRequest['body']['messages'][number], text: string) {
+  if (typeof message.content === 'string') {
+    return message.content.includes(text)
+  }
+
+  return message.content.some(item => item.type === 'text' && item.text?.includes(text))
+}
+
+function findChatCompletionRequest(capturedRequests: CapturedRequest[], text: string) {
+  return capturedRequests.find(
+    req =>
+      req.url?.includes('/chat/completions') &&
+      req.body.messages.some(
+        message => message.role === 'user' && messageContainsText(message, text)
+      )
+  )
+}
+
+async function waitForChatCompletionRequest(
+  request: APIRequestContext,
+  text: string
+): Promise<CapturedRequest> {
+  const timeoutMs = 15000
+  const intervalMs = 500
+  const deadline = Date.now() + timeoutMs
+  let lastCapturedRequests: CapturedRequest[] = []
+
+  while (Date.now() < deadline) {
+    const capturedResponse = await request.get(`${MOCK_MODEL_SERVER_URL}/captured-requests`)
+    if (capturedResponse.status() !== 200) {
+      throw new Error(`Failed to read captured requests: ${capturedResponse.status()}`)
+    }
+
+    lastCapturedRequests = (await capturedResponse.json()) as CapturedRequest[]
+    const chatRequest = findChatCompletionRequest(lastCapturedRequests, text)
+    if (chatRequest) {
+      console.log(`Captured ${lastCapturedRequests.length} requests`)
+      return chatRequest
+    }
+
+    await new Promise(resolve => setTimeout(resolve, intervalMs))
+  }
+
+  console.log('Captured requests:', JSON.stringify(lastCapturedRequests, null, 2))
+  throw new Error('No chat completion request captured by mock model server')
+}
+
 test.describe('Chat Image Browser E2E with Mock Model Server', () => {
   let apiClient: ApiClient
   let token: string
@@ -61,6 +108,7 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
 
   // Created resource IDs for cleanup
   let createdModelId: number | null = null
+  let createdModelCreated = false
   let createdBotId: number | null = null
   let createdTeamId: number | null = null
 
@@ -99,7 +147,8 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
 
       if (modelResponse.status() === 200 || modelResponse.status() === 201) {
         const modelData = await modelResponse.json()
-        createdModelId = modelData.id
+        createdModelCreated = true
+        createdModelId = modelData.id ?? null
         console.log(`Created model: ${TEST_MODEL_NAME} (ID: ${createdModelId})`)
       } else {
         console.error('Failed to create model:', await modelResponse.text())
@@ -204,7 +253,7 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
       }
     }
 
-    if (createdModelId) {
+    if (createdModelCreated) {
       try {
         // Use CRD API to delete user-owned model
         await request.delete(
@@ -275,6 +324,17 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
   }
 
   /**
+   * Navigate directly to the created test team.
+   * ChatArea supports teamId in the URL, which avoids relying on quick-access card ordering.
+   */
+  async function gotoChatWithTestTeam(page: Page): Promise<void> {
+    await skipOnboardingTour(page)
+    await page.goto(`/chat?teamId=${createdTeamId}`)
+    await page.waitForLoadState('domcontentloaded')
+    await page.waitForTimeout(1500)
+  }
+
+  /**
    * Helper function to select the test team in the UI
    * Updated to work with the new QuickAccessCards pagination design (removed "More" button)
    * Note: TeamSelectorButton only renders when selectedTeam exists and teams.length > 0
@@ -291,6 +351,39 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
       // Take a screenshot for debugging
       await page.screenshot({ path: 'test-results/chat-page-initial.png' })
       console.log('Saved initial page screenshot')
+
+      // Strategy 0: Current input toolbar selector.
+      // The trigger is icon-only and uses data-testid="agent-skill-selector-button".
+      const currentAgentSelector = page
+        .locator('[data-testid="agent-skill-selector-button"], [data-testid="team-selector"]')
+        .first()
+      if (await currentAgentSelector.isVisible({ timeout: 5000 }).catch(() => false)) {
+        console.log('Found current agent selector, opening...')
+        await currentAgentSelector.click({ force: true })
+        await page.waitForTimeout(500)
+
+        const searchInput = page
+          .locator('input[placeholder*="Search"], input[placeholder*="搜索"]')
+          .last()
+        if (await searchInput.isVisible({ timeout: 1000 }).catch(() => false)) {
+          await searchInput.fill(TEST_TEAM_NAME)
+          await page.waitForTimeout(300)
+        }
+
+        const teamOption = page
+          .locator(
+            `[data-testid="team-option-${TEST_TEAM_NAME}"], [data-testid="quick-access-more-team-${TEST_TEAM_NAME}"], [role="button"]:has-text("${TEST_TEAM_NAME}")`
+          )
+          .first()
+        if (await teamOption.isVisible({ timeout: 5000 }).catch(() => false)) {
+          console.log('Found test team in current selector, selecting...')
+          await teamOption.click()
+          await page.waitForTimeout(1000)
+          return true
+        }
+
+        await page.keyboard.press('Escape').catch(() => {})
+      }
 
       // Strategy 1: Look for team card directly in QuickAccessCards
       // Note: Team cards are now div elements, not buttons
@@ -538,21 +631,19 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
     try {
       const healthResponse = await request.get(`${MOCK_MODEL_SERVER_URL}/health`)
       if (healthResponse.status() !== 200) {
-        console.warn('Mock model server is not running. Tests will be skipped.')
-        return
+        throw new Error('Mock model server is not running')
       }
       console.log('Mock model server is running')
-    } catch {
-      console.warn(
-        'Mock model server is not reachable. Start it with: npx ts-node frontend/e2e/utils/mock-model-server.ts'
+    } catch (error) {
+      throw new Error(
+        `Mock model server is not reachable. Start it with: npx ts-node frontend/e2e/utils/mock-model-server.ts. ${error}`
       )
-      return
     }
 
     // Create test resources
     const created = await createTestResources(request)
     if (!created) {
-      console.warn('Failed to create test resources')
+      throw new Error('Failed to create test resources')
     }
   })
 
@@ -571,11 +662,7 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
 
   test('should verify mock model server is running', async ({ request }) => {
     const response = await request.get(`${MOCK_MODEL_SERVER_URL}/health`)
-
-    if (response.status() !== 200) {
-      test.skip()
-      return
-    }
+    expect(response.status()).toBe(200)
 
     const data = await response.json()
     expect(data.status).toBe('ok')
@@ -585,36 +672,23 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
     page,
     request,
   }) => {
-    // Skip if mock server is not running
     const healthCheck = await request.get(`${MOCK_MODEL_SERVER_URL}/health`).catch(() => null)
-    if (!healthCheck || healthCheck.status() !== 200) {
-      console.warn('Mock model server not running, skipping test')
-      test.skip()
-      return
-    }
+    expect(healthCheck?.status()).toBe(200)
 
-    // Skip if team was not created
-    if (!createdTeamId) {
-      console.warn('Test team was not created, skipping test')
-      test.skip()
-      return
-    }
+    expect(createdTeamId, 'Test team should be created in beforeAll').not.toBeNull()
 
     // Step 1: Navigate to chat page
     console.log('Navigating to chat page...')
-    await skipOnboardingTour(page)
-    await page.goto('/chat')
-    await page.waitForLoadState('domcontentloaded')
-    await page.waitForTimeout(3000)
+    await gotoChatWithTestTeam(page)
 
     // Step 2: Try to select the test team
     console.log('Attempting to select test team...')
     const teamSelected = await selectTestTeam(page)
     if (!teamSelected) {
-      console.warn('Could not select test team via UI')
       // Take screenshot for debugging
       await page.screenshot({ path: 'test-results/chat-team-selection-failed.png' })
     }
+    expect(teamSelected).toBe(true)
 
     // Wait for team selection to take effect
     await page.waitForTimeout(2000)
@@ -623,20 +697,18 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
     console.log('Checking if model selection is required...')
     const modelSelected = await selectTestModel(page)
     if (!modelSelected) {
-      console.warn('Could not select model, test may fail')
       await page.screenshot({ path: 'test-results/chat-model-selection-failed.png' })
     }
+    expect(modelSelected).toBe(true)
 
     // Step 3: Upload image using helper function
     console.log('Uploading image...')
     const fileUploaded = await uploadFile(page, testImagePath)
 
     if (!fileUploaded) {
-      console.warn('Could not upload file')
       await page.screenshot({ path: 'test-results/chat-file-upload-failed.png' })
-      test.skip()
-      return
     }
+    expect(fileUploaded).toBe(true)
 
     // Wait for file to be processed
     await page.waitForTimeout(2000)
@@ -648,20 +720,19 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
     // The input is a contentEditable div with data-testid="message-input", not a textarea
     console.log('Typing message...')
     const messageInput = page.locator('[data-testid="message-input"]')
+    const messageText = `What is in this image? ${TEST_PREFIX}`
 
     if (!(await messageInput.isVisible({ timeout: 5000 }).catch(() => false))) {
-      console.warn('Message input not found')
       await page.screenshot({ path: 'test-results/chat-no-input.png' })
-      test.skip()
-      return
     }
+    await expect(messageInput).toBeVisible()
 
     // Dismiss any onboarding tour overlay before clicking input
     await dismissOnboardingTour(page)
 
     // For contentEditable elements, use pressSequentially to ensure input events fire correctly
     await messageInput.click()
-    await messageInput.pressSequentially('What is in this image?')
+    await messageInput.pressSequentially(messageText)
 
     // Step 5: Send message
     console.log('Sending message...')
@@ -673,11 +744,9 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
       .first()
 
     if (!(await sendButton.isVisible({ timeout: 3000 }).catch(() => false))) {
-      console.warn('Send button not visible')
       await page.screenshot({ path: 'test-results/chat-no-send-button.png' })
-      test.skip()
-      return
     }
+    await expect(sendButton).toBeVisible()
 
     // Wait for the button to be enabled (canSubmit = true)
     // This requires: !isLoading && !isStreaming && !isModelSelectionRequired && isAttachmentReadyToSend
@@ -688,36 +757,12 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
 
     // Step 6: Wait for the request to be processed
     console.log('Waiting for request to be processed...')
-    await page.waitForTimeout(8000)
+    const chatRequest = await waitForChatCompletionRequest(request, messageText)
 
     // Take screenshot after sending
     await page.screenshot({ path: 'test-results/chat-after-send.png' })
 
-    // Step 7: Check captured requests on mock server
-    console.log('Checking captured requests...')
-    const capturedResponse = await request.get(`${MOCK_MODEL_SERVER_URL}/captured-requests`)
-    expect(capturedResponse.status()).toBe(200)
-
-    const capturedRequests = (await capturedResponse.json()) as CapturedRequest[]
-    console.log(`Captured ${capturedRequests.length} requests`)
-
-    // Find the chat completion request
-    const chatRequest = capturedRequests.find(req => req.url?.includes('/chat/completions'))
-
-    if (!chatRequest) {
-      console.log('Captured requests:', JSON.stringify(capturedRequests, null, 2))
-      console.warn(
-        'No chat completion request captured. The team might not be using the mock model.'
-      )
-      // This might happen if the team selector didn't work
-      // Let's check if any request was made
-      if (capturedRequests.length === 0) {
-        console.warn('No requests captured at all. Check if the team is configured correctly.')
-      }
-      return
-    }
-
-    // Step 8: Verify the request contains image_url
+    // Step 7: Verify the request contains image_url
     expect(chatRequest.body).toBeDefined()
     expect(chatRequest.body.messages).toBeDefined()
 
@@ -725,7 +770,8 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
 
     // Find user message with image
     const userMessage = chatRequest.body.messages.find(
-      msg => msg.role === 'user' && Array.isArray(msg.content)
+      msg =>
+        msg.role === 'user' && Array.isArray(msg.content) && messageContainsText(msg, messageText)
     )
 
     expect(userMessage).toBeDefined()
@@ -734,7 +780,7 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
       // Verify text content exists
       const textContent = userMessage.content.find(c => c.type === 'text')
       expect(textContent).toBeDefined()
-      expect(textContent?.text).toContain('What is in this image?')
+      expect(textContent?.text).toContain(messageText)
 
       // Verify image_url content exists
       const imageContent = userMessage.content.find(c => c.type === 'image_url')
@@ -748,29 +794,20 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
   })
 
   test('should display model response after sending image', async ({ page, request }) => {
-    // Skip if mock server is not running
     const healthCheck = await request.get(`${MOCK_MODEL_SERVER_URL}/health`).catch(() => null)
-    if (!healthCheck || healthCheck.status() !== 200) {
-      test.skip()
-      return
-    }
+    expect(healthCheck?.status()).toBe(200)
 
-    if (!createdTeamId) {
-      test.skip()
-      return
-    }
+    expect(createdTeamId, 'Test team should be created in beforeAll').not.toBeNull()
 
     // Navigate to chat page
-    await skipOnboardingTour(page)
-    await page.goto('/chat')
-    await page.waitForLoadState('domcontentloaded')
-    await page.waitForTimeout(3000)
+    await gotoChatWithTestTeam(page)
 
     // Try to select test team
     const teamSelected = await selectTestTeam(page)
     if (!teamSelected) {
-      console.warn('Could not select test team')
+      await page.screenshot({ path: 'test-results/chat-team-selection-failed.png' })
     }
+    expect(teamSelected).toBe(true)
 
     // Wait for team selection
     await page.waitForTimeout(2000)
@@ -778,16 +815,16 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
     // Select model if required
     const modelSelected = await selectTestModel(page)
     if (!modelSelected) {
-      console.warn('Could not select model, test may fail')
+      await page.screenshot({ path: 'test-results/chat-model-selection-failed.png' })
     }
+    expect(modelSelected).toBe(true)
 
     // Upload image using helper function
     const fileUploaded = await uploadFile(page, testImagePath)
     if (!fileUploaded) {
-      console.warn('Could not upload file')
-      test.skip()
-      return
+      await page.screenshot({ path: 'test-results/chat-file-upload-failed.png' })
     }
+    expect(fileUploaded).toBe(true)
 
     // Wait for file to be processed
     await page.waitForTimeout(2000)
@@ -795,17 +832,18 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
     // Type and send message
     // The input is a contentEditable div with data-testid="message-input", not a textarea
     const messageInput = page.locator('[data-testid="message-input"]')
+    const messageText = `Describe this image ${TEST_PREFIX}`
     if (!(await messageInput.isVisible({ timeout: 5000 }).catch(() => false))) {
-      test.skip()
-      return
+      await page.screenshot({ path: 'test-results/chat-no-input.png' })
     }
+    await expect(messageInput).toBeVisible()
 
     // Dismiss any onboarding tour overlay before clicking input
     await dismissOnboardingTour(page)
 
     // For contentEditable elements, use pressSequentially to ensure input events fire correctly
     await messageInput.click()
-    await messageInput.pressSequentially('Describe this image')
+    await messageInput.pressSequentially(messageText)
 
     // Look for send button
     const sendButton = page
@@ -814,9 +852,9 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
       )
       .first()
     if (!(await sendButton.isVisible({ timeout: 3000 }).catch(() => false))) {
-      test.skip()
-      return
+      await page.screenshot({ path: 'test-results/chat-no-send-button.png' })
     }
+    await expect(sendButton).toBeVisible()
 
     // Wait for the button to be enabled (canSubmit = true)
     // This requires: !isLoading && !isStreaming && !isModelSelectionRequired && isAttachmentReadyToSend
@@ -836,8 +874,8 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
     if (hasResponse) {
       console.log('✅ Model response displayed successfully!')
     } else {
-      console.warn('Model response not found in UI (might be due to team selection issue)')
       await page.screenshot({ path: 'test-results/chat-response-not-found.png' })
     }
+    expect(hasResponse).toBe(true)
   })
 })

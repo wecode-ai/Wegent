@@ -279,4 +279,21 @@ describe('TeamSelectorButton', () => {
     expect(await screen.findByTestId('favorite-team-button-3')).toBeInTheDocument()
     expect(screen.queryByTestId('favorite-team-button-2')).not.toBeInTheDocument()
   })
+
+  it('exposes stable test ids for footer actions', async () => {
+    const selectedTeam = makeTeam({ id: 3, name: 'dev-team', user_id: 123 })
+
+    render(
+      <TeamSelectorButton
+        selectedTeam={selectedTeam}
+        setSelectedTeam={jest.fn()}
+        teams={[selectedTeam]}
+        disabled={false}
+        currentMode="code"
+      />
+    )
+
+    expect(await screen.findByTestId('quick-create-button')).toHaveAttribute('role', 'button')
+    expect(screen.getByTestId('settings-button')).toHaveAttribute('role', 'button')
+  })
 })

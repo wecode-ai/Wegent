@@ -4,6 +4,7 @@
 
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import type { ComponentProps } from 'react'
 
 import { userApis } from '@/apis/user'
 import { QuickAccessCards } from '@/features/tasks/components/chat/QuickAccessCards'
@@ -27,9 +28,9 @@ jest.mock('@/hooks/useTranslation', () => ({
         'common:teams.search_team': 'Search team',
         'common:teams.no_match': 'No match',
         'common:teams.reorder_quick_access': 'Drag to reorder',
+        'teams.create_first_team': 'Create Agent',
         'teams.no_teams_title': 'No teams',
         'teams.no_teams_description': 'Create a team first',
-        'wizard:wizard_button': 'Create',
       }
 
       return translations[key] || key
@@ -37,9 +38,23 @@ jest.mock('@/hooks/useTranslation', () => ({
   }),
 }))
 
-jest.mock('@/features/settings/components/wizard/TeamCreationWizard', () => ({
+jest.mock('@/hooks/use-toast', () => ({
+  useToast: () => ({
+    toast: jest.fn(),
+  }),
+}))
+
+jest.mock('@/features/settings/components/TeamEditDialog', () => ({
   __esModule: true,
-  default: () => null,
+  default: ({ open, onClose }: { open: boolean; onClose: () => void }) =>
+    open ? (
+      <div data-testid="simple-team-edit-dialog">
+        Simple Team Edit Dialog
+        <button type="button" onClick={onClose}>
+          Close dialog
+        </button>
+      </div>
+    ) : null,
 }))
 
 const mockGetQuickAccess = userApis.getQuickAccess as jest.MockedFunction<
@@ -62,7 +77,11 @@ const makeTeam = (overrides: Partial<Team>): Team => ({
   ...overrides,
 })
 
-const renderQuickAccessCards = (teams: Team[], quickAccess: QuickAccessResponse) => {
+const renderQuickAccessCards = (
+  teams: Team[],
+  quickAccess: QuickAccessResponse,
+  props: Partial<ComponentProps<typeof QuickAccessCards>> = {}
+) => {
   mockGetQuickAccess.mockResolvedValueOnce(quickAccess)
 
   return render(
@@ -71,6 +90,7 @@ const renderQuickAccessCards = (teams: Team[], quickAccess: QuickAccessResponse)
       selectedTeam={null}
       onTeamSelect={jest.fn()}
       currentMode="chat"
+      {...props}
     />
   )
 }
@@ -216,6 +236,67 @@ describe('QuickAccessCards', () => {
     const reorderedCards = within(container).getAllByTestId(/^quick-access-team-/)
     expect(reorderedCards[0]).toHaveTextContent('Favorite Team Display')
     expect(reorderedCards[1]).toHaveTextContent('System Team Display')
+  })
+
+  test('opens the simple agent editor from the quick create card', async () => {
+    renderQuickAccessCards(
+      [makeTeam({ id: 2, name: 'system-team', description: 'System description' })],
+      {
+        system_version: 2,
+        system_team_ids: [2],
+        user_version: 2,
+        show_system_recommended: false,
+        teams: [
+          {
+            id: 2,
+            name: 'system-team',
+            display_name: 'System Team Display',
+            is_system: true,
+            recommended_mode: 'chat',
+          },
+        ],
+      },
+      { showWizardButton: true }
+    )
+
+    const quickCreate = await screen.findByTestId('quick-create-agent')
+    expect(quickCreate.tagName).toBe('BUTTON')
+    expect(quickCreate).toHaveAttribute('type', 'button')
+
+    fireEvent.click(quickCreate)
+
+    expect(screen.getByTestId('simple-team-edit-dialog')).toBeInTheDocument()
+  })
+
+  test('does not refresh teams when the create dialog closes without a created agent', async () => {
+    const onRefreshTeams = jest.fn().mockResolvedValue([])
+    renderQuickAccessCards(
+      [makeTeam({ id: 2, name: 'system-team', description: 'System description' })],
+      {
+        system_version: 2,
+        system_team_ids: [2],
+        user_version: 2,
+        show_system_recommended: false,
+        teams: [
+          {
+            id: 2,
+            name: 'system-team',
+            display_name: 'System Team Display',
+            is_system: true,
+            recommended_mode: 'chat',
+          },
+        ],
+      },
+      { showWizardButton: true, onRefreshTeams }
+    )
+
+    fireEvent.click(await screen.findByTestId('quick-create-agent'))
+    fireEvent.click(screen.getByRole('button', { name: 'Close dialog' }))
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('simple-team-edit-dialog')).not.toBeInTheDocument()
+    })
+    expect(onRefreshTeams).not.toHaveBeenCalled()
   })
 
   test('reorders quick access teams by dragging a hidden team in the more popover', async () => {

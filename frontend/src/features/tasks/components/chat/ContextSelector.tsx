@@ -32,20 +32,13 @@ import { taskKnowledgeBaseApi } from '@/apis/task-knowledge-base'
 import { tableApi, TableDocument } from '@/apis/table'
 import type { KnowledgeBase } from '@/types/api'
 import type { BoundKnowledgeBaseDetail } from '@/types/task-knowledge-base'
-import type {
-  ContextItem,
-  KnowledgeBaseContext,
-  TableContext,
-} from '@/types/context'
+import type { ContextItem, KnowledgeBaseContext, TableContext } from '@/types/context'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useOrganizationNamespace } from '@/hooks/useOrganizationNamespace'
 import { cn } from '@/lib/utils'
 import { formatDocumentCount } from '@/lib/i18n-helpers'
 import { getKnowledgeBaseGroup } from '@/utils/knowledge-base-grouping'
-import {
-  getDingTalkSelectedIds,
-  DingTalkDocContextSelector,
-} from './DingTalkDocContextSelector'
+import { getDingTalkSelectedIds, DingTalkDocContextSelector } from './DingTalkDocContextSelector'
 
 interface GroupedKnowledgeBases {
   personal: KnowledgeBase[]
@@ -224,12 +217,9 @@ export default function ContextSelector({
     fetchTables()
   }, [fetchTables])
 
-  const handleTabChange = useCallback(
-    (value: string) => {
-      setActiveTab(value)
-    },
-    []
-  )
+  const handleTabChange = useCallback((value: string) => {
+    setActiveTab(value)
+  }, [])
 
   // Group knowledge bases by category (personal, group, organization)
   // and exclude bound ones and current notebook KB from user list
@@ -425,6 +415,7 @@ export default function ContextSelector({
           'flex flex-col'
         )}
         align="start"
+        side="top"
         sideOffset={4}
         collisionPadding={8}
         avoidCollisions={true}
