@@ -341,7 +341,7 @@ export default function TaskSidebar({
                 />
                 <span
                   className={`ml-1.5 text-[14px] leading-5 font-medium ${
-                    btn.isActive ? 'text-primary' : 'text-[#444746]'
+                    btn.isActive ? 'text-primary' : 'text-text-primary'
                   }`}
                 >
                   {btn.label}
@@ -422,7 +422,7 @@ export default function TaskSidebar({
                 />
                 <span
                   className={`ml-1.5 text-[14px] leading-5 font-medium ${
-                    hasActiveItem ? 'text-primary' : 'text-[#444746]'
+                    hasActiveItem ? 'text-primary' : 'text-text-primary'
                   }`}
                 >
                   {t('common:navigation.more')}
@@ -590,7 +590,7 @@ export default function TaskSidebar({
                   >
                     <span className="flex items-center">
                       <Plus className="h-4 w-4 flex-shrink-0" />
-                      <span className="ml-1.5 text-[14px] leading-5 font-medium text-[#444746]">
+                      <span className="ml-1.5 text-[14px] leading-5 font-medium text-text-primary">
                         {t('common:tasks.new_conversation')}
                       </span>
                     </span>
