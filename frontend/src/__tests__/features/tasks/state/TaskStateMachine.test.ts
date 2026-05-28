@@ -98,6 +98,24 @@ describe('TaskStateMachine', () => {
     expect(blocks.every(block => block.status === 'done')).toBe(true)
   })
 
+  it('finalizes streaming blocks on chat done without event result', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.handleChatChunk(42, '', { reasoning_chunk: 'Thought.' })
+    machine.handleChatChunk(42, 'Final answer.')
+    machine.handleChatDone(42, 'Final answer.')
+
+    const message = machine.getState().messages.get('ai-42')
+    const blocks = message?.result?.blocks ?? []
+
+    expect(blocks.map(block => block.type)).toEqual(['thinking', 'text'])
+    expect(blocks.every(block => block.status === 'done')).toBe(true)
+  })
+
   it('does not debounce a recovery that exits before the socket is connected', async () => {
     const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1000)
     const consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})

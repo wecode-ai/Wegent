@@ -1193,6 +1193,15 @@ export class TaskStateMachine {
       existingMessage.result?.blocks || [],
       event.result?.blocks || []
     )
+    const mergedResult =
+      event.result || existingMessage.result?.blocks
+        ? {
+            ...existingMessage.result,
+            ...(event.result || {}),
+            thinking: event.result?.thinking || existingMessage.result?.thinking,
+            blocks: mergedBlocks,
+          }
+        : existingMessage.result
 
     const newMessages = new Map(this.state.messages)
     newMessages.set(aiMessageId, {
@@ -1208,14 +1217,7 @@ export class TaskStateMachine {
       // This prevents messageId from being overwritten with undefined/null
       messageId: event.messageId ?? existingMessage.messageId,
       sources: event.sources || existingMessage.sources,
-      result: event.result
-        ? {
-            ...existingMessage.result,
-            ...event.result,
-            thinking: event.result.thinking || existingMessage.result?.thinking,
-            blocks: mergedBlocks,
-          }
-        : existingMessage.result,
+      result: mergedResult,
     })
 
     // Update status to ready if this was the streaming subtask
