@@ -118,6 +118,7 @@ interface BaseBlock {
 export interface TextBlock extends BaseBlock {
   type: 'text'
   content: string // Text content
+  offset_start?: number // Absolute stream offset for replay-safe merging
 }
 
 /**

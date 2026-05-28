@@ -87,3 +87,22 @@ async def test_add_tool_block_is_idempotent_by_tool_use_id():
     assert blocks[0]["tool_input"] == {"command": "pwd"}
     assert blocks[0]["tool_protocol"] == "function_call"
     assert json.loads(redis_client.lists["chat:streaming:blocks:202"][0]) == blocks[0]
+
+
+@pytest.mark.asyncio
+async def test_add_text_content_ignores_replayed_chunk_by_offset():
+    manager = SessionManager()
+    redis_client = FakeRedisClient()
+    manager._cache = FakeCache(redis_client)
+
+    await manager.add_text_content(subtask_id=303, content="现在我 ✅", offset=0)
+    await manager.add_text_content(
+        subtask_id=303, content="，开始汇总", offset=len("现在我 ✅")
+    )
+    await manager.add_text_content(subtask_id=303, content="现在我 ✅", offset=0)
+
+    blocks = await manager.get_blocks(303)
+
+    assert await manager.get_accumulated_content(303) == "现在我 ✅，开始汇总"
+    assert len(blocks) == 1
+    assert blocks[0]["content"] == "现在我 ✅，开始汇总"

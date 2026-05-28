@@ -275,7 +275,16 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    * Uses task_id from event payload directly (no subtaskToTaskRef needed)
    */
   const handleChatChunk = useCallback((data: ChatChunkPayload) => {
-    const { subtask_id, content, result, sources, block_id, task_id: taskId } = data
+    const {
+      subtask_id,
+      content,
+      offset,
+      result,
+      sources,
+      block_id,
+      block_offset,
+      task_id: taskId,
+    } = data
 
     if (!taskId) {
       console.warn('[ChatStreamContext] Received chunk without task_id:', subtask_id)
@@ -289,7 +298,9 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       content,
       result as UnifiedMessage['result'],
       sources,
-      block_id
+      block_id,
+      offset,
+      block_offset
     )
   }, [])
 

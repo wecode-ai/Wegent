@@ -119,6 +119,8 @@ interface PendingChunkEvent {
   result?: UnifiedMessage['result']
   sources?: UnifiedMessage['sources']
   blockId?: string
+  offset?: number
+  blockOffset?: number
 }
 
 /**
@@ -152,6 +154,8 @@ type Event =
       result?: UnifiedMessage['result']
       sources?: UnifiedMessage['sources']
       blockId?: string
+      offset?: number
+      blockOffset?: number
     }
   | {
       type: 'CHAT_DONE'
@@ -210,6 +214,23 @@ export function generateMessageId(type: 'user' | 'ai', subtaskId?: number): stri
     return `ai-${subtaskId}`
   }
   return `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+}
+
+function mergeTextContent(existing: string, content: string, offset?: number): string {
+  if (!content) return existing
+  if (offset === undefined) return existing + content
+
+  const safeOffset = Math.max(0, offset)
+  if (safeOffset > existing.length) {
+    return existing + content
+  }
+
+  const endOffset = safeOffset + content.length
+  if (existing.slice(safeOffset, endOffset) === content) {
+    return existing
+  }
+
+  return existing.slice(0, safeOffset) + content + existing.slice(endOffset)
 }
 
 /**
@@ -299,9 +320,20 @@ export class TaskStateMachine {
     content: string,
     result?: UnifiedMessage['result'],
     sources?: UnifiedMessage['sources'],
-    blockId?: string
+    blockId?: string,
+    offset?: number,
+    blockOffset?: number
   ): void {
-    this.dispatch({ type: 'CHAT_CHUNK', subtaskId, content, result, sources, blockId })
+    this.dispatch({
+      type: 'CHAT_CHUNK',
+      subtaskId,
+      content,
+      result,
+      sources,
+      blockId,
+      offset,
+      blockOffset,
+    })
   }
 
   /**
@@ -724,7 +756,7 @@ export class TaskStateMachine {
       const newMessages = new Map(this.state.messages)
       const updatedMessage: UnifiedMessage = {
         ...existingMessage,
-        content: existingMessage.content + chunk.content,
+        content: mergeTextContent(existingMessage.content, chunk.content, chunk.offset),
       }
 
       // Handle reasoning content
@@ -804,9 +836,14 @@ export class TaskStateMachine {
       const targetBlock = blocksMap.get(chunk.blockId)
 
       if (targetBlock && targetBlock.type === 'text') {
+        const blockOffset =
+          chunk.blockOffset ??
+          (chunk.offset !== undefined && targetBlock.offset_start !== undefined
+            ? chunk.offset - targetBlock.offset_start
+            : undefined)
         const updatedBlock = {
           ...targetBlock,
-          content: (targetBlock.content || '') + chunk.content,
+          content: mergeTextContent(targetBlock.content || '', chunk.content, blockOffset),
         }
         blocksMap.set(chunk.blockId, updatedBlock)
       } else if (!targetBlock) {
@@ -816,6 +853,7 @@ export class TaskStateMachine {
           content: chunk.content,
           status: 'streaming',
           timestamp: Date.now(),
+          ...(chunk.offset !== undefined ? { offset_start: chunk.offset } : {}),
         }
         blocksMap.set(chunk.blockId, newBlock)
       }
@@ -831,8 +869,12 @@ export class TaskStateMachine {
       // Find the last text block that is still streaming
       const lastBlock = blocksArray[blocksArray.length - 1]
       if (lastBlock && lastBlock.type === 'text' && lastBlock.status === 'streaming') {
-        // Append to existing streaming text block
-        lastBlock.content = (lastBlock.content || '') + chunk.content
+        const blockOffset =
+          chunk.blockOffset ??
+          (chunk.offset !== undefined && lastBlock.offset_start !== undefined
+            ? chunk.offset - lastBlock.offset_start
+            : undefined)
+        lastBlock.content = mergeTextContent(lastBlock.content || '', chunk.content, blockOffset)
         return blocksArray
       }
 
@@ -843,6 +885,7 @@ export class TaskStateMachine {
         content: chunk.content,
         status: 'streaming',
         timestamp: Date.now(),
+        ...(chunk.offset !== undefined ? { offset_start: chunk.offset } : {}),
       }
       blocksArray.push(newTextBlock)
       return blocksArray
@@ -1115,6 +1158,8 @@ export class TaskStateMachine {
         result: event.result,
         sources: event.sources,
         blockId: event.blockId,
+        offset: event.offset,
+        blockOffset: event.blockOffset,
       })
       return
     }
@@ -1145,7 +1190,7 @@ export class TaskStateMachine {
     // the UI to lose the cached_content after page refresh
     const updatedMessage: UnifiedMessage = {
       ...existingMessage,
-      content: existingMessage.content + event.content,
+      content: mergeTextContent(existingMessage.content, event.content, event.offset),
     }
 
     // Handle reasoning content
@@ -1225,9 +1270,14 @@ export class TaskStateMachine {
       const targetBlock = blocksMap.get(event.blockId)
 
       if (targetBlock && targetBlock.type === 'text') {
+        const blockOffset =
+          event.blockOffset ??
+          (event.offset !== undefined && targetBlock.offset_start !== undefined
+            ? event.offset - targetBlock.offset_start
+            : undefined)
         const updatedBlock = {
           ...targetBlock,
-          content: (targetBlock.content || '') + event.content,
+          content: mergeTextContent(targetBlock.content || '', event.content, blockOffset),
         }
         blocksMap.set(event.blockId, updatedBlock)
       } else if (!targetBlock) {
@@ -1237,6 +1287,7 @@ export class TaskStateMachine {
           content: event.content,
           status: 'streaming',
           timestamp: Date.now(),
+          ...(event.offset !== undefined ? { offset_start: event.offset } : {}),
         }
         blocksMap.set(event.blockId, newBlock)
       }
@@ -1252,8 +1303,12 @@ export class TaskStateMachine {
       // Find the last text block that is still streaming
       const lastBlock = blocksArray[blocksArray.length - 1]
       if (lastBlock && lastBlock.type === 'text' && lastBlock.status === 'streaming') {
-        // Append to existing streaming text block
-        lastBlock.content = (lastBlock.content || '') + event.content
+        const blockOffset =
+          event.blockOffset ??
+          (event.offset !== undefined && lastBlock.offset_start !== undefined
+            ? event.offset - lastBlock.offset_start
+            : undefined)
+        lastBlock.content = mergeTextContent(lastBlock.content || '', event.content, blockOffset)
         return blocksArray
       }
 
@@ -1264,6 +1319,7 @@ export class TaskStateMachine {
         content: event.content,
         status: 'streaming',
         timestamp: Date.now(),
+        ...(event.offset !== undefined ? { offset_start: event.offset } : {}),
       }
       blocksArray.push(newTextBlock)
       return blocksArray
