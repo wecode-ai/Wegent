@@ -58,6 +58,8 @@ export default function ExecutorModeSelector({
 }: ExecutorModeSelectorProps) {
   const { t } = useTranslation()
   const customShells = getCustomShells(shells)
+  const hasCustomShells = customShells.length > 0
+  const selectedCustomShellName = hasCustomShells ? customShellName : ''
 
   return (
     <section className="space-y-2">
@@ -107,23 +109,42 @@ export default function ExecutorModeSelector({
       {helperText && <p className="text-xs text-text-secondary">{helperText}</p>}
 
       {value === 'custom' && (
-        <Select value={customShellName} onValueChange={onCustomShellChange}>
-          <SelectTrigger className="bg-base">
-            <SelectValue
-              placeholder={t('settings:team.simple.executor.custom_shell_placeholder')}
-            />
-          </SelectTrigger>
-          <SelectContent>
-            {customShells.map(shell => (
-              <SelectItem
-                key={`${shell.type}-${shell.namespace || 'default'}-${shell.name}`}
-                value={shell.name}
-              >
-                {shell.displayName || shell.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="space-y-1.5">
+          <Select value={selectedCustomShellName} onValueChange={onCustomShellChange}>
+            <SelectTrigger className="bg-base">
+              <SelectValue
+                placeholder={t(
+                  hasCustomShells
+                    ? 'settings:team.simple.executor.custom_shell_placeholder'
+                    : 'settings:team.simple.executor.no_custom_shells'
+                )}
+              />
+            </SelectTrigger>
+            <SelectContent>
+              {hasCustomShells ? (
+                customShells.map(shell => (
+                  <SelectItem
+                    key={`${shell.type}-${shell.namespace || 'default'}-${shell.name}`}
+                    value={shell.name}
+                  >
+                    {shell.displayName || shell.name}
+                  </SelectItem>
+                ))
+              ) : (
+                <SelectItem value="__no_custom_shells__" disabled>
+                  <span className="text-text-muted">
+                    {t('settings:team.simple.executor.no_custom_shells')}
+                  </span>
+                </SelectItem>
+              )}
+            </SelectContent>
+          </Select>
+          {!hasCustomShells && (
+            <p className="text-xs leading-5 text-text-secondary">
+              {t('settings:team.simple.executor.manage_custom_shells_hint')}
+            </p>
+          )}
+        </div>
       )}
     </section>
   )
