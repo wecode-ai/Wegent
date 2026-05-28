@@ -4,10 +4,11 @@
 
 'use client'
 
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { TextPreview } from './TextPreview'
+import { SandboxedHtmlFrame } from '@/components/common/SandboxedHtmlFrame'
 
 export interface HtmlPreviewProps {
   content: string
@@ -36,8 +37,6 @@ export function HtmlPreview({
     }
     onViewModeChange?.(value)
   }
-
-  const iframeRef = useRef<HTMLIFrameElement>(null)
 
   // Reset loading state when content changes
   useEffect(() => {
@@ -76,10 +75,9 @@ export function HtmlPreview({
                 </div>
               </div>
             )}
-            <iframe
-              ref={iframeRef}
+            <SandboxedHtmlFrame
               title={filename}
-              srcDoc={content}
+              content={content}
               className="w-full h-full border-0"
               sandbox="allow-scripts allow-popups allow-forms"
               onLoad={handleIframeLoad}

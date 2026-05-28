@@ -25,6 +25,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      '@wecode': path.resolve(__dirname, './wecode'),
     },
   },
   test: {

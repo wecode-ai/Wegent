@@ -234,9 +234,40 @@ class LocalModeStrategy(ExecutionModeStrategy):
         if self._use_global_capabilities:
             return os.path.expanduser("~/.claude/skills")
         if config_dir:
-            return os.path.join(config_dir, "skills")
+            skills_dir = os.path.join(config_dir, "skills")
+            self._copy_global_managed_skills(skills_dir)
+            return skills_dir
         # Fallback to default location if config_dir not provided
         return os.path.expanduser("~/.claude/skills")
+
+    def _copy_global_managed_skills(self, target_skills_dir: str) -> None:
+        """Copy globally synced managed skills into the task skills directory."""
+        try:
+            from executor.modes.local.capabilities import GlobalCapabilityStore
+
+            store = GlobalCapabilityStore()
+            manifest = store.load()
+            os.makedirs(target_skills_dir, exist_ok=True)
+            copied = []
+            skipped = []
+            for name, record in manifest.get("skills", {}).items():
+                if not isinstance(record, dict) or not record.get("managed", True):
+                    continue
+                source = store.skills_dir / name
+                target = os.path.join(target_skills_dir, name)
+                if not source.is_dir() or os.path.exists(target):
+                    skipped.append(name)
+                    continue
+                shutil.copytree(source, target)
+                copied.append(name)
+            logger.info(
+                "Copied global managed skills: copied=%s skipped=%s target=%s",
+                copied,
+                skipped,
+                target_skills_dir,
+            )
+        except Exception as exc:
+            logger.warning("Failed to copy global managed skills: %s", exc)
 
     def get_skills_deployment_options(self) -> Dict[str, bool]:
         """Get deployment options optimized for local mode.

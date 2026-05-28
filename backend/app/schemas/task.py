@@ -261,6 +261,42 @@ class TaskLiteGroupedListResponse(BaseModel):
     items: list[TaskLiteGroup]
 
 
+class ArchivedTask(BaseModel):
+    """Archived chat item for settings and restore/delete actions."""
+
+    id: int
+    title: str
+    status: str
+    task_type: str
+    type: str
+    created_at: datetime
+    updated_at: datetime
+    completed_at: Optional[datetime] = None
+    project_id: int = 0
+    project_name: Optional[str] = None
+
+
+class ArchivedTaskListResponse(BaseModel):
+    """Archived chat list response."""
+
+    total: int
+    items: list[ArchivedTask]
+
+
+class TaskArchiveResponse(BaseModel):
+    """Response for a single archive state transition."""
+
+    message: str
+    task_id: int
+
+
+class TaskArchiveBatchResponse(BaseModel):
+    """Response for batch archive/delete operations."""
+
+    message: str
+    count: int
+
+
 class ConfirmStageRequest(BaseModel):
     """Request body for confirming a pipeline stage"""
 

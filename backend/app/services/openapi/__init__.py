@@ -15,7 +15,6 @@ Note: chat_response module is deprecated. OpenAPI responses now use the unified
 trigger architecture via build_execution_request + dispatch_sse_stream.
 """
 
-from app.services.openapi.chat_session import ChatSessionSetup, setup_chat_session
 from app.services.openapi.helpers import (
     extract_input_text,
     get_team_shell_type,
@@ -24,7 +23,31 @@ from app.services.openapi.helpers import (
     subtask_status_to_message_status,
     wegent_status_to_openai_status,
 )
-from app.services.openapi.mcp import load_bot_mcp_tools, load_server_mcp_tools
+
+
+def __getattr__(name: str):
+    """Lazy-load heavier helpers so utility imports stay lightweight."""
+    if name in {"ChatSessionSetup", "setup_chat_session"}:
+        from app.services.openapi.chat_session import (
+            ChatSessionSetup,
+            setup_chat_session,
+        )
+
+        return {
+            "ChatSessionSetup": ChatSessionSetup,
+            "setup_chat_session": setup_chat_session,
+        }[name]
+
+    if name in {"load_bot_mcp_tools", "load_server_mcp_tools"}:
+        from app.services.openapi.mcp import load_bot_mcp_tools, load_server_mcp_tools
+
+        return {
+            "load_bot_mcp_tools": load_bot_mcp_tools,
+            "load_server_mcp_tools": load_server_mcp_tools,
+        }[name]
+
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     # chat_session

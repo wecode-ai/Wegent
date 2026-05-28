@@ -8,6 +8,7 @@
  * Subscription configuration list component.
  */
 import { useCallback, useState } from 'react'
+import dynamic from 'next/dynamic'
 import {
   AlertCircle,
   CalendarClock,
@@ -66,7 +67,14 @@ import type {
 } from '@/types/subscription'
 import { toast } from 'sonner'
 import { formatUTCDate, parseUTCDate } from '@/lib/utils'
-import { SubscriptionConversationDialog } from './SubscriptionConversationDialog'
+
+const SubscriptionConversationDialog = dynamic(
+  () =>
+    import('./SubscriptionConversationDialog').then(
+      module => module.SubscriptionConversationDialog
+    ),
+  { ssr: false }
+)
 
 interface SubscriptionListProps {
   onCreateSubscription: () => void
@@ -797,13 +805,15 @@ export function SubscriptionList({
       </AlertDialog>
 
       {/* Conversation Dialog */}
-      <SubscriptionConversationDialog
-        taskId={dialogTaskId}
-        open={dialogTaskId !== null}
-        onOpenChange={open => {
-          if (!open) setDialogTaskId(null)
-        }}
-      />
+      {dialogTaskId !== null && (
+        <SubscriptionConversationDialog
+          taskId={dialogTaskId}
+          open={dialogTaskId !== null}
+          onOpenChange={open => {
+            if (!open) setDialogTaskId(null)
+          }}
+        />
+      )}
     </div>
   )
 }

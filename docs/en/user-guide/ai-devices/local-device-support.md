@@ -234,7 +234,31 @@ Simply change the device selection before sending each message.
 Access your devices through:
 
 1. **Device Selector**: Quick access in chat interface
-2. **API**: `GET /devices` for programmatic access
+2. **Settings Page**: Go to **Settings** → **Connections** to view connectable devices
+3. **API**: `GET /devices` for programmatic access
+
+### Managing Cloud Devices
+
+The **Settings** → **Connections** page lists Claude Code cloud devices that the current account can connect to. It only shows devices with `device_type=cloud` and `bind_shell=claudecode`, and displays online status, executor version, CPU, memory, and disk usage.
+
+When no cloud device exists, click **Add** to create one. After the create request returns, the page keeps a "cloud device creating" notice visible. Initialization usually takes 2-3 minutes, and the device appears in the list automatically when it comes online.
+
+Online cloud devices can open interactive sessions directly:
+
+| Action | Backend API | Description |
+|--------|-------------|-------------|
+| **Terminal** | `POST /api/devices/{device_id}/terminal` | Starts ttyd in the default working directory `/home/ubuntu/.wegent-executor/workspace` |
+| **IDE** | `POST /api/devices/{device_id}/code-server` | Opens a code-server session |
+
+The returned URL includes a short-lived session token and is exposed through the device-side session gateway. Terminal and IDE buttons are disabled while the device is offline.
+
+The more menu contains lower-frequency management actions:
+
+| Action | Description |
+|--------|-------------|
+| **Rename** | Click the device name or edit icon; the list refreshes after saving |
+| **Restart Device** | Requires confirmation; the device briefly goes offline and active connections may be interrupted |
+| **Delete Device** | Requires confirmation; the cloud resources are released |
 
 ### Device Information
 
@@ -244,6 +268,8 @@ Each device shows:
 |-------|-------------|
 | **Name** | Device hostname (e.g., "Darwin - MacBook-Pro.local") |
 | **Status** | Online/Offline indicator |
+| **Version** | Executor version, when available |
+| **Resource Usage** | CPU, memory, and disk usage, when reported by the device |
 | **Slots** | Concurrent task capacity (X/5) |
 | **Default** | Star indicator if set as default |
 
@@ -255,7 +281,7 @@ Each device shows:
 | **Remove Default** | Click star again on current default |
 | **Delete Device** | Click delete icon |
 
-> **Note**: Deleting a device only removes the registration. If the device reconnects, it will automatically re-register.
+> **Note**: Deleting a local device only removes the registration. If the device reconnects, it will automatically re-register. Deleting a cloud device from the Connections settings page releases the corresponding cloud resources.
 
 ### Offline Device Handling
 

@@ -402,6 +402,15 @@ class EmitterBridgeTransport(EventTransport):
                 )
             return None
 
+        elif event_type == ResponsesAPIStreamEvents.REASONING_SUMMARY_TEXT_DELTA.value:
+            return ExecutionEvent(
+                type=EventType.THINKING.value,
+                task_id=self.task_id,
+                subtask_id=self.subtask_id,
+                content=data.get("delta", ""),
+                message_id=message_id,
+            )
+
         # Skip lifecycle events
         elif event_type in (
             ResponsesAPIStreamEvents.RESPONSE_CREATED.value,
