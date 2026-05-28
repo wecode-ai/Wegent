@@ -164,20 +164,37 @@ List files and subdirectories in a directory.
 ---
 
 #### `read_file`
-Read file contents.
+Read file contents from the sandbox filesystem.
 
 **Parameters:**
 - `file_path` (required): File path to read
+- `format` (optional): Read format - 'text' (default) or 'bytes'
+
+**Behavior:**
+- For **image files** (jpg, jpeg, png, gif, webp, bmp, tiff): Returns visual content as a base64-encoded `image_url` block for direct rendering by the model
+- For **other files**: Returns JSON with file contents and metadata
 
 **Limits:**
-- Maximum file size: 1MB (configurable)
+- Text files: Maximum 100KB
+- Binary files: Maximum 32KB
+- Image files: Maximum 2MB
 
-**Example:**
+**Example - Text file:**
 ```json
 {
   "name": "read_file",
   "arguments": {
     "file_path": "/home/user/config.json"
+  }
+}
+```
+
+**Example - Image file:**
+```json
+{
+  "name": "read_file",
+  "arguments": {
+    "file_path": "/home/user/chart.png"
   }
 }
 ```
@@ -307,7 +324,7 @@ Download a file from Wegent attachment URL to sandbox for processing.
 |-----------|-----------------|--------|
 | Execute commands or scripts | `exec` | Fast execution, no overhead |
 | Create/delete directories | `exec` | Use `mkdir -p` or `rm -rf` directly |
-| Read files | `read_file` | Better error handling and size validation |
+| Read files | `read_file` | Better error handling and size validation. Auto-detects images and returns visual content. |
 | Write files | `write_file` | Auto directory creation, size validation |
 | Browse directories | `list_files` | Structured output with metadata |
 | Upload files for user download | `upload_attachment` | Get download URL for user-facing files |
@@ -417,7 +434,7 @@ Download a file from Wegent attachment URL to sandbox for processing.
 - Each sandbox runs in an isolated Docker container
 
 ### Resource Limits
-- **Read file limit**: 1MB (configurable)
+- **Read file limit**: 100KB text / 32KB binary / 2MB images (configurable)
 - **Write file limit**: 10MB (configurable)
 - **Upload file limit**: 100MB (configurable)
 - **Command timeout**: 300 seconds (5 minutes)
@@ -478,7 +495,7 @@ Control Claude's available tools via the `allowed_tools` parameter:
 **Solution**: Increase timeout setting or split into smaller tasks
 
 ### File Too Large
-**Cause**: Exceeds size limit (1MB read / 10MB write)
+**Cause**: Exceeds size limit (100KB text / 32KB binary / 2MB images for read, 10MB for write)
 **Solution**: Process in chunks or adjust configuration
 
 ### Permission Denied
