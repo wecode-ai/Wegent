@@ -375,7 +375,8 @@ describe('TaskSidebar scroll structure', () => {
 
     const groupToggle = within(groupDock).getByTestId('task-sidebar-group-chat-toggle')
     expect(groupToggle).toHaveTextContent('common:tasks.group_chats')
-    expect(groupToggle).toHaveClass('h-11', 'min-w-[44px]')
+    expect(groupToggle).toHaveClass('h-6', 'min-w-[44px]')
+    expect(groupToggle).not.toHaveClass('h-11')
     expect(groupToggle).not.toHaveTextContent('(+2)')
     expect(within(groupToggle).getByTestId('task-sidebar-group-chat-chevron')).toHaveClass(
       'lucide-chevron-down'

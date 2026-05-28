@@ -80,7 +80,7 @@ export default function FixedGroupChatsSection({
             data-testid="task-sidebar-group-chat-toggle"
             aria-label={toggleLabel}
             onClick={handleToggleGroupChats}
-            className="flex items-center justify-between w-full h-11 min-w-[44px] px-1 text-xs font-medium rounded-md text-text-muted hover:text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 transition-colors"
+            className="flex items-center justify-between w-full h-6 min-w-[44px] px-1 text-xs font-medium rounded-md text-text-muted hover:text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 transition-colors"
           >
             <span className="truncate">{t('common:tasks.group_chats')}</span>
             {isGroupChatsExpanded ? (
