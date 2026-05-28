@@ -105,7 +105,7 @@ jest.mock('@/hooks/useTranslation', () => ({
 }))
 
 describe('ResourceLibrary route page', () => {
-  it('renders with the task sidebar active on resource library', async () => {
+  it('renders with the task sidebar active and discover selected by default', async () => {
     render(<Page />)
 
     expect(screen.getByTestId('resource-library-task-sidebar')).toHaveAttribute(
@@ -114,8 +114,13 @@ describe('ResourceLibrary route page', () => {
     )
     expect(screen.getByTestId('resource-library-top-navigation')).toHaveTextContent('资源库')
     expect(screen.queryByRole('heading', { name: '资源库' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '发现' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '我的' })).not.toBeInTheDocument()
-    expect(await screen.findByTestId('my-resource-management')).toBeInTheDocument()
+    expect(screen.getByTestId('resource-library-discover-tab')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.getByTestId('resource-library-mine-tab')).toBeInTheDocument()
+    expect(screen.getByTestId('discover-resources')).toBeInTheDocument()
+    expect(screen.queryByTestId('my-resource-management')).not.toBeInTheDocument()
+    expect(await screen.findByText('暂无资源')).toBeInTheDocument()
   })
 })
