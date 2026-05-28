@@ -38,6 +38,8 @@ import {
   ChatSloganItem,
   ChatTipItem,
   ChatSloganTipsResponse,
+  QuickLaunchFunctionConfig,
+  QuickLaunchFunctionsResponse,
   SloganTipMode,
 } from '@/apis/admin'
 import {
@@ -55,6 +57,19 @@ type ItemFormData = {
   mode: SloganTipMode
 }
 
+function formatQuickLaunchFunctions(functions: QuickLaunchFunctionConfig[]): string {
+  return JSON.stringify(functions, null, 2)
+}
+
+function parseQuickLaunchFunctionsJson(value: string): QuickLaunchFunctionConfig[] {
+  const parsed = JSON.parse(value || '[]')
+  if (!Array.isArray(parsed)) {
+    throw new Error('Quick launch functions must be a JSON array')
+  }
+
+  return parsed as QuickLaunchFunctionConfig[]
+}
+
 const SystemConfigPanel: React.FC = () => {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -66,9 +81,11 @@ const SystemConfigPanel: React.FC = () => {
   const [tips, setTips] = useState<ChatTipItem[]>([])
   const [version, setVersion] = useState(0)
   const [quickAccessVersion, setQuickAccessVersion] = useState(0)
+  const [quickLaunchFunctionsVersion, setQuickLaunchFunctionsVersion] = useState(0)
   const [publicTeams, setPublicTeams] = useState<AdminPublicTeam[]>([])
   const [quickAccessTeamIds, setQuickAccessTeamIds] = useState<string[]>([])
   const [savedQuickAccessTeamIds, setSavedQuickAccessTeamIds] = useState<string[]>([])
+  const [quickLaunchFunctionsJson, setQuickLaunchFunctionsJson] = useState('[]')
 
   // Slogan dialog states
   const [isSloganDialogOpen, setIsSloganDialogOpen] = useState(false)
@@ -115,19 +132,25 @@ const SystemConfigPanel: React.FC = () => {
   const fetchConfig = useCallback(async () => {
     setLoading(true)
     try {
-      const [response, quickAccessResponse, publicTeamsResponse]: [
+      const [response, quickAccessResponse, publicTeamsResponse, quickLaunchFunctionsResponse]: [
         ChatSloganTipsResponse,
         { version: number; teams: number[] },
         { total: number; items: AdminPublicTeam[] },
+        QuickLaunchFunctionsResponse,
       ] = await Promise.all([
         adminApis.getSloganTipsConfig(),
         adminApis.getQuickAccessConfig(),
         adminApis.getPublicTeams(1, 1000),
+        adminApis.getQuickLaunchFunctionsConfig(),
       ])
       setSlogans(response.slogans)
       setTips(response.tips)
       setVersion(response.version)
       setQuickAccessVersion(quickAccessResponse.version)
+      setQuickLaunchFunctionsVersion(quickLaunchFunctionsResponse.version)
+      setQuickLaunchFunctionsJson(
+        formatQuickLaunchFunctions(quickLaunchFunctionsResponse.functions)
+      )
       setPublicTeams(publicTeamsResponse.items)
 
       const configuredTeamIds = quickAccessResponse.teams.map(String)
@@ -150,9 +173,21 @@ const SystemConfigPanel: React.FC = () => {
 
   // Save config
   const handleSave = async () => {
+    let quickLaunchFunctions: QuickLaunchFunctionConfig[]
+    try {
+      quickLaunchFunctions = parseQuickLaunchFunctionsJson(quickLaunchFunctionsJson)
+    } catch (error) {
+      console.error('Failed to parse quick launch functions config:', error)
+      toast({
+        title: t('admin:system_config.errors.quick_launch_functions_invalid'),
+        variant: 'destructive',
+      })
+      return
+    }
+
     setSaving(true)
     try {
-      const [response, quickAccessResponse] = await Promise.all([
+      const [response, quickAccessResponse, quickLaunchFunctionsResponse] = await Promise.all([
         adminApis.updateSloganTipsConfig({
           slogans,
           tips,
@@ -160,12 +195,17 @@ const SystemConfigPanel: React.FC = () => {
         hasQuickAccessChanged()
           ? adminApis.updateQuickAccessConfig(quickAccessTeamIds.map(Number))
           : Promise.resolve(null),
+        adminApis.updateQuickLaunchFunctionsConfig({ functions: quickLaunchFunctions }),
       ])
       setVersion(response.version)
       if (quickAccessResponse) {
         setQuickAccessVersion(quickAccessResponse.version)
         setSavedQuickAccessTeamIds(quickAccessResponse.teams.map(String))
       }
+      setQuickLaunchFunctionsVersion(quickLaunchFunctionsResponse.version)
+      setQuickLaunchFunctionsJson(
+        formatQuickLaunchFunctions(quickLaunchFunctionsResponse.functions)
+      )
       toast({
         title: t('admin:system_config.success.updated'),
       })
@@ -559,6 +599,34 @@ const SystemConfigPanel: React.FC = () => {
               (item.description || '').toLowerCase().includes(normalizedInput)
             )
           }}
+        />
+      </Card>
+
+      {/* Quick Launch System Functions Configuration */}
+      <Card className="p-6" data-testid="quick-launch-functions-section">
+        <div className="flex items-start justify-between gap-4 mb-4">
+          <div>
+            <h3 className="text-md font-medium text-text-primary">
+              {t('admin:system_config.quick_launch_functions_title')}
+            </h3>
+            <p className="text-sm text-text-muted mt-1">
+              {t('admin:system_config.quick_launch_functions_description')}
+            </p>
+          </div>
+          <span className="text-xs text-text-muted flex-shrink-0">
+            {t('admin:system_config.quick_launch_functions_version')}: {quickLaunchFunctionsVersion}
+          </span>
+        </div>
+        <Label htmlFor="quick-launch-functions-json" className="sr-only">
+          {t('admin:system_config.quick_launch_functions_title')}
+        </Label>
+        <Textarea
+          id="quick-launch-functions-json"
+          value={quickLaunchFunctionsJson}
+          onChange={event => setQuickLaunchFunctionsJson(event.target.value)}
+          className="min-h-[260px] resize-y bg-base font-mono text-xs leading-5"
+          spellCheck={false}
+          data-testid="quick-launch-functions-json"
         />
       </Card>
 

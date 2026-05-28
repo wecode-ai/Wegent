@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { adminApis } from '@/apis/admin'
 import SystemConfigPanel from '@/features/admin/components/SystemConfigPanel'
@@ -15,6 +15,8 @@ jest.mock('@/apis/admin', () => ({
     getQuickAccessConfig: jest.fn(),
     updateQuickAccessConfig: jest.fn(),
     getPublicTeams: jest.fn(),
+    getQuickLaunchFunctionsConfig: jest.fn(),
+    updateQuickLaunchFunctionsConfig: jest.fn(),
   },
 }))
 
@@ -42,6 +44,10 @@ const tMock = (key: string) => {
     'admin:system_config.quick_access_selected': 'Homepage agents',
     'admin:system_config.quick_access_no_description': 'No description',
     'admin:system_config.quick_access_version': 'Homepage agents version',
+    'admin:system_config.quick_launch_functions_title': 'System functions',
+    'admin:system_config.quick_launch_functions_description':
+      'Configure system function launchers as JSON.',
+    'admin:system_config.quick_launch_functions_version': 'System functions version',
     'admin:system_config.version': 'Version',
     'admin:common.save': 'Save',
   }
@@ -83,6 +89,30 @@ describe('SystemConfigPanel', () => {
         },
       ],
     })
+    mockedAdminApis.getQuickLaunchFunctionsConfig.mockResolvedValue({
+      version: 7,
+      functions: [
+        {
+          id: 'create_ppt',
+          title: 'Create PPT',
+          description: 'Create presentation decks',
+          icon: 'presentation',
+          team_id: 42,
+          enabled: true,
+          order: 1,
+          quick_phrases: ['Help me create a product roadmap PPT'],
+        },
+      ],
+    })
+    mockedAdminApis.updateSloganTipsConfig.mockResolvedValue({
+      version: 4,
+      slogans: [],
+      tips: [],
+    })
+    mockedAdminApis.updateQuickLaunchFunctionsConfig.mockResolvedValue({
+      version: 8,
+      functions: [],
+    })
   })
 
   test('loads and displays homepage quick access team configuration', async () => {
@@ -91,5 +121,52 @@ describe('SystemConfigPanel', () => {
     expect(await screen.findByText('Homepage recommended agents')).toBeInTheDocument()
     expect(screen.getByText('AI Assistant')).toBeInTheDocument()
     expect(screen.getByText('Homepage agents version: 5')).toBeInTheDocument()
+  })
+
+  test('loads and saves system function launcher configuration', async () => {
+    render(<SystemConfigPanel />)
+
+    expect(await screen.findByTestId('quick-launch-functions-section')).toHaveTextContent(
+      'System functions'
+    )
+    expect(screen.getByText('System functions version: 7')).toBeInTheDocument()
+
+    const editor = screen.getByTestId('quick-launch-functions-json')
+    expect((editor as HTMLTextAreaElement).value).toContain('Create PPT')
+
+    fireEvent.change(editor, {
+      target: {
+        value: JSON.stringify(
+          [
+            {
+              id: 'create_skill',
+              title: 'Create Skill',
+              team_id: 42,
+              enabled: true,
+              order: 1,
+              quick_phrases: ['Help me create a skill'],
+            },
+          ],
+          null,
+          2
+        ),
+      },
+    })
+    fireEvent.click(screen.getByText('Save'))
+
+    await waitFor(() => {
+      expect(mockedAdminApis.updateQuickLaunchFunctionsConfig).toHaveBeenCalledWith({
+        functions: [
+          {
+            id: 'create_skill',
+            title: 'Create Skill',
+            team_id: 42,
+            enabled: true,
+            order: 1,
+            quick_phrases: ['Help me create a skill'],
+          },
+        ],
+      })
+    })
   })
 })
