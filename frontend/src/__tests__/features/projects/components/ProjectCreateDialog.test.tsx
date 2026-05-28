@@ -3,9 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import type { DeviceInfo } from '@/apis/devices'
+import { deviceApis } from '@/apis/devices'
+import { projectApis } from '@/apis/projects'
 import { ProjectCreateDialog } from '@/features/projects/components/ProjectCreateDialog'
 
 const createProjectMock = jest.fn()
@@ -23,8 +25,8 @@ const baseDevice: DeviceInfo = {
   slot_used: 0,
   slot_max: 1,
   running_tasks: [],
-  executor_version: 'v1.7.11',
-  latest_version: 'v1.7.11',
+  executor_version: '1.0.0',
+  latest_version: '1.0.0',
   update_available: false,
   bind_shell: 'claudecode',
 }
@@ -34,6 +36,12 @@ jest.mock('@/hooks/useTranslation', () => ({
     t: (key: string, params?: Record<string, string>) => {
       if (key === 'workspace.deviceVersionUnsupported') {
         return `upgrade required from ${params?.version} to ${params?.requiredVersion}`
+      }
+      if (key === 'workspace.projectNamePreview') {
+        return `project name: ${params?.name}`
+      }
+      if (key === 'workspace.directoryPicker.selected') {
+        return `selected: ${params?.path}`
       }
       return key
     },
@@ -57,6 +65,12 @@ jest.mock('@/apis/projects', () => ({
   projectApis: {
     createProject: jest.fn(),
     updateProject: jest.fn(),
+  },
+}))
+
+jest.mock('@/apis/devices', () => ({
+  deviceApis: {
+    executeCommand: jest.fn(),
   },
 }))
 
@@ -103,14 +117,32 @@ describe('ProjectCreateDialog', () => {
     expect(screen.getByRole('button', { name: 'workspaceCreate.submit' })).toBeDisabled()
   })
 
-  test('allows workspace project creation when the selected device version is v1.7.11 or newer', async () => {
+  test('allows directory selection when the selected device version is exactly 1.0.0', async () => {
     devicesMock = [baseDevice]
 
     render(<ProjectCreateDialog open={true} onOpenChange={jest.fn()} mode="workspace" />)
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'workspaceCreate.submit' })).not.toBeDisabled()
+      expect(screen.getByTestId('workspace-directory-picker-trigger')).not.toBeDisabled()
     })
+    expect(screen.getByRole('button', { name: 'workspaceCreate.submit' })).toBeDisabled()
+    expect(screen.queryByTestId('workspace-device-version-warning')).not.toBeInTheDocument()
+  })
+
+  test('allows directory selection when the selected device version is v1.7.11 or newer', async () => {
+    devicesMock = [
+      {
+        ...baseDevice,
+        executor_version: 'v1.7.11',
+      },
+    ]
+
+    render(<ProjectCreateDialog open={true} onOpenChange={jest.fn()} mode="workspace" />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('workspace-directory-picker-trigger')).not.toBeDisabled()
+    })
+    expect(screen.getByRole('button', { name: 'workspaceCreate.submit' })).toBeDisabled()
   })
   test('filters OpenClaw devices from workspace project creation', () => {
     devicesMock = [
@@ -133,5 +165,116 @@ describe('ProjectCreateDialog', () => {
 
     expect(screen.getByText('ClaudeCode Device')).toBeInTheDocument()
     expect(screen.queryByText('OpenClaw Device')).not.toBeInTheDocument()
+  })
+
+  test('creates workspace project from selected device directory', async () => {
+    devicesMock = [
+      {
+        ...baseDevice,
+        executor_version: 'v1.7.11',
+      },
+    ]
+    ;(deviceApis.executeCommand as jest.Mock).mockImplementation((_deviceId, request) => {
+      if (request.command_key === 'pwd') {
+        return Promise.resolve({
+          success: true,
+          exit_code: 0,
+          stdout: '/Users/dev\n',
+          stderr: '',
+          duration: 0.01,
+        })
+      }
+
+      return Promise.resolve({
+        success: true,
+        exit_code: 0,
+        stdout: ['repo', 'tmp'],
+        stderr: '',
+        duration: 0.01,
+      })
+    })
+    ;(projectApis.createProject as jest.Mock).mockResolvedValue({ id: 10 })
+
+    render(<ProjectCreateDialog open={true} onOpenChange={jest.fn()} mode="workspace" />)
+
+    const pickerTrigger = await screen.findByTestId('workspace-directory-picker-trigger')
+    await waitFor(() => expect(pickerTrigger).not.toBeDisabled())
+    expect(screen.getByRole('button', { name: 'workspaceCreate.submit' })).toBeDisabled()
+
+    fireEvent.click(pickerTrigger)
+    const repoRow = await screen.findByText('repo')
+    fireEvent.click(repoRow)
+    fireEvent.click(screen.getByTestId('workspace-directory-confirm-button'))
+
+    expect(await screen.findByText('project name: repo')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'workspaceCreate.submit' }))
+
+    await waitFor(() => {
+      expect(projectApis.createProject).toHaveBeenCalledWith({
+        name: 'repo',
+        config: {
+          mode: 'workspace',
+          execution: {
+            targetType: 'local',
+            deviceId: 'device-1',
+          },
+          workspace: {
+            source: 'local_path',
+            localPath: '/Users/dev/repo',
+          },
+        },
+      })
+    })
+  })
+
+  test('double-click selects and opens a subdirectory in the directory picker', async () => {
+    devicesMock = [
+      {
+        ...baseDevice,
+        executor_version: 'v1.7.11',
+      },
+    ]
+    ;(deviceApis.executeCommand as jest.Mock).mockImplementation((_deviceId, request) => {
+      if (request.command_key === 'pwd') {
+        return Promise.resolve({
+          success: true,
+          exit_code: 0,
+          stdout: '/Users/dev\n',
+          stderr: '',
+          duration: 0.01,
+        })
+      }
+
+      return Promise.resolve({
+        success: true,
+        exit_code: 0,
+        stdout: request.path === '/Users/dev/repo' ? ['src'] : ['repo'],
+        stderr: '',
+        duration: 0.01,
+      })
+    })
+
+    render(<ProjectCreateDialog open={true} onOpenChange={jest.fn()} mode="workspace" />)
+
+    const pickerTrigger = await screen.findByTestId('workspace-directory-picker-trigger')
+    await waitFor(() => expect(pickerTrigger).not.toBeDisabled())
+    fireEvent.click(pickerTrigger)
+
+    const repoRow = await screen.findByText('repo')
+    fireEvent.doubleClick(repoRow)
+
+    await waitFor(() => {
+      expect(deviceApis.executeCommand).toHaveBeenCalledWith(
+        'device-1',
+        expect.objectContaining({
+          command_key: 'ls_dirs',
+          path: '/Users/dev/repo',
+        })
+      )
+    })
+    expect(await screen.findByText('src')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-directory-selected-path')).toHaveTextContent(
+      'selected: /Users/dev/repo'
+    )
   })
 })

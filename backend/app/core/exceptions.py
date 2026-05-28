@@ -11,6 +11,8 @@ def _make_json_serializable(value):
     """Convert validation error details into JSON-serializable values."""
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
+    if isinstance(value, BaseException):
+        return str(value)
     if isinstance(value, dict):
         return {key: _make_json_serializable(item) for key, item in value.items()}
     if isinstance(value, list):

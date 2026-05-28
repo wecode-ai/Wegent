@@ -45,6 +45,8 @@
     "devicePlaceholder": "选择设备",
     "directoryPath": "目录地址",
     "directoryPathPlaceholder": "输入本地目录路径",
+    "selectDirectory": "选择设备目录",
+    "selectDirectoryHint": "请从所选设备中选择项目所在目录",
     "projectNamePreview": "项目名称：{{name}}",
     "newConversation": "新建对话",
     "greeting": "要在{{name}}中构建什么？",
@@ -65,7 +67,20 @@
     "gitRepo": "仓库名称（可选）",
     "gitBranch": "分支，默认 main",
     "checkoutPath": "目标目录（可选）",
-    "localPathPlaceholder": "目录地址"
+    "localPathPlaceholder": "目录地址",
+    "directoryPicker": {
+      "title": "选择项目目录",
+      "description": "单击目录可选中，双击目录可选中并进入子目录。",
+      "loading": "正在加载目录...",
+      "error": "目录加载失败",
+      "empty": "当前目录下没有子目录",
+      "retry": "重试",
+      "refresh": "刷新",
+      "parent": "上级目录",
+      "selected": "已选择：{{path}}",
+      "selectHint": "请选择一个目录",
+      "confirm": "选择目录"
+    }
   },
   "edit": {
     "title": "编辑分组",

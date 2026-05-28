@@ -12,6 +12,9 @@ const isTurbopack = process.env.TURBOPACK === '1'
 const nextConfig = {
   reactStrictMode: false,
   output: 'standalone',
+  turbopack: {
+    root: __dirname,
+  },
   // Allow cross-origin requests in development mode
   // This prevents "Cross origin request detected" warning
   allowedDevOrigins: ['localhost:3000', '10.37.254.194'],

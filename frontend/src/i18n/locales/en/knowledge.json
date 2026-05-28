@@ -531,7 +531,32 @@
       "namespaceMembers": "Group Permissions",
       "addNamespace": "Add group",
       "noNamespacePermissions": "No group permissions yet",
-      "namespace": "Group"
+      "namespace": "Group",
+      "permissionManagement": "Permission Management",
+      "allCollaborators": "All Collaborators ({{count}})",
+      "addCollaborator": "Add Collaborator",
+      "removeMember": "Remove Member",
+      "addedBy": "Added by {{name}}",
+      "pendingApprovals": "Pending Approvals",
+      "searchCollaborators": "Search collaborators...",
+      "collaboratorType": {
+        "user": "User",
+        "group": "Group",
+        "department": "Department"
+      },
+      "search": {
+        "users": "Search username or email...",
+        "groups": "Search groups...",
+        "departments": "Search departments..."
+      },
+      "selectRole": "Select Role",
+      "defaultRole": "View Only",
+      "noCollaborators": "No collaborators",
+      "noPendingApprovals": "No pending approvals",
+      "approve": "Approve",
+      "reject": "Reject",
+      "entitySectionCount": "{{label}} ({{count}})",
+      "userMetaInfo": "({{content}})"
     },
     "advancedSettings": {
       "title": "Advanced Settings",
@@ -758,6 +783,18 @@
     "summaryFailedHint": "Click retry to regenerate summary",
     "summaryRetry": "Retry",
     "summaryRetrying": "Retrying...",
+    "summaryEdit": "Edit Summary",
+    "summaryEditTitle": "Edit Knowledge Base Summary",
+    "summaryEditDescription": "Manual summary takes priority for display and chat context, while AI summary keeps updating in the background.",
+    "summaryEditPlaceholder": "Enter knowledge base summary",
+    "summaryEditSaved": "Summary updated",
+    "summaryEditRequired": "Please enter summary content",
+    "summaryEditTooLong": "Summary must be 500 characters or fewer",
+    "summaryManualBadge": "Manual Summary",
+    "summaryManualHint": "Manual summary is currently active",
+    "summaryReset": "Restore AI Summary",
+    "summaryResetting": "Restoring...",
+    "summaryResetDone": "Restored AI summary",
     "guidedQuestions": {
       "hint": "Try these questions:"
     },

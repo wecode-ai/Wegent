@@ -15,6 +15,7 @@ import type {
   KnowledgeBase,
   KnowledgeBaseCreate,
   KnowledgeBaseListResponse,
+  KnowledgeBaseSummaryResponse,
   KnowledgeBaseUpdate,
   KnowledgeDocument,
   KnowledgeDocumentCreate,
@@ -303,6 +304,21 @@ export async function refreshKnowledgeBaseSummary(
   return apiClient.post<KnowledgeBaseSummaryRefreshResponse>(
     `/knowledge-bases/${kbId}/summary/refresh`
   )
+}
+
+export async function updateKnowledgeBaseSummary(
+  kbId: number,
+  longSummary: string
+): Promise<KnowledgeBaseSummaryResponse> {
+  return apiClient.put<KnowledgeBaseSummaryResponse>(`/knowledge-bases/${kbId}/summary`, {
+    long_summary: longSummary,
+  })
+}
+
+export async function resetKnowledgeBaseSummary(
+  kbId: number
+): Promise<KnowledgeBaseSummaryResponse> {
+  return apiClient.post<KnowledgeBaseSummaryResponse>(`/knowledge-bases/${kbId}/summary/reset`)
 }
 
 // ============== Configuration APIs ==============

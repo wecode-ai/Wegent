@@ -102,6 +102,39 @@ class SummaryService:
     def __init__(self, db: Session):
         self.db = db
 
+    @staticmethod
+    def _normalize_manual_summary_text(content: str) -> str:
+        """Normalize manual summary content before persistence."""
+        normalized = content.strip()
+        if not normalized:
+            raise ValueError("Manual summary cannot be empty")
+        return normalized
+
+    @staticmethod
+    def _finalize_kb_summary_payload(
+        summary_data: Optional[dict[str, Any]],
+    ) -> Optional[dict[str, Any]]:
+        """Prepare KB summary payloads for persistence.
+
+        Strips legacy derived fields so they are never stored.
+        """
+        if not summary_data:
+            return None
+
+        return dict(summary_data)
+
+    def _persist_kb_summary(
+        self, kb: Kind, summary_data: Optional[dict[str, Any]]
+    ) -> None:
+        """Persist KB summary into spec.summary."""
+        kb_json = kb.json or {}
+        spec = kb_json.get("spec", {})
+        spec["summary"] = self._finalize_kb_summary_payload(summary_data)
+        kb_json["spec"] = spec
+        kb.json = kb_json
+        flag_modified(kb, "json")
+        self.db.commit()
+
     def _persist_document_summary(
         self,
         document_id: int,
@@ -542,6 +575,14 @@ class SummaryService:
 
         logger.info(f"[SummaryService] KB found: kb_id={kb_id}, name={kb.name}")
 
+        kb_spec = (kb.json or {}).get("spec", {})
+        if not kb_spec.get("summaryEnabled") and not clear_if_empty:
+            logger.info(
+                "[SummaryService] KB summary is disabled, skipping trigger: kb_id=%s",
+                kb_id,
+            )
+            return None
+
         # 2. Check if trigger is needed (unless forced)
         # This check is now atomic with the lock
         if not force and not self._should_trigger_kb_summary(kb):
@@ -584,17 +625,17 @@ class SummaryService:
 
         try:
             # 5. Update status to generating (atomic with the lock)
-            kb_json = kb.json or {}
-            spec = kb_json.get("spec", {})
-            spec["summary"] = {
-                **(spec.get("summary") or {}),
-                "status": "generating",
-                "updated_at": datetime.now().isoformat(),
-            }
-            kb_json["spec"] = spec
-            kb.json = kb_json
-            flag_modified(kb, "json")
-            self.db.commit()  # Release the lock after setting status
+            existing_summary = dict(
+                (kb.json or {}).get("spec", {}).get("summary") or {}
+            )
+            self._persist_kb_summary(
+                kb,
+                {
+                    **existing_summary,
+                    "status": "generating",
+                    "updated_at": datetime.now().isoformat(),
+                },
+            )  # Release the lock after setting status
 
             logger.info(
                 f"[SummaryService] KB summary status set to generating: kb_id={kb_id}"
@@ -623,7 +664,11 @@ class SummaryService:
 
             # 7. Update knowledge base summary (reuse completed_count from aggregation)
             if result.success and result.parsed_content:
+                existing_summary = dict(
+                    (kb.json or {}).get("spec", {}).get("summary") or {}
+                )
                 summary_data = {
+                    **existing_summary,
                     **result.parsed_content,
                     "status": "completed",
                     "task_id": result.task_id,
@@ -640,7 +685,11 @@ class SummaryService:
                     f"doc_count={aggregation.completed_count}"
                 )
             else:
+                existing_summary = dict(
+                    (kb.json or {}).get("spec", {}).get("summary") or {}
+                )
                 summary_data = {
+                    **existing_summary,
                     "status": "failed",
                     "error": result.error or "Failed to parse summary",
                     "task_id": result.task_id,
@@ -651,11 +700,7 @@ class SummaryService:
                     f"kb_id={kb_id}, error={result.error}"
                 )
 
-            spec["summary"] = summary_data
-            kb_json["spec"] = spec
-            kb.json = kb_json
-            flag_modified(kb, "json")
-            self.db.commit()
+            self._persist_kb_summary(kb, summary_data)
 
             return result
 
@@ -665,17 +710,18 @@ class SummaryService:
             )
             self.db.rollback()
             try:
-                kb_json = kb.json or {}
-                spec = kb_json.get("spec", {})
-                spec["summary"] = {
-                    "status": "failed",
-                    "error": str(e),
-                    "updated_at": datetime.now().isoformat(),
-                }
-                kb_json["spec"] = spec
-                kb.json = kb_json
-                flag_modified(kb, "json")
-                self.db.commit()
+                existing_summary = dict(
+                    (kb.json or {}).get("spec", {}).get("summary") or {}
+                )
+                self._persist_kb_summary(
+                    kb,
+                    {
+                        **existing_summary,
+                        "status": "failed",
+                        "error": str(e),
+                        "updated_at": datetime.now().isoformat(),
+                    },
+                )
             except Exception as commit_error:
                 logger.warning(
                     f"[SummaryService] Failed to save KB error status: {commit_error}"
@@ -700,10 +746,74 @@ class SummaryService:
         kb_json = kb.json or {}
         summary_data = kb_json.get("spec", {}).get("summary")
 
+        summary_payload = self._finalize_kb_summary_payload(summary_data)
+
+        if not summary_payload:
+            return None
+        return KnowledgeBaseSummary(**summary_payload)
+
+    async def update_kb_manual_summary(
+        self,
+        kb_id: int,
+        user_id: int,
+        user_name: str,
+        content: str,
+    ) -> Optional[KnowledgeBaseSummary]:
+        """Persist manual KB summary override."""
+        kb = (
+            self.db.query(Kind)
+            .filter(
+                Kind.id == kb_id,
+                Kind.kind == "KnowledgeBase",
+            )
+            .with_for_update()
+            .first()
+        )
+
+        if not kb:
+            return None
+
+        normalized = self._normalize_manual_summary_text(content)
+        summary_data = dict((kb.json or {}).get("spec", {}).get("summary") or {})
+        summary_data["manual_long_summary"] = normalized
+        summary_data["manual_updated_at"] = datetime.now().isoformat()
+        summary_data["manual_updated_by"] = {
+            "id": user_id,
+            "name": user_name,
+        }
+
+        self._persist_kb_summary(kb, summary_data)
+
+        return await self.get_kb_summary(kb_id)
+
+    async def reset_kb_manual_summary(
+        self, kb_id: int
+    ) -> Optional[KnowledgeBaseSummary]:
+        """Clear manual KB summary override while preserving AI summary."""
+        kb = (
+            self.db.query(Kind)
+            .filter(
+                Kind.id == kb_id,
+                Kind.kind == "KnowledgeBase",
+            )
+            .with_for_update()
+            .first()
+        )
+
+        if not kb:
+            return None
+
+        summary_data = dict((kb.json or {}).get("spec", {}).get("summary") or {})
         if not summary_data:
             return None
 
-        return KnowledgeBaseSummary(**summary_data)
+        summary_data["manual_long_summary"] = None
+        summary_data["manual_updated_at"] = None
+        summary_data["manual_updated_by"] = None
+
+        self._persist_kb_summary(kb, summary_data)
+
+        return await self.get_kb_summary(kb_id)
 
     async def refresh_kb_summary(
         self, kb_id: int, user_id: int, user_name: str

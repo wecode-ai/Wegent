@@ -7,6 +7,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import orjson
+from redis import Redis as SyncRedis
 from redis.asyncio import Redis
 
 from app.core.config import settings

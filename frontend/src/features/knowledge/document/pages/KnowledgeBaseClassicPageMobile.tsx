@@ -21,7 +21,7 @@ import { useKnowledgeBaseDetail } from '@/features/knowledge/document/hooks'
 import { useNamespaceRoleMap } from '@/features/knowledge/document/hooks/useNamespaceRoleMap'
 import { useKnowledgePermissions } from '@/features/knowledge/permission/hooks/useKnowledgePermissions'
 import { DocumentList } from '@/features/knowledge/document/components'
-import { PermissionManagementTab } from '@/features/knowledge/permission/components/PermissionManagementTab'
+import { KnowledgePermissionDialog } from '@wecode/features/knowledge-permission-ui'
 import {
   canManageKnowledgeBase,
   canManageKnowledgeBaseDocuments,
@@ -50,6 +50,7 @@ export function KnowledgeBaseClassicPageMobile({ knowledgeBaseId, initialDocPath
     knowledgeBase,
     loading: kbLoading,
     error: kbError,
+    refresh: refreshKnowledgeBase,
   } = useKnowledgeBaseDetail({
     knowledgeBaseId,
     autoLoad: true,
@@ -202,7 +203,7 @@ export function KnowledgeBaseClassicPageMobile({ knowledgeBaseId, initialDocPath
                 <TabsTrigger value="documents" className="flex-1 gap-1.5">
                   {t('knowledge:document.documents')}
                 </TabsTrigger>
-                <TabsTrigger value="permissions" className="flex-1 gap-1.5">
+                <TabsTrigger value="permissions" className="flex-1 gap-1.5" data-testid="permission-management-tab">
                   {t('knowledge:document.permissions')}
                 </TabsTrigger>
               </TabsList>
@@ -211,13 +212,17 @@ export function KnowledgeBaseClassicPageMobile({ knowledgeBaseId, initialDocPath
                   knowledgeBase={knowledgeBase}
                   canUpload={canUploadDocuments}
                   canManageAllDocuments={canManageKb}
+                  onRefreshKnowledgeBase={refreshKnowledgeBase}
                   initialDocPath={initialDocPath}
                 />
               </TabsContent>
               <TabsContent value="permissions" className="mt-0">
-                <PermissionManagementTab
+                <KnowledgePermissionDialog
+                  open={true}
+                  onOpenChange={open => {
+                    if (!open) setActiveTab('documents')
+                  }}
                   kbId={knowledgeBase.id}
-                  kbNamespace={knowledgeBase.namespace}
                 />
               </TabsContent>
             </Tabs>
@@ -226,6 +231,7 @@ export function KnowledgeBaseClassicPageMobile({ knowledgeBaseId, initialDocPath
               knowledgeBase={knowledgeBase}
               canUpload={canUploadDocuments}
               canManageAllDocuments={canManageKb}
+              onRefreshKnowledgeBase={refreshKnowledgeBase}
               initialDocPath={initialDocPath}
             />
           )}

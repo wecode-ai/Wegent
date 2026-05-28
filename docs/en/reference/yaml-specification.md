@@ -15,6 +15,7 @@ This document provides detailed explanations of the YAML configuration formats f
 - [🤝 Collaboration](#-collaboration)
 - [💼 Workspace](#-workspace)
 - [🎯 Task](#-task)
+- [📚 KnowledgeBase](#-knowledgebase)
 
 ---
 
@@ -325,6 +326,41 @@ spec:
 | `route` | Route mode, route based on conditions |
 | `coordinate` | Coordinate mode, members coordinate |
 | `collaborate` | Concurrent mode, members execute simultaneously |
+
+---
+
+## 📚 KnowledgeBase
+
+KnowledgeBase is used to manage document knowledge bases, retrieval configuration, and summary capabilities.
+
+### Summary-Related Configuration
+
+| Field | Type | Required | Description |
+|------|------|----------|-------------|
+| `spec.summaryEnabled` | boolean | No | Whether automatic summary generation is enabled |
+| `spec.summaryModelRef.name` | string | No | Summary model name |
+| `spec.summaryModelRef.namespace` | string | No | Namespace where the summary model is defined |
+| `spec.summaryModelRef.type` | string | No | Summary model type: `public`, `user`, or `group` |
+
+### Runtime Summary Fields
+
+`spec.summary` is maintained by the system at runtime and is not intended to be authored directly in YAML. Common fields include:
+
+| Field | Description |
+|------|-------------|
+| `short_summary` | AI-generated short summary |
+| `long_summary` | AI-generated long summary |
+| `manual_long_summary` | Manually edited knowledge base long summary; takes priority for display and context injection |
+| `topics` | AI-generated topic tags |
+| `status` | Summary state: `pending`, `generating`, `completed`, `failed` |
+| `manual_updated_at` | Last manual summary update time |
+| `manual_updated_by` | Last manual summary editor |
+
+**Notes:**
+
+- Manual summary does not stop AI summary generation from continuing
+- When `manual_long_summary` exists, the system uses it first for UI display and chat-context injection
+- After using **Restore AI Summary**, the system falls back to the latest `long_summary`
 
 ---
 

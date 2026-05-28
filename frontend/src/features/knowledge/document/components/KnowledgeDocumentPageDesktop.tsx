@@ -430,6 +430,7 @@ export function KnowledgeDocumentPageDesktop({
         <KnowledgeDetailPanel
           key={`${sidebar.selectedKb.id}-${currentDocPath ?? ''}`}
           selectedKb={sidebar.selectedKb}
+          onSyncKnowledgeBase={sidebar.syncKnowledgeBase}
           isTreeCollapsed={isSidebarCollapsed}
           onExpandTree={() => updateSidebarCollapsed(false)}
           onEditKb={dialogs.setEditingKb}

@@ -201,6 +201,268 @@ class TestTriggerKbSummaryClearIfEmpty:
         assert result is None
 
     @pytest.mark.asyncio
+    async def test_clear_if_empty_still_clears_when_summary_disabled(
+        self, test_db: Session, test_user: User, test_knowledge_base: Kind
+    ):
+        """Test clear_if_empty=True still clears stale AI summary when summary is disabled."""
+        test_knowledge_base.json["spec"]["summaryEnabled"] = False
+        test_db.commit()
+
+        summary_service = get_summary_service(test_db)
+        kb = test_db.query(Kind).filter(Kind.id == test_knowledge_base.id).first()
+        assert kb is not None
+        assert kb.json["spec"]["summary"] is not None
+
+        result = await summary_service.trigger_kb_summary(
+            test_knowledge_base.id,
+            test_user.id,
+            test_user.user_name,
+            force=False,
+            clear_if_empty=True,
+        )
+
+        assert result is None
+        test_db.refresh(kb)
+        assert kb.json["spec"]["summary"] is None
+
+
+class TestManualKnowledgeBaseSummary:
+    """Test manual KB summary overrides."""
+
+    @pytest.fixture
+    def test_knowledge_base(self, test_db: Session, test_user: User) -> Kind:
+        kb_json = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "KnowledgeBase",
+            "metadata": {
+                "name": f"test-kb-manual-{test_user.id}",
+                "namespace": "default",
+            },
+            "spec": {
+                "name": "Manual Summary KB",
+                "description": "A KB for manual summary tests",
+                "summaryEnabled": True,
+                "summaryModelRef": {
+                    "name": "test-summary-model",
+                    "namespace": "default",
+                    "type": "public",
+                },
+                "summary": {
+                    "status": "completed",
+                    "short_summary": "AI short summary",
+                    "long_summary": "AI long summary",
+                    "topics": ["topic1"],
+                    "updated_at": datetime.now().isoformat(),
+                },
+            },
+            "status": {"state": "Available"},
+        }
+        kb = Kind(
+            user_id=test_user.id,
+            kind="KnowledgeBase",
+            name=f"test-kb-manual-{test_user.id}",
+            namespace="default",
+            json=kb_json,
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        )
+        test_db.add(kb)
+        test_db.commit()
+        test_db.refresh(kb)
+        return kb
+
+    @pytest.mark.asyncio
+    async def test_update_manual_summary_sets_override_fields(
+        self, test_db: Session, test_user: User, test_knowledge_base: Kind
+    ):
+        summary_service = get_summary_service(test_db)
+
+        summary = await summary_service.update_kb_manual_summary(
+            test_knowledge_base.id,
+            test_user.id,
+            test_user.user_name,
+            "Manual long summary",
+        )
+
+        assert summary is not None
+        assert summary.long_summary == "AI long summary"
+        assert summary.manual_long_summary == "Manual long summary"
+        assert summary.manual_updated_by is not None
+        assert summary.manual_updated_by.name == test_user.user_name
+        assert summary.status == "completed"
+
+    @pytest.mark.asyncio
+    async def test_reset_manual_summary_clears_override_fields(
+        self, test_db: Session, test_user: User, test_knowledge_base: Kind
+    ):
+        summary_service = get_summary_service(test_db)
+        await summary_service.update_kb_manual_summary(
+            test_knowledge_base.id,
+            test_user.id,
+            test_user.user_name,
+            "Manual long summary",
+        )
+
+        summary = await summary_service.reset_kb_manual_summary(test_knowledge_base.id)
+
+        assert summary is not None
+        assert summary.long_summary == "AI long summary"
+        assert summary.manual_long_summary is None
+
+    @pytest.mark.asyncio
+    async def test_update_manual_summary_does_not_set_completed_without_ai_summary(
+        self, test_db: Session, test_user: User
+    ):
+        kb_json = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "KnowledgeBase",
+            "metadata": {
+                "name": f"test-kb-pending-{test_user.id}",
+                "namespace": "default",
+            },
+            "spec": {
+                "name": "Pending KB",
+                "description": "A KB without AI summary",
+                "summaryEnabled": True,
+                "summary": {
+                    "status": "pending",
+                },
+            },
+            "status": {"state": "Available"},
+        }
+        kb = Kind(
+            user_id=test_user.id,
+            kind="KnowledgeBase",
+            name=f"test-kb-pending-{test_user.id}",
+            namespace="default",
+            json=kb_json,
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        )
+        test_db.add(kb)
+        test_db.commit()
+        test_db.refresh(kb)
+
+        summary_service = get_summary_service(test_db)
+        summary = await summary_service.update_kb_manual_summary(
+            kb.id,
+            test_user.id,
+            test_user.user_name,
+            "Manual long summary",
+        )
+
+        assert summary is not None
+        assert summary.status == "pending"
+        assert summary.manual_long_summary == "Manual long summary"
+
+    @pytest.mark.asyncio
+    async def test_trigger_kb_summary_preserves_manual_summary_and_updates_ai_fields(
+        self, test_db: Session, test_user: User, test_knowledge_base: Kind
+    ):
+        summary_service = get_summary_service(test_db)
+        await summary_service.update_kb_manual_summary(
+            test_knowledge_base.id,
+            test_user.id,
+            test_user.user_name,
+            "Manual long summary",
+        )
+
+        doc = KnowledgeDocument(
+            kind_id=test_knowledge_base.id,
+            attachment_id=0,
+            name="doc.pdf",
+            file_extension="pdf",
+            file_size=100,
+            user_id=test_user.id,
+            is_active=True,
+            source_type="file",
+            summary={
+                "status": "completed",
+                "short_summary": "Doc summary",
+                "topics": ["topic2"],
+            },
+        )
+        test_db.add(doc)
+        test_db.commit()
+
+        with patch(
+            "app.services.knowledge.summary_service.BackgroundChatExecutor"
+        ) as mock_executor:
+            mock_instance = MagicMock()
+            mock_instance.execute = AsyncMock(
+                return_value=MagicMock(
+                    success=True,
+                    parsed_content={
+                        "short_summary": "New AI short summary",
+                        "long_summary": "New AI long summary",
+                        "topics": ["new_topic"],
+                    },
+                    task_id=456,
+                )
+            )
+            mock_executor.return_value = mock_instance
+            with patch.object(
+                summary_service,
+                "_get_model_config_from_kb",
+                return_value={"model_name": "summary-model"},
+            ):
+                await summary_service.trigger_kb_summary(
+                    test_knowledge_base.id,
+                    test_user.id,
+                    test_user.user_name,
+                    force=True,
+                )
+
+        refreshed_summary = await summary_service.get_kb_summary(test_knowledge_base.id)
+        assert refreshed_summary is not None
+        assert refreshed_summary.long_summary == "New AI long summary"
+        assert refreshed_summary.manual_long_summary == "Manual long summary"
+
+    @pytest.mark.asyncio
+    async def test_trigger_kb_summary_skips_when_summary_disabled(
+        self, test_db: Session, test_user: User
+    ):
+        kb_json = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "KnowledgeBase",
+            "metadata": {
+                "name": f"test-kb-disabled-{test_user.id}",
+                "namespace": "default",
+            },
+            "spec": {
+                "name": "Disabled Summary KB",
+                "description": "A KB with disabled AI summary",
+                "summaryEnabled": False,
+                "summary": {
+                    "status": "pending",
+                },
+            },
+            "status": {"state": "Available"},
+        }
+        kb = Kind(
+            user_id=test_user.id,
+            kind="KnowledgeBase",
+            name=f"test-kb-disabled-{test_user.id}",
+            namespace="default",
+            json=kb_json,
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        )
+        test_db.add(kb)
+        test_db.commit()
+        test_db.refresh(kb)
+
+        summary_service = get_summary_service(test_db)
+        result = await summary_service.trigger_kb_summary(
+            kb.id,
+            test_user.id,
+            test_user.user_name,
+            force=True,
+        )
+
+        assert result is None
+
+    @pytest.mark.asyncio
     async def test_clear_if_empty_summary_already_none(
         self, test_db: Session, test_user: User
     ):

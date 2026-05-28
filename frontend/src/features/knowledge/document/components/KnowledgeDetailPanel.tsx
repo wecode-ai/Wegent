@@ -24,20 +24,23 @@ import { ChatArea } from '@/features/tasks/components/chat'
 import { DocumentList, type KbGroupInfo } from './DocumentList'
 import { DocumentPanel } from './DocumentPanel'
 import { KnowledgeBaseSummaryCard } from './KnowledgeBaseSummaryCard'
-import { PermissionManagementTab } from '../../permission/components/PermissionManagementTab'
 import { useKnowledgePermissions } from '../../permission/hooks/useKnowledgePermissions'
 import { useNamespaceRoleMap } from '../hooks/useNamespaceRoleMap'
+import { KnowledgePermissionDialog } from '@wecode/features/knowledge-permission-ui'
 import {
   canManageKnowledgeBase,
   canManageKnowledgeBaseDocuments,
   canManageKnowledgeBasePermissions,
 } from '@/utils/namespace-permissions'
+import { getKnowledgeBase } from '@/apis/knowledge'
 import type { KnowledgeBase } from '@/types/knowledge'
 import type { Team } from '@/types/api'
 
 interface KnowledgeDetailPanelProps {
   /** Currently selected knowledge base */
   selectedKb: KnowledgeBase | null
+  /** Sync updated KB data back into sidebar state */
+  onSyncKnowledgeBase?: (kb: KnowledgeBase) => void
   /** Whether the tree panel is collapsed */
   isTreeCollapsed?: boolean
   /** Callback to expand the tree panel */
@@ -54,6 +57,7 @@ interface KnowledgeDetailPanelProps {
 
 export function KnowledgeDetailPanel({
   selectedKb,
+  onSyncKnowledgeBase,
   isTreeCollapsed: _isTreeCollapsed,
   onExpandTree: _onExpandTree,
   onEditKb: _onEditKb,
@@ -106,6 +110,12 @@ export function KnowledgeDetailPanel({
   const handleRefreshTeams = useCallback(async (): Promise<Team[]> => {
     return await refreshTeams()
   }, [refreshTeams])
+
+  const handleRefreshKnowledgeBase = useCallback(async () => {
+    if (!selectedKb || !onSyncKnowledgeBase) return
+    const nextKb = await getKnowledgeBase(selectedKb.id)
+    onSyncKnowledgeBase(nextKb)
+  }, [selectedKb, onSyncKnowledgeBase])
 
   // Check if user can manage this knowledge base
   const canManageKb = useMemo(() => {
@@ -187,7 +197,13 @@ export function KnowledgeDetailPanel({
             selectedDocumentIds={selectedDocumentIds}
             guidedQuestions={selectedKb.guided_questions}
             inputAlwaysAtBottom={true}
-            emptyStateContent={<KnowledgeBaseSummaryCard knowledgeBase={selectedKb} />}
+            emptyStateContent={
+              <KnowledgeBaseSummaryCard
+                knowledgeBase={selectedKb}
+                onRefresh={handleRefreshKnowledgeBase}
+                canEditSummary={canManageKb}
+              />
+            }
             // Note: Knowledge base binding is handled by the backend when creating the task
             // via the knowledge_base_id parameter in the chat request. No need to call
             // bindKnowledgeBase API here as it would either fail (not a group chat) or
@@ -201,6 +217,7 @@ export function KnowledgeDetailPanel({
           canUpload={canUploadDocuments}
           canManageAllDocuments={canManageKb}
           canManagePermissions={canManagePermissions}
+          onRefreshKnowledgeBase={handleRefreshKnowledgeBase}
           onDocumentSelectionChange={setSelectedDocumentIds}
           onCollapsedChange={setIsDocumentPanelCollapsed}
           groupInfo={groupInfo}
@@ -225,7 +242,7 @@ export function KnowledgeDetailPanel({
             <FileText className="w-3.5 h-3.5" />
             {t('chatPage.documents')}
           </TabsTrigger>
-          <TabsTrigger value="permissions" className="gap-1 h-7 px-2 text-xs">
+          <TabsTrigger value="permissions" className="gap-1 h-7 px-2 text-xs" data-testid="permission-management-tab">
             <Shield className="w-3.5 h-3.5" />
             {t('document.permission.management')}
           </TabsTrigger>
@@ -245,24 +262,20 @@ export function KnowledgeDetailPanel({
               knowledgeBase={selectedKb}
               canUpload={canUploadDocuments}
               canManageAllDocuments={canManageKb}
+              onRefreshKnowledgeBase={handleRefreshKnowledgeBase}
               headerActions={headerActions}
               groupInfo={groupInfo}
               onGroupClick={onGroupClick}
               initialDocPath={initialDocPath}
             />
           ) : (
-            <>
-              {/* Show header with tabs when on permissions tab */}
-              <div className="flex items-center gap-3 mb-4">
-                <div className="flex-1 min-w-0">
-                  <h2 className="text-base font-medium text-text-primary truncate">
-                    {selectedKb.name}
-                  </h2>
-                </div>
-                {headerActions}
-              </div>
-              <PermissionManagementTab kbId={selectedKb.id} kbNamespace={selectedKb.namespace} />
-            </>
+            <KnowledgePermissionDialog
+              open={true}
+              onOpenChange={open => {
+                if (!open) setActiveTab('documents')
+              }}
+              kbId={selectedKb.id}
+            />
           )}
         </div>
       </div>

@@ -4,10 +4,11 @@ import type { User as UserProfile } from '@/types/api'
 
 interface DesktopSettingsMenuProps {
   user: UserProfile | null
+  onOpenSettings: () => void
   onLogout: () => void
 }
 
-export function DesktopSettingsMenu({ user, onLogout }: DesktopSettingsMenuProps) {
+export function DesktopSettingsMenu({ user, onOpenSettings, onLogout }: DesktopSettingsMenuProps) {
   const { t } = useTranslation('common')
   const accountLabel =
     user?.email || user?.user_name || t('workbench.account_fallback', '当前账号')
@@ -33,6 +34,7 @@ export function DesktopSettingsMenu({ user, onLogout }: DesktopSettingsMenuProps
       <button
         type="button"
         data-testid="settings-menu-button"
+        onClick={onOpenSettings}
         className="flex h-11 w-full items-center gap-3 px-4 text-left text-sm font-medium text-[#333] hover:bg-muted"
       >
         <Settings className="h-5 w-5 shrink-0 text-[#555]" />

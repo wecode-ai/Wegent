@@ -40,6 +40,8 @@ logger = logging.getLogger(__name__)
 # Redis key patterns and TTL
 DEVICE_ONLINE_KEY_PREFIX = "device:online:"
 DEVICE_ONLINE_TTL = 90  # seconds (heartbeat interval 30s x 3)
+DEVICE_CAPABILITIES_KEY_PREFIX = "device:capabilities:"
+DEVICE_CAPABILITIES_TTL = 600
 
 
 class LocalDeviceProvider(BaseDeviceProvider):
@@ -65,6 +67,11 @@ class LocalDeviceProvider(BaseDeviceProvider):
     def generate_online_key(user_id: int, device_id: str) -> str:
         """Generate Redis key for device online status."""
         return f"{DEVICE_ONLINE_KEY_PREFIX}{user_id}:{device_id}"
+
+    @staticmethod
+    def generate_capabilities_key(user_id: int, device_id: str) -> str:
+        """Generate Redis key for device global capability state."""
+        return f"{DEVICE_CAPABILITIES_KEY_PREFIX}{user_id}:{device_id}"
 
     async def register(
         self,
@@ -312,6 +319,26 @@ class LocalDeviceProvider(BaseDeviceProvider):
             f"[LocalDeviceProvider] get_online_info: key={key}, found={result is not None}"
         )
         return result
+
+    async def store_capabilities_state(
+        self,
+        user_id: int,
+        device_id: str,
+        capabilities: Dict[str, Any],
+    ) -> bool:
+        """Store sanitized local global capability state reported by heartbeat."""
+        key = self.generate_capabilities_key(user_id, device_id)
+        payload = dict(capabilities)
+        payload["reported_at"] = datetime.now().isoformat()
+        return await cache_manager.set(key, payload, expire=DEVICE_CAPABILITIES_TTL)
+
+    async def get_capabilities_state(
+        self, user_id: int, device_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Get the latest sanitized global capability state for a device."""
+        return await cache_manager.get(
+            self.generate_capabilities_key(user_id, device_id)
+        )
 
     async def list_devices(
         self,

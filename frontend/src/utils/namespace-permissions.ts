@@ -53,17 +53,15 @@ export function canManageKnowledgeBase({
     return false
   }
 
-  if (knowledgeBase.namespace === 'default') {
-    return knowledgeBase.user_id === currentUserId || isManager(knowledgeRole)
-  }
-
-  if (isManager(namespaceRole) || isManager(knowledgeRole)) {
+  if (knowledgeBase.user_id === currentUserId) {
     return true
   }
 
-  return (
-    (isEditor(namespaceRole) || isEditor(knowledgeRole)) && knowledgeBase.user_id === currentUserId
-  )
+  if (knowledgeBase.namespace === 'default') {
+    return isManager(knowledgeRole)
+  }
+
+  return isManager(namespaceRole) || isManager(knowledgeRole)
 }
 
 export function canManageKnowledgeBaseDocuments({

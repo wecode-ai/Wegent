@@ -365,18 +365,18 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
     cd backend
     
     # Check if virtual environment or Python packages are available
-    if ! command -v black &> /dev/null && [ ! -f "venv/bin/black" ]; then
+    if ! command -v black &> /dev/null && [ ! -f "venv/bin/black" ] && [ ! -f ".venv/bin/black" ]; then
         echo -e "   ${YELLOW}⚠️ SKIP: black not found${NC}"
         echo -e "   ${YELLOW}   Run 'pip install black isort pytest' to install dependencies${NC}"
         WARNINGS+=("Backend: black not found, format checks skipped")
         
         # Still try to run other checks if available
         # isort check
-        if ! command -v isort &> /dev/null; then
+        if ! command -v isort &> /dev/null && [ ! -f "venv/bin/isort" ] && [ ! -f ".venv/bin/isort" ]; then
             echo -e "   ${YELLOW}⚠️ SKIP: isort not found${NC}"
             WARNINGS+=("Backend: isort not found, import sort checks skipped")
         fi
-        
+
         maybe_run_full_python_tests \
             "Backend" \
             "pytest tests/ --tb=short -q" \
@@ -422,7 +422,7 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
         fi
         
         # isort check
-        if ! command -v isort &> /dev/null; then
+        if ! command -v isort &> /dev/null && [ ! -f "venv/bin/isort" ] && [ ! -f ".venv/bin/isort" ]; then
             echo -e "   ${YELLOW}⚠️ SKIP: isort not found${NC}"
             echo -e "   ${YELLOW}   Run 'pip install isort' to install dependencies${NC}"
             WARNINGS+=("Backend: isort not found, import sort checks skipped")
@@ -600,7 +600,7 @@ if [ "$EXECUTOR_COUNT" -gt 0 ] 2>/dev/null; then
             WARNINGS+=("Executor: tests directory not found")
         fi
     fi
-    
+
     cd ..
     echo ""
 fi

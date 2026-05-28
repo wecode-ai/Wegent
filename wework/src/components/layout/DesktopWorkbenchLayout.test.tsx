@@ -97,6 +97,72 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByText('退出登录')).toBeInTheDocument()
   })
 
+  test('opens the independent connection settings page from the settings menu', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await userEvent.click(screen.getByTestId('settings-button'))
+    await userEvent.click(screen.getByTestId('settings-menu-button'))
+
+    expect(screen.getByTestId('wework-settings-page')).toBeInTheDocument()
+    expect(screen.getByTestId('settings-back-button')).toHaveTextContent('返回')
+    expect(screen.queryByText('返回应用')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '连接' })).toBeInTheDocument()
+    expect(screen.getByText('连接设备')).toBeInTheDocument()
+    expect(screen.queryByText('连接这台设备')).not.toBeInTheDocument()
+    expect(screen.queryByText('链接这台设备')).not.toBeInTheDocument()
+    expect(screen.queryByText('控制其他设备')).not.toBeInTheDocument()
+    expect(screen.queryByText('SSH')).not.toBeInTheDocument()
+    expect(screen.getByTestId('settings-nav-connections')).toBeInTheDocument()
+    expect(screen.getByTestId('settings-nav-projects')).toBeInTheDocument()
+    expect(screen.getByText('项目')).toBeInTheDocument()
+    expect(screen.queryByTestId('settings-nav-general')).not.toBeInTheDocument()
+    expect(screen.queryByText('Personal Devices')).not.toBeInTheDocument()
+    expect(screen.queryByText('Linux-Device-481b616e8e0b')).not.toBeInTheDocument()
+    expect(screen.getByText('可连接的设备')).toBeInTheDocument()
+    expect(screen.queryByText('可连接这台设备的云设备')).not.toBeInTheDocument()
+    expect(screen.getByText('云设备')).toBeInTheDocument()
+    expect(
+      screen.getByTestId('connection-device-icon-24a59054-4638-4744-983d-372706c30fcd'),
+    ).toHaveClass('text-[#3c4043]')
+    expect(
+      screen.getByTestId('connection-device-icon-24a59054-4638-4744-983d-372706c30fcd'),
+    ).not.toHaveClass('bg-[#f7f7f8]')
+    expect(screen.getByText('yunpeng7-executor-372706c30fcd')).toBeInTheDocument()
+    expect(screen.getByText('v1.712')).toBeInTheDocument()
+    expect(screen.getByText('在线')).toBeInTheDocument()
+    expect(screen.queryByText('Online')).not.toBeInTheDocument()
+    expect(
+      screen.getByTestId('connection-terminal-button-24a59054-4638-4744-983d-372706c30fcd'),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByTestId('connection-code-server-button-24a59054-4638-4744-983d-372706c30fcd'),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByTestId('connection-vnc-button-24a59054-4638-4744-983d-372706c30fcd'),
+    ).toBeInTheDocument()
+    expect(screen.getByText('终端')).toBeInTheDocument()
+    expect(screen.getByText('IDE')).toBeInTheDocument()
+    expect(screen.getByText('桌面')).toBeInTheDocument()
+    expect(screen.queryByText('Terminal')).not.toBeInTheDocument()
+    expect(screen.queryByText('Code Server')).not.toBeInTheDocument()
+    expect(screen.queryByText('桌面 VNC')).not.toBeInTheDocument()
+    expect(screen.getByText('CPU')).toBeInTheDocument()
+    expect(screen.getByText('MEM')).toBeInTheDocument()
+    expect(screen.getByText('磁盘')).toBeInTheDocument()
+    expect(screen.getByText('42%')).toBeInTheDocument()
+    expect(screen.getByText('68%')).toBeInTheDocument()
+    expect(screen.getByText('57%')).toBeInTheDocument()
+    expect(screen.getByTestId('connection-scale-wiki')).toBeInTheDocument()
+    expect(screen.getByText('说明')).toBeInTheDocument()
+    expect(screen.queryByText('扩容 Wiki')).not.toBeInTheDocument()
+    expect(screen.getByText(/持续超过 80%/)).toBeInTheDocument()
+    expect(screen.queryByText('a8791aa3-4e8a-4076-b9a6-481b616e8e0b')).not.toBeInTheDocument()
+    expect(screen.queryByText('Nevis')).not.toBeInTheDocument()
+    expect(screen.queryByText('Cloud computing powered by Nevis')).not.toBeInTheDocument()
+    expect(screen.queryByText('其他设置')).not.toBeInTheDocument()
+    expect(screen.queryByText('Start Task')).not.toBeInTheDocument()
+  })
+
   test('opens and resizes the right workspace panel', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 

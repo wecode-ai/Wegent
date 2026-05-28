@@ -531,7 +531,32 @@
       "namespaceMembers": "群组权限",
       "addNamespace": "添加群组",
       "noNamespacePermissions": "暂无群组权限",
-      "namespace": "群组"
+      "namespace": "群组",
+      "permissionManagement": "权限管理",
+      "allCollaborators": "所有协作者（{{count}}）",
+      "addCollaborator": "添加协作者",
+      "removeMember": "移除成员",
+      "addedBy": "由 {{name}} 添加",
+      "pendingApprovals": "待审批协作者",
+      "searchCollaborators": "搜索协作者...",
+      "collaboratorType": {
+        "user": "用户",
+        "group": "群组",
+        "department": "部门"
+      },
+      "search": {
+        "users": "搜索用户名或邮箱...",
+        "groups": "搜索群组...",
+        "departments": "搜索部门..."
+      },
+      "selectRole": "选择角色",
+      "defaultRole": "可查看",
+      "noCollaborators": "暂无协作者",
+      "noPendingApprovals": "暂无待审批协作者",
+      "approve": "通过",
+      "reject": "拒绝",
+      "entitySectionCount": "{{label}}（{{count}}）",
+      "userMetaInfo": "（{{content}}）"
     },
     "advancedSettings": {
       "title": "高级设置",
@@ -758,6 +783,18 @@
     "summaryFailedHint": "点击重试按钮重新生成摘要",
     "summaryRetry": "重试",
     "summaryRetrying": "重试中...",
+    "summaryEdit": "编辑摘要",
+    "summaryEditTitle": "编辑知识库摘要",
+    "summaryEditDescription": "手动摘要会优先用于展示和对话上下文，自动摘要仍会继续更新。",
+    "summaryEditPlaceholder": "请输入知识库摘要",
+    "summaryEditSaved": "摘要已更新",
+    "summaryEditRequired": "请输入摘要内容",
+    "summaryEditTooLong": "摘要不能超过 500 个字符",
+    "summaryManualBadge": "手动摘要",
+    "summaryManualHint": "当前正在使用手动摘要",
+    "summaryReset": "恢复 AI 摘要",
+    "summaryResetting": "恢复中...",
+    "summaryResetDone": "已恢复为 AI 摘要",
     "guidedQuestions": {
       "hint": "试试这些问题："
     },

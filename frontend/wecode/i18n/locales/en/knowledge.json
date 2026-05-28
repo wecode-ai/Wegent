@@ -13,7 +13,28 @@
       "add": "Add",
       "searchFailed": "Search failed",
       "partialFailure": "Failed to add {{count}} department(s): {{names}}",
-      "departmentLimitReached": "Department limit reached ({{limit}}), please reduce selection"
+      "departmentLimitReached": "Department limit reached ({{limit}}), please reduce selection",
+      "roles": {
+        "Maintainer": "Manage",
+        "Developer": "Edit",
+        "Reporter": "View",
+        "RestrictedAnalyst": "Visit Only",
+        "Owner": "Creator"
+      },
+      "roleUpdateFailed": "Failed to update role",
+      "removeFailed": "Failed to remove member",
+      "addFailed": "Failed to add",
+      "loading": "Loading...",
+      "noMatchingResults": "No matching results",
+      "searching": "Searching...",
+      "memberCount": "({{count}} members)",
+      "addSucceeded": "Added successfully: {{names}}",
+      "selectedCount": "{{count}} selected",
+      "adding": "Adding...",
+      "addWithCount": "Add ({{count}})",
+      "separator": ", ",
+      "colon": ": ",
+      "semicolon": "; "
     }
   }
 }

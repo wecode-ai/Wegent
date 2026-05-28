@@ -383,6 +383,40 @@ def _get_device_slot_usage_sync(user_id: int, device_id: str) -> dict:
         return device_service.get_device_slot_usage(db, user_id, device_id)
 
 
+async def _store_device_capabilities_state(
+    user_id: int, device_id: str, capabilities: dict
+) -> None:
+    """Store heartbeat capability state without dropping previous full lists."""
+    if not isinstance(capabilities, dict):
+        return
+
+    digest = capabilities.get("digest")
+    revision = capabilities.get("revision")
+    if not digest or revision is None:
+        return
+
+    existing = await device_service.get_device_capabilities_state(user_id, device_id)
+    if capabilities.get("full"):
+        await device_service.store_device_capabilities_state(
+            user_id,
+            device_id,
+            {
+                "revision": revision,
+                "digest": digest,
+                "skills": capabilities.get("skills", []),
+                "last_sync_at": capabilities.get("last_sync_at"),
+            },
+        )
+        return
+
+    if existing and existing.get("digest") == digest:
+        existing["revision"] = revision
+        existing["digest"] = digest
+        await device_service.store_device_capabilities_state(
+            user_id, device_id, existing
+        )
+
+
 class DeviceNamespace(socketio.AsyncNamespace):
     """
     Socket.IO namespace for local executor connections.
@@ -853,6 +887,16 @@ class DeviceNamespace(socketio.AsyncNamespace):
             )
             # Re-broadcast device online event
             await self._broadcast_device_online(user_id, payload.device_id, device_name)
+
+        if payload.capabilities:
+            try:
+                await _store_device_capabilities_state(
+                    user_id, payload.device_id, payload.capabilities
+                )
+            except Exception as e:
+                logger.warning(
+                    "[Device WS] Ignored invalid capability heartbeat state: %s", e
+                )
 
         # Database operation: quick in, quick out
         _update_device_heartbeat(user_id, payload.device_id)

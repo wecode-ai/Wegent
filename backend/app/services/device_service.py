@@ -176,6 +176,22 @@ class DeviceService:
         return await provider._get_online_info(user_id, device_id)
 
     @staticmethod
+    async def store_device_capabilities_state(
+        user_id: int, device_id: str, capabilities: Dict[str, Any]
+    ) -> bool:
+        """Store sanitized local global capability heartbeat state."""
+        provider = DeviceService._get_provider(DeviceType.LOCAL)
+        return await provider.store_capabilities_state(user_id, device_id, capabilities)
+
+    @staticmethod
+    async def get_device_capabilities_state(
+        user_id: int, device_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Get latest sanitized local global capability heartbeat state."""
+        provider = DeviceService._get_provider(DeviceType.LOCAL)
+        return await provider.get_capabilities_state(user_id, device_id)
+
+    @staticmethod
     async def get_device_online_info_by_type(
         user_id: int, device_id: str, device_type: DeviceType
     ) -> Optional[Dict[str, Any]]:

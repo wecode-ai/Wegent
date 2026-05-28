@@ -11,7 +11,7 @@ Defines Pydantic models for document-level and knowledge-base-level summary data
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class DocumentSummaryMetaInfo(BaseModel):
@@ -68,6 +68,15 @@ class KnowledgeBaseSummaryMetaInfo(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class SummaryEditorInfo(BaseModel):
+    """User information for manual knowledge base summary edits."""
+
+    id: int = Field(description="Editor user ID")
+    name: str = Field(description="Editor user name")
+
+    model_config = ConfigDict(extra="allow")
+
+
 class KnowledgeBaseSummary(BaseModel):
     """Knowledge base summary data structure."""
 
@@ -99,8 +108,44 @@ class KnowledgeBaseSummary(BaseModel):
         default=None,
         description="Document count when summary was last generated (for change detection)",
     )
-
+    manual_long_summary: Optional[str] = Field(
+        default=None,
+        description="Manual long summary override (up to 500 characters)",
+    )
+    manual_updated_at: Optional[datetime] = Field(
+        default=None,
+        description="Manual summary last update timestamp",
+    )
+    manual_updated_by: Optional[SummaryEditorInfo] = Field(
+        default=None,
+        description="Manual summary editor info",
+    )
     model_config = ConfigDict(extra="allow")
+
+
+class KnowledgeBaseSummaryUpdateRequest(BaseModel):
+    """Request payload for manual KB summary updates."""
+
+    long_summary: str = Field(
+        max_length=500,
+        description="Manual long summary content",
+    )
+
+    @field_validator("long_summary", mode="before")
+    @classmethod
+    def normalize_long_summary(cls, value: str) -> str:
+        """Trim manual summary content before field constraints run."""
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+    @field_validator("long_summary")
+    @classmethod
+    def validate_long_summary(cls, value: str) -> str:
+        """Reject empty manual summary content after normalization."""
+        if not value:
+            raise ValueError("Manual summary cannot be empty")
+        return value
 
 
 # API Response schemas

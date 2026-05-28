@@ -15,6 +15,7 @@
 - [🤝 Collaboration](#-collaboration)
 - [💼 Workspace](#-workspace)
 - [🎯 Task](#-task)
+- [📚 KnowledgeBase](#-knowledgebase)
 
 ---
 
@@ -325,6 +326,41 @@ spec:
 | `route` | 路由模式，根据条件路由 |
 | `coordinate` | 协调模式，成员间协调 |
 | `collaborate` | 并发模式，成员间同时执行 |
+
+---
+
+## 📚 KnowledgeBase
+
+KnowledgeBase 用于管理文档知识库、检索配置和摘要能力。
+
+### 摘要相关配置
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `spec.summaryEnabled` | boolean | 否 | 是否启用自动摘要生成 |
+| `spec.summaryModelRef.name` | string | 否 | 用于生成摘要的模型名称 |
+| `spec.summaryModelRef.namespace` | string | 否 | 摘要模型所在 namespace |
+| `spec.summaryModelRef.type` | string | 否 | 摘要模型类型：`public`、`user`、`group` |
+
+### 运行时摘要字段
+
+`spec.summary` 由系统在运行时维护，不建议手工直接写入 YAML。常见字段包括：
+
+| 字段 | 说明 |
+|------|------|
+| `short_summary` | AI 生成的短摘要 |
+| `long_summary` | AI 生成的长摘要 |
+| `manual_long_summary` | 手动编辑的知识库长摘要，展示和上下文注入时优先使用 |
+| `topics` | AI 生成的主题标签 |
+| `status` | 摘要状态：`pending`、`generating`、`completed`、`failed` |
+| `manual_updated_at` | 手动摘要最近更新时间 |
+| `manual_updated_by` | 手动摘要最近编辑人 |
+
+**说明：**
+
+- 手动摘要不会阻止 AI 自动摘要继续更新
+- 当 `manual_long_summary` 存在时，系统优先使用它做页面展示和聊天上下文注入
+- 点击“恢复 AI 摘要”后，系统会回退到最新的 `long_summary`
 
 ---
 

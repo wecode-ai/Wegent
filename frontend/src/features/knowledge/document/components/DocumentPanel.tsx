@@ -9,7 +9,7 @@ import { PanelRightClose, PanelRightOpen, FileText, Shield, Plus } from 'lucide-
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { DocumentList, type KbGroupInfo } from './DocumentList'
-import { PermissionManagementTab } from '@/features/knowledge/permission/components/PermissionManagementTab'
+import { KnowledgePermissionDialog } from '@wecode/features/knowledge-permission-ui'
 import type { KnowledgeBase } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -56,6 +56,8 @@ interface DocumentPanelProps {
   canManageAllDocuments?: boolean
   /** Whether the user can manage permissions (is creator or has manage permission) */
   canManagePermissions?: boolean
+  /** Callback to refresh knowledge base details after summary changes */
+  onRefreshKnowledgeBase?: () => void
   /** Callback when document selection changes */
   onDocumentSelectionChange?: (documentIds: number[]) => void
   /** Callback when new chat button is clicked */
@@ -90,6 +92,7 @@ export function DocumentPanel({
   canUpload = true,
   canManageAllDocuments = false,
   canManagePermissions = false,
+  onRefreshKnowledgeBase,
   onDocumentSelectionChange,
   onNewChat,
   onCollapsedChange,
@@ -255,7 +258,7 @@ export function DocumentPanel({
                 <FileText className="w-4 h-4" />
                 {t('chatPage.documents')}
               </TabsTrigger>
-              <TabsTrigger value="permissions" className="gap-1.5">
+              <TabsTrigger value="permissions" className="gap-1.5" data-testid="permission-management-tab">
                 <Shield className="w-4 h-4" />
                 {t('document.permission.management')}
               </TabsTrigger>
@@ -300,6 +303,7 @@ export function DocumentPanel({
               canUpload={canUpload}
               canManageAllDocuments={canManageAllDocuments}
               compact={true}
+              onRefreshKnowledgeBase={onRefreshKnowledgeBase}
               onSelectionChange={onDocumentSelectionChange}
               groupInfo={groupInfo}
               onGroupClick={onGroupClick}
@@ -307,9 +311,12 @@ export function DocumentPanel({
             />
           </TabsContent>
           <TabsContent value="permissions" className="flex-1 overflow-auto mt-0">
-            <PermissionManagementTab
+            <KnowledgePermissionDialog
+              open={true}
+              onOpenChange={open => {
+                if (!open) setActiveTab('documents')
+              }}
               kbId={knowledgeBase.id}
-              kbNamespace={knowledgeBase.namespace}
             />
           </TabsContent>
         </Tabs>
@@ -356,6 +363,7 @@ export function DocumentPanel({
               canUpload={canUpload}
               canManageAllDocuments={canManageAllDocuments}
               compact={true}
+              onRefreshKnowledgeBase={onRefreshKnowledgeBase}
               onSelectionChange={onDocumentSelectionChange}
               groupInfo={groupInfo}
               onGroupClick={onGroupClick}
