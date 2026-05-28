@@ -19,6 +19,12 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
 
     pwd_definition = resolve_local_device_command("pwd", settings.LOCAL_DEVICE_COMMANDS)
     ls_definition = resolve_local_device_command("ls_a", settings.LOCAL_DEVICE_COMMANDS)
+    home_dir_definition = resolve_local_device_command(
+        "home_dir", settings.LOCAL_DEVICE_COMMANDS
+    )
+    project_workspace_root_definition = resolve_local_device_command(
+        "project_workspace_root", settings.LOCAL_DEVICE_COMMANDS
+    )
     ls_dirs_definition = resolve_local_device_command(
         "ls_dirs", settings.LOCAL_DEVICE_COMMANDS
     )
@@ -32,6 +38,13 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert ls_definition is not None
     assert ls_definition.command == "ls -a"
     assert ls_definition.post_processor == "file_list"
+    assert home_dir_definition is not None
+    assert home_dir_definition.command == "printenv HOME"
+    assert home_dir_definition.post_processor is None
+    assert project_workspace_root_definition is not None
+    assert "WEGENT_EXECUTOR_PROJECTS_DIR" in project_workspace_root_definition.command
+    assert "WECODE_HOME" in project_workspace_root_definition.command
+    assert project_workspace_root_definition.post_processor is None
     assert ls_dirs_definition is not None
     assert ls_dirs_definition.command == "ls -a -p"
     assert ls_dirs_definition.post_processor == "directory_list"

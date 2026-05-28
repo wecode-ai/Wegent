@@ -39,6 +39,8 @@ export interface DeviceInfo {
   name: string
   status: 'online' | 'offline' | 'busy'
   is_default: boolean
+  device_type?: 'local' | 'cloud' | string
+  bind_shell?: 'claudecode' | 'openclaw' | string
 }
 
 export interface ProjectTask {

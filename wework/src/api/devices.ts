@@ -7,6 +7,11 @@ import type {
 } from '@/types/devices'
 import type { HttpClient } from './http'
 
+function getCommandText(response: DeviceCommandResponse): string {
+  const output = Array.isArray(response.stdout) ? response.stdout.join('\n') : response.stdout
+  return output.trim()
+}
+
 export function createDeviceApi(client: HttpClient) {
   async function fetchDevices(): Promise<DeviceInfo[]> {
     const response = await client.get<DeviceListResponse>('/devices')
@@ -17,6 +22,35 @@ export function createDeviceApi(client: HttpClient) {
     listDevices: fetchDevices,
 
     getAllDevices: fetchDevices,
+
+    async getHomeDirectory(deviceId: string): Promise<string> {
+      const response = await client.post<DeviceCommandResponse>(
+        `/devices/${encodeURIComponent(deviceId)}/commands`,
+        {
+          command_key: 'home_dir',
+          timeout_seconds: 10,
+          max_output_bytes: 4096,
+        },
+      )
+      if (!response.success) {
+        throw new Error(response.error || response.stderr || 'Failed to resolve home directory')
+      }
+      return getCommandText(response)
+    },
+    async getProjectWorkspaceRoot(deviceId: string): Promise<string> {
+      const response = await client.post<DeviceCommandResponse>(
+        `/devices/${encodeURIComponent(deviceId)}/commands`,
+        {
+          command_key: 'project_workspace_root',
+          timeout_seconds: 10,
+          max_output_bytes: 4096,
+        },
+      )
+      if (!response.success) {
+        throw new Error(response.error || response.stderr || 'Failed to resolve project directory')
+      }
+      return getCommandText(response)
+    },
 
     async listDirectories(deviceId: string, path: string): Promise<string[]> {
       const response = await client.post<DeviceCommandResponse>(

@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest'
 import { createProjectApi } from './projects'
+import { createDeviceApi } from './devices'
 import { createSystemSkillApi } from './systemSkills'
 import { createTaskApi } from './tasks'
 import { createTeamApi } from './teams'
@@ -154,5 +155,36 @@ describe('REST adapters', () => {
     expect(client.get).toHaveBeenCalledWith('/tasks/archived?limit=200&page=1')
     expect(client.post).toHaveBeenNthCalledWith(4, '/tasks/8/unarchive')
     expect(client.delete).toHaveBeenCalledWith('/tasks/archived')
+  })
+
+  test('resolves device home and project workspace root', async () => {
+    const client = mockClient()
+    vi.mocked(client.post)
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '/home/ubuntu\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '/workspace/projects\n',
+        stderr: '',
+      })
+
+    const api = createDeviceApi(client)
+
+    await expect(api.getHomeDirectory('device-1')).resolves.toBe('/home/ubuntu')
+    await expect(api.getProjectWorkspaceRoot('device-1')).resolves.toBe('/workspace/projects')
+
+    expect(client.post).toHaveBeenNthCalledWith(
+      1,
+      '/devices/device-1/commands',
+      expect.objectContaining({ command_key: 'home_dir' }),
+    )
+    expect(client.post).toHaveBeenNthCalledWith(
+      2,
+      '/devices/device-1/commands',
+      expect.objectContaining({ command_key: 'project_workspace_root' }),
+    )
   })
 })

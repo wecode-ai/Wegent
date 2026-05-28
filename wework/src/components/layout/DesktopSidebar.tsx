@@ -35,6 +35,7 @@ interface DesktopSidebarProps {
   devices: DeviceInfo[]
   recentTasks: Task[]
   currentProjectId?: number
+  currentTaskId?: number
   activeItem?: 'chat' | 'plugins' | 'automation'
   onCollapse: () => void
   onNewChat: () => void
@@ -49,6 +50,8 @@ interface DesktopSidebarProps {
   onArchiveProjectChats: (projectId: number) => Promise<void>
   onArchiveTask: (taskId: number) => Promise<void>
   onRenameTask: (taskId: number, title: string) => Promise<void>
+  onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
+  onGetProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   onOpenSettings: () => void
   onLogout: () => void
@@ -85,11 +88,23 @@ function SidebarButton({
   )
 }
 
-function formatSidebarTime(value?: string) {
+const INITIAL_PROJECT_CHAT_COUNT = 5
+
+function formatRelativeSidebarTime(value?: string) {
   if (!value) return ''
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return ''
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const elapsedMs = Math.max(0, Date.now() - date.getTime())
+  const minutes = Math.floor(elapsedMs / 60000)
+  if (minutes < 60) return `${minutes}m`
+
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h`
+
+  const days = Math.floor(hours / 24)
+  if (days < 7) return `${days}d`
+
+  return `${Math.floor(days / 7)}w`
 }
 
 function getProjectTaskTitle(task: ProjectTask) {
@@ -118,18 +133,27 @@ function sortTasksByTime(tasks: Task[] = []) {
 
 function ProjectTaskRow({
   task,
+  selected,
   onOpenTask,
   onArchiveTask,
   onRenameTask,
 }: {
   task: ProjectTask
+  selected: boolean
   onOpenTask: (taskId: number) => void
   onArchiveTask: (taskId: number) => Promise<void>
   onRenameTask: (task: ProjectTask) => void
 }) {
+  const { t } = useTranslation('common')
   const title = getProjectTaskTitle(task)
   return (
-    <div className="group/task ml-5 flex h-8 items-center rounded-md pl-3 pr-1 text-sm text-text-secondary hover:bg-white/70">
+    <div
+      data-testid={`project-chat-row-${task.task_id}`}
+      className={[
+        'group/task ml-5 flex h-8 items-center rounded-md pl-3 pr-1 text-sm',
+        selected ? 'bg-white text-text-primary' : 'text-text-secondary hover:bg-white/70',
+      ].join(' ')}
+    >
       <button
         type="button"
         data-testid="project-chat-button"
@@ -139,22 +163,22 @@ function ProjectTaskRow({
         {title}
       </button>
       <span className="ml-2 shrink-0 text-xs text-[#8a8a8a]">
-        {formatSidebarTime(getProjectTaskTime(task))}
+        {formatRelativeSidebarTime(getProjectTaskTime(task))}
       </span>
       <div className="ml-1 opacity-0 transition-opacity group-hover/task:opacity-100 focus-within:opacity-100">
         <ActionMenu
-          ariaLabel="会话操作"
+          ariaLabel={t('workbench.chat_actions', '会话操作')}
           testId={`project-chat-menu-${task.task_id}`}
           variant="vertical"
           items={[
             {
-              label: 'Archive chat',
+              label: t('workbench.archive_chat', '归档会话'),
               icon: Archive,
               testId: `archive-chat-${task.task_id}`,
               onSelect: () => onArchiveTask(task.task_id),
             },
             {
-              label: 'Rename chat',
+              label: t('workbench.rename_chat', '重命名会话'),
               icon: Edit3,
               testId: `rename-chat-${task.task_id}`,
               onSelect: () => onRenameTask(task),
@@ -168,8 +192,11 @@ function ProjectTaskRow({
 
 function ProjectItem({
   project,
-  selected,
-  onSelectProject,
+  expanded,
+  showAllTasks,
+  activeTaskId,
+  onToggleProject,
+  onToggleTaskLimit,
   onStartNewProjectChat,
   onArchiveProjectChats,
   onRemoveProject,
@@ -179,8 +206,11 @@ function ProjectItem({
   onRenameTask,
 }: {
   project: ProjectWithTasks
-  selected: boolean
-  onSelectProject: (projectId: number) => void
+  expanded: boolean
+  showAllTasks: boolean
+  activeTaskId?: number
+  onToggleProject: (projectId: number) => void
+  onToggleTaskLimit: (projectId: number) => void
   onStartNewProjectChat: (projectId: number) => void
   onArchiveProjectChats: (projectId: number) => Promise<void>
   onRemoveProject: (projectId: number) => Promise<void>
@@ -189,20 +219,22 @@ function ProjectItem({
   onArchiveTask: (taskId: number) => Promise<void>
   onRenameTask: (task: ProjectTask) => void
 }) {
+  const { t } = useTranslation('common')
   const tasks = useMemo(() => sortProjectTasks(project.tasks), [project.tasks])
+  const hasMoreTasks = tasks.length > INITIAL_PROJECT_CHAT_COUNT
+  const visibleTasks = showAllTasks ? tasks : tasks.slice(0, INITIAL_PROJECT_CHAT_COUNT)
 
   return (
     <div data-testid="project-item" className="space-y-0.5">
       <div
-        className={[
-          'group/project flex h-9 items-center gap-1 rounded-md pl-3 pr-1 text-sm',
-          selected ? 'bg-white text-text-primary' : 'text-text-secondary hover:bg-white/70',
-        ].join(' ')}
+        data-testid={`project-row-${project.id}`}
+        className="group/project flex h-9 items-center gap-1 rounded-md pl-3 pr-1 text-sm text-text-secondary hover:bg-white/70"
       >
         <button
           type="button"
           data-testid="project-item-button"
-          onClick={() => onSelectProject(project.id)}
+          onClick={() => onToggleProject(project.id)}
+          aria-expanded={expanded}
           className="flex min-w-0 flex-1 items-center gap-2 text-left"
         >
           <Folder className="h-4 w-4 shrink-0" />
@@ -210,23 +242,23 @@ function ProjectItem({
         </button>
         <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover/project:opacity-100 focus-within:opacity-100">
           <ActionMenu
-            ariaLabel="项目操作"
+            ariaLabel={t('workbench.project_actions', '项目操作')}
             testId={`project-menu-${project.id}`}
             items={[
               {
-                label: 'Rename project',
+                label: t('workbench.rename_project', '重命名项目'),
                 icon: Edit3,
                 testId: `rename-project-${project.id}`,
                 onSelect: () => onRenameProject(project),
               },
               {
-                label: 'Archive chats',
+                label: t('workbench.archive_chats', '归档会话'),
                 icon: Archive,
                 testId: `archive-project-chats-${project.id}`,
                 onSelect: () => onArchiveProjectChats(project.id),
               },
               {
-                label: 'Remove',
+                label: t('workbench.remove_project', '移除'),
                 icon: X,
                 testId: `remove-project-${project.id}`,
                 danger: true,
@@ -242,38 +274,70 @@ function ProjectItem({
               onStartNewProjectChat(project.id)
             }}
             className="flex h-7 w-7 items-center justify-center rounded-md text-[#606368] hover:bg-white/80 hover:text-[#2d2d2d]"
-            aria-label="新建项目对话"
+            aria-label={t('workbench.new_project_chat', '新建项目对话')}
           >
             <MessageSquarePlus className="h-4 w-4" />
           </button>
         </div>
       </div>
-      {tasks.map(task => (
-        <ProjectTaskRow
-          key={task.task_id}
-          task={task}
-          onOpenTask={onOpenTask}
-          onArchiveTask={onArchiveTask}
-          onRenameTask={onRenameTask}
-        />
-      ))}
+      {expanded && (
+        <div className="space-y-0.5">
+          {tasks.length === 0 ? (
+            <div className="ml-5 rounded-md px-3 py-1.5 text-xs text-[#8a8a8a]">
+              {t('workbench.no_chats', '暂无会话')}
+            </div>
+          ) : (
+            visibleTasks.map(task => (
+              <ProjectTaskRow
+                key={task.task_id}
+                task={task}
+                selected={activeTaskId === task.task_id}
+                onOpenTask={onOpenTask}
+                onArchiveTask={onArchiveTask}
+                onRenameTask={onRenameTask}
+              />
+            ))
+          )}
+          {hasMoreTasks && (
+            <button
+              type="button"
+              data-testid={`project-task-limit-toggle-${project.id}`}
+              onClick={() => onToggleTaskLimit(project.id)}
+              className="ml-5 h-8 rounded-md px-3 text-left text-xs font-medium text-[#606368] hover:bg-white/70 hover:text-[#2d2d2d]"
+            >
+              {showAllTasks
+                ? t('workbench.show_less', '收起')
+                : t('workbench.show_more', '显示更多')}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }
 
 function RecentTaskRow({
   task,
+  selected,
   onOpenTask,
   onArchiveTask,
   onRenameTask,
 }: {
   task: Task
+  selected: boolean
   onOpenTask: (taskId: number) => void
   onArchiveTask: (taskId: number) => Promise<void>
   onRenameTask: (task: Task) => void
 }) {
+  const { t } = useTranslation('common')
   return (
-    <div className="group/task flex h-9 items-center gap-2 rounded-md pl-3 pr-1 text-sm text-text-secondary hover:bg-white/70">
+    <div
+      data-testid={`history-task-row-${task.id}`}
+      className={[
+        'group/task flex h-9 items-center gap-2 rounded-md pl-3 pr-1 text-sm',
+        selected ? 'bg-white text-text-primary' : 'text-text-secondary hover:bg-white/70',
+      ].join(' ')}
+    >
       <Clock className="h-4 w-4 shrink-0" />
       <button
         type="button"
@@ -284,22 +348,22 @@ function RecentTaskRow({
         {task.title}
       </button>
       <span className="shrink-0 text-xs text-[#8a8a8a]">
-        {formatSidebarTime(task.updated_at || task.created_at)}
+        {formatRelativeSidebarTime(task.updated_at || task.created_at)}
       </span>
       <div className="opacity-0 transition-opacity group-hover/task:opacity-100 focus-within:opacity-100">
         <ActionMenu
-          ariaLabel="会话操作"
+          ariaLabel={t('workbench.chat_actions', '会话操作')}
           testId={`history-task-menu-${task.id}`}
           variant="vertical"
           items={[
             {
-              label: 'Archive chat',
+              label: t('workbench.archive_chat', '归档会话'),
               icon: Archive,
               testId: `archive-history-chat-${task.id}`,
               onSelect: () => onArchiveTask(task.id),
             },
             {
-              label: 'Rename chat',
+              label: t('workbench.rename_chat', '重命名会话'),
               icon: Edit3,
               testId: `rename-history-chat-${task.id}`,
               onSelect: () => onRenameTask(task),
@@ -317,6 +381,7 @@ export function DesktopSidebar({
   devices,
   recentTasks,
   currentProjectId,
+  currentTaskId,
   activeItem = 'chat',
   onCollapse,
   onNewChat,
@@ -331,6 +396,8 @@ export function DesktopSidebar({
   onArchiveProjectChats,
   onArchiveTask,
   onRenameTask,
+  onGetDeviceHomeDirectory,
+  onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
   onOpenSettings,
   onLogout,
@@ -341,7 +408,37 @@ export function DesktopSidebar({
   const [projectCreateMode, setProjectCreateMode] = useState<ProjectCreateMode | null>(null)
   const [renamingProject, setRenamingProject] = useState<ProjectWithTasks | null>(null)
   const [renamingTask, setRenamingTask] = useState<{ id: number; title: string } | null>(null)
+  const [expandedProjectIds, setExpandedProjectIds] = useState<Set<number>>(new Set())
+  const [expandedTaskListIds, setExpandedTaskListIds] = useState<Set<number>>(new Set())
   const sortedRecentTasks = useMemo(() => sortTasksByTime(recentTasks), [recentTasks])
+
+  const handleToggleProject = (projectId: number) => {
+    const shouldExpand = !expandedProjectIds.has(projectId)
+    setExpandedProjectIds(previous => {
+      const next = new Set(previous)
+      if (next.has(projectId)) {
+        next.delete(projectId)
+      } else {
+        next.add(projectId)
+      }
+      return next
+    })
+    if (shouldExpand) {
+      onSelectProject(projectId)
+    }
+  }
+
+  const handleToggleProjectTaskLimit = (projectId: number) => {
+    setExpandedTaskListIds(previous => {
+      const next = new Set(previous)
+      if (next.has(projectId)) {
+        next.delete(projectId)
+      } else {
+        next.add(projectId)
+      }
+      return next
+    })
+  }
 
   return (
     <aside
@@ -396,11 +493,11 @@ export function DesktopSidebar({
           </h2>
           <div className="flex items-center opacity-0 transition-opacity group-hover/projects:opacity-100 focus-within:opacity-100">
             <ActionMenu
-              ariaLabel="项目列表操作"
+              ariaLabel={t('workbench.project_list_actions', '项目列表操作')}
               testId="projects-more-button"
               items={[
                 {
-                  label: 'Archive all chats',
+                  label: t('workbench.archive_all_chats', '归档所有会话'),
                   icon: Archive,
                   testId: 'archive-all-chats-button',
                   onSelect: onArchiveAllChats,
@@ -408,18 +505,18 @@ export function DesktopSidebar({
               ]}
             />
             <ActionMenu
-              ariaLabel="新建项目"
+              ariaLabel={t('workbench.new_project', '新建项目')}
               testId="projects-create-button"
               icon={FolderPlus}
               items={[
                 {
-                  label: 'Start from scratch',
+                  label: t('workbench.start_from_scratch', '从头开始'),
                   icon: FolderPlus,
                   testId: 'project-start-from-scratch-button',
                   onSelect: () => setProjectCreateMode('scratch'),
                 },
                 {
-                  label: 'Using an existing folder',
+                  label: t('workbench.using_existing_folder', '使用现有目录'),
                   icon: Folder,
                   testId: 'project-existing-folder-button',
                   onSelect: () => setProjectCreateMode('existing'),
@@ -433,8 +530,11 @@ export function DesktopSidebar({
             <ProjectItem
               key={project.id}
               project={project}
-              selected={currentProjectId === project.id}
-              onSelectProject={onSelectProject}
+              expanded={expandedProjectIds.has(project.id)}
+              showAllTasks={expandedTaskListIds.has(project.id)}
+              activeTaskId={currentTaskId}
+              onToggleProject={handleToggleProject}
+              onToggleTaskLimit={handleToggleProjectTaskLimit}
               onStartNewProjectChat={onStartNewProjectChat}
               onArchiveProjectChats={onArchiveProjectChats}
               onRemoveProject={onRemoveProject}
@@ -458,6 +558,7 @@ export function DesktopSidebar({
             <RecentTaskRow
               key={task.id}
               task={task}
+              selected={currentTaskId === task.id && currentProjectId === undefined}
               onOpenTask={onOpenTask}
               onArchiveTask={onArchiveTask}
               onRenameTask={item => setRenamingTask({ id: item.id, title: item.title })}
@@ -501,15 +602,17 @@ export function DesktopSidebar({
         devices={devices}
         onClose={() => setProjectCreateMode(null)}
         onCreateProject={onCreateProject}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+        onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
         onListDeviceDirectories={onListDeviceDirectories}
       />
       <TextInputDialog
         open={renamingProject !== null}
-        title="Rename project"
-        label="Project name"
+        title={t('workbench.rename_project', '重命名项目')}
+        label={t('workbench.project_name', '项目名称')}
         initialValue={renamingProject?.name ?? ''}
-        confirmLabel="Save"
-        cancelLabel="Cancel"
+        confirmLabel={t('workbench.save', '保存')}
+        cancelLabel={t('workbench.cancel', '取消')}
         inputTestId="rename-project-input"
         confirmTestId="confirm-rename-project-button"
         onClose={() => setRenamingProject(null)}
@@ -521,11 +624,11 @@ export function DesktopSidebar({
       />
       <TextInputDialog
         open={renamingTask !== null}
-        title="Rename chat"
-        label="Chat name"
+        title={t('workbench.rename_chat', '重命名会话')}
+        label={t('workbench.chat_name', '会话名称')}
         initialValue={renamingTask?.title ?? ''}
-        confirmLabel="Save"
-        cancelLabel="Cancel"
+        confirmLabel={t('workbench.save', '保存')}
+        cancelLabel={t('workbench.cancel', '取消')}
         inputTestId="rename-chat-input"
         confirmTestId="confirm-rename-chat-button"
         onClose={() => setRenamingTask(null)}

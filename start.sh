@@ -2098,7 +2098,7 @@ start_services() {
         export VITE_API_PROXY_TARGET=http://localhost:$BACKEND_PORT
         export VITE_SOCKET_PROXY_TARGET=$WEGENT_SOCKET_URL
 
-        local wework_cmd="npm run dev -- --port $WEWORK_PORT"
+        local wework_cmd="npm run dev -- --host 0.0.0.0 --port $WEWORK_PORT"
 
         if is_wsl; then
             local node_path=$(command -v node)
