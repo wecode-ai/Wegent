@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 
 import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import ResourceLibraryPage from '@/features/resource-library/ResourceLibraryPage'
@@ -25,6 +25,10 @@ jest.mock('@/hooks/use-toast', () => ({
   }),
 }))
 
+jest.mock('@/features/resource-library/components/MyResources', () => ({
+  MyResources: () => <div data-testid="my-resource-management">资源管理</div>,
+}))
+
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (key: string) => {
@@ -36,8 +40,7 @@ jest.mock('@/hooks/useTranslation', () => ({
         'tabs.published': '我发布的',
         'filters.all': '全部',
         'filters.agent': '智能体',
-        'filters.skill': 'Skill',
-        'filters.mcp': 'MCP',
+        'filters.skill': '技能',
         'search.placeholder': '搜索资源',
         'actions.search': '搜索',
         'actions.publish': '发布资源',
@@ -58,31 +61,17 @@ describe('ResourceLibraryPage', () => {
     jest.clearAllMocks()
   })
 
-  it('renders the resource library shell and switches tabs', async () => {
+  it('renders my resources as the only visible resource library view', async () => {
     render(<ResourceLibraryPage />)
 
-    expect(screen.getByRole('heading', { name: '资源库' })).toBeInTheDocument()
-    expect(await screen.findByText('暂无资源')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '发现' })).toBeInTheDocument()
-
-    const mineTab = screen.getByRole('button', { name: '我的' })
-    expect(mineTab).toBeInTheDocument()
-
-    expect(screen.getByRole('button', { name: '全部' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '智能体' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Skill' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'MCP' })).toBeInTheDocument()
-
-    fireEvent.click(mineTab)
-
-    expect(mineTab).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByRole('heading', { name: '资源库' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '发现' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '我的' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '全部' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'MCP' })).not.toBeInTheDocument()
     expect(screen.getByTestId('resource-library-content')).toBeInTheDocument()
-    expect(await screen.findByTestId('my-resources')).toBeInTheDocument()
-    await waitFor(() => {
-      expect(mockResourceLibraryApi.listMyInstalls).toHaveBeenCalled()
-    })
-    await waitFor(() => {
-      expect(screen.queryByLabelText('正在加载资源')).not.toBeInTheDocument()
-    })
+    expect(await screen.findByTestId('my-resource-management')).toBeInTheDocument()
+    expect(mockResourceLibraryApi.listListings).not.toHaveBeenCalled()
+    expect(mockResourceLibraryApi.listMyInstalls).not.toHaveBeenCalled()
   })
 })

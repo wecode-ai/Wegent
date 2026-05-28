@@ -5,248 +5,247 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { Plus, RefreshCw } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { Boxes, ChevronDown, Users } from 'lucide-react'
 
-import { resourceLibraryApi } from '@/apis/resourceLibrary'
+import { listGroups } from '@/apis/groups'
 import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
-import { useToast } from '@/hooks/use-toast'
+import { ModelListWithScope } from '@/features/settings/components/ModelListWithScope'
+import { RetrieverListWithScope } from '@/features/settings/components/RetrieverListWithScope'
+import { ShellListWithScope } from '@/features/settings/components/ShellListWithScope'
+import { SkillListWithScope } from '@/features/settings/components/SkillListWithScope'
+import { TeamListWithScope } from '@/features/settings/components/TeamListWithScope'
+import { paths } from '@/config/paths'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import type { ResourceLibraryListing, ResourceLibraryTypeFilter } from '../types'
-import { PublishResourceDialog } from './PublishResourceDialog'
-import { ResourceDetailDrawer } from './ResourceDetailDrawer'
-import { ResourceListingCard } from './ResourceListingCard'
+import type { Group } from '@/types/group'
+import type { ManagedResourceType } from '../types'
 
-interface MyResourcesProps {
-  resourceType: ResourceLibraryTypeFilter
+type ResourceScope = 'personal' | 'group'
+
+const MANAGE_GROUPS_VALUE = '__manage_groups__'
+
+const managedResourceTypes: ManagedResourceType[] = [
+  'agent',
+  'skill',
+  'model',
+  'shell',
+  'retriever',
+]
+
+function getInitialSearchParam(name: string): string | null {
+  if (typeof window === 'undefined') {
+    return null
+  }
+  return new URLSearchParams(window.location.search).get(name)
 }
 
-type MyResourcesTab = 'installed' | 'published'
+function getInitialResourceType(): ManagedResourceType {
+  const type = getInitialSearchParam('type')
+  return managedResourceTypes.includes(type as ManagedResourceType)
+    ? (type as ManagedResourceType)
+    : 'agent'
+}
 
-const myResourcesTabs: MyResourcesTab[] = ['installed', 'published']
-const MY_RESOURCES_PAGE_SIZE = 50
+function getInitialScope(): ResourceScope {
+  return getInitialSearchParam('scope') === 'group' ? 'group' : 'personal'
+}
 
-export function MyResources({ resourceType }: MyResourcesProps) {
+function ManagedResourceTabs({
+  value,
+  onValueChange,
+}: {
+  value: ManagedResourceType
+  onValueChange: (value: ManagedResourceType) => void
+}) {
   const { t } = useTranslation('resource-library')
-  const { toast } = useToast()
-  const [activeTab, setActiveTab] = useState<MyResourcesTab>('installed')
-  const [listings, setListings] = useState<ResourceLibraryListing[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [hasError, setHasError] = useState(false)
-  const [selectedListing, setSelectedListing] = useState<ResourceLibraryListing | null>(null)
-  const [isDetailOpen, setIsDetailOpen] = useState(false)
-  const [isDetailLoading, setIsDetailLoading] = useState(false)
-  const [installingIds, setInstallingIds] = useState<Set<number>>(() => new Set())
-  const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false)
-  const [refreshVersion, setRefreshVersion] = useState(0)
 
-  const loadResources = useCallback(async () => {
-    setIsLoading(true)
-    setHasError(false)
-    try {
-      if (activeTab === 'installed') {
-        const response = await resourceLibraryApi.listMyInstalls({
-          resourceType,
-          page: 1,
-          limit: MY_RESOURCES_PAGE_SIZE,
-        })
-        setListings(
-          response.items
-            .map(install => install.listing)
-            .filter((listing): listing is ResourceLibraryListing => Boolean(listing))
-            .map(listing => ({ ...listing, is_installed: true }))
+  return (
+    <div className="flex flex-wrap items-center gap-2" role="tablist" aria-label={t('fields.type')}>
+      {managedResourceTypes.map(type => {
+        const isActive = value === type
+
+        return (
+          <Button
+            key={type}
+            type="button"
+            variant={isActive ? 'primary' : 'outline'}
+            aria-pressed={isActive}
+            data-testid={`managed-resource-${type}-tab`}
+            className="h-11 min-w-[44px] px-4 lg:h-9"
+            onClick={() => onValueChange(type)}
+          >
+            {t(`filters.${type}`)}
+          </Button>
         )
-      } else {
-        const response = await resourceLibraryApi.listMyPublished({
-          resourceType,
-          page: 1,
-          limit: MY_RESOURCES_PAGE_SIZE,
-        })
-        setListings(response.items)
-      }
-    } catch {
-      setHasError(true)
-    } finally {
-      setIsLoading(false)
-    }
-  }, [activeTab, resourceType])
+      })}
+    </div>
+  )
+}
 
-  useEffect(() => {
-    void loadResources()
-  }, [loadResources, refreshVersion])
+function ResourceScopeControls({
+  scope,
+  groups,
+  selectedGroup,
+  onScopeChange,
+  onGroupChange,
+}: {
+  scope: ResourceScope
+  groups: Group[]
+  selectedGroup: string | null
+  onScopeChange: (scope: ResourceScope) => void
+  onGroupChange: (groupName: string | null) => void
+}) {
+  const { t } = useTranslation('resource-library')
+  const router = useRouter()
+  const groupSelectValue = scope === 'group' ? (selectedGroup ?? '') : ''
 
-  const markInstalling = (listingId: number, installing: boolean) => {
-    setInstallingIds(previous => {
-      const next = new Set(previous)
-      if (installing) {
-        next.add(listingId)
-      } else {
-        next.delete(listingId)
-      }
-      return next
-    })
-  }
-
-  const markListingInstalled = (listingId: number) => {
-    setListings(previous =>
-      previous.map(item =>
-        item.id === listingId
-          ? {
-              ...item,
-              is_installed: true,
-              install_count: item.install_count + 1,
-            }
-          : item
-      )
-    )
-    setSelectedListing(previous =>
-      previous?.id === listingId
-        ? {
-            ...previous,
-            is_installed: true,
-            install_count: previous.install_count + 1,
-          }
-        : previous
-    )
-  }
-
-  const handleViewDetails = async (listing: ResourceLibraryListing) => {
-    setSelectedListing(listing)
-    setIsDetailOpen(true)
-    setIsDetailLoading(true)
-    try {
-      const detail = await resourceLibraryApi.getListing(listing.id)
-      setSelectedListing(activeTab === 'installed' ? { ...detail, is_installed: true } : detail)
-    } catch {
-      toast({
-        title: t('states.error'),
-        variant: 'destructive',
-      })
-    } finally {
-      setIsDetailLoading(false)
-    }
-  }
-
-  const handleInstall = async (listing: ResourceLibraryListing) => {
-    if (listing.is_installed || installingIds.has(listing.id)) {
+  const handleGroupSelectChange = (value: string) => {
+    if (value === MANAGE_GROUPS_VALUE) {
+      router.push(paths.settings.groupManager.getHref())
       return
     }
-
-    markInstalling(listing.id, true)
-    try {
-      const install = await resourceLibraryApi.installListing(listing.id, {
-        targetNamespace: 'default',
-      })
-      markListingInstalled(listing.id)
-      toast({
-        title: install.requires_configuration
-          ? t('messages.install_requires_configuration')
-          : t('messages.install_success'),
-      })
-      await loadResources()
-    } catch (error) {
-      toast({
-        title: t('messages.install_failed'),
-        description: error instanceof Error ? error.message : undefined,
-        variant: 'destructive',
-      })
-    } finally {
-      markInstalling(listing.id, false)
+    if (!value) {
+      return
     }
-  }
-
-  const handlePublished = () => {
-    setActiveTab('published')
-    setRefreshVersion(version => version + 1)
+    onGroupChange(value)
+    onScopeChange('group')
   }
 
   return (
-    <div className="flex flex-col gap-4" data-testid="my-resources">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex rounded-lg border border-border bg-surface p-1" role="tablist">
-          {myResourcesTabs.map(tab => {
-            const isActive = activeTab === tab
-            return (
-              <Button
-                key={tab}
-                type="button"
-                variant={isActive ? 'primary' : 'ghost'}
-                className={cn('h-11 min-w-[44px] px-4 lg:h-9', isActive && 'border-primary')}
-                aria-pressed={isActive}
-                onClick={() => setActiveTab(tab)}
-                data-testid={`my-resources-${tab}-tab`}
-              >
-                {t(`tabs.${tab}`)}
-              </Button>
-            )
-          })}
-        </div>
-
-        <Button
-          type="button"
-          variant="primary"
-          className="h-11 min-w-[44px] px-4 lg:h-9"
-          onClick={() => setIsPublishDialogOpen(true)}
-          data-testid="publish-resource-button"
+    <div className="flex flex-wrap items-center gap-2">
+      <Button
+        type="button"
+        variant={scope === 'personal' ? 'primary' : 'outline'}
+        aria-pressed={scope === 'personal'}
+        className="h-11 min-w-[44px] px-4 lg:h-9"
+        onClick={() => onScopeChange('personal')}
+        data-testid="resource-scope-personal-button"
+      >
+        <Boxes className="h-4 w-4" aria-hidden="true" />
+        {t('scopes.personal')}
+      </Button>
+      <div
+        className={cn(
+          'relative inline-flex h-11 min-w-[180px] items-center rounded-lg border text-sm font-medium ring-offset-base transition-colors focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-2 lg:h-9',
+          scope === 'group'
+            ? 'border-primary bg-primary text-white'
+            : 'border-border bg-transparent text-text-primary hover:bg-surface'
+        )}
+      >
+        <Users className="pointer-events-none absolute left-4 h-4 w-4" aria-hidden="true" />
+        <select
+          value={groupSelectValue}
+          className="h-full w-full cursor-pointer appearance-none rounded-lg bg-transparent pl-10 pr-10 text-sm font-medium text-inherit outline-none"
+          onChange={event => handleGroupSelectChange(event.target.value)}
+          data-testid="resource-group-select"
+          aria-label={t('scopes.group')}
         >
-          <Plus className="h-4 w-4" aria-hidden="true" />
-          {t('actions.publish')}
-        </Button>
+          <option value="" className="text-text-primary">
+            {t('scopes.group')}
+          </option>
+          {groups.length === 0 ? (
+            <option value="__no_groups__" disabled className="text-text-primary">
+              {t('states.no_groups')}
+            </option>
+          ) : (
+            groups.map(group => (
+              <option key={group.id} value={group.name} className="text-text-primary">
+                {group.display_name || group.name}
+              </option>
+            ))
+          )}
+          <option value={MANAGE_GROUPS_VALUE} className="text-text-primary">
+            {t('actions.manage_groups')}
+          </option>
+        </select>
+        <ChevronDown className="pointer-events-none absolute right-4 h-4 w-4 opacity-70" />
+      </div>
+    </div>
+  )
+}
+
+export function MyResources() {
+  const [resourceType, setResourceType] = useState<ManagedResourceType>(getInitialResourceType)
+  const [scope, setScope] = useState<ResourceScope>(getInitialScope)
+  const [groups, setGroups] = useState<Group[]>([])
+  const [selectedGroup, setSelectedGroup] = useState<string | null>(() =>
+    getInitialSearchParam('group')
+  )
+
+  useEffect(() => {
+    let isMounted = true
+
+    listGroups({ page: 1, limit: 100 })
+      .then(response => {
+        if (!isMounted) return
+        setGroups(response.items || [])
+      })
+      .catch(() => {
+        if (!isMounted) return
+        setGroups([])
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (scope === 'group' && !selectedGroup && groups.length > 0) {
+      setSelectedGroup(groups[0].name)
+    }
+  }, [groups, scope, selectedGroup])
+
+  const handleScopeChange = useCallback(
+    (nextScope: ResourceScope) => {
+      setScope(nextScope)
+      if (nextScope === 'group' && !selectedGroup && groups.length > 0) {
+        setSelectedGroup(groups[0].name)
+      }
+    },
+    [groups, selectedGroup]
+  )
+
+  const renderManager = () => {
+    const managerScope = scope
+    const groupName = scope === 'group' ? selectedGroup : null
+
+    if (resourceType === 'agent') {
+      return <TeamListWithScope scope={managerScope} selectedGroup={groupName} />
+    }
+    if (resourceType === 'model') {
+      return <ModelListWithScope scope={managerScope} selectedGroup={groupName} />
+    }
+    if (resourceType === 'shell') {
+      return <ShellListWithScope scope={managerScope} selectedGroup={groupName} />
+    }
+    if (resourceType === 'skill') {
+      return <SkillListWithScope scope={managerScope} selectedGroup={groupName} />
+    }
+    if (resourceType === 'retriever') {
+      return <RetrieverListWithScope scope={managerScope} selectedGroup={groupName} />
+    }
+
+    return null
+  }
+
+  return (
+    <div className="flex flex-col gap-5" data-testid="my-resources">
+      <div className="flex flex-col gap-3 border-b border-border pb-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <ManagedResourceTabs value={resourceType} onValueChange={setResourceType} />
+          <ResourceScopeControls
+            scope={scope}
+            groups={groups}
+            selectedGroup={selectedGroup}
+            onScopeChange={handleScopeChange}
+            onGroupChange={setSelectedGroup}
+          />
+        </div>
       </div>
 
-      {isLoading ? (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3" aria-label={t('states.loading')}>
-          {Array.from({ length: 3 }).map((_, index) => (
-            <Skeleton key={index} className="h-[220px] rounded-lg" />
-          ))}
-        </div>
-      ) : hasError ? (
-        <div className="flex min-h-[260px] flex-col items-center justify-center gap-3 rounded-lg border border-border bg-surface p-6 text-center">
-          <p className="text-sm text-text-secondary">{t('states.error')}</p>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-11 min-w-[44px]"
-            onClick={() => void loadResources()}
-          >
-            <RefreshCw className="h-4 w-4" aria-hidden="true" />
-            {t('actions.retry')}
-          </Button>
-        </div>
-      ) : listings.length === 0 ? (
-        <div className="flex min-h-[260px] items-center justify-center rounded-lg border border-border bg-surface p-6 text-sm text-text-secondary">
-          {t('states.empty')}
-        </div>
-      ) : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {listings.map(listing => (
-            <ResourceListingCard
-              key={listing.id}
-              listing={listing}
-              isInstalling={installingIds.has(listing.id)}
-              onInstall={handleInstall}
-              onViewDetails={handleViewDetails}
-            />
-          ))}
-        </div>
-      )}
-
-      <ResourceDetailDrawer
-        open={isDetailOpen}
-        listing={selectedListing}
-        isLoading={isDetailLoading}
-        isInstalling={selectedListing ? installingIds.has(selectedListing.id) : false}
-        onOpenChange={setIsDetailOpen}
-        onInstall={handleInstall}
-      />
-
-      <PublishResourceDialog
-        open={isPublishDialogOpen}
-        resourceType={resourceType}
-        onOpenChange={setIsPublishDialogOpen}
-        onPublished={handlePublished}
-      />
+      <div>{renderManager()}</div>
     </div>
   )
 }

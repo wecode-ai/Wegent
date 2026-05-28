@@ -9,8 +9,15 @@
   "filters": {
     "all": "全部",
     "agent": "智能体",
-    "skill": "Skill",
-    "mcp": "MCP"
+    "model": "模型",
+    "shell": "执行器",
+    "skill": "技能",
+    "retriever": "检索器"
+  },
+  "scopes": {
+    "personal": "个人资源",
+    "group": "组资源",
+    "group_placeholder": "选择组"
   },
   "actions": {
     "install": "安装",
@@ -21,6 +28,7 @@
     "configure": "配置",
     "view_detail": "查看详情",
     "details": "详情",
+    "manage_groups": "管理...",
     "retry": "重试",
     "search": "搜索",
     "close": "关闭",
@@ -53,7 +61,8 @@
     "loading": "正在加载资源",
     "empty": "暂无资源",
     "error": "加载失败",
-    "requiresConfiguration": "需要配置"
+    "requiresConfiguration": "需要配置",
+    "no_groups": "暂无组资源"
   },
   "search": {
     "placeholder": "搜索资源"
@@ -66,6 +75,6 @@
     "publish_failed": "发布失败"
   },
   "publish": {
-    "description": "将已有智能体、Skill 或 MCP 发布到资源库"
+    "description": "将已有智能体或技能发布到资源库"
   }
 }

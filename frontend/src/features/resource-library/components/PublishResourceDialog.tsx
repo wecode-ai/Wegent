@@ -23,7 +23,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import type { ResourceLibraryResourceType, ResourceLibraryTypeFilter } from '../types'
+import type { ResourceLibraryTypeFilter, VisibleResourceLibraryResourceType } from '../types'
 
 interface PublishResourceDialogProps {
   open: boolean
@@ -32,7 +32,7 @@ interface PublishResourceDialogProps {
   onPublished: () => void
 }
 
-const publishableResourceTypes: ResourceLibraryResourceType[] = ['agent', 'skill', 'mcp']
+const publishableResourceTypes: VisibleResourceLibraryResourceType[] = ['agent', 'skill']
 
 function parseTags(value: string): string[] {
   return value
@@ -41,7 +41,9 @@ function parseTags(value: string): string[] {
     .filter(Boolean)
 }
 
-function defaultPublishType(resourceType: ResourceLibraryTypeFilter): ResourceLibraryResourceType {
+function defaultPublishType(
+  resourceType: ResourceLibraryTypeFilter
+): VisibleResourceLibraryResourceType {
   return resourceType === 'all' ? 'agent' : resourceType
 }
 
@@ -53,7 +55,7 @@ export function PublishResourceDialog({
 }: PublishResourceDialogProps) {
   const { t } = useTranslation('resource-library')
   const { toast } = useToast()
-  const [selectedType, setSelectedType] = useState<ResourceLibraryResourceType>(
+  const [selectedType, setSelectedType] = useState<VisibleResourceLibraryResourceType>(
     defaultPublishType(resourceType)
   )
   const [sourceId, setSourceId] = useState('')

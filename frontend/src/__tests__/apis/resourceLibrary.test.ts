@@ -101,10 +101,10 @@ describe('resourceLibraryApi', () => {
   it('loads installed resources for current user', async () => {
     mockedApiClient.get.mockResolvedValue({ items: [], total: 0 })
 
-    await resourceLibraryApi.listMyInstalls({ resourceType: 'mcp', page: 1, limit: 20 })
+    await resourceLibraryApi.listMyInstalls({ resourceType: 'skill', page: 1, limit: 20 })
 
     expect(mockedApiClient.get).toHaveBeenCalledWith(
-      '/resource-library/users/me/installs?resource_type=mcp&page=1&limit=20'
+      '/resource-library/users/me/installs?resource_type=skill&page=1&limit=20'
     )
   })
 })

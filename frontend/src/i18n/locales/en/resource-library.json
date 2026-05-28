@@ -9,8 +9,15 @@
   "filters": {
     "all": "All",
     "agent": "Agent",
+    "model": "Model",
+    "shell": "Executor",
     "skill": "Skill",
-    "mcp": "MCP"
+    "retriever": "Retriever"
+  },
+  "scopes": {
+    "personal": "Personal Resources",
+    "group": "Group Resources",
+    "group_placeholder": "Select group"
   },
   "actions": {
     "install": "Install",
@@ -21,6 +28,7 @@
     "configure": "Configure",
     "view_detail": "View Details",
     "details": "Details",
+    "manage_groups": "Manage...",
     "retry": "Retry",
     "search": "Search",
     "close": "Close",
@@ -53,7 +61,8 @@
     "loading": "Loading resources",
     "empty": "No resources",
     "error": "Failed to load resources",
-    "requiresConfiguration": "Configuration required"
+    "requiresConfiguration": "Configuration required",
+    "no_groups": "No group resources"
   },
   "search": {
     "placeholder": "Search resources"
@@ -66,6 +75,6 @@
     "publish_failed": "Publish failed"
   },
   "publish": {
-    "description": "Publish an existing Agent, Skill, or MCP to the resource library"
+    "description": "Publish an existing Agent or Skill to the resource library"
   }
 }

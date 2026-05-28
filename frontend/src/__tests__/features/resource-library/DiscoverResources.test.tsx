@@ -46,8 +46,7 @@ jest.mock('@/hooks/useTranslation', () => ({
     t: (key: string) => {
       const translations: Record<string, string> = {
         'filters.agent': '智能体',
-        'filters.skill': 'Skill',
-        'filters.mcp': 'MCP',
+        'filters.skill': '技能',
         'actions.install': '安装',
         'actions.installed': '已安装',
         'actions.details': '详情',
@@ -130,6 +129,27 @@ describe('DiscoverResources', () => {
     })
     expect(screen.getByTestId('resource-listing-card-1')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '安装 Doc Summary' })).toBeEnabled()
+  })
+
+  it('does not render MCP listings returned by the resource library API', async () => {
+    mockResourceLibraryApi.listListings.mockResolvedValue({
+      items: [
+        createListing(),
+        createListing({
+          id: 2,
+          resource_type: 'mcp',
+          name: 'mcp-server',
+          display_name: 'MCP Server',
+        }),
+      ],
+      total: 2,
+    })
+
+    render(<DiscoverResources resourceType="all" />)
+
+    expect(await screen.findByText('Doc Summary')).toBeInTheDocument()
+    expect(screen.queryByText('MCP Server')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('resource-listing-card-2')).not.toBeInTheDocument()
   })
 
   it('opens listing details and installs from the drawer', async () => {

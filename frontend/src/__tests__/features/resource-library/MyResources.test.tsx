@@ -4,95 +4,100 @@
 
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import type { HTMLAttributes, ReactNode } from 'react'
 
-import { resourceLibraryApi } from '@/apis/resourceLibrary'
+import { listGroups } from '@/apis/groups'
 import { MyResources } from '@/features/resource-library/components/MyResources'
-import type {
-  ResourceLibraryInstall,
-  ResourceLibraryListing,
-} from '@/features/resource-library/types'
 
-const mockToast = jest.fn()
+const mockPush = jest.fn()
 
-jest.mock('@/apis/resourceLibrary', () => ({
-  resourceLibraryApi: {
-    listMyInstalls: jest.fn(),
-    listMyPublished: jest.fn(),
-    getListing: jest.fn(),
-    installListing: jest.fn(),
-    createListing: jest.fn(),
-  },
+jest.mock('@/apis/groups', () => ({
+  listGroups: jest.fn(),
 }))
 
-jest.mock('@/hooks/use-toast', () => ({
-  useToast: () => ({
-    toast: mockToast,
+jest.mock('next/navigation', () => ({
+  useRouter: () => ({
+    push: mockPush,
   }),
 }))
 
-jest.mock('@/components/ui/drawer', () => ({
-  Drawer: ({ open, children }: { open: boolean; children: ReactNode }) =>
-    open ? <div>{children}</div> : null,
-  DrawerContent: ({ children, ...props }: HTMLAttributes<HTMLDivElement>) => (
-    <div role="dialog" {...props}>
-      {children}
-    </div>
+jest.mock('@/features/settings/components/TeamListWithScope', () => ({
+  TeamListWithScope: ({
+    scope,
+    selectedGroup,
+  }: {
+    scope: string
+    selectedGroup?: string | null
+  }) => (
+    <div data-testid="agent-resource-manager" data-scope={scope} data-group={selectedGroup ?? ''} />
   ),
-  DrawerHeader: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  DrawerTitle: ({ children }: { children: ReactNode }) => <h2>{children}</h2>,
-  DrawerDescription: ({ children }: { children: ReactNode }) => <p>{children}</p>,
-  DrawerFooter: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  DrawerClose: ({ children }: { children: ReactNode }) => <>{children}</>,
 }))
 
-jest.mock('@/components/ui/dialog', () => ({
-  Dialog: ({ open, children }: { open: boolean; children: ReactNode }) =>
-    open ? <div>{children}</div> : null,
-  DialogContent: ({ children, ...props }: HTMLAttributes<HTMLDivElement>) => (
-    <div role="dialog" {...props}>
-      {children}
-    </div>
+jest.mock('@/features/settings/components/ModelListWithScope', () => ({
+  ModelListWithScope: ({
+    scope,
+    selectedGroup,
+  }: {
+    scope: string
+    selectedGroup?: string | null
+  }) => (
+    <div data-testid="model-resource-manager" data-scope={scope} data-group={selectedGroup ?? ''} />
   ),
-  DialogHeader: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  DialogTitle: ({ children }: { children: ReactNode }) => <h2>{children}</h2>,
-  DialogDescription: ({ children }: { children: ReactNode }) => <p>{children}</p>,
-  DialogFooter: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  DialogClose: ({ children }: { children: ReactNode }) => <>{children}</>,
+}))
+
+jest.mock('@/features/settings/components/ShellListWithScope', () => ({
+  ShellListWithScope: ({
+    scope,
+    selectedGroup,
+  }: {
+    scope: string
+    selectedGroup?: string | null
+  }) => (
+    <div data-testid="shell-resource-manager" data-scope={scope} data-group={selectedGroup ?? ''} />
+  ),
+}))
+
+jest.mock('@/features/settings/components/SkillListWithScope', () => ({
+  SkillListWithScope: ({
+    scope,
+    selectedGroup,
+  }: {
+    scope: string
+    selectedGroup?: string | null
+  }) => (
+    <div data-testid="skill-resource-manager" data-scope={scope} data-group={selectedGroup ?? ''} />
+  ),
+}))
+
+jest.mock('@/features/settings/components/RetrieverListWithScope', () => ({
+  RetrieverListWithScope: ({
+    scope,
+    selectedGroup,
+  }: {
+    scope: string
+    selectedGroup?: string | null
+  }) => (
+    <div
+      data-testid="retriever-resource-manager"
+      data-scope={scope}
+      data-group={selectedGroup ?? ''}
+    />
+  ),
 }))
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (key: string) => {
       const translations: Record<string, string> = {
-        'tabs.installed': '已安装',
-        'tabs.published': '我发布的',
         'filters.agent': '智能体',
-        'filters.skill': 'Skill',
-        'filters.mcp': 'MCP',
-        'actions.install': '安装',
-        'actions.installed': '已安装',
-        'actions.details': '详情',
-        'actions.publish': '发布资源',
-        'actions.cancel': '取消',
-        'actions.close': '关闭',
-        'fields.name': '名称',
-        'fields.display_name': '显示名称',
-        'fields.description': '描述',
-        'fields.tags': '标签',
-        'fields.source_id': '源资源 ID',
-        'fields.type': '资源类型',
-        'fields.version': '版本',
-        'fields.install_count': '安装次数',
-        'fields.publisher': '发布者',
-        'fields.updated_at': '更新时间',
-        'states.loading': '正在加载资源',
-        'states.empty': '暂无资源',
-        'states.error': '加载失败',
-        'messages.publish_success': '发布成功',
-        'messages.install_success': '安装成功',
-        'messages.install_failed': '安装失败',
-        'publish.description': '发布已有资源',
+        'filters.model': '模型',
+        'filters.shell': '执行器',
+        'filters.skill': '技能',
+        'filters.retriever': '检索器',
+        'scopes.personal': '个人资源',
+        'scopes.group': '组资源',
+        'scopes.group_placeholder': '选择组',
+        'actions.manage_groups': '管理...',
+        'states.no_groups': '暂无组资源',
       }
 
       return translations[key] ?? key
@@ -100,142 +105,108 @@ jest.mock('@/hooks/useTranslation', () => ({
   }),
 }))
 
-const mockResourceLibraryApi = resourceLibraryApi as jest.Mocked<typeof resourceLibraryApi>
-
-function createListing(overrides: Partial<ResourceLibraryListing> = {}): ResourceLibraryListing {
-  return {
-    id: 1,
-    resource_type: 'skill',
-    name: 'doc-summary',
-    display_name: 'Doc Summary',
-    description: 'Summarizes documents',
-    icon: null,
-    tags: ['docs'],
-    publisher_user_id: 3,
-    status: 'published',
-    current_version_id: 10,
-    current_version: {
-      id: 10,
-      listing_id: 1,
-      version: '1.0.0',
-      created_at: '2026-05-27T00:00:00',
-    },
-    install_count: 4,
-    is_installed: true,
-    created_at: '2026-05-27T00:00:00',
-    updated_at: '2026-05-27T00:00:00',
-    ...overrides,
-  }
-}
-
-function createInstall(listing: ResourceLibraryListing): ResourceLibraryInstall {
-  return {
-    id: 11,
-    listing_id: listing.id,
-    version_id: listing.current_version_id ?? 10,
-    user_id: 2,
-    resource_type: listing.resource_type,
-    listing,
-    installed_kind_id: 20,
-    installed_reference: { namespace: 'default', name: listing.name },
-    install_status: 'installed',
-    requires_configuration: false,
-    installed_at: '2026-05-27T00:00:00',
-    updated_at: '2026-05-27T00:00:00',
-  }
-}
+const mockListGroups = listGroups as jest.MockedFunction<typeof listGroups>
 
 describe('MyResources', () => {
   beforeEach(() => {
     jest.clearAllMocks()
-    mockResourceLibraryApi.listMyInstalls.mockResolvedValue({
-      items: [createInstall(createListing())],
+    mockPush.mockClear()
+    mockListGroups.mockResolvedValue({
+      items: [
+        {
+          id: 1,
+          name: 'platform',
+          display_name: 'Platform',
+          parent_name: null,
+          owner_user_id: 1,
+          description: '',
+          visibility: 'private',
+          level: 'group',
+          is_active: true,
+          my_role: 'Owner',
+          member_count: 1,
+          created_at: '2026-05-28T00:00:00',
+          updated_at: '2026-05-28T00:00:00',
+        },
+      ],
       total: 1,
     })
-    mockResourceLibraryApi.listMyPublished.mockResolvedValue({
-      items: [createListing({ id: 2, name: 'research-agent', display_name: 'Research Agent' })],
-      total: 1,
-    })
-    mockResourceLibraryApi.createListing.mockResolvedValue(
-      createListing({ id: 3, name: 'new-agent', display_name: 'New Agent' })
+  })
+
+  it('renders the personal agent manager by default', async () => {
+    render(<MyResources />)
+
+    expect(await screen.findByTestId('agent-resource-manager')).toHaveAttribute(
+      'data-scope',
+      'personal'
     )
-    mockResourceLibraryApi.getListing.mockResolvedValue(createListing())
-    mockResourceLibraryApi.installListing.mockResolvedValue(createInstall(createListing()))
+    expect(screen.getByTestId('managed-resource-agent-tab')).toHaveAttribute('aria-pressed', 'true')
+    expect(
+      screen
+        .getAllByRole('button')
+        .filter(button => button.dataset.testid?.startsWith('managed-resource-'))
+        .map(button => button.textContent)
+    ).toEqual(['智能体', '技能', '模型', '执行器', '检索器'])
+    expect(screen.queryByRole('button', { name: 'MCP' })).not.toBeInTheDocument()
+    expect(screen.queryByTestId('managed-resource-mcp-tab')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('resource-scope-group-button')).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: '组管理' })).not.toBeInTheDocument()
+
+    const groupSelect = screen.getByTestId('resource-group-select')
+    expect(groupSelect).toHaveDisplayValue('组资源')
+    const options = within(groupSelect).getAllByRole('option')
+    expect(options.at(-1)).toHaveTextContent('管理...')
   })
 
-  it('loads installed resources by default and switches to published resources', async () => {
-    render(<MyResources resourceType="skill" />)
+  it('switches between managed resource types', async () => {
+    render(<MyResources />)
 
-    expect(await screen.findByText('Doc Summary')).toBeInTheDocument()
-    expect(mockResourceLibraryApi.listMyInstalls).toHaveBeenCalledWith({
-      resourceType: 'skill',
-      page: 1,
-      limit: 50,
-    })
+    expect(await screen.findByTestId('agent-resource-manager')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: '我发布的' }))
+    fireEvent.click(screen.getByTestId('managed-resource-model-tab'))
+    expect(screen.getByTestId('model-resource-manager')).toHaveAttribute('data-scope', 'personal')
 
-    expect(await screen.findByText('Research Agent')).toBeInTheDocument()
-    expect(mockResourceLibraryApi.listMyPublished).toHaveBeenCalledWith({
-      resourceType: 'skill',
-      page: 1,
-      limit: 50,
-    })
-  })
+    fireEvent.click(screen.getByTestId('managed-resource-shell-tab'))
+    expect(screen.getByTestId('shell-resource-manager')).toHaveAttribute('data-scope', 'personal')
 
-  it('publishes a resource from the dialog', async () => {
-    render(<MyResources resourceType="agent" />)
+    fireEvent.click(screen.getByTestId('managed-resource-skill-tab'))
+    expect(screen.getByTestId('skill-resource-manager')).toHaveAttribute('data-scope', 'personal')
 
-    expect(await screen.findByText('Doc Summary')).toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('publish-resource-button'))
-    const dialog = screen.getByTestId('publish-resource-dialog')
-    expect(within(dialog).getByTestId('publish-resource-type-agent-button')).toHaveAttribute(
-      'aria-pressed',
-      'true'
+    fireEvent.click(screen.getByTestId('managed-resource-retriever-tab'))
+    expect(screen.getByTestId('retriever-resource-manager')).toHaveAttribute(
+      'data-scope',
+      'personal'
     )
-    fireEvent.change(within(dialog).getByTestId('publish-resource-source-id-input'), {
-      target: { value: '42' },
-    })
-    fireEvent.change(within(dialog).getByTestId('publish-resource-name-input'), {
-      target: { value: 'new-agent' },
-    })
-    fireEvent.change(within(dialog).getByTestId('publish-resource-display-name-input'), {
-      target: { value: 'New Agent' },
-    })
-    fireEvent.change(within(dialog).getByTestId('publish-resource-description-textarea'), {
-      target: { value: 'Handles research' },
-    })
-    fireEvent.change(within(dialog).getByTestId('publish-resource-tags-input'), {
-      target: { value: 'research,agent' },
-    })
-    fireEvent.change(within(dialog).getByTestId('publish-resource-version-input'), {
-      target: { value: '1.0.0' },
-    })
-    fireEvent.click(within(dialog).getByTestId('publish-resource-submit-button'))
-
-    await waitFor(() => {
-      expect(mockResourceLibraryApi.createListing).toHaveBeenCalledWith({
-        resource_type: 'agent',
-        source_id: 42,
-        name: 'new-agent',
-        display_name: 'New Agent',
-        description: 'Handles research',
-        icon: null,
-        tags: ['research', 'agent'],
-        version: '1.0.0',
-        manifest_options: {},
-      })
-    })
-    expect(mockToast).toHaveBeenCalledWith({ title: '发布成功' })
   })
 
-  it('opens resource details with a close control', async () => {
-    render(<MyResources resourceType="skill" />)
+  it('passes selected group scope into migrated managers', async () => {
+    render(<MyResources />)
 
-    expect(await screen.findByText('Doc Summary')).toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('view-resource-1-button'))
+    await waitFor(() => expect(mockListGroups).toHaveBeenCalled())
+    await screen.findByRole('option', { name: 'Platform' })
 
-    expect(await screen.findByTestId('resource-detail-drawer')).toBeInTheDocument()
-    expect(screen.getByTestId('resource-detail-close-button')).toBeInTheDocument()
+    fireEvent.change(screen.getByTestId('resource-group-select'), {
+      target: { value: 'platform' },
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('agent-resource-manager')).toHaveAttribute('data-scope', 'group')
+    )
+    expect(screen.getByTestId('agent-resource-manager')).toHaveAttribute('data-group', 'platform')
+
+    fireEvent.click(screen.getByTestId('managed-resource-model-tab'))
+    expect(screen.getByTestId('model-resource-manager')).toHaveAttribute('data-scope', 'group')
+    expect(screen.getByTestId('model-resource-manager')).toHaveAttribute('data-group', 'platform')
+  })
+
+  it('navigates to group management from the group resource dropdown', async () => {
+    render(<MyResources />)
+
+    await waitFor(() => expect(mockListGroups).toHaveBeenCalled())
+
+    fireEvent.change(screen.getByTestId('resource-group-select'), {
+      target: { value: '__manage_groups__' },
+    })
+
+    expect(mockPush).toHaveBeenCalledWith('/settings?tab=group-manager')
   })
 })

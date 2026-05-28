@@ -13,7 +13,7 @@ interface ResourceTypeFilterProps {
   onValueChange: (value: ResourceLibraryTypeFilter) => void
 }
 
-const RESOURCE_TYPE_FILTERS: ResourceLibraryTypeFilter[] = ['all', 'agent', 'skill', 'mcp']
+const RESOURCE_TYPE_FILTERS: ResourceLibraryTypeFilter[] = ['all', 'agent', 'skill']
 
 export function ResourceTypeFilter({ value, onValueChange }: ResourceTypeFilterProps) {
   const { t } = useTranslation('resource-library')

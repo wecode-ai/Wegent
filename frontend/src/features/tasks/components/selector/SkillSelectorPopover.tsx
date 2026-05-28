@@ -313,7 +313,7 @@ const SkillSelectorPopover = forwardRef<SkillSelectorPopoverRef, SkillSelectorPo
             className="h-6 px-2 text-xs text-text-muted hover:text-text-primary"
             asChild
           >
-            <Link href="/settings?section=personal&tab=personal-skills">
+            <Link href="/resource-library?tab=mine&type=skill&scope=personal">
               <Settings className="h-3 w-3 mr-1" />
               {t('common:skillSelector.manage_skills')}
             </Link>

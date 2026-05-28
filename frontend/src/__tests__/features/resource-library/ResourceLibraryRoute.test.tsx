@@ -74,6 +74,10 @@ jest.mock('@/features/tasks/contexts/taskContext', () => ({
   }),
 }))
 
+jest.mock('@/features/resource-library/components/MyResources', () => ({
+  MyResources: () => <div data-testid="my-resource-management">资源管理</div>,
+}))
+
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (key: string) => {
@@ -85,8 +89,7 @@ jest.mock('@/hooks/useTranslation', () => ({
         'tabs.published': '我发布的',
         'filters.all': '全部',
         'filters.agent': '智能体',
-        'filters.skill': 'Skill',
-        'filters.mcp': 'MCP',
+        'filters.skill': '技能',
         'fields.tags': '标签',
         'search.placeholder': '搜索资源',
         'actions.search': '搜索',
@@ -110,7 +113,9 @@ describe('ResourceLibrary route page', () => {
       'resource-library'
     )
     expect(screen.getByTestId('resource-library-top-navigation')).toHaveTextContent('资源库')
-    expect(screen.getByRole('heading', { name: '资源库' })).toBeInTheDocument()
-    expect(await screen.findByText('暂无资源')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '资源库' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '发现' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '我的' })).not.toBeInTheDocument()
+    expect(await screen.findByTestId('my-resource-management')).toBeInTheDocument()
   })
 })

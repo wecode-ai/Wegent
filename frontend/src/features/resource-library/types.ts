@@ -4,7 +4,11 @@
 
 export type ResourceLibraryResourceType = 'agent' | 'skill' | 'mcp'
 
-export type ResourceLibraryTypeFilter = 'all' | ResourceLibraryResourceType
+export type VisibleResourceLibraryResourceType = Exclude<ResourceLibraryResourceType, 'mcp'>
+
+export type ResourceLibraryTypeFilter = 'all' | VisibleResourceLibraryResourceType
+
+export type ManagedResourceType = 'agent' | 'model' | 'shell' | 'skill' | 'retriever'
 
 export type ResourceLibraryListingStatus = 'published' | 'archived'
 

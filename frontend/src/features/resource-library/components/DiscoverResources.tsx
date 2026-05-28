@@ -23,6 +23,10 @@ interface DiscoverResourcesProps {
 
 const RESOURCE_LIBRARY_PAGE_SIZE = 50
 
+function isVisibleListing(listing: ResourceLibraryListing) {
+  return listing.resource_type !== 'mcp'
+}
+
 export function DiscoverResources({ resourceType }: DiscoverResourcesProps) {
   const { t } = useTranslation('resource-library')
   const { toast } = useToast()
@@ -46,7 +50,7 @@ export function DiscoverResources({ resourceType }: DiscoverResourcesProps) {
         page: 1,
         limit: RESOURCE_LIBRARY_PAGE_SIZE,
       })
-      setListings(response.items)
+      setListings(response.items.filter(isVisibleListing))
     } catch {
       setHasError(true)
     } finally {

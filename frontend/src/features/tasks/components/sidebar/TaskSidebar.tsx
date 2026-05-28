@@ -302,15 +302,13 @@ export default function TaskSidebar({
     btn =>
       btn.buttonPageType === 'flow' ||
       btn.buttonPageType === 'code' ||
-      btn.buttonPageType === 'knowledge' ||
-      btn.buttonPageType === 'resource-library'
+      btn.buttonPageType === 'knowledge'
   )
   const moreNavigationButtons = navigationButtons.filter(
     btn =>
       btn.buttonPageType !== 'flow' &&
       btn.buttonPageType !== 'code' &&
-      btn.buttonPageType !== 'knowledge' &&
-      btn.buttonPageType !== 'resource-library'
+      btn.buttonPageType !== 'knowledge'
   )
   const fixedSecondaryNavigationButtons = SIDEBAR_NAV_CONFIG.keepSecondaryNavFixed
     ? moreNavigationButtons
