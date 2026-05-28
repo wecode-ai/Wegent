@@ -25,6 +25,13 @@ from shared.utils.crypto import decrypt_sensitive_data, is_data_encrypted
 logger = setup_logger("claude_code_config_manager")
 
 
+def _redact_mcp_url_for_log(config: Any) -> str:
+    """Return a non-sensitive URL marker for MCP server logs."""
+    if isinstance(config, dict) and config.get("url"):
+        return "<configured>"
+    return "<empty>"
+
+
 def generate_claude_code_user_id() -> str:
     """Generate a random user ID for Claude Code."""
     return "".join(random.choices(string.ascii_lowercase + string.digits, k=64))
@@ -446,7 +453,7 @@ def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
                     "[MCP] Server '%s': type=%s, url=%s, headers=%s",
                     name,
                     cfg.get("type", "?"),
-                    cfg.get("url", "?"),
+                    _redact_mcp_url_for_log(cfg),
                     list(cfg.get("headers", {}).keys()),
                 )
             logger.info(
@@ -497,7 +504,7 @@ def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
                     "[MCP] Final '%s': type=%s, url=%s, headers=%s",
                     name,
                     cfg.get("type", "?"),
-                    cfg.get("url", "?"),
+                    _redact_mcp_url_for_log(cfg),
                     list(cfg.get("headers", {}).keys()),
                 )
     elif final_mcp:

@@ -4,7 +4,7 @@
 
 import '@testing-library/jest-dom'
 import React from 'react'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import ModelSelector from '@/features/tasks/components/selector/ModelSelector'
 import type { Model } from '@/features/tasks/hooks/useModelSelection'
 
@@ -77,8 +77,7 @@ jest.mock('@/features/tasks/hooks/useModelSelection', () => {
             return 'Select model'
           }
 
-          const displayText = selectedModel.displayName || selectedModel.name
-          return forceOverride ? `${displayText}(覆盖)` : displayText
+          return selectedModel.displayName || selectedModel.name
         },
         getBoundModelDisplayNames: () => [],
         getModelKey,
@@ -135,7 +134,7 @@ describe('ModelSelector', () => {
     })
   })
 
-  it('syncs an external forceOverride change into the selector display', async () => {
+  it('does not show override wording when external forceOverride is true', async () => {
     const externalSetSelectedModel = jest.fn()
     const externalSetForceOverride = jest.fn()
 
@@ -166,7 +165,31 @@ describe('ModelSelector', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByTestId('model-selector')).toHaveTextContent('Claude 3.5 Sonnet(覆盖)')
+      expect(screen.getByTestId('model-selector')).toHaveTextContent('Claude 3.5 Sonnet')
+      expect(screen.getByTestId('model-selector')).not.toHaveTextContent('覆盖')
+    })
+  })
+
+  it('does not show an override control in the dropdown', async () => {
+    render(
+      <ModelSelector
+        selectedModel={mockModel}
+        setSelectedModel={jest.fn()}
+        forceOverride={true}
+        setForceOverride={jest.fn()}
+        selectedTeam={null}
+        disabled={false}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('model-selector')).toHaveTextContent('Claude 3.5 Sonnet')
+    })
+
+    fireEvent.click(screen.getByTestId('model-selector'))
+
+    await waitFor(() => {
+      expect(screen.queryByText('覆盖默认模型')).not.toBeInTheDocument()
     })
   })
 })

@@ -73,6 +73,32 @@ _OWNED_IDS_SQL = text(
 """
 )
 
+_PERSONAL_COUNT_SQL = text(
+    """
+    SELECT COUNT(*)
+    FROM tasks k
+    WHERE k.kind = 'Task'
+    AND k.is_active = :is_active
+    AND k.namespace != 'system'
+    AND k.user_id = :user_id
+    AND k.is_group_chat = 0
+"""
+)
+
+_PERSONAL_IDS_SQL = text(
+    """
+    SELECT k.id, k.created_at
+    FROM tasks k
+    WHERE k.kind = 'Task'
+    AND k.is_active = :is_active
+    AND k.namespace != 'system'
+    AND k.user_id = :user_id
+    AND k.is_group_chat = 0
+    ORDER BY k.created_at DESC
+    LIMIT :limit OFFSET :skip
+"""
+)
+
 # Optimized group chat queries using physical is_group_chat column
 # These queries avoid JOIN and JSON_EXTRACT for better performance
 
@@ -183,6 +209,36 @@ def get_owned_task_ids_and_total(
             "skip": skip,
         },
         "owned_ids",
+    )
+    task_ids = [row[0] for row in rows]
+    return task_ids, total
+
+
+def get_personal_task_ids_and_total(
+    db: Session, *, user_id: int, skip: int, limit: int, extra_limit: int
+) -> Tuple[List[int], int]:
+    """Fetch owned non-group task IDs and total count."""
+    total = _timed_scalar(
+        db,
+        _PERSONAL_COUNT_SQL,
+        {
+            "user_id": user_id,
+            "entity_id": str(user_id),
+            "is_active": TaskResource.STATE_ACTIVE,
+        },
+        "personal_total",
+    )
+    rows = _timed_rows(
+        db,
+        _PERSONAL_IDS_SQL,
+        {
+            "user_id": user_id,
+            "entity_id": str(user_id),
+            "is_active": TaskResource.STATE_ACTIVE,
+            "limit": limit + extra_limit,
+            "skip": skip,
+        },
+        "personal_ids",
     )
     task_ids = [row[0] for row in rows]
     return task_ids, total

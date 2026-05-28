@@ -94,7 +94,12 @@ def test_apply_sync_records_downloaded_skill_and_mcp(tmp_path, monkeypatch):
     )
 
     assert result["success"] is True
-    assert calls == [("image-gen", {"skill_id": 42, "namespace": "default"})]
+    assert calls == [
+        (
+            "image-gen",
+            {"skill_id": 42, "namespace": "default", "is_public": False},
+        )
+    ]
     manifest = json.loads(manifest_path.read_text())
     assert manifest["skills"]["image-gen"]["skill_id"] == 42
     assert manifest["mcps"]["docs"]["installed_mcp_id"] == 7

@@ -8,7 +8,7 @@ Device schemas for request/response validation.
 
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -185,7 +185,7 @@ class DeviceCommandResponse(BaseModel):
 
 
 class DeviceCapabilitySyncRequest(BaseModel):
-    """Request model for syncing global user capabilities to a local device."""
+    """Request model for syncing global local executor capabilities."""
 
     skill_ids: List[int] = Field(
         default_factory=list,
@@ -199,10 +199,24 @@ class DeviceCapabilitySyncRequest(BaseModel):
         default_factory=list,
         description="InstalledMCP Kind IDs to resolve and sync.",
     )
+    mcp_ids: List[str] = Field(
+        default_factory=list,
+        description="Deprecated server-key based MCP IDs; use installed_mcp_ids.",
+    )
     mode: Literal["merge", "replace"] = Field(
-        "replace",
+        "merge",
         description="How the device should apply the capability set.",
     )
+
+
+class DeviceCapabilityItemResult(BaseModel):
+    """Per-item capability sync result."""
+
+    id: Optional[Union[int, str]] = None
+    name: Optional[str] = None
+    server_name: Optional[str] = None
+    status: str = "ok"
+    error: Optional[str] = None
 
 
 class DeviceCapabilitySyncResult(BaseModel):
@@ -211,11 +225,20 @@ class DeviceCapabilitySyncResult(BaseModel):
     device_id: str
     success: bool
     error: Optional[str] = None
+    skills: List[DeviceCapabilityItemResult] = Field(default_factory=list)
+    mcps: List[DeviceCapabilityItemResult] = Field(default_factory=list)
+    errors: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class DeviceCapabilitySyncResponse(BaseModel):
     """Response model for capability sync requests."""
 
+    success: bool = True
+    device_id: str = ""
+    mode: Literal["merge", "replace"] = "merge"
+    skills: List[DeviceCapabilityItemResult] = Field(default_factory=list)
+    mcps: List[DeviceCapabilityItemResult] = Field(default_factory=list)
+    errors: List[Dict[str, Any]] = Field(default_factory=list)
     synced: int = 0
     failed: int = 0
     skipped: int = 0
@@ -272,6 +295,10 @@ class DeviceHeartbeatPayload(BaseModel):
         None,
         max_length=50,
         description="Executor version (e.g., '1.0.0')",
+    )
+    capabilities: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Sanitized local global capability state reported by executor",
     )
 
 

@@ -2,114 +2,250 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Local executor global capability synchronization."""
+"""Global Claude Code capability synchronization for local executor mode."""
 
+from __future__ import annotations
+
+import hashlib
 import json
 import os
 import shutil
+import tempfile
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Iterator
 
+from executor.platform_compat import get_permissions_manager
 from executor.services.api_client import SkillDownloader
 from shared.logger import setup_logger
+from shared.models.execution import ExecutionRequest
 
 logger = setup_logger("local_capabilities")
 
-DEFAULT_MANIFEST_PATH = Path.home() / ".wegent-executor" / "capabilities.json"
-DEFAULT_SKILLS_DIR = Path.home() / ".claude" / "skills"
+MANIFEST_VERSION = 1
+DEFAULT_FULL_REPORT_INTERVAL_SECONDS = 300
 
 
-class GlobalCapabilityStore:
-    """Persistent manifest for Wegent-managed global capabilities."""
+def utc_now_iso() -> str:
+    """Return a UTC timestamp suitable for persisted sync metadata."""
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
-    def __init__(
-        self,
-        *,
-        manifest_path: Path = DEFAULT_MANIFEST_PATH,
-        skills_dir: Path = DEFAULT_SKILLS_DIR,
-    ) -> None:
-        self.manifest_path = Path(manifest_path)
-        self.skills_dir = Path(skills_dir)
 
-    def load(self) -> Dict[str, Any]:
-        """Load the manifest, returning an empty structure when absent."""
-        if not self.manifest_path.exists():
-            return {"skills": {}, "mcps": {}}
+def default_manifest_path() -> Path:
+    """Return the Wegent managed global capability manifest path."""
+    executor_home = os.environ.get(
+        "WEGENT_EXECUTOR_HOME", os.path.expanduser("~/.wegent-executor")
+    )
+    return Path(executor_home).expanduser() / "capabilities.json"
+
+
+def default_global_skills_dir() -> Path:
+    """Return the Claude Code global Skills directory."""
+    return Path.home() / ".claude" / "skills"
+
+
+def is_project_task(task_data: ExecutionRequest) -> bool:
+    """Return whether an execution request should use project-global capabilities."""
+    project_id = getattr(task_data, "project_id", None)
+    if project_id and int(project_id) > 0:
+        return True
+
+    workspace = getattr(task_data, "workspace", None)
+    if isinstance(workspace, dict):
+        metadata = workspace.get("metadata") or {}
+        project = metadata.get("project") if isinstance(metadata, dict) else None
+        if isinstance(project, dict) and project.get("project_id"):
+            return True
+
+    task_data_payload = getattr(task_data, "task_data", None)
+    return bool(
+        isinstance(task_data_payload, dict) and task_data_payload.get("project_id")
+    )
+
+
+def _read_json_file(path: Path, default: dict[str, Any]) -> dict[str, Any]:
+    if not path.exists():
+        return default.copy()
+    try:
+        with path.open("r", encoding="utf-8") as file:
+            value = json.load(file)
+        return value if isinstance(value, dict) else default.copy()
+    except Exception as exc:
+        logger.warning("Failed to read JSON file %s: %s", path, exc)
+        return default.copy()
+
+
+def _canonical_digest(value: Any) -> str:
+    payload = json.dumps(
+        value, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+    )
+    return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _set_owner_only(path: Path, *, is_directory: bool) -> None:
+    try:
+        get_permissions_manager().set_owner_only(str(path), is_directory=is_directory)
+    except Exception as exc:
+        logger.debug("Failed to set owner-only permissions for %s: %s", path, exc)
+
+
+def _atomic_write_json(
+    path: Path, data: dict[str, Any], *, backup: bool = True
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _set_owner_only(path.parent, is_directory=True)
+    if backup and path.exists():
+        backup_path = path.with_suffix(
+            path.suffix + f".bak.{int(datetime.now().timestamp())}"
+        )
+        shutil.copy2(path, backup_path)
+        _set_owner_only(backup_path, is_directory=False)
+
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as file:
+            json.dump(data, file, ensure_ascii=False, indent=2, sort_keys=True)
+            file.write("\n")
+        _set_owner_only(temp_path, is_directory=False)
+        os.replace(temp_path, path)
+        _set_owner_only(path, is_directory=False)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+@contextmanager
+def _file_lock(path: Path) -> Iterator[None]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = path.open("a+", encoding="utf-8")
+    try:
         try:
-            data = json.loads(self.manifest_path.read_text())
-        except Exception:
-            logger.warning("Failed to read capability manifest, starting fresh")
-            return {"skills": {}, "mcps": {}}
-        if not isinstance(data, dict):
-            return {"skills": {}, "mcps": {}}
+            import fcntl
+
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        except ImportError:
+            pass
+        yield
+    finally:
+        try:
+            import fcntl
+
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        except ImportError:
+            pass
+        lock_file.close()
+
+
+class ManagedCapabilityManifest:
+    """Read and write Wegent-managed global capability state."""
+
+    def __init__(self, path: Path | None = None):
+        self.path = path or default_manifest_path()
+
+    def load(self) -> dict[str, Any]:
+        data = _read_json_file(
+            self.path,
+            {
+                "version": MANIFEST_VERSION,
+                "revision": 0,
+                "skills": {},
+                "mcps": {},
+            },
+        )
+        data.setdefault("version", MANIFEST_VERSION)
+        data.setdefault("revision", 0)
         data.setdefault("skills", {})
         data.setdefault("mcps", {})
         return data
 
-    def save(self, manifest: Dict[str, Any]) -> None:
-        """Save the manifest atomically enough for local executor usage."""
-        self.manifest_path.parent.mkdir(parents=True, exist_ok=True)
-        self.manifest_path.write_text(
-            json.dumps(manifest, indent=2, sort_keys=True),
-        )
+    def save(self, data: dict[str, Any]) -> None:
+        data["version"] = MANIFEST_VERSION
+        data.setdefault("revision", 0)
+        data.setdefault("skills", {})
+        data.setdefault("mcps", {})
+        _atomic_write_json(self.path, data)
 
-    def remove_stale_managed_skills(self, desired_names: set[str]) -> list[str]:
-        """Remove previously managed skills missing from the replace payload."""
-        manifest = self.load()
-        logger.info(
-            "Checking stale managed skills: manifest_skills=%s desired_skills=%s skills_dir=%s",
-            sorted(manifest.get("skills", {}).keys()),
-            sorted(desired_names),
-            self.skills_dir,
+    def bump_revision(self, data: dict[str, Any]) -> dict[str, Any]:
+        data["revision"] = int(data.get("revision") or 0) + 1
+        return data
+
+
+class GlobalCapabilityStore:
+    """Manage the Wegent global capability manifest."""
+
+    def __init__(
+        self,
+        *,
+        manifest: ManagedCapabilityManifest | None = None,
+        manifest_path: Path | None = None,
+        skills_dir: Path | None = None,
+    ):
+        self.manifest = manifest or ManagedCapabilityManifest(
+            path=manifest_path or default_manifest_path()
         )
-        removed = []
-        for name, record in list(manifest.get("skills", {}).items()):
-            managed = record.get("managed", True) if isinstance(record, dict) else False
-            logger.info(
-                "Stale skill candidate: name=%s managed=%s in_desired=%s path_exists=%s",
-                name,
-                managed,
-                name in desired_names,
-                (self.skills_dir / name).exists(),
-            )
-            if name in desired_names or not managed:
-                continue
-            skill_path = self.skills_dir / name
-            if skill_path.exists() and self._is_child(skill_path, self.skills_dir):
-                shutil.rmtree(skill_path)
-                removed.append(name)
-            manifest["skills"].pop(name, None)
-        self.save(manifest)
-        return removed
+        self.skills_dir = skills_dir or default_global_skills_dir()
+        self._lock_path = self.manifest.path.with_suffix(".lock")
+
+    def record_skill(self, skill: dict[str, Any]) -> None:
+        with _file_lock(self._lock_path):
+            manifest = self.manifest.load()
+            skills = manifest.setdefault("skills", {})
+            skills[skill["name"]] = self._skill_record(skill)
+            self.manifest.save(self.manifest.bump_revision(manifest))
 
     def replace_records(
         self,
         *,
-        skills: Dict[str, Dict[str, Any]],
-        mcps: Dict[str, Dict[str, Any]],
+        skills: dict[str, dict[str, Any]],
+        mcps: dict[str, dict[str, Any]],
     ) -> None:
-        """Replace Wegent-managed manifest records with desired state."""
-        old_manifest = self.load()
-        logger.info(
-            "Replacing capability manifest: old_skills=%s new_skills=%s old_mcps=%s new_mcps=%s",
-            sorted(old_manifest.get("skills", {}).keys()),
-            sorted(skills.keys()),
-            sorted(old_manifest.get("mcps", {}).keys()),
-            sorted(mcps.keys()),
-        )
-        self.save({"skills": skills, "mcps": mcps})
+        with _file_lock(self._lock_path):
+            manifest = self.manifest.load()
+            manifest["skills"] = skills
+            manifest["mcps"] = mcps
+            self.manifest.save(self.manifest.bump_revision(manifest))
 
     def merge_records(
         self,
         *,
-        skills: Dict[str, Dict[str, Any]],
-        mcps: Dict[str, Dict[str, Any]],
+        skills: dict[str, dict[str, Any]],
+        mcps: dict[str, dict[str, Any]],
     ) -> None:
-        """Merge desired state into the existing manifest."""
-        manifest = self.load()
-        manifest.setdefault("skills", {}).update(skills)
-        manifest.setdefault("mcps", {}).update(mcps)
-        self.save(manifest)
+        with _file_lock(self._lock_path):
+            manifest = self.manifest.load()
+            manifest.setdefault("skills", {}).update(skills)
+            manifest.setdefault("mcps", {}).update(mcps)
+            self.manifest.save(self.manifest.bump_revision(manifest))
+
+    def remove_stale_managed_skills(self, desired_names: set[str]) -> list[str]:
+        with _file_lock(self._lock_path):
+            manifest = self.manifest.load()
+            removed = []
+            for name, record in list(manifest.get("skills", {}).items()):
+                managed = (
+                    record.get("managed", True) if isinstance(record, dict) else False
+                )
+                if name in desired_names or not managed:
+                    continue
+                skill_path = self.skills_dir / name
+                if skill_path.exists() and self._is_child(skill_path, self.skills_dir):
+                    shutil.rmtree(skill_path)
+                    removed.append(name)
+                manifest["skills"].pop(name, None)
+            if removed:
+                self.manifest.save(self.manifest.bump_revision(manifest))
+            return removed
+
+    def _skill_record(self, skill: dict[str, Any]) -> dict[str, Any]:
+        record = {
+            "skill_id": skill.get("id") or skill.get("skill_id"),
+            "namespace": skill.get("namespace", "default"),
+            "updated_at": utc_now_iso(),
+        }
+        if skill.get("installed_skill_id") is not None:
+            record["installed_skill_id"] = skill.get("installed_skill_id")
+        return record
 
     def _is_child(self, path: Path, parent: Path) -> bool:
         try:
@@ -119,126 +255,247 @@ class GlobalCapabilityStore:
             return False
 
 
-class CapabilitySyncHandler:
-    """Apply backend-requested capability sync payloads on the local device."""
+class GlobalCapabilityReporter:
+    """Build sanitized global capability heartbeat reports."""
 
     def __init__(
         self,
-        *,
-        auth_token: Optional[str] = None,
-        store: Optional[GlobalCapabilityStore] = None,
-        skills_dir: Path = DEFAULT_SKILLS_DIR,
-    ) -> None:
-        self.auth_token = auth_token or os.getenv("WEGENT_AUTH_TOKEN", "")
-        self.skills_dir = Path(skills_dir)
-        self.store = store or GlobalCapabilityStore(skills_dir=self.skills_dir)
+        skills_dir: Path | None = None,
+        manifest: ManagedCapabilityManifest | None = None,
+        full_report_interval_seconds: int = DEFAULT_FULL_REPORT_INTERVAL_SECONDS,
+    ):
+        self.skills_dir = skills_dir or default_global_skills_dir()
+        self.manifest = manifest or ManagedCapabilityManifest()
+        self.full_report_interval_seconds = full_report_interval_seconds
+        self._last_digest: str | None = None
+        self._last_full_report_at = 0.0
+        self._force_next_full = True
 
-    async def handle_sync_capabilities(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Socket.IO async handler for device:sync_capabilities."""
+    def force_next_full_report(self) -> None:
+        self._force_next_full = True
+
+    def build_report(self, *, force_full: bool = False) -> dict[str, Any]:
+        import time
+
+        manifest_data = self.manifest.load()
+        skills = self._scan_skills(manifest_data)
+        mcps = self._scan_mcps(manifest_data)
+        digest = _canonical_digest({"skills": skills, "mcps": mcps})
+        now = time.time()
+        should_full = (
+            force_full
+            or self._force_next_full
+            or digest != self._last_digest
+            or now - self._last_full_report_at >= self.full_report_interval_seconds
+        )
+
+        report = {
+            "revision": manifest_data.get("revision", 0),
+            "digest": digest,
+            "full": should_full,
+        }
+        if should_full:
+            report.update(
+                {
+                    "skills": skills,
+                    "mcps": mcps,
+                    "last_sync_at": manifest_data.get("last_sync_at"),
+                }
+            )
+            self._last_full_report_at = now
+            self._force_next_full = False
+        self._last_digest = digest
+        return report
+
+    def _scan_skills(self, manifest_data: dict[str, Any]) -> list[dict[str, Any]]:
+        manifest_skills = manifest_data.get("skills") or {}
+        results: list[dict[str, Any]] = []
+        if not self.skills_dir.exists():
+            return results
+
+        for child in sorted(self.skills_dir.iterdir(), key=lambda item: item.name):
+            if not child.is_dir() or not (child / "SKILL.md").exists():
+                continue
+            managed = manifest_skills.get(child.name)
+            if managed:
+                results.append(
+                    {
+                        "name": child.name,
+                        "skill_id": managed.get("skill_id"),
+                        "namespace": managed.get("namespace", "default"),
+                        "source": "wegent",
+                    }
+                )
+            else:
+                results.append({"name": child.name, "source": "local_user"})
+        return results
+
+    def _scan_mcps(self, manifest_data: dict[str, Any]) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": name,
+                "installed_mcp_id": record.get("installed_mcp_id"),
+                "server": record.get("server") or {},
+                "source": "wegent",
+            }
+            for name, record in sorted((manifest_data.get("mcps") or {}).items())
+            if isinstance(record, dict)
+        ]
+
+
+class CapabilitySyncHandler:
+    """Handle Backend device:sync_capabilities RPCs."""
+
+    def __init__(
+        self,
+        auth_token: str | None = None,
+        store: GlobalCapabilityStore | None = None,
+        reporter: GlobalCapabilityReporter | None = None,
+        skills_dir: Path | None = None,
+    ):
+        self.auth_token = auth_token or os.getenv("WEGENT_AUTH_TOKEN", "")
+        self.skills_dir = skills_dir or default_global_skills_dir()
+        self.store = store or GlobalCapabilityStore(skills_dir=self.skills_dir)
+        self.reporter = reporter
+
+    async def handle_sync_capabilities(self, data: dict[str, Any]) -> dict[str, Any]:
         return self.apply_sync(data)
 
-    def apply_sync(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Apply a capability payload and return an acknowledgement dict."""
-        mode = data.get("mode", "replace")
+    def apply_sync(self, data: dict[str, Any]) -> dict[str, Any]:
+        mode = data.get("mode") or "merge"
         if mode not in {"merge", "replace"}:
-            return {"success": False, "error": f"unsupported sync mode: {mode}"}
+            return {"success": False, "errors": [{"error": "Invalid sync mode"}]}
 
         skills = data.get("skills") or []
         mcps = data.get("mcps") or []
-        logger.info(
-            "Applying capability sync: mode=%s skills=%s mcps=%s skill_names=%s mcp_names=%s",
-            mode,
-            len(skills),
-            len(mcps),
-            [item.get("name") for item in skills if isinstance(item, dict)],
-            [item.get("name") for item in mcps if isinstance(item, dict)],
-        )
         desired_skill_names = {
             item.get("name")
             for item in skills
             if isinstance(item, dict) and item.get("name")
         }
-
-        removed = []
-        if mode == "replace":
-            removed = self.store.remove_stale_managed_skills(desired_skill_names)
-            if removed:
-                logger.info("Removed stale managed skills: %s", removed)
-
-        skill_records = self._apply_skills(skills)
-        mcp_records = self._build_mcp_records(mcps)
+        removed = (
+            self.store.remove_stale_managed_skills(desired_skill_names)
+            if mode == "replace"
+            else []
+        )
+        skill_results, skill_records = self._sync_skills(skills)
+        mcp_results, mcp_records = self._sync_mcps(mcps)
 
         if mode == "replace":
             self.store.replace_records(skills=skill_records, mcps=mcp_records)
         else:
             self.store.merge_records(skills=skill_records, mcps=mcp_records)
 
-        result = {
-            "success": True,
+        manifest = self.store.manifest.load()
+        manifest["last_sync_at"] = utc_now_iso()
+        self.store.manifest.save(self.store.manifest.bump_revision(manifest))
+        if self.reporter:
+            self.reporter.force_next_full_report()
+
+        results = skill_results + mcp_results
+        errors = [item for item in results if item.get("status") == "failed"]
+        return {
+            "success": not errors,
+            "mode": mode,
+            "skills": skill_results,
+            "mcps": mcp_results,
+            "errors": errors,
             "installed_skills": sorted(skill_records.keys()),
             "configured_mcps": sorted(mcp_records.keys()),
             "removed_skills": removed,
         }
-        logger.info(
-            "Capability sync applied: installed_skills=%s configured_mcps=%s removed_skills=%s",
-            sorted(skill_records.keys()),
-            sorted(mcp_records.keys()),
-            removed,
-        )
-        return result
 
-    def _apply_skills(self, skills: list[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-        records: Dict[str, Dict[str, Any]] = {}
-        if not self.auth_token and skills:
-            logger.warning("No auth token available, cannot sync global skills")
-            return records
+    def _sync_skills(
+        self, skills: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+        results: list[dict[str, Any]] = []
+        records: dict[str, dict[str, Any]] = {}
+        if not skills:
+            return results, records
+        if not self.auth_token:
+            return [
+                {
+                    "id": item.get("id") or item.get("skill_id"),
+                    "name": item.get("name"),
+                    "status": "failed",
+                    "error": "No auth token available",
+                }
+                for item in skills
+                if isinstance(item, dict)
+            ], records
 
         self.skills_dir.mkdir(parents=True, exist_ok=True)
+        _set_owner_only(self.skills_dir, is_directory=True)
         downloader = SkillDownloader(
             auth_token=self.auth_token,
             team_namespace="default",
             skills_dir=str(self.skills_dir),
         )
 
-        for item in skills:
-            if not isinstance(item, dict):
+        for skill in skills:
+            name = skill.get("name")
+            skill_id = skill.get("id") or skill.get("skill_id")
+            namespace = skill.get("namespace", "default")
+            if not name or not skill_id:
+                results.append(
+                    {
+                        "id": skill_id,
+                        "name": name,
+                        "status": "failed",
+                        "error": "Invalid Skill entry",
+                    }
+                )
                 continue
-            name = item.get("name")
-            if not name:
-                continue
+            before_digest = self._skill_digest(name)
             if (self.skills_dir / name).is_dir():
-                records[name] = self._skill_record(name, item)
-                logger.info("Global skill already present: %s", name)
+                record = dict(skill)
+                record["id"] = skill_id
+                records[name] = self.store._skill_record(record)
+                results.append({"id": skill_id, "name": name, "status": "skipped"})
                 continue
-            skill_ref = {
-                "skill_id": item.get("skill_id"),
-                "namespace": item.get("namespace", "default"),
-            }
-            if downloader._download_single_skill(name, skill_ref):
-                records[name] = self._skill_record(name, item)
-                logger.info("Installed global skill: %s", name)
+            ok = downloader._download_single_skill(
+                name,
+                {
+                    "skill_id": skill_id,
+                    "namespace": namespace,
+                    "is_public": skill.get("is_public", False),
+                },
+            )
+            if ok:
+                after_digest = self._skill_digest(name)
+                record = dict(skill)
+                record["id"] = skill_id
+                records[name] = self.store._skill_record(record)
+                status = (
+                    "skipped"
+                    if before_digest and before_digest == after_digest
+                    else "synced"
+                )
+                results.append({"id": skill_id, "name": name, "status": status})
             else:
-                logger.warning("Failed to install global skill: %s", name)
-        return records
+                results.append(
+                    {
+                        "id": skill_id,
+                        "name": name,
+                        "status": "failed",
+                        "error": "Failed to download Skill package",
+                    }
+                )
+        return results, records
 
-    def _skill_record(self, name: str, item: Dict[str, Any]) -> Dict[str, Any]:
-        return {
-            "name": name,
-            "skill_id": item.get("skill_id"),
-            "installed_skill_id": item.get("installed_skill_id"),
-            "namespace": item.get("namespace", "default"),
-            "managed": True,
-        }
-
-    def _build_mcp_records(
-        self, mcps: list[Dict[str, Any]]
-    ) -> Dict[str, Dict[str, Any]]:
-        records: Dict[str, Dict[str, Any]] = {}
+    def _sync_mcps(
+        self, mcps: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+        results: list[dict[str, Any]] = []
+        records: dict[str, dict[str, Any]] = {}
         for item in mcps:
             if not isinstance(item, dict):
                 continue
             name = item.get("name")
             if not name:
+                results.append(
+                    {"name": None, "status": "failed", "error": "Invalid MCP entry"}
+                )
                 continue
             records[name] = {
                 "name": name,
@@ -248,6 +505,23 @@ class CapabilitySyncHandler:
                 "source": item.get("source") or {},
                 "server": item.get("server") or {},
                 "managed": True,
+                "updated_at": utc_now_iso(),
             }
-            logger.info("Configured global MCP: %s", name)
-        return records
+            results.append(
+                {
+                    "id": item.get("installed_mcp_id"),
+                    "name": name,
+                    "status": "synced",
+                }
+            )
+        return results, records
+
+    def _skill_digest(self, name: str) -> str | None:
+        path = self.skills_dir / name
+        if not path.exists():
+            return None
+        files: list[tuple[str, str]] = []
+        for file_path in sorted(item for item in path.rglob("*") if item.is_file()):
+            rel = str(file_path.relative_to(path))
+            files.append((rel, hashlib.sha256(file_path.read_bytes()).hexdigest()))
+        return _canonical_digest(files)

@@ -10,7 +10,6 @@ import { useRouter } from 'next/navigation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { paths } from '@/config/paths'
-import { Switch } from '@/components/ui/switch'
 import { Tag } from '@/components/ui/tag'
 import { Drawer, DrawerContent, DrawerTrigger } from '@/components/ui/drawer'
 import { useModelSelection } from '@/features/tasks/hooks/useModelSelection'
@@ -31,8 +30,8 @@ function getModelKey(model: Model): string {
 interface MobileModelSelectorProps {
   selectedModel: Model | null
   setSelectedModel: (model: Model | null) => void
-  forceOverride: boolean
-  setForceOverride: (force: boolean) => void
+  forceOverride?: boolean
+  setForceOverride?: (force: boolean) => void
   selectedTeam: Team | null
   disabled: boolean
   isLoading?: boolean
@@ -48,8 +47,8 @@ interface MobileModelSelectorProps {
 export default function MobileModelSelector({
   selectedModel: externalSelectedModel,
   setSelectedModel: externalSetSelectedModel,
-  forceOverride: externalForceOverride,
-  setForceOverride: externalSetForceOverride,
+  forceOverride: externalForceOverride = false,
+  setForceOverride: externalSetForceOverride = () => {},
   selectedTeam,
   disabled,
   isLoading: externalLoading,
@@ -138,9 +137,7 @@ export default function MobileModelSelector({
             'disabled:cursor-not-allowed disabled:opacity-50'
           )}
         >
-          <span className="flex-1 truncate text-xs min-w-0">
-            {modelSelection.getDisplayText()}
-          </span>
+          <span className="flex-1 truncate text-xs min-w-0">{modelSelection.getDisplayText()}</span>
         </button>
       </DrawerTrigger>
 
@@ -264,30 +261,8 @@ export default function MobileModelSelector({
         {/* Footer - compact single row */}
         {!isSearchFocused && (
           <div className="px-4 pb-4 pt-2">
-            <div className="flex items-center justify-between">
-              {/* Override toggle - left */}
-              {modelSelection.selectedModel && !modelSelection.isMixedTeam ? (
-                <button
-                  type="button"
-                  onClick={() => modelSelection.setForceOverride(!modelSelection.forceOverride)}
-                  className="flex items-center gap-2 active:opacity-70"
-                >
-                  <Switch
-                    checked={modelSelection.forceOverride}
-                    onCheckedChange={modelSelection.setForceOverride}
-                    disabled={disabled || externalLoading}
-                    onClick={e => e.stopPropagation()}
-                    className="scale-90"
-                  />
-                  <span className="text-[13px] text-[#8e8e93]">
-                    {t('common:task_submit.override_default_model', '覆盖默认')}
-                  </span>
-                </button>
-              ) : (
-                <div />
-              )}
-
-              {/* Settings link - right */}
+            <div className="flex items-center justify-end">
+              {/* Settings link */}
               <button
                 type="button"
                 onClick={() => {

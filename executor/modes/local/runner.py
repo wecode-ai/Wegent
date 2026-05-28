@@ -32,6 +32,7 @@ from executor.modes.local.events import ChatEvents, DeviceEvents, TaskEvents
 from executor.modes.local.extension_handler import DeviceExtensionHandler
 from executor.modes.local.handlers import TaskHandler, UpgradeHandler
 from executor.modes.local.heartbeat import LocalHeartbeatService
+from executor.modes.local.session_handler import LocalSessionHandler
 from executor.modes.local.websocket_client import WebSocketClient
 from executor.services.updater.process_manager import ProcessManager
 from executor.version import get_version
@@ -81,7 +82,11 @@ class LocalRunner:
         # Event handlers
         self.task_handler = TaskHandler(self)
         self.command_handler = CommandHandler()
-        self.capability_sync_handler = CapabilitySyncHandler()
+        self.capability_sync_handler = CapabilitySyncHandler(
+            auth_token=self.websocket_client.auth_token,
+            reporter=self.websocket_client.capability_reporter,
+        )
+        self.session_handler = LocalSessionHandler()
         self.upgrade_handler = UpgradeHandler(self)
         self.extension_handler = DeviceExtensionHandler(self)
 
@@ -151,20 +156,31 @@ class LocalRunner:
                 signal.signal(sig, self._handle_signal)
 
         try:
+            await self.session_handler.start_gateway()
+
             # Register WebSocket event handlers
             self._register_handlers()
 
-            # Connect to Backend
-            connected = await self.websocket_client.connect()
-            if not connected:
+            # Connect to Backend with retry on initial connection failure
+            connected = False
+            retry_delay = config.LOCAL_RECONNECT_DELAY
+            retry_max = config.LOCAL_RECONNECT_MAX_DELAY
+            while self._running:
+                connected = await self.websocket_client.connect()
+                if connected:
+                    break
                 error_msg = self.websocket_client.connection_error or "Unknown error"
-                logger.error(f"Failed to connect to Backend WebSocket: {error_msg}")
-                logger.error(
-                    "Please check:\n"
-                    "  1. WEGENT_BACKEND_URL should be http://localhost:8000 (not wss://, not port 3000)\n"
-                    "  2. Backend server is running on the specified URL\n"
-                    "  3. WEGENT_AUTH_TOKEN is set"
+                logger.warning(
+                    f"Failed to connect to Backend WebSocket: {error_msg}. "
+                    f"Retrying in {retry_delay}s..."
                 )
+                slept = 0.0
+                while self._running and slept < retry_delay:
+                    await asyncio.sleep(0.5)
+                    slept += 0.5
+                retry_delay = min(retry_delay * 2, retry_max)
+
+            if not connected:
                 return
 
             logger.info("WebSocket connected to Backend")
@@ -208,6 +224,9 @@ class LocalRunner:
         # Stop heartbeat service
         await self.heartbeat_service.stop()
 
+        # Stop interactive sessions and gateway
+        await self.session_handler.stop()
+
         # Disconnect WebSocket
         await self.websocket_client.disconnect()
 
@@ -241,6 +260,14 @@ class LocalRunner:
         self.websocket_client.on(
             DeviceEvents.SYNC_CAPABILITIES,
             self.capability_sync_handler.handle_sync_capabilities,
+        )
+        self.websocket_client.on(
+            DeviceEvents.START_TERMINAL_SESSION,
+            self.session_handler.handle_start_session,
+        )
+        self.websocket_client.on(
+            DeviceEvents.START_CODE_SERVER_SESSION,
+            self.session_handler.handle_start_session,
         )
 
         # Upgrade handler

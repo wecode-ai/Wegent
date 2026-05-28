@@ -8,8 +8,35 @@ import { navigateTo } from '@/lib/navigation'
 export function WorkbenchPage() {
   const isMobile = useIsMobile()
   const { logout } = useAuth()
-  const { state, messages, selectProject, openTask, setInput, sendCurrentInput } = useWorkbench()
+  const {
+    state,
+    messages,
+    projectChat,
+    selectProject,
+    startNewProjectChat,
+    openTask,
+    createProject,
+    updateProjectName,
+    removeProject,
+    archiveAllChats,
+    archiveProjectChats,
+    archiveTask,
+    renameTask,
+    listArchivedTasks,
+    unarchiveTask,
+    deleteTask,
+    deleteArchivedTasks,
+    listDeviceDirectories,
+    setInput,
+    sendCurrentInput,
+  } = useWorkbench()
   const Layout = isMobile ? MobileWorkbenchLayout : DesktopWorkbenchLayout
+  const projectWork = {
+    projects: state.projects,
+    devices: state.devices,
+    currentProjectId: state.currentProject?.id,
+    onSelectProject: selectProject,
+  }
 
   return (
     <Layout
@@ -17,8 +44,23 @@ export function WorkbenchPage() {
       messages={messages}
       onNewChat={() => navigateTo('/')}
       onOpenPlugins={() => navigateTo('/plugins')}
+      projectChat={projectChat}
+      projectWork={projectWork}
       onSelectProject={selectProject}
+      onStartNewProjectChat={startNewProjectChat}
       onOpenTask={openTask}
+      onCreateProject={createProject}
+      onUpdateProjectName={updateProjectName}
+      onRemoveProject={removeProject}
+      onArchiveAllChats={archiveAllChats}
+      onArchiveProjectChats={archiveProjectChats}
+      onArchiveTask={archiveTask}
+      onRenameTask={renameTask}
+      onListArchivedTasks={listArchivedTasks}
+      onUnarchiveTask={unarchiveTask}
+      onDeleteTask={deleteTask}
+      onDeleteArchivedTasks={deleteArchivedTasks}
+      onListDeviceDirectories={listDeviceDirectories}
       onInputChange={setInput}
       onSend={sendCurrentInput}
       onLogout={logout}

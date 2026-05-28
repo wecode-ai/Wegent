@@ -1,14 +1,22 @@
 import { test, expect, TestData } from '../fixtures/test-fixtures'
 
+const AGENT_RESOURCES_URL = '/resource-library?tab=mine&type=agent&scope=personal'
+
 test.describe('Settings - Team Management', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/settings?tab=team')
+    // Team/agent management moved into Resource Library.
+    await page.goto(AGENT_RESOURCES_URL)
     await page.waitForLoadState('domcontentloaded')
+    await expect(page.locator('[data-testid="my-resources"]')).toBeVisible({ timeout: 15000 })
+    await expect(page.locator('[data-testid="managed-resource-agent-tab"]')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
   })
 
   test('should access team management page', async ({ page }) => {
-    // Verify we're on settings page
-    await expect(page).toHaveURL(/\/settings/)
+    // Verify we're on Resource Library.
+    await expect(page).toHaveURL(/\/resource-library/)
 
     // Wait for team list title to load
     await expect(page.locator('h2:has-text("Team")')).toBeVisible({ timeout: 20000 })

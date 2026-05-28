@@ -19,6 +19,7 @@ from app.schemas.project import (
     ProjectConversationCreate,
     ProjectConversationResponse,
     ProjectCreate,
+    ProjectDeviceSessionResponse,
     ProjectListResponse,
     ProjectResponse,
     ProjectTaskCreate,
@@ -26,7 +27,8 @@ from app.schemas.project import (
     ProjectWithTasksResponse,
     RemoveTaskFromProjectResponse,
 )
-from app.services import project_service
+from app.schemas.task import TaskArchiveBatchResponse
+from app.services import project_device_session_service, project_service
 
 router = APIRouter()
 
@@ -173,6 +175,66 @@ def create_project_conversation_endpoint(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create project conversation: {str(e)}",
         )
+
+
+@router.post(
+    "/{project_id}/archive-chats",
+    response_model=TaskArchiveBatchResponse,
+)
+def archive_project_chats_endpoint(
+    project_id: int = Path(..., description="Project ID"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Archive all active chats in a project."""
+    try:
+        count = project_service.archive_project_chats(
+            db=db, project_id=project_id, user_id=current_user.id
+        )
+        return {"message": "Project chats archived successfully", "count": count}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to archive project chats: {str(e)}",
+        )
+
+
+@router.post(
+    "/{project_id}/terminal",
+    response_model=ProjectDeviceSessionResponse,
+)
+async def start_project_terminal_session_endpoint(
+    project_id: int = Path(..., description="Project ID"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Start a writable ttyd session for the project's bound local device."""
+    return await project_device_session_service.start_project_device_session(
+        db=db,
+        user_id=current_user.id,
+        project_id=project_id,
+        session_type="terminal",
+    )
+
+
+@router.post(
+    "/{project_id}/code-server",
+    response_model=ProjectDeviceSessionResponse,
+)
+async def start_project_code_server_session_endpoint(
+    project_id: int = Path(..., description="Project ID"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Start a code-server session for the project's bound local device."""
+    return await project_device_session_service.start_project_device_session(
+        db=db,
+        user_id=current_user.id,
+        project_id=project_id,
+        session_type="code_server",
+    )
 
 
 # ============================================================================

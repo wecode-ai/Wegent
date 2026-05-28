@@ -27,6 +27,12 @@ class TestHealthEndpoints:
         assert data["service"] == "chat-shell"
         assert data["status"] == "running"
 
+    def test_health_endpoint_accepts_head(self, client):
+        """Test liveness endpoint accepts HEAD probes."""
+        response = client.head("/health")
+        assert response.status_code == 200
+        assert response.content == b""
+
 
 class TestExecutionRequest:
     """Tests for ExecutionRequest data structure."""

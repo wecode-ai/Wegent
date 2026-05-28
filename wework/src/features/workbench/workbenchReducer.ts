@@ -1,10 +1,11 @@
-import type { ProjectWithTasks, Task, Team, User } from '@/types/api'
+import type { DeviceInfo, ProjectWithTasks, Task, Team, User } from '@/types/api'
 import type { WorkbenchState } from '@/types/workbench'
 
 export const initialWorkbenchState: WorkbenchState = {
   user: null,
   defaultTeam: null,
   projects: [],
+  devices: [],
   recentTasks: [],
   currentProject: null,
   currentTask: null,
@@ -18,8 +19,15 @@ export type WorkbenchAction =
   | {
       type: 'bootstrapped'
       user: User
-      defaultTeam: Team
+      defaultTeam: Team | null
       projects: ProjectWithTasks[]
+      devices: DeviceInfo[]
+      recentTasks: Task[]
+    }
+  | {
+      type: 'lists_refreshed'
+      projects: ProjectWithTasks[]
+      devices: DeviceInfo[]
       recentTasks: Task[]
     }
   | { type: 'bootstrap_failed'; error: string }
@@ -41,9 +49,20 @@ export function workbenchReducer(
         user: action.user,
         defaultTeam: action.defaultTeam,
         projects: action.projects,
+        devices: action.devices,
         recentTasks: action.recentTasks,
         isBootstrapping: false,
         error: null,
+      }
+    case 'lists_refreshed':
+      return {
+        ...state,
+        projects: action.projects,
+        devices: action.devices,
+        recentTasks: action.recentTasks,
+        currentProject: state.currentProject
+          ? action.projects.find(project => project.id === state.currentProject?.id) ?? null
+          : null,
       }
     case 'bootstrap_failed':
       return { ...state, isBootstrapping: false, error: action.error }

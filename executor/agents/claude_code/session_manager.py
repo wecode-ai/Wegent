@@ -42,7 +42,7 @@ class SessionManager:
 
     @classmethod
     def set_task_session_root(cls, task_id: int, session_root: Optional[str]) -> None:
-        """Set task-specific session root for project workspace mode."""
+        """Set task-specific session root outside the project workspace."""
 
         if session_root:
             cls._task_session_roots[task_id] = session_root
@@ -55,7 +55,7 @@ class SessionManager:
 
         session_root = cls._task_session_roots.get(task_id)
         if session_root:
-            return os.path.join(session_root, ".wegent", "sessions", str(task_id))
+            return os.path.join(session_root, str(task_id))
         workspace_root = config.get_workspace_root()
         return os.path.join(workspace_root, str(task_id))
 

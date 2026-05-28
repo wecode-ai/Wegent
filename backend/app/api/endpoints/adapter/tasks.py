@@ -36,13 +36,17 @@ from app.schemas.shared_task import (
     TaskShareResponse,
 )
 from app.schemas.task import (
+    ArchivedTaskListResponse,
     PipelineStageInfo,
     PromptDraftGenerateRequest,
     PromptDraftGenerateResponse,
+    TaskArchiveBatchResponse,
+    TaskArchiveResponse,
     TaskCreate,
     TaskDetail,
     TaskInDB,
     TaskListResponse,
+    TaskLiteGroupedListResponse,
     TaskLiteListResponse,
     TaskSkillsResponse,
     TaskUpdate,
@@ -52,6 +56,7 @@ from app.services.adapters.executor_job import job_service
 from app.services.adapters.task_kinds import task_kinds_service
 from app.services.remote_workspace_service import remote_workspace_service
 from app.services.shared_task import shared_task_service
+from shared.telemetry.decorators import trace_sync
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -179,6 +184,31 @@ def get_personal_tasks_lite(
     return {"total": total, "items": items}
 
 
+@router.get("/lite/personal/grouped", response_model=TaskLiteGroupedListResponse)
+@trace_sync("get_personal_task_groups_lite", "tasks.api")
+def get_personal_task_groups_lite(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(50, ge=1, le=100, description="Items per page"),
+    types: str = Query(
+        "online,offline",
+        description="Comma-separated task types to include: online (chat), offline (code), flow",
+    ),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get current user's personal task page grouped by device or agent.
+
+    This endpoint groups only the current flat page (default 50 items) to keep
+    query costs equivalent to the existing personal history pagination.
+    """
+    skip = (page - 1) * limit
+    type_list = [t.strip() for t in types.split(",") if t.strip()]
+    items, total = task_kinds_service.get_user_personal_task_groups_lite(
+        db=db, user_id=current_user.id, skip=skip, limit=limit, types=type_list
+    )
+    return {"total": total, "items": items}
+
+
 @router.get("/search", response_model=TaskListResponse)
 def search_tasks_by_title(
     title: str = Query(..., min_length=1, description="Search by task title keywords"),
@@ -195,6 +225,41 @@ def search_tasks_by_title(
     return {"total": total, "items": items}
 
 
+@router.get("/archived", response_model=ArchivedTaskListResponse)
+def get_archived_tasks(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(100, ge=1, le=200, description="Items per page"),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get archived chats owned by the current user."""
+    skip = (page - 1) * limit
+    items, total = task_kinds_service.list_archived_tasks(
+        db=db, user_id=current_user.id, skip=skip, limit=limit
+    )
+    return {"total": total, "items": items}
+
+
+@router.delete("/archived", response_model=TaskArchiveBatchResponse)
+def delete_archived_tasks(
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Soft delete all archived chats owned by the current user."""
+    count = task_kinds_service.delete_all_archived_tasks(db=db, user_id=current_user.id)
+    return {"message": "Archived chats deleted successfully", "count": count}
+
+
+@router.post("/archive", response_model=TaskArchiveBatchResponse)
+def archive_all_user_chats(
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Archive all active personal chat/code tasks owned by the current user."""
+    count = task_kinds_service.archive_all_user_chats(db=db, user_id=current_user.id)
+    return {"message": "Chats archived successfully", "count": count}
+
+
 @router.get("/{task_id}", response_model=TaskDetail)
 def get_task(
     task_id: int = Depends(with_task_telemetry),
@@ -205,6 +270,28 @@ def get_task(
     return task_kinds_service.get_task_detail(
         db=db, task_id=task_id, user_id=current_user.id
     )
+
+
+@router.post("/{task_id}/archive", response_model=TaskArchiveResponse)
+def archive_task(
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Archive one chat owned by the current user."""
+    task_kinds_service.archive_task(db=db, task_id=task_id, user_id=current_user.id)
+    return {"message": "Chat archived successfully", "task_id": task_id}
+
+
+@router.post("/{task_id}/unarchive", response_model=TaskArchiveResponse)
+def unarchive_task(
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Restore one archived chat owned by the current user."""
+    task_kinds_service.unarchive_task(db=db, task_id=task_id, user_id=current_user.id)
+    return {"message": "Chat unarchived successfully", "task_id": task_id}
 
 
 @router.get(
@@ -549,7 +636,8 @@ def join_shared_task(
         user_id=current_user.id,
         team_id=user_team.id,
         model_id=request.model_id,
-        force_override_bot_model=request.force_override_bot_model or False,
+        force_override_bot_model=bool(request.model_id)
+        or bool(request.force_override_bot_model),
         force_override_bot_model_type=request.force_override_bot_model_type,
         git_repo_id=request.git_repo_id,
         git_url=request.git_url,
