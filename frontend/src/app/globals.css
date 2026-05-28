@@ -52,9 +52,9 @@
   --color-border: 42 45 45;
   --color-border-strong: 52 53 53;
   --color-border-light: 42 45 45;
-  --color-text-primary: 236 236 236;
-  --color-text-secondary: 212 212 212;
-  --color-text-muted: 160 160 160;
+  --color-text-primary: 212 212 212;
+  --color-text-secondary: 176 176 176;
+  --color-text-muted: 136 136 136;
   --color-text-inverted: 14 15 15;
   --color-primary: 118 119 218;
   --color-primary-contrast: 255 255 255;
@@ -66,7 +66,7 @@
   --color-link: 118 119 218;
   --color-code-bg: 13 17 23;
   --color-popover: 26 28 28;
-  --color-popover-foreground: 236 236 236;
+  --color-popover-foreground: 212 212 212;
   --color-tooltip: 236 236 236;
   --color-tooltip-foreground: 14 15 15;
   --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.5);

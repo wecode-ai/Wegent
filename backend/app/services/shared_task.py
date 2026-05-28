@@ -326,6 +326,8 @@ class SharedTaskService:
         """Copy task and all its subtasks to new user"""
         from app.schemas.kind import Task, Team, Workspace
 
+        should_force_override_model = bool(model_id) or force_override_bot_model
+
         # Get the new team to get its name and namespace
         new_team = (
             db.query(Kind)
@@ -513,12 +515,12 @@ class SharedTaskService:
             del task_crd.metadata.labels["forceOverrideBotModelType"]
 
         # Update model configuration in metadata labels if provided by user during import
-        if model_id or force_override_bot_model:
+        if model_id or should_force_override_model:
             if not task_crd.metadata.labels:
                 task_crd.metadata.labels = {}
             if model_id:
                 task_crd.metadata.labels["modelId"] = model_id
-            if force_override_bot_model:
+            if should_force_override_model:
                 task_crd.metadata.labels["forceOverrideBotModel"] = "true"
             if force_override_bot_model_type:
                 task_crd.metadata.labels["forceOverrideBotModelType"] = (

@@ -91,6 +91,11 @@ class TaskCreationParams:
     # Used to save video_config to user subtask.result for display
     generate_params: Optional[Dict[str, Any]] = None
 
+    def __post_init__(self) -> None:
+        """Treat an explicit model_id as an override selection."""
+        if self.model_id:
+            self.force_override_bot_model = True
+
 
 def get_bot_ids_from_team(db: Session, team: Kind) -> List[int]:
     """
