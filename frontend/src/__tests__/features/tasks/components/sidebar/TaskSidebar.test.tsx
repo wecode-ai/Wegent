@@ -322,10 +322,10 @@ describe('TaskSidebar scroll structure', () => {
     const automationButton = screen.getAllByTestId('task-sidebar-nav-flow-button')[0]
     const moreButton = screen.getAllByTestId('task-sidebar-more-button')[0]
 
-    expect(logoSection).toHaveClass('pt-2', 'pb-3')
-    expect(newConversationButton).toHaveClass('h-11', 'min-w-[44px]')
-    expect(automationButton).toHaveClass('h-11', 'min-w-[44px]')
-    expect(moreButton).toHaveClass('h-11', 'min-w-[44px]')
+    expect(logoSection).toHaveClass('pt-2', 'pb-1.5')
+    expect(newConversationButton).toHaveClass('h-11', 'lg:h-10', 'min-w-[44px]')
+    expect(automationButton).toHaveClass('h-11', 'lg:h-10', 'min-w-[44px]')
+    expect(moreButton).toHaveClass('h-11', 'lg:h-10', 'min-w-[44px]')
     expect(newConversationButton).toHaveAttribute('data-testid', 'new-agent-button')
   })
 
@@ -433,6 +433,23 @@ describe('TaskSidebar scroll structure', () => {
     expect(
       within(collapsedGroupDock).queryByText('common:tasks.no_group_chats')
     ).not.toBeInTheDocument()
+  })
+
+  it('keeps the group chat dock visible after empty group chat loading has settled', () => {
+    Object.assign(mockTaskContext, {
+      groupTasks: [],
+      personalTasks: [],
+      hasMoreGroupTasks: false,
+    })
+
+    render(
+      <TaskSidebar isMobileSidebarOpen={false} setIsMobileSidebarOpen={jest.fn()} pageType="chat" />
+    )
+
+    const groupDock = screen.getAllByTestId('task-sidebar-group-chat-dock')[0]
+
+    expect(within(groupDock).getByText('common:tasks.group_chats')).toBeInTheDocument()
+    expect(within(groupDock).queryByText('common:tasks.no_group_chats')).not.toBeInTheDocument()
   })
 
   it('renders personal history as a flat list', () => {
