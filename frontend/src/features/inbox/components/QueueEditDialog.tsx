@@ -328,7 +328,7 @@ export function QueueEditDialog({ queue, open, onOpenChange }: QueueEditDialogPr
             namespace: selectedModel.namespace || 'default',
             name: selectedModel.name,
           }
-          shouldForceOverrideBotModel = forceOverrideBotModel
+          shouldForceOverrideBotModel = true
         }
       }
     }

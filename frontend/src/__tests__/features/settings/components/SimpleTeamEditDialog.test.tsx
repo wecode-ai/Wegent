@@ -74,9 +74,12 @@ jest.mock('@/hooks/useTranslation', () => ({
         'settings:team.simple.executor.complex.description':
           'Complex executor for code tasks, device tasks, or multi-step complex tasks.',
         'settings:team.simple.executor.complex.title': 'Complex',
-        'settings:team.simple.executor.custom.description': 'Choose custom shell.',
+        'settings:team.simple.executor.custom.description': 'Use an executor you created.',
         'settings:team.simple.executor.custom.title': 'Custom',
-        'settings:team.simple.executor.custom_shell_placeholder': 'Choose custom shell',
+        'settings:team.simple.executor.custom_shell_placeholder': 'Choose custom executor',
+        'settings:team.simple.executor.manage_custom_shells_hint':
+          'Manage custom executors in Resource Library - Executors.',
+        'settings:team.simple.executor.no_custom_shells': 'No custom executors available',
         'settings:team.simple.executor.required': 'Choose executor',
         'settings:team.simple.executor.requires_complex_hint': 'Code requires complex.',
         'settings:team.simple.executor.simple.description': 'Chat executor.',
