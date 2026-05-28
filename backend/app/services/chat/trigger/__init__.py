@@ -30,7 +30,17 @@ from .lifecycle import (
     persist_completed_result,
     prepare_execution_session,
 )
-from .unified import trigger_ai_response_unified
+
+
+def __getattr__(name: str):
+    """Lazy-load the full trigger pipeline only when needed."""
+    if name == "trigger_ai_response_unified":
+        from .unified import trigger_ai_response_unified
+
+        return trigger_ai_response_unified
+
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     # Core

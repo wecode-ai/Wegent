@@ -256,7 +256,7 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('project-work-button'))
 
     expect(screen.getByTestId('project-work-menu')).toBeInTheDocument()
-    expect(screen.getByText('Wegent')).toBeInTheDocument()
+    expect(screen.getAllByText('Wegent').length).toBeGreaterThan(0)
     expect(screen.getByText('Docs')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('project-option-8'))

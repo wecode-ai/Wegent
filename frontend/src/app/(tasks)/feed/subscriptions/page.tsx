@@ -5,6 +5,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
 import { ArrowLeft, Plus } from 'lucide-react'
 import TopNavigation from '@/features/layout/TopNavigation'
@@ -13,12 +14,6 @@ import {
   ResizableSidebar,
   CollapsedSidebarButtons,
 } from '@/features/tasks/components/sidebar'
-import {
-  SubscriptionList,
-  SubscriptionForm,
-  FollowingSubscriptionList,
-  RentalSubscriptionList,
-} from '@/features/feed/components'
 import {
   SubscriptionProvider,
   useSubscriptionContext,
@@ -30,6 +25,31 @@ import '@/features/common/scrollbar.css'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { Subscription } from '@/types/subscription'
+
+const SubscriptionList = dynamic(
+  () =>
+    import('@/features/feed/components/SubscriptionList').then(module => module.SubscriptionList),
+  { ssr: false }
+)
+const SubscriptionForm = dynamic(
+  () =>
+    import('@/features/feed/components/SubscriptionForm').then(module => module.SubscriptionForm),
+  { ssr: false }
+)
+const FollowingSubscriptionList = dynamic(
+  () =>
+    import('@/features/feed/components/FollowingSubscriptionList').then(
+      module => module.FollowingSubscriptionList
+    ),
+  { ssr: false }
+)
+const RentalSubscriptionList = dynamic(
+  () =>
+    import('@/features/feed/components/RentalSubscriptionList').then(
+      module => module.RentalSubscriptionList
+    ),
+  { ssr: false }
+)
 
 /**
  * Tab type for subscription management
@@ -144,12 +164,14 @@ function SubscriptionsPageContent() {
       </div>
 
       {/* Form Dialog */}
-      <SubscriptionForm
-        open={formOpen}
-        onOpenChange={setFormOpen}
-        subscription={editingSubscription}
-        onSuccess={handleFormSuccess}
-      />
+      {formOpen && (
+        <SubscriptionForm
+          open={formOpen}
+          onOpenChange={setFormOpen}
+          subscription={editingSubscription}
+          onSuccess={handleFormSuccess}
+        />
+      )}
     </div>
   )
 }

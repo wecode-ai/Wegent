@@ -24,6 +24,12 @@ export type WorkbenchAction =
       devices: DeviceInfo[]
       recentTasks: Task[]
     }
+  | {
+      type: 'lists_refreshed'
+      projects: ProjectWithTasks[]
+      devices: DeviceInfo[]
+      recentTasks: Task[]
+    }
   | { type: 'bootstrap_failed'; error: string }
   | { type: 'project_selected'; project: ProjectWithTasks }
   | { type: 'task_opened'; task: Task }
@@ -47,6 +53,16 @@ export function workbenchReducer(
         recentTasks: action.recentTasks,
         isBootstrapping: false,
         error: null,
+      }
+    case 'lists_refreshed':
+      return {
+        ...state,
+        projects: action.projects,
+        devices: action.devices,
+        recentTasks: action.recentTasks,
+        currentProject: state.currentProject
+          ? action.projects.find(project => project.id === state.currentProject?.id) ?? null
+          : null,
       }
     case 'bootstrap_failed':
       return { ...state, isBootstrapping: false, error: action.error }

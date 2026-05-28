@@ -5,6 +5,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
 import { Boxes, Check, ChevronDown, Settings2, Users } from 'lucide-react'
 
@@ -17,11 +18,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown'
-import { ModelListWithScope } from '@/features/settings/components/ModelListWithScope'
-import { RetrieverListWithScope } from '@/features/settings/components/RetrieverListWithScope'
-import { ShellListWithScope } from '@/features/settings/components/ShellListWithScope'
-import { SkillListWithScope } from '@/features/settings/components/SkillListWithScope'
-import { TeamListWithScope } from '@/features/settings/components/TeamListWithScope'
 import { paths } from '@/config/paths'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -37,6 +33,42 @@ const managedResourceTypes: ManagedResourceType[] = [
   'shell',
   'retriever',
 ]
+
+const TeamListWithScope = dynamic(
+  () =>
+    import('@/features/settings/components/TeamListWithScope').then(
+      module => module.TeamListWithScope
+    ),
+  { ssr: false }
+)
+const ModelListWithScope = dynamic(
+  () =>
+    import('@/features/settings/components/ModelListWithScope').then(
+      module => module.ModelListWithScope
+    ),
+  { ssr: false }
+)
+const ShellListWithScope = dynamic(
+  () =>
+    import('@/features/settings/components/ShellListWithScope').then(
+      module => module.ShellListWithScope
+    ),
+  { ssr: false }
+)
+const SkillListWithScope = dynamic(
+  () =>
+    import('@/features/settings/components/SkillListWithScope').then(
+      module => module.SkillListWithScope
+    ),
+  { ssr: false }
+)
+const RetrieverListWithScope = dynamic(
+  () =>
+    import('@/features/settings/components/RetrieverListWithScope').then(
+      module => module.RetrieverListWithScope
+    ),
+  { ssr: false }
+)
 
 function getInitialSearchParam(name: string): string | null {
   if (typeof window === 'undefined') {

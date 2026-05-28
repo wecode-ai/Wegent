@@ -1,9 +1,10 @@
 import { Bot, Code2, Folder, Image, Menu, MoreHorizontal } from 'lucide-react'
 import { useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
+import { useTranslation } from '@/hooks/useTranslation'
 import { MessageList } from '@/components/chat/MessageList'
+import type { ArchivedTaskListResponse, CreateProjectRequest, ProjectWithTasks } from '@/types/api'
 import type { WorkbenchMessage, WorkbenchState } from '@/types/workbench'
 import { MobileDrawer } from './MobileDrawer'
 
@@ -13,7 +14,20 @@ interface MobileWorkbenchLayoutProps {
   projectChat: ProjectChatControls
   projectWork: ProjectWorkControls
   onSelectProject: (projectId: number) => void
+  onStartNewProjectChat?: (projectId: number) => void
   onOpenTask: (taskId: number) => void
+  onCreateProject?: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
+  onUpdateProjectName?: (projectId: number, name: string) => Promise<void>
+  onRemoveProject?: (projectId: number) => Promise<void>
+  onArchiveAllChats?: () => Promise<void>
+  onArchiveProjectChats?: (projectId: number) => Promise<void>
+  onArchiveTask?: (taskId: number) => Promise<void>
+  onRenameTask?: (taskId: number, title: string) => Promise<void>
+  onListArchivedTasks?: () => Promise<ArchivedTaskListResponse>
+  onUnarchiveTask?: (taskId: number) => Promise<void>
+  onDeleteTask?: (taskId: number) => Promise<void>
+  onDeleteArchivedTasks?: () => Promise<void>
+  onListDeviceDirectories?: (deviceId: string, path: string) => Promise<string[]>
   onInputChange: (value: string) => void
   onSend: () => void
   onLogout: () => void

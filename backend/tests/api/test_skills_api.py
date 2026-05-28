@@ -104,6 +104,7 @@ tags: ["api", "test"]
         data = response.json()
         assert data["metadata"]["name"] == "api-test-skill"
         assert data["spec"]["description"] == "API test skill"
+        assert data["spec"]["enabled"] is True
         assert data["spec"]["version"] == "1.0.0"
         assert data["status"]["state"] == "Available"
 
@@ -260,6 +261,29 @@ tags: ["api", "test"]
         assert response.status_code == 200
         data = response.json()
         assert data["metadata"]["name"] == "get-by-id-api"
+
+    def test_update_skill_enabled(self, test_client: TestClient, test_token: str):
+        """Test toggling a personal skill enabled state."""
+        skill_md = "---\ndescription: Enable API test\n---\n"
+        zip_content = self.create_test_zip(skill_md)
+
+        create_response = test_client.post(
+            "/api/v1/kinds/skills/upload",
+            headers={"Authorization": f"Bearer {test_token}"},
+            data={"name": "enable-api-test", "namespace": "default"},
+            files={"file": ("test.zip", io.BytesIO(zip_content), "application/zip")},
+        )
+        assert create_response.status_code == 201
+        skill_id = create_response.json()["metadata"]["labels"]["id"]
+
+        response = test_client.put(
+            f"/api/v1/kinds/skills/{skill_id}/enabled",
+            headers={"Authorization": f"Bearer {test_token}"},
+            json={"enabled": False},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["spec"]["enabled"] is False
 
     def test_get_skill_not_found(self, test_client: TestClient, test_token: str):
         """Test getting non-existent skill returns 404"""

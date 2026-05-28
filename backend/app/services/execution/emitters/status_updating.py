@@ -19,15 +19,20 @@ page refresh recovery.
 import logging
 from typing import Any, Dict, Optional
 
-from app.services.chat.trigger.lifecycle import (
-    collect_completed_result,
-    persist_completed_result,
-)
 from shared.models import EventType, ExecutionEvent
 
 from .protocol import ResultEmitter
 
 logger = logging.getLogger(__name__)
+
+
+def _get_lifecycle_handlers():
+    from app.services.chat.trigger.lifecycle import (
+        collect_completed_result,
+        persist_completed_result,
+    )
+
+    return collect_completed_result, persist_completed_result
 
 
 class StatusUpdatingEmitter(ResultEmitter):
@@ -297,6 +302,9 @@ class StatusUpdatingEmitter(ResultEmitter):
             result: Optional result data from the event
         """
         try:
+            collect_completed_result, persist_completed_result = (
+                _get_lifecycle_handlers()
+            )
             final_result = await collect_completed_result(
                 self._subtask_id,
                 status="COMPLETED",
@@ -339,6 +347,9 @@ class StatusUpdatingEmitter(ResultEmitter):
             error_code: Classified error code (e.g., 'context_length_exceeded')
         """
         try:
+            collect_completed_result, persist_completed_result = (
+                _get_lifecycle_handlers()
+            )
             result = await collect_completed_result(
                 self._subtask_id,
                 status="FAILED",
@@ -376,6 +387,9 @@ class StatusUpdatingEmitter(ResultEmitter):
         task completion handler and other event subscribers.
         """
         try:
+            collect_completed_result, persist_completed_result = (
+                _get_lifecycle_handlers()
+            )
             result = await collect_completed_result(
                 self._subtask_id,
                 status="CANCELLED",

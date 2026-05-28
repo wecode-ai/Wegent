@@ -61,7 +61,7 @@ def test_default_manifest_path_lives_with_device_config(tmp_path, monkeypatch):
     )
 
 
-def test_manifest_store_records_skills_and_drops_stale_mcp_section(tmp_path):
+def test_manifest_store_records_skills_and_preserves_mcp_section(tmp_path):
     manifest = ManagedCapabilityManifest(
         path=tmp_path / ".wegent-executor" / "capabilities.json"
     )
@@ -78,7 +78,7 @@ def test_manifest_store_records_skills_and_drops_stale_mcp_section(tmp_path):
     store.record_skill({"id": 101, "name": "browser", "namespace": "default"})
 
     written = json.loads(manifest.path.read_text())
-    assert "mcps" not in written
+    assert written["mcps"] == {"wegent__old_docs": {"id": "dingtalk/old_docs"}}
     assert written["skills"] == {
         "browser": {
             "skill_id": 101,
@@ -89,9 +89,7 @@ def test_manifest_store_records_skills_and_drops_stale_mcp_section(tmp_path):
     assert written["revision"] == 2
 
 
-def test_reporter_marks_local_and_managed_skills_without_mcp_report(
-    tmp_path, monkeypatch
-):
+def test_reporter_marks_local_and_managed_skills_with_mcp_report(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     skills_root = tmp_path / ".claude" / "skills"
     local_skill = skills_root / "local-review-helper"
@@ -114,7 +112,12 @@ def test_reporter_marks_local_and_managed_skills_without_mcp_report(
                     "namespace": "default",
                 }
             },
-            "mcps": {"wegent__old_docs": {"id": "dingtalk/old_docs"}},
+            "mcps": {
+                "wegent__old_docs": {
+                    "installed_mcp_id": 7,
+                    "server": {"url": "https://example.com/mcp"},
+                }
+            },
         }
     )
     reporter = GlobalCapabilityReporter(
@@ -134,4 +137,11 @@ def test_reporter_marks_local_and_managed_skills_without_mcp_report(
         },
         {"name": "local-review-helper", "source": "local_user"},
     ]
-    assert "mcps" not in report
+    assert report["mcps"] == [
+        {
+            "name": "wegent__old_docs",
+            "installed_mcp_id": 7,
+            "server": {"url": "https://example.com/mcp"},
+            "source": "wegent",
+        }
+    ]

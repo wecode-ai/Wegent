@@ -24,6 +24,9 @@ class MCPServer(BaseModel):
     provider_url: Optional[str] = None
     logo_url: Optional[str] = None
     tags: Optional[List[str]] = None
+    installState: str = "not_installed"
+    installedMcpId: Optional[int] = None
+    enabled: bool = False
 
 
 class MCPProviderInfo(BaseModel):

@@ -9,6 +9,7 @@
  * Displays the recent 5 execution history records for a discovered subscription.
  */
 import { useEffect, useState, useCallback } from 'react'
+import dynamic from 'next/dynamic'
 import {
   AlertCircle,
   CheckCircle2,
@@ -34,8 +35,15 @@ import { subscriptionApis } from '@/apis/subscription'
 import type { BackgroundExecution, BackgroundExecutionStatus } from '@/types/subscription'
 import { cn } from '@/lib/utils'
 import { parseUTCDate } from '@/lib/utils'
-import { SubscriptionConversationDialog } from './SubscriptionConversationDialog'
 import { EnhancedMarkdown } from '@/components/common/EnhancedMarkdown'
+
+const SubscriptionConversationDialog = dynamic(
+  () =>
+    import('./SubscriptionConversationDialog').then(
+      module => module.SubscriptionConversationDialog
+    ),
+  { ssr: false }
+)
 
 /**
  * Generic subscription info interface for the history dialog.
@@ -309,13 +317,15 @@ export function DiscoverHistoryDialog({
       </Dialog>
 
       {/* Conversation Dialog */}
-      <SubscriptionConversationDialog
-        taskId={dialogTaskId}
-        open={dialogTaskId !== null}
-        onOpenChange={open => {
-          if (!open) setDialogTaskId(null)
-        }}
-      />
+      {dialogTaskId !== null && (
+        <SubscriptionConversationDialog
+          taskId={dialogTaskId}
+          open={dialogTaskId !== null}
+          onOpenChange={open => {
+            if (!open) setDialogTaskId(null)
+          }}
+        />
+      )}
     </>
   )
 }
