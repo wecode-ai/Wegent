@@ -54,6 +54,11 @@
     "discard_changes": "放弃更改",
     "reset_to_default": "恢复默认"
   },
+  "resourceGuide": {
+    "title": "资源管理已移到资源库",
+    "description": "智能体、模型、执行器、技能和检索器现在在资源库管理。",
+    "action": "前往资源库"
+  },
   "navigation": {
     "team": "智能体",
     "models": "模型",

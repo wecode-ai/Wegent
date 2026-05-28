@@ -8,6 +8,8 @@ import { fireEvent, render, screen, within } from '@testing-library/react'
 import TaskSidebar, { SIDEBAR_NAV_CONFIG } from '@/features/tasks/components/sidebar/TaskSidebar'
 import type { Task } from '@/types/api'
 
+let mockUser: { role?: string } | null = null
+
 const createTask = (overrides: Partial<Task>): Task => ({
   id: overrides.id ?? 1,
   title: overrides.title ?? 'Task',
@@ -80,6 +82,8 @@ jest.mock('@/config/paths', () => ({
     devices: { getHref: () => '/devices' },
     inbox: { getHref: () => '/inbox' },
     chat: { getHref: () => '/chat' },
+    resourceLibrary: { getHref: () => '/resource-library' },
+    evaluation: { getHref: () => '/evaluation' },
   },
 }))
 
@@ -93,6 +97,10 @@ jest.mock('@/features/tasks/contexts/chatStreamContext', () => ({
   }),
 }))
 
+jest.mock('@/features/common/UserContext', () => ({
+  useUser: () => ({ user: mockUser }),
+}))
+
 jest.mock('@/features/inbox', () => ({
   useInboxUnreadCount: () => ({
     unreadCount: 0,
@@ -101,7 +109,10 @@ jest.mock('@/features/inbox', () => ({
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (key: string) => key,
+    t: (key: string) =>
+      ({
+        'common:navigation.evaluation': 'AI Evaluation',
+      })[key] ?? key,
   }),
 }))
 
@@ -196,6 +207,7 @@ describe('TaskSidebar scroll structure', () => {
       setSelectedTask: jest.fn(),
       isRefreshing: false,
     })
+    mockUser = null
   })
 
   afterEach(() => {
@@ -222,8 +234,12 @@ describe('TaskSidebar scroll structure', () => {
     expect(within(fixedSection).getByText('common:navigation.wiki')).toBeInTheDocument()
     expect(within(fixedSection).getByText('common:navigation.more')).toBeInTheDocument()
     expect(within(fixedSection).getByLabelText('More navigation')).toHaveClass('lucide-layout-grid')
+    expect(
+      within(fixedSection).queryByTestId('resource-library-sidebar-button')
+    ).not.toBeInTheDocument()
     expect(within(fixedSection).queryByText('devices:my_devices')).not.toBeInTheDocument()
     expect(within(fixedSection).queryByText('common:navigation.inbox')).not.toBeInTheDocument()
+    expect(within(fixedSection).queryByText('resource-library:title')).not.toBeInTheDocument()
 
     expect(within(scrollableSection).queryByText('common:navigation.wiki')).not.toBeInTheDocument()
     expect(within(scrollableSection).queryByText('devices:my_devices')).not.toBeInTheDocument()
@@ -242,8 +258,25 @@ describe('TaskSidebar scroll structure', () => {
     fireEvent.mouseEnter(within(fixedSection).getByTestId('task-sidebar-more-button'))
 
     const flyout = screen.getByTestId('task-sidebar-more-flyout')
+    expect(within(flyout).getByText('resource-library:title')).toBeInTheDocument()
     expect(within(flyout).getByText('devices:my_devices')).toBeInTheDocument()
     expect(within(flyout).getByText('common:navigation.inbox')).toBeInTheDocument()
+  })
+
+  it('uses the translated evaluation label for admin users', () => {
+    mockUser = { role: 'admin' }
+
+    render(
+      <TaskSidebar isMobileSidebarOpen={false} setIsMobileSidebarOpen={jest.fn()} pageType="chat" />
+    )
+
+    const fixedSection = screen.getAllByTestId('task-sidebar-fixed-section')[0]
+
+    fireEvent.mouseEnter(within(fixedSection).getByTestId('task-sidebar-more-button'))
+
+    const flyout = screen.getByTestId('task-sidebar-more-flyout')
+    expect(within(flyout).getByText('AI Evaluation')).toBeInTheDocument()
+    expect(within(flyout).queryByText('navigation.evaluation')).not.toBeInTheDocument()
   })
 
   it('moves secondary navigation back into the scrollable area when the config is disabled', () => {
@@ -257,9 +290,11 @@ describe('TaskSidebar scroll structure', () => {
     const scrollableSection = screen.getAllByTestId('task-sidebar-scroll-content')[0]
 
     expect(within(fixedSection).getByText('common:navigation.wiki')).toBeInTheDocument()
+    expect(within(fixedSection).queryByText('resource-library:title')).not.toBeInTheDocument()
     expect(within(fixedSection).queryByText('devices:my_devices')).not.toBeInTheDocument()
     expect(within(fixedSection).queryByText('common:navigation.inbox')).not.toBeInTheDocument()
 
+    expect(within(scrollableSection).getByText('resource-library:title')).toBeInTheDocument()
     expect(within(scrollableSection).getByText('devices:my_devices')).toBeInTheDocument()
     expect(within(scrollableSection).getByText('common:navigation.inbox')).toBeInTheDocument()
   })

@@ -21,6 +21,7 @@ import {
   ChevronRight,
   Monitor,
   Inbox,
+  Library,
   LayoutGrid,
   ClipboardCheck,
 } from 'lucide-react'
@@ -51,7 +52,15 @@ export const SIDEBAR_NAV_CONFIG = {
 interface TaskSidebarProps {
   isMobileSidebarOpen: boolean
   setIsMobileSidebarOpen: (open: boolean) => void
-  pageType?: 'chat' | 'code' | 'flow' | 'knowledge' | 'devices' | 'inbox' | 'evaluation'
+  pageType?:
+    | 'chat'
+    | 'code'
+    | 'flow'
+    | 'knowledge'
+    | 'devices'
+    | 'inbox'
+    | 'resource-library'
+    | 'evaluation'
   isCollapsed?: boolean
   onToggleCollapsed?: () => void
   // Search dialog control from parent (for global shortcut support)
@@ -152,7 +161,15 @@ export default function TaskSidebar({
   // Navigation buttons - show evaluation only for admin users
   const isAdmin = user?.role === 'admin'
   // Define type explicitly to include all possible buttonPageType values
-  type ButtonPageType = 'chat' | 'code' | 'flow' | 'knowledge' | 'devices' | 'inbox' | 'evaluation'
+  type ButtonPageType =
+    | 'chat'
+    | 'code'
+    | 'flow'
+    | 'knowledge'
+    | 'devices'
+    | 'inbox'
+    | 'resource-library'
+    | 'evaluation'
   interface NavigationButton {
     label: string
     icon: typeof Workflow
@@ -161,7 +178,11 @@ export default function TaskSidebar({
     tooltip?: string
     buttonPageType: ButtonPageType
     unreadCount?: number
+    testId?: string
   }
+
+  const currentPath = typeof window === 'undefined' ? '' : window.location.pathname
+  const resourceLibraryPath = paths.resourceLibrary?.getHref?.() ?? '/resource-library'
 
   const navigationButtons: NavigationButton[] = useMemo(() => {
     const buttons: NavigationButton[] = [
@@ -186,6 +207,14 @@ export default function TaskSidebar({
         path: paths.wiki.getHref(),
         isActive: pageType === 'knowledge',
         buttonPageType: 'knowledge' as const,
+      },
+      {
+        label: t('resource-library:title'),
+        icon: Library,
+        path: resourceLibraryPath,
+        isActive: pageType === 'resource-library' || currentPath === resourceLibraryPath,
+        buttonPageType: 'resource-library' as const,
+        testId: 'resource-library-sidebar-button',
       },
       {
         label: t('devices:my_devices'),
@@ -215,7 +244,7 @@ export default function TaskSidebar({
       })
     }
     return buttons
-  }, [t, pageType, isAdmin, inboxUnreadCount])
+  }, [currentPath, inboxUnreadCount, isAdmin, pageType, resourceLibraryPath, t])
 
   // New conversation - always navigate to chat page
   const handleNewAgentClick = () => {
@@ -325,7 +354,7 @@ export default function TaskSidebar({
             <Button
               variant="ghost"
               onClick={() => handleNavigationClick(btn.path, btn.isActive, btn.buttonPageType)}
-              data-testid={`task-sidebar-nav-${btn.buttonPageType}-button`}
+              data-testid={btn.testId ?? `task-sidebar-nav-${btn.buttonPageType}-button`}
               className={`w-full justify-between px-3 h-11 min-w-[44px] text-sm rounded-md transition-all duration-200 ${
                 btn.isActive
                   ? 'bg-primary/10 text-primary font-medium hover:bg-primary/15'

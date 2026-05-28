@@ -62,6 +62,7 @@ async function loadTranslations() {
     'promptOptimization',
     'subscription',
     'wecode',
+    'resource-library',
   ]
 
   for (const lng of supportedLanguages) {
@@ -121,6 +122,7 @@ export async function initI18n() {
       'promptOptimization',
       'subscription',
       'wecode',
+      'resource-library',
     ],
   })
 
