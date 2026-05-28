@@ -55,4 +55,26 @@ describe('TaskStateMachine', () => {
 
     nowSpy.mockRestore()
   })
+
+  it('ignores a replayed chat chunk with the same offset', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleChatStart(42, 'ClaudeCode', 7)
+    machine.handleChatChunk(42, '现在我 ✅', undefined, undefined, undefined, 0)
+    machine.handleChatChunk(42, '，开始汇总', undefined, undefined, undefined, '现在我 ✅'.length)
+    machine.handleChatChunk(42, '现在我 ✅', undefined, undefined, undefined, 0)
+
+    const message = machine.getState().messages.get('ai-42')
+
+    expect(message?.content).toBe('现在我 ✅，开始汇总')
+    expect(message?.result?.blocks).toHaveLength(1)
+    const block = message?.result?.blocks?.[0]
+    expect(block?.type).toBe('text')
+    if (block?.type === 'text') {
+      expect(block.content).toBe('现在我 ✅，开始汇总')
+    }
+  })
 })

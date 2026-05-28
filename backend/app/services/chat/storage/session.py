@@ -391,17 +391,12 @@ class SessionManager:
         """
         try:
             key = self._get_streaming_key(subtask_id)
-            # Use direct Redis client to get raw string content
-            # (add_text_content uses redis APPEND which stores raw strings)
+            # Use direct Redis client to get raw string content.
             redis_client = await self._cache._get_client()
             try:
                 content = await redis_client.get(key)
                 if content is not None:
-                    # Content is stored as raw bytes, decode to string
-                    if isinstance(content, bytes):
-                        result = content.decode("utf-8")
-                    else:
-                        result = str(content)
+                    result = self._decode_text(content)
                     logger.debug(
                         f"[SessionManager] get_streaming_content: subtask_id={subtask_id}, "
                         f"content_len={len(result)}, content_preview={result[:100] if result else 'None'}..."
@@ -722,8 +717,8 @@ class SessionManager:
             return False
 
     # ==================== Blocks Collection (Mixed Content Rendering) ====================
-    # Uses Redis atomic operations for high performance:
-    # - accumulated_content: APPEND for O(1) content addition
+    # Uses Redis operations for streaming recovery:
+    # - accumulated_content: offset-aware merge for replay-safe content addition
     # - blocks: RPUSH for O(1) block addition
     # - current_text_block_id: separate key for O(1) read/write
 
@@ -734,6 +729,37 @@ class SessionManager:
     def _get_current_text_block_key(self, subtask_id: int) -> str:
         """Generate Redis key for current text block ID."""
         return f"{STREAMING_KEY_PREFIX}text_block:{subtask_id}"
+
+    @staticmethod
+    def _decode_text(value: Any) -> str:
+        """Decode Redis string values to text."""
+        if value is None:
+            return ""
+        if isinstance(value, bytes):
+            return value.decode("utf-8")
+        return str(value)
+
+    @staticmethod
+    def _merge_text_content(
+        existing: str,
+        content: str,
+        offset: Optional[int] = None,
+    ) -> str:
+        """Merge a streaming text chunk using an optional absolute offset."""
+        if not content:
+            return existing
+        if offset is None:
+            return existing + content
+
+        safe_offset = max(0, offset)
+        if safe_offset > len(existing):
+            return existing + content
+
+        end_offset = safe_offset + len(content)
+        if existing[safe_offset:end_offset] == content:
+            return existing
+
+        return existing[:safe_offset] + content + existing[end_offset:]
 
     async def add_tool_block(
         self,
@@ -917,21 +943,28 @@ class SessionManager:
                 f"[SessionManager] Failed to add block for subtask {subtask_id}: {e}"
             )
 
-    async def add_text_content(self, subtask_id: int, content: str) -> None:
+    async def add_text_content(
+        self,
+        subtask_id: int,
+        content: str,
+        offset: Optional[int] = None,
+        block_offset: Optional[int] = None,
+    ) -> None:
         """Add text content to the current text block.
 
         Creates a new text block if there isn't one currently active.
-        Uses Redis APPEND for O(1) content addition.
+        Uses offsets when available so replayed chunks are idempotent.
 
         Args:
             subtask_id: Subtask ID
             content: Text content to add
+            offset: Absolute offset in the accumulated assistant text
+            block_offset: Optional offset within the current text block
         """
         if not content:
             return
 
         try:
-            # Append to accumulated content using Redis APPEND (O(1))
             streaming_key = self._get_streaming_key(subtask_id)
             text_block_key = self._get_current_text_block_key(subtask_id)
             blocks_key = self._get_blocks_key(subtask_id)
@@ -943,12 +976,21 @@ class SessionManager:
 
             redis_client = await self._cache._get_client()
             try:
-                # Append content to streaming cache
-                new_len = await redis_client.append(streaming_key, content)
+                # Merge content into streaming cache by absolute offset.
+                existing_content = self._decode_text(
+                    await redis_client.get(streaming_key)
+                )
+                merged_content = self._merge_text_content(
+                    existing_content,
+                    content,
+                    offset,
+                )
+                await redis_client.set(streaming_key, merged_content, ex=STREAMING_TTL)
                 await redis_client.expire(streaming_key, STREAMING_TTL)
                 logger.debug(
-                    f"[SessionManager] add_text_content: appended to Redis, "
-                    f"subtask_id={subtask_id}, new_total_len={new_len}"
+                    f"[SessionManager] add_text_content: merged Redis content, "
+                    f"subtask_id={subtask_id}, old_total_len={len(existing_content)}, "
+                    f"new_total_len={len(merged_content)}, offset={offset}"
                 )
 
                 # Check if we have a current text block
@@ -960,21 +1002,34 @@ class SessionManager:
                     blocks_raw = await redis_client.lrange(blocks_key, -1, -1)
                     if blocks_raw:
                         last_block = json.loads(blocks_raw[0])
-                        if (
-                            last_block.get("id") == current_block_id.decode()
-                            if isinstance(current_block_id, bytes)
-                            else current_block_id
-                        ):
-                            last_block["content"] = (
-                                last_block.get("content", "") + content
+                        if last_block.get("id") == self._decode_text(current_block_id):
+                            offset_start = last_block.get("offset_start")
+                            local_offset = block_offset
+                            if (
+                                local_offset is None
+                                and isinstance(offset, int)
+                                and isinstance(offset_start, int)
+                            ):
+                                local_offset = offset - offset_start
+                            last_block["content"] = self._merge_text_content(
+                                last_block.get("content", ""),
+                                content,
+                                local_offset,
                             )
                             await redis_client.lset(
-                                blocks_key, -1, json.dumps(last_block)
+                                blocks_key,
+                                -1,
+                                json.dumps(last_block, ensure_ascii=False),
                             )
                 else:
                     # Create new text block
                     block = create_text_block(content=content)
-                    await redis_client.rpush(blocks_key, json.dumps(block))
+                    if offset is not None:
+                        block["offset_start"] = offset
+                    await redis_client.rpush(
+                        blocks_key,
+                        json.dumps(block, ensure_ascii=False),
+                    )
                     await redis_client.set(
                         text_block_key, block["id"], ex=STREAMING_TTL
                     )
@@ -1014,7 +1069,9 @@ class SessionManager:
                     block = json.loads(block_json)
                     if block.get("id") == block_id:
                         block["status"] = BlockStatus.DONE.value
-                        await redis_client.lset(blocks_key, i, json.dumps(block))
+                        await redis_client.lset(
+                            blocks_key, i, json.dumps(block, ensure_ascii=False)
+                        )
                         break
 
                 # Clear current text block ID

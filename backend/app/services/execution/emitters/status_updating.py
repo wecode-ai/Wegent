@@ -164,9 +164,12 @@ class StatusUpdatingEmitter(ResultEmitter):
             # Accumulate content and track text blocks
             content = event.content or ""
             if content:
+                block_offset = event.data.get("block_offset") if event.data else None
                 await session_manager.add_text_content(
                     subtask_id=self._subtask_id,
                     content=content,
+                    offset=event.offset,
+                    block_offset=block_offset,
                 )
 
         # Handle terminal events - update status before forwarding
@@ -205,6 +208,8 @@ class StatusUpdatingEmitter(ResultEmitter):
             await session_manager.add_text_content(
                 subtask_id=subtask_id,
                 content=content,
+                offset=offset,
+                block_offset=kwargs.get("block_offset"),
             )
         await self._wrapped.emit_chunk(task_id, subtask_id, content, offset, **kwargs)
 
