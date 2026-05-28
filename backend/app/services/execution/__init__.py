@@ -15,7 +15,10 @@ This module provides unified task dispatch functionality including:
 """
 
 import json
+import logging
 
+from app.db.session import SessionLocal
+from app.services.sandbox_workspace_archive import sandbox_workspace_archive_service
 from shared.models import ExecutionRequest
 
 from .dispatcher import ExecutionDispatcher, execution_dispatcher
@@ -37,6 +40,8 @@ from .recovery_service import ExecutorRecoveryService, recovery_service
 from .request_builder import TaskRequestBuilder
 from .router import CommunicationMode, ExecutionRouter, ExecutionTarget
 from .schedule_helper import schedule_dispatch
+
+logger = logging.getLogger(__name__)
 
 
 def get_executor_runtime_client():
@@ -109,6 +114,24 @@ class _ExecutorRuntimeClient:
             "user_name": user_name,
             "metadata": metadata or {},
         }
+        restore_task = None
+        db = SessionLocal()
+        try:
+            payload["metadata"], restore_task = (
+                sandbox_workspace_archive_service.prepare_restore_metadata(
+                    db, payload["metadata"]
+                )
+            )
+        except Exception as restore_prepare_error:
+            logger.warning(
+                "Failed to prepare sandbox restore metadata: %s",
+                restore_prepare_error,
+            )
+            restore_task = None
+        finally:
+            if restore_task is None:
+                db.close()
+                db = None
 
         if timeout:
             payload["timeout"] = timeout
@@ -136,9 +159,24 @@ class _ExecutorRuntimeClient:
                         self.executor_namespace = data.get("executor_namespace")
                         self.metadata = data.get("metadata", {})
 
-                return SimpleSandbox(data), None
+                sandbox = SimpleSandbox(data)
+                if restore_task is not None and db is not None:
+                    try:
+                        await sandbox_workspace_archive_service.restore_sandbox_after_create(
+                            db, restore_task, sandbox
+                        )
+                    except Exception as restore_error:
+                        logger.warning(
+                            "Failed to restore sandbox workspace for task %s: %s",
+                            getattr(restore_task, "id", None),
+                            restore_error,
+                        )
+                return sandbox, None
         except Exception as e:
             return None, str(e)
+        finally:
+            if db is not None:
+                db.close()
 
     async def get_sandbox(self, sandbox_id: str):
         """Get sandbox status via executor_manager API."""
@@ -167,6 +205,21 @@ class _ExecutorRuntimeClient:
 
         base_url = settings.EXECUTOR_MANAGER_URL.rstrip("/")
         url = f"{base_url}/executor-manager/sandboxes/{sandbox_id}"
+
+        db = SessionLocal()
+        try:
+            await sandbox_workspace_archive_service.archive_sandbox_before_delete(
+                db, sandbox_id
+            )
+        except Exception as archive_error:
+            logger.warning(
+                "Failed to archive sandbox %s before deletion: %s",
+                sandbox_id,
+                archive_error,
+            )
+            pass
+        finally:
+            db.close()
 
         try:
             async with httpx.AsyncClient(timeout=180.0) as client:
