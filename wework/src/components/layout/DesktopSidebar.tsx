@@ -35,10 +35,13 @@ interface DesktopSidebarProps {
   devices: DeviceInfo[]
   recentTasks: Task[]
   currentProjectId?: number
+  activeItem?: 'chat' | 'plugins' | 'automation'
   onCollapse: () => void
+  onNewChat: () => void
   onSelectProject: (projectId: number) => void
   onStartNewProjectChat: (projectId: number) => void
   onOpenTask: (taskId: number) => void
+  onOpenPlugins: () => void
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
   onRemoveProject: (projectId: number) => Promise<void>
@@ -57,16 +60,24 @@ function SidebarButton({
   icon: Icon,
   label,
   testId,
+  selected,
+  onClick,
 }: {
   icon: typeof Plus
   label: string
   testId: string
+  selected?: boolean
+  onClick: () => void
 }) {
   return (
     <button
       type="button"
       data-testid={testId}
-      className="flex h-8 w-full items-center gap-3 rounded-md px-3 text-left text-sm font-medium text-[#333] hover:bg-white/70"
+      onClick={onClick}
+      className={[
+        'flex h-8 w-full items-center gap-3 rounded-md px-3 text-left text-sm font-medium',
+        selected ? 'bg-[#cfd1d4] text-[#222]' : 'text-[#333] hover:bg-white/70',
+      ].join(' ')}
     >
       <Icon className="h-4 w-4 text-[#555]" />
       <span>{label}</span>
@@ -306,10 +317,13 @@ export function DesktopSidebar({
   devices,
   recentTasks,
   currentProjectId,
+  activeItem = 'chat',
   onCollapse,
+  onNewChat,
   onSelectProject,
   onStartNewProjectChat,
   onOpenTask,
+  onOpenPlugins,
   onCreateProject,
   onUpdateProjectName,
   onRemoveProject,
@@ -351,21 +365,27 @@ export function DesktopSidebar({
           icon={Plus}
           label={t('workbench.new_chat', '新对话')}
           testId="new-chat-button"
+          onClick={onNewChat}
         />
         <SidebarButton
           icon={Search}
           label={t('workbench.search', '搜索')}
           testId="search-button"
+          onClick={() => {}}
         />
         <SidebarButton
           icon={Sparkles}
           label={t('workbench.plugins', '插件')}
           testId="plugins-button"
+          selected={activeItem === 'plugins'}
+          onClick={onOpenPlugins}
         />
         <SidebarButton
           icon={Workflow}
           label={t('workbench.automation', '自动化')}
           testId="automation-button"
+          selected={activeItem === 'automation'}
+          onClick={() => {}}
         />
       </nav>
 
