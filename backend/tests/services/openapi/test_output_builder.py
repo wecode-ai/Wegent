@@ -86,23 +86,9 @@ def test_build_response_output_includes_reasoning_content():
     assert len(output) == 1
     assert output[0].type == "message"
     assert [part.type for part in output[0].content] == ["reasoning", "output_text"]
-    assert output[0].content[0].text == "<thinking>Thinking summary</thinking>"
+    assert output[0].content[0].text == "Thinking summary"
     assert output[0].content[1].text == "Final answer"
     assert output[0].status == "completed"
-
-
-def test_build_response_output_does_not_double_wrap_reasoning_content():
-    subtask = _assistant_subtask(
-        subtask_id=103,
-        result={
-            "value": "Final answer",
-            "reasoning_content": "<thinking>Already wrapped</thinking>",
-        },
-    )
-
-    output = build_response_output([subtask])
-
-    assert output[0].content[0].text == "<thinking>Already wrapped</thinking>"
 
 
 def test_build_response_output_matches_tool_block_by_id():

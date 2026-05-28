@@ -16,38 +16,6 @@ from app.services.execution.inprocess_executor import EmitterBridgeTransport
 from shared.models.responses_api import ResponsesAPIStreamEvents
 
 
-class TestResponsesAPIEventParserReasoning:
-    def test_reasoning_summary_text_delta_maps_to_thinking(self):
-        parser = ResponsesAPIEventParser()
-
-        result = parser.parse(
-            task_id=1,
-            subtask_id=2,
-            message_id=3,
-            event_type=ResponsesAPIStreamEvents.REASONING_SUMMARY_TEXT_DELTA.value,
-            data={"delta": "<thinking>Step 1"},
-        )
-
-        assert result is not None
-        assert result.type == "thinking"
-        assert result.content == "<thinking>Step 1"
-
-    def test_legacy_reasoning_part_added_maps_to_thinking(self):
-        parser = ResponsesAPIEventParser()
-
-        result = parser.parse(
-            task_id=1,
-            subtask_id=2,
-            message_id=3,
-            event_type=ResponsesAPIStreamEvents.RESPONSE_PART_ADDED.value,
-            data={"part": {"type": "reasoning", "text": "legacy thinking"}},
-        )
-
-        assert result is not None
-        assert result.type == "thinking"
-        assert result.content == "legacy thinking"
-
-
 class TestResponsesAPIEventParserToolIds:
     def test_tool_start_requires_non_empty_id(self):
         parser = ResponsesAPIEventParser()

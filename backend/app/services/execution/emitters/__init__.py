@@ -15,18 +15,8 @@ from .composite import CompositeResultEmitter
 from .factory import EmitterType, ResultEmitterFactory
 from .protocol import ResultEmitter, StreamableEmitter
 from .sse import DirectSSEEmitter, SSEResultEmitter
+from .status_updating import StatusUpdatingEmitter
 from .websocket import WebSocketResultEmitter
-
-
-def __getattr__(name: str):
-    """Lazy-load emitters that pull in broader chat dependencies."""
-    if name == "StatusUpdatingEmitter":
-        from .status_updating import StatusUpdatingEmitter
-
-        return StatusUpdatingEmitter
-
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
 
 __all__ = [
     # Protocol
