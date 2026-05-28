@@ -26,6 +26,8 @@ export function WorkbenchPage() {
     unarchiveTask,
     deleteTask,
     deleteArchivedTasks,
+    getDeviceHomeDirectory,
+    getProjectWorkspaceRoot,
     listDeviceDirectories,
     setInput,
     sendCurrentInput,
@@ -60,6 +62,8 @@ export function WorkbenchPage() {
       onUnarchiveTask={unarchiveTask}
       onDeleteTask={deleteTask}
       onDeleteArchivedTasks={deleteArchivedTasks}
+      onGetDeviceHomeDirectory={getDeviceHomeDirectory}
+      onGetProjectWorkspaceRoot={getProjectWorkspaceRoot}
       onListDeviceDirectories={listDeviceDirectories}
       onInputChange={setInput}
       onSend={sendCurrentInput}
