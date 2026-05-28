@@ -23,6 +23,7 @@
     "install": "Install",
     "installed": "Installed",
     "publish": "Publish Resource",
+    "publish_to_library": "Publish to library",
     "upgrade": "Upgrade",
     "archive": "Archive",
     "configure": "Configure",
@@ -75,6 +76,7 @@
     "publish_failed": "Publish failed"
   },
   "publish": {
-    "description": "Publish an existing Agent or Skill to the resource library"
+    "description": "Publish an existing Agent or Skill to the resource library",
+    "selected_resource": "Selected resource"
   }
 }

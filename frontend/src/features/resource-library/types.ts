@@ -10,6 +10,16 @@ export type ResourceLibraryTypeFilter = 'all' | VisibleResourceLibraryResourceTy
 
 export type ManagedResourceType = 'agent' | 'model' | 'shell' | 'skill' | 'retriever'
 
+export interface ResourceLibraryPublishSource {
+  resourceType: VisibleResourceLibraryResourceType
+  sourceId: number
+  name: string
+  displayName?: string | null
+  description?: string | null
+  tags?: string[]
+  namespace?: string | null
+}
+
 export type ResourceLibraryListingStatus = 'published' | 'archived'
 
 export type ResourceLibraryInstallStatus = 'installed' | 'removed' | 'failed'

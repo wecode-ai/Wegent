@@ -26,7 +26,8 @@ import { paths } from '@/config/paths'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { Group } from '@/types/group'
-import type { ManagedResourceType } from '../types'
+import type { ManagedResourceType, ResourceLibraryPublishSource } from '../types'
+import { PublishResourceDialog } from './PublishResourceDialog'
 
 type ResourceScope = 'personal' | 'group'
 
@@ -215,6 +216,9 @@ export function MyResources() {
   const [selectedGroup, setSelectedGroup] = useState<string | null>(() =>
     getInitialSearchParam('group')
   )
+  const [publishingSource, setPublishingSource] = useState<ResourceLibraryPublishSource | null>(
+    null
+  )
 
   useEffect(() => {
     let isMounted = true
@@ -250,12 +254,28 @@ export function MyResources() {
     [groups, selectedGroup]
   )
 
+  const handlePublishDialogOpenChange = useCallback((nextOpen: boolean) => {
+    if (!nextOpen) {
+      setPublishingSource(null)
+    }
+  }, [])
+
+  const handlePublished = useCallback(() => {
+    setPublishingSource(null)
+  }, [])
+
   const renderManager = () => {
     const managerScope = scope
     const groupName = scope === 'group' ? selectedGroup : null
 
     if (resourceType === 'agent') {
-      return <TeamListWithScope scope={managerScope} selectedGroup={groupName} />
+      return (
+        <TeamListWithScope
+          scope={managerScope}
+          selectedGroup={groupName}
+          onPublishResource={setPublishingSource}
+        />
+      )
     }
     if (resourceType === 'model') {
       return <ModelListWithScope scope={managerScope} selectedGroup={groupName} />
@@ -264,7 +284,13 @@ export function MyResources() {
       return <ShellListWithScope scope={managerScope} selectedGroup={groupName} />
     }
     if (resourceType === 'skill') {
-      return <SkillListWithScope scope={managerScope} selectedGroup={groupName} />
+      return (
+        <SkillListWithScope
+          scope={managerScope}
+          selectedGroup={groupName}
+          onPublishResource={setPublishingSource}
+        />
+      )
     }
     if (resourceType === 'retriever') {
       return <RetrieverListWithScope scope={managerScope} selectedGroup={groupName} />
@@ -289,6 +315,14 @@ export function MyResources() {
       </div>
 
       <div>{renderManager()}</div>
+
+      <PublishResourceDialog
+        open={publishingSource !== null}
+        resourceType={publishingSource?.resourceType ?? 'all'}
+        sourceResource={publishingSource}
+        onOpenChange={handlePublishDialogOpenChange}
+        onPublished={handlePublished}
+      />
     </div>
   )
 }

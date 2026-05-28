@@ -39,6 +39,7 @@ jest.mock('@/hooks/useTranslation', () => ({
         'bots.manage_bots': 'Manage Bots',
         'wizard:wizard_button': 'Wizard',
         'wizard:wizard_button_tooltip': 'Create with wizard',
+        'resource-library:actions.publish_to_library': 'Publish to library',
       })[key] || key,
     i18n: { language: 'en' },
   }),
@@ -146,6 +147,25 @@ describe('TeamList mode filter', () => {
     await waitFor(() => {
       expect(screen.queryByText('chat-agent')).not.toBeInTheDocument()
       expect(screen.getByText('device-agent')).toBeInTheDocument()
+    })
+  })
+
+  it('publishes a selected personal team through the callback', async () => {
+    const onPublishResource = jest.fn()
+    ;(fetchTeamsList as jest.Mock).mockResolvedValue([makeTeam(3, 'wiki-agent', ['chat'])])
+
+    render(<TeamList scope="personal" onPublishResource={onPublishResource} />)
+
+    await screen.findByText('wiki-agent')
+    await userEvent.click(screen.getByTestId('publish-team-3-button'))
+
+    expect(onPublishResource).toHaveBeenCalledWith({
+      resourceType: 'agent',
+      sourceId: 3,
+      name: 'wiki-agent',
+      displayName: 'wiki-agent',
+      description: '',
+      namespace: 'default',
     })
   })
 })

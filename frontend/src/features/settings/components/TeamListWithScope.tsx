@@ -8,18 +8,21 @@ import { useState, useEffect } from 'react'
 import TeamList from './TeamList'
 import { GroupSelector } from './groups/GroupSelector'
 import { listGroups } from '@/apis/groups'
+import type { ResourceLibraryPublishSource } from '@/features/resource-library/types'
 import type { BaseRole } from '@/types/base-role'
 
 interface TeamListWithScopeProps {
   scope: 'personal' | 'group' | 'all'
   selectedGroup?: string | null
   onGroupChange?: (groupName: string | null) => void
+  onPublishResource?: (source: ResourceLibraryPublishSource) => void
 }
 
 export function TeamListWithScope({
   scope,
   selectedGroup: externalSelectedGroup,
   onGroupChange,
+  onPublishResource,
 }: TeamListWithScopeProps) {
   // Use external state if provided, otherwise use internal state
   const [internalSelectedGroup, setInternalSelectedGroup] = useState<string | null>(null)
@@ -61,7 +64,7 @@ export function TeamListWithScope({
   }
 
   if (scope === 'personal') {
-    return <TeamList scope="personal" />
+    return <TeamList scope="personal" onPublishResource={onPublishResource} />
   }
 
   // When selectedGroup is provided externally (from nav), don't show GroupSelector
@@ -79,6 +82,7 @@ export function TeamListWithScope({
         groupName={selectedGroup || undefined}
         groupRoleMap={groupRoleMap}
         onEditResource={handleEditResource}
+        onPublishResource={onPublishResource}
       />
     </div>
   )

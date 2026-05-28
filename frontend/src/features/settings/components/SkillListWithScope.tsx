@@ -56,20 +56,27 @@ import {
   ExternalLink,
   Users,
   Link2,
+  UploadCloud,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import SkillUploadModal from './skills/SkillUploadModal'
 import SkillSearchModal from './skills/SkillSearchModal'
 import { SkillReferenceConflictDialog } from './skills/SkillReferenceConflictDialog'
 import { useUser } from '@/features/common/UserContext'
+import type { ResourceLibraryPublishSource } from '@/features/resource-library/types'
 
 interface SkillListWithScopeProps {
   scope: 'personal' | 'group' | 'all'
   selectedGroup?: string | null
   onGroupChange?: (groupName: string | null) => void
+  onPublishResource?: (source: ResourceLibraryPublishSource) => void
 }
 
-export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeProps) {
+export function SkillListWithScope({
+  scope,
+  selectedGroup,
+  onPublishResource,
+}: SkillListWithScopeProps) {
   const { t } = useTranslation('common')
   const { user } = useUser()
   const [skills, setSkills] = useState<UnifiedSkill[]>([])
@@ -172,6 +179,24 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
     if (user.role === 'admin') return true
 
     return false
+  }
+
+  const canPublishSkill = (skill: UnifiedSkill): boolean => {
+    if (!onPublishResource || skill.is_public) return false
+    if (scope === 'personal') return true
+    return canDeleteSkill(skill)
+  }
+
+  const handlePublishSkill = (skill: UnifiedSkill) => {
+    onPublishResource?.({
+      resourceType: 'skill',
+      sourceId: skill.id,
+      name: skill.name,
+      displayName: skill.displayName || skill.name,
+      description: skill.description,
+      tags: skill.tags || [],
+      namespace: skill.namespace,
+    })
   }
 
   const handleDelete = async () => {
@@ -556,6 +581,21 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
                       >
                         <Download className="w-4 h-4" />
                       </Button>
+                      {canPublishSkill(skill) && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handlePublishSkill(skill)}
+                          className="text-text-secondary hover:text-text-primary"
+                          title={t('resource-library:actions.publish_to_library')}
+                          aria-label={`${t('resource-library:actions.publish_to_library')} ${
+                            skill.displayName || skill.name
+                          }`}
+                          data-testid={`publish-skill-${skill.id}-button`}
+                        >
+                          <UploadCloud className="w-4 h-4" />
+                        </Button>
+                      )}
                       {canDeleteSkill(skill) && (
                         <Button
                           variant="ghost"
@@ -613,13 +653,6 @@ export function SkillListWithScope({ scope, selectedGroup }: SkillListWithScopeP
       </AlertDialog>
 
       {/* Upload Modal */}
-      {(() => {
-        const uploadNs = scope === 'group' && selectedGroup ? selectedGroup : 'default'
-        console.log(
-          `[SkillListWithScope] scope=${scope}, selectedGroup=${selectedGroup}, uploadNamespace=${uploadNs}`
-        )
-        return null
-      })()}
       <SkillUploadModal
         open={uploadModalOpen}
         onClose={handleUploadModalClose}

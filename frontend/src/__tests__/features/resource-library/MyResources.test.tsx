@@ -8,6 +8,7 @@ import userEvent from '@testing-library/user-event'
 
 import { listGroups } from '@/apis/groups'
 import { MyResources } from '@/features/resource-library/components/MyResources'
+import type { ResourceLibraryPublishSource } from '@/features/resource-library/types'
 
 const mockPush = jest.fn()
 
@@ -25,11 +26,29 @@ jest.mock('@/features/settings/components/TeamListWithScope', () => ({
   TeamListWithScope: ({
     scope,
     selectedGroup,
+    onPublishResource,
   }: {
     scope: string
     selectedGroup?: string | null
+    onPublishResource?: (source: ResourceLibraryPublishSource) => void
   }) => (
-    <div data-testid="agent-resource-manager" data-scope={scope} data-group={selectedGroup ?? ''} />
+    <div data-testid="agent-resource-manager" data-scope={scope} data-group={selectedGroup ?? ''}>
+      <button
+        type="button"
+        data-testid="mock-publish-agent"
+        onClick={() =>
+          onPublishResource?.({
+            resourceType: 'agent',
+            sourceId: 11,
+            name: 'agent-one',
+            displayName: 'Agent One',
+            description: 'Agent desc',
+          })
+        }
+      >
+        publish agent
+      </button>
+    </div>
   ),
 }))
 
@@ -61,11 +80,30 @@ jest.mock('@/features/settings/components/SkillListWithScope', () => ({
   SkillListWithScope: ({
     scope,
     selectedGroup,
+    onPublishResource,
   }: {
     scope: string
     selectedGroup?: string | null
+    onPublishResource?: (source: ResourceLibraryPublishSource) => void
   }) => (
-    <div data-testid="skill-resource-manager" data-scope={scope} data-group={selectedGroup ?? ''} />
+    <div data-testid="skill-resource-manager" data-scope={scope} data-group={selectedGroup ?? ''}>
+      <button
+        type="button"
+        data-testid="mock-publish-skill"
+        onClick={() =>
+          onPublishResource?.({
+            resourceType: 'skill',
+            sourceId: 22,
+            name: 'skill-one',
+            displayName: 'Skill One',
+            description: 'Skill desc',
+            tags: ['chat'],
+          })
+        }
+      >
+        publish skill
+      </button>
+    </div>
   ),
 }))
 
@@ -83,6 +121,29 @@ jest.mock('@/features/settings/components/RetrieverListWithScope', () => ({
       data-group={selectedGroup ?? ''}
     />
   ),
+}))
+
+jest.mock('@/features/resource-library/components/PublishResourceDialog', () => ({
+  PublishResourceDialog: ({
+    open,
+    sourceResource,
+    onOpenChange,
+  }: {
+    open: boolean
+    sourceResource?: ResourceLibraryPublishSource | null
+    onOpenChange: (open: boolean) => void
+  }) =>
+    open ? (
+      <div
+        data-testid="publish-resource-dialog"
+        data-resource-type={sourceResource?.resourceType ?? ''}
+        data-source-id={sourceResource?.sourceId ?? ''}
+      >
+        <button type="button" onClick={() => onOpenChange(false)}>
+          close
+        </button>
+      </div>
+    ) : null,
 }))
 
 jest.mock('@/hooks/useTranslation', () => ({
@@ -205,6 +266,29 @@ describe('MyResources', () => {
       'data-scope',
       'personal'
     )
+  })
+
+  it('opens publish dialog from the selected agent manager item', async () => {
+    render(<MyResources />)
+
+    expect(await screen.findByTestId('agent-resource-manager')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('mock-publish-agent'))
+
+    const dialog = screen.getByTestId('publish-resource-dialog')
+    expect(dialog).toHaveAttribute('data-resource-type', 'agent')
+    expect(dialog).toHaveAttribute('data-source-id', '11')
+  })
+
+  it('opens publish dialog from the selected skill manager item', async () => {
+    render(<MyResources />)
+
+    expect(await screen.findByTestId('agent-resource-manager')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('managed-resource-skill-tab'))
+    fireEvent.click(screen.getByTestId('mock-publish-skill'))
+
+    const dialog = screen.getByTestId('publish-resource-dialog')
+    expect(dialog).toHaveAttribute('data-resource-type', 'skill')
+    expect(dialog).toHaveAttribute('data-source-id', '22')
   })
 
   it('passes selected group scope into migrated managers', async () => {

@@ -23,6 +23,7 @@
     "install": "安装",
     "installed": "已安装",
     "publish": "发布资源",
+    "publish_to_library": "发布到资源库",
     "upgrade": "升级",
     "archive": "归档",
     "configure": "配置",
@@ -75,6 +76,7 @@
     "publish_failed": "发布失败"
   },
   "publish": {
-    "description": "将已有智能体或技能发布到资源库"
+    "description": "将已有智能体或技能发布到资源库",
+    "selected_resource": "已选资源"
   }
 }
