@@ -19,11 +19,18 @@ export interface ProjectExecutionConfig {
   deviceId?: string
 }
 
+export interface ProjectWorkspaceConfig {
+  source: 'git' | 'local_path'
+  localPath?: string
+  checkoutPath?: string
+}
+
 export interface ProjectConfig {
   mode?: 'workspace' | string
   path?: string
   device_id?: string
   execution?: ProjectExecutionConfig | null
+  workspace?: ProjectWorkspaceConfig | null
 }
 
 export interface DeviceInfo {
@@ -37,7 +44,10 @@ export interface DeviceInfo {
 export interface ProjectTask {
   id: number
   task_id: number
+  task_title?: string
+  task_status?: string
   title?: string
+  status?: string
   created_at?: string
   updated_at?: string
   task_type?: string
@@ -53,7 +63,22 @@ export interface ProjectWithTasks {
 }
 
 export interface ProjectListResponse {
+  total?: number
   items: ProjectWithTasks[]
+}
+
+export interface CreateProjectRequest {
+  name: string
+  description?: string
+  color?: string
+  config?: ProjectConfig
+}
+
+export interface UpdateProjectRequest {
+  name?: string
+  description?: string
+  color?: string
+  config?: ProjectConfig
 }
 
 export interface Task {
@@ -72,6 +97,56 @@ export interface Task {
 export interface TaskListResponse {
   total: number
   items: Task[]
+}
+
+export interface ArchivedTask {
+  id: number
+  title: string
+  status: string
+  task_type: string
+  type: string
+  created_at: string
+  updated_at: string
+  completed_at?: string | null
+  project_id: number
+  project_name?: string | null
+}
+
+export interface ArchivedTaskListResponse {
+  total: number
+  items: ArchivedTask[]
+}
+
+export interface TaskArchiveBatchResponse {
+  message: string
+  count: number
+}
+
+export interface TaskArchiveResponse {
+  message: string
+  task_id: number
+}
+
+export interface DeviceCommandRequest {
+  command_key: string
+  path?: string
+  cwd?: string
+  args?: string[]
+  env?: Record<string, unknown>
+  timeout_seconds?: number
+  max_output_bytes?: number
+}
+
+export interface DeviceCommandResponse {
+  success: boolean
+  exit_code?: number | null
+  stdout: string | string[]
+  stderr: string
+  error?: string
+  duration?: number
+  timed_out?: boolean
+  stdout_truncated?: boolean
+  stderr_truncated?: boolean
 }
 
 export interface TaskContextData {

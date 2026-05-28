@@ -12,7 +12,10 @@ import { createChatStream } from '@/stream/chatStream'
 import { createSocketClient } from '@/stream/socketClient'
 import type {
   Attachment,
+  ArchivedTaskListResponse,
   ChatSendPayload,
+  CreateProjectRequest,
+  ProjectWithTasks,
   SkillRef,
   Subtask,
   Task,
@@ -63,7 +66,21 @@ export interface WorkbenchContextValue {
     resetAttachments: () => void
   }
   selectProject: (projectId: number) => void
+  startNewProjectChat: (projectId: number) => void
   openTask: (taskId: number) => Promise<void>
+  refreshWorkLists: () => Promise<void>
+  createProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
+  updateProjectName: (projectId: number, name: string) => Promise<void>
+  removeProject: (projectId: number) => Promise<void>
+  archiveAllChats: () => Promise<void>
+  archiveProjectChats: (projectId: number) => Promise<void>
+  archiveTask: (taskId: number) => Promise<void>
+  renameTask: (taskId: number, title: string) => Promise<void>
+  listArchivedTasks: () => Promise<ArchivedTaskListResponse>
+  unarchiveTask: (taskId: number) => Promise<void>
+  deleteTask: (taskId: number) => Promise<void>
+  deleteArchivedTasks: () => Promise<void>
+  listDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   setInput: (input: string) => void
   sendCurrentInput: () => Promise<void>
 }
@@ -158,6 +175,20 @@ export function WorkbenchProvider({
     }
   }, [resolvedServices, user])
 
+  const refreshWorkLists = useCallback(async () => {
+    const [projectsResult, recentTasksResult, devicesResult] = await Promise.all([
+      resolvedServices.projectApi.listProjects(),
+      resolvedServices.taskApi.listRecentTasks({ limit: 20 }),
+      resolvedServices.deviceApi.listDevices(),
+    ])
+    dispatch({
+      type: 'lists_refreshed',
+      projects: projectsResult.items,
+      recentTasks: recentTasksResult.items,
+      devices: devicesResult,
+    })
+  }, [resolvedServices])
+
   useEffect(() => {
     return resolvedServices.chatStream.subscribe({
       onChatStart: payload =>
@@ -221,9 +252,20 @@ export function WorkbenchProvider({
   const selectProject = useCallback(
     (projectId: number) => {
       const project = state.projects.find(item => item.id === projectId)
-      if (project) dispatch({ type: 'project_selected', project })
+      if (project) {
+        dispatch({ type: 'project_selected', project })
+        dispatchMessages({ type: 'reset', messages: [] })
+      }
     },
     [state.projects]
+  )
+
+  const startNewProjectChat = useCallback(
+    (projectId: number) => {
+      selectProject(projectId)
+      dispatchMessages({ type: 'reset', messages: [] })
+    },
+    [selectProject]
   )
 
   const openTask = useCallback(
@@ -242,6 +284,99 @@ export function WorkbenchProvider({
   const setInput = useCallback((input: string) => {
     dispatch({ type: 'input_changed', input })
   }, [])
+
+  const createProject = useCallback(
+    async (data: CreateProjectRequest) => {
+      const project = await resolvedServices.projectApi.createProject(data)
+      await refreshWorkLists()
+      dispatch({ type: 'project_selected', project })
+      dispatchMessages({ type: 'reset', messages: [] })
+      return project
+    },
+    [refreshWorkLists, resolvedServices]
+  )
+
+  const updateProjectName = useCallback(
+    async (projectId: number, name: string) => {
+      await resolvedServices.projectApi.updateProject(projectId, { name })
+      await refreshWorkLists()
+    },
+    [refreshWorkLists, resolvedServices]
+  )
+
+  const removeProject = useCallback(
+    async (projectId: number) => {
+      await resolvedServices.projectApi.deleteProject(projectId)
+      await refreshWorkLists()
+    },
+    [refreshWorkLists, resolvedServices]
+  )
+
+  const archiveAllChats = useCallback(async () => {
+    await resolvedServices.taskApi.archiveAllChats()
+    await refreshWorkLists()
+    dispatchMessages({ type: 'reset', messages: [] })
+  }, [refreshWorkLists, resolvedServices])
+
+  const archiveProjectChats = useCallback(
+    async (projectId: number) => {
+      await resolvedServices.projectApi.archiveProjectChats(projectId)
+      await refreshWorkLists()
+      dispatchMessages({ type: 'reset', messages: [] })
+    },
+    [refreshWorkLists, resolvedServices]
+  )
+
+  const archiveTask = useCallback(
+    async (taskId: number) => {
+      await resolvedServices.taskApi.archiveTask(taskId)
+      await refreshWorkLists()
+      if (state.currentTask?.id === taskId) {
+        dispatchMessages({ type: 'reset', messages: [] })
+      }
+    },
+    [refreshWorkLists, resolvedServices, state.currentTask?.id]
+  )
+
+  const renameTask = useCallback(
+    async (taskId: number, title: string) => {
+      await resolvedServices.taskApi.renameTask(taskId, title)
+      await refreshWorkLists()
+    },
+    [refreshWorkLists, resolvedServices]
+  )
+
+  const listArchivedTasks = useCallback(
+    () => resolvedServices.taskApi.listArchivedTasks(),
+    [resolvedServices]
+  )
+
+  const unarchiveTask = useCallback(
+    async (taskId: number) => {
+      await resolvedServices.taskApi.unarchiveTask(taskId)
+      await refreshWorkLists()
+    },
+    [refreshWorkLists, resolvedServices]
+  )
+
+  const deleteTask = useCallback(
+    async (taskId: number) => {
+      await resolvedServices.taskApi.deleteTask(taskId)
+      await refreshWorkLists()
+    },
+    [refreshWorkLists, resolvedServices]
+  )
+
+  const deleteArchivedTasks = useCallback(async () => {
+    await resolvedServices.taskApi.deleteArchivedTasks()
+    await refreshWorkLists()
+  }, [refreshWorkLists, resolvedServices])
+
+  const listDeviceDirectories = useCallback(
+    (deviceId: string, path: string) =>
+      resolvedServices.deviceApi.listDirectories(deviceId, path),
+    [resolvedServices]
+  )
 
   const sendCurrentInput = useCallback(async () => {
     const trimmedMessage = state.input.trim()
@@ -315,6 +450,7 @@ export function WorkbenchProvider({
     resolvedServices,
     skillSelection.selectedSkills,
     state.currentProject?.id,
+    state.currentProject?.config,
     state.currentTask,
     state.defaultTeam,
     state.input,
@@ -342,7 +478,21 @@ export function WorkbenchProvider({
       resetAttachments: attachmentSelection.resetAttachments,
     },
     selectProject,
+    startNewProjectChat,
     openTask,
+    refreshWorkLists,
+    createProject,
+    updateProjectName,
+    removeProject,
+    archiveAllChats,
+    archiveProjectChats,
+    archiveTask,
+    renameTask,
+    listArchivedTasks,
+    unarchiveTask,
+    deleteTask,
+    deleteArchivedTasks,
+    listDeviceDirectories,
     setInput,
     sendCurrentInput,
   }

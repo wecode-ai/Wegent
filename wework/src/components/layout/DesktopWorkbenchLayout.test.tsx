@@ -1,14 +1,20 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, test, vi } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { DesktopWorkbenchLayout } from './DesktopWorkbenchLayout'
 
 describe('DesktopWorkbenchLayout', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+  })
+
   const baseProps = {
     state: {
       user: null,
       defaultTeam: null,
       projects: [{ id: 1, name: 'github_wegent', tasks: [] }],
+      devices: [],
       recentTasks: [
         {
           id: 3,
@@ -16,6 +22,7 @@ describe('DesktopWorkbenchLayout', () => {
           status: 'COMPLETED',
           task_type: 'code' as const,
           created_at: '2026-05-25T00:00:00.000Z',
+          updated_at: '2026-05-25T08:30:00.000Z',
         },
       ],
       currentProject: null,
@@ -26,8 +33,45 @@ describe('DesktopWorkbenchLayout', () => {
       error: null,
     },
     messages: [],
+    projectChat: {
+      models: [],
+      skills: [],
+      selectedModel: null,
+      selectedSkills: [],
+      attachments: [],
+      uploadingFiles: new Map(),
+      errors: new Map(),
+      isOptionsLocked: false,
+      isAttachmentReadyToSend: true,
+      setSelectedModel: vi.fn(),
+      setSelectedSkills: vi.fn(),
+      toggleSkill: vi.fn(),
+      handleFileSelect: vi.fn(),
+      addExistingAttachment: vi.fn(),
+      removeAttachment: vi.fn(),
+      resetAttachments: vi.fn(),
+    },
+    projectWork: {
+      projects: [{ id: 1, name: 'github_wegent', tasks: [] }],
+      devices: [],
+      currentProjectId: undefined,
+      onSelectProject: vi.fn(),
+    },
     onSelectProject: vi.fn(),
+    onStartNewProjectChat: vi.fn(),
     onOpenTask: vi.fn(),
+    onCreateProject: vi.fn(),
+    onUpdateProjectName: vi.fn(),
+    onRemoveProject: vi.fn(),
+    onArchiveAllChats: vi.fn(),
+    onArchiveProjectChats: vi.fn(),
+    onArchiveTask: vi.fn(),
+    onRenameTask: vi.fn(),
+    onListArchivedTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+    onUnarchiveTask: vi.fn(),
+    onDeleteTask: vi.fn(),
+    onDeleteArchivedTasks: vi.fn(),
+    onListDeviceDirectories: vi.fn(),
     onInputChange: vi.fn(),
     onSend: vi.fn(),
     onLogout: vi.fn(),
@@ -111,6 +155,239 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getAllByText('设置')).toHaveLength(2)
     expect(screen.getByText('剩余用量')).toBeInTheDocument()
     expect(screen.getByText('退出登录')).toBeInTheDocument()
+  })
+
+  test('shows project header menus and creates a scratch project workspace', async () => {
+    const onCreateProject = vi.fn().mockResolvedValue({ id: 2, name: 'alpha', tasks: [] })
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onCreateProject={onCreateProject}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'device-1',
+              name: 'sifang-executor',
+              status: 'online',
+              is_default: true,
+            },
+          ],
+        }}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('projects-more-button'))
+    expect(screen.getByTestId('archive-all-chats-button')).toHaveTextContent(
+      'Archive all chats',
+    )
+    await userEvent.click(screen.getByTestId('archive-all-chats-button'))
+    expect(baseProps.onArchiveAllChats).toHaveBeenCalledTimes(1)
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-start-from-scratch-button'))
+
+    expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
+    await userEvent.type(screen.getByTestId('project-name-input'), 'alpha app')
+    expect(screen.getByText(/~\/\.wecode\/wegent-executor\/workspace\/alpha-app/)).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('create-project-button'))
+
+    await waitFor(() =>
+      expect(onCreateProject).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'alpha app',
+          config: expect.objectContaining({
+            mode: 'workspace',
+            execution: {
+              targetType: 'local',
+              deviceId: 'device-1',
+            },
+            workspace: {
+              source: 'local_path',
+              localPath: '~/.wecode/wegent-executor/workspace/alpha-app',
+            },
+          }),
+        }),
+      ),
+    )
+  })
+
+  test('creates a project from an existing folder selected in the directory tree', async () => {
+    const onCreateProject = vi.fn().mockResolvedValue({ id: 2, name: 'repo', tasks: [] })
+    const onListDeviceDirectories = vi.fn().mockResolvedValue(['repo'])
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onCreateProject={onCreateProject}
+        onListDeviceDirectories={onListDeviceDirectories}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'device-1',
+              name: 'sifang-executor',
+              status: 'online',
+              is_default: true,
+            },
+          ],
+        }}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-existing-folder-button'))
+
+    await waitFor(() =>
+      expect(onListDeviceDirectories).toHaveBeenCalledWith('device-1', '/'),
+    )
+    await userEvent.click(await screen.findByText('repo'))
+    await userEvent.click(screen.getByTestId('select-current-directory-button'))
+    await userEvent.click(screen.getByTestId('create-project-button'))
+
+    await waitFor(() =>
+      expect(onCreateProject).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'repo',
+          config: expect.objectContaining({
+            workspace: {
+              source: 'local_path',
+              localPath: '/repo',
+            },
+          }),
+        }),
+      ),
+    )
+  })
+
+  test('shows project row actions and chat row actions', async () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          projects: [
+            {
+              id: 1,
+              name: 'publish',
+              tasks: [
+                {
+                  id: 11,
+                  task_id: 11,
+                  task_title: 'Implement archive',
+                  task_status: 'COMPLETED',
+                  updated_at: '2026-05-28T10:25:00',
+                },
+              ],
+            },
+          ],
+        }}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('project-new-conversation-button'))
+    expect(baseProps.onStartNewProjectChat).toHaveBeenCalledWith(1)
+
+    await userEvent.click(screen.getByTestId('project-menu-1'))
+    expect(screen.getByTestId('rename-project-1')).toHaveTextContent('Rename project')
+    expect(screen.getByTestId('archive-project-chats-1')).toHaveTextContent('Archive chats')
+    expect(screen.getByTestId('remove-project-1')).toHaveTextContent('Remove')
+
+    await userEvent.click(screen.getByTestId('rename-project-1'))
+    await userEvent.clear(screen.getByTestId('rename-project-input'))
+    await userEvent.type(screen.getByTestId('rename-project-input'), 'publish-v2')
+    await userEvent.click(screen.getByTestId('confirm-rename-project-button'))
+    expect(baseProps.onUpdateProjectName).toHaveBeenCalledWith(1, 'publish-v2')
+
+    expect(screen.getByText('Implement archive')).toBeInTheDocument()
+    expect(screen.getByText(/10:25/)).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('project-chat-menu-11'))
+    expect(screen.getByTestId('archive-chat-11')).toHaveTextContent('Archive chat')
+    expect(screen.getByTestId('rename-chat-11')).toHaveTextContent('Rename chat')
+  })
+
+  test('sorts recent sessions by updated time and exposes chat archive actions', async () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          recentTasks: [
+            {
+              id: 4,
+              title: 'Older session',
+              status: 'COMPLETED',
+              task_type: 'code',
+              created_at: '2026-05-28T08:00:00',
+              updated_at: '2026-05-28T08:00:00',
+            },
+            {
+              id: 5,
+              title: 'Newest session',
+              status: 'COMPLETED',
+              task_type: 'code',
+              created_at: '2026-05-28T09:00:00',
+              updated_at: '2026-05-28T11:30:00',
+            },
+          ],
+        }}
+      />,
+    )
+
+    const rows = screen.getAllByTestId('history-task-button')
+    expect(rows[0]).toHaveTextContent('Newest session')
+    expect(rows[1]).toHaveTextContent('Older session')
+    expect(screen.getByText(/11:30/)).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('history-task-menu-5'))
+    expect(screen.getByTestId('archive-history-chat-5')).toHaveTextContent('Archive chat')
+    expect(screen.getByTestId('rename-history-chat-5')).toHaveTextContent('Rename chat')
+  })
+
+  test('opens archived chats settings and supports unarchive and delete actions', async () => {
+    const onListArchivedTasks = vi.fn().mockResolvedValue({
+      total: 1,
+      items: [
+        {
+          id: 20,
+          title: 'Archived task',
+          status: 'COMPLETED',
+          task_type: 'code',
+          type: 'offline',
+          created_at: '2026-05-27T01:00:00.000Z',
+          updated_at: '2026-05-27T12:15:00.000Z',
+          project_id: 1,
+          project_name: 'Wegent',
+        },
+      ],
+    })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onListArchivedTasks={onListArchivedTasks}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('settings-button'))
+    await userEvent.click(screen.getByTestId('settings-menu-button'))
+    await userEvent.click(screen.getByTestId('settings-nav-archived-chats'))
+
+    expect(await screen.findByTestId('archived-chats-settings')).toBeInTheDocument()
+    expect(screen.getByText('Archived task')).toBeInTheDocument()
+    expect(screen.getByText(/Wegent/)).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('unarchive-chat-20'))
+    await waitFor(() => expect(baseProps.onUnarchiveTask).toHaveBeenCalledWith(20))
+
+    await userEvent.click(screen.getByTestId('delete-archived-chat-20'))
+    await waitFor(() => expect(baseProps.onDeleteTask).toHaveBeenCalledWith(20))
+
+    await userEvent.click(screen.getByTestId('delete-all-archived-chats-button'))
+    await waitFor(() => expect(baseProps.onDeleteArchivedTasks).toHaveBeenCalledTimes(1))
   })
 
   test('opens the independent connection settings page from the settings menu', async () => {

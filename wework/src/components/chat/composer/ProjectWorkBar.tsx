@@ -1,6 +1,6 @@
 import { ChevronDown, FolderOpen, FolderPlus } from 'lucide-react'
 import { useCallback, useMemo, useRef, useState } from 'react'
-import { useTranslation } from 'react-i18next'
+import { useTranslation } from '@/hooks/useTranslation'
 import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
 import { useOutsideClick } from './useOutsideClick'
 
@@ -24,11 +24,11 @@ export function ProjectWorkBar({ projects, devices, currentProjectId, onSelectPr
     [projects, currentProjectId]
   )
 
-  const getDeviceForProject = (project: ProjectWithTasks): DeviceInfo | undefined => {
+  const getDeviceForProject = useCallback((project: ProjectWithTasks): DeviceInfo | undefined => {
     const deviceId = project.config?.execution?.deviceId
     if (!deviceId) return undefined
     return devices.find(d => d.device_id === deviceId)
-  }
+  }, [devices])
 
   const sortedProjects = useMemo(() => {
     return [...projects].sort((a, b) => {
@@ -38,7 +38,7 @@ export function ProjectWorkBar({ projects, devices, currentProjectId, onSelectPr
       const onlineB = deviceB?.status === 'online' ? 1 : 0
       return onlineB - onlineA
     })
-  }, [projects, devices])
+  }, [projects, getDeviceForProject])
 
   const handleSelectProject = (projectId: number) => {
     onSelectProject(projectId)
