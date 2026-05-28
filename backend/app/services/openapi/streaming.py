@@ -183,14 +183,12 @@ class OpenAPIStreamingService:
 
         message_id = _generate_message_id()
         accumulated_text = ""
-        accumulated_reasoning = ""
         sequence_number = 0
-        reasoning_started = False
-        reasoning_complete = False
         next_output_index = 0
         message_started = False
-        reasoning_output_index: Optional[int] = None
         message_output_index: Optional[int] = None
+        reasoning_segments: List[Dict[str, Any]] = []
+        current_reasoning_segment: Optional[Dict[str, Any]] = None
         tool_output_indexes: Dict[str, int] = {}
         completed_output_items: Dict[int, Any] = {}
         pending_user_input = False
@@ -212,6 +210,23 @@ class OpenAPIStreamingService:
             if existing is not None:
                 return existing
             return allocate_output_index()
+
+        def ensure_reasoning_segment() -> tuple[Dict[str, Any], bool]:
+            nonlocal current_reasoning_segment
+            if current_reasoning_segment is not None:
+                return current_reasoning_segment, False
+
+            current_reasoning_segment = {
+                "output_index": allocate_output_index(),
+                "item_id": _generate_message_id(),
+                "content": "",
+            }
+            reasoning_segments.append(current_reasoning_segment)
+            return current_reasoning_segment, True
+
+        def close_reasoning_segment() -> None:
+            nonlocal current_reasoning_segment
+            current_reasoning_segment = None
 
         try:
             # Event 1: response.created
@@ -261,21 +276,19 @@ class OpenAPIStreamingService:
                 # Handle StreamingChunk objects
                 if isinstance(chunk, StreamingChunk):
                     if chunk.type == "reasoning":
-                        # Start reasoning output if not started
-                        if not reasoning_started:
-                            reasoning_started = True
-                            reasoning_output_index = allocate_output_index()
+                        segment, created = ensure_reasoning_segment()
+                        if created:
                             # Official OpenAI event: response.reasoning_summary_part.added
                             yield _format_sse_event(
                                 {
                                     "item": {
-                                        "id": _generate_message_id(),
+                                        "id": segment["item_id"],
                                         "object": "response.output_item",
                                         "status": "in_progress",
                                         "summary": [],
                                         "type": "reasoning",
                                     },
-                                    "output_index": reasoning_output_index,
+                                    "output_index": segment["output_index"],
                                     "sequence_number": sequence_number,
                                     "type": "response.reasoning_summary_part.added",
                                 }
@@ -283,15 +296,15 @@ class OpenAPIStreamingService:
                             sequence_number += 1
 
                         # Accumulate reasoning content
-                        if chunk.content and not reasoning_complete:
-                            accumulated_reasoning += chunk.content
+                        if chunk.content:
+                            segment["content"] += chunk.content
                             # Official OpenAI event: response.reasoning_summary_text.delta
                             yield _format_sse_event(
                                 {
                                     "content_index": 0,
                                     "delta": chunk.content,
-                                    "item_id": message_id,
-                                    "output_index": reasoning_output_index,
+                                    "item_id": segment["item_id"],
+                                    "output_index": segment["output_index"],
                                     "sequence_number": sequence_number,
                                     "type": "response.reasoning_summary_text.delta",
                                 }
@@ -301,11 +314,7 @@ class OpenAPIStreamingService:
                     elif chunk.type == "text":
                         # Handle text content
                         if chunk.content:
-                            # If we had reasoning before, close it first
-                            if reasoning_started and not reasoning_complete:
-                                reasoning_complete = True
-                                # Note: OpenAI doesn't have explicit reasoning "done" event
-                                # We transition directly to text output
+                            close_reasoning_segment()
 
                             accumulated_text += chunk.content
 
@@ -360,6 +369,7 @@ class OpenAPIStreamingService:
                             )
                             sequence_number += 1
                     elif chunk.type == "function_call_added":
+                        close_reasoning_segment()
                         call_id = chunk.data["call_id"]
                         name = chunk.data["name"]
                         arguments = chunk.data.get("arguments") or ""
@@ -381,6 +391,7 @@ class OpenAPIStreamingService:
                         )
                         sequence_number += 1
                     elif chunk.type == "function_call_done":
+                        close_reasoning_segment()
                         call_id = chunk.data["call_id"]
                         name = chunk.data["name"]
                         arguments = chunk.data.get("arguments") or ""
@@ -422,6 +433,7 @@ class OpenAPIStreamingService:
                         )
                         sequence_number += 1
                     elif chunk.type == "shell_call_added":
+                        close_reasoning_segment()
                         call_id = chunk.data["call_id"]
                         name = chunk.data["name"]
                         arguments = chunk.data.get("arguments") or {}
@@ -442,6 +454,7 @@ class OpenAPIStreamingService:
                         )
                         sequence_number += 1
                     elif chunk.type == "shell_call_done":
+                        close_reasoning_segment()
                         call_id = chunk.data["call_id"]
                         name = chunk.data["name"]
                         arguments = chunk.data.get("arguments") or {}
@@ -472,6 +485,7 @@ class OpenAPIStreamingService:
                         )
                         sequence_number += 1
                     elif chunk.type == "mcp_call_added":
+                        close_reasoning_segment()
                         item_id = chunk.data["item_id"]
                         name = chunk.data["name"]
                         server_label = chunk.data["server_label"]
@@ -503,6 +517,7 @@ class OpenAPIStreamingService:
                         )
                         sequence_number += 1
                     elif chunk.type == "mcp_call_done":
+                        close_reasoning_segment()
                         item_id = chunk.data["item_id"]
                         name = chunk.data["name"]
                         server_label = chunk.data["server_label"]
@@ -650,12 +665,20 @@ class OpenAPIStreamingService:
                 sequence_number += 1
 
             # Build final output items
-            if accumulated_reasoning and reasoning_output_index is not None:
-                completed_output_items[reasoning_output_index] = OutputMessage(
-                    id=_generate_message_id(),
+            for segment in reasoning_segments:
+                if not segment["content"]:
+                    continue
+                completed_output_items[segment["output_index"]] = OutputMessage(
+                    id=segment["item_id"],
                     status="completed",
                     role="assistant",
-                    content=[{"type": "reasoning", "text": accumulated_reasoning}],
+                    content=[
+                        OutputTextContent(
+                            type="reasoning",
+                            text=segment["content"],
+                            annotations=[],
+                        )
+                    ],
                 )
             if accumulated_text and message_output_index is not None:
                 completed_output_items[message_output_index] = OutputMessage(
