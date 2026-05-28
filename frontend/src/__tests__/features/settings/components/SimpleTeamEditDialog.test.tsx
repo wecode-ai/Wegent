@@ -353,6 +353,36 @@ describe('Simple TeamEditDialog', () => {
     expect(screen.queryByText('Common repository hint.')).not.toBeInTheDocument()
   })
 
+  it('collapses and expands the basic settings section from its header', async () => {
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    expect(await screen.findByLabelText(/^Name/)).toBeInTheDocument()
+
+    const basicSectionTrigger = screen.getByTestId('simple-section-basic-trigger')
+    expect(basicSectionTrigger).toHaveAttribute('aria-expanded', 'true')
+
+    fireEvent.click(basicSectionTrigger)
+
+    expect(basicSectionTrigger).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByLabelText(/^Name/)).not.toBeInTheDocument()
+
+    fireEvent.click(basicSectionTrigger)
+
+    expect(basicSectionTrigger).toHaveAttribute('aria-expanded', 'true')
+    expect(await screen.findByLabelText(/^Name/)).toBeInTheDocument()
+  })
+
   it('saves a new simple solo agent through bot and team payloads', async () => {
     render(
       <TeamEditDialog

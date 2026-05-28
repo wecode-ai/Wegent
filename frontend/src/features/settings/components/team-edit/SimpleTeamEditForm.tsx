@@ -4,8 +4,8 @@
 
 'use client'
 
-import { type ReactNode, useMemo, useState } from 'react'
-import { SettingsIcon, Wand2, XIcon } from 'lucide-react'
+import { type ReactNode, useId, useMemo, useState } from 'react'
+import { ChevronDown, SettingsIcon, Wand2, XIcon } from 'lucide-react'
 
 import type { SkillRefMeta } from '@/apis/bots'
 import type { ModelTypeEnum, UnifiedModel } from '@/apis/models'
@@ -88,14 +88,42 @@ interface SimpleTeamEditFormProps {
   groupName?: string
 }
 
-function SimpleSection({ title, children }: { title: string; children: ReactNode }) {
+function SimpleSection({
+  title,
+  sectionId,
+  children,
+}: {
+  title: string
+  sectionId: string
+  children: ReactNode
+}) {
+  const [isExpanded, setIsExpanded] = useState(true)
+  const contentId = useId()
+
   return (
     <section className="space-y-4">
-      <div className="flex items-center gap-3">
+      <button
+        type="button"
+        aria-controls={contentId}
+        aria-expanded={isExpanded}
+        data-testid={`simple-section-${sectionId}-trigger`}
+        onClick={() => setIsExpanded(current => !current)}
+        className="group flex w-full items-center gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+      >
         <h3 className="shrink-0 text-sm font-semibold text-text-primary">{title}</h3>
-        <div className="h-px flex-1 bg-border" />
-      </div>
-      {children}
+        <div className="h-px flex-1 bg-border transition-colors group-hover:bg-primary/40" />
+        <ChevronDown
+          className={cn(
+            'h-4 w-4 shrink-0 text-text-muted transition-transform duration-200',
+            !isExpanded && '-rotate-90'
+          )}
+        />
+      </button>
+      {isExpanded && (
+        <div id={contentId} className="space-y-4">
+          {children}
+        </div>
+      )}
     </section>
   )
 }
@@ -175,7 +203,7 @@ export default function SimpleTeamEditForm({
 
   return (
     <div className="space-y-5">
-      <SimpleSection title={t('settings:team.simple.sections.basic')}>
+      <SimpleSection title={t('settings:team.simple.sections.basic')} sectionId="basic">
         <SimpleConfigGroup>
           <SimpleConfigRow
             label={
@@ -248,7 +276,7 @@ export default function SimpleTeamEditForm({
         </SimpleConfigGroup>
       </SimpleSection>
 
-      <SimpleSection title={t('settings:team.simple.sections.execution')}>
+      <SimpleSection title={t('settings:team.simple.sections.execution')} sectionId="execution">
         <SimpleConfigGroup>
           <SimpleConfigRow
             label={t('common:team.bind_mode')}
@@ -292,7 +320,7 @@ export default function SimpleTeamEditForm({
         </SimpleConfigGroup>
       </SimpleSection>
 
-      <SimpleSection title={t('settings:team.simple.sections.prompt')}>
+      <SimpleSection title={t('settings:team.simple.sections.prompt')} sectionId="prompt">
         <SimpleConfigGroup>
           <div className="space-y-2">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -323,7 +351,7 @@ export default function SimpleTeamEditForm({
         </SimpleConfigGroup>
       </SimpleSection>
 
-      <SimpleSection title={t('settings:team.simple.sections.capability')}>
+      <SimpleSection title={t('settings:team.simple.sections.capability')} sectionId="capability">
         <SimpleConfigGroup>
           <SimpleConfigRow
             label={t('common:skills.skills_section')}
