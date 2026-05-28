@@ -59,6 +59,8 @@ interface ChatInputProps {
   onExpandToggle?: () => void
   /** Use tighter vertical spacing for prefilled queue-message state */
   compactSpacing?: boolean
+  /** Increment to focus the editor and move the cursor to the end after external fills. */
+  focusAtEndSignal?: number
 }
 
 export default function ChatInput({
@@ -88,6 +90,7 @@ export default function ChatInput({
   isExpanded = false,
   onExpandToggle,
   compactSpacing = false,
+  focusAtEndSignal,
 }: ChatInputProps) {
   const { t, i18n } = useTranslation()
 
@@ -124,6 +127,7 @@ export default function ChatInput({
   const { user } = useUser()
   const editableRef = useRef<HTMLDivElement>(null)
   const badgeRef = useRef<HTMLSpanElement>(null)
+  const lastFocusAtEndSignalRef = useRef(focusAtEndSignal)
   const [badgeWidth, setBadgeWidth] = useState(0)
 
   // Track if we should show placeholder
@@ -620,9 +624,9 @@ export default function ChatInput({
     [isInputDisabled, setMessage, getTextWithNewlines, onPasteFile]
   )
 
-  const handleFocus = useCallback(() => {
-    // Move cursor to end on focus
+  const focusEditableAtEnd = useCallback(() => {
     if (editableRef.current) {
+      editableRef.current.focus()
       const selection = window.getSelection()
       if (selection) {
         const range = document.createRange()
@@ -633,6 +637,20 @@ export default function ChatInput({
       }
     }
   }, [])
+
+  const handleFocus = useCallback(() => {
+    // Move cursor to end on focus
+    focusEditableAtEnd()
+  }, [focusEditableAtEnd])
+
+  useEffect(() => {
+    if (focusAtEndSignal === undefined || lastFocusAtEndSignalRef.current === focusAtEndSignal) {
+      return
+    }
+
+    lastFocusAtEndSignalRef.current = focusAtEndSignal
+    focusEditableAtEnd()
+  }, [focusAtEndSignal, focusEditableAtEnd])
 
   // Calculate min height based on device
   // Figma design shows input card ~140px total, text area takes most of it

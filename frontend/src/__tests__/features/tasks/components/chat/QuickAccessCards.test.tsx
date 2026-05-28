@@ -280,6 +280,81 @@ describe('QuickAccessCards', () => {
     expect(onPhraseSelect).toHaveBeenCalledWith('帮我创建一个 xxx 的 PPT')
   })
 
+  test('keeps quick cards visible when a launcher has no quick phrases', async () => {
+    const onPhraseSelect = jest.fn()
+    const onTeamSelect = jest.fn()
+    mockGetQuickLaunch.mockResolvedValueOnce({
+      system_functions: [
+        {
+          type: 'system_function',
+          id: 'create_ppt',
+          title: 'Create PPT',
+          team_id: 2,
+          name: 'system-team',
+          enabled: true,
+          order: 10,
+          quick_phrases: [],
+        },
+      ],
+      favorite_agents: [],
+    } satisfies QuickLaunchResponse)
+
+    render(
+      <QuickAccessCards
+        teams={[makeTeam({ id: 2, name: 'system-team', description: 'System description' })]}
+        selectedTeam={null}
+        onTeamSelect={onTeamSelect}
+        onPhraseSelect={onPhraseSelect}
+        currentMode="chat"
+      />
+    )
+
+    fireEvent.click(await screen.findByText('Create PPT'))
+
+    expect(onTeamSelect).toHaveBeenCalledWith(expect.objectContaining({ id: 2 }))
+    expect(onPhraseSelect).not.toHaveBeenCalled()
+    expect(screen.getByTestId('quick-launch-cards')).toBeInTheDocument()
+    expect(screen.queryByTestId('quick-phrase-list')).not.toBeInTheDocument()
+    expect(screen.getByTestId('quick-launcher-system_function-system-create_ppt')).toHaveClass(
+      'bg-primary/5'
+    )
+  })
+
+  test('does not preselect a launcher from the initial selected team', async () => {
+    mockGetQuickLaunch.mockResolvedValueOnce({
+      system_functions: [
+        {
+          type: 'system_function',
+          id: 'system_config',
+          title: 'System Config',
+          team_id: 2,
+          name: 'system-team',
+          enabled: true,
+          order: 10,
+          quick_phrases: [],
+        },
+      ],
+      favorite_agents: [],
+    } satisfies QuickLaunchResponse)
+    const selectedTeam = makeTeam({ id: 2, name: 'system-team', description: 'System description' })
+
+    render(
+      <QuickAccessCards
+        teams={[selectedTeam]}
+        selectedTeam={selectedTeam}
+        onTeamSelect={jest.fn()}
+        currentMode="chat"
+      />
+    )
+
+    const systemCard = await screen.findByTestId(
+      'quick-launcher-system_function-system-system_config'
+    )
+
+    expect(systemCard).not.toHaveClass('bg-primary/5')
+    expect(screen.getByText('System Config')).not.toHaveClass('text-primary')
+  })
+
   test('does not fall back to all teams when quick access has no teams', async () => {
     renderQuickAccessCards(
       [makeTeam({ id: 1, name: 'regular-team', description: 'Regular description' })],

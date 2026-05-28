@@ -2,8 +2,6 @@
 
 import { ArrowLeft } from 'lucide-react'
 
-import { useTranslation } from '@/hooks/useTranslation'
-
 import type { QuickLauncher } from './types'
 
 interface QuickPhraseListProps {
@@ -13,7 +11,9 @@ interface QuickPhraseListProps {
 }
 
 export function QuickPhraseList({ launcher, onBack, onPhraseSelect }: QuickPhraseListProps) {
-  const { t } = useTranslation('chat')
+  if (launcher.quickPhrases.length === 0) {
+    return null
+  }
 
   return (
     <div className="mx-auto mt-6 w-full max-w-[620px]" data-testid="quick-phrase-list">
@@ -27,25 +27,19 @@ export function QuickPhraseList({ launcher, onBack, onPhraseSelect }: QuickPhras
         {launcher.title}
       </button>
 
-      {launcher.quickPhrases.length > 0 ? (
-        <div className="flex flex-col gap-2">
-          {launcher.quickPhrases.map((phrase, index) => (
-            <button
-              key={`${phrase}-${index}`}
-              type="button"
-              onClick={() => onPhraseSelect(phrase)}
-              className="min-h-11 rounded-lg border border-border bg-base px-3 py-2 text-left text-sm text-text-secondary transition-colors hover:border-primary/30 hover:bg-hover hover:text-text-primary"
-              data-testid={`quick-phrase-${index}`}
-            >
-              {phrase}
-            </button>
-          ))}
-        </div>
-      ) : (
-        <div className="rounded-lg border border-border bg-base px-3 py-4 text-sm text-text-muted">
-          {t('quick_launch.empty_phrases')}
-        </div>
-      )}
+      <div className="flex flex-col gap-2">
+        {launcher.quickPhrases.map((phrase, index) => (
+          <button
+            key={`${phrase}-${index}`}
+            type="button"
+            onClick={() => onPhraseSelect(phrase)}
+            className="min-h-11 rounded-lg border border-border bg-base px-3 py-2 text-left text-sm text-text-secondary transition-colors hover:border-primary/30 hover:bg-hover hover:text-text-primary"
+            data-testid={`quick-phrase-${index}`}
+          >
+            {phrase}
+          </button>
+        ))}
+      </div>
     </div>
   )
 }

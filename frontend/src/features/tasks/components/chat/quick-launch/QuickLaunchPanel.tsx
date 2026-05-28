@@ -30,6 +30,7 @@ export function QuickLaunchPanel({
   renderQuickCreateCard,
 }: QuickLaunchPanelProps) {
   const [selectedLauncher, setSelectedLauncher] = useState<QuickLauncher | null>(null)
+  const [selectedLauncherKey, setSelectedLauncherKey] = useState<string | null>(null)
   const {
     isLoading: isQuickLaunchLoading,
     systemLaunchers,
@@ -65,9 +66,15 @@ export function QuickLaunchPanel({
     <QuickLauncherCards
       systemLaunchers={systemLaunchers}
       favoriteLaunchers={favoriteLaunchers}
+      selectedLauncherKey={selectedLauncherKey}
       onSelectLauncher={launcher => {
         onTeamSelect(launcher.team)
-        setSelectedLauncher(launcher)
+        if (launcher.quickPhrases.length > 0) {
+          setSelectedLauncherKey(null)
+          setSelectedLauncher(launcher)
+          return
+        }
+        setSelectedLauncherKey(launcher.key)
       }}
       renderMoreButton={renderMoreButton}
       renderQuickCreateCard={renderQuickCreateCard}

@@ -251,9 +251,12 @@
   "send_shortcut_cmd_enter_mac": "⌘+回车发送，回车换行",
   "send_shortcut_cmd_enter_win": "Ctrl+回车发送，回车换行",
   "quick_launch": {
-    "system_functions": "系统功能",
-    "favorite_agents": "收藏智能体",
-    "empty_phrases": "暂无快捷短语"
+    "system_functions": "推荐功能",
+    "favorite_agents": "我的收藏",
+    "overwrite_confirm_title": "覆盖当前输入？",
+    "overwrite_confirm_description": "发送框里已有内容，使用这条快捷短语会替换当前输入。",
+    "overwrite_confirm_cancel": "保留当前输入",
+    "overwrite_confirm_action": "覆盖"
   },
   "errors": {
     "request_failed": "请求大模型接口失败",

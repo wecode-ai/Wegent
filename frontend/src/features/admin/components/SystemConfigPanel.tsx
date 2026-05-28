@@ -4,16 +4,17 @@
 
 'use client'
 
-import React, { useEffect, useState, useCallback, useMemo } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { PlusIcon, TrashIcon, PencilIcon } from '@heroicons/react/24/outline'
 import { Loader2 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
-import { Transfer, type TransferItem } from '@/components/ui/transfer'
 import {
   Dialog,
   DialogContent,
@@ -57,21 +58,23 @@ type ItemFormData = {
   mode: SloganTipMode
 }
 
-function formatQuickLaunchFunctions(functions: QuickLaunchFunctionConfig[]): string {
-  return JSON.stringify(functions, null, 2)
-}
-
-function parseQuickLaunchFunctionsJson(value: string): QuickLaunchFunctionConfig[] {
-  const parsed = JSON.parse(value || '[]')
-  if (!Array.isArray(parsed)) {
-    throw new Error('Quick launch functions must be a JSON array')
-  }
-
-  return parsed as QuickLaunchFunctionConfig[]
+function normalizeQuickLaunchFunctions(
+  functions: QuickLaunchFunctionConfig[]
+): QuickLaunchFunctionConfig[] {
+  return functions.map((item, index) => ({
+    id: item.id.trim(),
+    title: item.title.trim(),
+    description: item.description?.trim() || undefined,
+    icon: item.icon?.trim() || undefined,
+    team_id: Number(item.team_id),
+    enabled: item.enabled,
+    order: Number.isFinite(Number(item.order)) ? Number(item.order) : index,
+    quick_phrases: (item.quick_phrases ?? []).map(phrase => phrase.trim()).filter(Boolean),
+  }))
 }
 
 const SystemConfigPanel: React.FC = () => {
-  const { t } = useTranslation()
+  const { t } = useTranslation('admin')
   const { toast } = useToast()
 
   // State
@@ -80,12 +83,9 @@ const SystemConfigPanel: React.FC = () => {
   const [slogans, setSlogans] = useState<ChatSloganItem[]>([])
   const [tips, setTips] = useState<ChatTipItem[]>([])
   const [version, setVersion] = useState(0)
-  const [quickAccessVersion, setQuickAccessVersion] = useState(0)
   const [quickLaunchFunctionsVersion, setQuickLaunchFunctionsVersion] = useState(0)
   const [publicTeams, setPublicTeams] = useState<AdminPublicTeam[]>([])
-  const [quickAccessTeamIds, setQuickAccessTeamIds] = useState<string[]>([])
-  const [savedQuickAccessTeamIds, setSavedQuickAccessTeamIds] = useState<string[]>([])
-  const [quickLaunchFunctionsJson, setQuickLaunchFunctionsJson] = useState('[]')
+  const [quickLaunchFunctions, setQuickLaunchFunctions] = useState<QuickLaunchFunctionConfig[]>([])
 
   // Slogan dialog states
   const [isSloganDialogOpen, setIsSloganDialogOpen] = useState(false)
@@ -109,57 +109,29 @@ const SystemConfigPanel: React.FC = () => {
     mode: 'both',
   })
 
-  const getTeamDisplayName = useCallback((team: AdminPublicTeam): string => {
-    return team.display_name || team.name
-  }, [])
-
-  const quickAccessTeamItems = useMemo<TransferItem[]>(
-    () =>
-      publicTeams.map(team => ({
-        key: String(team.id),
-        title: getTeamDisplayName(team),
-        description:
-          team.description || `${t('admin:system_config.quick_access_name')}: ${team.name}`,
-      })),
-    [getTeamDisplayName, publicTeams, t]
-  )
-
-  const hasQuickAccessChanged = useCallback(() => {
-    return quickAccessTeamIds.join(',') !== savedQuickAccessTeamIds.join(',')
-  }, [quickAccessTeamIds, savedQuickAccessTeamIds])
-
   // Fetch config
   const fetchConfig = useCallback(async () => {
     setLoading(true)
     try {
-      const [response, quickAccessResponse, publicTeamsResponse, quickLaunchFunctionsResponse]: [
+      const [response, publicTeamsResponse, quickLaunchFunctionsResponse]: [
         ChatSloganTipsResponse,
-        { version: number; teams: number[] },
         { total: number; items: AdminPublicTeam[] },
         QuickLaunchFunctionsResponse,
       ] = await Promise.all([
         adminApis.getSloganTipsConfig(),
-        adminApis.getQuickAccessConfig(),
         adminApis.getPublicTeams(1, 1000),
         adminApis.getQuickLaunchFunctionsConfig(),
       ])
       setSlogans(response.slogans)
       setTips(response.tips)
       setVersion(response.version)
-      setQuickAccessVersion(quickAccessResponse.version)
       setQuickLaunchFunctionsVersion(quickLaunchFunctionsResponse.version)
-      setQuickLaunchFunctionsJson(
-        formatQuickLaunchFunctions(quickLaunchFunctionsResponse.functions)
-      )
+      setQuickLaunchFunctions(quickLaunchFunctionsResponse.functions)
       setPublicTeams(publicTeamsResponse.items)
-
-      const configuredTeamIds = quickAccessResponse.teams.map(String)
-      setQuickAccessTeamIds(configuredTeamIds)
-      setSavedQuickAccessTeamIds(configuredTeamIds)
     } catch (error) {
       console.error('Failed to fetch slogan tips config:', error)
       toast({
-        title: t('admin:system_config.errors.load_failed'),
+        title: t('system_config.errors.load_failed'),
         variant: 'destructive',
       })
     } finally {
@@ -173,13 +145,13 @@ const SystemConfigPanel: React.FC = () => {
 
   // Save config
   const handleSave = async () => {
-    let quickLaunchFunctions: QuickLaunchFunctionConfig[]
-    try {
-      quickLaunchFunctions = parseQuickLaunchFunctionsJson(quickLaunchFunctionsJson)
-    } catch (error) {
-      console.error('Failed to parse quick launch functions config:', error)
+    const normalizedQuickLaunchFunctions = normalizeQuickLaunchFunctions(quickLaunchFunctions)
+    const hasInvalidFunction = normalizedQuickLaunchFunctions.some(
+      item => !item.id || !item.title || !item.team_id
+    )
+    if (hasInvalidFunction) {
       toast({
-        title: t('admin:system_config.errors.quick_launch_functions_invalid'),
+        title: t('system_config.errors.quick_launch_functions_required'),
         variant: 'destructive',
       })
       return
@@ -187,32 +159,23 @@ const SystemConfigPanel: React.FC = () => {
 
     setSaving(true)
     try {
-      const [response, quickAccessResponse, quickLaunchFunctionsResponse] = await Promise.all([
+      const [response, quickLaunchFunctionsResponse] = await Promise.all([
         adminApis.updateSloganTipsConfig({
           slogans,
           tips,
         }),
-        hasQuickAccessChanged()
-          ? adminApis.updateQuickAccessConfig(quickAccessTeamIds.map(Number))
-          : Promise.resolve(null),
-        adminApis.updateQuickLaunchFunctionsConfig({ functions: quickLaunchFunctions }),
+        adminApis.updateQuickLaunchFunctionsConfig({ functions: normalizedQuickLaunchFunctions }),
       ])
       setVersion(response.version)
-      if (quickAccessResponse) {
-        setQuickAccessVersion(quickAccessResponse.version)
-        setSavedQuickAccessTeamIds(quickAccessResponse.teams.map(String))
-      }
       setQuickLaunchFunctionsVersion(quickLaunchFunctionsResponse.version)
-      setQuickLaunchFunctionsJson(
-        formatQuickLaunchFunctions(quickLaunchFunctionsResponse.functions)
-      )
+      setQuickLaunchFunctions(quickLaunchFunctionsResponse.functions)
       toast({
-        title: t('admin:system_config.success.updated'),
+        title: t('system_config.success.updated'),
       })
     } catch (error) {
       console.error('Failed to save slogan tips config:', error)
       toast({
-        title: t('admin:system_config.errors.save_failed'),
+        title: t('system_config.errors.save_failed'),
         variant: 'destructive',
       })
     } finally {
@@ -239,7 +202,7 @@ const SystemConfigPanel: React.FC = () => {
   const handleSaveSlogan = () => {
     if (!sloganFormData.zh.trim() || !sloganFormData.en.trim()) {
       toast({
-        title: t('admin:system_config.errors.slogan_required'),
+        title: t('system_config.errors.slogan_required'),
         variant: 'destructive',
       })
       return
@@ -301,7 +264,7 @@ const SystemConfigPanel: React.FC = () => {
   const handleSaveTip = () => {
     if (!tipFormData.zh.trim() || !tipFormData.en.trim()) {
       toast({
-        title: t('admin:system_config.errors.tip_required'),
+        title: t('system_config.errors.tip_required'),
         variant: 'destructive',
       })
       return
@@ -344,13 +307,72 @@ const SystemConfigPanel: React.FC = () => {
     setEditingTipIndex(-1)
   }
 
+  // ==================== Quick Launch Function Operations ====================
+
+  const handleAddQuickLaunchFunction = () => {
+    const nextIndex = quickLaunchFunctions.length + 1
+    setQuickLaunchFunctions([
+      ...quickLaunchFunctions,
+      {
+        id: `system_function_${nextIndex}`,
+        title: '',
+        description: '',
+        icon: '',
+        team_id: publicTeams[0]?.id || 0,
+        enabled: true,
+        order: nextIndex,
+        quick_phrases: [],
+      },
+    ])
+  }
+
+  const updateQuickLaunchFunction = (index: number, patch: Partial<QuickLaunchFunctionConfig>) => {
+    setQuickLaunchFunctions(prev =>
+      prev.map((item, currentIndex) => (currentIndex === index ? { ...item, ...patch } : item))
+    )
+  }
+
+  const removeQuickLaunchFunction = (index: number) => {
+    setQuickLaunchFunctions(prev => prev.filter((_, currentIndex) => currentIndex !== index))
+  }
+
+  const updateQuickLaunchPhrase = (functionIndex: number, phraseIndex: number, phrase: string) => {
+    const currentFunction = quickLaunchFunctions[functionIndex]
+    if (!currentFunction) return
+
+    const phrases =
+      (currentFunction.quick_phrases ?? []).length > 0 ? [...currentFunction.quick_phrases] : ['']
+    phrases[phraseIndex] = phrase
+    updateQuickLaunchFunction(functionIndex, { quick_phrases: phrases })
+  }
+
+  const addQuickLaunchPhrase = (functionIndex: number) => {
+    const currentFunction = quickLaunchFunctions[functionIndex]
+    if (!currentFunction || (currentFunction.quick_phrases ?? []).length >= 6) return
+
+    updateQuickLaunchFunction(functionIndex, {
+      quick_phrases: [...(currentFunction.quick_phrases ?? []), ''],
+    })
+  }
+
+  const removeQuickLaunchPhrase = (functionIndex: number, phraseIndex: number) => {
+    const currentFunction = quickLaunchFunctions[functionIndex]
+    if (!currentFunction) return
+
+    updateQuickLaunchFunction(functionIndex, {
+      quick_phrases: (currentFunction.quick_phrases ?? []).filter(
+        (_, currentIndex) => currentIndex !== phraseIndex
+      ),
+    })
+  }
+
   // ==================== Render ====================
 
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        <span className="ml-2 text-text-muted">{t('admin:system_config.loading')}</span>
+        <span className="ml-2 text-text-muted">{t('system_config.loading')}</span>
       </div>
     )
   }
@@ -377,7 +399,7 @@ const SystemConfigPanel: React.FC = () => {
               <div className="flex items-center gap-2">
                 <p className="text-sm text-text-primary truncate flex-1">{item.zh}</p>
                 <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary flex-shrink-0">
-                  {t(`admin:system_config.mode_${item.mode || 'both'}`)}
+                  {t(`system_config.mode_${item.mode || 'both'}`)}
                 </span>
               </div>
               <p className="text-xs text-text-muted truncate mt-1">{item.en}</p>
@@ -423,7 +445,7 @@ const SystemConfigPanel: React.FC = () => {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{t('admin:system_config.dialog_description')}</DialogDescription>
+          <DialogDescription>{t('system_config.dialog_description')}</DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-4">
           <div>
@@ -449,27 +471,29 @@ const SystemConfigPanel: React.FC = () => {
             />
           </div>
           <div>
-            <Label htmlFor="item-mode">{t('admin:system_config.mode')}</Label>
+            <Label htmlFor="item-mode">{t('system_config.mode')}</Label>
             <Select
               value={formData.mode || 'both'}
               onValueChange={(value: SloganTipMode) => setFormData({ ...formData, mode: value })}
             >
               <SelectTrigger className="mt-1">
-                <SelectValue placeholder={t('admin:system_config.mode')} />
+                <SelectValue placeholder={t('system_config.mode')} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="chat">{t('admin:system_config.mode_chat')}</SelectItem>
-                <SelectItem value="code">{t('admin:system_config.mode_code')}</SelectItem>
-                <SelectItem value="both">{t('admin:system_config.mode_both')}</SelectItem>
+                <SelectItem value="chat">{t('system_config.mode_chat')}</SelectItem>
+                <SelectItem value="code">{t('system_config.mode_code')}</SelectItem>
+                <SelectItem value="both">{t('system_config.mode_both')}</SelectItem>
               </SelectContent>
             </Select>
           </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            {t('admin:common.cancel')}
+            {t('common.cancel')}
           </Button>
-          <Button onClick={onSave}>{t('admin:common.save')}</Button>
+          <Button variant="primary" onClick={onSave}>
+            {t('common.save')}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -490,24 +514,11 @@ const SystemConfigPanel: React.FC = () => {
           <AlertDialogDescription>{message}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>{t('admin:common.cancel')}</AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm}>{t('admin:common.delete')}</AlertDialogAction>
+          <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+          <AlertDialogAction onClick={onConfirm}>{t('common.delete')}</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
-  )
-
-  const renderQuickAccessItem = (item: TransferItem) => (
-    <div className="flex flex-col min-w-0">
-      <span className="text-sm text-text-primary truncate" title={item.title}>
-        {item.title}
-      </span>
-      {item.description && (
-        <span className="text-xs text-text-muted truncate" title={item.description}>
-          {item.description}
-        </span>
-      )}
-    </div>
   )
 
   return (
@@ -515,14 +526,12 @@ const SystemConfigPanel: React.FC = () => {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-text-primary">
-            {t('admin:system_config.title')}
-          </h2>
-          <p className="text-sm text-text-muted">{t('admin:system_config.description')}</p>
+          <h2 className="text-lg font-semibold text-text-primary">{t('system_config.title')}</h2>
+          <p className="text-sm text-text-muted">{t('system_config.description')}</p>
         </div>
         <Button onClick={handleSave} disabled={saving}>
           {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-          {t('admin:common.save')}
+          {t('common.save')}
         </Button>
       </div>
 
@@ -530,76 +539,36 @@ const SystemConfigPanel: React.FC = () => {
       <Card className="p-6">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-md font-medium text-text-primary">
-            {t('admin:system_config.slogan_title')}
+            {t('system_config.slogan_title')}
           </h3>
           <Button variant="outline" size="sm" onClick={handleAddSlogan}>
             <PlusIcon className="h-4 w-4 mr-1" />
-            {t('admin:system_config.add_slogan')}
+            {t('system_config.add_slogan')}
           </Button>
         </div>
         {renderItemList(
           slogans,
           handleEditSlogan as (item: ChatSloganItem | ChatTipItem, index: number) => void,
           handleDeleteSloganClick as (item: ChatSloganItem | ChatTipItem, index: number) => void,
-          t('admin:system_config.no_slogans')
+          t('system_config.no_slogans')
         )}
       </Card>
 
       {/* Tips Configuration */}
       <Card className="p-6">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-md font-medium text-text-primary">
-            {t('admin:system_config.tips_title')}
-          </h3>
+          <h3 className="text-md font-medium text-text-primary">{t('system_config.tips_title')}</h3>
           <Button variant="outline" size="sm" onClick={handleAddTip}>
             <PlusIcon className="h-4 w-4 mr-1" />
-            {t('admin:system_config.add_tip')}
+            {t('system_config.add_tip')}
           </Button>
         </div>
         {renderItemList(
           tips,
           handleEditTip as (item: ChatSloganItem | ChatTipItem, index: number) => void,
           handleDeleteTipClick as (item: ChatSloganItem | ChatTipItem, index: number) => void,
-          t('admin:system_config.no_tips')
+          t('system_config.no_tips')
         )}
-      </Card>
-
-      {/* Quick Access Configuration */}
-      <Card className="p-6" data-testid="quick-access-config-section">
-        <div className="flex items-start justify-between gap-4 mb-4">
-          <div>
-            <h3 className="text-md font-medium text-text-primary">
-              {t('admin:system_config.quick_access_title')}
-            </h3>
-            <p className="text-sm text-text-muted mt-1">
-              {t('admin:system_config.quick_access_description')}
-            </p>
-          </div>
-          <span className="text-xs text-text-muted flex-shrink-0">
-            {t('admin:system_config.quick_access_version')}: {quickAccessVersion}
-          </span>
-        </div>
-        <Transfer
-          dataSource={quickAccessTeamItems}
-          targetKeys={quickAccessTeamIds}
-          onChange={targetKeys => setQuickAccessTeamIds(targetKeys)}
-          onOrderChange={setQuickAccessTeamIds}
-          render={renderQuickAccessItem}
-          showSearch
-          sortable
-          titles={[
-            t('admin:system_config.quick_access_available'),
-            t('admin:system_config.quick_access_selected'),
-          ]}
-          listStyle={{ height: 280 }}
-          filterOption={(inputValue, item) => {
-            const normalizedInput = inputValue.toLowerCase()
-            return (
-              item.title.toLowerCase().includes(normalizedInput) ||
-              (item.description || '').toLowerCase().includes(normalizedInput)
-            )
-          }}
-        />
       </Card>
 
       {/* Quick Launch System Functions Configuration */}
@@ -607,52 +576,239 @@ const SystemConfigPanel: React.FC = () => {
         <div className="flex items-start justify-between gap-4 mb-4">
           <div>
             <h3 className="text-md font-medium text-text-primary">
-              {t('admin:system_config.quick_launch_functions_title')}
+              {t('system_config.quick_launch_functions_title')}
             </h3>
             <p className="text-sm text-text-muted mt-1">
-              {t('admin:system_config.quick_launch_functions_description')}
+              {t('system_config.quick_launch_functions_description')}
             </p>
           </div>
           <span className="text-xs text-text-muted flex-shrink-0">
-            {t('admin:system_config.quick_launch_functions_version')}: {quickLaunchFunctionsVersion}
+            {t('system_config.quick_launch_functions_version')}: {quickLaunchFunctionsVersion}
           </span>
         </div>
-        <Label htmlFor="quick-launch-functions-json" className="sr-only">
-          {t('admin:system_config.quick_launch_functions_title')}
-        </Label>
-        <Textarea
-          id="quick-launch-functions-json"
-          value={quickLaunchFunctionsJson}
-          onChange={event => setQuickLaunchFunctionsJson(event.target.value)}
-          className="min-h-[260px] resize-y bg-base font-mono text-xs leading-5"
-          spellCheck={false}
-          data-testid="quick-launch-functions-json"
-        />
+        <div className="space-y-4">
+          {quickLaunchFunctions.length === 0 ? (
+            <div className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm text-text-muted">
+              {t('system_config.quick_launch_function_empty')}
+            </div>
+          ) : (
+            quickLaunchFunctions.map((item, index) => {
+              const phrases = (item.quick_phrases ?? []).length > 0 ? item.quick_phrases : ['']
+              return (
+                <div
+                  key={`${item.id}-${index}`}
+                  className="space-y-4 rounded-md border border-border bg-base p-4"
+                  data-testid={`quick-launch-function-card-${index}`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h4 className="truncate text-sm font-medium text-text-primary">
+                        {item.title || t('system_config.quick_launch_function_untitled')}
+                      </h4>
+                      <p className="mt-0.5 text-xs text-text-muted">{item.id}</p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0 text-red-500 hover:text-red-600"
+                      onClick={() => removeQuickLaunchFunction(index)}
+                      data-testid={`remove-quick-launch-function-${index}`}
+                    >
+                      <TrashIcon className="h-4 w-4" />
+                    </Button>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor={`quick-launch-function-id-${index}`}>
+                        {t('system_config.quick_launch_function_id')}
+                      </Label>
+                      <Input
+                        id={`quick-launch-function-id-${index}`}
+                        value={item.id}
+                        onChange={event =>
+                          updateQuickLaunchFunction(index, { id: event.target.value })
+                        }
+                        data-testid={`quick-launch-function-id-${index}`}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor={`quick-launch-function-title-${index}`}>
+                        {t('system_config.quick_launch_function_title')}
+                      </Label>
+                      <Input
+                        id={`quick-launch-function-title-${index}`}
+                        value={item.title}
+                        onChange={event =>
+                          updateQuickLaunchFunction(index, { title: event.target.value })
+                        }
+                        data-testid={`quick-launch-function-title-${index}`}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor={`quick-launch-function-team-${index}`}>
+                        {t('system_config.quick_launch_function_team')}
+                      </Label>
+                      <select
+                        id={`quick-launch-function-team-${index}`}
+                        value={item.team_id || ''}
+                        onChange={event =>
+                          updateQuickLaunchFunction(index, { team_id: Number(event.target.value) })
+                        }
+                        className="h-10 w-full rounded-lg border border-border bg-surface px-3 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                        data-testid={`quick-launch-function-team-${index}`}
+                      >
+                        <option value="">
+                          {t('system_config.quick_launch_function_team_placeholder')}
+                        </option>
+                        {publicTeams.map(team => (
+                          <option key={team.id} value={team.id}>
+                            {team.display_name || team.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor={`quick-launch-function-order-${index}`}>
+                        {t('system_config.quick_launch_function_order')}
+                      </Label>
+                      <Input
+                        id={`quick-launch-function-order-${index}`}
+                        type="number"
+                        value={item.order}
+                        onChange={event =>
+                          updateQuickLaunchFunction(index, { order: Number(event.target.value) })
+                        }
+                        data-testid={`quick-launch-function-order-${index}`}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor={`quick-launch-function-icon-${index}`}>
+                        {t('system_config.quick_launch_function_icon')}
+                      </Label>
+                      <Input
+                        id={`quick-launch-function-icon-${index}`}
+                        value={item.icon || ''}
+                        onChange={event =>
+                          updateQuickLaunchFunction(index, { icon: event.target.value })
+                        }
+                        data-testid={`quick-launch-function-icon-${index}`}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
+                      <Label htmlFor={`quick-launch-function-enabled-${index}`}>
+                        {t('system_config.quick_launch_function_enabled')}
+                      </Label>
+                      <Switch
+                        id={`quick-launch-function-enabled-${index}`}
+                        checked={item.enabled}
+                        onCheckedChange={checked =>
+                          updateQuickLaunchFunction(index, { enabled: checked })
+                        }
+                        data-testid={`quick-launch-function-enabled-${index}`}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor={`quick-launch-function-description-${index}`}>
+                      {t('system_config.quick_launch_function_description')}
+                    </Label>
+                    <Textarea
+                      id={`quick-launch-function-description-${index}`}
+                      value={item.description || ''}
+                      onChange={event =>
+                        updateQuickLaunchFunction(index, { description: event.target.value })
+                      }
+                      rows={2}
+                      data-testid={`quick-launch-function-description-${index}`}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label>{t('system_config.quick_launch_function_phrases')}</Label>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => addQuickLaunchPhrase(index)}
+                        disabled={(item.quick_phrases ?? []).length >= 6}
+                        data-testid={`add-quick-launch-function-phrase-${index}`}
+                      >
+                        <PlusIcon className="h-4 w-4" />
+                        {t('system_config.quick_launch_function_add_phrase')}
+                      </Button>
+                    </div>
+                    <div className="space-y-2">
+                      {phrases.map((phrase, phraseIndex) => (
+                        <div key={phraseIndex} className="flex items-center gap-2">
+                          <Input
+                            value={phrase}
+                            maxLength={120}
+                            onChange={event =>
+                              updateQuickLaunchPhrase(index, phraseIndex, event.target.value)
+                            }
+                            placeholder={t(
+                              'system_config.quick_launch_function_phrase_placeholder'
+                            )}
+                            data-testid={`quick-launch-function-phrase-${index}-${phraseIndex}`}
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-9 w-9 shrink-0 text-text-muted hover:text-text-primary"
+                            onClick={() => removeQuickLaunchPhrase(index, phraseIndex)}
+                            data-testid={`remove-quick-launch-function-phrase-${index}-${phraseIndex}`}
+                          >
+                            <TrashIcon className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )
+            })
+          )}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleAddQuickLaunchFunction}
+            data-testid="add-quick-launch-function"
+          >
+            <PlusIcon className="h-4 w-4" />
+            {t('system_config.quick_launch_function_add')}
+          </Button>
+        </div>
       </Card>
 
       {/* Version Info */}
       <div className="text-xs text-text-muted text-right">
-        {t('admin:system_config.version')}: {version}
+        {t('system_config.version')}: {version}
       </div>
 
       {/* Slogan Dialogs */}
       {renderEditDialog(
         isSloganDialogOpen,
         setIsSloganDialogOpen,
-        editingSlogan ? t('admin:system_config.edit_slogan') : t('admin:system_config.add_slogan'),
+        editingSlogan ? t('system_config.edit_slogan') : t('system_config.add_slogan'),
         sloganFormData,
         setSloganFormData,
         handleSaveSlogan,
-        t('admin:system_config.slogan_zh'),
-        t('admin:system_config.slogan_zh_placeholder'),
-        t('admin:system_config.slogan_en'),
-        t('admin:system_config.slogan_en_placeholder')
+        t('system_config.slogan_zh'),
+        t('system_config.slogan_zh_placeholder'),
+        t('system_config.slogan_en'),
+        t('system_config.slogan_en_placeholder')
       )}
       {renderDeleteDialog(
         isDeleteSloganDialogOpen,
         setIsDeleteSloganDialogOpen,
-        t('admin:system_config.delete_slogan_title'),
-        t('admin:system_config.delete_slogan_message'),
+        t('system_config.delete_slogan_title'),
+        t('system_config.delete_slogan_message'),
         handleConfirmDeleteSlogan
       )}
 
@@ -660,20 +816,20 @@ const SystemConfigPanel: React.FC = () => {
       {renderEditDialog(
         isTipDialogOpen,
         setIsTipDialogOpen,
-        editingTip ? t('admin:system_config.edit_tip') : t('admin:system_config.add_tip'),
+        editingTip ? t('system_config.edit_tip') : t('system_config.add_tip'),
         tipFormData,
         setTipFormData,
         handleSaveTip,
-        t('admin:system_config.tip_zh'),
-        t('admin:system_config.tip_zh_placeholder'),
-        t('admin:system_config.tip_en'),
-        t('admin:system_config.tip_en_placeholder')
+        t('system_config.tip_zh'),
+        t('system_config.tip_zh_placeholder'),
+        t('system_config.tip_en'),
+        t('system_config.tip_en_placeholder')
       )}
       {renderDeleteDialog(
         isDeleteTipDialogOpen,
         setIsDeleteTipDialogOpen,
-        t('admin:system_config.delete_tip_title'),
-        t('admin:system_config.delete_tip_message'),
+        t('system_config.delete_tip_title'),
+        t('system_config.delete_tip_message'),
         handleConfirmDeleteTip
       )}
     </div>

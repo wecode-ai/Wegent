@@ -27,32 +27,32 @@ jest.mock('@/hooks/use-toast', () => ({
 }))
 
 const tMock = (key: string) => {
+  const normalizedKey = key.replace(/^admin:/, '')
   const translations: Record<string, string> = {
-    'admin:system_config.loading': 'Loading configuration...',
-    'admin:system_config.title': 'System configuration',
-    'admin:system_config.description': 'Manage system configuration',
-    'admin:system_config.slogan_title': 'Slogans',
-    'admin:system_config.add_slogan': 'Add slogan',
-    'admin:system_config.no_slogans': 'No slogans',
-    'admin:system_config.tips_title': 'Tips',
-    'admin:system_config.add_tip': 'Add tip',
-    'admin:system_config.no_tips': 'No tips',
-    'admin:system_config.quick_access_title': 'Homepage recommended agents',
-    'admin:system_config.quick_access_description':
-      'Select the system agents shown on the homepage quick cards.',
-    'admin:system_config.quick_access_available': 'Available agents',
-    'admin:system_config.quick_access_selected': 'Homepage agents',
-    'admin:system_config.quick_access_no_description': 'No description',
-    'admin:system_config.quick_access_version': 'Homepage agents version',
-    'admin:system_config.quick_launch_functions_title': 'System functions',
-    'admin:system_config.quick_launch_functions_description':
-      'Configure system function launchers as JSON.',
-    'admin:system_config.quick_launch_functions_version': 'System functions version',
-    'admin:system_config.version': 'Version',
-    'admin:common.save': 'Save',
+    'system_config.loading': 'Loading configuration...',
+    'system_config.title': 'System configuration',
+    'system_config.description': 'Manage system configuration',
+    'system_config.slogan_title': 'Slogans',
+    'system_config.add_slogan': 'Add slogan',
+    'system_config.no_slogans': 'No slogans',
+    'system_config.tips_title': 'Tips',
+    'system_config.add_tip': 'Add tip',
+    'system_config.no_tips': 'No tips',
+    'system_config.quick_launch_functions_title': 'System functions',
+    'system_config.quick_launch_functions_description':
+      'Configure QuickCard system functions with form fields.',
+    'system_config.quick_launch_functions_version': 'System functions version',
+    'system_config.quick_launch_function_title': 'Title',
+    'system_config.quick_launch_function_description': 'Description',
+    'system_config.quick_launch_function_phrase_placeholder': 'Enter quick phrase',
+    'system_config.quick_launch_function_add_phrase': 'Add phrase',
+    'system_config.quick_launch_function_add': 'Add system function',
+    'system_config.quick_launch_function_empty': 'No system functions',
+    'system_config.version': 'Version',
+    'common.save': 'Save',
   }
 
-  return translations[key] || key
+  return translations[normalizedKey] || normalizedKey
 }
 
 jest.mock('@/hooks/useTranslation', () => ({
@@ -69,10 +69,7 @@ describe('SystemConfigPanel', () => {
       slogans: [],
       tips: [],
     })
-    mockedAdminApis.getQuickAccessConfig.mockResolvedValue({
-      version: 5,
-      teams: [42],
-    })
+    mockedAdminApis.getQuickAccessConfig.mockResolvedValue({ version: 5, teams: [42] })
     mockedAdminApis.getPublicTeams.mockResolvedValue({
       total: 1,
       items: [
@@ -115,15 +112,15 @@ describe('SystemConfigPanel', () => {
     })
   })
 
-  test('loads and displays homepage quick access team configuration', async () => {
+  test('does not render the legacy homepage recommended agents configuration', async () => {
     render(<SystemConfigPanel />)
 
-    expect(await screen.findByText('Homepage recommended agents')).toBeInTheDocument()
-    expect(screen.getByText('AI Assistant')).toBeInTheDocument()
-    expect(screen.getByText('Homepage agents version: 5')).toBeInTheDocument()
+    expect(await screen.findByTestId('quick-launch-functions-section')).toBeInTheDocument()
+    expect(screen.queryByTestId('quick-access-config-section')).not.toBeInTheDocument()
+    expect(mockedAdminApis.getQuickAccessConfig).not.toHaveBeenCalled()
   })
 
-  test('loads and saves system function launcher configuration', async () => {
+  test('loads and saves system function launcher form configuration', async () => {
     render(<SystemConfigPanel />)
 
     expect(await screen.findByTestId('quick-launch-functions-section')).toHaveTextContent(
@@ -131,26 +128,14 @@ describe('SystemConfigPanel', () => {
     )
     expect(screen.getByText('System functions version: 7')).toBeInTheDocument()
 
-    const editor = screen.getByTestId('quick-launch-functions-json')
-    expect((editor as HTMLTextAreaElement).value).toContain('Create PPT')
+    expect(screen.queryByTestId('quick-launch-functions-json')).not.toBeInTheDocument()
+    expect(screen.getByTestId('quick-launch-function-card-0')).toHaveTextContent('Create PPT')
 
-    fireEvent.change(editor, {
-      target: {
-        value: JSON.stringify(
-          [
-            {
-              id: 'create_skill',
-              title: 'Create Skill',
-              team_id: 42,
-              enabled: true,
-              order: 1,
-              quick_phrases: ['Help me create a skill'],
-            },
-          ],
-          null,
-          2
-        ),
-      },
+    fireEvent.change(screen.getByTestId('quick-launch-function-title-0'), {
+      target: { value: 'Create Skill' },
+    })
+    fireEvent.change(screen.getByTestId('quick-launch-function-phrase-0-0'), {
+      target: { value: 'Help me create a skill' },
     })
     fireEvent.click(screen.getByText('Save'))
 
@@ -158,8 +143,10 @@ describe('SystemConfigPanel', () => {
       expect(mockedAdminApis.updateQuickLaunchFunctionsConfig).toHaveBeenCalledWith({
         functions: [
           {
-            id: 'create_skill',
+            id: 'create_ppt',
             title: 'Create Skill',
+            description: 'Create presentation decks',
+            icon: 'presentation',
             team_id: 42,
             enabled: true,
             order: 1,

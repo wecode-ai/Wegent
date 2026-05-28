@@ -171,6 +171,9 @@ function ChatAreaContent({
   const [pendingReplacementMessage, setPendingReplacementMessage] = useState<string | null>(null)
   const [isPendingReplacementOpen, setIsPendingReplacementOpen] = useState(false)
   const [isPendingReplacementConfirming, setIsPendingReplacementConfirming] = useState(false)
+  const [pendingQuickPhrase, setPendingQuickPhrase] = useState<string | null>(null)
+  const [isQuickPhraseOverwriteOpen, setIsQuickPhraseOverwriteOpen] = useState(false)
+  const [focusInputAtEndSignal, setFocusInputAtEndSignal] = useState(0)
   const { quote, clearQuote, formatQuoteForMessage } = useQuote()
 
   // Task context
@@ -771,6 +774,35 @@ function ChatAreaContent({
   const shouldConfirmPendingReplacement =
     selectedTaskDetail?.status === 'PENDING' && !selectedTaskDetail?.is_group_chat
 
+  const applyQuickPhraseToInput = useCallback(
+    (phrase: string) => {
+      setTaskInputMessage(phrase)
+      setFocusInputAtEndSignal(signal => signal + 1)
+    },
+    [setTaskInputMessage]
+  )
+
+  const handleQuickPhraseSelect = useCallback(
+    (phrase: string) => {
+      if (chatState.taskInputMessage.trim()) {
+        setPendingQuickPhrase(phrase)
+        setIsQuickPhraseOverwriteOpen(true)
+        return
+      }
+
+      applyQuickPhraseToInput(phrase)
+    },
+    [applyQuickPhraseToInput, chatState.taskInputMessage]
+  )
+
+  const handleConfirmQuickPhraseOverwrite = useCallback(() => {
+    if (!pendingQuickPhrase) return
+
+    applyQuickPhraseToInput(pendingQuickPhrase)
+    setPendingQuickPhrase(null)
+    setIsQuickPhraseOverwriteOpen(false)
+  }, [applyQuickPhraseToInput, pendingQuickPhrase])
+
   const sendOrConfirmPendingReplacement = useCallback(
     async (message: string) => {
       const trimmedMessage = message.trim()
@@ -1194,6 +1226,7 @@ function ChatAreaContent({
   const inputCardProps = {
     taskInputMessage: chatState.taskInputMessage,
     setTaskInputMessage: chatState.setTaskInputMessage,
+    focusInputAtEndSignal,
     selectedTeam: chatState.selectedTeam,
     teams: teams,
     externalApiParams: chatState.externalApiParams,
@@ -1467,7 +1500,7 @@ function ChatAreaContent({
                   teams={teams}
                   selectedTeam={chatState.selectedTeam}
                   onTeamSelect={handleTeamSelect}
-                  onPhraseSelect={phrase => chatState.setTaskInputMessage(phrase)}
+                  onPhraseSelect={handleQuickPhraseSelect}
                   currentMode={taskType}
                   isLoading={isTeamsLoading}
                   isTeamsLoading={isTeamsLoading}
@@ -1563,6 +1596,36 @@ function ChatAreaContent({
           onConfirm={handlePipelineNextStepConfirm}
         />
       )}
+      <AlertDialog
+        open={isQuickPhraseOverwriteOpen}
+        onOpenChange={open => {
+          setIsQuickPhraseOverwriteOpen(open)
+          if (!open) {
+            setPendingQuickPhrase(null)
+          }
+        }}
+      >
+        <AlertDialogContent className="w-[420px] max-w-[calc(100vw-32px)] rounded-2xl border-border bg-base">
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('chat:quick_launch.overwrite_confirm_title')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('chat:quick_launch.overwrite_confirm_description')}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="quick-phrase-overwrite-cancel">
+              {t('chat:quick_launch.overwrite_confirm_cancel')}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="quick-phrase-overwrite-confirm"
+              onClick={handleConfirmQuickPhraseOverwrite}
+              className="bg-primary text-white hover:bg-primary/90"
+            >
+              {t('chat:quick_launch.overwrite_confirm_action')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <AlertDialog
         open={isPendingReplacementOpen}
         onOpenChange={open => {

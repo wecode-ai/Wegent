@@ -11,6 +11,7 @@ const CARD_WIDTH = 154
 interface QuickLauncherCardsProps {
   systemLaunchers: QuickLauncher[]
   favoriteLaunchers: QuickLauncher[]
+  selectedLauncherKey?: string | null
   onSelectLauncher: (launcher: QuickLauncher) => void
   renderMoreButton?: () => ReactNode
   renderQuickCreateCard?: () => ReactNode
@@ -18,11 +19,11 @@ interface QuickLauncherCardsProps {
 
 function LauncherCard({
   launcher,
-  accent,
+  isSelected,
   onClick,
 }: {
   launcher: QuickLauncher
-  accent: boolean
+  isSelected: boolean
   onClick: () => void
 }) {
   return (
@@ -30,19 +31,20 @@ function LauncherCard({
       type="button"
       data-testid={`quick-launcher-${launcher.type}-${launcher.key.replace(':', '-')}`}
       onClick={onClick}
-      className={`group relative flex h-[78px] flex-col justify-center rounded-lg px-3 py-2 text-left transition-all duration-200 ${
-        accent
-          ? 'border border-primary/25 bg-primary/5 hover:border-primary/50'
-          : 'border border-border bg-base hover:bg-hover'
-      } hover:shadow-sm`}
+      className={`group relative flex h-[78px] flex-col justify-center px-3 py-2 text-left transition-all duration-200 ${
+        isSelected
+          ? 'border-l-[3px] border-l-primary border-y border-r border-border bg-primary/5'
+          : 'border border-border bg-base hover:bg-hover hover:shadow-[0_2px_12px_0_rgba(0,0,0,0.1)]'
+      }`}
       style={{
         width: CARD_WIDTH,
+        borderRadius: 20,
         flexShrink: 0,
       }}
     >
       <span
         className={`block truncate text-[15px] font-semibold leading-5 ${
-          accent ? 'text-primary' : 'text-text-primary'
+          isSelected ? 'text-primary' : 'text-text-primary'
         }`}
         title={launcher.title}
       >
@@ -63,6 +65,7 @@ function LauncherCard({
 export function QuickLauncherCards({
   systemLaunchers,
   favoriteLaunchers,
+  selectedLauncherKey,
   onSelectLauncher,
   renderMoreButton,
   renderQuickCreateCard,
@@ -76,12 +79,15 @@ export function QuickLauncherCards({
           <h3 className="px-1 text-xs font-medium text-text-muted">
             {t('quick_launch.system_functions')}
           </h3>
-          <div className="flex flex-wrap items-center justify-center gap-3">
+          <div
+            className="flex flex-wrap items-center justify-start gap-3"
+            data-testid="quick-launch-system-grid"
+          >
             {systemLaunchers.map(launcher => (
               <LauncherCard
                 key={launcher.key}
                 launcher={launcher}
-                accent
+                isSelected={launcher.key === selectedLauncherKey}
                 onClick={() => onSelectLauncher(launcher)}
               />
             ))}
@@ -94,12 +100,15 @@ export function QuickLauncherCards({
           <h3 className="px-1 text-xs font-medium text-text-muted">
             {t('quick_launch.favorite_agents')}
           </h3>
-          <div className="flex flex-wrap items-center justify-center gap-3">
+          <div
+            className="flex flex-wrap items-center justify-start gap-3"
+            data-testid="quick-launch-favorites-grid"
+          >
             {favoriteLaunchers.map(launcher => (
               <LauncherCard
                 key={launcher.key}
                 launcher={launcher}
-                accent={false}
+                isSelected={launcher.key === selectedLauncherKey}
                 onClick={() => onSelectLauncher(launcher)}
               />
             ))}
