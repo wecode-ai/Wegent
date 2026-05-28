@@ -1,14 +1,15 @@
 'use client'
 
-import type { ReactNode } from 'react'
+import { useRef, type ReactNode } from 'react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 
 import { useTranslation } from '@/hooks/useTranslation'
 
 import type { QuickLauncher } from './types'
 
 const CARD_WIDTH = 154
-const launcherRowClassName =
-  'flex flex-nowrap items-center justify-start gap-3 overflow-x-auto overscroll-x-contain pb-1'
+const CARD_GAP = 12
+const SCROLL_STEP = (CARD_WIDTH + CARD_GAP) * 2
 
 interface QuickLauncherCardsProps {
   systemLaunchers: QuickLauncher[]
@@ -64,6 +65,64 @@ function LauncherCard({
   )
 }
 
+function LauncherScrollTrack({
+  launchers,
+  selectedLauncherKey,
+  onSelectLauncher,
+  testId,
+}: {
+  launchers: QuickLauncher[]
+  selectedLauncherKey?: string | null
+  onSelectLauncher: (launcher: QuickLauncher) => void
+  testId: string
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  const handleScroll = (direction: -1 | 1) => {
+    scrollRef.current?.scrollBy({
+      left: direction * SCROLL_STEP,
+      behavior: 'smooth',
+    })
+  }
+
+  return (
+    <div className="flex min-w-0 items-center gap-2" data-testid={`${testId}-track`}>
+      <button
+        type="button"
+        aria-label="Scroll left"
+        className="flex h-11 min-w-[44px] shrink-0 items-center justify-center rounded-full border border-border bg-base text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
+        onClick={() => handleScroll(-1)}
+        data-testid={`${testId}-scroll-left`}
+      >
+        <ChevronLeft className="h-4 w-4" />
+      </button>
+      <div
+        ref={scrollRef}
+        className="scrollbar-hide flex min-w-0 flex-1 flex-nowrap items-center justify-start gap-3 overflow-x-auto overscroll-x-contain"
+        data-testid={testId}
+      >
+        {launchers.map(launcher => (
+          <LauncherCard
+            key={launcher.key}
+            launcher={launcher}
+            isSelected={launcher.key === selectedLauncherKey}
+            onClick={() => onSelectLauncher(launcher)}
+          />
+        ))}
+      </div>
+      <button
+        type="button"
+        aria-label="Scroll right"
+        className="flex h-11 min-w-[44px] shrink-0 items-center justify-center rounded-full border border-border bg-base text-text-muted transition-colors hover:bg-hover hover:text-text-primary"
+        onClick={() => handleScroll(1)}
+        data-testid={`${testId}-scroll-right`}
+      >
+        <ChevronRight className="h-4 w-4" />
+      </button>
+    </div>
+  )
+}
+
 export function QuickLauncherCards({
   systemLaunchers,
   favoriteLaunchers,
@@ -81,16 +140,12 @@ export function QuickLauncherCards({
           <h3 className="px-1 text-xs font-medium text-text-muted">
             {t('quick_launch.system_functions')}
           </h3>
-          <div className={launcherRowClassName} data-testid="quick-launch-system-grid">
-            {systemLaunchers.map(launcher => (
-              <LauncherCard
-                key={launcher.key}
-                launcher={launcher}
-                isSelected={launcher.key === selectedLauncherKey}
-                onClick={() => onSelectLauncher(launcher)}
-              />
-            ))}
-          </div>
+          <LauncherScrollTrack
+            launchers={systemLaunchers}
+            selectedLauncherKey={selectedLauncherKey}
+            onSelectLauncher={onSelectLauncher}
+            testId="quick-launch-system-grid"
+          />
         </section>
       )}
 
@@ -99,17 +154,26 @@ export function QuickLauncherCards({
           <h3 className="px-1 text-xs font-medium text-text-muted">
             {t('quick_launch.favorite_agents')}
           </h3>
-          <div className={launcherRowClassName} data-testid="quick-launch-favorites-grid">
-            {favoriteLaunchers.map(launcher => (
-              <LauncherCard
-                key={launcher.key}
-                launcher={launcher}
-                isSelected={launcher.key === selectedLauncherKey}
-                onClick={() => onSelectLauncher(launcher)}
-              />
-            ))}
-            {renderMoreButton?.()}
-            {renderQuickCreateCard?.()}
+          <div className="flex items-center gap-3" data-testid="quick-launch-favorites-layout">
+            {favoriteLaunchers.length > 0 && (
+              <div className="min-w-0 flex-1">
+                <LauncherScrollTrack
+                  launchers={favoriteLaunchers}
+                  selectedLauncherKey={selectedLauncherKey}
+                  onSelectLauncher={onSelectLauncher}
+                  testId="quick-launch-favorites-grid"
+                />
+              </div>
+            )}
+            {(renderMoreButton || renderQuickCreateCard) && (
+              <div
+                className="flex shrink-0 items-center gap-3"
+                data-testid="quick-launch-favorites-actions"
+              >
+                {renderMoreButton?.()}
+                {renderQuickCreateCard?.()}
+              </div>
+            )}
           </div>
         </section>
       )}

@@ -127,8 +127,51 @@ describe('QuickLauncherCards', () => {
     ]) {
       expect(grid).toHaveClass('flex-nowrap')
       expect(grid).toHaveClass('overflow-x-auto')
+      expect(grid).toHaveClass('scrollbar-hide')
       expect(grid).not.toHaveClass('flex-wrap')
     }
+
+    expect(screen.getByTestId('quick-launch-system-grid-scroll-left')).toBeInTheDocument()
+    expect(screen.getByTestId('quick-launch-system-grid-scroll-right')).toBeInTheDocument()
+    expect(screen.getByTestId('quick-launch-favorites-grid-scroll-left')).toBeInTheDocument()
+    expect(screen.getByTestId('quick-launch-favorites-grid-scroll-right')).toBeInTheDocument()
+  })
+
+  test('keeps more and create cards outside the horizontally scrolling favorites area', () => {
+    render(
+      <QuickLauncherCards
+        systemLaunchers={[]}
+        favoriteLaunchers={[
+          makeLauncher({
+            type: 'favorite_agent',
+            key: 'agent:2',
+            team: makeTeam({ id: 2 }),
+            title: 'Writing Agent',
+          }),
+        ]}
+        onSelectLauncher={jest.fn()}
+        renderMoreButton={() => (
+          <button type="button" data-testid="quick-launch-more-card">
+            More
+          </button>
+        )}
+        renderQuickCreateCard={() => (
+          <button type="button" data-testid="quick-launch-create-card">
+            Create
+          </button>
+        )}
+      />
+    )
+
+    const favoritesGrid = screen.getByTestId('quick-launch-favorites-grid')
+    const actions = screen.getByTestId('quick-launch-favorites-actions')
+    const moreCard = screen.getByTestId('quick-launch-more-card')
+    const createCard = screen.getByTestId('quick-launch-create-card')
+
+    expect(favoritesGrid).not.toContainElement(moreCard)
+    expect(favoritesGrid).not.toContainElement(createCard)
+    expect(actions).toContainElement(moreCard)
+    expect(actions).toContainElement(createCard)
   })
 
   test('uses the main branch rounded card shape', () => {
