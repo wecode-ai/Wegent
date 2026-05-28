@@ -12,9 +12,11 @@ from app.api.endpoints import (
     dingtalk_docs,
     groups,
     health,
+    installed_mcps,
     knowledge,
     knowledge_open,
     knowledge_transfer,
+    local_executor,
     mcp_providers,
     oidc,
     openapi_responses,
@@ -27,6 +29,7 @@ from app.api.endpoints import (
     skill_identity,
     skill_market,
     subtasks,
+    system_skills,
     tables,
     token_issuers,
     users,
@@ -214,6 +217,10 @@ if not settings.STANDALONE_MODE:
 api_router.include_router(
     mcp_providers.router, prefix="/mcp-providers", tags=["mcp-providers"]
 )
+api_router.include_router(installed_mcps.router, prefix="/mcps", tags=["mcps"])
+api_router.include_router(
+    local_executor.router, prefix="/local-executor", tags=["local-executor"]
+)
 
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])
 api_router.include_router(
@@ -222,6 +229,9 @@ api_router.include_router(
 # Skill market endpoints (external skill market integration)
 api_router.include_router(
     skill_market.router, prefix="/skill-market", tags=["skill-market"]
+)
+api_router.include_router(
+    system_skills.router, prefix="/system-skills", tags=["system-skills"]
 )
 api_router.include_router(skill_identity.router, tags=["skill-identity"])
 api_router.include_router(

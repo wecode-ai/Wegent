@@ -23,6 +23,7 @@ Cross-platform support:
 
 import json
 import os
+import shutil
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
@@ -181,9 +182,30 @@ class LocalModeStrategy(ExecutionModeStrategy):
             Path to skills directory within config_dir
         """
         if config_dir:
-            return os.path.join(config_dir, "skills")
+            skills_dir = os.path.join(config_dir, "skills")
+            self._copy_global_managed_skills(skills_dir)
+            return skills_dir
         # Fallback to default location if config_dir not provided
         return os.path.expanduser("~/.claude/skills")
+
+    def _copy_global_managed_skills(self, target_skills_dir: str) -> None:
+        """Copy globally synced managed skills into the task skills directory."""
+        try:
+            from executor.modes.local.capabilities import GlobalCapabilityStore
+
+            store = GlobalCapabilityStore()
+            manifest = store.load()
+            os.makedirs(target_skills_dir, exist_ok=True)
+            for name, record in manifest.get("skills", {}).items():
+                if not isinstance(record, dict) or not record.get("managed", True):
+                    continue
+                source = store.skills_dir / name
+                target = os.path.join(target_skills_dir, name)
+                if not source.is_dir() or os.path.exists(target):
+                    continue
+                shutil.copytree(source, target)
+        except Exception as exc:
+            logger.warning("Failed to copy global managed skills: %s", exc)
 
     def get_skills_deployment_options(self) -> Dict[str, bool]:
         """Get deployment options optimized for local mode.

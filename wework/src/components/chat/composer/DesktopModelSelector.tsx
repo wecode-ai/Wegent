@@ -67,7 +67,7 @@ export function DesktopModelSelector() {
         type="button"
         data-testid="model-selector-button"
         onClick={() => setOpen(current => !current)}
-        className="flex h-11 min-w-[44px] items-center gap-1 rounded-full px-2 text-sm font-medium text-text-primary hover:bg-muted"
+        className="flex h-10 min-w-10 items-center gap-1 rounded-full px-2 text-sm font-medium text-text-primary hover:bg-muted"
         aria-expanded={open}
         aria-label={t('workbench.model_selector', '模型选择')}
       >

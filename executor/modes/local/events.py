@@ -21,6 +21,7 @@ class DeviceEvents:
     REGISTER = "device:register"
     HEARTBEAT = "device:heartbeat"
     EXECUTE_COMMAND = "device:execute_command"
+    SYNC_CAPABILITIES = "device:sync_capabilities"
 
 
 class TaskEvents:

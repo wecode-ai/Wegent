@@ -26,6 +26,8 @@ describe('DesktopWorkbenchLayout', () => {
       error: null,
     },
     messages: [],
+    onNewChat: vi.fn(),
+    onOpenPlugins: vi.fn(),
     onSelectProject: vi.fn(),
     onOpenTask: vi.fn(),
     onInputChange: vi.fn(),
@@ -46,8 +48,9 @@ describe('DesktopWorkbenchLayout', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.getByTestId('desktop-empty-composer-frame')).toHaveClass(
-      'w-[min(90%,62rem)]',
-      'max-w-full',
+      'w-[min(58vw,62rem)]',
+      'min-w-[32rem]',
+      'max-w-[calc(100vw-4rem)]',
     )
   })
 

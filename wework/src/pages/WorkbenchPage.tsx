@@ -3,6 +3,7 @@ import { MobileWorkbenchLayout } from '@/components/layout/MobileWorkbenchLayout
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useAuth } from '@/features/auth/useAuth'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { navigateTo } from '@/lib/navigation'
 
 export function WorkbenchPage() {
   const isMobile = useIsMobile()
@@ -14,6 +15,8 @@ export function WorkbenchPage() {
     <Layout
       state={state}
       messages={messages}
+      onNewChat={() => navigateTo('/')}
+      onOpenPlugins={() => navigateTo('/plugins')}
       onSelectProject={selectProject}
       onOpenTask={openTask}
       onInputChange={setInput}

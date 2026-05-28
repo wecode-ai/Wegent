@@ -73,11 +73,11 @@ export function DesktopContextMenu() {
         type="button"
         data-testid="add-context-button"
         onClick={() => setOpen(current => !current)}
-        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full p-0 text-text-secondary hover:bg-muted"
+        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full p-0 text-text-secondary hover:bg-muted"
         aria-expanded={open}
         aria-label={t('workbench.add_context', '添加上下文')}
       >
-        <Plus className="h-6 w-6" />
+        <Plus className="h-5 w-5" />
       </button>
     </div>
   )

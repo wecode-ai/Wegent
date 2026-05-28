@@ -75,11 +75,11 @@ export function DesktopModeSelector() {
         type="button"
         data-testid="custom-mode-button"
         onClick={() => setOpen(current => !current)}
-        className="flex h-11 min-w-[44px] items-center gap-2 rounded-full px-2 text-sm font-medium text-text-secondary hover:bg-muted"
+        className="flex h-10 min-w-10 items-center gap-2 rounded-full px-2 text-sm font-medium text-text-secondary hover:bg-muted"
         aria-expanded={open}
         aria-label={t('workbench.custom_mode', '自定义')}
       >
-        <Settings className="h-5 w-5" />
+        <Settings className="h-[18px] w-[18px]" />
         <span>{t('workbench.custom_mode', '自定义')}</span>
         <ChevronDown className="h-4 w-4" />
       </button>

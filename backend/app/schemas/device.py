@@ -8,7 +8,7 @@ Device schemas for request/response validation.
 
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -182,6 +182,44 @@ class DeviceCommandResponse(BaseModel):
     error: Optional[str] = None
     stdout_truncated: bool = False
     stderr_truncated: bool = False
+
+
+class DeviceCapabilitySyncRequest(BaseModel):
+    """Request model for syncing global user capabilities to a local device."""
+
+    skill_ids: List[int] = Field(
+        default_factory=list,
+        description="Executable Skill Kind IDs to sync.",
+    )
+    installed_skill_ids: List[int] = Field(
+        default_factory=list,
+        description="InstalledSkill Kind IDs to resolve and sync.",
+    )
+    installed_mcp_ids: List[int] = Field(
+        default_factory=list,
+        description="InstalledMCP Kind IDs to resolve and sync.",
+    )
+    mode: Literal["merge", "replace"] = Field(
+        "replace",
+        description="How the device should apply the capability set.",
+    )
+
+
+class DeviceCapabilitySyncResult(BaseModel):
+    """Per-device capability sync result."""
+
+    device_id: str
+    success: bool
+    error: Optional[str] = None
+
+
+class DeviceCapabilitySyncResponse(BaseModel):
+    """Response model for capability sync requests."""
+
+    synced: int = 0
+    failed: int = 0
+    skipped: int = 0
+    results: List[DeviceCapabilitySyncResult] = Field(default_factory=list)
 
 
 class DeviceRegisterPayload(BaseModel):

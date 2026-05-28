@@ -6,6 +6,9 @@ import { DesktopWorkbenchMain } from './DesktopWorkbenchMain'
 interface DesktopWorkbenchLayoutProps {
   state: WorkbenchState
   messages: WorkbenchMessage[]
+  activeItem?: 'chat' | 'plugins' | 'automation'
+  onNewChat: () => void
+  onOpenPlugins: () => void
   onSelectProject: (projectId: number) => void
   onOpenTask: (taskId: number) => void
   onInputChange: (value: string) => void
@@ -16,6 +19,9 @@ interface DesktopWorkbenchLayoutProps {
 export function DesktopWorkbenchLayout({
   state,
   messages,
+  activeItem = 'chat',
+  onNewChat,
+  onOpenPlugins,
   onSelectProject,
   onOpenTask,
   onInputChange,
@@ -32,9 +38,12 @@ export function DesktopWorkbenchLayout({
           projects={state.projects}
           recentTasks={state.recentTasks}
           currentProjectId={state.currentProject?.id}
+          activeItem={activeItem}
           onCollapse={() => setSidebarCollapsed(true)}
+          onNewChat={onNewChat}
           onSelectProject={onSelectProject}
           onOpenTask={onOpenTask}
+          onOpenPlugins={onOpenPlugins}
           onLogout={onLogout}
         />
       )}

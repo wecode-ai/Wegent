@@ -18,13 +18,13 @@ export function DesktopChatComposer({
   disabled,
   placeholder,
 }: DesktopChatComposerProps) {
-  const textareaRef = useAutoResizeTextarea(value, 168)
+  const textareaRef = useAutoResizeTextarea(value, 144)
   const canSend = value.trim().length > 0 && !disabled
 
   return (
-    <div className="w-full rounded-[28px] bg-surface shadow-[0_16px_44px_rgba(0,0,0,0.08)]">
+    <div className="w-full rounded-[26px] bg-surface shadow-[0_14px_42px_rgba(0,0,0,0.055)]">
       <form
-        className="flex min-h-[112px] w-full flex-col rounded-[28px] border border-border bg-base px-6 pb-4 pt-5"
+        className="flex min-h-[100px] w-full flex-col rounded-[26px] border border-border bg-base px-5 pb-3 pt-4"
         onSubmit={event => {
           event.preventDefault()
           if (canSend) onSubmit()
@@ -38,7 +38,7 @@ export function DesktopChatComposer({
           canSend={canSend}
           placeholder={placeholder}
           rows={2}
-          className="max-h-[144px] min-h-12 w-full resize-none overflow-y-auto bg-transparent text-base leading-6 text-text-primary outline-none placeholder:text-text-muted"
+          className="max-h-[120px] min-h-10 w-full resize-none overflow-y-auto bg-transparent text-[15px] leading-5 text-text-primary outline-none placeholder:text-text-muted"
         />
         <DesktopComposerToolbar canSend={canSend} />
       </form>

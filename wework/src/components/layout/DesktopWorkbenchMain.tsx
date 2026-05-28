@@ -9,7 +9,7 @@ import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
 import { RightWorkspacePanel } from './workspace-panels/RightWorkspacePanel'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
 
-const DESKTOP_COMPOSER_FRAME_CLASS = 'mx-auto w-[min(90%,62rem)] max-w-full'
+const DESKTOP_COMPOSER_FRAME_CLASS = 'mx-auto w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100vw-4rem)]'
 
 interface DesktopWorkbenchMainProps {
   sidebarCollapsed: boolean
@@ -72,10 +72,10 @@ export function DesktopWorkbenchMain({
         ) : (
           <div className="flex flex-1 items-center justify-center px-10">
             <div className={DESKTOP_COMPOSER_FRAME_CLASS} data-testid="desktop-empty-composer-frame">
-              <div className="mb-8 flex justify-center">
-                <Bot className="h-8 w-8 text-text-muted" />
+              <div className="mb-7 flex justify-center">
+                <Bot className="h-7 w-7 text-text-muted" />
               </div>
-              <h1 className="mb-10 text-center text-[34px] font-medium tracking-normal">
+              <h1 className="mb-9 text-center text-[31px] font-medium leading-tight tracking-normal">
                 {t('workbench.empty_title', '我们该做什么？')}
               </h1>
               <ChatInput

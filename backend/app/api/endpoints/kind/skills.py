@@ -123,6 +123,12 @@ class PublicSkillUpdate(BaseModel):
         return str(v)
 
 
+class SkillEnabledUpdate(BaseModel):
+    """Schema for updating a Skill enabled state."""
+
+    enabled: bool
+
+
 class InvokeSkillRequest(BaseModel):
     """Schema for invoking a skill"""
 
@@ -1421,6 +1427,29 @@ def update_skill_from_git(
         db=db,
     )
     return result
+
+
+@router.put("/{skill_id}/enabled", response_model=Skill)
+def update_skill_enabled(
+    skill_id: int,
+    data: SkillEnabledUpdate,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Update a Skill enabled state without replacing its ZIP package."""
+    skill_kind = _resolve_manageable_skill(
+        db=db,
+        skill_id=skill_id,
+        current_user=current_user,
+        action="update",
+    )
+
+    return skill_kinds_service.update_skill_enabled(
+        db=db,
+        skill_id=skill_id,
+        user_id=skill_kind.user_id,
+        enabled=data.enabled,
+    )
 
 
 @router.put("/{skill_id}", response_model=Skill)
