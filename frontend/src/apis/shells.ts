@@ -11,7 +11,7 @@ export interface UnifiedShell {
   name: string
   type: ShellTypeEnum // 'public', 'user', or 'group' - identifies shell source
   displayName?: string | null
-  shellType: string // Agent type: 'ClaudeCode' | 'Agno' | 'Dify'
+  shellType: string // Agent type, e.g. 'Chat', 'ClaudeCode', 'Agno', or 'Dify'
   baseImage?: string | null
   baseShellRef?: string | null
   supportModel?: string[] | null

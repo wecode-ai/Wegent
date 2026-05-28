@@ -10,6 +10,7 @@ requires-python = ">=3.10,<=3.13"
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn>=0.30.0",
+    "watchfiles>=1.0.0",
     "pydantic>=2.5.3",
     "pydantic-settings>=2.0.0",
     "httpx[brotli,socks]>=0.26.0",

@@ -11,12 +11,27 @@ export interface Team {
   is_active: boolean
   default_for_modes?: string[]
   recommended_mode?: 'chat' | 'code' | 'both'
+  agent_type?: string | null
+}
+
+export interface ProjectExecutionConfig {
+  targetType: 'local' | 'cloud'
+  deviceId?: string
 }
 
 export interface ProjectConfig {
   mode?: 'workspace' | string
   path?: string
   device_id?: string
+  execution?: ProjectExecutionConfig | null
+}
+
+export interface DeviceInfo {
+  id: number
+  device_id: string
+  name: string
+  status: 'online' | 'offline' | 'busy'
+  is_default: boolean
 }
 
 export interface ProjectTask {
@@ -50,6 +65,8 @@ export interface Task {
   created_at: string
   updated_at?: string
   is_group_chat?: boolean
+  model_id?: string | null
+  requested_skills?: SkillRef[]
 }
 
 export interface TaskListResponse {
@@ -99,6 +116,12 @@ export interface ChatSendPayload {
   title?: string
   task_type?: 'chat' | 'code' | 'task' | 'knowledge' | 'video' | 'image'
   project_id?: number
+  device_id?: string
+  model_id?: string
+  force_override_bot_model?: string
+  force_override_bot_model_type?: string
+  attachment_ids?: number[]
+  additional_skills?: SkillRef[]
 }
 
 export interface ChatSendAck {
@@ -145,4 +168,102 @@ export interface TaskJoinResponse {
   }
   subtasks?: Array<Record<string, unknown>>
   error?: string
+}
+
+export type ChatBlockType = 'text' | 'tool' | 'thinking' | 'error' | 'guidance'
+
+export interface ChatBlock {
+  id: string
+  type: ChatBlockType
+  content?: string
+  tool_use_id?: string
+  tool_name?: string
+  tool_input?: Record<string, unknown>
+  tool_output?: unknown
+  status?: 'generating_arguments' | 'pending' | 'streaming' | 'done' | 'error'
+  timestamp?: number
+}
+
+export interface ChatBlockCreatedPayload {
+  task_id: number
+  subtask_id: number
+  block: ChatBlock
+}
+
+export interface ChatBlockUpdatedPayload {
+  task_id: number
+  subtask_id: number
+  block_id: string
+  content?: string
+  tool_output?: unknown
+  tool_input?: Record<string, unknown>
+  status?: ChatBlock['status'] | 'running'
+}
+
+export type ModelType = 'public' | 'user' | 'group'
+
+export interface UnifiedModel {
+  name: string
+  type: ModelType
+  displayName?: string | null
+  provider?: string | null
+  modelId?: string | null
+  namespace?: string
+  config?: Record<string, unknown>
+  isActive?: boolean
+}
+
+export interface UnifiedModelListResponse {
+  data: UnifiedModel[]
+}
+
+export interface UnifiedSkill {
+  id: number
+  name: string
+  namespace: string
+  description: string
+  displayName?: string
+  version?: string
+  author?: string
+  tags?: string[]
+  bindShells?: string[]
+  visible?: boolean
+  is_active: boolean
+  is_public: boolean
+  user_id: number
+  created_at?: string
+  updated_at?: string
+}
+
+export interface SkillRef {
+  name: string
+  namespace: string
+  is_public: boolean
+}
+
+export type AttachmentStatus = 'uploading' | 'parsing' | 'ready' | 'failed'
+
+export interface Attachment {
+  id: number
+  filename: string
+  file_size: number
+  mime_type: string
+  status: AttachmentStatus
+  text_length?: number | null
+  error_message?: string | null
+  error_code?: string | null
+  subtask_id?: number | null
+  file_extension: string
+  created_at: string
+}
+
+export interface AttachmentUploadProgress {
+  file: File
+  progress: number
+}
+
+export interface MultiAttachmentUploadState {
+  attachments: Attachment[]
+  uploadingFiles: Map<string, AttachmentUploadProgress>
+  errors: Map<string, string>
 }

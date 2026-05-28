@@ -180,6 +180,7 @@ class ParseResult:
     text: str
     text_length: int
     image_base64: Optional[str] = None
+    image_mime_type: Optional[str] = None
     truncation_info: Optional[TruncationInfo] = None
 
 
@@ -246,6 +247,12 @@ class DocumentParser:
         # Archive formats (binary, no text extraction)
         ".zip": "application/zip",
     }
+
+    # Formats supported by all major vision APIs (intersection of Anthropic, OpenAI, Gemini).
+    # Images with these extensions are stored as-is without re-encoding.
+    VISION_SUPPORTED_EXTENSIONS: frozenset = frozenset(
+        {".jpg", ".jpeg", ".png", ".webp"}
+    )
 
     # Special format extensions that have dedicated parsers
     SPECIAL_FORMAT_EXTENSIONS = {
@@ -463,6 +470,7 @@ class DocumentParser:
         These formats have dedicated parsers.
         """
         image_base64 = None
+        image_mime_type = None
         truncation_info = None
 
         if use_smart_truncation:
@@ -485,7 +493,9 @@ class DocumentParser:
             elif extension == ".xmind":
                 text, truncation_info = self._parse_xmind_smart(binary_data, max_length)
             elif extension in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]:
-                text, image_base64 = self._parse_image(binary_data, extension)
+                text, image_base64, image_mime_type = self._parse_image(
+                    binary_data, extension
+                )
             elif extension == ".zip":
                 text = self._parse_archive(binary_data, extension)
             else:
@@ -508,7 +518,9 @@ class DocumentParser:
             elif extension == ".xmind":
                 text = self._parse_xmind(binary_data)
             elif extension in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]:
-                text, image_base64 = self._parse_image(binary_data, extension)
+                text, image_base64, image_mime_type = self._parse_image(
+                    binary_data, extension
+                )
             elif extension == ".zip":
                 text = self._parse_archive(binary_data, extension)
             else:
@@ -535,6 +547,7 @@ class DocumentParser:
             text=text,
             text_length=len(text),
             image_base64=image_base64,
+            image_mime_type=image_mime_type,
             truncation_info=truncation_info,
         )
 
@@ -965,12 +978,17 @@ class DocumentParser:
                 DocumentParseError.PARSE_FAILED,
             ) from e
 
-    def _parse_image(self, binary_data: bytes, extension: str) -> Tuple[str, str]:
+    def _parse_image(self, binary_data: bytes, extension: str) -> Tuple[str, str, str]:
         """
-        Parse image file and return metadata information with base64 encoding.
+        Parse image file and return metadata, base64 data, and actual MIME type.
+
+        Images with formats natively supported by all major vision APIs
+        (JPEG, PNG, WebP — intersection of Anthropic, OpenAI, Gemini) are
+        stored as-is without re-encoding.  Other formats (GIF, BMP) are
+        converted to JPEG, taking only the first frame for animated images.
 
         Returns:
-            Tuple of (metadata_text, base64_encoded_image)
+            Tuple of (metadata_text, base64_encoded_image, actual_mime_type)
         """
         try:
             from PIL import Image
@@ -1000,20 +1018,25 @@ class DocumentParser:
             # Force full image load to validate pixel data (Image.open is lazy)
             img.load()
 
-            # Re-encode to PNG to ensure valid image data for vision models
-            output_buf = io.BytesIO()
-            png_img = img
-            if img.mode == "CMYK":
-                png_img = img.convert("RGB")
-            elif img.mode == "P" and "transparency" in img.info:
-                png_img = img.convert("RGBA")
-            elif img.mode not in {"1", "L", "LA", "RGB", "RGBA", "P"}:
-                png_img = img.convert("RGB")
+            ext = extension.lower()
+            if ext in self.VISION_SUPPORTED_EXTENSIONS:
+                # Format is natively supported by all major vision APIs — use original bytes
+                image_base64 = base64.b64encode(binary_data).decode("utf-8")
+                actual_mime_type = self.get_mime_type(ext)
+            else:
+                # Convert to JPEG (supported by all major vision APIs, compact for photos)
+                # JPEG requires RGB or L mode; convert everything else accordingly
+                if img.mode not in {"RGB", "L"}:
+                    img = img.convert("RGB")
+                output_buf = io.BytesIO()
+                img.save(output_buf, format="JPEG", quality=85)
+                image_base64 = base64.b64encode(output_buf.getvalue()).decode("utf-8")
+                actual_mime_type = "image/jpeg"
+                logger.info(
+                    f"Converted {extension} image to JPEG for vision API compatibility"
+                )
 
-            png_img.save(output_buf, format="PNG")
-            image_base64 = base64.b64encode(output_buf.getvalue()).decode("utf-8")
-
-            return text, image_base64
+            return text, image_base64, actual_mime_type
 
         except Exception as e:
             logger.error(f"Error parsing image: {e}", exc_info=True)
