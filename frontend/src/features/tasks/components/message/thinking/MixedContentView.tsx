@@ -69,8 +69,6 @@ interface MixedContentViewProps {
   currentMessageIndex?: number
   /** Callback when user submits an ask_user_question form - receives pre-formatted message string */
   onAskUserSubmit?: (askId: string, formattedMessage: string) => void
-  /** Callback when interactive HTML artifacts send a chat message */
-  onSendMessage?: (content: string) => void
 }
 
 /**
@@ -93,7 +91,6 @@ const MixedContentView = memo(function MixedContentView({
   subtaskId,
   currentMessageIndex,
   onAskUserSubmit,
-  onSendMessage,
 }: MixedContentViewProps) {
   const { t } = useTranslation('chat')
   // Extract tools from thinking (legacy mode)
@@ -531,7 +528,7 @@ const MixedContentView = memo(function MixedContentView({
               : item.content
           return (
             <div key={key} className="text-sm">
-              <EnhancedMarkdown source={textContent} theme={theme} onSendMessage={onSendMessage} />
+              <EnhancedMarkdown source={textContent} theme={theme} />
             </div>
           )
         } else if (item.type === 'video') {
