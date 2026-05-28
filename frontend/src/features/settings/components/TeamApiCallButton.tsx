@@ -20,7 +20,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
-import { getPublicApiBaseUrl } from '@/lib/runtime-config'
+import { getPublicApiBaseUrl as getConfiguredPublicApiBaseUrl } from '@/lib/runtime-config'
 import type { Team } from '@/types/api'
 
 const API_KEYS_PATH = '/settings?section=api-keys&tab=api-keys'
@@ -75,10 +75,16 @@ export function buildTeamApiResponsesEndpoint(
   ).toString()
 }
 
+function resolvePublicApiBaseUrl(): string {
+  return typeof getConfiguredPublicApiBaseUrl === 'function'
+    ? getConfiguredPublicApiBaseUrl()
+    : '/api'
+}
+
 export function buildTeamApiCurl(
   team: Team,
   input: string = DEFAULT_INPUT,
-  responsesEndpoint: string = buildTeamApiResponsesEndpoint(getPublicApiBaseUrl())
+  responsesEndpoint: string = buildTeamApiResponsesEndpoint(resolvePublicApiBaseUrl())
 ): string {
   const model = buildTeamApiModel(team)
 
@@ -106,7 +112,7 @@ function buildSingleQuotedString(value: string): string {
 export function buildTeamApiCodeSamples(
   team: Team,
   input: string = DEFAULT_INPUT,
-  responsesEndpoint: string = buildTeamApiResponsesEndpoint(getPublicApiBaseUrl())
+  responsesEndpoint: string = buildTeamApiResponsesEndpoint(resolvePublicApiBaseUrl())
 ): TeamApiCodeSample[] {
   const model = buildTeamApiModel(team)
   const sdkBaseUrl = buildTeamApiSdkBaseUrl(responsesEndpoint)
@@ -314,7 +320,10 @@ export function TeamApiCallButton({ team }: TeamApiCallButtonProps) {
 
   const teamDisplayName = team.displayName?.trim() || team.name
   const model = useMemo(() => buildTeamApiModel(team), [team])
-  const responsesEndpoint = useMemo(() => buildTeamApiResponsesEndpoint(getPublicApiBaseUrl()), [])
+  const responsesEndpoint = useMemo(
+    () => buildTeamApiResponsesEndpoint(resolvePublicApiBaseUrl()),
+    []
+  )
   const codeSamples = useMemo(
     () => buildTeamApiCodeSamples(team, DEFAULT_INPUT, responsesEndpoint),
     [team, responsesEndpoint]

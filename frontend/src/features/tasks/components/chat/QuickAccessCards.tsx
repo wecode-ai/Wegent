@@ -4,15 +4,16 @@
 
 'use client'
 
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, type Dispatch, type SetStateAction } from 'react'
 import { SparklesIcon, ChevronDownIcon } from '@heroicons/react/24/outline'
 import { ArrowLeft, List, Search } from 'lucide-react'
 import { userApis } from '@/apis/user'
-import type { QuickAccessResponse, QuickAccessTeam, Team, UserPreferences } from '@/types/api'
+import type { Bot, QuickAccessResponse, QuickAccessTeam, Team, UserPreferences } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Input } from '@/components/ui/input'
-import TeamCreationWizard from '@/features/settings/components/wizard/TeamCreationWizard'
+import TeamEditDialog from '@/features/settings/components/TeamEditDialog'
+import { useToast } from '@/hooks/use-toast'
 import { TEAM_SELECTOR_POPOVER_CLASS_NAME } from '../selector/team-selector-popover'
 import TeamSelectorList from '../selector/TeamSelectorList'
 import {
@@ -58,18 +59,22 @@ export function QuickAccessCards({
   showWizardButton: _showWizardButton = false,
   defaultTeam,
 }: QuickAccessCardsProps) {
-  const { t } = useTranslation(['common', 'wizard'])
+  const { t } = useTranslation('common')
+  const { toast } = useToast()
   const [quickAccessTeams, setQuickAccessTeams] = useState<QuickAccessTeam[]>([])
   const [quickAccessResponse, setQuickAccessResponse] = useState<QuickAccessResponse | null>(null)
   const [isQuickAccessLoading, setIsQuickAccessLoading] = useState(true)
   const [clickedTeamId, setClickedTeamId] = useState<number | null>(null)
   const [draggedTeamId, setDraggedTeamId] = useState<number | null>(null)
   const [dragOverTeamId, setDragOverTeamId] = useState<number | null>(null)
-  const [showWizard, setShowWizard] = useState(false)
+  const [createAgentOpen, setCreateAgentOpen] = useState(false)
+  const [dialogTeams, setDialogTeams] = useState<Team[]>(teams)
+  const [dialogBots, setDialogBots] = useState<Bot[]>([])
   const [morePopoverOpen, setMorePopoverOpen] = useState(false)
   const [showAllTeamsInMore, setShowAllTeamsInMore] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const isDragReorderingRef = useRef(false)
+  const createdTeamRef = useRef<Team | null>(null)
 
   type DisplayTeam = SelectableTeam & {
     is_system: boolean
@@ -99,6 +104,10 @@ export function QuickAccessCards({
       window.removeEventListener('quick-access-updated', fetchQuickAccess)
     }
   }, [fetchQuickAccess])
+
+  useEffect(() => {
+    setDialogTeams(teams)
+  }, [teams])
 
   const filteredTeams = filterTeamsByMode(teams, currentMode)
 
@@ -309,16 +318,48 @@ export function QuickAccessCards({
     }, 0)
   }
 
-  const handleWizardSuccess = async (teamId: number, _teamName: string) => {
-    setShowWizard(false)
-    if (_onRefreshTeams) {
-      const refreshedTeams = await _onRefreshTeams()
-      const newTeam = refreshedTeams.find(t => t.id === teamId)
-      if (newTeam) {
-        onTeamSelect(newTeam)
+  const handleDialogTeamsChange = useCallback<Dispatch<SetStateAction<Team[]>>>(updater => {
+    setDialogTeams(prev => {
+      const next =
+        typeof updater === 'function' ? (updater as (value: Team[]) => Team[])(prev) : updater
+      const previousIds = new Set(prev.map(team => team.id))
+      const createdTeam = next.find(team => !previousIds.has(team.id))
+
+      if (createdTeam) {
+        createdTeamRef.current = createdTeam
       }
-    }
+
+      return next
+    })
+  }, [])
+
+  const handleOpenCreateAgent = () => {
+    createdTeamRef.current = null
+    setDialogTeams(teams)
+    setDialogBots([])
+    setCreateAgentOpen(true)
   }
+
+  const handleCreateAgentClose = useCallback(async () => {
+    setCreateAgentOpen(false)
+    const createdTeam = createdTeamRef.current
+    createdTeamRef.current = null
+
+    if (_onRefreshTeams && createdTeam) {
+      try {
+        const refreshedTeams = await _onRefreshTeams()
+        onTeamSelect(refreshedTeams.find(t => t.id === createdTeam.id) || createdTeam)
+      } catch (error) {
+        console.error('Failed to refresh teams after creating agent:', error)
+        onTeamSelect(createdTeam)
+      }
+      return
+    }
+
+    if (createdTeam) {
+      onTeamSelect(createdTeam)
+    }
+  }, [_onRefreshTeams, onTeamSelect])
 
   if (isLoading || isQuickAccessLoading) {
     return (
@@ -444,8 +485,10 @@ export function QuickAccessCards({
     if (!_showWizardButton) return null
 
     return (
-      <div
-        onClick={() => setShowWizard(true)}
+      <button
+        type="button"
+        data-testid="quick-create-agent"
+        onClick={handleOpenCreateAgent}
         className="group relative flex flex-col justify-center items-center cursor-pointer transition-all duration-200 border border-dashed border-border bg-base hover:border-primary hover:bg-primary/5 hover:shadow-[0_2px_12px_0_rgba(0,0,0,0.1)]"
         style={{
           width: SMALL_BUTTON_WIDTH,
@@ -458,9 +501,9 @@ export function QuickAccessCards({
       >
         <SparklesIcon className="w-4 h-4 text-primary mb-1 transition-colors" />
         <span className="text-[10px] font-medium text-text-primary group-hover:text-primary transition-colors text-center leading-tight">
-          {t('wizard:wizard_button')}
+          {t('teams.create_first_team')}
         </span>
-      </div>
+      </button>
     )
   }
 
@@ -621,13 +664,19 @@ export function QuickAccessCards({
         {renderQuickCreateCard()}
       </div>
 
-      {/* Team Creation Wizard Dialog */}
-      <TeamCreationWizard
-        open={showWizard}
-        onClose={() => setShowWizard(false)}
-        onSuccess={handleWizardSuccess}
-        scope="personal"
-      />
+      {createAgentOpen && (
+        <TeamEditDialog
+          open={createAgentOpen}
+          onClose={() => void handleCreateAgentClose()}
+          teams={dialogTeams}
+          setTeams={handleDialogTeamsChange}
+          editingTeamId={0}
+          bots={dialogBots}
+          setBots={setDialogBots}
+          toast={toast}
+          scope="personal"
+        />
+      )}
     </>
   )
 }

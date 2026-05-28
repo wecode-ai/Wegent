@@ -215,7 +215,7 @@ export const getApiBaseUrl = (): string => {
  * Get the public API base URL for generated examples.
  * Falls back to regular browser API base URL when no public URL is configured.
  */
-export const getPublicApiBaseUrl = (): string => {
+export function getPublicApiBaseUrl(): string {
   const config = getRuntimeConfigSync()
 
   if (!config.publicApiUrl || config.publicApiUrl.trim() === '') {

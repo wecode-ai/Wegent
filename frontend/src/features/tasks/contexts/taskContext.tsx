@@ -46,6 +46,7 @@ type TaskContextType = {
   refreshPersonalTasks: () => void
   refreshSelectedTaskDetail: (isAutoRefresh?: boolean) => void
   loadMore: () => void
+  loadAllGroupTasks: () => Promise<void>
   loadMoreGroupTasks: () => void
   loadMorePersonalTasks: () => void
   hasMore: boolean
@@ -115,7 +116,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   // Pagination related - group tasks
   const [hasMoreGroupTasks, setHasMoreGroupTasks] = useState(true)
   const [loadingMoreGroupTasks, setLoadingMoreGroupTasks] = useState(false)
-  const [loadedGroupPages, setLoadedGroupPages] = useState([1])
+  const [loadedGroupPages, setLoadedGroupPages] = useState<number[]>([])
 
   // Pagination related - personal tasks
   const [hasMorePersonalTasks, setHasMorePersonalTasks] = useState(true)
@@ -167,14 +168,14 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   // Load personal task pages
   const loadPersonalPages = async (pagesArr: number[]) => {
     if (pagesArr.length === 0) return { items: [], hasMore: false, error: false }
-    const requests = pagesArr.map(p => taskApis.getPersonalTasksLite({ page: p, limit }))
     try {
+      const requests = pagesArr.map(p => taskApis.getPersonalTasksLite({ page: p, limit }))
       const results = await Promise.all(requests)
       const allItems = results.flatMap(res => res.items || [])
       const lastPageItems = results[results.length - 1]?.items || []
       return {
         items: allItems,
-        hasMore: lastPageItems.length > 0,
+        hasMore: lastPageItems.length === limit,
         pages: pagesArr,
         error: false,
       }
@@ -211,7 +212,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const loadMoreGroupTasks = async () => {
     if (loadingMoreGroupTasks || !hasMoreGroupTasks) return
     setLoadingMoreGroupTasks(true)
-    const nextPage = (loadedGroupPages[loadedGroupPages.length - 1] || 1) + 1
+    const nextPage = (loadedGroupPages[loadedGroupPages.length - 1] || 0) + 1
     const result = await loadGroupPages([nextPage])
 
     if (!result.error) {
@@ -228,23 +229,89 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     setLoadingMoreGroupTasks(false)
   }
 
+  // Load every remaining group task page.
+  const loadAllGroupTasks = async () => {
+    if (loadingMoreGroupTasks || !hasMoreGroupTasks) return
+
+    setLoadingMoreGroupTasks(true)
+    const loadedItems: Task[] = []
+    const loadedPagesToAdd: number[] = []
+    let nextPage = loadedGroupPages.length > 0 ? Math.max(...loadedGroupPages) + 1 : 1
+    let reachedEnd = false
+    let hasError = false
+
+    while (!reachedEnd && !hasError) {
+      const result = await loadGroupPages([nextPage])
+
+      if (result.error) {
+        hasError = true
+        break
+      }
+
+      loadedItems.push(...result.items)
+      loadedPagesToAdd.push(...(result.pages || [nextPage]))
+      reachedEnd = !result.hasMore
+      nextPage += 1
+    }
+
+    if (loadedItems.length > 0 || loadedPagesToAdd.length > 0) {
+      setGroupTasks(prev => {
+        const existingIds = new Set(prev.map(t => t.id))
+        const newItems = loadedItems.filter(t => !existingIds.has(t.id))
+        return [...prev, ...newItems]
+      })
+      setLoadedGroupPages(prev =>
+        Array.from(new Set([...prev, ...loadedPagesToAdd])).sort((a, b) => a - b)
+      )
+    }
+
+    if (!hasError) {
+      setHasMoreGroupTasks(false)
+    }
+    setLoadingMoreGroupTasks(false)
+  }
+
   // Load more personal tasks
   const loadMorePersonalTasks = async () => {
     if (loadingMorePersonalTasks || !hasMorePersonalTasks) return
     setLoadingMorePersonalTasks(true)
-    const nextPage = (loadedPersonalPages[loadedPersonalPages.length - 1] || 1) + 1
-    const result = await loadPersonalPages([nextPage])
+    let nextPage = (loadedPersonalPages[loadedPersonalPages.length - 1] || 1) + 1
+    let reachedEnd = false
+    let hasError = false
+    const loadedPagesToAdd: number[] = []
+    const loadedItems: Task[] = []
+    const existingIds = new Set(personalTasks.map(task => task.id))
 
-    if (!result.error) {
+    while (!reachedEnd && !hasError && loadedItems.length === 0) {
+      const result = await loadPersonalPages([nextPage])
+
+      if (result.error) {
+        hasError = true
+        break
+      }
+
+      loadedPagesToAdd.push(...(result.pages || [nextPage]))
+      const newItems = result.items.filter(task => !existingIds.has(task.id))
+      newItems.forEach(task => existingIds.add(task.id))
+
+      if (newItems.length > 0) {
+        loadedItems.push(...newItems)
+      }
+
+      reachedEnd = !result.hasMore
+      nextPage += 1
+    }
+
+    if (!hasError) {
       setPersonalTasks(prev => {
         const existingIds = new Set(prev.map(t => t.id))
-        const newItems = result.items.filter(t => !existingIds.has(t.id))
+        const newItems = loadedItems.filter(t => !existingIds.has(t.id))
         return [...prev, ...newItems]
       })
       setLoadedPersonalPages(prev =>
-        Array.from(new Set([...prev, ...(result.pages || [])])).sort((a, b) => a - b)
+        Array.from(new Set([...prev, ...loadedPagesToAdd])).sort((a, b) => a - b)
       )
-      setHasMorePersonalTasks(result.hasMore)
+      setHasMorePersonalTasks(!reachedEnd)
     }
     setLoadingMorePersonalTasks(false)
   }
@@ -253,16 +320,23 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const refreshTasks = async () => {
     setTaskLoading(true)
 
-    // Load group and personal tasks in parallel
+    const shouldRefreshGroupTasks = loadedGroupPages.length > 0
     const [groupResult, personalResult] = await Promise.all([
-      loadGroupPages(loadedGroupPages),
+      shouldRefreshGroupTasks
+        ? loadGroupPages(loadedGroupPages)
+        : Promise.resolve({
+            items: groupTasks,
+            hasMore: hasMoreGroupTasks,
+            pages: loadedGroupPages,
+            error: false,
+          }),
       loadPersonalPages(loadedPersonalPages),
     ])
 
     // Update group tasks
-    if (!groupResult.error) {
+    if (shouldRefreshGroupTasks && !groupResult.error) {
       setGroupTasks(groupResult.items)
-      setLoadedGroupPages(groupResult.pages || [1])
+      setLoadedGroupPages(groupResult.pages || [])
       setHasMoreGroupTasks(groupResult.hasMore)
     }
 
@@ -419,6 +493,9 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
       error_message: '',
       user_id: 0,
       user_name: '',
+      team_name: data.team_name,
+      team_namespace: 'default',
+      team_display_name: data.team_name,
       created_at: data.created_at,
       updated_at: data.created_at,
       completed_at: '',
@@ -474,6 +551,9 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
       error_message: '',
       user_id: 0,
       user_name: '',
+      team_name: data.team_name,
+      team_namespace: 'default',
+      team_display_name: data.team_name,
       created_at: data.created_at,
       updated_at: data.created_at,
       completed_at: '',
@@ -734,28 +814,31 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTask, leaveTask])
 
+  const selectedTaskDetailId = selectedTaskDetail?.id
+  const selectedTaskDetailStatus = selectedTaskDetail?.status
+  const selectedTaskDetailCompletedAt = selectedTaskDetail?.completed_at
+  const selectedTaskDetailUpdatedAt = selectedTaskDetail?.updated_at
+
   // Mark task as viewed when selectedTaskDetail is loaded
   // This ensures we have the correct status and timestamps from the backend
   useEffect(() => {
-    if (selectedTaskDetail) {
-      const terminalStates = ['COMPLETED', 'FAILED', 'CANCELLED']
-      // For terminal states, use task's completed_at/updated_at to ensure viewedAt >= taskUpdatedAt
-      // This prevents the "unread" badge from showing due to client/server time differences
-      const taskTimestamp = terminalStates.includes(selectedTaskDetail.status)
-        ? selectedTaskDetail.completed_at ||
-          selectedTaskDetail.updated_at ||
-          new Date().toISOString()
-        : undefined
+    if (selectedTaskDetailId === undefined || !selectedTaskDetailStatus) return
 
-      markTaskAsViewed(selectedTaskDetail.id, selectedTaskDetail.status, taskTimestamp)
-      // Trigger re-render to update unread status in sidebar
-      setViewStatusVersion(prev => prev + 1)
-    }
+    const terminalStates = ['COMPLETED', 'FAILED', 'CANCELLED']
+    // For terminal states, use task's completed_at/updated_at to ensure viewedAt >= taskUpdatedAt
+    // This prevents the "unread" badge from showing due to client/server time differences
+    const taskTimestamp = terminalStates.includes(selectedTaskDetailStatus)
+      ? selectedTaskDetailCompletedAt || selectedTaskDetailUpdatedAt || new Date().toISOString()
+      : undefined
+
+    markTaskAsViewed(selectedTaskDetailId, selectedTaskDetailStatus, taskTimestamp)
+    // Trigger re-render to update unread status in sidebar
+    setViewStatusVersion(prev => prev + 1)
   }, [
-    selectedTaskDetail?.status,
-    selectedTaskDetail?.id,
-    selectedTaskDetail?.completed_at,
-    selectedTaskDetail?.updated_at,
+    selectedTaskDetailId,
+    selectedTaskDetailStatus,
+    selectedTaskDetailCompletedAt,
+    selectedTaskDetailUpdatedAt,
   ])
 
   // Search tasks
@@ -817,6 +900,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         refreshPersonalTasks,
         refreshSelectedTaskDetail,
         loadMore,
+        loadAllGroupTasks,
         loadMoreGroupTasks,
         loadMorePersonalTasks,
         hasMore,

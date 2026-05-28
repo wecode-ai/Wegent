@@ -14,9 +14,14 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { Loader2 } from 'lucide-react'
+import { Switch } from '@/components/ui/switch'
+import { AlertCircle, Loader2 } from 'lucide-react'
 
-import { Bot, Team, TaskType } from '@/types/api'
+import type { SkillRefMeta } from '@/apis/bots'
+import { botApis } from '@/apis/bots'
+import { modelApis, type ModelTypeEnum, type UnifiedModel } from '@/apis/models'
+import { fetchUnifiedSkillsList, type UnifiedSkill } from '@/apis/skills'
+import { Bot, Team, TaskType, type KnowledgeBaseDefaultRef } from '@/types/api'
 import { TeamMode, getFilteredBotsForMode, AgentType, getActualShellType } from './team-modes'
 import { createTeam, updateTeam } from '../services/teams'
 import TeamEditDrawer from './TeamEditDrawer'
@@ -24,13 +29,31 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { shellApis, UnifiedShell } from '@/apis/shells'
 import { BotEditRef } from './BotEdit'
 import { useTeamContext } from '@/contexts/TeamContext'
+import { filterVisibleSkills } from '@/utils/skillVisibility'
 
 // Import sub-components
 import TeamBasicInfoForm from './team-edit/TeamBasicInfoForm'
 import TeamModeSelector from './team-edit/TeamModeSelector'
 import TeamModeEditor from './team-edit/TeamModeEditor'
 import TeamModeChangeDialog from './team-edit/TeamModeChangeDialog'
+import SimpleTeamEditForm from './team-edit/SimpleTeamEditForm'
+import {
+  bindModeRequiresClaudeCode,
+  getDefaultSimpleBindMode,
+  isClaudeCodeShell,
+  normalizeExecutorForBindMode,
+  resolveShellForExecutor,
+  type SimpleExecutorMode,
+} from './team-edit/simple-team-edit-utils'
+import { buildSimpleBotRequest, buildSimpleTeamRequest } from './team-edit/simple-team-edit-save'
+import {
+  getModelFromConfig,
+  getModelNamespaceFromConfig,
+  getModelTypeFromConfig,
+} from '../services/bots'
 import { getAllowedAgentsForBindMode } from '../utils/team-bind-mode-rules'
+import { normalizeMcpServers, parseMcpConfig, stringifyMcpConfig } from '../utils/mcpConfig'
+import type { AgentType as McpAgentType } from '../utils/mcpTypeAdapter'
 
 interface TeamEditDialogProps {
   open: boolean
@@ -44,6 +67,53 @@ interface TeamEditDialogProps {
   toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast']
   scope?: 'personal' | 'group' | 'all'
   groupName?: string
+}
+
+const SIMPLE_BIND_MODES = new Set<TaskType>(['chat', 'code', 'task'])
+
+function normalizeSimpleBindMode(team: Team): TaskType[] {
+  if (team.bind_mode && Array.isArray(team.bind_mode)) {
+    const supportedModes = team.bind_mode.filter(mode => SIMPLE_BIND_MODES.has(mode))
+    return supportedModes.length > 0 ? supportedModes : getDefaultSimpleBindMode()
+  }
+
+  const recommendedMode =
+    team.recommended_mode ||
+    (team.workflow?.recommended_mode as 'chat' | 'code' | 'both' | undefined)
+
+  if (recommendedMode === 'code') {
+    return ['code']
+  }
+
+  return getDefaultSimpleBindMode()
+}
+
+function getInitialBindMode(team: Team): TaskType[] {
+  if (team.bind_mode && Array.isArray(team.bind_mode) && team.bind_mode.length > 0) {
+    const hasNonSimpleMode = team.bind_mode.some(mode => !SIMPLE_BIND_MODES.has(mode))
+    return hasNonSimpleMode ? team.bind_mode : normalizeSimpleBindMode(team)
+  }
+
+  return normalizeSimpleBindMode(team)
+}
+
+function resolveSimpleExecutorFromBot(bot: Bot | undefined): {
+  mode: SimpleExecutorMode
+  customShellName: string
+} {
+  if (!bot) {
+    return { mode: 'simple', customShellName: '' }
+  }
+
+  if (bot.shell_type === 'ClaudeCode' || bot.shell_name === 'ClaudeCode') {
+    return { mode: 'complex', customShellName: '' }
+  }
+
+  if (bot.shell_type === 'Chat' || bot.shell_name === 'Chat') {
+    return { mode: 'simple', customShellName: '' }
+  }
+
+  return { mode: 'custom', customShellName: bot.shell_name }
 }
 
 export default function TeamEditDialog(props: TeamEditDialogProps) {
@@ -107,6 +177,30 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   // Shells data for resolving custom shell runtime types
   const [shells, setShells] = useState<UnifiedShell[]>([])
 
+  // Simplified editor state
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [simpleExecutorMode, setSimpleExecutorMode] = useState<SimpleExecutorMode>('simple')
+  const [simpleCustomShellName, setSimpleCustomShellName] = useState('')
+  const [simpleBotName, setSimpleBotName] = useState('')
+  const [simpleModelName, setSimpleModelName] = useState('')
+  const [simpleModelType, setSimpleModelType] = useState<ModelTypeEnum | undefined>(undefined)
+  const [simpleModelNamespace, setSimpleModelNamespace] = useState<string | undefined>(undefined)
+  const [simplePrompt, setSimplePrompt] = useState('')
+  const [simpleSelectedSkills, setSimpleSelectedSkills] = useState<string[]>([])
+  const [simpleSelectedSkillRefs, setSimpleSelectedSkillRefs] = useState<
+    Record<string, SkillRefMeta>
+  >({})
+  const [simplePreloadSkills, setSimplePreloadSkills] = useState<string[]>([])
+  const [simpleAllSkills, setSimpleAllSkills] = useState<UnifiedSkill[]>([])
+  const [simpleAvailableSkills, setSimpleAvailableSkills] = useState<UnifiedSkill[]>([])
+  const [simpleLoadingSkills, setSimpleLoadingSkills] = useState(false)
+  const [simpleModels, setSimpleModels] = useState<UnifiedModel[]>([])
+  const [simpleLoadingModels, setSimpleLoadingModels] = useState(false)
+  const [simpleDefaultKnowledgeBaseRefs, setSimpleDefaultKnowledgeBaseRefs] = useState<
+    KnowledgeBaseDefaultRef[]
+  >([])
+  const [simpleMcpConfig, setSimpleMcpConfig] = useState('')
+
   // Ref for BotEdit in solo mode
   const botEditRef = useRef<BotEditRef | null>(null)
 
@@ -163,6 +257,30 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     return map
   }, [editingTeam, unsavedPrompts])
 
+  const isNonSoloTeam = !!formTeam && mode !== 'solo'
+  const useSimpleEditor = !advancedOpen && !isNonSoloTeam
+
+  const selectedSimpleShell = useMemo(
+    () => resolveShellForExecutor(shells, simpleExecutorMode, simpleCustomShellName),
+    [shells, simpleCustomShellName, simpleExecutorMode]
+  )
+
+  const simpleMcpAgentType = useMemo<McpAgentType | undefined>(() => {
+    const shellType = selectedSimpleShell?.shellType || selectedSimpleShell?.name
+    return shellType === 'ClaudeCode' || shellType === 'Agno' ? shellType : undefined
+  }, [selectedSimpleShell])
+  const simpleSupportsPreloadSkills = useMemo(() => {
+    const shellType = selectedSimpleShell?.shellType || selectedSimpleShell?.name
+    return shellType === 'Chat'
+  }, [selectedSimpleShell])
+
+  const simpleExecutorNeedsComplex = bindModeRequiresClaudeCode(bindMode)
+  const simpleExecutorHelperText = simpleExecutorNeedsComplex
+    ? t('settings:team.simple.executor.requires_complex_hint')
+    : null
+  const skillLoadingFailedTitle = t('common:skills.loading_failed')
+  const modelLoadingFailedTitle = t('common:bot.errors.fetch_models_failed')
+
   // Reset form when dialog opens
   useEffect(() => {
     if (!open) return
@@ -172,26 +290,36 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setDisplayName(formTeam.displayName || '')
       setDescription(formTeam.description || '')
       setIcon(formTeam.icon || null)
-      const m = (formTeam.workflow?.mode as TeamMode) || 'pipeline'
+      const m = (formTeam.workflow?.mode as TeamMode) || 'solo'
       setMode(m)
-      if (formTeam.bind_mode && Array.isArray(formTeam.bind_mode)) {
-        setBindMode(formTeam.bind_mode)
-      } else {
-        const recMode =
-          formTeam.recommended_mode ||
-          (formTeam.workflow?.recommended_mode as 'chat' | 'code' | 'both' | undefined)
-        if (recMode === 'chat') {
-          setBindMode(['chat'])
-        } else if (recMode === 'code') {
-          setBindMode(['code'])
-        } else {
-          setBindMode([]) // Default to empty array instead of ['chat', 'code']
-        }
-      }
+      setAdvancedOpen(m !== 'solo')
+      setBindMode(getInitialBindMode(formTeam))
       const ids = formTeam.bots.map(b => String(b.bot_id))
       setSelectedBotKeys(ids)
-      const leaderBot = formTeam.bots.find(b => b.role === 'leader')
+      const leaderBot = formTeam.bots.find(b => b.role === 'leader') || formTeam.bots[0]
       setLeaderBotId(leaderBot?.bot_id ?? null)
+      const fullLeaderBot = bots.find(bot => bot.id === leaderBot?.bot_id)
+      const executor = resolveSimpleExecutorFromBot(fullLeaderBot)
+      setSimpleExecutorMode(executor.mode)
+      setSimpleCustomShellName(executor.customShellName)
+      setSimpleBotName(fullLeaderBot?.name || '')
+      setSimplePrompt(fullLeaderBot?.system_prompt || '')
+      setSimpleSelectedSkills(fullLeaderBot?.skills || [])
+      setSimpleSelectedSkillRefs(fullLeaderBot?.skill_refs || {})
+      setSimplePreloadSkills(fullLeaderBot?.preload_skills || [])
+      setSimpleDefaultKnowledgeBaseRefs(fullLeaderBot?.default_knowledge_base_refs || [])
+      setSimpleMcpConfig(stringifyMcpConfig(fullLeaderBot?.mcp_servers || {}))
+      setSimpleModelName(
+        fullLeaderBot?.agent_config ? getModelFromConfig(fullLeaderBot.agent_config) : ''
+      )
+      setSimpleModelType(
+        fullLeaderBot?.agent_config ? getModelTypeFromConfig(fullLeaderBot.agent_config) : undefined
+      )
+      setSimpleModelNamespace(
+        fullLeaderBot?.agent_config
+          ? getModelNamespaceFromConfig(fullLeaderBot.agent_config)
+          : undefined
+      )
       // Initialize requireConfirmationMap from existing team data
       const confirmMap: Record<number, boolean> = {}
       formTeam.bots.forEach(b => {
@@ -209,15 +337,28 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setDescription('')
       setIcon(null)
       setMode('solo')
-      setBindMode([])
+      setAdvancedOpen(false)
+      setBindMode(getDefaultSimpleBindMode())
       setSelectedBotKeys([])
       setLeaderBotId(null)
       setRequireConfirmationMap({})
+      setSimpleExecutorMode('simple')
+      setSimpleCustomShellName('')
+      setSimpleBotName('')
+      setSimpleModelName('')
+      setSimpleModelType(undefined)
+      setSimpleModelNamespace(undefined)
+      setSimplePrompt('')
+      setSimpleSelectedSkills([])
+      setSimpleSelectedSkillRefs({})
+      setSimplePreloadSkills([])
+      setSimpleDefaultKnowledgeBaseRefs([])
+      setSimpleMcpConfig('')
       // Default to true for new teams (requires workspace by default)
       setRequiresWorkspace(true)
     }
     setUnsavedPrompts({})
-  }, [open, formTeam])
+  }, [bots, formTeam, open])
 
   // Update bot selection when bots change
   useEffect(() => {
@@ -232,6 +373,79 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     )
     setLeaderBotId(leaderBot?.bot_id ?? null)
   }, [open, filteredBots, formTeam])
+
+  useEffect(() => {
+    if (!useSimpleEditor) return
+
+    const normalized = normalizeExecutorForBindMode(
+      simpleExecutorMode,
+      bindMode,
+      shells,
+      simpleCustomShellName
+    )
+
+    if (normalized.mode !== simpleExecutorMode) {
+      setSimpleExecutorMode(normalized.mode)
+    }
+  }, [bindMode, shells, simpleCustomShellName, simpleExecutorMode, useSimpleEditor])
+
+  const reloadSimpleSkills = useCallback(async () => {
+    if (!useSimpleEditor) return
+
+    setSimpleLoadingSkills(true)
+    try {
+      const skills = await fetchUnifiedSkillsList({ scope, groupName })
+      setSimpleAllSkills(skills)
+      setSimpleAvailableSkills(filterVisibleSkills(skills))
+    } catch {
+      toast({
+        variant: 'destructive',
+        title: skillLoadingFailedTitle,
+      })
+    } finally {
+      setSimpleLoadingSkills(false)
+    }
+  }, [groupName, scope, skillLoadingFailedTitle, toast, useSimpleEditor])
+
+  useEffect(() => {
+    if (!open || !useSimpleEditor) return
+    reloadSimpleSkills()
+  }, [open, reloadSimpleSkills, useSimpleEditor])
+
+  useEffect(() => {
+    if (!open || !useSimpleEditor || !selectedSimpleShell) return
+
+    let cancelled = false
+
+    const fetchModels = async () => {
+      setSimpleLoadingModels(true)
+      try {
+        const shellType = selectedSimpleShell.shellType || selectedSimpleShell.name
+        const response = await modelApis.getUnifiedModels(shellType, false, scope, groupName, 'llm')
+        if (!cancelled) {
+          setSimpleModels(response.data)
+        }
+      } catch {
+        if (!cancelled) {
+          setSimpleModels([])
+          toast({
+            variant: 'destructive',
+            title: modelLoadingFailedTitle,
+          })
+        }
+      } finally {
+        if (!cancelled) {
+          setSimpleLoadingModels(false)
+        }
+      }
+    }
+
+    fetchModels()
+
+    return () => {
+      cancelled = true
+    }
+  }, [groupName, modelLoadingFailedTitle, open, scope, selectedSimpleShell, toast, useSimpleEditor])
 
   // Check if mode change needs confirmation
   const needsModeChangeConfirmation = useCallback(() => {
@@ -365,6 +579,117 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     setTeams(prev => prev.map(t => (t.id === updatedTeam.id ? updatedTeam : t)))
   }
 
+  const handleSimpleSave = async () => {
+    const selectedShell = resolveShellForExecutor(shells, simpleExecutorMode, simpleCustomShellName)
+    if (!selectedShell) {
+      toast({
+        variant: 'destructive',
+        title: t('settings:team.simple.executor.required'),
+      })
+      return
+    }
+
+    if (bindModeRequiresClaudeCode(bindMode) && !isClaudeCodeShell(selectedShell)) {
+      toast({
+        variant: 'destructive',
+        title: t('settings:team.simple.executor.requires_complex_hint'),
+      })
+      return
+    }
+
+    const namespace = scope === 'group' && groupName ? groupName : undefined
+    const existingLeaderBotId =
+      formTeam?.bots.find(bot => bot.role === 'leader')?.bot_id ?? formTeam?.bots[0]?.bot_id
+    let parsedMcpServers: Record<string, unknown> = {}
+
+    if (simpleMcpConfig.trim()) {
+      try {
+        parsedMcpServers = normalizeMcpServers(parseMcpConfig(simpleMcpConfig), simpleMcpAgentType)
+      } catch {
+        toast({
+          variant: 'destructive',
+          title: t('common:bot.errors.mcp_config_json'),
+        })
+        return
+      }
+    }
+
+    const botRequest = {
+      ...buildSimpleBotRequest(
+        {
+          name: simpleBotName,
+          shellName: selectedShell.name,
+          modelName: simpleModelName,
+          modelType: simpleModelType,
+          modelNamespace: simpleModelNamespace,
+          prompt: simplePrompt,
+          selectedSkills: simpleSelectedSkills,
+          selectedSkillRefs: simpleSelectedSkillRefs,
+          preloadSkills: simpleSupportsPreloadSkills ? simplePreloadSkills : [],
+          availableSkills: simpleAllSkills,
+          defaultKnowledgeBaseRefs: simpleDefaultKnowledgeBaseRefs,
+          mcpServers: parsedMcpServers,
+        },
+        name,
+        scope,
+        groupName
+      ),
+      namespace,
+    }
+    const trimmedDisplayName = displayName.trim()
+    const displayNamePayload = trimmedDisplayName || (formTeam?.displayName ? null : undefined)
+
+    setSaving(true)
+    try {
+      const savedBot =
+        existingLeaderBotId && editingTeamId && editingTeamId > 0
+          ? await botApis.updateBot(existingLeaderBotId, botRequest)
+          : await botApis.createBot(botRequest)
+
+      setBots(prev => {
+        const exists = prev.some(bot => bot.id === savedBot.id)
+        return exists
+          ? prev.map(bot => (bot.id === savedBot.id ? savedBot : bot))
+          : [savedBot, ...prev]
+      })
+
+      const teamRequest = buildSimpleTeamRequest(
+        {
+          name,
+          displayName,
+          description,
+          bindMode,
+          icon,
+          requiresWorkspace,
+          namespace,
+        },
+        savedBot.id
+      )
+      teamRequest.displayName = displayNamePayload
+
+      if (editingTeam && editingTeamId && editingTeamId > 0) {
+        const updated = await updateTeam(editingTeamId, teamRequest)
+        setTeams(prev => prev.map(team => (team.id === updated.id ? updated : team)))
+      } else {
+        const created = await createTeam(teamRequest)
+        setTeams(prev => [created, ...prev])
+      }
+
+      refreshTeams().catch(err => console.error('Failed to refresh teams after save:', err))
+      setUnsavedPrompts({})
+      onClose()
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title:
+          (error as Error)?.message ||
+          (editingTeam ? t('common:teams.edit_failed') : t('common:teams.create_failed')),
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
+
   // Save handler
   const handleSave = async () => {
     if (!name.trim()) {
@@ -381,6 +706,11 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
         variant: 'destructive',
         title: t('team.bind_mode_required'),
       })
+      return
+    }
+
+    if (useSimpleEditor) {
+      await handleSimpleSave()
       return
     }
 
@@ -563,60 +893,147 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
             <DialogDescription>{t('common:teams.description')}</DialogDescription>
           </DialogHeader>
 
-          <div className="flex-1 overflow-y-auto space-y-6 py-4">
-            {/* Basic Info Section */}
-            <TeamBasicInfoForm
-              name={name}
-              setName={setName}
-              displayName={displayName}
-              setDisplayName={setDisplayName}
-              description={description}
-              setDescription={setDescription}
-              bindMode={bindMode}
-              setBindMode={setBindMode}
-              icon={icon}
-              setIcon={setIcon}
-              requiresWorkspace={requiresWorkspace}
-              setRequiresWorkspace={setRequiresWorkspace}
-            />
+          <div className="min-h-0 flex-1 space-y-5 overflow-y-auto py-4 pr-4 [scrollbar-gutter:stable]">
+            {!isNonSoloTeam && (
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-text-primary">
+                    {t('settings:team.simple.advanced_toggle')}
+                  </p>
+                  <p className="mt-0.5 text-xs text-text-secondary">
+                    {t('settings:team.simple.advanced_toggle_description')}
+                  </p>
+                </div>
+                <Switch
+                  checked={advancedOpen}
+                  onCheckedChange={checked => setAdvancedOpen(checked)}
+                  data-testid="advanced-mode-switch"
+                />
+              </div>
+            )}
 
-            {/* Mode Selection Section */}
-            <TeamModeSelector
-              mode={mode}
-              onModeChange={handleModeChange}
-              shouldCollapse={shouldCollapseSelector}
-              onCollapseHandled={handleCollapseHandled}
-            />
+            {useSimpleEditor ? (
+              <SimpleTeamEditForm
+                name={name}
+                setName={setName}
+                displayName={displayName}
+                setDisplayName={setDisplayName}
+                description={description}
+                setDescription={setDescription}
+                bindMode={bindMode}
+                setBindMode={setBindMode}
+                icon={icon}
+                setIcon={setIcon}
+                requiresWorkspace={requiresWorkspace}
+                setRequiresWorkspace={setRequiresWorkspace}
+                executorMode={simpleExecutorMode}
+                setExecutorMode={setSimpleExecutorMode}
+                shells={shells}
+                customShellName={simpleCustomShellName}
+                setCustomShellName={setSimpleCustomShellName}
+                executorHelperText={simpleExecutorHelperText}
+                disabledExecutorModes={simpleExecutorNeedsComplex ? ['simple'] : []}
+                modelName={simpleModelName}
+                modelType={simpleModelType}
+                modelNamespace={simpleModelNamespace}
+                models={simpleModels}
+                loadingModels={simpleLoadingModels}
+                onModelChange={value => {
+                  setSimpleModelName(value.name)
+                  setSimpleModelType(value.type)
+                  setSimpleModelNamespace(value.namespace)
+                }}
+                selectedSkills={simpleSelectedSkills}
+                selectedSkillRefs={simpleSelectedSkillRefs}
+                preloadSkills={simplePreloadSkills}
+                onPreloadSkillsChange={setSimplePreloadSkills}
+                supportsPreloadSkills={simpleSupportsPreloadSkills}
+                availableSkills={simpleAvailableSkills}
+                allSkills={simpleAllSkills}
+                loadingSkills={simpleLoadingSkills}
+                onSkillsChange={(skills, refs) => {
+                  setSimpleSelectedSkills(skills)
+                  setSimpleSelectedSkillRefs(refs)
+                  setSimplePreloadSkills(prev =>
+                    prev.filter(skillName => skills.includes(skillName))
+                  )
+                }}
+                onReloadSkills={reloadSimpleSkills}
+                defaultKnowledgeBaseRefs={simpleDefaultKnowledgeBaseRefs}
+                onDefaultKnowledgeBaseRefsChange={setSimpleDefaultKnowledgeBaseRefs}
+                mcpConfig={simpleMcpConfig}
+                onMcpConfigChange={setSimpleMcpConfig}
+                mcpAgentType={simpleMcpAgentType}
+                prompt={simplePrompt}
+                onPromptChange={setSimplePrompt}
+                toast={toast}
+                scope={scope}
+                groupName={groupName}
+              />
+            ) : (
+              <>
+                {isNonSoloTeam && (
+                  <div className="flex items-start gap-2 rounded-md border border-border bg-surface p-3 text-sm text-text-secondary">
+                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                    <span>{t('settings:team.simple.non_solo_notice')}</span>
+                  </div>
+                )}
 
-            {/* Mode-specific Editor Section */}
-            <TeamModeEditor
-              mode={mode}
-              filteredBots={filteredBots}
-              shells={shells}
-              setBots={setBots}
-              selectedBotKeys={selectedBotKeys}
-              setSelectedBotKeys={setSelectedBotKeys}
-              leaderBotId={leaderBotId}
-              setLeaderBotId={setLeaderBotId}
-              editingTeam={editingTeam}
-              editingTeamId={editingTeamId}
-              toast={toast}
-              unsavedPrompts={unsavedPrompts}
-              teamPromptMap={teamPromptMap}
-              isDifyLeader={isDifyLeader}
-              leaderOptions={leaderOptions}
-              allowedAgentsForMode={effectiveAllowedAgents}
-              botEditRef={botEditRef}
-              scope={scope}
-              groupName={groupName}
-              requireConfirmationMap={requireConfirmationMap}
-              setRequireConfirmationMap={setRequireConfirmationMap}
-              onEditBot={handleEditBot}
-              onCreateBot={handleCreateBot}
-              onCloneBot={handleCloneBot}
-              onOpenPromptDrawer={handleOpenPromptDrawer}
-              onLeaderChange={onLeaderChange}
-            />
+                {/* Basic Info Section */}
+                <TeamBasicInfoForm
+                  name={name}
+                  setName={setName}
+                  displayName={displayName}
+                  setDisplayName={setDisplayName}
+                  description={description}
+                  setDescription={setDescription}
+                  bindMode={bindMode}
+                  setBindMode={setBindMode}
+                  icon={icon}
+                  setIcon={setIcon}
+                  requiresWorkspace={requiresWorkspace}
+                  setRequiresWorkspace={setRequiresWorkspace}
+                />
+
+                {/* Mode Selection Section */}
+                <TeamModeSelector
+                  mode={mode}
+                  onModeChange={handleModeChange}
+                  shouldCollapse={shouldCollapseSelector}
+                  onCollapseHandled={handleCollapseHandled}
+                />
+
+                {/* Mode-specific Editor Section */}
+                <TeamModeEditor
+                  mode={mode}
+                  filteredBots={filteredBots}
+                  shells={shells}
+                  setBots={setBots}
+                  selectedBotKeys={selectedBotKeys}
+                  setSelectedBotKeys={setSelectedBotKeys}
+                  leaderBotId={leaderBotId}
+                  setLeaderBotId={setLeaderBotId}
+                  editingTeam={editingTeam}
+                  editingTeamId={editingTeamId}
+                  toast={toast}
+                  unsavedPrompts={unsavedPrompts}
+                  teamPromptMap={teamPromptMap}
+                  isDifyLeader={isDifyLeader}
+                  leaderOptions={leaderOptions}
+                  allowedAgentsForMode={effectiveAllowedAgents}
+                  botEditRef={botEditRef}
+                  scope={scope}
+                  groupName={groupName}
+                  requireConfirmationMap={requireConfirmationMap}
+                  setRequireConfirmationMap={setRequireConfirmationMap}
+                  onEditBot={handleEditBot}
+                  onCreateBot={handleCreateBot}
+                  onCloneBot={handleCloneBot}
+                  onOpenPromptDrawer={handleOpenPromptDrawer}
+                  onLeaderChange={onLeaderChange}
+                />
+              </>
+            )}
           </div>
 
           <DialogFooter>

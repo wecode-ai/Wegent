@@ -11,6 +11,12 @@ jest.mock('@/features/layout/hooks/useMediaQuery', () => ({
   useIsMobile: () => false,
 }))
 
+jest.mock('next/navigation', () => ({
+  useRouter: () => ({
+    push: jest.fn(),
+  }),
+}))
+
 jest.mock('@/features/tasks/components/chat/ChatContextInput', () => ({
   __esModule: true,
   default: () => <div data-testid="chat-context-input" />,
