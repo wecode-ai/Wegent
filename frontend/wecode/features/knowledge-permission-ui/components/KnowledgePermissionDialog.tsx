@@ -22,7 +22,7 @@ export function KnowledgePermissionDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[600px] h-[80vh] flex flex-col overflow-hidden">
+      <DialogContent className="sm:max-w-[600px] min-h-[300px] max-h-[80vh] flex flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Shield className="w-4 h-4" />
