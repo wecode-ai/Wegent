@@ -176,16 +176,25 @@ describe('MyResources', () => {
     expect(await screen.findByTestId('agent-resource-manager')).toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('managed-resource-model-tab'))
-    expect(screen.getByTestId('model-resource-manager')).toHaveAttribute('data-scope', 'personal')
+    expect(await screen.findByTestId('model-resource-manager')).toHaveAttribute(
+      'data-scope',
+      'personal'
+    )
 
     fireEvent.click(screen.getByTestId('managed-resource-shell-tab'))
-    expect(screen.getByTestId('shell-resource-manager')).toHaveAttribute('data-scope', 'personal')
+    expect(await screen.findByTestId('shell-resource-manager')).toHaveAttribute(
+      'data-scope',
+      'personal'
+    )
 
     fireEvent.click(screen.getByTestId('managed-resource-skill-tab'))
-    expect(screen.getByTestId('skill-resource-manager')).toHaveAttribute('data-scope', 'personal')
+    expect(await screen.findByTestId('skill-resource-manager')).toHaveAttribute(
+      'data-scope',
+      'personal'
+    )
 
     fireEvent.click(screen.getByTestId('managed-resource-retriever-tab'))
-    expect(screen.getByTestId('retriever-resource-manager')).toHaveAttribute(
+    expect(await screen.findByTestId('retriever-resource-manager')).toHaveAttribute(
       'data-scope',
       'personal'
     )
@@ -205,8 +214,9 @@ describe('MyResources', () => {
     expect(screen.getByTestId('agent-resource-manager')).toHaveAttribute('data-group', 'platform')
 
     fireEvent.click(screen.getByTestId('managed-resource-model-tab'))
-    expect(screen.getByTestId('model-resource-manager')).toHaveAttribute('data-scope', 'group')
-    expect(screen.getByTestId('model-resource-manager')).toHaveAttribute('data-group', 'platform')
+    const modelResourceManager = await screen.findByTestId('model-resource-manager')
+    expect(modelResourceManager).toHaveAttribute('data-scope', 'group')
+    expect(modelResourceManager).toHaveAttribute('data-group', 'platform')
   })
 
   it('navigates to group management from the group resource dropdown', async () => {

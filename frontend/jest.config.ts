@@ -52,6 +52,7 @@ const config: Config = {
   transformIgnorePatterns: [
     '/node_modules/(?!(react-markdown|remark-|rehype-|mdast-util-|micromark|micromark-|unist-|unist-util-|vfile|vfile-message|hast-|hast-util-|bail|ccount|comma-separated-tokens|property-information|space-separated-tokens|trim-lines|html-void-elements|decode-named-character-reference|character-entities|is-plain-obj|longest-streak|markdown-table|escape-string-regexp|stringify-entities|entities|web-namespaces|zwitch|direction)/)',
   ],
+  modulePathIgnorePatterns: ['<rootDir>/.next/'],
 }
 
 export default createJestConfig(config)

@@ -5,6 +5,7 @@
 'use client'
 
 import { Suspense, useState, useEffect, useCallback } from 'react'
+import dynamic from 'next/dynamic'
 import { useRouter, useSearchParams } from 'next/navigation'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
@@ -24,16 +25,30 @@ import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContex
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { paths } from '@/config/paths'
 import { Spinner } from '@/components/ui/spinner'
-import {
-  WikiProjectList,
-  AddRepoModal,
-  useWikiProjects,
-  CancelConfirmDialog,
-  SearchBox,
-  KnowledgeTabs,
-  KnowledgeTabType,
-  KnowledgeDocumentPage,
-} from '@/features/knowledge'
+import { useWikiProjects } from '@/features/knowledge/useWikiProjects'
+import { SearchBox } from '@/features/knowledge/SearchBox'
+import { KnowledgeTabs } from '@/features/knowledge/KnowledgeTabs'
+import type { KnowledgeTabType } from '@/features/knowledge/KnowledgeTabs'
+
+const WikiProjectList = dynamic(() => import('@/features/knowledge/WikiProjectList'), {
+  ssr: false,
+})
+
+const AddRepoModal = dynamic(() => import('@/features/knowledge/AddRepoModal'), {
+  ssr: false,
+})
+
+const CancelConfirmDialog = dynamic(() => import('@/features/knowledge/CancelConfirmDialog'), {
+  ssr: false,
+})
+
+const KnowledgeDocumentPage = dynamic(
+  () =>
+    import('@/features/knowledge/document/components/KnowledgeDocumentPage').then(mod => ({
+      default: mod.KnowledgeDocumentPage,
+    })),
+  { ssr: false }
+)
 
 // Storage key for knowledge sidebar collapsed state
 const KNOWLEDGE_SIDEBAR_COLLAPSED_KEY = 'knowledge-sidebar-collapsed'
@@ -281,25 +296,29 @@ function KnowledgePageContent() {
       </div>
 
       {/* Add repository modal */}
-      <AddRepoModal
-        isOpen={isModalOpen}
-        onClose={handleCloseModal}
-        formErrors={formErrors}
-        isSubmitting={isSubmitting}
-        onRepoChange={handleRepoChange}
-        onSubmit={handleSubmit}
-        selectedRepo={selectedRepo}
-        wikiConfig={wikiConfig}
-      />
+      {isModalOpen && (
+        <AddRepoModal
+          isOpen={isModalOpen}
+          onClose={handleCloseModal}
+          formErrors={formErrors}
+          isSubmitting={isSubmitting}
+          onRepoChange={handleRepoChange}
+          onSubmit={handleSubmit}
+          selectedRepo={selectedRepo}
+          wikiConfig={wikiConfig}
+        />
+      )}
       {/* Cancel confirm dialog */}
-      <CancelConfirmDialog
-        isOpen={confirmDialogOpen}
-        onClose={() => {
-          setConfirmDialogOpen(false)
-          setPendingCancelProjectId(null)
-        }}
-        onConfirm={confirmCancelGeneration}
-      />
+      {confirmDialogOpen && (
+        <CancelConfirmDialog
+          isOpen={confirmDialogOpen}
+          onClose={() => {
+            setConfirmDialogOpen(false)
+            setPendingCancelProjectId(null)
+          }}
+          onConfirm={confirmCancelGeneration}
+        />
+      )}
     </div>
   )
 }

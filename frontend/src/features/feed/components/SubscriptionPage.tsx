@@ -10,19 +10,42 @@
  * Supports multiple tabs for extensibility.
  */
 import { useState, useCallback, useEffect } from 'react'
+import dynamic from 'next/dynamic'
 import { Compass, Eye, EyeOff, Plus, Store, User } from 'lucide-react'
 import { SubscriptionProvider, useSubscriptionContext } from '../contexts/subscriptionContext'
-import { SubscriptionTimeline } from './SubscriptionTimeline'
-import { SubscriptionForm } from './SubscriptionForm'
-import { SubscriptionList } from './SubscriptionList'
-import { FollowingSubscriptionList } from './FollowingSubscriptionList'
-import { RentalSubscriptionList } from './RentalSubscriptionList'
-import { DiscoverPageInline } from './DiscoverPageInline'
-import { MarketPageInline } from './MarketPageInline'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { Subscription } from '@/types/subscription'
+
+const SubscriptionTimeline = dynamic(
+  () => import('./SubscriptionTimeline').then(module => module.SubscriptionTimeline),
+  { ssr: false }
+)
+const SubscriptionForm = dynamic(
+  () => import('./SubscriptionForm').then(module => module.SubscriptionForm),
+  { ssr: false }
+)
+const SubscriptionList = dynamic(
+  () => import('./SubscriptionList').then(module => module.SubscriptionList),
+  { ssr: false }
+)
+const FollowingSubscriptionList = dynamic(
+  () => import('./FollowingSubscriptionList').then(module => module.FollowingSubscriptionList),
+  { ssr: false }
+)
+const RentalSubscriptionList = dynamic(
+  () => import('./RentalSubscriptionList').then(module => module.RentalSubscriptionList),
+  { ssr: false }
+)
+const DiscoverPageInline = dynamic(
+  () => import('./DiscoverPageInline').then(module => module.DiscoverPageInline),
+  { ssr: false }
+)
+const MarketPageInline = dynamic(
+  () => import('./MarketPageInline').then(module => module.MarketPageInline),
+  { ssr: false }
+)
 
 /**
  * Tab configuration for extensibility.
@@ -280,13 +303,15 @@ function SubscriptionPageContent() {
         )}
       </div>
 
-      <SubscriptionForm
-        open={isFormOpen}
-        onOpenChange={setIsFormOpen}
-        subscription={editingSubscription}
-        onSuccess={handleFormSuccess}
-        initialData={formInitialData}
-      />
+      {isFormOpen && (
+        <SubscriptionForm
+          open={isFormOpen}
+          onOpenChange={setIsFormOpen}
+          subscription={editingSubscription}
+          onSuccess={handleFormSuccess}
+          initialData={formInitialData}
+        />
+      )}
     </div>
   )
 }

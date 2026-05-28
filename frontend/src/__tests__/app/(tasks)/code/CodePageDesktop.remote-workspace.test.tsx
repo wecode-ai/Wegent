@@ -97,8 +97,9 @@ jest.mock('@/features/tasks/hooks/useSearchShortcut', () => ({
   }),
 }))
 
-jest.mock('@/features/tasks/components', () => ({
-  Workbench: () => <div>workbench</div>,
+jest.mock('@/features/tasks/components/workbench/Workbench', () => ({
+  __esModule: true,
+  default: () => <div>workbench</div>,
 }))
 
 jest.mock('@/features/tasks/components/chat', () => ({
@@ -118,9 +119,11 @@ jest.mock('@/features/tasks/components/remote-workspace', () => ({
 }))
 
 describe('CodePageDesktop remote workspace integration', () => {
-  test('code desktop renders remote workspace entry in top nav when task selected', () => {
+  test('code desktop renders remote workspace entry in top nav when task selected', async () => {
     render(<CodePageDesktop />)
 
     expect(screen.getByTestId('remote-workspace-entry')).toHaveTextContent('84')
+    expect(screen.queryByText('search-dialog')).not.toBeInTheDocument()
+    expect(await screen.findByText('workbench')).toBeInTheDocument()
   })
 })
