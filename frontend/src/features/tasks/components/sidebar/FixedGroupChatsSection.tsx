@@ -50,7 +50,10 @@ export default function FixedGroupChatsSection({
   const readGroupChats = filteredGroupTasks.filter(task => !isTaskUnread(task))
   const orderedGroupChats = [...unreadGroupChats, ...readGroupChats]
   const collapsedGroupChatCount = orderedGroupChats.length
-  const shouldShowGroupChats = orderedGroupChats.length > 0 || hasMoreGroupTasks
+  const shouldShowGroupChats =
+    orderedGroupChats.length > 0 || hasMoreGroupTasks || isGroupChatsExpanded
+  const shouldShowEmptyState =
+    isGroupChatsExpanded && orderedGroupChats.length === 0 && !loadingMoreGroupTasks
 
   if (!shouldShowGroupChats) return null
 
@@ -107,6 +110,11 @@ export default function FixedGroupChatsSection({
                 enableDrag={true}
                 key={`group-chats-${viewStatusVersion}`}
               />
+            </div>
+          )}
+          {shouldShowEmptyState && (
+            <div className="px-1 py-2 text-xs text-text-muted">
+              {t('common:tasks.no_group_chats')}
             </div>
           )}
         </>

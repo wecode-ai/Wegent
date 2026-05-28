@@ -393,6 +393,40 @@ describe('TaskSidebar scroll structure', () => {
     expect(within(groupDock).getByText('Group chat message')).toBeInTheDocument()
   })
 
+  it('keeps the group chat toggle visible after loading an empty group chat list', () => {
+    const loadAllGroupTasks = jest.fn().mockResolvedValue(undefined)
+    Object.assign(mockTaskContext, {
+      groupTasks: [],
+      personalTasks: [],
+      hasMoreGroupTasks: true,
+      loadAllGroupTasks,
+    })
+
+    const sidebarProps = {
+      isMobileSidebarOpen: false,
+      setIsMobileSidebarOpen: jest.fn(),
+      pageType: 'chat' as const,
+    }
+    const { rerender } = render(<TaskSidebar {...sidebarProps} />)
+
+    const groupDock = screen.getAllByTestId('task-sidebar-group-chat-dock')[0]
+    fireEvent.click(within(groupDock).getByTestId('task-sidebar-group-chat-toggle'))
+
+    expect(loadAllGroupTasks).toHaveBeenCalledTimes(1)
+
+    Object.assign(mockTaskContext, {
+      groupTasks: [],
+      hasMoreGroupTasks: false,
+    })
+    rerender(<TaskSidebar {...sidebarProps} />)
+
+    const updatedGroupDock = screen.getAllByTestId('task-sidebar-group-chat-dock')[0]
+    expect(
+      within(updatedGroupDock).getByTestId('task-sidebar-group-chat-toggle')
+    ).toBeInTheDocument()
+    expect(within(updatedGroupDock).getByText('common:tasks.no_group_chats')).toBeInTheDocument()
+  })
+
   it('renders personal history as a flat list', () => {
     const agentTask = createTask({ id: 1, title: 'Agent conversation' })
     const deviceTask = createTask({ id: 2, title: 'Device conversation' })
