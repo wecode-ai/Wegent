@@ -27,6 +27,7 @@ from app.schemas.project import (
     ProjectWithTasksResponse,
     RemoveTaskFromProjectResponse,
 )
+from app.schemas.task import TaskArchiveBatchResponse
 from app.services import project_device_session_service, project_service
 
 router = APIRouter()
@@ -173,6 +174,30 @@ def create_project_conversation_endpoint(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create project conversation: {str(e)}",
+        )
+
+
+@router.post(
+    "/{project_id}/archive-chats",
+    response_model=TaskArchiveBatchResponse,
+)
+def archive_project_chats_endpoint(
+    project_id: int = Path(..., description="Project ID"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Archive all active chats in a project."""
+    try:
+        count = project_service.archive_project_chats(
+            db=db, project_id=project_id, user_id=current_user.id
+        )
+        return {"message": "Project chats archived successfully", "count": count}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to archive project chats: {str(e)}",
         )
 
 
