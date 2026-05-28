@@ -698,7 +698,7 @@ export default function TaskListSection({
                       ) : (
                         <span
                           className={cn(
-                            'flex-1 min-w-0 text-sm font-medium text-[#444746] leading-5 truncate transition-[padding] duration-150',
+                            'flex-1 min-w-0 text-sm font-medium text-text-primary leading-5 truncate transition-[padding] duration-150',
                             showMenu ? 'pr-8' : 'pr-0'
                           )}
                         >
