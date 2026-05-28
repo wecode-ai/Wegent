@@ -329,6 +329,23 @@ describe('TaskSidebar scroll structure', () => {
     expect(newConversationButton).toHaveAttribute('data-testid', 'new-agent-button')
   })
 
+  it('uses theme-aware text color for inactive sidebar labels', () => {
+    render(
+      <TaskSidebar isMobileSidebarOpen={false} setIsMobileSidebarOpen={jest.fn()} pageType="chat" />
+    )
+
+    const newConversationLabel = screen.getAllByText('common:tasks.new_conversation')[0]
+    const automationLabel = screen.getAllByText('common:navigation.flow')[0]
+    const moreLabel = screen.getAllByText('common:navigation.more')[0]
+
+    expect(newConversationLabel).toHaveClass('text-text-primary')
+    expect(automationLabel).toHaveClass('text-text-primary')
+    expect(moreLabel).toHaveClass('text-text-primary')
+    expect(newConversationLabel).not.toHaveClass('text-[#444746]')
+    expect(automationLabel).not.toHaveClass('text-[#444746]')
+    expect(moreLabel).not.toHaveClass('text-[#444746]')
+  })
+
   it('keeps the user menu outside of the scroll container', () => {
     render(
       <TaskSidebar isMobileSidebarOpen={false} setIsMobileSidebarOpen={jest.fn()} pageType="chat" />

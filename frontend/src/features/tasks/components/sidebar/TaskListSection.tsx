@@ -628,6 +628,10 @@ export default function TaskListSection({
             }
             return taskType === 'code' ? t('common:navigation.code') : t('common:navigation.chat')
           })()
+          const showTrailingStatus =
+            (shouldShowStatusIcon(task) || isTaskUnread(task)) &&
+            editingTaskId !== task.id &&
+            !showMenu
 
           return (
             <DraggableTaskItem key={task.id} task={task} enableDrag={enableDrag}>
@@ -635,13 +639,14 @@ export default function TaskListSection({
                 <Tooltip delayDuration={500}>
                   <TooltipTrigger asChild>
                     <div
-                      className={`flex items-center gap-2 py-1.5 px-3 rounded-xl cursor-pointer ${
-                        editingTaskId === task.id ? 'h-12' : 'h-8'
-                      } ${
+                      className={cn(
+                        'relative flex items-center gap-2 rounded-xl cursor-pointer py-1.5 pl-3 transition-[padding] duration-150',
+                        editingTaskId === task.id ? 'h-12' : 'h-8',
+                        'pr-3',
                         selectedTask?.id === task.id || selectedTaskDetail?.id === task.id
                           ? 'bg-primary/10'
                           : 'hover:bg-hover'
-                      }`}
+                      )}
                       onClick={() => {
                         // Don't trigger task click when editing
                         if (editingTaskId === task.id) return
@@ -691,44 +696,46 @@ export default function TaskListSection({
                           }}
                         />
                       ) : (
-                        <span className="flex-1 min-w-0 text-sm font-medium text-[#444746] leading-5 truncate">
+                        <span
+                          className={cn(
+                            'flex-1 min-w-0 text-sm font-medium text-[#444746] leading-5 truncate transition-[padding] duration-150',
+                            showMenu ? 'pr-8' : 'pr-0'
+                          )}
+                        >
                           {localTitles[task.id] ?? task.title}
                         </span>
                       )}
 
                       {/* Status icon on the right - only render container when needed */}
-                      {(shouldShowStatusIcon(task) || isTaskUnread(task)) &&
-                        editingTaskId !== task.id && (
-                          <div className="flex-shrink-0 relative">
-                            <div className="w-4 h-4 flex items-center justify-center">
-                              {shouldShowStatusIcon(task) && getStatusIcon(task.status)}
-                            </div>
-                            {isTaskUnread(task) && (
-                              <span
-                                className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${getUnreadDotColor(task)} animate-pulse-dot`}
-                              />
-                            )}
+                      {showTrailingStatus && (
+                        <div className="flex-shrink-0 relative">
+                          <div className="w-4 h-4 flex items-center justify-center">
+                            {shouldShowStatusIcon(task) && getStatusIcon(task.status)}
                           </div>
-                        )}
+                          {isTaskUnread(task) && (
+                            <span
+                              className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${getUnreadDotColor(task)} animate-pulse-dot`}
+                            />
+                          )}
+                        </div>
+                      )}
 
                       {editingTaskId !== task.id && (
-                        <div className="flex-shrink-0">
-                          <div
-                            className={`transition-opacity duration-150 [@media(hover:none)]:opacity-100 [@media(hover:none)]:pointer-events-auto ${
-                              showMenu ? 'opacity-100' : 'opacity-0 pointer-events-none'
-                            }`}
-                            onTouchStart={e => e.stopPropagation()}
-                            onTouchEnd={e => e.stopPropagation()}
-                            onClick={e => e.stopPropagation()}
-                          >
-                            <TaskMenu
-                              taskId={task.id}
-                              handleCopyTaskId={handleCopyTaskId}
-                              handleDeleteTask={handleDeleteTask}
-                              onRename={() => handleStartRename(task.id)}
-                              isGroupChat={task.is_group_chat}
-                            />
-                          </div>
+                        <div
+                          className={`absolute right-2 top-1/2 -translate-y-1/2 transition-opacity duration-150 [@media(hover:none)]:static [@media(hover:none)]:translate-y-0 [@media(hover:none)]:flex-shrink-0 [@media(hover:none)]:opacity-100 [@media(hover:none)]:pointer-events-auto ${
+                            showMenu ? 'opacity-100' : 'opacity-0 pointer-events-none'
+                          }`}
+                          onTouchStart={e => e.stopPropagation()}
+                          onTouchEnd={e => e.stopPropagation()}
+                          onClick={e => e.stopPropagation()}
+                        >
+                          <TaskMenu
+                            taskId={task.id}
+                            handleCopyTaskId={handleCopyTaskId}
+                            handleDeleteTask={handleDeleteTask}
+                            onRename={() => handleStartRename(task.id)}
+                            isGroupChat={task.is_group_chat}
+                          />
                         </div>
                       )}
                     </div>
