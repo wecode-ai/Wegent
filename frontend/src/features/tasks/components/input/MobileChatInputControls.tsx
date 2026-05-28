@@ -29,6 +29,7 @@ import type {
 import type { ContextItem } from '@/types/context'
 import type { UnifiedSkill } from '@/apis/skills'
 import {
+  canSwitchModelAfterMessages,
   canUseChatContexts,
   isChatShell,
   teamRequiresWorkspace,
@@ -453,7 +454,11 @@ export function MobileChatInputControls({
               forceOverride={forceOverride}
               setForceOverride={setForceOverride}
               selectedTeam={selectedTeam}
-              disabled={isLoading || isStreaming || (hasMessages && !isChatShell(selectedTeam))}
+              disabled={
+                isLoading ||
+                isStreaming ||
+                (hasMessages && !canSwitchModelAfterMessages(selectedTeam))
+              }
               teamId={teamId}
               taskId={taskId}
               taskModelId={taskModelId}

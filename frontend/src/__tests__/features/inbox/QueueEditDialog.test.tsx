@@ -115,8 +115,6 @@ jest.mock('@/features/tasks/components/selector/ModelSelector', () => ({
   default: ({
     selectedModel,
     setSelectedModel,
-    forceOverride,
-    setForceOverride,
   }: {
     selectedModel: { name: string } | null
     setSelectedModel: (model: {
@@ -126,8 +124,6 @@ jest.mock('@/features/tasks/components/selector/ModelSelector', () => ({
       type: 'public'
       namespace: string
     }) => void
-    forceOverride: boolean
-    setForceOverride: (value: boolean) => void
   }) => (
     <div>
       <button
@@ -145,14 +141,6 @@ jest.mock('@/features/tasks/components/selector/ModelSelector', () => ({
       >
         Select GPT 5
       </button>
-      <label htmlFor="queue-force-override-model-switch">Override</label>
-      <input
-        id="queue-force-override-model-switch"
-        data-testid="queue-force-override-model-switch"
-        type="checkbox"
-        checked={forceOverride}
-        onChange={event => setForceOverride(event.target.checked)}
-      />
       <div data-testid="queue-current-model">{selectedModel?.name ?? 'none'}</div>
     </div>
   ),
@@ -164,7 +152,7 @@ describe('QueueEditDialog', () => {
     ;(createWorkQueue as jest.Mock).mockResolvedValue({ id: 1 })
   })
 
-  it('saves direct agent model override settings into queue auto process config', async () => {
+  it('saves selected direct agent models as force override by default', async () => {
     const user = userEvent.setup()
 
     render(<QueueEditDialog open onOpenChange={jest.fn()} />)
@@ -182,7 +170,6 @@ describe('QueueEditDialog', () => {
     })
 
     await user.click(screen.getByTestId('queue-select-gpt-5'))
-    await user.click(screen.getByTestId('queue-force-override-model-switch'))
     await user.click(screen.getByRole('button', { name: 'common:actions.save' }))
 
     await waitFor(() => {

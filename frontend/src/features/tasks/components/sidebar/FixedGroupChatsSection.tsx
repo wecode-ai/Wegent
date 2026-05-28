@@ -50,9 +50,8 @@ export default function FixedGroupChatsSection({
   const readGroupChats = filteredGroupTasks.filter(task => !isTaskUnread(task))
   const orderedGroupChats = [...unreadGroupChats, ...readGroupChats]
   const collapsedGroupChatCount = orderedGroupChats.length
-  const shouldShowGroupChats = orderedGroupChats.length > 0 || hasMoreGroupTasks
-
-  if (!shouldShowGroupChats) return null
+  const shouldShowEmptyState =
+    isGroupChatsExpanded && orderedGroupChats.length === 0 && !loadingMoreGroupTasks
 
   const toggleLabel = isGroupChatsExpanded
     ? t('common:tasks.group_chats_collapse')
@@ -62,10 +61,11 @@ export default function FixedGroupChatsSection({
       })
 
   const handleToggleGroupChats = () => {
-    if (!isGroupChatsExpanded && hasMoreGroupTasks) {
+    const nextExpanded = !isGroupChatsExpanded
+    if (nextExpanded && hasMoreGroupTasks) {
       void loadAllGroupTasks()
     }
-    setIsGroupChatsExpanded(!isGroupChatsExpanded)
+    setIsGroupChatsExpanded(nextExpanded)
   }
 
   return (
@@ -80,7 +80,7 @@ export default function FixedGroupChatsSection({
             data-testid="task-sidebar-group-chat-toggle"
             aria-label={toggleLabel}
             onClick={handleToggleGroupChats}
-            className="flex items-center justify-between w-full h-11 min-w-[44px] px-1 text-xs font-medium rounded-md text-text-muted hover:text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 transition-colors"
+            className="flex items-center justify-between w-full h-6 min-w-[44px] px-1 text-xs font-medium rounded-md text-text-muted hover:text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 transition-colors"
           >
             <span className="truncate">{t('common:tasks.group_chats')}</span>
             {isGroupChatsExpanded ? (
@@ -107,6 +107,11 @@ export default function FixedGroupChatsSection({
                 enableDrag={true}
                 key={`group-chats-${viewStatusVersion}`}
               />
+            </div>
+          )}
+          {shouldShowEmptyState && (
+            <div className="px-1 py-2 text-xs text-text-muted">
+              {t('common:tasks.no_group_chats')}
             </div>
           )}
         </>

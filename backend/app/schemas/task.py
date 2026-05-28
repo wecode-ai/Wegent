@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from app.schemas.kind import SkillRefMeta
 from app.schemas.subtask import SubtaskWithBot
@@ -95,6 +95,13 @@ class TaskCreate(BaseModel):
     # Skill selection (user-selected skills for this message)
     # Backend determines preload vs download based on executor type
     additional_skills: Optional[List[SkillRef]] = None
+
+    @model_validator(mode="after")
+    def default_model_selection_to_override(self) -> "TaskCreate":
+        """Treat an explicit model_id as an override selection."""
+        if self.model_id:
+            self.force_override_bot_model = True
+        return self
 
 
 class TaskUpdate(BaseModel):
