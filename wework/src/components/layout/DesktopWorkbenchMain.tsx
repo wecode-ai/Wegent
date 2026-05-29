@@ -119,7 +119,12 @@ export function DesktopWorkbenchMain({
             </div>
           </div>
         )}
-        {bottomPanelOpen && <BottomWorkspacePanel />}
+        {bottomPanelOpen && (
+          <BottomWorkspacePanel
+            currentProject={currentProject}
+            onRequestClose={() => setBottomPanelOpen(false)}
+          />
+        )}
       </div>
       <WorkspacePanelActions
         environmentInfo={environmentInfo}
@@ -130,7 +135,12 @@ export function DesktopWorkbenchMain({
         onToggleRightPanel={() => setRightPanelOpen(open => !open)}
         onToggleBottomPanel={() => setBottomPanelOpen(open => !open)}
       />
-      {rightPanelOpen && <RightWorkspacePanel />}
+      {rightPanelOpen && (
+        <RightWorkspacePanel
+          currentProject={currentProject}
+          onRequestClose={() => setRightPanelOpen(false)}
+        />
+      )}
     </main>
   )
 }

@@ -5,12 +5,9 @@ import {
   Check,
   Cloud,
   Code2,
-  Cpu,
   Folder,
   Globe2,
-  HardDrive,
   Loader2,
-  MemoryStick,
   Monitor,
   MoreHorizontal,
   Pencil,
@@ -26,8 +23,9 @@ import { createDeviceApi } from '@/api/devices'
 import { createHttpClient } from '@/api/http'
 import { getRuntimeConfig } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
+import { buildVncPageUrl } from '@/lib/vnc'
 import type { ArchivedTask } from '@/types/api'
-import type { DeviceInfo } from '@/types/devices'
+import type { CloudDeviceMetricsResponse, DeviceInfo } from '@/types/devices'
 import { AddCloudDeviceDialog } from './AddCloudDeviceDialog'
 
 interface ConnectionsSettingsPageProps {
@@ -43,15 +41,6 @@ interface SettingsNavItem {
   icon: ComponentType<{ className?: string }>
   label: string
   fallback: string
-}
-
-interface DeviceMetricFields {
-  cpu_usage?: number | null
-  memory_usage?: number | null
-  disk_usage?: number | null
-  cpuUsage?: number | null
-  memoryUsage?: number | null
-  diskUsage?: number | null
 }
 
 const settingsNavItems: SettingsNavItem[] = [
@@ -148,6 +137,85 @@ function DeviceIconActionButton({
   )
 }
 
+function createSettingsDeviceApi() {
+  const { apiBaseUrl } = getRuntimeConfig()
+  return createDeviceApi(createHttpClient({ baseUrl: apiBaseUrl }))
+}
+
+function formatMetricPercent(value: number | null | undefined): string {
+  if (value === null || value === undefined) return '--%'
+  if (value < 1) return '<1%'
+  return `${Math.round(value)}%`
+}
+
+function DeviceMetrics({ deviceId }: { deviceId: string }) {
+  const [metrics, setMetrics] = useState<CloudDeviceMetricsResponse | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+
+    createSettingsDeviceApi()
+      .getMetrics(deviceId)
+      .then(data => {
+        if (!cancelled) setMetrics(data)
+      })
+      .catch(() => {
+        if (!cancelled) setMetrics(null)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [deviceId])
+
+  return (
+    <div
+      data-testid="device-metrics"
+      className="flex flex-wrap items-center gap-3 text-xs text-[#6b6f76]"
+    >
+      <span className="inline-flex items-center gap-1">
+        <span>CPU</span>
+        <span>{formatMetricPercent(metrics?.cpu_usage)}</span>
+      </span>
+      <span className="inline-flex items-center gap-1">
+        <span>MEM</span>
+        <span>{formatMetricPercent(metrics?.memory_usage)}</span>
+      </span>
+      <span className="inline-flex items-center gap-1">
+        <span>磁盘</span>
+        <span>{formatMetricPercent(metrics?.disk_usage)}</span>
+      </span>
+    </div>
+  )
+}
+
+function VncDesktopButton({ deviceId }: { deviceId: string }) {
+  const [loading, setLoading] = useState(false)
+
+  const handleClick = useCallback(async () => {
+    if (loading) return
+    setLoading(true)
+    try {
+      const config = await createSettingsDeviceApi().getVncConfig(deviceId)
+      window.open(buildVncPageUrl(deviceId, config.sandbox_id), '_blank', 'noopener')
+    } catch (e) {
+      console.error('Failed to open device desktop:', e)
+    } finally {
+      setLoading(false)
+    }
+  }, [deviceId, loading])
+
+  return (
+    <DeviceActionButton
+      testId={`connection-vnc-button-${deviceId}`}
+      icon={Monitor}
+      label="桌面"
+      onClick={handleClick}
+      disabled={loading}
+    />
+  )
+}
+
 type ConfirmDeviceAction = 'restart' | 'delete'
 
 function ConfirmDeviceActionDialog({
@@ -230,70 +298,6 @@ function ConfirmDeviceActionDialog({
           </button>
         </div>
       </div>
-    </div>
-  )
-}
-
-function readMetric(
-  device: DeviceInfo,
-  snakeKey: keyof DeviceMetricFields,
-  camelKey: keyof DeviceMetricFields,
-) {
-  const metrics = device as DeviceInfo & DeviceMetricFields
-  const value = metrics[snakeKey] ?? metrics[camelKey]
-  return typeof value === 'number' ? value : null
-}
-
-function ResourceMetric({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: ComponentType<{ className?: string }>
-  label: string
-  value: number | null
-}) {
-  const color = value === null ? '#d1d5db' : '#409eff'
-
-  return (
-    <div className="flex min-w-[150px] items-center gap-2 text-xs text-[#6b6f76]">
-      <span className="inline-flex w-12 shrink-0 items-center gap-1.5">
-        <Icon className="h-3.5 w-3.5" />
-        {label}
-      </span>
-      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#e8eaed]">
-        <div
-          className="h-full rounded-full"
-          style={{ width: `${value ?? 0}%`, backgroundColor: color }}
-        />
-      </div>
-      <span className="w-8 shrink-0 text-right font-medium text-[#3c4043]">
-        {value === null ? '--%' : `${value}%`}
-      </span>
-    </div>
-  )
-}
-
-function DeviceMetricsPanel({ device }: { device: DeviceInfo }) {
-  const { t } = useTranslation('common')
-
-  return (
-    <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-md bg-[#fafafa] px-3 py-2">
-      <ResourceMetric
-        icon={Cpu}
-        label={t('workbench.connection_resource_cpu', 'CPU')}
-        value={readMetric(device, 'cpu_usage', 'cpuUsage')}
-      />
-      <ResourceMetric
-        icon={MemoryStick}
-        label={t('workbench.connection_resource_memory', 'MEM')}
-        value={readMetric(device, 'memory_usage', 'memoryUsage')}
-      />
-      <ResourceMetric
-        icon={HardDrive}
-        label={t('workbench.connection_resource_disk', '磁盘')}
-        value={readMetric(device, 'disk_usage', 'diskUsage')}
-      />
     </div>
   )
 }
@@ -495,12 +499,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
               onClick={() => handleStartSession('code-server')}
               disabled={!isOnline || sessionLoading === 'code-server'}
             />
-            <DeviceActionButton
-              testId={`connection-vnc-button-${device.device_id}`}
-              icon={Monitor}
-              label="桌面"
-              disabled={!isOnline}
-            />
+            <VncDesktopButton deviceId={device.device_id} />
             <div ref={actionMenuRef} className="relative">
               <DeviceIconActionButton
                 testId={`connection-more-button-${device.device_id}`}
@@ -538,7 +537,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
           </div>
         </div>
 
-        <DeviceMetricsPanel device={device} />
+        <DeviceMetrics deviceId={device.device_id} />
       </div>
 
       {confirmAction && (

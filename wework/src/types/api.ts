@@ -162,10 +162,12 @@ export interface TaskContextData {
 
 export interface Subtask {
   id: number
+  task_id?: number
   role: string
   prompt?: string
   result?: unknown
   status: string
+  message_id?: number
   created_at: string
   updated_at?: string
   contexts?: TaskContextData[]
@@ -188,6 +190,16 @@ export interface CreateProjectConversationResponse {
   task: unknown
 }
 
+export interface ProjectDeviceSessionResponse {
+  session_id: string
+  project_id: number
+  device_id: string
+  type: 'terminal' | 'code_server'
+  path: string
+  url: string
+  expires_at?: string | null
+}
+
 export interface ChatSendPayload {
   task_id?: number
   team_id: number
@@ -204,7 +216,7 @@ export interface ChatSendPayload {
 }
 
 export interface ChatSendAck {
-  success: boolean
+  success?: boolean
   task_id?: number
   error?: string
 }

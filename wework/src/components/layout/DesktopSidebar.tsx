@@ -14,7 +14,7 @@ import {
   Workflow,
   X,
 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
@@ -443,6 +443,7 @@ export function DesktopSidebar({
   const { t } = useTranslation('common')
   const { sidebarWidth, handleResizeStart } = useResizableSidebar()
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
+  const settingsMenuRef = useRef<HTMLDivElement>(null)
   const [projectCreateMode, setProjectCreateMode] = useState<ProjectCreateMode | null>(null)
   const [renamingProject, setRenamingProject] = useState<ProjectWithTasks | null>(null)
   const [renamingTask, setRenamingTask] = useState<{ id: number; title: string } | null>(null)
@@ -480,6 +481,26 @@ export function DesktopSidebar({
       return next
     })
   }
+
+  useEffect(() => {
+    if (!settingsMenuOpen) {
+      return
+    }
+
+    const handleOutsidePointer = (event: MouseEvent | PointerEvent) => {
+      if (!settingsMenuRef.current?.contains(event.target as Node)) {
+        setSettingsMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('pointerdown', handleOutsidePointer)
+    document.addEventListener('mousedown', handleOutsidePointer)
+
+    return () => {
+      document.removeEventListener('pointerdown', handleOutsidePointer)
+      document.removeEventListener('mousedown', handleOutsidePointer)
+    }
+  }, [settingsMenuOpen])
 
   return (
     <aside
@@ -640,26 +661,28 @@ export function DesktopSidebar({
         </section>
       </div>
 
-      <button
-        type="button"
-        data-testid="settings-button"
-        onClick={() => setSettingsMenuOpen(open => !open)}
-        className="mt-4 flex h-10 shrink-0 items-center gap-3 rounded-md px-3 text-sm font-medium text-[#333] hover:bg-white/70"
-        aria-expanded={settingsMenuOpen}
-      >
-        <Settings className="h-4 w-4" />
-        {t('workbench.settings', '设置')}
-      </button>
-      {settingsMenuOpen && (
-        <DesktopSettingsMenu
-          user={user}
-          onOpenSettings={() => {
-            setSettingsMenuOpen(false)
-            onOpenSettings()
-          }}
-          onLogout={onLogout}
-        />
-      )}
+      <div ref={settingsMenuRef} className="mt-4 shrink-0">
+        <button
+          type="button"
+          data-testid="settings-button"
+          onClick={() => setSettingsMenuOpen(open => !open)}
+          className="flex h-10 shrink-0 items-center gap-3 rounded-md px-3 text-sm font-medium text-[#333] hover:bg-white/70"
+          aria-expanded={settingsMenuOpen}
+        >
+          <Settings className="h-4 w-4" />
+          {t('workbench.settings', '设置')}
+        </button>
+        {settingsMenuOpen && (
+          <DesktopSettingsMenu
+            user={user}
+            onOpenSettings={() => {
+              setSettingsMenuOpen(false)
+              onOpenSettings()
+            }}
+            onLogout={onLogout}
+          />
+        )}
+      </div>
 
       <button
         type="button"

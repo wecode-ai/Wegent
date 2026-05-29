@@ -26,7 +26,7 @@ import type {
   User,
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
-import type { WorkbenchMessage, WorkbenchState } from '@/types/workbench'
+import type { ToolBlock, WorkbenchMessage, WorkbenchState } from '@/types/workbench'
 import { useWorkbenchAttachments } from './useWorkbenchAttachments'
 import { useWorkbenchModels } from './useWorkbenchModels'
 import { useWorkbenchSkills } from './useWorkbenchSkills'
@@ -122,16 +122,79 @@ function createDefaultServices(): WorkbenchServices {
   }
 }
 
+interface SubtaskResult {
+  value?: string
+  blocks?: unknown[]
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function getSubtaskResult(result: unknown): SubtaskResult | undefined {
+  if (!isRecord(result)) return undefined
+  return {
+    value: typeof result.value === 'string' ? result.value : undefined,
+    blocks: Array.isArray(result.blocks) ? result.blocks : undefined,
+  }
+}
+
+function getPersistedToolBlocks(subtask: Subtask, blocks?: unknown[]): ToolBlock[] {
+  if (!blocks) return []
+
+  return blocks.flatMap((block, index) => {
+    if (!isRecord(block) || block.type !== 'tool') return []
+
+    const id =
+      typeof block.id === 'string'
+        ? block.id
+        : typeof block.tool_use_id === 'string'
+          ? block.tool_use_id
+          : `tool-${subtask.id}-${index}`
+    const timestamp = typeof block.timestamp === 'number' ? block.timestamp : Date.now()
+
+    return [
+      {
+        id,
+        subtaskId: subtask.id,
+        toolName: typeof block.tool_name === 'string' ? block.tool_name : 'unknown',
+        toolInput: isRecord(block.tool_input) ? block.tool_input : undefined,
+        toolOutput: block.tool_output,
+        status: normalizeBlockStatus(
+          typeof block.status === 'string' ? block.status : undefined
+        ),
+        createdAt: timestamp,
+      },
+    ]
+  })
+}
+
 function subtaskToMessage(subtask: Subtask): WorkbenchMessage {
-  const result = subtask.result as { value?: string } | undefined
+  const result = getSubtaskResult(subtask.result)
+  const role = subtask.role.toLowerCase() === 'user' ? 'user' : 'assistant'
+  const blocks = getPersistedToolBlocks(subtask, result?.blocks)
   return {
     id: `subtask-${subtask.id}`,
+    taskId: subtask.task_id,
     subtaskId: subtask.id,
-    role: subtask.role === 'user' ? 'user' : 'assistant',
+    role,
     content: subtask.prompt || result?.value || '',
     status: subtask.status === 'FAILED' ? 'failed' : 'done',
+    blocks: blocks.length > 0 ? blocks : undefined,
     createdAt: subtask.created_at,
   }
+}
+
+function sortSubtasksForDisplay(subtasks: Subtask[]): Subtask[] {
+  return [...subtasks].sort((left, right) => {
+    const leftMessageId = left.message_id ?? Number.MAX_SAFE_INTEGER
+    const rightMessageId = right.message_id ?? Number.MAX_SAFE_INTEGER
+    if (leftMessageId !== rightMessageId) {
+      return leftMessageId - rightMessageId
+    }
+
+    return new Date(left.created_at).getTime() - new Date(right.created_at).getTime()
+  })
 }
 
 function getLastProjectStorageKey(userId: number) {
@@ -431,7 +494,7 @@ export function WorkbenchProvider({
       })
       dispatchMessages({
         type: 'reset',
-        messages: (detail.subtasks ?? []).map(subtaskToMessage),
+        messages: sortSubtasksForDisplay(detail.subtasks ?? []).map(subtaskToMessage),
       })
       await resolvedServices.chatStream.joinTask(taskId)
     },
@@ -623,7 +686,7 @@ export function WorkbenchProvider({
     const ack = await resolvedServices.chatStream.sendMessage(payload)
     dispatch({ type: 'sending_finished' })
 
-    if (!ack.success) {
+    if (ack.error || ack.success === false) {
       dispatch({ type: 'error_set', error: ack.error ?? '发送失败' })
       return
     }

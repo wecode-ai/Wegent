@@ -451,6 +451,331 @@ describe('WorkbenchProvider', () => {
     )
   })
 
+  test('treats backend chat ACK without success as successful and reuses task id', async () => {
+    const sendMessage = vi
+      .fn()
+      .mockResolvedValueOnce({ task_id: 99, subtask_id: 101, message_id: 1 })
+      .mockResolvedValueOnce({ task_id: 99, subtask_id: 103, message_id: 3 })
+
+    function FollowUpProbe() {
+      const workbench = useWorkbench()
+      return (
+        <div>
+          <span data-testid="current-task-id">
+            {workbench.state.currentTask?.id ?? 'no-task'}
+          </span>
+          <button type="button" onClick={() => workbench.selectProject(7)}>
+            select project
+          </button>
+          <button type="button" onClick={() => workbench.setInput('我叫胡云鹏')}>
+            set first input
+          </button>
+          <button type="button" onClick={() => workbench.setInput('我叫什么')}>
+            set second input
+          </button>
+          <button type="button" onClick={() => void workbench.sendCurrentInput()}>
+            send
+          </button>
+        </div>
+      )
+    }
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: { listModels: vi.fn().mockResolvedValue({ data: [] }) },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({
+              items: [{ id: 7, name: 'Wegent', tasks: [] }],
+            }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail: vi.fn(),
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+          },
+          chatStream: {
+            joinTask: vi.fn(),
+            leaveTask: vi.fn(),
+            sendMessage,
+            subscribe: vi.fn(() => vi.fn()),
+          },
+        }}
+      >
+        <FollowUpProbe />
+      </WorkbenchProvider>
+    )
+
+    await userEvent.click(await screen.findByText('select project'))
+    await userEvent.click(screen.getByText('set first input'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('current-task-id')).toHaveTextContent('99')
+    )
+
+    await userEvent.click(screen.getByText('set second input'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2))
+    expect(sendMessage).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        task_id: 99,
+        project_id: undefined,
+        message: '我叫什么',
+      })
+    )
+  })
+
+  test('opens task history in message order with normalized backend roles', async () => {
+    function HistoryProbe() {
+      const workbench = useWorkbench()
+      return (
+        <div>
+          <button type="button" onClick={() => void workbench.openTask(8)}>
+            open task
+          </button>
+          <ol data-testid="messages">
+            {workbench.messages.map(message => (
+              <li key={message.id}>
+                {message.role}:{message.content}
+              </li>
+            ))}
+          </ol>
+        </div>
+      )
+    }
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: { listModels: vi.fn().mockResolvedValue({ data: [] }) },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({ items: [] }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail: vi.fn().mockResolvedValue({
+              id: 8,
+              title: 'Existing task',
+              status: 'COMPLETED',
+              task_type: 'code',
+              created_at: '2026-05-27T00:00:00.000Z',
+              subtasks: [
+                {
+                  id: 12,
+                  role: 'ASSISTANT',
+                  message_id: 2,
+                  prompt: '',
+                  result: { value: '你好，胡云鹏！' },
+                  status: 'COMPLETED',
+                  created_at: '2026-05-27T00:02:00.000Z',
+                },
+                {
+                  id: 11,
+                  role: 'USER',
+                  message_id: 1,
+                  prompt: '我叫胡云鹏',
+                  status: 'COMPLETED',
+                  created_at: '2026-05-27T00:01:00.000Z',
+                },
+              ],
+            }),
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+          },
+          chatStream: {
+            joinTask: vi.fn(),
+            leaveTask: vi.fn(),
+            sendMessage: vi.fn(),
+            subscribe: vi.fn(() => vi.fn()),
+          },
+        }}
+      >
+        <HistoryProbe />
+      </WorkbenchProvider>
+    )
+
+    await userEvent.click(await screen.findByText('open task'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('messages')).toHaveTextContent(
+        'user:我叫胡云鹏assistant:你好，胡云鹏！'
+      )
+    )
+  })
+
+  test('restores persisted tool blocks when opening task history', async () => {
+    function ToolBlockHistoryProbe() {
+      const workbench = useWorkbench()
+      return (
+        <div>
+          <button type="button" onClick={() => void workbench.openTask(8)}>
+            open task
+          </button>
+          <ol data-testid="tool-blocks">
+            {workbench.messages.flatMap(message =>
+              (message.blocks ?? []).map(block => (
+                <li key={block.id}>
+                  {block.toolName}:{String(block.toolInput?.command)}:
+                  {String(block.toolOutput)}
+                </li>
+              ))
+            )}
+          </ol>
+        </div>
+      )
+    }
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: { listModels: vi.fn().mockResolvedValue({ data: [] }) },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({ items: [] }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail: vi.fn().mockResolvedValue({
+              id: 8,
+              title: 'Existing task',
+              status: 'COMPLETED',
+              task_type: 'code',
+              created_at: '2026-05-27T00:00:00.000Z',
+              subtasks: [
+                {
+                  id: 12,
+                  task_id: 8,
+                  role: 'ASSISTANT',
+                  message_id: 2,
+                  prompt: '',
+                  result: {
+                    value: '/Users/yunpeng7/AIGCWorkSpace',
+                    blocks: [
+                      {
+                        id: 'call_exec_1',
+                        type: 'tool',
+                        tool_use_id: 'call_exec_1',
+                        tool_name: 'exec',
+                        tool_input: { command: 'pwd' },
+                        tool_output: '/Users/yunpeng7/AIGCWorkSpace',
+                        status: 'done',
+                        timestamp: 1770000000000,
+                      },
+                    ],
+                  },
+                  status: 'COMPLETED',
+                  created_at: '2026-05-27T00:02:00.000Z',
+                },
+              ],
+            }),
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+          },
+          chatStream: {
+            joinTask: vi.fn(),
+            leaveTask: vi.fn(),
+            sendMessage: vi.fn(),
+            subscribe: vi.fn(() => vi.fn()),
+          },
+        }}
+      >
+        <ToolBlockHistoryProbe />
+      </WorkbenchProvider>
+    )
+
+    await userEvent.click(await screen.findByText('open task'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('tool-blocks')).toHaveTextContent(
+        'exec:pwd:/Users/yunpeng7/AIGCWorkSpace'
+      )
+    )
+  })
+
   test('does not send model or skill overrides after a task is open', async () => {
     const sendMessage = vi.fn().mockResolvedValue({ success: true, task_id: 8 })
 

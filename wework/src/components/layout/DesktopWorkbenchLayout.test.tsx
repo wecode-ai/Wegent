@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { createDeviceApi } from '@/api/devices'
+import { createQuotaApi } from '@/api/quota'
 import { DesktopWorkbenchLayout } from './DesktopWorkbenchLayout'
 
 vi.mock('@/config/runtime', () => ({
@@ -16,7 +17,13 @@ vi.mock('@/api/devices', () => ({
   createDeviceApi: vi.fn(),
 }))
 
+vi.mock('@/api/quota', () => ({
+  createQuotaApi: vi.fn(),
+}))
+
 const createDeviceApiMock = vi.mocked(createDeviceApi)
+const createQuotaApiMock = vi.mocked(createQuotaApi)
+const fetchQuotaMock = vi.fn()
 
 describe('DesktopWorkbenchLayout', () => {
   beforeEach(() => {
@@ -27,6 +34,16 @@ describe('DesktopWorkbenchLayout', () => {
       value: {
         writeText: vi.fn().mockResolvedValue(undefined),
       },
+    })
+    fetchQuotaMock.mockResolvedValue({
+      quota: 748,
+      usage: 747.74,
+      remaining: 0.26,
+      usage_rate: 0.9997,
+      user: 'yunpeng7',
+    })
+    createQuotaApiMock.mockReturnValue({
+      fetchQuota: fetchQuotaMock,
     })
     createDeviceApiMock.mockReturnValue({
       getHomeDirectory: vi.fn().mockResolvedValue('/home/ubuntu'),
@@ -54,6 +71,17 @@ describe('DesktopWorkbenchLayout', () => {
       renameDevice: vi.fn(),
       restartCloudDevice: vi.fn(),
       deleteCloudDevice: vi.fn(),
+      getMetrics: vi.fn().mockResolvedValue({
+        cpu_usage: 42,
+        memory_usage: 68,
+        disk_usage: 57,
+      }),
+      getMetricsHistory: vi.fn().mockResolvedValue({
+        cpu: [],
+        memory: [],
+        disk: [],
+      }),
+      getVncConfig: vi.fn(),
     })
   })
 
@@ -257,6 +285,42 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getAllByText('设置')).toHaveLength(2)
     expect(screen.getByText('剩余用量')).toBeInTheDocument()
     expect(screen.getByText('退出登录')).toBeInTheDocument()
+  })
+
+  test('closes the settings menu when clicking outside it', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await userEvent.click(screen.getByTestId('settings-button'))
+    expect(screen.getByTestId('settings-menu')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('heading', { name: '我们该做什么？' }))
+
+    expect(screen.queryByTestId('settings-menu')).not.toBeInTheDocument()
+  })
+
+  test('expands remaining usage details from the settings menu', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await userEvent.click(screen.getByTestId('settings-button'))
+    await userEvent.click(screen.getByTestId('usage-menu-button'))
+
+    await waitFor(() => expect(fetchQuotaMock).toHaveBeenCalledTimes(1))
+
+    const usagePanel = await screen.findByTestId('usage-detail-panel')
+    expect(usagePanel).toHaveTextContent('模型额度')
+    expect(usagePanel).toHaveTextContent('747.74 / 748 元')
+    expect(usagePanel).toHaveTextContent('剩余 0.26 元')
+    expect(usagePanel).not.toHaveTextContent('使用率')
+    expect(usagePanel).not.toHaveTextContent('总额度')
+    const quotaLink = await screen.findByRole('link', {
+      name: '额度与计费说明',
+    })
+    expect(quotaLink).toHaveAttribute(
+      'href',
+      'https://space.intra.weibo.com/develop/model-quota'
+    )
+    expect(quotaLink).toHaveClass('text-text-secondary')
+    expect(quotaLink).not.toHaveClass('text-primary')
   })
 
   test('shows project header menus and creates a scratch project workspace', async () => {
@@ -770,7 +834,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByText('CPU')).toBeInTheDocument()
     expect(screen.getByText('MEM')).toBeInTheDocument()
     expect(screen.getByText('磁盘')).toBeInTheDocument()
-    expect(screen.getByText('42%')).toBeInTheDocument()
+    expect(await screen.findByText('42%')).toBeInTheDocument()
     expect(screen.getByText('68%')).toBeInTheDocument()
     expect(screen.getByText('57%')).toBeInTheDocument()
     expect(screen.getByTestId('connection-scale-wiki')).toBeInTheDocument()
@@ -793,8 +857,9 @@ describe('DesktopWorkbenchLayout', () => {
     expect(panel).toBeInTheDocument()
     expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
     expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
-    expect(screen.getByText('浏览器')).toBeInTheDocument()
     expect(screen.getByText('终端')).toBeInTheDocument()
+    expect(screen.getByText('IDE')).toBeInTheDocument()
+    expect(screen.getByText('桌面')).toBeInTheDocument()
 
     fireEvent.pointerDown(screen.getByTestId('right-workspace-resize-handle'), { clientX: 700 })
     fireEvent.pointerMove(document, { clientX: 640 })
@@ -1068,6 +1133,18 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
+  test('closes the right workspace panel from the panel edge', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    expect(screen.getByTestId('right-workspace-panel')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('close-right-workspace-panel-button'))
+
+    expect(screen.queryByTestId('right-workspace-panel')).not.toBeInTheDocument()
+    expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
+  })
+
   test('opens and resizes the bottom workspace panel', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
@@ -1077,13 +1154,26 @@ describe('DesktopWorkbenchLayout', () => {
     expect(panel).toBeInTheDocument()
     expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
     expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
-    expect(screen.getByText('浏览器')).toBeInTheDocument()
     expect(screen.getByText('终端')).toBeInTheDocument()
+    expect(screen.getByText('IDE')).toBeInTheDocument()
+    expect(screen.getByText('桌面')).toBeInTheDocument()
 
     fireEvent.pointerDown(screen.getByTestId('bottom-workspace-resize-handle'), { clientY: 700 })
     fireEvent.pointerMove(document, { clientY: 620 })
     fireEvent.pointerUp(document)
 
     expect(panel).toHaveStyle({ height: '400px' })
+  })
+
+  test('closes the bottom workspace panel from the panel edge', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
+    expect(screen.getByTestId('bottom-workspace-panel')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('close-bottom-workspace-panel-button'))
+
+    expect(screen.queryByTestId('bottom-workspace-panel')).not.toBeInTheDocument()
+    expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
   })
 })
