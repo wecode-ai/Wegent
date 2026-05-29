@@ -8,6 +8,7 @@ import { useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   ChevronDown,
+  ChevronUp,
   ChevronRight,
   FolderPlus,
   MoreHorizontal,
@@ -103,7 +104,10 @@ export function ProjectSection({ onTaskSelect, variant = 'all' }: ProjectSection
   const [selectedProject, setSelectedProject] = useState<ProjectWithTasks | null>(null)
 
   // Section collapsed state
-  const [sectionCollapsed, setSectionCollapsed] = useState(false)
+  const [sectionCollapsed, setSectionCollapsed] = useState(true)
+  const sectionTitle = t(
+    isUnifiedSection || isWorkspaceSection ? 'workspaceSection.title' : 'section.title'
+  )
 
   const handleEditProject = (project: ProjectWithTasks) => {
     setSelectedProject(project)
@@ -150,22 +154,25 @@ export function ProjectSection({ onTaskSelect, variant = 'all' }: ProjectSection
   }
 
   return (
-    <div className="mb-2">
+    <div className="mb-0">
       {/* Section Header */}
-      <div className="flex items-center justify-between px-1 py-1.5 group">
+      <div
+        className="group flex h-6 items-center justify-between rounded-md px-1 text-xs font-medium text-text-muted hover:bg-[rgb(238,238,238)] hover:text-text-primary dark:hover:bg-white/10 transition-colors"
+        data-testid="project-section-header"
+      >
         <button
+          type="button"
+          data-testid="project-section-toggle"
           onClick={() => setSectionCollapsed(!sectionCollapsed)}
-          className="flex items-center gap-1 text-xs font-medium text-text-muted hover:text-text-primary transition-colors"
+          aria-expanded={!sectionCollapsed}
+          className="flex h-full min-w-0 flex-1 items-center justify-between"
         >
+          <span className="truncate">{sectionTitle}</span>
           {sectionCollapsed ? (
-            <ChevronRight className="w-3.5 h-3.5" />
+            <ChevronDown className="h-3.5 w-3.5 flex-shrink-0" />
           ) : (
-            <ChevronDown className="w-3.5 h-3.5" />
+            <ChevronUp className="h-3.5 w-3.5 flex-shrink-0" />
           )}
-          <span>
-            {t(isUnifiedSection || isWorkspaceSection ? 'workspaceSection.title' : 'section.title')}
-          </span>
-          <span className="text-text-muted ml-1">({visibleProjects.length})</span>
         </button>
         <Button
           data-testid={
@@ -175,7 +182,7 @@ export function ProjectSection({ onTaskSelect, variant = 'all' }: ProjectSection
           }
           variant="ghost"
           size="sm"
-          className="p-0.5 text-text-muted hover:text-text-primary transition-colors rounded"
+          className="ml-1 h-5 w-5 p-0 text-text-muted hover:text-text-primary transition-colors rounded"
           onClick={() => setCreateDialogOpen(true)}
           title={t(
             isUnifiedSection || isWorkspaceSection ? 'workspaceCreate.title' : 'create.title'
@@ -187,7 +194,7 @@ export function ProjectSection({ onTaskSelect, variant = 'all' }: ProjectSection
 
       {/* Project List */}
       {!sectionCollapsed && (
-        <div className="space-y-0.5">
+        <div className="mt-1 space-y-0.5" data-testid="project-section-list">
           {isLoading ? (
             <div className="px-4 py-2 text-xs text-text-muted">{t('common:loading')}</div>
           ) : visibleProjects.length === 0 ? (

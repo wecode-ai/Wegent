@@ -212,11 +212,11 @@ class ErpClient:
     def search_employee(self, keyword: str) -> Optional[EmployeeInfo]:
         """Search employee by keyword (username, email, or ssn).
 
-        Prefers an exact case-insensitive match on ssn or name; falls back
-        to the first result if no exact match is found.
+        Prefers an exact case-insensitive match on ssn, name, or email; falls
+        back to the first result if no exact match is found.
 
         Args:
-            keyword: Search keyword, typically username or email prefix
+            keyword: Search keyword, typically username, email, or email prefix
 
         Returns:
             Employee info object with ssn, name, email, department, or None if not found
@@ -232,6 +232,7 @@ class ErpClient:
             if keyword_lower and (
                 (info.ssn and info.ssn.lower() == keyword_lower)
                 or (info.name and info.name.lower() == keyword_lower)
+                or (info.email and info.email.lower() == keyword_lower)
             ):
                 return info
         return EmployeeInfo.model_validate(employees[0])

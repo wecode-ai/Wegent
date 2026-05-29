@@ -14,6 +14,7 @@ interface AddContextButtonProps {
   onClick: () => void
   selectedCount?: number
   triggerVariant?: 'button' | 'menu-item'
+  iconOnly?: boolean
 }
 
 /**
@@ -25,6 +26,7 @@ export default function AddContextButton({
   onClick,
   selectedCount = 0,
   triggerVariant = 'button',
+  iconOnly = false,
 }: AddContextButtonProps) {
   const { t } = useTranslation()
 
@@ -52,13 +54,19 @@ export default function AddContextButton({
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
-          <div>
+          <div className="relative">
             <ActionButton
               onClick={onClick}
               icon={<BookOpenText className="h-4 w-4" />}
-              label={t('knowledge:tooltip')}
               title={t('knowledge:tooltip')}
+              label={iconOnly ? undefined : t('knowledge:tooltip')}
+              data-testid="knowledge-context-button"
             />
+            {iconOnly && selectedCount > 0 && (
+              <span className="absolute -top-1.5 -right-1.5 h-[18px] min-w-[18px] rounded-full bg-primary px-1 text-center text-[10px] leading-[18px] text-white pointer-events-none">
+                {selectedCount}
+              </span>
+            )}
           </div>
         </TooltipTrigger>
         <TooltipContent side="top">

@@ -13,10 +13,26 @@ from app.services.execution.dispatcher import (
     ResponsesAPIEventParser,
 )
 from app.services.execution.inprocess_executor import EmitterBridgeTransport
+from shared.models import EventType
 from shared.models.responses_api import ResponsesAPIStreamEvents
 
 
 class TestResponsesAPIEventParserToolIds:
+    def test_reasoning_summary_text_delta_emits_thinking_event(self):
+        parser = ResponsesAPIEventParser()
+
+        result = parser.parse(
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+            event_type=ResponsesAPIStreamEvents.REASONING_SUMMARY_TEXT_DELTA.value,
+            data={"delta": "Reasoning chunk."},
+        )
+
+        assert result is not None
+        assert result.type == EventType.THINKING
+        assert result.content == "Reasoning chunk."
+
     def test_tool_start_requires_non_empty_id(self):
         parser = ResponsesAPIEventParser()
 
@@ -556,6 +572,24 @@ class TestResponsesAPIEventParserToolIds:
                 },
                 message_id=3,
             )
+
+    def test_inprocess_bridge_reasoning_summary_text_delta_emits_thinking_event(self):
+        transport = EmitterBridgeTransport(
+            emitter=AsyncMock(),
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+        )
+
+        result = transport._convert_event(
+            ResponsesAPIStreamEvents.REASONING_SUMMARY_TEXT_DELTA.value,
+            {"delta": "Reasoning chunk."},
+            message_id=3,
+        )
+
+        assert result is not None
+        assert result.type == EventType.THINKING.value
+        assert result.content == "Reasoning chunk."
 
     def test_inprocess_bridge_raises_for_unknown_tool_completion(self):
         transport = EmitterBridgeTransport(

@@ -2,7 +2,7 @@ import { io, type Socket } from 'socket.io-client'
 import { getRuntimeConfig } from '@/config/runtime'
 import { getToken } from '@/api/auth'
 
-export type WorkbenchSocket = Pick<Socket, 'emit' | 'on' | 'off' | 'disconnect'>
+export type WorkbenchSocket = Pick<Socket, 'emit' | 'on' | 'off' | 'disconnect' | 'connected'>
 
 export function createSocketClient(): Socket {
   const { socketBaseUrl } = getRuntimeConfig()

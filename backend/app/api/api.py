@@ -19,6 +19,7 @@ from app.api.endpoints import (
     grey,
     groups,
     health,
+    installed_mcps,
     knowledge,
     knowledge_open,
     knowledge_transfer,
@@ -35,6 +36,7 @@ from app.api.endpoints import (
     skill_identity,
     skill_market,
     subtasks,
+    system_skills,
     tables,
     token_issuers,
     users,
@@ -109,9 +111,6 @@ api_router.include_router(grey.router, prefix="/grey", tags=["grey"])
 api_router.include_router(projects.router, prefix="/projects", tags=["projects"])
 api_router.include_router(api_keys.router, prefix="/api-keys", tags=["api-keys"])
 api_router.include_router(devices.router, prefix="/devices", tags=["devices"])
-api_router.include_router(
-    local_executor.router, prefix="/local-executor", tags=["local-executor"]
-)
 api_router.include_router(bots.router, prefix="/bots", tags=["bots"])
 api_router.include_router(models.router, prefix="/models", tags=["public-models"])
 api_router.include_router(shells.router, prefix="/shells", tags=["shells"])
@@ -231,6 +230,10 @@ if not settings.STANDALONE_MODE:
 api_router.include_router(
     mcp_providers.router, prefix="/mcp-providers", tags=["mcp-providers"]
 )
+api_router.include_router(installed_mcps.router, prefix="/mcps", tags=["mcps"])
+api_router.include_router(
+    local_executor.router, prefix="/local-executor", tags=["local-executor"]
+)
 
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])
 api_router.include_router(
@@ -239,6 +242,9 @@ api_router.include_router(
 # Skill market endpoints (external skill market integration)
 api_router.include_router(
     skill_market.router, prefix="/skill-market", tags=["skill-market"]
+)
+api_router.include_router(
+    system_skills.router, prefix="/system-skills", tags=["system-skills"]
 )
 api_router.include_router(skill_identity.router, tags=["skill-identity"])
 api_router.include_router(

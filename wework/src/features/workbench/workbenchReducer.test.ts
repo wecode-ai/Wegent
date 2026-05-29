@@ -31,4 +31,25 @@ describe('workbenchReducer', () => {
     expect(opened.currentProject?.id).toBe(7)
     expect(opened.currentTask?.id).toBe(3)
   })
+
+  test('clears the current task without changing the selected project', () => {
+    const selected = workbenchReducer(initialWorkbenchState, {
+      type: 'project_selected',
+      project: { id: 7, name: 'Repo', tasks: [] },
+    })
+    const opened = workbenchReducer(selected, {
+      type: 'task_opened',
+      task: {
+        id: 3,
+        title: '历史会话',
+        status: 'COMPLETED',
+        task_type: 'code',
+        created_at: '2026-05-25T00:00:00.000Z',
+      },
+    })
+    const cleared = workbenchReducer(opened, { type: 'current_task_cleared' })
+
+    expect(cleared.currentProject?.id).toBe(7)
+    expect(cleared.currentTask).toBeNull()
+  })
 })

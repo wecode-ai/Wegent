@@ -5,6 +5,8 @@ import { WorkbenchProvider } from '@/features/workbench/WorkbenchProvider'
 import { OidcCallbackPage } from '@/pages/OidcCallbackPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { WorkbenchPage } from '@/pages/WorkbenchPage'
+import { PluginsPage } from '@/pages/PluginsPage'
+import { PluginManagementPage } from '@/pages/PluginManagementPage'
 
 function useCurrentPath() {
   const [path, setPath] = useState(window.location.pathname)
@@ -36,7 +38,13 @@ function AppRoutes() {
 
   return (
     <WorkbenchProvider user={user}>
-      <WorkbenchPage />
+      {path === '/plugins/manage' ? (
+        <PluginManagementPage />
+      ) : path === '/plugins' ? (
+        <PluginsPage />
+      ) : (
+        <WorkbenchPage />
+      )}
     </WorkbenchProvider>
   )
 }

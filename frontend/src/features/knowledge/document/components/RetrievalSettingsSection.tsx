@@ -283,7 +283,7 @@ export function RetrievalSettingsSection({
               {t('document.retrieval.ragUnavailableHint')}
             </p>
             <Link
-              href="/settings?section=personal&tab=personal-retrievers"
+              href="/resource-library?tab=mine&type=retriever&scope=personal"
               className="text-xs text-primary hover:underline"
             >
               {t('document.goToSettings')}

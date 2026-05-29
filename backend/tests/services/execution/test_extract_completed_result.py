@@ -100,3 +100,24 @@ class TestExtractCompletedResult:
         }
         result = extract_completed_result(response_data)
         assert result["value"] == "hello"
+
+    def test_reasoning_output_is_not_merged_into_value(self):
+        response_data = {
+            "output": [
+                {
+                    "content": [
+                        {"type": "reasoning", "text": "Before tool."},
+                    ]
+                },
+                {
+                    "content": [
+                        {"type": "output_text", "text": "Final answer."},
+                    ]
+                },
+            ]
+        }
+
+        result = extract_completed_result(response_data)
+
+        assert result["value"] == "Final answer."
+        assert result["reasoning_content"] == "Before tool."

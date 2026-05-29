@@ -54,6 +54,28 @@
     "discard_changes": "放弃更改",
     "reset_to_default": "恢复默认"
   },
+  "resourceGuide": {
+    "title": "资源管理已移到资源库",
+    "description": "智能体、模型、执行器、技能和检索器现在在资源库管理。",
+    "action": "前往资源库"
+  },
+  "navigation": {
+    "team": "智能体",
+    "models": "模型",
+    "shells": "执行器",
+    "skills": "技能",
+    "retrievers": "检索引擎",
+    "integrations": "集成",
+    "apiKeys": "API 密钥",
+    "groupManager": "组管理",
+    "personalResources": "个人资源",
+    "groupResources": "组资源",
+    "scopeLabel": "当前范围",
+    "personalResourcesDescription": "正在管理你个人名下的智能体、模型、执行器、技能和检索引擎。",
+    "groupResourcesDescription": "选择一个组后，可管理该组内的共享资源。",
+    "groupResourcesDescriptionWithName": "正在管理「{{groupName}}」组内的共享资源。",
+    "groupManagerDescription": "管理组、成员和权限。"
+  },
   "skills": {
     "search_skills": "在市场搜索",
     "search_skills_title": "从技能市场搜索",
@@ -86,6 +108,72 @@
     "errors": {
       "default_model_required_when_restrict": "开启限制模型时，必须选择一个默认模型",
       "default_model_must_be_in_allowed": "默认模型必须在限制模型列表中"
+    }
+  },
+  "team": {
+    "list": {
+      "filterDevice": "设备",
+      "goToDevice": "去设备"
+    },
+    "simple": {
+      "advanced_title": "高级配置",
+      "advanced_description": "协作模式、多机器人编排和更细的角色设置都在这里。",
+      "open_advanced": "打开高级",
+      "advanced_toggle": "高级模式",
+      "advanced_toggle_description": "开启后切换到完整配置界面，可设置协作模式和多机器人编排。",
+      "non_solo_notice": "这个智能体使用了高级协作模式，已切换到完整配置。",
+      "sections": {
+        "basic": "基础设置",
+        "prompt": "提示词",
+        "capability": "能力配置",
+        "execution": "模式设置"
+      },
+      "core": {
+        "model_description": "不绑定时使用系统默认模型，可按需指定默认模型。",
+        "prompt_description": "定义智能体的角色、目标和回答方式。",
+        "skills_description": "添加常用技能，让智能体按需调用工具能力。",
+        "knowledge_description": "新聊天默认会带上这些知识库，之后仍可在聊天中追加选择。",
+        "mcp_description": "连接外部 MCP 服务，为智能体补充工具能力。"
+      },
+      "execution": {
+        "bind_mode_description": "决定这个智能体可以在哪些入口和任务类型中使用。",
+        "requires_workspace_description": "开启后，编码任务必须先选择仓库。",
+        "executor_description": "决定智能体处理任务时使用的运行环境。"
+      },
+      "bind_mode": {
+        "chat": {
+          "title": "对话",
+          "description": "用于普通问答、资料讨论和持续对话。"
+        },
+        "code": {
+          "title": "编码",
+          "description": "用于代码仓库内的开发、修复和审查任务。"
+        },
+        "task": {
+          "title": "设备",
+          "description": "用于需要本地设备或执行环境参与的任务。"
+        }
+      },
+      "executor": {
+        "title": "执行器",
+        "required": "请选择一个可用执行器",
+        "requires_complex_hint": "编码和设备模式需要 Claude Code 能力，已优先使用复杂执行器。",
+        "custom_shell_placeholder": "选择自定义执行器",
+        "no_custom_shells": "暂无自定义执行器",
+        "manage_custom_shells_hint": "可前往资源库 - 执行器管理自定义执行器。",
+        "simple": {
+          "title": "简单",
+          "description": "使用 Chat 执行器，适合对话和轻量问答。"
+        },
+        "complex": {
+          "title": "复杂",
+          "description": "复杂执行器，适合代码任务、设备任务或需要较多步骤完成的复杂任务。"
+        },
+        "custom": {
+          "title": "自定义",
+          "description": "使用你创建的执行器，适合特殊运行环境。"
+        }
+      }
     }
   }
 }

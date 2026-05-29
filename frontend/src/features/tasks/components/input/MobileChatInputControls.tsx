@@ -30,6 +30,7 @@ import type {
 import type { ContextItem } from '@/types/context'
 import type { UnifiedSkill } from '@/apis/skills'
 import {
+  canSwitchModelAfterMessages,
   canUseChatContexts,
   isChatShell,
   teamRequiresWorkspace,
@@ -413,20 +414,20 @@ export function MobileChatInputControls({
               )}
 
               {showGuidanceAction && onSendGuidance && (
-              <Button
-                type="button"
-                variant="ghost"
-                data-testid="send-guidance-button"
-                onClick={onSendGuidance}
-                disabled={!canSendGuidance || !taskInputMessage.trim()}
-                className="flex h-11 w-full items-center justify-start gap-3 px-3 text-sm"
-              >
-                <Hand className="h-4 w-4 text-primary" />
-                <span>{t('guidance.send')}</span>
-              </Button>
-            )}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  data-testid="send-guidance-button"
+                  onClick={onSendGuidance}
+                  disabled={!canSendGuidance || !taskInputMessage.trim()}
+                  className="flex h-11 w-full items-center justify-start gap-3 px-3 text-sm"
+                >
+                  <Hand className="h-4 w-4 text-primary" />
+                  <span>{t('guidance.send')}</span>
+                </Button>
+              )}
 
-            {/* Repository Selector - full row clickable, only show if team requires workspace */}
+              {/* Repository Selector - full row clickable, only show if team requires workspace */}
               {showRepositoryAction && (
                 <MobileRepositorySelector
                   selectedRepo={selectedRepo}
@@ -479,7 +480,11 @@ export function MobileChatInputControls({
               forceOverride={forceOverride}
               setForceOverride={setForceOverride}
               selectedTeam={selectedTeam}
-              disabled={isLoading || isStreaming || (hasMessages && !isChatShell(selectedTeam))}
+              disabled={
+                isLoading ||
+                isStreaming ||
+                (hasMessages && !canSwitchModelAfterMessages(selectedTeam))
+              }
               teamId={teamId}
               taskId={taskId}
               taskModelId={taskModelId}
