@@ -39,7 +39,7 @@ describe('resourceLibraryApi', () => {
     )
   })
 
-  it('installs a listing with target namespace and install options', async () => {
+  it('accepts a listing share with optional install options', async () => {
     mockedApiClient.post.mockResolvedValue({
       id: 1,
       listing_id: 7,
@@ -82,10 +82,7 @@ describe('resourceLibraryApi', () => {
 
     await resourceLibraryApi.installListing(7, {})
 
-    expect(mockedApiClient.post).toHaveBeenCalledWith('/resource-library/listings/7/install', {
-      target_namespace: 'default',
-      install_options: {},
-    })
+    expect(mockedApiClient.post).toHaveBeenCalledWith('/resource-library/listings/7/install', {})
   })
 
   it('loads published resources for current user', async () => {

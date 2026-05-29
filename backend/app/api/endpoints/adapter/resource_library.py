@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
-from app.models.resource_library import ResourceLibraryInstall, ResourceLibraryListing
+from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.resource_library import (
     ResourceLibraryInstallCreate,
@@ -37,31 +37,33 @@ def _parse_tags(tags: Optional[str]) -> list[str] | None:
 
 def _listing_response(
     db: Session,
-    listing: ResourceLibraryListing,
+    listing: Kind,
     *,
     user_id: int,
 ) -> ResourceLibraryListingResponse:
-    current_version = None
-    if listing.current_version_id:
-        current_version = resource_library_service.get_current_version(db, listing)
+    spec = listing.json.get("spec") or {}
+    current_version = resource_library_service.get_current_version(db, listing)
+    is_installed = listing.user_id == user_id or (
+        resource_library_service.get_install_for_user(
+            db, listing_id=listing.id, user_id=user_id
+        )
+        is not None
+    )
     return ResourceLibraryListingResponse.model_validate(
         {
             "id": listing.id,
-            "resource_type": listing.resource_type,
+            "resource_type": spec.get("resourceType"),
             "name": listing.name,
-            "display_name": listing.display_name or listing.name,
-            "description": listing.description,
-            "icon": listing.icon,
-            "tags": listing.tags or [],
-            "publisher_user_id": listing.publisher_user_id,
-            "status": listing.status,
-            "current_version_id": listing.current_version_id,
+            "display_name": spec.get("displayName") or listing.name,
+            "description": spec.get("description"),
+            "icon": spec.get("icon"),
+            "tags": spec.get("tags") or [],
+            "publisher_user_id": listing.user_id,
+            "status": resource_library_service.get_listing_status(listing),
+            "current_version_id": listing.id,
             "current_version": current_version,
-            "install_count": listing.install_count,
-            "is_installed": resource_library_service.get_install_for_user(
-                db, listing_id=listing.id, user_id=user_id
-            )
-            is not None,
+            "install_count": resource_library_service.count_acceptances(db, listing),
+            "is_installed": is_installed,
             "created_at": listing.created_at,
             "updated_at": listing.updated_at,
         }
@@ -70,14 +72,14 @@ def _listing_response(
 
 def _install_response(
     db: Session,
-    install: ResourceLibraryInstall,
+    install,
     *,
     user_id: int,
     include_listing: bool = False,
 ) -> ResourceLibraryInstallResponse:
     listing_response = None
     if include_listing:
-        listing = resource_library_service.get_listing(
+        listing = install.listing or resource_library_service.get_listing(
             db,
             listing_id=install.listing_id,
             user_id=user_id,

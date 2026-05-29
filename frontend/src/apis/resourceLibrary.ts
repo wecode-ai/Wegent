@@ -49,11 +49,17 @@ function buildListingsQuery(params?: ResourceLibraryListListingsParams): string 
 function toInstallApiRequest(
   request: ResourceLibraryInstallRequest
 ): ResourceLibraryInstallApiRequest {
-  return {
-    version_id: request.versionId,
-    target_namespace: request.targetNamespace || 'default',
-    install_options: request.installOptions || {},
+  const payload: ResourceLibraryInstallApiRequest = {}
+  if (request.versionId !== undefined) {
+    payload.version_id = request.versionId
   }
+  if (request.targetNamespace) {
+    payload.target_namespace = request.targetNamespace
+  }
+  if (request.installOptions) {
+    payload.install_options = request.installOptions
+  }
+  return payload
 }
 
 export const resourceLibraryApi = {

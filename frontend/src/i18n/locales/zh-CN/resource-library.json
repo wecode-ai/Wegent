@@ -3,7 +3,7 @@
   "tabs": {
     "discover": "发现",
     "mine": "我的",
-    "installed": "已安装",
+    "installed": "已接受",
     "published": "我发布的"
   },
   "filters": {
@@ -20,8 +20,8 @@
     "group_placeholder": "选择组"
   },
   "actions": {
-    "install": "安装",
-    "installed": "已安装",
+    "install": "接受分享",
+    "installed": "已接受",
     "publish": "发布资源",
     "publish_to_library": "发布到资源库",
     "upgrade": "升级",
@@ -36,7 +36,7 @@
     "cancel": "取消"
   },
   "status": {
-    "installed": "已安装",
+    "installed": "已接受",
     "requires_configuration": "需要配置",
     "draft": "草稿",
     "published": "已发布",
@@ -51,7 +51,7 @@
     "source_id": "源资源 ID",
     "version": "版本",
     "publisher": "发布者",
-    "install_count": "安装次数",
+    "install_count": "接受次数",
     "updated_at": "更新时间"
   },
   "empty": {
@@ -69,14 +69,14 @@
     "placeholder": "搜索资源"
   },
   "messages": {
-    "install_success": "安装成功",
-    "install_requires_configuration": "安装成功，需要配置",
-    "install_failed": "安装失败",
+    "install_success": "已接受分享",
+    "install_requires_configuration": "已接受分享，需要配置",
+    "install_failed": "接受分享失败",
     "publish_success": "发布成功",
     "publish_failed": "发布失败"
   },
   "publish": {
-    "description": "将已有智能体或技能发布到资源库",
+    "description": "将已有智能体或技能作为分享说明发布到资源库",
     "selected_resource": "已选资源"
   }
 }

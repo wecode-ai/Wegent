@@ -3,7 +3,7 @@
   "tabs": {
     "discover": "Discover",
     "mine": "Mine",
-    "installed": "Installed",
+    "installed": "Accepted",
     "published": "Published by me"
   },
   "filters": {
@@ -20,8 +20,8 @@
     "group_placeholder": "Select group"
   },
   "actions": {
-    "install": "Install",
-    "installed": "Installed",
+    "install": "Accept Share",
+    "installed": "Accepted",
     "publish": "Publish Resource",
     "publish_to_library": "Publish to library",
     "upgrade": "Upgrade",
@@ -36,7 +36,7 @@
     "cancel": "Cancel"
   },
   "status": {
-    "installed": "Installed",
+    "installed": "Accepted",
     "requires_configuration": "Requires Configuration",
     "draft": "Draft",
     "published": "Published",
@@ -51,7 +51,7 @@
     "source_id": "Source resource ID",
     "version": "Version",
     "publisher": "Publisher",
-    "install_count": "Installs",
+    "install_count": "Accepts",
     "updated_at": "Updated"
   },
   "empty": {
@@ -69,14 +69,14 @@
     "placeholder": "Search resources"
   },
   "messages": {
-    "install_success": "Installed",
-    "install_requires_configuration": "Installed, configuration required",
-    "install_failed": "Install failed",
+    "install_success": "Share accepted",
+    "install_requires_configuration": "Share accepted, configuration required",
+    "install_failed": "Failed to accept share",
     "publish_success": "Published",
     "publish_failed": "Publish failed"
   },
   "publish": {
-    "description": "Publish an existing Agent or Skill to the resource library",
+    "description": "Publish an existing Agent or Skill description to the resource library",
     "selected_resource": "Selected resource"
   }
 }

@@ -2,43 +2,81 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Application service for Resource Library listings, versions, and installs."""
+"""Application service for Resource Library discovery and share acceptance."""
 
-from typing import Optional
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Optional
 
 from fastapi import HTTPException, status
-from sqlalchemy import or_
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
-from app.models.resource_library import (
-    INSTALL_STATUS_FAILED,
-    INSTALL_STATUS_INSTALLED,
-    INSTALL_STATUS_REMOVED,
-    RESOURCE_LIBRARY_STATUS_ARCHIVED,
-    RESOURCE_LIBRARY_STATUS_PUBLISHED,
-    ResourceLibraryInstall,
-    ResourceLibraryListing,
-    ResourceLibraryVersion,
-)
+from app.models.kind import Kind
+from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
+from app.models.share_link import ResourceType
 from app.schemas.resource_library import (
-    ResourceLibraryInstallCreate,
     ResourceLibraryListingCreate,
     ResourceLibraryVersionCreate,
 )
-from app.services.resource_library.installers import ResourceLibraryInstaller
-from app.services.resource_library.manifest_builders import ResourceManifestBuilder
+
+RESOURCE_LIBRARY_KIND = "ResourceLibraryListing"
+RESOURCE_LIBRARY_NAMESPACE = "resource-library"
+RESOURCE_TYPE_AGENT = "agent"
+RESOURCE_TYPE_SKILL = "skill"
+RESOURCE_LIBRARY_STATUS_PUBLISHED = "published"
+RESOURCE_LIBRARY_STATUS_ARCHIVED = "archived"
+INSTALL_STATUS_INSTALLED = "installed"
+INSTALL_STATUS_REMOVED = "removed"
+
+SOURCE_KIND_BY_RESOURCE_TYPE = {
+    RESOURCE_TYPE_AGENT: "Team",
+    RESOURCE_TYPE_SKILL: "Skill",
+}
+
+SHARE_RESOURCE_TYPE_BY_RESOURCE_TYPE = {
+    RESOURCE_TYPE_AGENT: ResourceType.TEAM.value,
+    RESOURCE_TYPE_SKILL: "Skill",
+}
+
+
+@dataclass
+class ResourceLibraryVersionRecord:
+    """Compatibility view for the resource library API shape."""
+
+    id: int
+    listing_id: int
+    version: str
+    changelog: str | None
+    package_url: str | None
+    manifest: dict[str, Any] | None
+    is_current: bool
+    created_at: datetime
+    updated_at: datetime | None
+
+
+@dataclass
+class ResourceLibraryInstallRecord:
+    """Compatibility view backed by ResourceMember."""
+
+    id: int
+    listing_id: int
+    version_id: int
+    user_id: int
+    resource_type: str
+    listing: Kind | None
+    installed_kind_id: int | None
+    installed_reference: dict[str, Any]
+    install_status: str
+    error_message: str | None
+    installed_at: datetime
+    updated_at: datetime
 
 
 class ResourceLibraryService:
-    """Service boundary for the Resource Library domain."""
-
-    def __init__(
-        self,
-        manifest_builder: ResourceManifestBuilder | None = None,
-        installer: ResourceLibraryInstaller | None = None,
-    ) -> None:
-        self.manifest_builder = manifest_builder or ResourceManifestBuilder()
-        self.installer = installer or ResourceLibraryInstaller()
+    """Service boundary for the Resource Library share directory."""
 
     def create_listing(
         self,
@@ -46,46 +84,29 @@ class ResourceLibraryService:
         *,
         user_id: int,
         payload: ResourceLibraryListingCreate,
-    ) -> ResourceLibraryListing:
+    ) -> Kind:
         self._ensure_listing_name_available(
             db,
             resource_type=payload.resource_type,
             name=payload.name,
             publisher_user_id=user_id,
         )
-        manifest = self.manifest_builder.build(
+        source = self._get_publishable_source(
             db,
             user_id=user_id,
             resource_type=payload.resource_type,
             source_id=payload.source_id,
-            options=payload.manifest_options,
         )
 
-        listing = ResourceLibraryListing(
-            resource_type=payload.resource_type,
+        listing = Kind(
+            user_id=user_id,
+            kind=RESOURCE_LIBRARY_KIND,
             name=payload.name,
-            display_name=payload.display_name,
-            description=payload.description,
-            icon=payload.icon,
-            tags=payload.tags,
-            publisher_user_id=user_id,
-            status=RESOURCE_LIBRARY_STATUS_PUBLISHED,
+            namespace=RESOURCE_LIBRARY_NAMESPACE,
+            json=self._build_listing_json(payload, source),
+            is_active=True,
         )
         db.add(listing)
-        db.flush()
-
-        version = ResourceLibraryVersion(
-            listing_id=listing.id,
-            version=payload.version,
-            manifest=manifest,
-            source_kind_id=payload.source_id,
-            source_binary_id=self._source_binary_id(manifest),
-            is_current=True,
-        )
-        db.add(version)
-        db.flush()
-
-        listing.current_version_id = version.id
         db.commit()
         db.refresh(listing)
         return listing
@@ -97,46 +118,34 @@ class ResourceLibraryService:
         listing_id: int,
         user_id: int,
         payload: ResourceLibraryVersionCreate,
-    ) -> ResourceLibraryVersion:
+    ) -> ResourceLibraryVersionRecord:
         listing = self.get_listing(
             db,
             listing_id=listing_id,
             user_id=user_id,
             include_archived_for_owner=True,
         )
-        if listing.publisher_user_id != user_id:
+        if listing.user_id != user_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed"
             )
 
-        manifest = self.manifest_builder.build(
+        spec = self._listing_spec(listing)
+        source = self._get_publishable_source(
             db,
             user_id=user_id,
-            resource_type=listing.resource_type,
+            resource_type=spec["resourceType"],
             source_id=payload.source_id,
-            options=payload.manifest_options,
         )
-
-        (
-            db.query(ResourceLibraryVersion)
-            .filter(ResourceLibraryVersion.listing_id == listing.id)
-            .update({"is_current": False})
-        )
-        version = ResourceLibraryVersion(
-            listing_id=listing.id,
-            version=payload.version,
-            manifest=manifest,
-            source_kind_id=payload.source_id,
-            source_binary_id=self._source_binary_id(manifest),
-            is_current=True,
-        )
-        db.add(version)
-        db.flush()
-        listing.current_version_id = version.id
-        listing.status = RESOURCE_LIBRARY_STATUS_PUBLISHED
+        spec["sourceKindId"] = source.id
+        spec["sourceKind"] = source.kind
+        spec["version"] = payload.version
+        listing.json["spec"] = spec
+        self._set_listing_status(listing, RESOURCE_LIBRARY_STATUS_PUBLISHED)
+        flag_modified(listing, "json")
         db.commit()
-        db.refresh(version)
-        return version
+        db.refresh(listing)
+        return self.get_current_version(db, listing)
 
     def list_listings(
         self,
@@ -148,38 +157,18 @@ class ResourceLibraryService:
         tags: Optional[list[str]] = None,
         skip: int = 0,
         limit: int = 20,
-    ) -> tuple[list[ResourceLibraryListing], int]:
-        query = db.query(ResourceLibraryListing).filter(
-            ResourceLibraryListing.status == RESOURCE_LIBRARY_STATUS_PUBLISHED
-        )
-        if resource_type:
-            query = query.filter(ResourceLibraryListing.resource_type == resource_type)
-        if keyword:
-            pattern = f"%{keyword.strip()}%"
-            query = query.filter(
-                or_(
-                    ResourceLibraryListing.name.ilike(pattern),
-                    ResourceLibraryListing.display_name.ilike(pattern),
-                    ResourceLibraryListing.description.ilike(pattern),
-                )
+    ) -> tuple[list[Kind], int]:
+        listings = self._query_listings(db)
+        filtered = [
+            listing
+            for listing in listings
+            if self._listing_status(listing) == RESOURCE_LIBRARY_STATUS_PUBLISHED
+            and self._source_for_listing(db, listing) is not None
+            and self._matches_listing_filters(
+                listing, resource_type=resource_type, keyword=keyword, tags=tags
             )
-        if tags:
-            # JSON containment is not portable across SQLite/MySQL in tests, so keep
-            # filtering in Python after narrowing the SQL query.
-            all_items = query.order_by(ResourceLibraryListing.updated_at.desc()).all()
-            filtered = [
-                item for item in all_items if set(tags).issubset(set(item.tags or []))
-            ]
-            return filtered[skip : skip + limit], len(filtered)
-
-        total = query.count()
-        items = (
-            query.order_by(ResourceLibraryListing.updated_at.desc())
-            .offset(skip)
-            .limit(limit)
-            .all()
-        )
-        return items, total
+        ]
+        return filtered[skip : skip + limit], len(filtered)
 
     def list_published(
         self,
@@ -190,22 +179,17 @@ class ResourceLibraryService:
         status_filter: Optional[str] = None,
         skip: int = 0,
         limit: int = 20,
-    ) -> tuple[list[ResourceLibraryListing], int]:
-        query = db.query(ResourceLibraryListing).filter(
-            ResourceLibraryListing.publisher_user_id == user_id
-        )
-        if resource_type:
-            query = query.filter(ResourceLibraryListing.resource_type == resource_type)
-        if status_filter:
-            query = query.filter(ResourceLibraryListing.status == status_filter)
-        total = query.count()
-        items = (
-            query.order_by(ResourceLibraryListing.updated_at.desc())
-            .offset(skip)
-            .limit(limit)
-            .all()
-        )
-        return items, total
+    ) -> tuple[list[Kind], int]:
+        listings = self._query_listings(db).filter(Kind.user_id == user_id).all()
+        filtered = [
+            listing
+            for listing in listings
+            if (not status_filter or self._listing_status(listing) == status_filter)
+            and self._matches_listing_filters(
+                listing, resource_type=resource_type, keyword=None, tags=None
+            )
+        ]
+        return filtered[skip : skip + limit], len(filtered)
 
     def list_installs(
         self,
@@ -216,22 +200,31 @@ class ResourceLibraryService:
         status_filter: Optional[str] = None,
         skip: int = 0,
         limit: int = 20,
-    ) -> tuple[list[ResourceLibraryInstall], int]:
-        query = db.query(ResourceLibraryInstall).filter(
-            ResourceLibraryInstall.user_id == user_id
-        )
-        if resource_type:
-            query = query.filter(ResourceLibraryInstall.resource_type == resource_type)
-        if status_filter:
-            query = query.filter(ResourceLibraryInstall.install_status == status_filter)
-        total = query.count()
-        items = (
-            query.order_by(ResourceLibraryInstall.updated_at.desc())
-            .offset(skip)
-            .limit(limit)
-            .all()
-        )
-        return items, total
+    ) -> tuple[list[ResourceLibraryInstallRecord], int]:
+        listings = [
+            listing
+            for listing in self._query_listings(db)
+            if self._listing_status(listing) == RESOURCE_LIBRARY_STATUS_PUBLISHED
+            and self._matches_listing_filters(
+                listing, resource_type=resource_type, keyword=None, tags=None
+            )
+        ]
+        installs = []
+        for listing in listings:
+            member = self._get_accepted_member_for_listing(
+                db, listing=listing, user_id=user_id
+            )
+            if not member:
+                continue
+            record = self._install_record(
+                db, listing=listing, user_id=user_id, member=member
+            )
+            if status_filter and record.install_status != status_filter:
+                continue
+            installs.append(record)
+
+        installs.sort(key=lambda item: item.updated_at, reverse=True)
+        return installs[skip : skip + limit], len(installs)
 
     def get_listing(
         self,
@@ -240,10 +233,14 @@ class ResourceLibraryService:
         listing_id: int,
         user_id: int,
         include_archived_for_owner: bool = False,
-    ) -> ResourceLibraryListing:
+    ) -> Kind:
         listing = (
-            db.query(ResourceLibraryListing)
-            .filter(ResourceLibraryListing.id == listing_id)
+            db.query(Kind)
+            .filter(
+                Kind.id == listing_id,
+                Kind.kind == RESOURCE_LIBRARY_KIND,
+                Kind.is_active == True,
+            )
             .first()
         )
         if not listing:
@@ -251,10 +248,8 @@ class ResourceLibraryService:
                 status_code=status.HTTP_404_NOT_FOUND, detail="Resource not found"
             )
 
-        if listing.status == RESOURCE_LIBRARY_STATUS_ARCHIVED:
-            can_view = (
-                include_archived_for_owner and listing.publisher_user_id == user_id
-            )
+        if self._listing_status(listing) == RESOURCE_LIBRARY_STATUS_ARCHIVED:
+            can_view = include_archived_for_owner and listing.user_id == user_id
             if not can_view:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -264,43 +259,44 @@ class ResourceLibraryService:
         return listing
 
     def get_current_version(
-        self, db: Session, listing: ResourceLibraryListing
-    ) -> ResourceLibraryVersion:
-        version = None
-        if listing.current_version_id:
-            version = (
-                db.query(ResourceLibraryVersion)
-                .filter(ResourceLibraryVersion.id == listing.current_version_id)
-                .first()
-            )
-        if not version:
-            version = (
-                db.query(ResourceLibraryVersion)
-                .filter(
-                    ResourceLibraryVersion.listing_id == listing.id,
-                    ResourceLibraryVersion.is_current == True,
-                )
-                .first()
-            )
-        if not version:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Current resource version not found",
-            )
-        return version
+        self, db: Session, listing: Kind
+    ) -> ResourceLibraryVersionRecord:
+        spec = self._listing_spec(listing)
+        return ResourceLibraryVersionRecord(
+            id=listing.id,
+            listing_id=listing.id,
+            version=str(spec.get("version") or "1.0.0"),
+            changelog=None,
+            package_url=None,
+            manifest=None,
+            is_current=True,
+            created_at=listing.created_at,
+            updated_at=listing.updated_at,
+        )
+
+    def get_listing_status(self, listing: Kind) -> str:
+        return self._listing_status(listing)
+
+    def count_acceptances(self, db: Session, listing: Kind) -> int:
+        return self._install_count(db, listing)
 
     def get_install_for_user(
         self, db: Session, *, listing_id: int, user_id: int
-    ) -> ResourceLibraryInstall | None:
-        return (
-            db.query(ResourceLibraryInstall)
-            .filter(
-                ResourceLibraryInstall.listing_id == listing_id,
-                ResourceLibraryInstall.user_id == user_id,
-                ResourceLibraryInstall.install_status == INSTALL_STATUS_INSTALLED,
+    ) -> ResourceLibraryInstallRecord | None:
+        listing = self.get_listing(db, listing_id=listing_id, user_id=user_id)
+        source = self._source_for_listing(db, listing)
+        if not source:
+            return None
+        if source.user_id == user_id:
+            return self._install_record(
+                db, listing=listing, user_id=user_id, member=None
             )
-            .first()
+        member = self._get_accepted_member_for_listing(
+            db, listing=listing, user_id=user_id
         )
+        if not member:
+            return None
+        return self._install_record(db, listing=listing, user_id=user_id, member=member)
 
     def install_listing(
         self,
@@ -308,65 +304,54 @@ class ResourceLibraryService:
         *,
         listing_id: int,
         user_id: int,
-        payload: ResourceLibraryInstallCreate,
-    ) -> ResourceLibraryInstall:
+        payload: object | None = None,
+    ) -> ResourceLibraryInstallRecord:
         listing = self.get_listing(db, listing_id=listing_id, user_id=user_id)
-        version = self._resolve_version(
-            db, listing=listing, version_id=payload.version_id
-        )
+        source = self._require_listing_source(db, listing)
+        if source.user_id == user_id:
+            return self._install_record(
+                db, listing=listing, user_id=user_id, member=None
+            )
+
+        share_resource_type = self._share_resource_type(listing)
         existing = (
-            db.query(ResourceLibraryInstall)
+            db.query(ResourceMember)
             .filter(
-                ResourceLibraryInstall.listing_id == listing.id,
-                ResourceLibraryInstall.user_id == user_id,
+                ResourceMember.resource_type == share_resource_type,
+                ResourceMember.resource_id == source.id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
             )
             .first()
         )
-        if existing and existing.install_status == INSTALL_STATUS_INSTALLED:
-            return existing
+        if existing:
+            existing.status = MemberStatus.APPROVED.value
+            existing.role = ResourceRole.Maintainer.value
+            existing.invited_by_user_id = source.user_id
+            existing.updated_at = datetime.now()
+            db.commit()
+            db.refresh(existing)
+            return self._install_record(
+                db, listing=listing, user_id=user_id, member=existing
+            )
 
-        try:
-            result = self.installer.install(
-                db,
-                user_id=user_id,
-                listing=listing,
-                version=version,
-                target_namespace=payload.target_namespace or "default",
-                options=payload.install_options,
-            )
-            install = existing or ResourceLibraryInstall(
-                listing_id=listing.id,
-                user_id=user_id,
-                resource_type=listing.resource_type,
-                version_id=version.id,
-                installed_reference={},
-            )
-            install.version_id = version.id
-            install.installed_kind_id = result.installed_kind_id
-            install.installed_reference = result.installed_reference
-            install.install_status = INSTALL_STATUS_INSTALLED
-            install.error_message = None
-            if not existing:
-                listing.install_count = (listing.install_count or 0) + 1
-                db.add(install)
-            db.commit()
-            db.refresh(install)
-            return install
-        except Exception as exc:
-            install = existing or ResourceLibraryInstall(
-                listing_id=listing.id,
-                version_id=version.id,
-                user_id=user_id,
-                resource_type=listing.resource_type,
-                installed_reference={},
-            )
-            install.version_id = version.id
-            install.install_status = INSTALL_STATUS_FAILED
-            install.error_message = str(exc)
-            db.add(install)
-            db.commit()
-            db.refresh(install)
-            raise
+        member = ResourceMember(
+            resource_type=share_resource_type,
+            resource_id=source.id,
+            entity_type="user",
+            entity_id=str(user_id),
+            role=ResourceRole.Maintainer.value,
+            status=MemberStatus.APPROVED.value,
+            invited_by_user_id=source.user_id,
+            share_link_id=0,
+            reviewed_by_user_id=0,
+            copied_resource_id=0,
+            requested_at=datetime.now(),
+        )
+        db.add(member)
+        db.commit()
+        db.refresh(member)
+        return self._install_record(db, listing=listing, user_id=user_id, member=member)
 
     def archive_listing(
         self,
@@ -375,18 +360,19 @@ class ResourceLibraryService:
         listing_id: int,
         user_id: int,
         is_admin: bool = False,
-    ) -> ResourceLibraryListing:
+    ) -> Kind:
         listing = self.get_listing(
             db,
             listing_id=listing_id,
             user_id=user_id,
             include_archived_for_owner=True,
         )
-        if listing.publisher_user_id != user_id and not is_admin:
+        if listing.user_id != user_id and not is_admin:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed"
             )
-        listing.status = RESOURCE_LIBRARY_STATUS_ARCHIVED
+        self._set_listing_status(listing, RESOURCE_LIBRARY_STATUS_ARCHIVED)
+        flag_modified(listing, "json")
         db.commit()
         db.refresh(listing)
         return listing
@@ -398,16 +384,14 @@ class ResourceLibraryService:
         install_id: int,
         user_id: int,
         version_id: Optional[int] = None,
-    ) -> ResourceLibraryInstall:
-        install = self._get_user_install(db, install_id=install_id, user_id=user_id)
-        listing = self.get_listing(db, listing_id=install.listing_id, user_id=user_id)
-        version = self._resolve_version(db, listing=listing, version_id=version_id)
-        install.version_id = version.id
-        install.install_status = INSTALL_STATUS_INSTALLED
-        install.error_message = None
-        db.commit()
-        db.refresh(install)
-        return install
+    ) -> ResourceLibraryInstallRecord:
+        member = self._get_user_member(db, install_id=install_id, user_id=user_id)
+        listing = self._listing_for_source_member(db, member)
+        if not listing:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Install not found"
+            )
+        return self._install_record(db, listing=listing, user_id=user_id, member=member)
 
     def remove_install(
         self,
@@ -415,53 +399,282 @@ class ResourceLibraryService:
         *,
         install_id: int,
         user_id: int,
-    ) -> ResourceLibraryInstall:
-        install = self._get_user_install(db, install_id=install_id, user_id=user_id)
-        install.install_status = INSTALL_STATUS_REMOVED
-        db.commit()
-        db.refresh(install)
-        return install
-
-    def _get_user_install(
-        self, db: Session, *, install_id: int, user_id: int
-    ) -> ResourceLibraryInstall:
-        install = (
-            db.query(ResourceLibraryInstall)
-            .filter(
-                ResourceLibraryInstall.id == install_id,
-                ResourceLibraryInstall.user_id == user_id,
-            )
-            .first()
-        )
-        if not install:
+    ) -> ResourceLibraryInstallRecord:
+        member = self._get_user_member(db, install_id=install_id, user_id=user_id)
+        listing = self._listing_for_source_member(db, member)
+        if not listing:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Install not found"
             )
-        return install
+        member.status = MemberStatus.REJECTED.value
+        member.updated_at = datetime.now()
+        db.commit()
+        db.refresh(member)
+        return self._install_record(db, listing=listing, user_id=user_id, member=member)
 
-    def _resolve_version(
+    def _query_listings(self, db: Session):
+        return (
+            db.query(Kind)
+            .filter(
+                Kind.kind == RESOURCE_LIBRARY_KIND,
+                Kind.namespace == RESOURCE_LIBRARY_NAMESPACE,
+                Kind.is_active == True,
+            )
+            .order_by(Kind.updated_at.desc(), Kind.id.desc())
+        )
+
+    def _build_listing_json(
+        self, payload: ResourceLibraryListingCreate, source: Kind
+    ) -> dict[str, Any]:
+        return {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": RESOURCE_LIBRARY_KIND,
+            "metadata": {
+                "name": payload.name,
+                "namespace": RESOURCE_LIBRARY_NAMESPACE,
+                "description": payload.description,
+                "labels": {
+                    "resource-library/status": RESOURCE_LIBRARY_STATUS_PUBLISHED,
+                    "resource-library/resource-type": payload.resource_type,
+                    "resource-library/source-kind": source.kind,
+                    "resource-library/source-kind-id": str(source.id),
+                },
+            },
+            "spec": {
+                "resourceType": payload.resource_type,
+                "sourceKind": source.kind,
+                "sourceKindId": source.id,
+                "sourceNamespace": source.namespace,
+                "name": payload.name,
+                "displayName": payload.display_name or payload.name,
+                "description": payload.description,
+                "icon": payload.icon,
+                "tags": payload.tags,
+                "version": payload.version,
+            },
+        }
+
+    def _listing_spec(self, listing: Kind) -> dict[str, Any]:
+        spec = listing.json.get("spec")
+        return spec if isinstance(spec, dict) else {}
+
+    def _listing_metadata(self, listing: Kind) -> dict[str, Any]:
+        metadata = listing.json.get("metadata")
+        return metadata if isinstance(metadata, dict) else {}
+
+    def _listing_labels(self, listing: Kind) -> dict[str, Any]:
+        labels = self._listing_metadata(listing).get("labels")
+        return labels if isinstance(labels, dict) else {}
+
+    def _listing_status(self, listing: Kind) -> str:
+        return str(
+            self._listing_labels(listing).get(
+                "resource-library/status", RESOURCE_LIBRARY_STATUS_PUBLISHED
+            )
+        )
+
+    def _set_listing_status(self, listing: Kind, next_status: str) -> None:
+        metadata = self._listing_metadata(listing)
+        labels = metadata.get("labels")
+        if not isinstance(labels, dict):
+            labels = {}
+        labels["resource-library/status"] = next_status
+        metadata["labels"] = labels
+        listing.json["metadata"] = metadata
+
+    def _matches_listing_filters(
+        self,
+        listing: Kind,
+        *,
+        resource_type: Optional[str],
+        keyword: Optional[str],
+        tags: Optional[list[str]],
+    ) -> bool:
+        spec = self._listing_spec(listing)
+        if resource_type and resource_type != "all":
+            if spec.get("resourceType") != resource_type:
+                return False
+        if keyword:
+            needle = keyword.strip().lower()
+            searchable = " ".join(
+                str(value or "")
+                for value in (
+                    listing.name,
+                    spec.get("displayName"),
+                    spec.get("description"),
+                )
+            ).lower()
+            if needle not in searchable:
+                return False
+        if tags:
+            listing_tags = set(spec.get("tags") or [])
+            if not set(tags).issubset(listing_tags):
+                return False
+        return True
+
+    def _get_publishable_source(
         self,
         db: Session,
         *,
-        listing: ResourceLibraryListing,
-        version_id: Optional[int],
-    ) -> ResourceLibraryVersion:
-        if version_id:
-            version = (
-                db.query(ResourceLibraryVersion)
-                .filter(
-                    ResourceLibraryVersion.id == version_id,
-                    ResourceLibraryVersion.listing_id == listing.id,
-                )
-                .first()
+        user_id: int,
+        resource_type: str,
+        source_id: int,
+    ) -> Kind:
+        source_kind = SOURCE_KIND_BY_RESOURCE_TYPE.get(resource_type)
+        if not source_kind:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Resource type is not publishable",
             )
-            if not version:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Resource version not found",
-                )
-            return version
-        return self.get_current_version(db, listing)
+        source = (
+            db.query(Kind)
+            .filter(
+                Kind.id == source_id,
+                Kind.user_id == user_id,
+                Kind.kind == source_kind,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if not source:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Source resource not found",
+            )
+        return source
+
+    def _source_for_listing(self, db: Session, listing: Kind) -> Kind | None:
+        spec = self._listing_spec(listing)
+        source_id = spec.get("sourceKindId")
+        source_kind = spec.get("sourceKind")
+        if not source_id or not source_kind:
+            return None
+        return (
+            db.query(Kind)
+            .filter(
+                Kind.id == int(source_id),
+                Kind.kind == str(source_kind),
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+    def _require_listing_source(self, db: Session, listing: Kind) -> Kind:
+        source = self._source_for_listing(db, listing)
+        if not source:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Source resource not found",
+            )
+        return source
+
+    def _share_resource_type(self, listing: Kind) -> str:
+        resource_type = self._listing_spec(listing).get("resourceType")
+        share_type = SHARE_RESOURCE_TYPE_BY_RESOURCE_TYPE.get(str(resource_type))
+        if not share_type:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Resource type is not shareable",
+            )
+        return share_type
+
+    def _get_accepted_member_for_listing(
+        self, db: Session, *, listing: Kind, user_id: int
+    ) -> ResourceMember | None:
+        source = self._source_for_listing(db, listing)
+        if not source or source.user_id == user_id:
+            return None
+        return (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == self._share_resource_type(listing),
+                ResourceMember.resource_id == source.id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
+                ResourceMember.status == MemberStatus.APPROVED.value,
+            )
+            .first()
+        )
+
+    def _install_record(
+        self,
+        db: Session,
+        *,
+        listing: Kind,
+        user_id: int,
+        member: ResourceMember | None,
+    ) -> ResourceLibraryInstallRecord:
+        source = self._require_listing_source(db, listing)
+        timestamp = member.updated_at if member else listing.updated_at
+        installed_at = member.created_at if member else listing.created_at
+        status_value = INSTALL_STATUS_INSTALLED
+        if member and member.status == MemberStatus.REJECTED.value:
+            status_value = INSTALL_STATUS_REMOVED
+        return ResourceLibraryInstallRecord(
+            id=member.id if member else 0,
+            listing_id=listing.id,
+            version_id=listing.id,
+            user_id=user_id,
+            resource_type=str(self._listing_spec(listing).get("resourceType")),
+            listing=listing,
+            installed_kind_id=source.id,
+            installed_reference={
+                "kind": source.kind,
+                "namespace": source.namespace,
+                "name": source.name,
+                "source_kind_id": source.id,
+            },
+            install_status=status_value,
+            error_message=None,
+            installed_at=installed_at,
+            updated_at=timestamp,
+        )
+
+    def _get_user_member(
+        self, db: Session, *, install_id: int, user_id: int
+    ) -> ResourceMember:
+        member = (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.id == install_id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
+            )
+            .first()
+        )
+        if not member:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Install not found"
+            )
+        return member
+
+    def _listing_for_source_member(
+        self, db: Session, member: ResourceMember
+    ) -> Kind | None:
+        for listing in self._query_listings(db):
+            source = self._source_for_listing(db, listing)
+            if (
+                source
+                and source.id == member.resource_id
+                and self._share_resource_type(listing) == member.resource_type
+            ):
+                return listing
+        return None
+
+    def _install_count(self, db: Session, listing: Kind) -> int:
+        source = self._source_for_listing(db, listing)
+        if not source:
+            return 0
+        return (
+            db.query(ResourceMember)
+            .filter(
+                ResourceMember.resource_type == self._share_resource_type(listing),
+                ResourceMember.resource_id == source.id,
+                ResourceMember.entity_type == "user",
+                ResourceMember.status == MemberStatus.APPROVED.value,
+            )
+            .count()
+        )
 
     def _ensure_listing_name_available(
         self,
@@ -472,11 +685,13 @@ class ResourceLibraryService:
         publisher_user_id: int,
     ) -> None:
         existing = (
-            db.query(ResourceLibraryListing)
+            db.query(Kind)
             .filter(
-                ResourceLibraryListing.resource_type == resource_type,
-                ResourceLibraryListing.name == name,
-                ResourceLibraryListing.publisher_user_id == publisher_user_id,
+                Kind.kind == RESOURCE_LIBRARY_KIND,
+                Kind.namespace == RESOURCE_LIBRARY_NAMESPACE,
+                Kind.name == name,
+                Kind.user_id == publisher_user_id,
+                Kind.is_active == True,
             )
             .first()
         )
@@ -485,13 +700,6 @@ class ResourceLibraryService:
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Resource listing name already exists",
             )
-
-    def _source_binary_id(self, manifest: dict) -> int | None:
-        source = manifest.get("source")
-        if isinstance(source, dict):
-            binary_id = source.get("binary_id")
-            return int(binary_id) if binary_id else None
-        return None
 
 
 resource_library_service = ResourceLibraryService()

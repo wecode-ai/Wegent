@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { Download, X } from 'lucide-react'
+import { UserPlus, X } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -137,7 +137,7 @@ export function ResourceDetailDrawer({
             aria-label={`${listing?.is_installed ? t('actions.installed') : t('actions.install')} ${title}`}
             data-testid="resource-detail-install-button"
           >
-            <Download className="h-4 w-4" aria-hidden="true" />
+            <UserPlus className="h-4 w-4" aria-hidden="true" />
             {listing?.is_installed ? t('actions.installed') : t('actions.install')}
           </Button>
         </DrawerFooter>

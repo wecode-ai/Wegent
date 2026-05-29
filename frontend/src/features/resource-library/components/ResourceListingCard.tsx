@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { Bot, Code2, Download, Eye, Server } from 'lucide-react'
+import { Bot, Code2, Eye, UserPlus } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -21,7 +21,6 @@ interface ResourceListingCardProps {
 const typeIcons = {
   agent: Bot,
   skill: Code2,
-  mcp: Server,
 } satisfies Record<ResourceLibraryResourceType, typeof Bot>
 
 function getListingTitle(listing: ResourceLibraryListing) {
@@ -95,7 +94,7 @@ export function ResourceListingCard({
             aria-label={`${listing.is_installed ? t('actions.installed') : t('actions.install')} ${title}`}
             data-testid={`install-resource-${listing.id}-button`}
           >
-            <Download className="h-4 w-4" aria-hidden="true" />
+            <UserPlus className="h-4 w-4" aria-hidden="true" />
             {listing.is_installed ? t('actions.installed') : t('actions.install')}
           </Button>
           <Button

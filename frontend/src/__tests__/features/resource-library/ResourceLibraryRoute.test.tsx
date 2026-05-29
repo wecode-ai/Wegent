@@ -85,7 +85,7 @@ jest.mock('@/hooks/useTranslation', () => ({
         title: '资源库',
         'tabs.discover': '发现',
         'tabs.mine': '我的',
-        'tabs.installed': '已安装',
+        'tabs.installed': '已接受',
         'tabs.published': '我发布的',
         'filters.all': '全部',
         'filters.agent': '智能体',

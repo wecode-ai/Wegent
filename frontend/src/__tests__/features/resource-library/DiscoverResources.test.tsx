@@ -47,19 +47,19 @@ jest.mock('@/hooks/useTranslation', () => ({
       const translations: Record<string, string> = {
         'filters.agent': '智能体',
         'filters.skill': '技能',
-        'actions.install': '安装',
-        'actions.installed': '已安装',
+        'actions.install': '接受分享',
+        'actions.installed': '已接受',
         'actions.details': '详情',
         'actions.retry': '重试',
         'actions.search': '搜索',
-        'fields.install_count': '安装次数',
+        'fields.install_count': '接受次数',
         'fields.publisher': '发布者',
         'fields.updated_at': '更新时间',
         'search.placeholder': '搜索资源',
         'states.loading': '正在加载资源',
         'states.empty': '暂无资源',
         'states.error': '加载失败',
-        'messages.install_success': '安装成功',
+        'messages.install_success': '已接受分享',
       }
 
       return translations[key] ?? key
@@ -129,7 +129,7 @@ describe('DiscoverResources', () => {
     })
     expect(screen.getByText('Doc Summary')).toHaveClass('text-text-primary')
     expect(screen.getByTestId('resource-listing-card-1')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '安装 Doc Summary' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '接受分享 Doc Summary' })).toBeEnabled()
   })
 
   it('renders custom toolbar controls beside discover search', async () => {
@@ -168,27 +168,6 @@ describe('DiscoverResources', () => {
     expect(await screen.findByText('Doc Summary')).toBeInTheDocument()
   })
 
-  it('does not render MCP listings returned by the resource library API', async () => {
-    mockResourceLibraryApi.listListings.mockResolvedValue({
-      items: [
-        createListing(),
-        createListing({
-          id: 2,
-          resource_type: 'mcp',
-          name: 'mcp-server',
-          display_name: 'MCP Server',
-        }),
-      ],
-      total: 2,
-    })
-
-    render(<DiscoverResources resourceType="all" />)
-
-    expect(await screen.findByText('Doc Summary')).toBeInTheDocument()
-    expect(screen.queryByText('MCP Server')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('resource-listing-card-2')).not.toBeInTheDocument()
-  })
-
   it('opens listing details and installs from the drawer', async () => {
     render(<DiscoverResources resourceType="all" />)
 
@@ -199,14 +178,12 @@ describe('DiscoverResources', () => {
     expect(mockResourceLibraryApi.getListing).toHaveBeenCalledWith(1)
     expect(within(dialog).getByText('Summarizes documents')).toBeInTheDocument()
 
-    fireEvent.click(within(dialog).getByRole('button', { name: '安装 Doc Summary' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: '接受分享 Doc Summary' }))
 
     await waitFor(() => {
-      expect(mockResourceLibraryApi.installListing).toHaveBeenCalledWith(1, {
-        targetNamespace: 'default',
-      })
+      expect(mockResourceLibraryApi.installListing).toHaveBeenCalledWith(1, {})
     })
-    expect(mockToast).toHaveBeenCalledWith({ title: '安装成功' })
+    expect(mockToast).toHaveBeenCalledWith({ title: '已接受分享' })
     expect(mockResourceLibraryApi.listListings).toHaveBeenCalledTimes(2)
   })
 })

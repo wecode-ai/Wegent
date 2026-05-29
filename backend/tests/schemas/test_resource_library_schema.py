@@ -11,8 +11,8 @@ from app.schemas.resource_library import (
 )
 
 
-def test_listing_create_accepts_agent_skill_and_mcp_types():
-    for resource_type in ("agent", "skill", "mcp"):
+def test_listing_create_accepts_agent_and_skill_types():
+    for resource_type in ("agent", "skill"):
         payload = ResourceLibraryListingCreate(
             resource_type=resource_type,
             source_id=1,
@@ -39,4 +39,4 @@ def test_listing_create_rejects_unknown_type():
 
 
 def test_resource_type_literal_values_are_stable():
-    assert ResourceLibraryResourceType.__args__ == ("agent", "skill", "mcp")
+    assert ResourceLibraryResourceType.__args__ == ("agent", "skill")

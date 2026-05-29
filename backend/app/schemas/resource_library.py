@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-ResourceLibraryResourceType = Literal["agent", "skill", "mcp"]
+ResourceLibraryResourceType = Literal["agent", "skill"]
 ResourceLibraryListingStatus = Literal["published", "archived"]
 ResourceLibraryInstallStatus = Literal["installed", "removed", "failed"]
 

@@ -2,57 +2,44 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from app.models.resource_library import (
-    INSTALL_STATUS_INSTALLED,
-    RESOURCE_LIBRARY_STATUS_PUBLISHED,
-    RESOURCE_TYPE_AGENT,
-    ResourceLibraryInstall,
-    ResourceLibraryListing,
-    ResourceLibraryVersion,
-)
+from app.models.kind import Kind
 
 
-def test_resource_library_listing_version_and_install_persist(test_db, test_user):
-    listing = ResourceLibraryListing(
-        resource_type=RESOURCE_TYPE_AGENT,
+def test_resource_library_listing_is_stored_as_kind(test_db, test_user):
+    listing = Kind(
+        user_id=test_user.id,
+        kind="ResourceLibraryListing",
         name="research-agent",
-        display_name="Research Agent",
-        description="Collects and summarizes source material",
-        tags=["research", "summary"],
-        publisher_user_id=test_user.id,
-        status=RESOURCE_LIBRARY_STATUS_PUBLISHED,
+        namespace="resource-library",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "ResourceLibraryListing",
+            "metadata": {
+                "name": "research-agent",
+                "namespace": "resource-library",
+                "labels": {
+                    "resource-library/status": "published",
+                    "resource-library/resource-type": "agent",
+                    "resource-library/source-kind": "Team",
+                    "resource-library/source-kind-id": "101",
+                },
+            },
+            "spec": {
+                "resourceType": "agent",
+                "sourceKind": "Team",
+                "sourceKindId": 101,
+                "displayName": "Research Agent",
+                "description": "Collects and summarizes source material",
+                "tags": ["research", "summary"],
+                "version": "1.0.0",
+            },
+        },
+        is_active=True,
     )
     test_db.add(listing)
     test_db.commit()
     test_db.refresh(listing)
 
-    version = ResourceLibraryVersion(
-        listing_id=listing.id,
-        version="1.0.0",
-        manifest={"resource_type": "agent", "team": {"name": "research-agent"}},
-        is_current=True,
-    )
-    test_db.add(version)
-    test_db.commit()
-    test_db.refresh(version)
-
-    listing.current_version_id = version.id
-    install = ResourceLibraryInstall(
-        listing_id=listing.id,
-        version_id=version.id,
-        user_id=test_user.id,
-        resource_type=RESOURCE_TYPE_AGENT,
-        install_status=INSTALL_STATUS_INSTALLED,
-        installed_reference={
-            "team_id": 101,
-            "namespace": "default",
-            "name": "research-agent",
-        },
-    )
-    test_db.add(install)
-    test_db.commit()
-    test_db.refresh(install)
-
     assert listing.id > 0
-    assert version.id > 0
-    assert install.installed_reference["team_id"] == 101
+    assert listing.kind == "ResourceLibraryListing"
+    assert listing.json["spec"]["sourceKindId"] == 101

@@ -2,9 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export type ResourceLibraryResourceType = 'agent' | 'skill' | 'mcp'
+export type ResourceLibraryResourceType = 'agent' | 'skill'
 
-export type VisibleResourceLibraryResourceType = Exclude<ResourceLibraryResourceType, 'mcp'>
+export type VisibleResourceLibraryResourceType = ResourceLibraryResourceType
 
 export type ResourceLibraryTypeFilter = 'all' | VisibleResourceLibraryResourceType
 
@@ -87,7 +87,7 @@ export interface ResourceLibraryInstallRequest {
 }
 
 export interface ResourceLibraryInstallApiRequest {
-  target_namespace: string
+  target_namespace?: string
   version_id?: number
   install_options?: Record<string, unknown>
 }
