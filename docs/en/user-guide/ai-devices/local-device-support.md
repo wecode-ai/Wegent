@@ -130,6 +130,14 @@ Both entrypoints are exposed under the `/s/{session_id}/` path on `DEVICE_PUBLIC
 
 When a project configures `workspace.localPath` or `workspace.checkoutPath`, the device creates that directory before starting terminal or code-server.
 
+### Standalone Chat Workspaces
+
+When a chat has no selected project but is bound to an online device, Wegent creates an independent Chats workspace for that conversation. The first task runs in a temporary task directory. After the response finishes, the Executor generates a dated directory name from the response summary and moves the temporary directory into the Chats workspace tree.
+
+The default root is `~/.wecode/wegent-executor/workspace/chats`. To use another location, set `WEGENT_EXECUTOR_CHATS_DIR` in the device runtime environment. Backend stores the final path in the task metadata label `standaloneChatWorkspacePath`, so continuing the conversation or opening it from history reuses the same directory.
+
+Project chats do not use this path. They continue to use the project's configured `workspace.localPath` or `workspace.checkoutPath`.
+
 #### Installing a Specific Version
 
 **macOS / Linux:**
@@ -190,6 +198,12 @@ In the chat interface, you'll see a device selector dropdown:
    - 🟡 **Busy**: Device is running at capacity
 3. Select your preferred device
 4. Send your message as usual
+
+### Conversations Without a Project
+
+When you select **No project** in the chat input area, the task is bound directly to the selected online device. Wegent prefers an online cloud device by default. If you manually choose another online device, the new conversation runs in that device's Chats workspace. Offline devices are not selectable execution targets.
+
+This mode is useful for temporary commands, organizing notes, or troubleshooting work that does not need a code project. Switch back to a specific project when you need the project directory, project terminal, or project IDE.
 
 ### Device Status Indicators
 
