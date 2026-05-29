@@ -43,6 +43,7 @@ export type WorkbenchAction =
       project?: ProjectWithTasks | null
       standaloneDeviceId?: string | null
     }
+  | { type: 'task_upserted'; task: Task }
   | { type: 'task_status_changed'; taskId: number; status: string }
   | { type: 'current_task_cleared' }
   | { type: 'input_changed'; input: string }
@@ -102,6 +103,21 @@ function upsertOpenedTask(state: WorkbenchState, task: Task): WorkbenchState {
   }
 }
 
+function workListsIncludeTask(
+  projects: ProjectWithTasks[],
+  recentTasks: Task[],
+  task: Task
+): boolean {
+  if (taskBelongsToProject(task)) {
+    return projects.some(project =>
+      project.id === task.project_id &&
+      (project.tasks ?? []).some(projectTask => projectTask.task_id === task.id)
+    )
+  }
+
+  return recentTasks.some(recentTask => recentTask.id === task.id)
+}
+
 export function workbenchReducer(
   state: WorkbenchState,
   action: WorkbenchAction
@@ -126,8 +142,8 @@ export function workbenchReducer(
         isBootstrapping: false,
         error: null,
       }
-    case 'lists_refreshed':
-      return {
+    case 'lists_refreshed': {
+      const refreshedState = {
         ...state,
         projects: action.projects,
         devices: action.devices,
@@ -140,6 +156,14 @@ export function workbenchReducer(
             ? state.standaloneDeviceId
             : action.standaloneDeviceId,
       }
+      if (
+        state.currentTask &&
+        !workListsIncludeTask(action.projects, action.recentTasks, state.currentTask)
+      ) {
+        return upsertOpenedTask(refreshedState, state.currentTask)
+      }
+      return refreshedState
+    }
     case 'bootstrap_failed':
       return { ...state, isBootstrapping: false, error: action.error }
     case 'project_selected':
@@ -165,6 +189,11 @@ export function workbenchReducer(
             : state.standaloneDeviceId,
         currentTask: action.task,
       }
+    case 'task_upserted':
+      return upsertOpenedTask(
+        state,
+        state.currentTask?.id === action.task.id ? state.currentTask : action.task
+      )
     case 'task_status_changed':
       return {
         ...state,

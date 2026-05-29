@@ -472,28 +472,28 @@ export function WorkbenchProvider({
 
   const archiveAllChats = useCallback(async () => {
     await resolvedServices.taskApi.archiveAllChats()
-    await refreshWorkLists()
     if (!state.currentProject && (!state.currentTask || !state.currentTask.project_id)) {
       dispatch({ type: 'current_task_cleared' })
       dispatchMessages({ type: 'reset', messages: [] })
     }
+    await refreshWorkLists()
   }, [refreshWorkLists, resolvedServices, state.currentProject, state.currentTask])
 
   const archiveAllProjectChats = useCallback(async () => {
     await resolvedServices.projectApi.archiveAllProjectChats()
-    await refreshWorkLists()
     if (state.currentProject || (state.currentTask?.project_id ?? 0) > 0) {
       dispatch({ type: 'current_task_cleared' })
       dispatchMessages({ type: 'reset', messages: [] })
     }
+    await refreshWorkLists()
   }, [refreshWorkLists, resolvedServices, state.currentProject, state.currentTask?.project_id])
 
   const archiveProjectChats = useCallback(
     async (projectId: number) => {
       await resolvedServices.projectApi.archiveProjectChats(projectId)
-      await refreshWorkLists()
       dispatch({ type: 'current_task_cleared' })
       dispatchMessages({ type: 'reset', messages: [] })
+      await refreshWorkLists()
     },
     [refreshWorkLists, resolvedServices]
   )
@@ -501,11 +501,11 @@ export function WorkbenchProvider({
   const archiveTask = useCallback(
     async (taskId: number) => {
       await resolvedServices.taskApi.archiveTask(taskId)
-      await refreshWorkLists()
       if (state.currentTask?.id === taskId) {
         dispatch({ type: 'current_task_cleared' })
         dispatchMessages({ type: 'reset', messages: [] })
       }
+      await refreshWorkLists()
     },
     [refreshWorkLists, resolvedServices, state.currentTask?.id]
   )
@@ -632,18 +632,19 @@ export function WorkbenchProvider({
 
     if (!state.currentTask && ack.task_id) {
       const projectId = state.currentProject?.id ?? 0
+      const openedTask: Task = {
+        id: ack.task_id,
+        title: message.substring(0, 100),
+        status: 'RUNNING',
+        task_type: 'code',
+        team_id: state.defaultTeam.id,
+        project_id: projectId,
+        device_id: activeDeviceId,
+        created_at: new Date().toISOString(),
+      }
       dispatch({
         type: 'task_opened',
-        task: {
-          id: ack.task_id,
-          title: message.substring(0, 100),
-          status: 'RUNNING',
-          task_type: 'code',
-          team_id: state.defaultTeam.id,
-          project_id: projectId,
-          device_id: activeDeviceId,
-          created_at: new Date().toISOString(),
-        },
+        task: openedTask,
       })
       dispatch({
         type: 'task_status_changed',
@@ -651,6 +652,7 @@ export function WorkbenchProvider({
         status: 'RUNNING',
       })
       await refreshWorkLists()
+      dispatch({ type: 'task_upserted', task: openedTask })
     }
   }, [
     attachmentSelection,

@@ -104,6 +104,80 @@ describe('workbenchReducer', () => {
     ])
   })
 
+  test('preserves current task when a stale list refresh misses it', () => {
+    const opened = workbenchReducer(initialWorkbenchState, {
+      type: 'task_opened',
+      task: {
+        id: 11,
+        title: 'Standalone prompt',
+        status: 'RUNNING',
+        task_type: 'code',
+        project_id: 0,
+        created_at: '2026-05-25T00:00:00.000Z',
+      },
+      project: null,
+    })
+    const completed = workbenchReducer(opened, {
+      type: 'task_status_changed',
+      taskId: 11,
+      status: 'COMPLETED',
+    })
+    const staleRefresh = workbenchReducer(completed, {
+      type: 'lists_refreshed',
+      projects: [],
+      devices: [],
+      recentTasks: [],
+    })
+
+    expect(staleRefresh.recentTasks).toEqual([
+      expect.objectContaining({ id: 11, status: 'COMPLETED' }),
+    ])
+  })
+
+  test('re-adds current task after a stale list refresh without regressing status', () => {
+    const opened = workbenchReducer(initialWorkbenchState, {
+      type: 'task_opened',
+      task: {
+        id: 11,
+        title: 'Standalone prompt',
+        status: 'RUNNING',
+        task_type: 'code',
+        project_id: 0,
+        created_at: '2026-05-25T00:00:00.000Z',
+      },
+      project: null,
+    })
+    const completed = workbenchReducer(opened, {
+      type: 'task_status_changed',
+      taskId: 11,
+      status: 'COMPLETED',
+    })
+    const staleRefresh = {
+      ...workbenchReducer(completed, {
+        type: 'lists_refreshed',
+        projects: [],
+        devices: [],
+        recentTasks: [],
+      }),
+      recentTasks: [],
+    }
+    const reinserted = workbenchReducer(staleRefresh, {
+      type: 'task_upserted',
+      task: {
+        id: 11,
+        title: 'Standalone prompt',
+        status: 'RUNNING',
+        task_type: 'code',
+        project_id: 0,
+        created_at: '2026-05-25T00:00:00.000Z',
+      },
+    })
+
+    expect(reinserted.recentTasks).toEqual([
+      expect.objectContaining({ id: 11, status: 'COMPLETED' }),
+    ])
+  })
+
   test('clears the current task without changing the selected project', () => {
     const selected = workbenchReducer(initialWorkbenchState, {
       type: 'project_selected',
