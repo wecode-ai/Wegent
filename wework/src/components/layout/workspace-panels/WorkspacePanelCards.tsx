@@ -1,4 +1,4 @@
-import { ArrowLeft, Code2, Loader2, Monitor, SquareTerminal } from 'lucide-react'
+import { Code2, Loader2, Monitor, Plus, SquareTerminal, X } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { createHttpClient } from '@/api/http'
@@ -23,27 +23,58 @@ function createProjectSessionApi() {
   return createProjectApi(createHttpClient({ baseUrl: apiBaseUrl }))
 }
 
+function toEmbeddedSessionUrl(url: string): string {
+  try {
+    const parsed = new URL(url)
+    parsed.searchParams.set('embed', '1')
+    return parsed.toString()
+  } catch {
+    return url
+  }
+}
+
 export function WorkspacePanelCards({ currentProject }: WorkspacePanelCardsProps) {
   const { t } = useTranslation('common')
-  const [terminalSession, setTerminalSession] = useState<ProjectDeviceSessionResponse | null>(null)
+  const [terminalSessions, setTerminalSessions] = useState<ProjectDeviceSessionResponse[]>([])
+  const [activeTerminalSessionId, setActiveTerminalSessionId] = useState<string | null>(null)
   const [loadingTool, setLoadingTool] = useState<WorkspaceTool | null>(null)
   const [error, setError] = useState<string | null>(null)
   const projectDeviceId = getProjectDeviceId(currentProject)
   const toolsDisabled = !currentProject || Boolean(loadingTool)
+  const activeTerminalSession =
+    terminalSessions.find(session => session.session_id === activeTerminalSessionId) ??
+    terminalSessions[0] ??
+    null
 
-  const handleTerminalClick = async () => {
+  const startTerminalSession = async () => {
     if (!currentProject || loadingTool) return
     setLoadingTool('terminal')
     setError(null)
     try {
       const session = await createProjectSessionApi().startTerminalSession(currentProject.id)
-      setTerminalSession(session)
+      setTerminalSessions(sessions => [...sessions, session])
+      setActiveTerminalSessionId(session.session_id)
     } catch (e) {
       console.error('Failed to start project terminal:', e)
       setError(t('workbench.project_tool_start_failed', '启动失败'))
     } finally {
       setLoadingTool(null)
     }
+  }
+
+  const handleTerminalClick = () => {
+    void startTerminalSession()
+  }
+
+  const handleCloseActiveTerminal = () => {
+    if (!activeTerminalSession) return
+    setTerminalSessions(sessions => {
+      const remaining = sessions.filter(
+        session => session.session_id !== activeTerminalSession.session_id,
+      )
+      setActiveTerminalSessionId(remaining[remaining.length - 1]?.session_id ?? null)
+      return remaining
+    })
   }
 
   const handleIdeClick = async () => {
@@ -78,32 +109,60 @@ export function WorkspacePanelCards({ currentProject }: WorkspacePanelCardsProps
     }
   }
 
-  if (terminalSession) {
+  if (activeTerminalSession) {
     return (
-      <div className="flex h-full min-h-0 w-full flex-col overflow-hidden rounded-lg border border-border bg-white">
-        <div className="flex min-h-12 items-center gap-3 border-b border-border px-3">
+      <div
+        data-testid="workspace-terminal-window"
+        className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-white"
+      >
+        <div className="flex h-10 shrink-0 items-center gap-2 overflow-hidden border-b border-border bg-[#fafafa] px-2">
+          <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
+            {terminalSessions.map(session => (
+              <button
+                type="button"
+                key={session.session_id}
+                data-testid="workspace-terminal-tab"
+                onClick={() => setActiveTerminalSessionId(session.session_id)}
+                className={`flex h-8 max-w-[180px] shrink-0 items-center gap-2 rounded-md px-2.5 text-left text-sm ${
+                  session.session_id === activeTerminalSession.session_id
+                    ? 'bg-surface text-text-primary'
+                    : 'text-text-secondary hover:bg-muted'
+                }`}
+                title={session.device_id}
+              >
+                <SquareTerminal className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
+                <span className="truncate">{session.device_id}</span>
+              </button>
+            ))}
+          </div>
           <button
             type="button"
-            data-testid="workspace-terminal-back-button"
-            onClick={() => setTerminalSession(null)}
-            className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary hover:bg-muted"
-            aria-label={t('workbench.back_to_workspace_tools', '返回工具')}
+            data-testid="workspace-terminal-new-tab-button"
+            onClick={() => void startTerminalSession()}
+            disabled={loadingTool === 'terminal'}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted disabled:cursor-wait disabled:opacity-50"
+            aria-label={t('workbench.new_terminal_tab', '新建终端标签')}
           >
-            <ArrowLeft className="h-4 w-4" />
+            {loadingTool === 'terminal' ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Plus className="h-4 w-4" />
+            )}
           </button>
-          <div className="min-w-0">
-            <div className="text-sm font-medium text-text-primary">
-              {t('workbench.terminal', '终端')}
-            </div>
-            <div className="truncate text-xs text-text-secondary">
-              {terminalSession.path}
-            </div>
-          </div>
+          <button
+            type="button"
+            data-testid="workspace-terminal-close-button"
+            onClick={handleCloseActiveTerminal}
+            className="ml-auto mr-2 flex h-8 w-8 items-center justify-center rounded-md text-text-secondary hover:bg-muted"
+            aria-label={t('workbench.close_terminal', '关闭终端')}
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
         <iframe
           data-testid="workspace-terminal-frame"
           title={t('workbench.project_terminal_frame_title', '项目终端')}
-          src={terminalSession.url}
+          src={toEmbeddedSessionUrl(activeTerminalSession.url)}
           className="min-h-0 flex-1 border-0"
         />
       </div>
@@ -111,7 +170,7 @@ export function WorkspacePanelCards({ currentProject }: WorkspacePanelCardsProps
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col gap-3">
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-8 py-6">
       {!currentProject && (
         <p className="text-center text-sm text-text-secondary">
           {t('workbench.project_tool_requires_project', '请选择项目后使用')}

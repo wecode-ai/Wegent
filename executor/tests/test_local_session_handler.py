@@ -98,6 +98,67 @@ def test_session_gateway_keeps_terminal_prefix_for_ttyd():
     )
 
 
+def test_session_gateway_does_not_redirect_terminal_token_requests():
+    """Embedded terminal iframes must keep token auth in the URL."""
+    from executor.modes.local.session_handler import SessionGateway
+
+    gateway = SessionGateway({})
+    terminal_session = _local_session("terminal-1", "terminal")
+    code_session = _local_session("code-1", "code_server")
+    request = SimpleNamespace(
+        query={"token": "secret"},
+        headers={},
+    )
+    embedded_code_request = SimpleNamespace(
+        query={"token": "secret", "embed": "1"},
+        headers={},
+    )
+
+    assert (
+        gateway._should_redirect_authenticated_request(
+            request,
+            terminal_session,
+        )
+        is False
+    )
+    assert (
+        gateway._should_redirect_authenticated_request(
+            embedded_code_request,
+            code_session,
+        )
+        is False
+    )
+    assert (
+        gateway._should_redirect_authenticated_request(
+            request,
+            code_session,
+        )
+        is True
+    )
+
+
+def test_session_gateway_authorizes_terminal_session_path_without_cookies():
+    """Terminal iframe resources authenticate through the session path."""
+    from executor.modes.local.session_handler import SessionGateway
+
+    gateway = SessionGateway({})
+    terminal_session = _local_session("terminal-1", "terminal")
+    code_session = _local_session("code-1", "code_server")
+    terminal_request = SimpleNamespace(
+        path="/s/terminal-1/js/app.js",
+        query={},
+        cookies={},
+    )
+    code_request = SimpleNamespace(
+        path="/s/code-1/",
+        query={},
+        cookies={},
+    )
+
+    assert gateway._is_authorized(terminal_request, terminal_session) is True
+    assert gateway._is_authorized(code_request, code_session) is False
+
+
 @pytest.mark.asyncio
 async def test_session_gateway_logs_in_to_code_server_with_configured_password(
     monkeypatch,

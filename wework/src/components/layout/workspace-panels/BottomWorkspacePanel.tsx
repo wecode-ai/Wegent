@@ -23,7 +23,7 @@ export function BottomWorkspacePanel({ currentProject }: BottomWorkspacePanelPro
         onPointerDown={handleResizeStart}
         aria-label={t('workbench.resize_bottom_workspace_panel', '调整底部栏高度')}
       />
-      <div className="flex min-h-0 flex-1 px-8 py-6">
+      <div className="flex min-h-0 flex-1">
         <WorkspacePanelCards currentProject={currentProject} />
       </div>
     </section>

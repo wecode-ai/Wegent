@@ -47,10 +47,16 @@ describe('WorkspacePanelCards', () => {
     vi.clearAllMocks()
     vi.spyOn(window, 'open').mockImplementation(() => null)
     window.localStorage.setItem('auth_token', 'token-1')
+    let terminalSessionCount = 0
     createProjectApiMock.mockReturnValue({
-      startTerminalSession: vi.fn().mockResolvedValue({
-        url: 'http://localhost/terminal',
-        path: '/workspace/projects/project38',
+      startTerminalSession: vi.fn().mockImplementation(async () => {
+        terminalSessionCount += 1
+        return {
+          session_id: `terminal-${terminalSessionCount}`,
+          url: `http://localhost/terminal-${terminalSessionCount}`,
+          device_id: 'device-1',
+          path: '/workspace/projects/project38',
+        }
       }),
       startCodeServerSession: vi.fn().mockResolvedValue({
         url: 'http://localhost/ide',
@@ -84,9 +90,41 @@ describe('WorkspacePanelCards', () => {
     )
     expect(screen.getByTestId('workspace-terminal-frame')).toHaveAttribute(
       'src',
-      'http://localhost/terminal',
+      'http://localhost/terminal-1?embed=1',
     )
-    expect(screen.getByText('/workspace/projects/project38')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-terminal-window')).toHaveClass(
+      'bg-white',
+    )
+    expect(screen.getByTestId('workspace-terminal-tab')).toHaveTextContent(
+      'device-1',
+    )
+    expect(screen.getByTestId('workspace-terminal-new-tab-button')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-terminal-close-button')).toBeInTheDocument()
+    expect(screen.queryByText('/workspace/projects/project38')).not.toBeInTheDocument()
+  })
+
+  test('creates and switches to a new project terminal tab', async () => {
+    const api = createProjectApiMock()
+    render(<WorkspacePanelCards currentProject={project} />)
+
+    await userEvent.click(screen.getByTestId('workspace-terminal-card'))
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-terminal-frame')).toHaveAttribute(
+        'src',
+        'http://localhost/terminal-1?embed=1',
+      ),
+    )
+
+    await userEvent.click(screen.getByTestId('workspace-terminal-new-tab-button'))
+
+    await waitFor(() =>
+      expect(api.startTerminalSession).toHaveBeenCalledTimes(2),
+    )
+    expect(screen.getAllByTestId('workspace-terminal-tab')).toHaveLength(2)
+    expect(screen.getByTestId('workspace-terminal-frame')).toHaveAttribute(
+      'src',
+      'http://localhost/terminal-2?embed=1',
+    )
   })
 
   test('opens the project IDE in a new page', async () => {

@@ -23,7 +23,7 @@ export function RightWorkspacePanel({ currentProject }: RightWorkspacePanelProps
         onPointerDown={handleResizeStart}
         aria-label={t('workbench.resize_right_workspace_panel', '调整右侧栏宽度')}
       />
-      <div className="flex min-h-0 flex-1 px-8 py-6">
+      <div className="flex min-h-0 flex-1 pt-14">
         <WorkspacePanelCards currentProject={currentProject} />
       </div>
     </section>

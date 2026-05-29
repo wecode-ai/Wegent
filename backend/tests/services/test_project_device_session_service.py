@@ -283,12 +283,52 @@ async def test_local_device_session_service_calls_device_start_session(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_local_device_session_service_adds_missing_url_token(monkeypatch):
+    """Returned session URLs must include the generated access token."""
+    from app.services.device import session_service
+
+    monkeypatch.setattr(session_service.secrets, "token_urlsafe", lambda size: "secret")
+    mock_sio = AsyncMock()
+    mock_sio.call.return_value = {
+        "success": True,
+        "session_id": "session-123",
+        "url": "http://localhost:17888/s/session-123/",
+        "path": "/repo",
+        "device_id": "device-abc",
+        "type": "terminal",
+    }
+    monkeypatch.setattr(
+        session_service.device_service,
+        "get_device_online_info",
+        AsyncMock(return_value={"socket_id": "socket-123"}),
+    )
+    monkeypatch.setattr(
+        session_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    monkeypatch.setattr(session_service, "get_sio", lambda: mock_sio)
+
+    result = await session_service.local_device_session_service.start_session(
+        db=object(),
+        user_id=7,
+        device_id="device-abc",
+        project_id=123,
+        session_type="terminal",
+        path="/repo",
+    )
+
+    assert result["url"] == "http://localhost:17888/s/session-123/?token=secret"
+
+
+@pytest.mark.asyncio
 async def test_cloud_device_session_service_rewrites_localhost_session_url(
     monkeypatch,
 ):
     """Cloud device sessions should not return the device-local localhost URL."""
     from app.services.device import session_service
 
+    monkeypatch.setattr(session_service.secrets, "token_urlsafe", lambda size: "short")
     mock_sio = AsyncMock()
     mock_sio.call.return_value = {
         "success": True,

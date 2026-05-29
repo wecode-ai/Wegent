@@ -8,7 +8,7 @@ import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from app.core.socketio import get_sio
 from app.schemas.device import DeviceType
@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 SESSION_RPC_TIMEOUT_SECONDS = 15
 DEFAULT_SESSION_TTL_SECONDS = 60 * 60
+SESSION_ID_TOKEN_BYTES = 16
 SESSION_RPC_EVENTS = {
     "terminal": "device:start_terminal_session",
     "code_server": "device:start_code_server_session",
@@ -106,6 +107,7 @@ class LocalDeviceSessionService:
             error = result.get("error") or "Device failed to start session"
             raise DeviceSessionError(str(error))
 
+        result = _ensure_session_url_token(result, access_token)
         result = await _rewrite_cloud_localhost_url(result, device_kind)
         result.setdefault("session_id", session_id)
         result.setdefault("project_id", project_id)
@@ -119,7 +121,7 @@ class LocalDeviceSessionService:
         self, session_type: DeviceSessionType, project_id: int
     ) -> str:
         prefix = "terminal" if session_type == "terminal" else "code"
-        return f"{prefix}-{project_id}-{secrets.token_urlsafe(8)}"
+        return f"{prefix}-{project_id}-{secrets.token_urlsafe(SESSION_ID_TOKEN_BYTES)}"
 
     def _normalize_ttl(self, ttl_seconds: Any) -> int:
         try:
@@ -132,6 +134,35 @@ class LocalDeviceSessionService:
 
 
 local_device_session_service = LocalDeviceSessionService()
+
+
+def _ensure_session_url_token(
+    result: dict[str, Any],
+    access_token: str,
+) -> dict[str, Any]:
+    """Ensure device session URLs carry the generated access token."""
+    url = result.get("url")
+    if not isinstance(url, str) or not url:
+        return result
+
+    parsed = urlsplit(url)
+    query_items = [
+        (key, value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        if key != "token"
+    ]
+    query_items.append(("token", access_token))
+    rewritten = dict(result)
+    rewritten["url"] = urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            urlencode(query_items),
+            parsed.fragment,
+        )
+    )
+    return rewritten
 
 
 async def _rewrite_cloud_localhost_url(
