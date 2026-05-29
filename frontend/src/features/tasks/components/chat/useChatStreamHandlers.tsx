@@ -250,6 +250,20 @@ export function useChatStreamHandlers({
     markTaskAsViewed,
   } = useTaskContext()
 
+  // Navigate to a knowledge task without triggering Next.js re-renders.
+  // Uses setSelectedTask + replaceState to avoid the router.push cascade
+  // that causes selectedTaskDetail=null and hasMessages flip (UI flickering).
+  const navigateToKnowledgeTask = useCallback(
+    (taskId: number, kbId: number) => {
+      setSelectedTask({ id: taskId } as Task)
+      const params = new URLSearchParams(Array.from(searchParams.entries()))
+      params.set('taskId', String(taskId))
+      params.set('kb', String(kbId))
+      window.history.replaceState({}, '', `?${params.toString()}`)
+    },
+    [setSelectedTask, searchParams]
+  )
+
   const {
     sendMessage: contextSendMessage,
     stopStream: contextStopStream,
@@ -732,14 +746,7 @@ export function useChatStreamHandlers({
 
           if (completedTaskId && !selectedTaskDetail?.id) {
             if (taskType === 'knowledge' && knowledgeBaseId) {
-              // Set task directly instead of router.push to avoid URL-change-induced
-              // re-renders that cascade into selectedTaskDetail=null and hasMessages flip
-              setSelectedTask({ id: completedTaskId } as Task)
-              // Silently update URL for page-refresh persistence (doesn't trigger Next.js re-renders)
-              const params = new URLSearchParams(Array.from(searchParams.entries()))
-              params.set('taskId', String(completedTaskId))
-              params.set('kb', String(knowledgeBaseId))
-              window.history.replaceState({}, '', `?${params.toString()}`)
+              navigateToKnowledgeTask(completedTaskId, knowledgeBaseId)
             } else if (taskType === 'task' && !pathname?.startsWith('/devices')) {
               const params = new URLSearchParams()
               params.set('taskId', String(completedTaskId))
@@ -802,6 +809,7 @@ export function useChatStreamHandlers({
       pathname,
       router,
       searchParams,
+      navigateToKnowledgeTask,
       refreshTasks,
       projectId,
       refreshProjects,
@@ -1434,9 +1442,13 @@ export function useChatStreamHandlers({
               }
 
               if (completedTaskId && !selectedTaskDetail?.id) {
-                const params = new URLSearchParams(Array.from(searchParams.entries()))
-                params.set('taskId', String(completedTaskId))
-                router.push(`?${params.toString()}`)
+                if (taskType === 'knowledge' && knowledgeBaseId) {
+                  navigateToKnowledgeTask(completedTaskId, knowledgeBaseId)
+                } else {
+                  const params = new URLSearchParams(Array.from(searchParams.entries()))
+                  params.set('taskId', String(completedTaskId))
+                  router.push(`?${params.toString()}`)
+                }
                 refreshTasks()
                 if (projectId) {
                   refreshProjects()
@@ -1502,6 +1514,7 @@ export function useChatStreamHandlers({
       effectiveRequiresWorkspace,
       projectId,
       refreshProjects,
+      navigateToKnowledgeTask,
     ]
   )
 

@@ -170,24 +170,30 @@ export function KnowledgeDetailPanel({
   const isNotebook = selectedKb?.kb_type === 'notebook'
 
   // Use ref for taskIdFromUrl to avoid resetting panel state when taskId changes
-  // (e.g., when router.push adds ?taskId=... after sending a message)
+  // (e.g., when replaceState adds ?taskId=... after sending a message)
   const taskIdFromUrlRef = useRef(taskIdFromUrl)
   taskIdFromUrlRef.current = taskIdFromUrl
 
+  // Track previous KB id to distinguish initial mount from KB switch
+  const prevKbIdRef = useRef<number | null>(null)
+
   // Reset state when KB changes
   // For notebook mode, also clear the selected task to show a fresh chat interface
-  // BUT only if there's no taskId in URL - preserve task when navigating from history
+  // - On initial mount: preserve task if taskId is in URL (user navigating from history)
+  // - On KB switch: always clear task (the old taskId belongs to a different KB)
   useEffect(() => {
     setActiveTab('documents')
     setSelectedDocumentIds([])
     setIsDocumentPanelCollapsed(false)
 
-    // Clear selected task when entering notebook mode to prevent showing
-    // a previously selected task from the tasks page
-    // Skip if URL contains taskId (user navigating from history/conversation)
-    if (selectedKb?.kb_type === 'notebook' && !taskIdFromUrlRef.current) {
-      setSelectedTask(null)
+    if (selectedKb?.kb_type === 'notebook') {
+      const isKbSwitch = prevKbIdRef.current !== null && prevKbIdRef.current !== selectedKb?.id
+      if (isKbSwitch || !taskIdFromUrlRef.current) {
+        setSelectedTask(null)
+      }
     }
+
+    prevKbIdRef.current = selectedKb?.id ?? null
   }, [selectedKb?.id, selectedKb?.kb_type, setSelectedTask])
 
   // When a notebook KB is selected, show chat interface with document panel

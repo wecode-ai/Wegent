@@ -53,6 +53,9 @@ export function useKnowledgeUrlSync({
     // Support all three param formats for backward compatibility with existing URLs
     // Also exclude kb param - it's only needed for page-refresh restoration,
     // not for runtime sync (selectKb handles KB selection via React state)
+    // INVARIANT: Runtime KB navigation must use pathname (via navigateToKbViaHistory)
+    // or updateUrlParams (which deletes kb), never router.push with only ?kb= changes.
+    // Violating this invariant would cause URL sync to miss KB switches.
     const navParams = new URLSearchParams(searchParams.toString())
     navParams.delete('taskId')
     navParams.delete('task_id')

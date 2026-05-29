@@ -635,19 +635,9 @@ function ChatAreaContent({
       return true
     }
 
-    // In inputAlwaysAtBottom mode (knowledge notebook), only consider actual messages
-    // not just the presence of selectedTaskDetail
-    if (inputAlwaysAtBottom) {
-      return Boolean(
-        hasSelectedTask ||
-        streamHandlers.hasPendingUserMessage ||
-        streamHandlers.isStreaming ||
-        hasNewTaskStream ||
-        hasLocalPending ||
-        hasUnifiedMessages
-      )
-    }
-
+    // Fallback: consider task selected (hasSelectedTask) as having messages to avoid
+    // brief hasMessages=false gap between task creation and state machine message population,
+    // which would cause empty-state content (e.g. SummaryCard) to flash.
     return Boolean(
       hasSelectedTask ||
       streamHandlers.hasPendingUserMessage ||
@@ -663,7 +653,6 @@ function ChatAreaContent({
     streamHandlers.pendingTaskId,
     streamHandlers.localPendingMessage,
     taskState?.messages,
-    inputAlwaysAtBottom,
   ])
 
   const pipelineNextStepMessages = useMemo<PipelineNextStepMessage[]>(() => {

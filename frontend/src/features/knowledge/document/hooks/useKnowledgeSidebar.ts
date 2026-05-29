@@ -508,6 +508,12 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
           })
           .catch(error => {
             console.error('Failed to fetch full knowledge base data:', error)
+            // Clear both selectedKb and selectedKbId to maintain consistency and allow retry
+            if (latestSelectedKbIdRef.current === kb.id) {
+              setSelectedKb(null)
+              setSelectedKbId(null)
+              selectedKbIdRef.current = null
+            }
           })
       } else {
         setSelectedKb(kb)
