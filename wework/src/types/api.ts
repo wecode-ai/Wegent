@@ -213,7 +213,7 @@ export interface ChatSendPayload {
 }
 
 export interface ChatSendAck {
-  success: boolean
+  success?: boolean
   task_id?: number
   error?: string
 }

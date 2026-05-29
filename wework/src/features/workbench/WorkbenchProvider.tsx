@@ -460,7 +460,7 @@ export function WorkbenchProvider({
     const ack = await resolvedServices.chatStream.sendMessage(payload)
     dispatch({ type: 'sending_finished' })
 
-    if (!ack.success) {
+    if (ack.error || ack.success === false) {
       dispatch({ type: 'error_set', error: ack.error ?? '发送失败' })
       return
     }
