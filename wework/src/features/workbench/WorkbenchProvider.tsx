@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer } from 'react'
 import type { ReactNode } from 'react'
 import { createDeviceApi } from '@/api/devices'
+import { commitProjectChanges, loadProjectEnvironment } from '@/api/environment'
 import { createHttpClient } from '@/api/http'
 import { createModelApi } from '@/api/models'
 import { createProjectApi } from '@/api/projects'
@@ -23,6 +24,7 @@ import type {
   UnifiedSkill,
   User,
 } from '@/types/api'
+import type { EnvironmentInfo } from '@/types/environment'
 import type { WorkbenchMessage, WorkbenchState } from '@/types/workbench'
 import { useWorkbenchAttachments } from './useWorkbenchAttachments'
 import { useWorkbenchModels } from './useWorkbenchModels'
@@ -67,7 +69,7 @@ export interface WorkbenchContextValue {
   }
   selectProject: (projectId: number) => void
   startNewProjectChat: (projectId: number) => void
-  openTask: (taskId: number) => Promise<void>
+  openTask: (taskId: number, projectId?: number) => Promise<void>
   refreshWorkLists: () => Promise<void>
   createProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   updateProjectName: (projectId: number, name: string) => Promise<void>
@@ -83,6 +85,11 @@ export interface WorkbenchContextValue {
   getDeviceHomeDirectory: (deviceId: string) => Promise<string>
   getProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   listDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
+  loadEnvironmentInfo: (project: ProjectWithTasks | null) => Promise<EnvironmentInfo>
+  commitEnvironmentChanges: (
+    project: ProjectWithTasks | null,
+    message: string,
+  ) => Promise<void>
   setInput: (input: string) => void
   sendCurrentInput: () => Promise<void>
 }
@@ -271,16 +278,19 @@ export function WorkbenchProvider({
   )
 
   const openTask = useCallback(
-    async (taskId: number) => {
+    async (taskId: number, projectId?: number) => {
       const detail = await resolvedServices.taskApi.getTaskDetail(taskId)
-      dispatch({ type: 'task_opened', task: detail as Task })
+      const project = projectId
+        ? state.projects.find(item => item.id === projectId) ?? null
+        : undefined
+      dispatch({ type: 'task_opened', task: detail as Task, project })
       dispatchMessages({
         type: 'reset',
         messages: (detail.subtasks ?? []).map(subtaskToMessage),
       })
       await resolvedServices.chatStream.joinTask(taskId)
     },
-    [resolvedServices]
+    [resolvedServices, state.projects]
   )
 
   const setInput = useCallback((input: string) => {
@@ -393,6 +403,18 @@ export function WorkbenchProvider({
     [resolvedServices]
   )
 
+  const loadEnvironmentInfo = useCallback(
+    (project: ProjectWithTasks | null) =>
+      loadProjectEnvironment(resolvedServices.deviceApi, project),
+    [resolvedServices]
+  )
+
+  const commitEnvironmentChanges = useCallback(
+    (project: ProjectWithTasks | null, message: string) =>
+      commitProjectChanges(resolvedServices.deviceApi, project, message),
+    [resolvedServices]
+  )
+
   const sendCurrentInput = useCallback(async () => {
     const trimmedMessage = state.input.trim()
     const hasAttachments = attachmentSelection.attachments.length > 0
@@ -454,6 +476,7 @@ export function WorkbenchProvider({
           status: 'RUNNING',
           task_type: 'code',
           team_id: state.defaultTeam.id,
+          project_id: state.currentProject?.id,
           created_at: new Date().toISOString(),
         },
       })
@@ -510,6 +533,8 @@ export function WorkbenchProvider({
     getDeviceHomeDirectory,
     getProjectWorkspaceRoot,
     listDeviceDirectories,
+    loadEnvironmentInfo,
+    commitEnvironmentChanges,
     setInput,
     sendCurrentInput,
   }

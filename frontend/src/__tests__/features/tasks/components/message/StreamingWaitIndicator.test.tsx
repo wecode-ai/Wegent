@@ -22,7 +22,7 @@ const getCssRule = (css: string, selector: string) => {
   const matches = Array.from(
     css.matchAll(new RegExp(`${escapedSelector} \\{([\\s\\S]*?)\\n\\}`, 'g'))
   )
-  return matches.at(-1)?.[1] ?? ''
+  return matches[0]?.[1] ?? ''
 }
 
 describe('StreamingWaitIndicator', () => {
@@ -47,7 +47,7 @@ describe('StreamingWaitIndicator', () => {
 
     expect(screen.getByTestId('streaming-wait-runner-dot')).toBeInTheDocument()
     expect(indicator.querySelectorAll('.animate-pulse')).toHaveLength(0)
-    expect(screen.getAllByText('thinking.processing')).toHaveLength(2)
+    expect(screen.getAllByText('thinking.processing')).toHaveLength(1)
   })
 
   it('keeps the runner dot as one continuous shape instead of split top and bottom pieces', () => {
@@ -64,21 +64,18 @@ describe('StreamingWaitIndicator', () => {
     expect(css).not.toContain('left: 68%')
   })
 
-  it('clips the moving runner highlight to text glyphs while it crosses the message', () => {
+  it('renders a single text layer so the runner cannot create ghosted glyphs', () => {
     render(<StreamingWaitIndicator isWaiting={true} />)
 
     const css = readGlobalCss()
     const trackRule = getCssRule(css, '.streaming-wait-runner-track')
-    const textMask = screen.getByTestId('streaming-wait-runner-text-mask')
-    const maskRule = css.slice(
-      css.indexOf('.streaming-wait-runner-text-mask {\n  position: absolute')
-    )
 
-    expect(textMask).toHaveAttribute('aria-hidden', 'true')
-    expect(textMask).toHaveTextContent('tasks:streaming_wait.thinking')
     expect(trackRule).toContain('--runner-dot-size: 0.75rem')
-    expect(maskRule).toContain('background-clip: text')
-    expect(maskRule).toContain('-webkit-text-fill-color: transparent')
+    expect(screen.getAllByText('tasks:streaming_wait.thinking')).toHaveLength(1)
+    expect(screen.queryByTestId('streaming-wait-runner-text-mask')).not.toBeInTheDocument()
+    expect(css).not.toContain('.streaming-wait-runner-text-mask')
+    expect(css).not.toContain('--runner-text-spot-size')
+    expect(css).not.toContain('@keyframes streaming-wait-runner-text-mask')
   })
 
   it('changes progressive text only after a full runner animation lap completes', () => {
@@ -87,19 +84,19 @@ describe('StreamingWaitIndicator', () => {
 
     render(<StreamingWaitIndicator isWaiting={true} />)
 
-    expect(screen.getAllByText('tasks:streaming_wait.thinking')).toHaveLength(2)
+    expect(screen.getAllByText('tasks:streaming_wait.thinking')).toHaveLength(1)
 
     act(() => {
       jest.advanceTimersByTime(5300)
     })
 
-    expect(screen.getAllByText('tasks:streaming_wait.thinking')).toHaveLength(2)
+    expect(screen.getAllByText('tasks:streaming_wait.thinking')).toHaveLength(1)
 
     act(() => {
       jest.advanceTimersByTime(100)
     })
 
-    expect(screen.getAllByText('tasks:streaming_wait.analyzing')).toHaveLength(2)
+    expect(screen.getAllByText('tasks:streaming_wait.analyzing')).toHaveLength(1)
 
     jest.useRealTimers()
   })
@@ -127,12 +124,8 @@ describe('StreamingWaitIndicator', () => {
   it('waits about 0.5 seconds on the right side before hopping', () => {
     const css = readGlobalCss()
     const dotRule = getCssRule(css, '.streaming-wait-runner-dot')
-    const maskRule = css.slice(
-      css.indexOf('.streaming-wait-runner-text-mask {\n  position: absolute')
-    )
 
     expect(dotRule).toContain('animation: streaming-wait-runner-travel 5.4s linear infinite')
-    expect(maskRule).toContain('animation: streaming-wait-runner-text-mask 5.4s linear infinite')
     expect(css).toMatch(
       /26%,\s+35% \{[\s\S]*left: calc\(100% - var\(--runner-dot-size\)\);[\s\S]*transform: translateY\(-50%\) scale\(1\);/
     )
