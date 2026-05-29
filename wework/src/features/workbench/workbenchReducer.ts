@@ -1,4 +1,4 @@
-import type { DeviceInfo, ProjectWithTasks, Task, Team, User } from '@/types/api'
+import type { DeviceInfo, ProjectTask, ProjectWithTasks, Task, Team, User } from '@/types/api'
 import type { WorkbenchState } from '@/types/workbench'
 
 export const initialWorkbenchState: WorkbenchState = {
@@ -49,6 +49,58 @@ export type WorkbenchAction =
   | { type: 'sending_started' }
   | { type: 'sending_finished' }
   | { type: 'error_set'; error: string | null }
+
+function taskBelongsToProject(task: Task): boolean {
+  return Boolean(task.project_id && task.project_id > 0)
+}
+
+function toProjectTask(task: Task): ProjectTask {
+  return {
+    id: task.id,
+    task_id: task.id,
+    task_title: task.title,
+    task_status: task.status,
+    title: task.title,
+    status: task.status,
+    task_type: task.task_type,
+    created_at: task.created_at,
+    updated_at: task.updated_at,
+  }
+}
+
+function upsertTask<T>(
+  tasks: T[] | undefined,
+  taskId: number,
+  nextTask: T,
+  getTaskId: (task: T) => number
+): T[] {
+  const currentTasks = tasks ?? []
+  const existingIndex = currentTasks.findIndex(task => getTaskId(task) === taskId)
+  if (existingIndex === -1) return [nextTask, ...currentTasks]
+
+  return currentTasks.map((task, index) => (index === existingIndex ? nextTask : task))
+}
+
+function upsertOpenedTask(state: WorkbenchState, task: Task): WorkbenchState {
+  if (taskBelongsToProject(task)) {
+    return {
+      ...state,
+      projects: state.projects.map(project =>
+        project.id === task.project_id
+          ? {
+              ...project,
+              tasks: upsertTask(project.tasks, task.id, toProjectTask(task), item => item.task_id),
+            }
+          : project
+      ),
+    }
+  }
+
+  return {
+    ...state,
+    recentTasks: upsertTask(state.recentTasks, task.id, task, item => item.id),
+  }
+}
 
 export function workbenchReducer(
   state: WorkbenchState,
@@ -104,7 +156,7 @@ export function workbenchReducer(
       }
     case 'task_opened':
       return {
-        ...state,
+        ...upsertOpenedTask(state, action.task),
         currentProject:
           action.project === undefined ? state.currentProject : action.project,
         standaloneDeviceId:
