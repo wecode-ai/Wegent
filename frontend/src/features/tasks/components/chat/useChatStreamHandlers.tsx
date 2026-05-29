@@ -726,10 +726,14 @@ export function useChatStreamHandlers({
 
           if (completedTaskId && !selectedTaskDetail?.id) {
             if (taskType === 'knowledge' && knowledgeBaseId && pathname === '/knowledge') {
+              // Set task directly instead of router.push to avoid URL-change-induced
+              // re-renders that cascade into selectedTaskDetail=null and hasMessages flip
+              setSelectedTask({ id: completedTaskId } as Task)
+              // Silently update URL for page-refresh persistence (doesn't trigger Next.js re-renders)
               const params = new URLSearchParams(Array.from(searchParams.entries()))
               params.set('taskId', String(completedTaskId))
               params.set('kb', String(knowledgeBaseId))
-              router.push(`?${params.toString()}`)
+              window.history.replaceState({}, '', `?${params.toString()}`)
             } else if (taskType === 'task' && !pathname?.startsWith('/devices')) {
               const params = new URLSearchParams()
               params.set('taskId', String(completedTaskId))

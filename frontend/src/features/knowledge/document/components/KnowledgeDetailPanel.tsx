@@ -152,8 +152,19 @@ export function KnowledgeDetailPanel({
   // Get search params to check for taskId in URL
   // Support multiple parameter formats for compatibility
   const searchParams = useSearchParams()
-  const taskIdFromUrl =
-    searchParams.get('taskId') || searchParams.get('task_id') || searchParams.get('taskid')
+  const taskIdFromUrl = useMemo(() => {
+    const fromSearchParams =
+      searchParams.get('taskId') || searchParams.get('task_id') || searchParams.get('taskid')
+    if (fromSearchParams) return fromSearchParams
+    // Fallback for replaceState scenarios where useSearchParams hasn't synced yet
+    if (typeof window !== 'undefined') {
+      const browserParams = new URLSearchParams(window.location.search)
+      return (
+        browserParams.get('taskId') || browserParams.get('task_id') || browserParams.get('taskid')
+      )
+    }
+    return null
+  }, [searchParams])
 
   // Determine KB type
   const isNotebook = selectedKb?.kb_type === 'notebook'

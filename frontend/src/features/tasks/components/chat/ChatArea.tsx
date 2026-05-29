@@ -639,6 +639,7 @@ function ChatAreaContent({
     // not just the presence of selectedTaskDetail
     if (inputAlwaysAtBottom) {
       return Boolean(
+        hasSelectedTask ||
         streamHandlers.hasPendingUserMessage ||
         streamHandlers.isStreaming ||
         hasNewTaskStream ||
