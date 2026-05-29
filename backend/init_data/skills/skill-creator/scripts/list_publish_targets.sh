@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# list_publish_targets.sh - List Skill publish targets for the current Wegent user.
+# List Skill publish targets available to the current Wegent user.
 
 set -e
 

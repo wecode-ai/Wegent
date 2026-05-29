@@ -12,7 +12,17 @@ import zipfile
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Query,
+    Security,
+    UploadFile,
+)
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
@@ -34,9 +44,47 @@ from app.schemas.kind import (
 )
 from app.services.adapters.public_skill import public_skill_service
 from app.services.adapters.skill_kinds import skill_kinds_service
+from app.services.auth import verify_skill_identity_token
 from app.services.git_skill import git_skill_service
 
 router = APIRouter()
+
+
+def _extract_bearer_token(authorization: str, oauth2_token: Optional[str]) -> str:
+    """Extract a bearer token from FastAPI auth sources."""
+    if authorization.startswith("Bearer "):
+        return authorization[7:]
+    return oauth2_token or ""
+
+
+def _get_current_user_or_skill_identity(
+    db: Session = Depends(get_db),
+    oauth2_token: Optional[str] = Security(security.oauth2_scheme_optional),
+    authorization: str = Header(default="", include_in_schema=False),
+) -> User:
+    """
+    Authenticate Skill package publishing requests.
+
+    Supports the normal user JWT used by Settings and the skill runtime identity
+    token used by Skill scripts. It intentionally does not accept generic task
+    auth tokens.
+    """
+    token = _extract_bearer_token(authorization, oauth2_token)
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing authentication token")
+
+    try:
+        return security.get_current_user(token=token, db=db)
+    except HTTPException as jwt_error:
+        token_info = verify_skill_identity_token(token)
+        if not token_info:
+            raise jwt_error
+
+    user = db.query(User).filter(User.id == token_info.user_id).first()
+    if not user or not user.is_active or user.user_name != token_info.user_name:
+        raise HTTPException(status_code=401, detail="Could not validate credentials")
+
+    return user
 
 
 def _resolve_manageable_skill(
@@ -196,7 +244,7 @@ async def upload_skill(
     file: UploadFile = File(..., description="Skill ZIP package (max 10MB)"),
     name: str = Form(..., description="Skill name (unique)"),
     namespace: str = Form("default", description="Namespace"),
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(_get_current_user_or_skill_identity),
     db: Session = Depends(get_db),
 ):
     """
@@ -1427,7 +1475,7 @@ def update_skill_from_git(
 async def update_skill(
     skill_id: int,
     file: UploadFile = File(..., description="New Skill ZIP package (max 10MB)"),
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(_get_current_user_or_skill_identity),
     db: Session = Depends(get_db),
 ):
     """

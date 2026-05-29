@@ -17,6 +17,7 @@ from app.models.kind import Kind
 from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.user import User
+from app.services.auth import create_skill_identity_token, create_task_token
 
 
 def _create_user(test_db: Session, username: str, email: str) -> User:
@@ -106,6 +107,100 @@ tags: ["api", "test"]
         assert data["spec"]["description"] == "API test skill"
         assert data["spec"]["version"] == "1.0.0"
         assert data["status"]["state"] == "Available"
+
+    def test_upload_skill_with_skill_identity_token(
+        self, test_client: TestClient, test_user: User
+    ):
+        """Skill identity tokens should be accepted when creating skills."""
+        skill_md = """---
+description: "Skill identity upload skill"
+version: "1.0.0"
+author: "Skill Identity"
+tags: ["skill-identity"]
+---
+
+"""
+        zip_content = self.create_test_zip(skill_md)
+        skill_identity_token = create_skill_identity_token(
+            user_id=test_user.id,
+            user_name=test_user.user_name,
+            runtime_type="executor",
+            runtime_name="skill-creator",
+        )
+
+        response = test_client.post(
+            "/api/v1/kinds/skills/upload",
+            headers={"Authorization": f"Bearer {skill_identity_token}"},
+            data={"name": "skill-identity-upload-skill", "namespace": "default"},
+            files={"file": ("test.zip", io.BytesIO(zip_content), "application/zip")},
+        )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["metadata"]["name"] == "skill-identity-upload-skill"
+        assert data["spec"]["description"] == "Skill identity upload skill"
+
+    def test_update_skill_with_skill_identity_token(
+        self, test_client: TestClient, test_token: str, test_user: User
+    ):
+        """Skill identity tokens should be accepted when updating skills."""
+        initial_skill_md = "---\ndescription: Initial skill\n---\n"
+        initial_zip = self.create_test_zip(initial_skill_md)
+        create_response = test_client.post(
+            "/api/v1/kinds/skills/upload",
+            headers={"Authorization": f"Bearer {test_token}"},
+            data={"name": "skill-identity-update-skill", "namespace": "default"},
+            files={"file": ("test.zip", io.BytesIO(initial_zip), "application/zip")},
+        )
+        assert create_response.status_code == 201
+        skill_id = create_response.json()["metadata"]["labels"]["id"]
+
+        updated_skill_md = """---
+description: "Updated with skill identity token"
+version: "1.1.0"
+---
+
+"""
+        updated_zip = self.create_test_zip(updated_skill_md)
+        skill_identity_token = create_skill_identity_token(
+            user_id=test_user.id,
+            user_name=test_user.user_name,
+            runtime_type="executor",
+            runtime_name="skill-creator",
+        )
+
+        response = test_client.put(
+            f"/api/v1/kinds/skills/{skill_id}",
+            headers={"Authorization": f"Bearer {skill_identity_token}"},
+            files={"file": ("test.zip", io.BytesIO(updated_zip), "application/zip")},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["spec"]["description"] == "Updated with skill identity token"
+        assert data["spec"]["version"] == "1.1.0"
+
+    def test_upload_skill_rejects_task_token(
+        self, test_client: TestClient, test_user: User
+    ):
+        """Skill publishing should not accept generic task auth tokens."""
+        skill_md = "---\ndescription: Task token should fail\n---\n"
+        zip_content = self.create_test_zip(skill_md)
+        task_token = create_task_token(
+            task_id=551,
+            subtask_id=1,
+            user_id=test_user.id,
+            user_name=test_user.user_name,
+        )
+
+        response = test_client.post(
+            "/api/v1/kinds/skills/upload",
+            headers={"Authorization": f"Bearer {task_token}"},
+            data={"name": "task-token-rejected-skill", "namespace": "default"},
+            files={"file": ("test.zip", io.BytesIO(zip_content), "application/zip")},
+        )
+
+        assert response.status_code == 401
 
     def test_upload_skill_without_auth(self, test_client: TestClient):
         """Test upload fails without authentication"""

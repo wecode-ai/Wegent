@@ -56,8 +56,40 @@ jest.mock('@/features/tasks/components/message/block-registry', () => ({
 
 jest.mock('@/features/prompt-optimization/block-renderer', () => ({}))
 
+const createToolOutput = (result: Record<string, unknown>) =>
+  JSON.stringify({ result: JSON.stringify(result) })
+
+const createSuccessfulFormOutput = (form: Record<string, unknown>) =>
+  createToolOutput({
+    __silent_exit__: true,
+    reason:
+      'interactive_form_question form displayed; waiting for user response via new conversation',
+    success: true,
+    status: 'form_rendered',
+    form,
+  })
+
 describe('MixedContentView', () => {
   it('renders only the interactive form block that contains questions', () => {
+    const form = {
+      type: 'interactive_form_question',
+      ask_id: 'ask_2730',
+      task_id: 2493,
+      subtask_id: 2730,
+      questions: [
+        {
+          id: 'additional_input',
+          question: '其他想法或补充说明',
+          input_type: 'text',
+          required: false,
+          multi_select: false,
+          options: null,
+          default: null,
+          placeholder: '在此输入其他想法、补充需求或特殊说明...',
+        },
+      ],
+    }
+
     render(
       <MixedContentView
         thinking={null}
@@ -73,24 +105,8 @@ describe('MixedContentView', () => {
             status: 'pending',
             tool_name: 'interactive_form_question',
             tool_use_id: 'ask_2730',
-            tool_input: {
-              type: 'interactive_form_question',
-              ask_id: 'ask_2730',
-              task_id: 2493,
-              subtask_id: 2730,
-              questions: [
-                {
-                  id: 'additional_input',
-                  question: '其他想法或补充说明',
-                  input_type: 'text',
-                  required: false,
-                  multi_select: false,
-                  options: null,
-                  default: null,
-                  placeholder: '在此输入其他想法、补充需求或特殊说明...',
-                },
-              ],
-            },
+            tool_output: createSuccessfulFormOutput(form),
+            tool_input: {},
           },
           {
             id: 'chatcmpl-tool-426bdd2d71374862a96c40baae380e92',
@@ -100,8 +116,12 @@ describe('MixedContentView', () => {
               'mcp__interactive-form-question_wegent-interactive-form-question__interactive_form_question',
             tool_use_id: 'chatcmpl-tool-426bdd2d71374862a96c40baae380e92',
             tool_input: {},
-            tool_output:
-              '{"result":"{\\"__silent_exit__\\": true, \\"reason\\": \\"interactive_form_question form displayed; waiting for user response via new conversation\\"}"}',
+            tool_output: createToolOutput({
+              __silent_exit__: true,
+              reason:
+                'interactive_form_question form displayed; waiting for user response via new conversation',
+              success: true,
+            }),
           },
           {
             id: 'text-intro',
@@ -132,6 +152,14 @@ describe('MixedContentView', () => {
   })
 
   it('does not render an interactive form when restored questions are empty objects', () => {
+    const form = {
+      type: 'interactive_form_question',
+      ask_id: 'ask_2716',
+      task_id: 2479,
+      subtask_id: 2716,
+      questions: [{}, {}, {}],
+    }
+
     render(
       <MixedContentView
         thinking={null}
@@ -155,8 +183,90 @@ describe('MixedContentView', () => {
               subtask_id: 2716,
               questions: [{}, {}, {}],
             },
-            tool_output:
-              '{"result":"{\\"__silent_exit__\\": true, \\"reason\\": \\"interactive_form_question form displayed; waiting for user response via new conversation\\"}"}',
+            tool_output: createSuccessfulFormOutput(form),
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('ask-user-form-block')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('tool-block')).not.toBeInTheDocument()
+  })
+
+  it('does not render interactive form tool arguments when the tool result is not successful', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        theme="light"
+        taskId={2493}
+        subtaskId={2730}
+        currentMessageIndex={0}
+        blocks={[
+          {
+            id: 'toolu_error',
+            type: 'tool',
+            status: 'done',
+            tool_name:
+              'mcp__interactive-form-question_wegent-interactive-form-question__interactive_form_question',
+            tool_use_id: 'toolu_error',
+            tool_input: {
+              questions: [
+                {
+                  id: 'source_lang',
+                  question: '源语言',
+                  input_type: 'single_select',
+                  required: true,
+                  options: [{ label: '自动检测', value: 'auto' }],
+                },
+              ],
+            },
+            tool_output: createToolOutput({
+              error: '1 validation error for InteractiveFormQuestionItem',
+            }),
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('ask-user-form-block')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('tool-block')).not.toBeInTheDocument()
+  })
+
+  it('does not render interactive form tool arguments when the successful result has no form', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        theme="light"
+        taskId={2493}
+        subtaskId={2730}
+        currentMessageIndex={0}
+        blocks={[
+          {
+            id: 'toolu_success_without_form',
+            type: 'tool',
+            status: 'done',
+            tool_name:
+              'mcp__interactive-form-question_wegent-interactive-form-question__interactive_form_question',
+            tool_use_id: 'toolu_success_without_form',
+            tool_input: {
+              questions: [
+                {
+                  id: 'source_lang',
+                  question: '源语言',
+                  input_type: 'choice',
+                  required: true,
+                  options: [{ label: '自动检测', value: 'auto' }],
+                },
+              ],
+            },
+            tool_output: createToolOutput({
+              __silent_exit__: true,
+              reason:
+                'interactive_form_question form displayed; waiting for user response via new conversation',
+              success: true,
+            }),
           },
         ]}
       />

@@ -12,7 +12,6 @@ from pathlib import Path
 
 import pytest
 
-
 pytestmark = pytest.mark.unit
 
 BACKEND_ROOT = Path(__file__).resolve().parents[4]
@@ -29,16 +28,17 @@ SCRIPT_PATH = (
 def _write_fake_curl(bin_dir: Path, response: dict) -> None:
     curl_path = bin_dir / "curl"
     curl_path.write_text(
-        "#!/bin/sh\n"
-        "cat <<'JSON'\n"
-        f"{json.dumps(response)}\n"
-        "JSON\n",
+        "#!/bin/sh\n" "cat <<'JSON'\n" f"{json.dumps(response)}\n" "JSON\n",
         encoding="utf-8",
     )
     curl_path.chmod(curl_path.stat().st_mode | stat.S_IEXEC)
 
 
-def _run_script(tmp_path: Path, response: dict, task_info: str | None = None):
+def _run_script(
+    tmp_path: Path,
+    response: dict,
+    skill_identity_token: str | None = "skill-identity-token",
+):
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     _write_fake_curl(fake_bin, response)
@@ -46,10 +46,9 @@ def _run_script(tmp_path: Path, response: dict, task_info: str | None = None):
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
     env["TASK_API_DOMAIN"] = "http://backend.test"
-    if task_info is None:
-        env["TASK_INFO"] = json.dumps({"auth_token": "task-token"})
-    else:
-        env["TASK_INFO"] = task_info
+    env.pop("WEGENT_SKILL_IDENTITY_TOKEN", None)
+    if skill_identity_token is not None:
+        env["WEGENT_SKILL_IDENTITY_TOKEN"] = skill_identity_token
 
     return subprocess.run(
         ["bash", str(SCRIPT_PATH)],
@@ -133,13 +132,13 @@ def test_list_publish_targets_falls_back_when_group_response_is_invalid(
     ]
 
 
-def test_list_publish_targets_requires_task_info(tmp_path: Path):
+def test_list_publish_targets_requires_skill_identity_token(tmp_path: Path):
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
 
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
-    env.pop("TASK_INFO", None)
+    env.pop("WEGENT_SKILL_IDENTITY_TOKEN", None)
 
     result = subprocess.run(
         ["bash", str(SCRIPT_PATH)],
@@ -151,4 +150,5 @@ def test_list_publish_targets_requires_task_info(tmp_path: Path):
     )
 
     assert result.returncode == 1
-    assert "TASK_INFO environment variable is not set" in result.stdout
+    assert "Wegent authentication token is not available" in result.stdout
+    assert "Expected WEGENT_SKILL_IDENTITY_TOKEN" in result.stdout

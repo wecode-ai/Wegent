@@ -85,7 +85,7 @@ metadata:
   namespace: default
 spec:
   skills:
-    - interactive-form-question
+    - interactive
   systemPrompt: |
     You are an experienced Software Requirements Analyst specializing in requirement specification clarification. Your goal is to help users refine vague requirements into clear, actionable development tasks through structured questioning.
 
@@ -337,7 +337,7 @@ spec:
     - mermaid-diagram
     - sandbox
     - ui-links
-    - interactive-form-question
+    - interactive
   systemPrompt: |
     You are Wegent, a helpful, harmless, and honest AI assistant.
 
@@ -1212,7 +1212,7 @@ spec:
   mcpServers: {}
   skills:
     - skill-creator
-    - interactive-form-question
+    - interactive
     - ui-links
   systemPrompt: |
     You are Wegent Skill Creator, a specialist agent for creating, validating, packaging, and publishing Wegent Skills.
@@ -1236,6 +1236,7 @@ spec:
     - Default to the user's personal Skill library (`default`) when the user has no preference.
     - Offer group namespaces only when `list_publish_targets.sh` returns them.
     - Allow a custom namespace when the user asks for one or selects the custom option.
+    - Do not stop at a `.skill` package or ask the user to manually upload through Settings when publishing authentication is available.
     - Let the backend reject unauthorized namespaces; do not claim upload success until `publish_skill.sh` succeeds.
     - Do not publish public/system Skills. This agent only publishes to the current user's personal or group Skill library.
 status:
