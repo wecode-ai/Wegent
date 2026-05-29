@@ -42,9 +42,10 @@ def _task_json(title: str) -> dict:
     }
 
 
-def _build_task(task_id: int, title: str) -> Mock:
+def _build_task(task_id: int, title: str, project_id: int = 0) -> Mock:
     task = Mock(spec=TaskResource)
     task.id = task_id
+    task.project_id = project_id
     task.json = _task_json(title)
     now = datetime.now()
     task.created_at = now
@@ -84,7 +85,7 @@ def test_build_lite_task_list_uses_batch_related_data_and_avoids_per_task_sql():
     mock_execute_result.fetchone.return_value = None
     db.execute.return_value = mock_execute_result
 
-    tasks = [_build_task(1, "Task One"), _build_task(2, "Task Two")]
+    tasks = [_build_task(1, "Task One", project_id=42), _build_task(2, "Task Two")]
     now = datetime.now()
     related_data = {
         "1": {
@@ -129,6 +130,7 @@ def test_build_lite_task_list_uses_batch_related_data_and_avoids_per_task_sql():
     assert result[0]["team_namespace"] == "default"
     assert result[0]["team_display_name"] == "Agent A"
     assert result[0]["team_icon"] == "sparkles"
+    assert result[0]["project_id"] == 42
     assert result[0]["device_id"] is None
     assert result[0]["device_name"] is None
     assert result[0]["git_repo"] == "repo-a"
@@ -138,6 +140,7 @@ def test_build_lite_task_list_uses_batch_related_data_and_avoids_per_task_sql():
     assert result[1]["team_namespace"] == "default"
     assert result[1]["team_display_name"] == "Agent B"
     assert result[1]["team_icon"] == "bot"
+    assert result[1]["project_id"] == 0
     assert result[1]["device_id"] == "device-1"
     assert result[1]["device_name"] == "Mac Studio"
     assert result[1]["git_repo"] == "repo-b"

@@ -1,4 +1,4 @@
-import { ChevronDown, FolderOpen, FolderPlus } from 'lucide-react'
+import { ChevronDown, FolderOpen, FolderPlus, FolderX } from 'lucide-react'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
@@ -8,7 +8,7 @@ interface ProjectWorkBarProps {
   projects: ProjectWithTasks[]
   devices: DeviceInfo[]
   currentProjectId?: number
-  onSelectProject: (projectId: number) => void
+  onSelectProject: (projectId: number | null) => void
 }
 
 export function ProjectWorkBar({ projects, devices, currentProjectId, onSelectProject }: ProjectWorkBarProps) {
@@ -42,6 +42,11 @@ export function ProjectWorkBar({ projects, devices, currentProjectId, onSelectPr
 
   const handleSelectProject = (projectId: number) => {
     onSelectProject(projectId)
+    setOpen(false)
+  }
+
+  const handleUseNoProject = () => {
+    onSelectProject(null)
     setOpen(false)
   }
 
@@ -87,6 +92,20 @@ export function ProjectWorkBar({ projects, devices, currentProjectId, onSelectPr
                   )
                 })}
               </div>
+            )}
+            {currentProject && (
+              <>
+                <div className="my-2 border-t border-border" />
+                <button
+                  type="button"
+                  data-testid="no-project-option"
+                  onClick={handleUseNoProject}
+                  className="flex min-h-10 w-full items-center gap-3 rounded-xl px-4 py-2 text-left text-sm font-medium text-text-secondary hover:bg-muted"
+                >
+                  <FolderX className="h-4 w-4 shrink-0" />
+                  <span>{t('workbench.no_project', '不使用项目')}</span>
+                </button>
+              </>
             )}
           </div>
         )}

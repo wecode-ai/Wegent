@@ -23,6 +23,7 @@ export type WorkbenchAction =
       projects: ProjectWithTasks[]
       devices: DeviceInfo[]
       recentTasks: Task[]
+      currentProject?: ProjectWithTasks | null
     }
   | {
       type: 'lists_refreshed'
@@ -32,7 +33,9 @@ export type WorkbenchAction =
     }
   | { type: 'bootstrap_failed'; error: string }
   | { type: 'project_selected'; project: ProjectWithTasks }
+  | { type: 'project_cleared' }
   | { type: 'task_opened'; task: Task; project?: ProjectWithTasks | null }
+  | { type: 'task_status_changed'; taskId: number; status: string }
   | { type: 'current_task_cleared' }
   | { type: 'input_changed'; input: string }
   | { type: 'sending_started' }
@@ -52,6 +55,10 @@ export function workbenchReducer(
         projects: action.projects,
         devices: action.devices,
         recentTasks: action.recentTasks,
+        currentProject:
+          action.currentProject === undefined
+            ? state.currentProject
+            : action.currentProject,
         isBootstrapping: false,
         error: null,
       }
@@ -69,12 +76,33 @@ export function workbenchReducer(
       return { ...state, isBootstrapping: false, error: action.error }
     case 'project_selected':
       return { ...state, currentProject: action.project, currentTask: null }
+    case 'project_cleared':
+      return { ...state, currentProject: null, currentTask: null }
     case 'task_opened':
       return {
         ...state,
         currentProject:
           action.project === undefined ? state.currentProject : action.project,
         currentTask: action.task,
+      }
+    case 'task_status_changed':
+      return {
+        ...state,
+        currentTask:
+          state.currentTask?.id === action.taskId
+            ? { ...state.currentTask, status: action.status }
+            : state.currentTask,
+        recentTasks: state.recentTasks.map(task =>
+          task.id === action.taskId ? { ...task, status: action.status } : task
+        ),
+        projects: state.projects.map(project => ({
+          ...project,
+          tasks: project.tasks?.map(task =>
+            task.task_id === action.taskId
+              ? { ...task, task_status: action.status, status: action.status }
+              : task
+          ),
+        })),
       }
     case 'current_task_cleared':
       return { ...state, currentTask: null }

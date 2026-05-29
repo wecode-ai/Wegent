@@ -5,6 +5,7 @@ import {
   Edit3,
   Folder,
   FolderPlus,
+  Loader2,
   MessageSquarePlus,
   Plus,
   Search,
@@ -34,11 +35,13 @@ interface DesktopSidebarProps {
   projects: ProjectWithTasks[]
   devices: DeviceInfo[]
   recentTasks: Task[]
+  runningTaskIds: Set<number>
   currentProjectId?: number
   currentTaskId?: number
   activeItem?: 'chat' | 'plugins' | 'automation'
   onCollapse: () => void
   onNewChat: () => void
+  onStartStandaloneChat: () => void
   onSelectProject: (projectId: number) => void
   onStartNewProjectChat: (projectId: number) => void
   onOpenTask: (taskId: number, projectId?: number) => void
@@ -47,6 +50,7 @@ interface DesktopSidebarProps {
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
   onRemoveProject: (projectId: number) => Promise<void>
   onArchiveAllChats: () => Promise<void>
+  onArchiveAllProjectChats: () => Promise<void>
   onArchiveProjectChats: (projectId: number) => Promise<void>
   onArchiveTask: (taskId: number) => Promise<void>
   onRenameTask: (taskId: number, title: string) => Promise<void>
@@ -96,7 +100,7 @@ function formatRelativeSidebarTime(value?: string) {
   if (Number.isNaN(date.getTime())) return ''
   const elapsedMs = Math.max(0, Date.now() - date.getTime())
   const minutes = Math.floor(elapsedMs / 60000)
-  if (minutes < 60) return `${minutes}m`
+  if (minutes < 60) return `${Math.max(1, minutes)}m`
 
   const hours = Math.floor(minutes / 60)
   if (hours < 24) return `${hours}h`
@@ -105,6 +109,12 @@ function formatRelativeSidebarTime(value?: string) {
   if (days < 7) return `${days}d`
 
   return `${Math.floor(days / 7)}w`
+}
+
+function isTaskRunning(status?: string) {
+  return ['PENDING', 'RUNNING', 'STARTED', 'PROCESSING', 'IN_PROGRESS'].includes(
+    String(status ?? '').toUpperCase()
+  )
 }
 
 function getProjectTaskTitle(task: ProjectTask) {
@@ -134,6 +144,7 @@ function sortTasksByTime(tasks: Task[] = []) {
 function ProjectTaskRow({
   task,
   selected,
+  running,
   onOpenTask,
   projectId,
   onArchiveTask,
@@ -141,6 +152,7 @@ function ProjectTaskRow({
 }: {
   task: ProjectTask
   selected: boolean
+  running: boolean
   onOpenTask: (taskId: number, projectId?: number) => void
   projectId: number
   onArchiveTask: (taskId: number) => Promise<void>
@@ -164,9 +176,16 @@ function ProjectTaskRow({
       >
         {title}
       </button>
-      <span className="ml-2 shrink-0 text-xs text-[#8a8a8a]">
-        {formatRelativeSidebarTime(getProjectTaskTime(task))}
-      </span>
+      {running ? (
+        <Loader2
+          data-testid={`project-chat-spinner-${task.task_id}`}
+          className="ml-2 h-3.5 w-3.5 shrink-0 animate-spin text-primary"
+        />
+      ) : (
+        <span className="ml-2 shrink-0 text-xs text-[#8a8a8a]">
+          {formatRelativeSidebarTime(getProjectTaskTime(task))}
+        </span>
+      )}
       <div className="ml-1 opacity-0 transition-opacity group-hover/task:opacity-100 focus-within:opacity-100">
         <ActionMenu
           ariaLabel={t('workbench.chat_actions', '会话操作')}
@@ -197,6 +216,7 @@ function ProjectItem({
   expanded,
   showAllTasks,
   activeTaskId,
+  runningTaskIds,
   onToggleProject,
   onToggleTaskLimit,
   onStartNewProjectChat,
@@ -211,6 +231,7 @@ function ProjectItem({
   expanded: boolean
   showAllTasks: boolean
   activeTaskId?: number
+  runningTaskIds: Set<number>
   onToggleProject: (projectId: number) => void
   onToggleTaskLimit: (projectId: number) => void
   onStartNewProjectChat: (projectId: number) => void
@@ -225,6 +246,11 @@ function ProjectItem({
   const tasks = useMemo(() => sortProjectTasks(project.tasks), [project.tasks])
   const hasMoreTasks = tasks.length > INITIAL_PROJECT_CHAT_COUNT
   const visibleTasks = showAllTasks ? tasks : tasks.slice(0, INITIAL_PROJECT_CHAT_COUNT)
+  const projectRunning = tasks.some(
+    task =>
+      runningTaskIds.has(task.task_id) ||
+      isTaskRunning(task.task_status || task.status)
+  )
 
   return (
     <div data-testid="project-item" className="space-y-0.5">
@@ -242,6 +268,12 @@ function ProjectItem({
           <Folder className="h-4 w-4 shrink-0" />
           <span className="truncate">{project.name}</span>
         </button>
+        {!expanded && projectRunning && (
+          <Loader2
+            data-testid={`project-spinner-${project.id}`}
+            className="h-3.5 w-3.5 shrink-0 animate-spin text-primary"
+          />
+        )}
         <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover/project:opacity-100 focus-within:opacity-100">
           <ActionMenu
             ariaLabel={t('workbench.project_actions', '项目操作')}
@@ -294,6 +326,10 @@ function ProjectItem({
                 key={task.task_id}
                 task={task}
                 selected={activeTaskId === task.task_id}
+                running={
+                  runningTaskIds.has(task.task_id) ||
+                  isTaskRunning(task.task_status || task.status)
+                }
                 onOpenTask={onOpenTask}
                 projectId={project.id}
                 onArchiveTask={onArchiveTask}
@@ -322,12 +358,14 @@ function ProjectItem({
 function RecentTaskRow({
   task,
   selected,
+  running,
   onOpenTask,
   onArchiveTask,
   onRenameTask,
 }: {
   task: Task
   selected: boolean
+  running: boolean
   onOpenTask: (taskId: number, projectId?: number) => void
   onArchiveTask: (taskId: number) => Promise<void>
   onRenameTask: (task: Task) => void
@@ -350,9 +388,16 @@ function RecentTaskRow({
       >
         {task.title}
       </button>
-      <span className="shrink-0 text-xs text-[#8a8a8a]">
-        {formatRelativeSidebarTime(task.updated_at || task.created_at)}
-      </span>
+      {running ? (
+        <Loader2
+          data-testid={`history-task-spinner-${task.id}`}
+          className="h-3.5 w-3.5 shrink-0 animate-spin text-primary"
+        />
+      ) : (
+        <span className="shrink-0 text-xs text-[#8a8a8a]">
+          {formatRelativeSidebarTime(task.updated_at || task.created_at)}
+        </span>
+      )}
       <div className="opacity-0 transition-opacity group-hover/task:opacity-100 focus-within:opacity-100">
         <ActionMenu
           ariaLabel={t('workbench.chat_actions', '会话操作')}
@@ -383,11 +428,13 @@ export function DesktopSidebar({
   projects,
   devices,
   recentTasks,
+  runningTaskIds,
   currentProjectId,
   currentTaskId,
   activeItem = 'chat',
   onCollapse,
   onNewChat,
+  onStartStandaloneChat,
   onSelectProject,
   onStartNewProjectChat,
   onOpenTask,
@@ -396,6 +443,7 @@ export function DesktopSidebar({
   onUpdateProjectName,
   onRemoveProject,
   onArchiveAllChats,
+  onArchiveAllProjectChats,
   onArchiveProjectChats,
   onArchiveTask,
   onRenameTask,
@@ -413,7 +461,10 @@ export function DesktopSidebar({
   const [renamingTask, setRenamingTask] = useState<{ id: number; title: string } | null>(null)
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<number>>(new Set())
   const [expandedTaskListIds, setExpandedTaskListIds] = useState<Set<number>>(new Set())
-  const sortedRecentTasks = useMemo(() => sortTasksByTime(recentTasks), [recentTasks])
+  const sortedRecentTasks = useMemo(
+    () => sortTasksByTime(recentTasks).filter(task => !task.project_id),
+    [recentTasks]
+  )
 
   const handleToggleProject = (projectId: number) => {
     const shouldExpand = !expandedProjectIds.has(projectId)
@@ -503,7 +554,7 @@ export function DesktopSidebar({
                   label: t('workbench.archive_all_chats', '归档所有会话'),
                   icon: Archive,
                   testId: 'archive-all-chats-button',
-                  onSelect: onArchiveAllChats,
+                  onSelect: onArchiveAllProjectChats,
                 },
               ]}
             />
@@ -536,6 +587,7 @@ export function DesktopSidebar({
               expanded={expandedProjectIds.has(project.id)}
               showAllTasks={expandedTaskListIds.has(project.id)}
               activeTaskId={currentTaskId}
+              runningTaskIds={runningTaskIds}
               onToggleProject={handleToggleProject}
               onToggleTaskLimit={handleToggleProjectTaskLimit}
               onStartNewProjectChat={onStartNewProjectChat}
@@ -553,15 +605,41 @@ export function DesktopSidebar({
       </section>
 
       <section className="mt-8 min-h-0 flex-1 overflow-hidden">
-        <h2 className="mb-3 px-3 text-sm font-semibold text-[#8a8a8a]">
-          {t('workbench.history', '对话')}
-        </h2>
+        <div className="group/chats mb-3 flex h-8 items-center justify-between px-3">
+          <h2 className="text-sm font-semibold text-[#8a8a8a]">
+            {t('workbench.history', '对话')}
+          </h2>
+          <div className="flex items-center opacity-0 transition-opacity group-hover/chats:opacity-100 focus-within:opacity-100">
+            <ActionMenu
+              ariaLabel={t('workbench.chat_list_actions', '对话列表操作')}
+              testId="chats-more-button"
+              items={[
+                {
+                  label: t('workbench.archive_all_chats', '归档所有会话'),
+                  icon: Archive,
+                  testId: 'archive-standalone-chats-button',
+                  onSelect: onArchiveAllChats,
+                },
+              ]}
+            />
+            <button
+              type="button"
+              data-testid="chats-new-conversation-button"
+              onClick={onStartStandaloneChat}
+              className="flex h-7 w-7 items-center justify-center rounded-md text-[#606368] hover:bg-white/80 hover:text-[#2d2d2d]"
+              aria-label={t('workbench.new_chat', '新对话')}
+            >
+              <MessageSquarePlus className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
         <div className="space-y-1 overflow-auto">
           {sortedRecentTasks.map(task => (
             <RecentTaskRow
               key={task.id}
               task={task}
               selected={currentTaskId === task.id && currentProjectId === undefined}
+              running={runningTaskIds.has(task.id) || isTaskRunning(task.status)}
               onOpenTask={onOpenTask}
               onArchiveTask={onArchiveTask}
               onRenameTask={item => setRenamingTask({ id: item.id, title: item.title })}

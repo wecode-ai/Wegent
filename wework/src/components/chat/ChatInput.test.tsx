@@ -37,6 +37,7 @@ function projectChatControls(overrides: Partial<ProjectChatControls> = {}): Proj
 function projectWorkControls(overrides: Partial<ProjectWorkControls> = {}): ProjectWorkControls {
   return {
     projects: [],
+    devices: [],
     currentProjectId: undefined,
     onSelectProject: vi.fn(),
     ...overrides,
@@ -274,10 +275,58 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('project-work-menu')).toBeInTheDocument()
     expect(screen.getAllByText('Wegent').length).toBeGreaterThan(0)
     expect(screen.getByText('Docs')).toBeInTheDocument()
+    expect(screen.getByTestId('no-project-option')).toHaveTextContent('不使用项目')
 
     await userEvent.click(screen.getByTestId('project-option-8'))
 
     expect(onSelectProject).toHaveBeenCalledWith(8)
+  })
+
+  test('shows no-project transition only when a concrete project is selected', async () => {
+    const onSelectProject = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects: [{ id: 7, name: 'Wegent', tasks: [] }],
+          currentProjectId: 7,
+          onSelectProject,
+        })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+    await userEvent.click(screen.getByTestId('no-project-option'))
+
+    expect(onSelectProject).toHaveBeenCalledWith(null)
+  })
+
+  test('does not include enter-project work as a menu item', async () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects: [{ id: 7, name: 'Wegent', tasks: [] }],
+          currentProjectId: undefined,
+        })}
+      />,
+    )
+
+    expect(screen.getByTestId('project-work-button')).toHaveTextContent('进入项目工作')
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    expect(screen.queryByTestId('no-project-option')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-work-menu')).not.toHaveTextContent('进入项目工作')
   })
 
   test('disables model and skill selectors when options are locked', () => {

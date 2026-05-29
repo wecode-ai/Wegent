@@ -67,7 +67,10 @@ export interface WorkbenchContextValue {
     removeAttachment: (attachmentId: number) => Promise<void>
     resetAttachments: () => void
   }
-  selectProject: (projectId: number) => void
+  runningTaskIds: Set<number>
+  selectProject: (projectId: number | null) => void
+  startNewChat: () => void
+  startStandaloneChat: () => void
   startNewProjectChat: (projectId: number) => void
   openTask: (taskId: number, projectId?: number) => Promise<void>
   refreshWorkLists: () => Promise<void>
@@ -75,6 +78,7 @@ export interface WorkbenchContextValue {
   updateProjectName: (projectId: number, name: string) => Promise<void>
   removeProject: (projectId: number) => Promise<void>
   archiveAllChats: () => Promise<void>
+  archiveAllProjectChats: () => Promise<void>
   archiveProjectChats: (projectId: number) => Promise<void>
   archiveTask: (taskId: number) => Promise<void>
   renameTask: (taskId: number, title: string) => Promise<void>
@@ -128,6 +132,35 @@ function subtaskToMessage(subtask: Subtask): WorkbenchMessage {
   }
 }
 
+function getLastProjectStorageKey(userId: number) {
+  return `wework.lastProjectId.${userId}`
+}
+
+function readLastProjectId(userId: number): number | null {
+  try {
+    const value = window.localStorage.getItem(getLastProjectStorageKey(userId))
+    if (!value) return null
+    const id = Number(value)
+    return Number.isFinite(id) && id > 0 ? id : null
+  } catch {
+    return null
+  }
+}
+
+function writeLastProjectId(userId: number, projectId: number) {
+  try {
+    window.localStorage.setItem(getLastProjectStorageKey(userId), String(projectId))
+  } catch {
+    // Ignore storage failures; project selection still works for the current session.
+  }
+}
+
+function isRunningTaskStatus(status?: string) {
+  return ['PENDING', 'RUNNING', 'STARTED', 'PROCESSING', 'IN_PROGRESS'].includes(
+    String(status ?? '').toUpperCase()
+  )
+}
+
 export function WorkbenchProvider({
   children,
   user,
@@ -167,14 +200,23 @@ export function WorkbenchProvider({
 
       if (cancelled) return
 
+      const projects =
+        projectsResult.status === 'fulfilled' ? projectsResult.value.items : []
+      const lastProjectId = readLastProjectId(user.id)
+      const currentProject =
+        lastProjectId === null
+          ? null
+          : projects.find(project => project.id === lastProjectId) ?? null
+
       dispatch({
         type: 'bootstrapped',
         user,
         defaultTeam: defaultTeamResult.status === 'fulfilled' ? defaultTeamResult.value : null,
-        projects: projectsResult.status === 'fulfilled' ? projectsResult.value.items : [],
+        projects,
         devices: devicesResult.status === 'fulfilled' ? devicesResult.value : [],
         recentTasks:
           recentTasksResult.status === 'fulfilled' ? recentTasksResult.value.items : [],
+        currentProject,
       })
     }
 
@@ -200,19 +242,32 @@ export function WorkbenchProvider({
 
   useEffect(() => {
     return resolvedServices.chatStream.subscribe({
-      onChatStart: payload =>
+      onChatStart: payload => {
+        dispatch({
+          type: 'task_status_changed',
+          taskId: payload.task_id,
+          status: 'RUNNING',
+        })
         dispatchMessages({
           type: 'assistant_started',
           taskId: payload.task_id,
           subtaskId: payload.subtask_id,
-        }),
+        })
+      },
       onChatChunk: payload =>
         dispatchMessages({
           type: 'assistant_chunk',
           subtaskId: payload.subtask_id,
           content: payload.content,
         }),
-      onChatDone: payload =>
+      onChatDone: payload => {
+        if (payload.task_id) {
+          dispatch({
+            type: 'task_status_changed',
+            taskId: payload.task_id,
+            status: 'COMPLETED',
+          })
+        }
         dispatchMessages({
           type: 'assistant_done',
           subtaskId: payload.subtask_id,
@@ -220,13 +275,22 @@ export function WorkbenchProvider({
             typeof payload.result.value === 'string'
               ? payload.result.value
               : undefined,
-        }),
-      onChatError: payload =>
+        })
+      },
+      onChatError: payload => {
+        if (payload.task_id) {
+          dispatch({
+            type: 'task_status_changed',
+            taskId: payload.task_id,
+            status: 'FAILED',
+          })
+        }
         dispatchMessages({
           type: 'assistant_error',
           subtaskId: payload.subtask_id,
           error: payload.error,
-        }),
+        })
+      },
       onBlockCreated: payload => {
         if (payload.block.type !== 'tool') return
         dispatchMessages({
@@ -259,15 +323,39 @@ export function WorkbenchProvider({
   }, [resolvedServices])
 
   const selectProject = useCallback(
-    (projectId: number) => {
+    (projectId: number | null) => {
+      if (projectId === null) {
+        dispatch({ type: 'project_cleared' })
+        dispatchMessages({ type: 'reset', messages: [] })
+        return
+      }
       const project = state.projects.find(item => item.id === projectId)
       if (project) {
+        writeLastProjectId(user.id, project.id)
         dispatch({ type: 'project_selected', project })
         dispatchMessages({ type: 'reset', messages: [] })
       }
     },
-    [state.projects]
+    [state.projects, user.id]
   )
+
+  const startNewChat = useCallback(() => {
+    const lastProjectId = readLastProjectId(user.id)
+    const project = lastProjectId
+      ? state.projects.find(item => item.id === lastProjectId)
+      : null
+    if (project) {
+      dispatch({ type: 'project_selected', project })
+    } else {
+      dispatch({ type: 'project_cleared' })
+    }
+    dispatchMessages({ type: 'reset', messages: [] })
+  }, [state.projects, user.id])
+
+  const startStandaloneChat = useCallback(() => {
+    dispatch({ type: 'project_cleared' })
+    dispatchMessages({ type: 'reset', messages: [] })
+  }, [])
 
   const startNewProjectChat = useCallback(
     (projectId: number) => {
@@ -280,9 +368,15 @@ export function WorkbenchProvider({
   const openTask = useCallback(
     async (taskId: number, projectId?: number) => {
       const detail = await resolvedServices.taskApi.getTaskDetail(taskId)
-      const project = projectId
-        ? state.projects.find(item => item.id === projectId) ?? null
-        : undefined
+      const project =
+        projectId === undefined
+          ? undefined
+          : projectId > 0
+            ? state.projects.find(item => item.id === projectId) ?? null
+            : null
+      if (project) {
+        writeLastProjectId(user.id, project.id)
+      }
       dispatch({ type: 'task_opened', task: detail as Task, project })
       dispatchMessages({
         type: 'reset',
@@ -290,7 +384,7 @@ export function WorkbenchProvider({
       })
       await resolvedServices.chatStream.joinTask(taskId)
     },
-    [resolvedServices, state.projects]
+    [resolvedServices, state.projects, user.id]
   )
 
   const setInput = useCallback((input: string) => {
@@ -301,11 +395,12 @@ export function WorkbenchProvider({
     async (data: CreateProjectRequest) => {
       const project = await resolvedServices.projectApi.createProject(data)
       await refreshWorkLists()
+      writeLastProjectId(user.id, project.id)
       dispatch({ type: 'project_selected', project })
       dispatchMessages({ type: 'reset', messages: [] })
       return project
     },
-    [refreshWorkLists, resolvedServices]
+    [refreshWorkLists, resolvedServices, user.id]
   )
 
   const updateProjectName = useCallback(
@@ -327,9 +422,20 @@ export function WorkbenchProvider({
   const archiveAllChats = useCallback(async () => {
     await resolvedServices.taskApi.archiveAllChats()
     await refreshWorkLists()
-    dispatch({ type: 'current_task_cleared' })
-    dispatchMessages({ type: 'reset', messages: [] })
-  }, [refreshWorkLists, resolvedServices])
+    if (!state.currentProject && (!state.currentTask || !state.currentTask.project_id)) {
+      dispatch({ type: 'current_task_cleared' })
+      dispatchMessages({ type: 'reset', messages: [] })
+    }
+  }, [refreshWorkLists, resolvedServices, state.currentProject, state.currentTask])
+
+  const archiveAllProjectChats = useCallback(async () => {
+    await resolvedServices.projectApi.archiveAllProjectChats()
+    await refreshWorkLists()
+    if (state.currentProject || (state.currentTask?.project_id ?? 0) > 0) {
+      dispatch({ type: 'current_task_cleared' })
+      dispatchMessages({ type: 'reset', messages: [] })
+    }
+  }, [refreshWorkLists, resolvedServices, state.currentProject, state.currentTask?.project_id])
 
   const archiveProjectChats = useCallback(
     async (projectId: number) => {
@@ -468,6 +574,7 @@ export function WorkbenchProvider({
     attachmentSelection.resetAttachments()
 
     if (!state.currentTask && ack.task_id) {
+      const projectId = state.currentProject?.id ?? 0
       dispatch({
         type: 'task_opened',
         task: {
@@ -476,13 +583,20 @@ export function WorkbenchProvider({
           status: 'RUNNING',
           task_type: 'code',
           team_id: state.defaultTeam.id,
-          project_id: state.currentProject?.id,
+          project_id: projectId,
           created_at: new Date().toISOString(),
         },
       })
+      dispatch({
+        type: 'task_status_changed',
+        taskId: ack.task_id,
+        status: 'RUNNING',
+      })
+      await refreshWorkLists()
     }
   }, [
     attachmentSelection,
+    refreshWorkLists,
     isOptionsLocked,
     modelSelection.selectedModel,
     resolvedServices,
@@ -494,9 +608,27 @@ export function WorkbenchProvider({
     state.input,
   ])
 
+  const runningTaskIds = useMemo(() => {
+    const ids = new Set<number>()
+    if (state.currentTask && isRunningTaskStatus(state.currentTask.status)) {
+      ids.add(state.currentTask.id)
+    }
+    for (const message of messages) {
+      if (
+        message.role === 'assistant' &&
+        message.status === 'streaming' &&
+        message.taskId
+      ) {
+        ids.add(message.taskId)
+      }
+    }
+    return ids
+  }, [messages, state.currentTask])
+
   const value: WorkbenchContextValue = {
     state,
     messages,
+    runningTaskIds,
     projectChat: {
       models: modelSelection.models,
       skills: skillSelection.skills,
@@ -516,6 +648,8 @@ export function WorkbenchProvider({
       resetAttachments: attachmentSelection.resetAttachments,
     },
     selectProject,
+    startNewChat,
+    startStandaloneChat,
     startNewProjectChat,
     openTask,
     refreshWorkLists,
@@ -523,6 +657,7 @@ export function WorkbenchProvider({
     updateProjectName,
     removeProject,
     archiveAllChats,
+    archiveAllProjectChats,
     archiveProjectChats,
     archiveTask,
     renameTask,

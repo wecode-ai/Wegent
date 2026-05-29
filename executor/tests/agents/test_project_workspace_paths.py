@@ -87,3 +87,32 @@ def test_project_workspace_sets_session_root_outside_workspace(tmp_path):
 
     set_session_root.assert_called_once_with(1001, str(executor_home / "sessions"))
     assert ".wegent" not in agent.project_path
+
+
+def test_standalone_workspace_path_sets_cwd_without_project_id(tmp_path):
+    standalone_workspace = tmp_path / "chats" / "2026-05-29" / "hello"
+    request = ExecutionRequest(
+        task_id=1002,
+        subtask_id=2002,
+        workspace_source="local_path",
+        project_workspace_path=str(standalone_workspace),
+    )
+    agent = ClaudeCodeAgent.__new__(ClaudeCodeAgent)
+    agent.task_data = request
+    agent.task_id = request.task_id
+    agent.options = {}
+    agent.project_path = None
+
+    executor_home = tmp_path / ".wegent-executor"
+    with (
+        patch(
+            "executor.agents.claude_code.claude_code_agent.config.WEGENT_EXECUTOR_HOME",
+            str(executor_home),
+        ),
+        patch.object(SessionManager, "set_task_session_root") as set_session_root,
+    ):
+        agent._prepare_project_workspace()
+
+    assert agent.options["cwd"] == str(standalone_workspace)
+    assert standalone_workspace.exists()
+    set_session_root.assert_called_once_with(1002, str(executor_home / "sessions"))

@@ -12,18 +12,21 @@ import { MobileDrawer } from './MobileDrawer'
 interface MobileWorkbenchLayoutProps {
   state: WorkbenchState
   messages: WorkbenchMessage[]
+  runningTaskIds?: Set<number>
   activeItem?: 'chat' | 'plugins' | 'automation'
   onNewChat?: () => void
+  onStartStandaloneChat?: () => void
   onOpenPlugins?: () => void
   projectChat: ProjectChatControls
   projectWork: ProjectWorkControls
-  onSelectProject: (projectId: number) => void
+  onSelectProject: (projectId: number | null) => void
   onStartNewProjectChat?: (projectId: number) => void
   onOpenTask: (taskId: number, projectId?: number) => void
   onCreateProject?: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onUpdateProjectName?: (projectId: number, name: string) => Promise<void>
   onRemoveProject?: (projectId: number) => Promise<void>
   onArchiveAllChats?: () => Promise<void>
+  onArchiveAllProjectChats?: () => Promise<void>
   onArchiveProjectChats?: (projectId: number) => Promise<void>
   onArchiveTask?: (taskId: number) => Promise<void>
   onRenameTask?: (taskId: number, title: string) => Promise<void>

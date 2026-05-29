@@ -7,7 +7,7 @@ import json
 import logging
 import re
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
@@ -99,11 +99,23 @@ def create_task_with_optional_id(
 
 @router.post("/archive", response_model=TaskArchiveBatchResponse)
 def archive_all_user_chats(
+    scope: Literal["all", "standalone"] = Query(
+        "all",
+        description=(
+            "Archive scope. 'standalone' archives chats with no project; "
+            "'all' preserves the legacy behavior."
+        ),
+    ),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
     """Archive all active personal chat/code tasks owned by the current user."""
-    count = task_kinds_service.archive_all_user_chats(db=db, user_id=current_user.id)
+    if scope == "standalone":
+        count = task_kinds_service.archive_standalone_chats(
+            db=db, user_id=current_user.id
+        )
+    else:
+        count = task_kinds_service.archive_all_user_chats(db=db, user_id=current_user.id)
     return {"message": "Chats archived successfully", "count": count}
 
 

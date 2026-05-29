@@ -378,6 +378,8 @@ async def persist_completed_result(
         executor_name=executor_name,
         executor_namespace=executor_namespace,
     )
+    if normalized_status == "COMPLETED":
+        await _persist_standalone_workspace_path(task_id, result)
     try:
         await chat_storage.session_manager.cleanup_streaming_state(
             subtask_id,
@@ -390,6 +392,40 @@ async def persist_completed_result(
             exc,
             exc_info=True,
         )
+
+
+async def _persist_standalone_workspace_path(
+    task_id: int,
+    result: Optional[Dict[str, Any]],
+) -> None:
+    """Persist standalone chat workspace path returned by local executors."""
+
+    from app.db.session import SessionLocal
+    from app.services.chat.standalone_workspace import (
+        extract_workspace_path,
+        persist_standalone_workspace_path,
+    )
+
+    workspace_path = extract_workspace_path(result)
+    if not workspace_path:
+        return
+
+    db = SessionLocal()
+    try:
+        persist_standalone_workspace_path(
+            db,
+            task_id=task_id,
+            workspace_path=workspace_path,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[CompletedResult] Failed to persist standalone workspace path for task %s: %s",
+            task_id,
+            exc,
+            exc_info=True,
+        )
+    finally:
+        db.close()
 
 
 __all__ = [

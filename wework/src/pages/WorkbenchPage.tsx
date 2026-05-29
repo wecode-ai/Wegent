@@ -11,14 +11,18 @@ export function WorkbenchPage() {
   const {
     state,
     messages,
+    runningTaskIds,
     projectChat,
     selectProject,
+    startNewChat,
+    startStandaloneChat,
     startNewProjectChat,
     openTask,
     createProject,
     updateProjectName,
     removeProject,
     archiveAllChats,
+    archiveAllProjectChats,
     archiveProjectChats,
     archiveTask,
     renameTask,
@@ -46,7 +50,9 @@ export function WorkbenchPage() {
     <Layout
       state={state}
       messages={messages}
-      onNewChat={() => navigateTo('/')}
+      runningTaskIds={runningTaskIds}
+      onNewChat={startNewChat}
+      onStartStandaloneChat={startStandaloneChat}
       onOpenPlugins={() => navigateTo('/plugins')}
       projectChat={projectChat}
       projectWork={projectWork}
@@ -57,6 +63,7 @@ export function WorkbenchPage() {
       onUpdateProjectName={updateProjectName}
       onRemoveProject={removeProject}
       onArchiveAllChats={archiveAllChats}
+      onArchiveAllProjectChats={archiveAllProjectChats}
       onArchiveProjectChats={archiveProjectChats}
       onArchiveTask={archiveTask}
       onRenameTask={renameTask}
