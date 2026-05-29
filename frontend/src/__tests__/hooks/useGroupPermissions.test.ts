@@ -83,6 +83,18 @@ describe('useGroupPermissions', () => {
   describe('canCreateInCurrentGroup', () => {
     const roleMap = new Map<string, BaseRole>([['my-group', 'Maintainer']])
 
+    it('returns true when scope=group and role is Owner', () => {
+      const ownerMap = new Map<string, BaseRole>([['my-group', 'Owner']])
+      const { result } = renderHook(() =>
+        useGroupPermissions({
+          scope: 'group',
+          groupName: 'my-group',
+          groupRoleMap: ownerMap,
+        })
+      )
+      expect(result.current.canCreateInCurrentGroup).toBe(true)
+    })
+
     it('returns true when scope=group and role is Maintainer', () => {
       const { result } = renderHook(() =>
         useGroupPermissions({
