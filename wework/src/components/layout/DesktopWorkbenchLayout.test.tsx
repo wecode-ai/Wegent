@@ -74,6 +74,7 @@ describe('DesktopWorkbenchLayout', () => {
         },
       ],
       currentProject: null,
+      standaloneDeviceId: null,
       currentTask: null,
       input: '',
       isBootstrapping: false,
@@ -81,7 +82,9 @@ describe('DesktopWorkbenchLayout', () => {
       error: null,
     },
     messages: [],
+    runningTaskIds: new Set<number>(),
     onNewChat: vi.fn(),
+    onStartStandaloneChat: vi.fn(),
     onOpenPlugins: vi.fn(),
     projectChat: {
       models: [],
@@ -114,6 +117,7 @@ describe('DesktopWorkbenchLayout', () => {
     onUpdateProjectName: vi.fn(),
     onRemoveProject: vi.fn(),
     onArchiveAllChats: vi.fn(),
+    onArchiveAllProjectChats: vi.fn(),
     onArchiveProjectChats: vi.fn(),
     onArchiveTask: vi.fn(),
     onRenameTask: vi.fn(),
@@ -287,7 +291,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('projects-more-button'))
     expect(screen.getByTestId('archive-all-chats-button')).toHaveTextContent('归档所有会话')
     await userEvent.click(screen.getByTestId('archive-all-chats-button'))
-    expect(baseProps.onArchiveAllChats).toHaveBeenCalledTimes(1)
+    expect(baseProps.onArchiveAllProjectChats).toHaveBeenCalledTimes(1)
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
     await userEvent.click(screen.getByTestId('project-start-from-scratch-button'))
@@ -488,6 +492,14 @@ describe('DesktopWorkbenchLayout', () => {
               title: 'Newest session',
               status: 'COMPLETED',
               task_type: 'code',
+              created_at: oneHourAgo,
+              updated_at: oneHourAgo,
+            },
+            {
+              id: 6,
+              title: 'Project session',
+              status: 'COMPLETED',
+              task_type: 'code',
               project_id: 7,
               created_at: oneHourAgo,
               updated_at: oneHourAgo,
@@ -500,13 +512,112 @@ describe('DesktopWorkbenchLayout', () => {
     const rows = screen.getAllByTestId('history-task-button')
     expect(rows[0]).toHaveTextContent('Newest session')
     expect(rows[1]).toHaveTextContent('Older session')
+    expect(screen.queryByText('Project session')).not.toBeInTheDocument()
     expect(screen.getByText('1h')).toBeInTheDocument()
     await userEvent.click(rows[0])
-    expect(baseProps.onOpenTask).toHaveBeenCalledWith(5, 7)
+    expect(baseProps.onOpenTask).toHaveBeenCalledWith(5, undefined)
 
     await userEvent.click(screen.getByTestId('history-task-menu-5'))
     expect(screen.getByTestId('archive-history-chat-5')).toHaveTextContent('归档会话')
-      expect(screen.getByTestId('rename-history-chat-5')).toHaveTextContent('重命名会话')
+    expect(screen.getByTestId('rename-history-chat-5')).toHaveTextContent('重命名会话')
+
+    await userEvent.click(screen.getByTestId('chats-more-button'))
+    expect(screen.getByTestId('archive-standalone-chats-button')).toHaveTextContent('归档所有会话')
+    await userEvent.click(screen.getByTestId('archive-standalone-chats-button'))
+    expect(baseProps.onArchiveAllChats).toHaveBeenCalledTimes(1)
+
+    await userEvent.click(screen.getByTestId('chats-new-conversation-button'))
+    expect(baseProps.onStartStandaloneChat).toHaveBeenCalledTimes(1)
+  })
+
+  test('shows running spinners for project and standalone chats', () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        runningTaskIds={new Set([31, 41])}
+        state={{
+          ...baseProps.state,
+          projects: [
+            {
+              id: 1,
+              name: 'github_wegent',
+              tasks: [
+                {
+                  id: 31,
+                  task_id: 31,
+                  task_title: 'Running project chat',
+                  task_status: 'RUNNING',
+                  updated_at: new Date().toISOString(),
+                },
+              ],
+            },
+          ],
+          recentTasks: [
+            {
+              id: 41,
+              title: 'Running standalone chat',
+              status: 'RUNNING',
+              task_type: 'code',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            },
+          ],
+        }}
+      />,
+    )
+
+    expect(screen.getByTestId('project-spinner-1')).toBeInTheDocument()
+    expect(screen.getByTestId('history-task-spinner-41')).toBeInTheDocument()
+  })
+
+  test('does not show spinners for stale server running statuses on initial lists', () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        runningTaskIds={new Set()}
+        state={{
+          ...baseProps.state,
+          projects: [
+            {
+              id: 1,
+              name: 'github_wegent',
+              tasks: [
+                {
+                  id: 31,
+                  task_id: 31,
+                  task_title: 'Stale project chat',
+                  task_status: 'RUNNING',
+                  updated_at: new Date().toISOString(),
+                },
+              ],
+            },
+          ],
+          recentTasks: [
+            {
+              id: 41,
+              title: 'Stale standalone chat',
+              status: 'PENDING',
+              task_type: 'code',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            },
+          ],
+        }}
+      />,
+    )
+
+    expect(screen.queryByTestId('project-spinner-1')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('history-task-spinner-41')).not.toBeInTheDocument()
+  })
+
+  test('keeps projects and chats in the scrollable sidebar region above settings', () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(screen.getByTestId('sidebar-worklists-scroll')).toHaveClass(
+      'flex-1',
+      'overflow-y-auto',
+    )
+    expect(screen.getByTestId('settings-button')).toHaveClass('shrink-0')
   })
 
   test('toggles an empty project chat list without persistent project highlight', async () => {

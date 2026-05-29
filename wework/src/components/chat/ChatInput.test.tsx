@@ -2,7 +2,14 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
-import type { Attachment, ProjectWithTasks, SkillRef, UnifiedModel, UnifiedSkill } from '@/types/api'
+import type {
+  Attachment,
+  DeviceInfo,
+  ProjectWithTasks,
+  SkillRef,
+  UnifiedModel,
+  UnifiedSkill,
+} from '@/types/api'
 import { ChatInput } from './ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from './ChatInput'
 
@@ -37,8 +44,11 @@ function projectChatControls(overrides: Partial<ProjectChatControls> = {}): Proj
 function projectWorkControls(overrides: Partial<ProjectWorkControls> = {}): ProjectWorkControls {
   return {
     projects: [],
+    devices: [],
     currentProjectId: undefined,
+    currentStandaloneDeviceId: null,
     onSelectProject: vi.fn(),
+    onSelectStandaloneDevice: vi.fn(),
     ...overrides,
   }
 }
@@ -274,10 +284,118 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('project-work-menu')).toBeInTheDocument()
     expect(screen.getAllByText('Wegent').length).toBeGreaterThan(0)
     expect(screen.getByText('Docs')).toBeInTheDocument()
+    expect(screen.getByTestId('no-project-option')).toHaveTextContent('不使用项目')
 
     await userEvent.click(screen.getByTestId('project-option-8'))
 
     expect(onSelectProject).toHaveBeenCalledWith(8)
+  })
+
+  test('shows no-project transition only when a concrete project is selected', async () => {
+    const onSelectStandaloneDevice = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects: [{ id: 7, name: 'Wegent', tasks: [] }],
+          currentProjectId: 7,
+          onSelectStandaloneDevice,
+        })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+    await userEvent.click(screen.getByTestId('no-project-option'))
+
+    expect(onSelectStandaloneDevice).toHaveBeenCalledWith(null)
+  })
+
+  test('lists standalone devices under no-project and defaults to online cloud devices', async () => {
+    const onSelectStandaloneDevice = vi.fn()
+    const devices: DeviceInfo[] = [
+      {
+        id: 1,
+        device_id: 'local-online',
+        name: 'Local Online',
+        status: 'online',
+        is_default: false,
+        device_type: 'local',
+      },
+      {
+        id: 2,
+        device_id: 'cloud-online',
+        name: 'Cloud Online',
+        status: 'online',
+        is_default: false,
+        device_type: 'cloud',
+      },
+      {
+        id: 3,
+        device_id: 'local-offline',
+        name: 'Local Offline',
+        status: 'offline',
+        is_default: false,
+        device_type: 'local',
+      },
+    ]
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects: [{ id: 7, name: 'Wegent', tasks: [] }],
+          devices,
+          currentProjectId: 7,
+          onSelectStandaloneDevice,
+        })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    expect(screen.getByTestId('standalone-device-list')).toBeInTheDocument()
+    expect(screen.getByText('Cloud Online')).toBeInTheDocument()
+    expect(screen.getByText('Local Online')).toBeInTheDocument()
+    expect(screen.getByTestId('standalone-device-option-local-offline')).toBeDisabled()
+
+    await userEvent.click(screen.getByTestId('no-project-option'))
+    expect(onSelectStandaloneDevice).toHaveBeenCalledWith('cloud-online')
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+    await userEvent.click(screen.getByTestId('standalone-device-option-local-online'))
+    expect(onSelectStandaloneDevice).toHaveBeenLastCalledWith('local-online')
+  })
+
+  test('does not include enter-project work as a menu item', async () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects: [{ id: 7, name: 'Wegent', tasks: [] }],
+          currentProjectId: undefined,
+        })}
+      />,
+    )
+
+    expect(screen.getByTestId('project-work-button')).toHaveTextContent('进入项目工作')
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    expect(screen.queryByTestId('no-project-option')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-work-menu')).not.toHaveTextContent('进入项目工作')
   })
 
   test('disables model and skill selectors when options are locked', () => {

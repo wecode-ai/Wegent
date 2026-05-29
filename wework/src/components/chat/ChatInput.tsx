@@ -1,4 +1,4 @@
-import { useTranslation } from 'react-i18next'
+import { useTranslation } from '@/hooks/useTranslation'
 import type {
   Attachment,
   DeviceInfo,
@@ -29,7 +29,9 @@ export interface ProjectWorkControls {
   projects: ProjectWithTasks[]
   devices: DeviceInfo[]
   currentProjectId?: number
-  onSelectProject: (projectId: number) => void
+  currentStandaloneDeviceId?: string | null
+  onSelectProject: (projectId: number | null) => void
+  onSelectStandaloneDevice: (deviceId: string | null) => void
 }
 
 interface ChatInputProps {
@@ -100,7 +102,9 @@ export function ChatInput({
             projects: [],
             devices: [],
             currentProjectId: undefined,
+            currentStandaloneDeviceId: null,
             onSelectProject: () => {},
+            onSelectStandaloneDevice: () => {},
           }
         }
         showProjectWorkBar={showProjectWorkBar}

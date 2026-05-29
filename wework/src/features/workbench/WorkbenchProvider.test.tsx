@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, test, vi } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { WorkbenchProvider } from './WorkbenchProvider'
 import { useWorkbench } from './useWorkbench'
 import type { Attachment, SkillRef, UnifiedModel } from '@/types/api'
@@ -81,7 +81,30 @@ function ArchiveProbe() {
   )
 }
 
+function ProjectSelectionProbe() {
+  const workbench = useWorkbench()
+
+  return (
+    <div>
+      <span data-testid="current-project-name">
+        {workbench.state.currentProject?.name ?? 'no-project'}
+      </span>
+      <button type="button" onClick={() => workbench.startNewChat()}>
+        new chat
+      </button>
+      <button type="button" onClick={() => workbench.startStandaloneChat()}>
+        standalone chat
+      </button>
+    </div>
+  )
+}
+
 describe('WorkbenchProvider', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    vi.clearAllMocks()
+  })
+
   test('bootstraps current user, default team, projects, and recent tasks', async () => {
     render(
       <WorkbenchProvider
@@ -104,6 +127,7 @@ describe('WorkbenchProvider', () => {
             updateProject: vi.fn(),
             deleteProject: vi.fn(),
             archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
             createConversation: vi.fn(),
           },
           taskApi: {
@@ -140,8 +164,8 @@ describe('WorkbenchProvider', () => {
     )
   })
 
-  test('sends project chat options for a new project conversation', async () => {
-    const sendMessage = vi.fn().mockResolvedValue({ success: true, task_id: 99 })
+  test('restores the last concrete project for new chat and can clear project work', async () => {
+    localStorage.setItem('wework.lastProjectId.1', '7')
 
     render(
       <WorkbenchProvider
@@ -159,26 +183,97 @@ describe('WorkbenchProvider', () => {
           },
           projectApi: {
             listProjects: vi.fn().mockResolvedValue({
-              items: [
-                {
-                  id: 7,
-                  name: 'Wegent',
-                  tasks: [],
-                  config: {
-                    mode: 'workspace',
-                    execution: {
-                      targetType: 'local',
-                      deviceId: 'device-1',
-                    },
-                  },
-                },
-              ],
+              items: [{ id: 7, name: 'Wegent', tasks: [] }],
             }),
             getProject: vi.fn(),
             createProject: vi.fn(),
             updateProject: vi.fn(),
             deleteProject: vi.fn(),
             archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail: vi.fn(),
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+          },
+          chatStream: {
+            joinTask: vi.fn(),
+            leaveTask: vi.fn(),
+            sendMessage: vi.fn(),
+            subscribe: vi.fn(() => vi.fn()),
+          },
+        }}
+      >
+        <ProjectSelectionProbe />
+      </WorkbenchProvider>
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
+    )
+
+    await userEvent.click(screen.getByText('standalone chat'))
+    expect(screen.getByTestId('current-project-name')).toHaveTextContent('no-project')
+
+    await userEvent.click(screen.getByText('new chat'))
+    expect(screen.getByTestId('current-project-name')).toHaveTextContent('Wegent')
+  })
+
+  test('sends project chat options for a new project conversation', async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ success: true, task_id: 99 })
+    const listProjects = vi.fn().mockResolvedValue({
+      items: [
+        {
+          id: 7,
+          name: 'Wegent',
+          tasks: [],
+          config: {
+            mode: 'workspace',
+            execution: {
+              targetType: 'local',
+              deviceId: 'device-1',
+            },
+          },
+        },
+      ],
+    })
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: { listModels: vi.fn().mockResolvedValue({ data: [] }) },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects,
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
             createConversation: vi.fn(),
           },
           taskApi: {
@@ -237,6 +332,120 @@ describe('WorkbenchProvider', () => {
               is_public: false,
             },
           ],
+        })
+      )
+    )
+    expect(listProjects).toHaveBeenCalledTimes(2)
+  })
+
+  test('sends standalone chats to the preferred online cloud device', async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ success: true, task_id: 100 })
+
+    function StandaloneDeviceProbe() {
+      const workbench = useWorkbench()
+
+      return (
+        <div>
+          <span data-testid="standalone-device-id">
+            {workbench.state.standaloneDeviceId ?? 'no-device'}
+          </span>
+          <button type="button" onClick={() => workbench.setInput('run pwd')}>
+            set input
+          </button>
+          <button type="button" onClick={() => void workbench.sendCurrentInput()}>
+            send
+          </button>
+        </div>
+      )
+    }
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: { listModels: vi.fn().mockResolvedValue({ data: [] }) },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({ items: [] }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail: vi.fn(),
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([
+              {
+                id: 1,
+                device_id: 'local-online',
+                name: 'Local Online',
+                status: 'online',
+                is_default: false,
+                device_type: 'local',
+              },
+              {
+                id: 2,
+                device_id: 'cloud-online',
+                name: 'Cloud Online',
+                status: 'online',
+                is_default: false,
+                device_type: 'cloud',
+              },
+            ]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+          },
+          chatStream: {
+            joinTask: vi.fn(),
+            leaveTask: vi.fn(),
+            sendMessage,
+            subscribe: vi.fn(() => vi.fn()),
+          },
+        }}
+      >
+        <StandaloneDeviceProbe />
+      </WorkbenchProvider>
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('standalone-device-id')).toHaveTextContent(
+        'cloud-online'
+      )
+    )
+
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          team_id: 2,
+          project_id: undefined,
+          device_id: 'cloud-online',
+          task_type: 'code',
+          message: 'run pwd',
         })
       )
     )
@@ -306,6 +515,7 @@ describe('WorkbenchProvider', () => {
             updateProject: vi.fn(),
             deleteProject: vi.fn(),
             archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
             createConversation: vi.fn(),
           },
           taskApi: {
@@ -413,6 +623,7 @@ describe('WorkbenchProvider', () => {
             updateProject: vi.fn(),
             deleteProject: vi.fn(),
             archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
             createConversation: vi.fn(),
           },
           taskApi: {
@@ -481,6 +692,7 @@ describe('WorkbenchProvider', () => {
             updateProject: vi.fn(),
             deleteProject: vi.fn(),
             archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
             createConversation: vi.fn(),
           },
           taskApi: {

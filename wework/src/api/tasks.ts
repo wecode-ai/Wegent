@@ -32,7 +32,7 @@ export function createTaskApi(client: HttpClient) {
       return client.post(`/tasks/${taskId}/archive`)
     },
     archiveAllChats(): Promise<TaskArchiveBatchResponse> {
-      return client.post('/tasks/archive')
+      return client.post('/tasks/archive?scope=standalone')
     },
     listArchivedTasks(): Promise<ArchivedTaskListResponse> {
       return client.get('/tasks/archived?limit=200&page=1')

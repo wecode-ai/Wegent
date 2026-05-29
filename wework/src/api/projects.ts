@@ -32,6 +32,9 @@ export function createProjectApi(client: HttpClient) {
     archiveProjectChats(projectId: number): Promise<TaskArchiveBatchResponse> {
       return client.post(`/projects/${projectId}/archive-chats`)
     },
+    archiveAllProjectChats(): Promise<TaskArchiveBatchResponse> {
+      return client.post('/projects/archive-chats')
+    },
     createConversation(
       projectId: number,
       data: CreateProjectConversationRequest

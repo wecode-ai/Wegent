@@ -1,6 +1,12 @@
-import { ChevronDown, FolderOpen, FolderPlus } from 'lucide-react'
+import { Check, ChevronDown, Cloud, FolderOpen, FolderPlus, FolderX, HardDrive } from 'lucide-react'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
+import {
+  getPreferredStandaloneDeviceId,
+  isCloudDevice,
+  isOnlineDevice,
+  sortStandaloneDevices,
+} from '@/lib/device-selection'
 import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
 import { useOutsideClick } from './useOutsideClick'
 
@@ -8,10 +14,19 @@ interface ProjectWorkBarProps {
   projects: ProjectWithTasks[]
   devices: DeviceInfo[]
   currentProjectId?: number
-  onSelectProject: (projectId: number) => void
+  currentStandaloneDeviceId?: string | null
+  onSelectProject: (projectId: number | null) => void
+  onSelectStandaloneDevice: (deviceId: string | null) => void
 }
 
-export function ProjectWorkBar({ projects, devices, currentProjectId, onSelectProject }: ProjectWorkBarProps) {
+export function ProjectWorkBar({
+  projects,
+  devices,
+  currentProjectId,
+  currentStandaloneDeviceId,
+  onSelectProject,
+  onSelectStandaloneDevice,
+}: ProjectWorkBarProps) {
   const { t } = useTranslation('common')
   const containerRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
@@ -39,10 +54,36 @@ export function ProjectWorkBar({ projects, devices, currentProjectId, onSelectPr
       return onlineB - onlineA
     })
   }, [projects, getDeviceForProject])
+  const standaloneDevices = useMemo(() => sortStandaloneDevices(devices), [devices])
+  const defaultStandaloneDeviceId = useMemo(
+    () => getPreferredStandaloneDeviceId(devices, currentStandaloneDeviceId),
+    [currentStandaloneDeviceId, devices]
+  )
+  const selectedStandaloneDeviceId = defaultStandaloneDeviceId
 
   const handleSelectProject = (projectId: number) => {
     onSelectProject(projectId)
     setOpen(false)
+  }
+
+  const handleUseNoProject = () => {
+    onSelectStandaloneDevice(defaultStandaloneDeviceId)
+    setOpen(false)
+  }
+
+  const handleSelectStandaloneDevice = (deviceId: string) => {
+    onSelectStandaloneDevice(deviceId)
+    setOpen(false)
+  }
+
+  const getDeviceStatusLabel = (device: DeviceInfo) => {
+    if (device.status === 'online') {
+      return t('workbench.project_device_online', '（在线）')
+    }
+    if (device.status === 'busy') {
+      return t('workbench.project_device_busy', '（忙碌）')
+    }
+    return t('workbench.project_device_offline', '（离线）')
   }
 
   return (
@@ -87,6 +128,58 @@ export function ProjectWorkBar({ projects, devices, currentProjectId, onSelectPr
                   )
                 })}
               </div>
+            )}
+            {currentProject && (
+              <>
+                <div className="my-2 border-t border-border" />
+                <button
+                  type="button"
+                  data-testid="no-project-option"
+                  onClick={handleUseNoProject}
+                  className="flex min-h-10 w-full items-center gap-3 rounded-xl px-4 py-2 text-left text-sm font-medium text-text-secondary hover:bg-muted"
+                >
+                  <FolderX className="h-4 w-4 shrink-0" />
+                  <span>{t('workbench.no_project', '不使用项目')}</span>
+                </button>
+                <div data-testid="standalone-device-list" className="mt-1 space-y-1 pl-6">
+                  {standaloneDevices.length === 0 ? (
+                    <div className="px-4 py-2 text-xs text-text-muted">
+                      {t('workbench.project_no_available_devices', '暂无可用设备')}
+                    </div>
+                  ) : (
+                    standaloneDevices.map(device => {
+                      const online = isOnlineDevice(device)
+                      const selected = device.device_id === selectedStandaloneDeviceId
+                      const DeviceIcon = isCloudDevice(device) ? Cloud : HardDrive
+                      return (
+                        <button
+                          key={device.device_id}
+                          type="button"
+                          data-testid={`standalone-device-option-${device.device_id}`}
+                          disabled={!online}
+                          onClick={() => handleSelectStandaloneDevice(device.device_id)}
+                          className={[
+                            'flex min-h-9 w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs',
+                            online
+                              ? 'text-text-secondary hover:bg-muted'
+                              : 'cursor-not-allowed text-text-muted opacity-60',
+                            selected ? 'bg-muted text-text-primary' : '',
+                          ].join(' ')}
+                        >
+                          <DeviceIcon className="h-3.5 w-3.5 shrink-0" />
+                          <span className="min-w-0 flex-1 truncate">
+                            {device.name || device.device_id}
+                          </span>
+                          <span className={online ? 'text-primary' : 'text-text-muted'}>
+                            {getDeviceStatusLabel(device)}
+                          </span>
+                          {selected && online && <Check className="h-3.5 w-3.5 shrink-0" />}
+                        </button>
+                      )
+                    })
+                  )}
+                </div>
+              </>
             )}
           </div>
         )}

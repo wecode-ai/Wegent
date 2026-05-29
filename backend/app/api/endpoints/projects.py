@@ -73,6 +73,29 @@ def create_project_endpoint(
         )
 
 
+@router.post(
+    "/archive-chats",
+    response_model=TaskArchiveBatchResponse,
+)
+def archive_all_project_chats_endpoint(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Archive all active chats that belong to any project."""
+    try:
+        count = project_service.archive_all_project_chats(
+            db=db, user_id=current_user.id
+        )
+        return {"message": "Project chats archived successfully", "count": count}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to archive project chats: {str(e)}",
+        )
+
+
 @router.get("/{project_id}", response_model=ProjectWithTasksResponse)
 def get_project_endpoint(
     project_id: int = Path(..., description="Project ID"),
