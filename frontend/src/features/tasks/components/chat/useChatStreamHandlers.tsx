@@ -731,7 +731,7 @@ export function useChatStreamHandlers({
           }
 
           if (completedTaskId && !selectedTaskDetail?.id) {
-            if (taskType === 'knowledge' && knowledgeBaseId && pathname === '/knowledge') {
+            if (taskType === 'knowledge' && knowledgeBaseId) {
               // Set task directly instead of router.push to avoid URL-change-induced
               // re-renders that cascade into selectedTaskDetail=null and hasMessages flip
               setSelectedTask({ id: completedTaskId } as Task)
