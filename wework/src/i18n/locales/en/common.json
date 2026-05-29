@@ -40,6 +40,7 @@
     "project_no_available_devices": "No available devices",
     "project_cloud_device": "(Cloud device)",
     "project_device_online": "(Online)",
+    "project_device_busy": "(Busy)",
     "project_device_offline": "(Offline)",
     "project_name": "Project name",
     "project_name_placeholder": "Enter project name",

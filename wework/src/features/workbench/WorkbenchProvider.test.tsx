@@ -338,6 +338,119 @@ describe('WorkbenchProvider', () => {
     expect(listProjects).toHaveBeenCalledTimes(2)
   })
 
+  test('sends standalone chats to the preferred online cloud device', async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ success: true, task_id: 100 })
+
+    function StandaloneDeviceProbe() {
+      const workbench = useWorkbench()
+
+      return (
+        <div>
+          <span data-testid="standalone-device-id">
+            {workbench.state.standaloneDeviceId ?? 'no-device'}
+          </span>
+          <button type="button" onClick={() => workbench.setInput('run pwd')}>
+            set input
+          </button>
+          <button type="button" onClick={() => void workbench.sendCurrentInput()}>
+            send
+          </button>
+        </div>
+      )
+    }
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: { listModels: vi.fn().mockResolvedValue({ data: [] }) },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({ items: [] }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail: vi.fn(),
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([
+              {
+                id: 1,
+                device_id: 'local-online',
+                name: 'Local Online',
+                status: 'online',
+                is_default: false,
+                device_type: 'local',
+              },
+              {
+                id: 2,
+                device_id: 'cloud-online',
+                name: 'Cloud Online',
+                status: 'online',
+                is_default: false,
+                device_type: 'cloud',
+              },
+            ]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+          },
+          chatStream: {
+            joinTask: vi.fn(),
+            leaveTask: vi.fn(),
+            sendMessage,
+            subscribe: vi.fn(() => vi.fn()),
+          },
+        }}
+      >
+        <StandaloneDeviceProbe />
+      </WorkbenchProvider>
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('standalone-device-id')).toHaveTextContent(
+        'cloud-online'
+      )
+    )
+
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          team_id: 2,
+          project_id: undefined,
+          device_id: 'cloud-online',
+          task_type: 'code',
+          message: 'run pwd',
+        })
+      )
+    )
+  })
+
   test('does not send model or skill overrides after a task is open', async () => {
     const sendMessage = vi.fn().mockResolvedValue({ success: true, task_id: 8 })
 

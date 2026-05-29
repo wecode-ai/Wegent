@@ -7,6 +7,7 @@ const baseState = {
   user: { id: 1, user_name: 'MI', email: 'mi@example.com' },
   defaultTeam: null,
   projects: [{ id: 1, name: 'github_wegent', tasks: [] }],
+  devices: [],
   recentTasks: [
     {
       id: 3,
@@ -17,6 +18,7 @@ const baseState = {
     },
   ],
   currentProject: null,
+  standaloneDeviceId: null,
   currentTask: null,
   input: '',
   isBootstrapping: false,

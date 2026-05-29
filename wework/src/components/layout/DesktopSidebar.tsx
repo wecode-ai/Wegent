@@ -111,12 +111,6 @@ function formatRelativeSidebarTime(value?: string) {
   return `${Math.floor(days / 7)}w`
 }
 
-function isTaskRunning(status?: string) {
-  return ['PENDING', 'RUNNING', 'STARTED', 'PROCESSING', 'IN_PROGRESS'].includes(
-    String(status ?? '').toUpperCase()
-  )
-}
-
 function getProjectTaskTitle(task: ProjectTask) {
   return task.task_title || task.title || `Task #${task.task_id}`
 }
@@ -246,11 +240,7 @@ function ProjectItem({
   const tasks = useMemo(() => sortProjectTasks(project.tasks), [project.tasks])
   const hasMoreTasks = tasks.length > INITIAL_PROJECT_CHAT_COUNT
   const visibleTasks = showAllTasks ? tasks : tasks.slice(0, INITIAL_PROJECT_CHAT_COUNT)
-  const projectRunning = tasks.some(
-    task =>
-      runningTaskIds.has(task.task_id) ||
-      isTaskRunning(task.task_status || task.status)
-  )
+  const projectRunning = tasks.some(task => runningTaskIds.has(task.task_id))
 
   return (
     <div data-testid="project-item" className="space-y-0.5">
@@ -326,10 +316,7 @@ function ProjectItem({
                 key={task.task_id}
                 task={task}
                 selected={activeTaskId === task.task_id}
-                running={
-                  runningTaskIds.has(task.task_id) ||
-                  isTaskRunning(task.task_status || task.status)
-                }
+                running={runningTaskIds.has(task.task_id)}
                 onOpenTask={onOpenTask}
                 projectId={project.id}
                 onArchiveTask={onArchiveTask}
@@ -540,119 +527,124 @@ export function DesktopSidebar({
         />
       </nav>
 
-      <section className="mt-8 min-h-0">
-        <div className="group/projects mb-3 flex h-8 items-center justify-between px-3">
-          <h2 className="text-sm font-semibold text-[#8a8a8a]">
-            {t('workbench.projects', '项目')}
-          </h2>
-          <div className="flex items-center opacity-0 transition-opacity group-hover/projects:opacity-100 focus-within:opacity-100">
-            <ActionMenu
-              ariaLabel={t('workbench.project_list_actions', '项目列表操作')}
-              testId="projects-more-button"
-              items={[
-                {
-                  label: t('workbench.archive_all_chats', '归档所有会话'),
-                  icon: Archive,
-                  testId: 'archive-all-chats-button',
-                  onSelect: onArchiveAllProjectChats,
-                },
-              ]}
-            />
-            <ActionMenu
-              ariaLabel={t('workbench.new_project', '新建项目')}
-              testId="projects-create-button"
-              icon={FolderPlus}
-              items={[
-                {
-                  label: t('workbench.start_from_scratch', '从头开始'),
-                  icon: FolderPlus,
-                  testId: 'project-start-from-scratch-button',
-                  onSelect: () => setProjectCreateMode('scratch'),
-                },
-                {
-                  label: t('workbench.using_existing_folder', '使用现有目录'),
-                  icon: Folder,
-                  testId: 'project-existing-folder-button',
-                  onSelect: () => setProjectCreateMode('existing'),
-                },
-              ]}
-            />
+      <div
+        data-testid="sidebar-worklists-scroll"
+        className="mt-8 min-h-0 flex-1 overflow-y-auto pr-1"
+      >
+        <section>
+          <div className="group/projects mb-3 flex h-8 items-center justify-between px-3">
+            <h2 className="text-sm font-semibold text-[#8a8a8a]">
+              {t('workbench.projects', '项目')}
+            </h2>
+            <div className="flex items-center opacity-0 transition-opacity group-hover/projects:opacity-100 focus-within:opacity-100">
+              <ActionMenu
+                ariaLabel={t('workbench.project_list_actions', '项目列表操作')}
+                testId="projects-more-button"
+                items={[
+                  {
+                    label: t('workbench.archive_all_chats', '归档所有会话'),
+                    icon: Archive,
+                    testId: 'archive-all-chats-button',
+                    onSelect: onArchiveAllProjectChats,
+                  },
+                ]}
+              />
+              <ActionMenu
+                ariaLabel={t('workbench.new_project', '新建项目')}
+                testId="projects-create-button"
+                icon={FolderPlus}
+                items={[
+                  {
+                    label: t('workbench.start_from_scratch', '从头开始'),
+                    icon: FolderPlus,
+                    testId: 'project-start-from-scratch-button',
+                    onSelect: () => setProjectCreateMode('scratch'),
+                  },
+                  {
+                    label: t('workbench.using_existing_folder', '使用现有目录'),
+                    icon: Folder,
+                    testId: 'project-existing-folder-button',
+                    onSelect: () => setProjectCreateMode('existing'),
+                  },
+                ]}
+              />
+            </div>
           </div>
-        </div>
-        <div className="space-y-1">
-          {projects.map(project => (
-            <ProjectItem
-              key={project.id}
-              project={project}
-              expanded={expandedProjectIds.has(project.id)}
-              showAllTasks={expandedTaskListIds.has(project.id)}
-              activeTaskId={currentTaskId}
-              runningTaskIds={runningTaskIds}
-              onToggleProject={handleToggleProject}
-              onToggleTaskLimit={handleToggleProjectTaskLimit}
-              onStartNewProjectChat={onStartNewProjectChat}
-              onArchiveProjectChats={onArchiveProjectChats}
-              onRemoveProject={onRemoveProject}
-              onRenameProject={setRenamingProject}
-              onOpenTask={onOpenTask}
-              onArchiveTask={onArchiveTask}
-              onRenameTask={task =>
-                setRenamingTask({ id: task.task_id, title: getProjectTaskTitle(task) })
-              }
-            />
-          ))}
-        </div>
-      </section>
+          <div className="space-y-1">
+            {projects.map(project => (
+              <ProjectItem
+                key={project.id}
+                project={project}
+                expanded={expandedProjectIds.has(project.id)}
+                showAllTasks={expandedTaskListIds.has(project.id)}
+                activeTaskId={currentTaskId}
+                runningTaskIds={runningTaskIds}
+                onToggleProject={handleToggleProject}
+                onToggleTaskLimit={handleToggleProjectTaskLimit}
+                onStartNewProjectChat={onStartNewProjectChat}
+                onArchiveProjectChats={onArchiveProjectChats}
+                onRemoveProject={onRemoveProject}
+                onRenameProject={setRenamingProject}
+                onOpenTask={onOpenTask}
+                onArchiveTask={onArchiveTask}
+                onRenameTask={task =>
+                  setRenamingTask({ id: task.task_id, title: getProjectTaskTitle(task) })
+                }
+              />
+            ))}
+          </div>
+        </section>
 
-      <section className="mt-8 min-h-0 flex-1 overflow-hidden">
-        <div className="group/chats mb-3 flex h-8 items-center justify-between px-3">
-          <h2 className="text-sm font-semibold text-[#8a8a8a]">
-            {t('workbench.history', '对话')}
-          </h2>
-          <div className="flex items-center opacity-0 transition-opacity group-hover/chats:opacity-100 focus-within:opacity-100">
-            <ActionMenu
-              ariaLabel={t('workbench.chat_list_actions', '对话列表操作')}
-              testId="chats-more-button"
-              items={[
-                {
-                  label: t('workbench.archive_all_chats', '归档所有会话'),
-                  icon: Archive,
-                  testId: 'archive-standalone-chats-button',
-                  onSelect: onArchiveAllChats,
-                },
-              ]}
-            />
-            <button
-              type="button"
-              data-testid="chats-new-conversation-button"
-              onClick={onStartStandaloneChat}
-              className="flex h-7 w-7 items-center justify-center rounded-md text-[#606368] hover:bg-white/80 hover:text-[#2d2d2d]"
-              aria-label={t('workbench.new_chat', '新对话')}
-            >
-              <MessageSquarePlus className="h-4 w-4" />
-            </button>
+        <section className="mt-8">
+          <div className="group/chats mb-3 flex h-8 items-center justify-between px-3">
+            <h2 className="text-sm font-semibold text-[#8a8a8a]">
+              {t('workbench.history', '对话')}
+            </h2>
+            <div className="flex items-center opacity-0 transition-opacity group-hover/chats:opacity-100 focus-within:opacity-100">
+              <ActionMenu
+                ariaLabel={t('workbench.chat_list_actions', '对话列表操作')}
+                testId="chats-more-button"
+                items={[
+                  {
+                    label: t('workbench.archive_all_chats', '归档所有会话'),
+                    icon: Archive,
+                    testId: 'archive-standalone-chats-button',
+                    onSelect: onArchiveAllChats,
+                  },
+                ]}
+              />
+              <button
+                type="button"
+                data-testid="chats-new-conversation-button"
+                onClick={onStartStandaloneChat}
+                className="flex h-7 w-7 items-center justify-center rounded-md text-[#606368] hover:bg-white/80 hover:text-[#2d2d2d]"
+                aria-label={t('workbench.new_chat', '新对话')}
+              >
+                <MessageSquarePlus className="h-4 w-4" />
+              </button>
+            </div>
           </div>
-        </div>
-        <div className="space-y-1 overflow-auto">
-          {sortedRecentTasks.map(task => (
-            <RecentTaskRow
-              key={task.id}
-              task={task}
-              selected={currentTaskId === task.id && currentProjectId === undefined}
-              running={runningTaskIds.has(task.id) || isTaskRunning(task.status)}
-              onOpenTask={onOpenTask}
-              onArchiveTask={onArchiveTask}
-              onRenameTask={item => setRenamingTask({ id: item.id, title: item.title })}
-            />
-          ))}
-        </div>
-      </section>
+          <div className="space-y-1 pb-2">
+            {sortedRecentTasks.map(task => (
+              <RecentTaskRow
+                key={task.id}
+                task={task}
+                selected={currentTaskId === task.id && currentProjectId === undefined}
+                running={runningTaskIds.has(task.id)}
+                onOpenTask={onOpenTask}
+                onArchiveTask={onArchiveTask}
+                onRenameTask={item => setRenamingTask({ id: item.id, title: item.title })}
+              />
+            ))}
+          </div>
+        </section>
+      </div>
 
       <button
         type="button"
         data-testid="settings-button"
         onClick={() => setSettingsMenuOpen(open => !open)}
-        className="mt-4 flex h-10 items-center gap-3 rounded-md px-3 text-sm font-medium text-[#333] hover:bg-white/70"
+        className="mt-4 flex h-10 shrink-0 items-center gap-3 rounded-md px-3 text-sm font-medium text-[#333] hover:bg-white/70"
         aria-expanded={settingsMenuOpen}
       >
         <Settings className="h-4 w-4" />

@@ -29,7 +29,9 @@ export interface ProjectWorkControls {
   projects: ProjectWithTasks[]
   devices: DeviceInfo[]
   currentProjectId?: number
+  currentStandaloneDeviceId?: string | null
   onSelectProject: (projectId: number | null) => void
+  onSelectStandaloneDevice: (deviceId: string | null) => void
 }
 
 interface ChatInputProps {
@@ -100,7 +102,9 @@ export function ChatInput({
             projects: [],
             devices: [],
             currentProjectId: undefined,
+            currentStandaloneDeviceId: null,
             onSelectProject: () => {},
+            onSelectStandaloneDevice: () => {},
           }
         }
         showProjectWorkBar={showProjectWorkBar}

@@ -74,6 +74,7 @@ describe('DesktopWorkbenchLayout', () => {
         },
       ],
       currentProject: null,
+      standaloneDeviceId: null,
       currentTask: null,
       input: '',
       isBootstrapping: false,
@@ -567,6 +568,56 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByTestId('project-spinner-1')).toBeInTheDocument()
     expect(screen.getByTestId('history-task-spinner-41')).toBeInTheDocument()
+  })
+
+  test('does not show spinners for stale server running statuses on initial lists', () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        runningTaskIds={new Set()}
+        state={{
+          ...baseProps.state,
+          projects: [
+            {
+              id: 1,
+              name: 'github_wegent',
+              tasks: [
+                {
+                  id: 31,
+                  task_id: 31,
+                  task_title: 'Stale project chat',
+                  task_status: 'RUNNING',
+                  updated_at: new Date().toISOString(),
+                },
+              ],
+            },
+          ],
+          recentTasks: [
+            {
+              id: 41,
+              title: 'Stale standalone chat',
+              status: 'PENDING',
+              task_type: 'code',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            },
+          ],
+        }}
+      />,
+    )
+
+    expect(screen.queryByTestId('project-spinner-1')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('history-task-spinner-41')).not.toBeInTheDocument()
+  })
+
+  test('keeps projects and chats in the scrollable sidebar region above settings', () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(screen.getByTestId('sidebar-worklists-scroll')).toHaveClass(
+      'flex-1',
+      'overflow-y-auto',
+    )
+    expect(screen.getByTestId('settings-button')).toHaveClass('shrink-0')
   })
 
   test('toggles an empty project chat list without persistent project highlight', async () => {

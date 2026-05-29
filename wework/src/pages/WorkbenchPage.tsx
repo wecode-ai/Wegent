@@ -14,6 +14,7 @@ export function WorkbenchPage() {
     runningTaskIds,
     projectChat,
     selectProject,
+    selectStandaloneDevice,
     startNewChat,
     startStandaloneChat,
     startNewProjectChat,
@@ -43,7 +44,9 @@ export function WorkbenchPage() {
     projects: state.projects,
     devices: state.devices,
     currentProjectId: state.currentProject?.id,
+    currentStandaloneDeviceId: state.standaloneDeviceId,
     onSelectProject: selectProject,
+    onSelectStandaloneDevice: selectStandaloneDevice,
   }
 
   return (

@@ -8,6 +8,7 @@ export const initialWorkbenchState: WorkbenchState = {
   devices: [],
   recentTasks: [],
   currentProject: null,
+  standaloneDeviceId: null,
   currentTask: null,
   input: '',
   isBootstrapping: true,
@@ -24,17 +25,24 @@ export type WorkbenchAction =
       devices: DeviceInfo[]
       recentTasks: Task[]
       currentProject?: ProjectWithTasks | null
+      standaloneDeviceId?: string | null
     }
   | {
       type: 'lists_refreshed'
       projects: ProjectWithTasks[]
       devices: DeviceInfo[]
       recentTasks: Task[]
+      standaloneDeviceId?: string | null
     }
   | { type: 'bootstrap_failed'; error: string }
   | { type: 'project_selected'; project: ProjectWithTasks }
-  | { type: 'project_cleared' }
-  | { type: 'task_opened'; task: Task; project?: ProjectWithTasks | null }
+  | { type: 'project_cleared'; standaloneDeviceId?: string | null }
+  | {
+      type: 'task_opened'
+      task: Task
+      project?: ProjectWithTasks | null
+      standaloneDeviceId?: string | null
+    }
   | { type: 'task_status_changed'; taskId: number; status: string }
   | { type: 'current_task_cleared' }
   | { type: 'input_changed'; input: string }
@@ -59,6 +67,10 @@ export function workbenchReducer(
           action.currentProject === undefined
             ? state.currentProject
             : action.currentProject,
+        standaloneDeviceId:
+          action.standaloneDeviceId === undefined
+            ? state.standaloneDeviceId
+            : action.standaloneDeviceId,
         isBootstrapping: false,
         error: null,
       }
@@ -71,18 +83,34 @@ export function workbenchReducer(
         currentProject: state.currentProject
           ? action.projects.find(project => project.id === state.currentProject?.id) ?? null
           : null,
+        standaloneDeviceId:
+          action.standaloneDeviceId === undefined
+            ? state.standaloneDeviceId
+            : action.standaloneDeviceId,
       }
     case 'bootstrap_failed':
       return { ...state, isBootstrapping: false, error: action.error }
     case 'project_selected':
       return { ...state, currentProject: action.project, currentTask: null }
     case 'project_cleared':
-      return { ...state, currentProject: null, currentTask: null }
+      return {
+        ...state,
+        currentProject: null,
+        standaloneDeviceId:
+          action.standaloneDeviceId === undefined
+            ? state.standaloneDeviceId
+            : action.standaloneDeviceId,
+        currentTask: null,
+      }
     case 'task_opened':
       return {
         ...state,
         currentProject:
           action.project === undefined ? state.currentProject : action.project,
+        standaloneDeviceId:
+          action.project === null
+            ? action.standaloneDeviceId ?? action.task.device_id ?? state.standaloneDeviceId
+            : state.standaloneDeviceId,
         currentTask: action.task,
       }
     case 'task_status_changed':

@@ -11,6 +11,7 @@ import { createTeamApi } from '@/api/teams'
 import { getRuntimeConfig } from '@/config/runtime'
 import { createChatStream } from '@/stream/chatStream'
 import { createSocketClient } from '@/stream/socketClient'
+import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import type {
   Attachment,
   ArchivedTaskListResponse,
@@ -69,6 +70,7 @@ export interface WorkbenchContextValue {
   }
   runningTaskIds: Set<number>
   selectProject: (projectId: number | null) => void
+  selectStandaloneDevice: (deviceId: string | null) => void
   startNewChat: () => void
   startStandaloneChat: () => void
   startNewProjectChat: (projectId: number) => void
@@ -202,6 +204,7 @@ export function WorkbenchProvider({
 
       const projects =
         projectsResult.status === 'fulfilled' ? projectsResult.value.items : []
+      const devices = devicesResult.status === 'fulfilled' ? devicesResult.value : []
       const lastProjectId = readLastProjectId(user.id)
       const currentProject =
         lastProjectId === null
@@ -213,10 +216,11 @@ export function WorkbenchProvider({
         user,
         defaultTeam: defaultTeamResult.status === 'fulfilled' ? defaultTeamResult.value : null,
         projects,
-        devices: devicesResult.status === 'fulfilled' ? devicesResult.value : [],
+        devices,
         recentTasks:
           recentTasksResult.status === 'fulfilled' ? recentTasksResult.value.items : [],
         currentProject,
+        standaloneDeviceId: getPreferredStandaloneDeviceId(devices),
       })
     }
 
@@ -237,8 +241,12 @@ export function WorkbenchProvider({
       projects: projectsResult.items,
       recentTasks: recentTasksResult.items,
       devices: devicesResult,
+      standaloneDeviceId: getPreferredStandaloneDeviceId(
+        devicesResult,
+        state.standaloneDeviceId
+      ),
     })
-  }, [resolvedServices])
+  }, [resolvedServices, state.standaloneDeviceId])
 
   useEffect(() => {
     return resolvedServices.chatStream.subscribe({
@@ -325,7 +333,13 @@ export function WorkbenchProvider({
   const selectProject = useCallback(
     (projectId: number | null) => {
       if (projectId === null) {
-        dispatch({ type: 'project_cleared' })
+        dispatch({
+          type: 'project_cleared',
+          standaloneDeviceId: getPreferredStandaloneDeviceId(
+            state.devices,
+            state.standaloneDeviceId
+          ),
+        })
         dispatchMessages({ type: 'reset', messages: [] })
         return
       }
@@ -336,7 +350,21 @@ export function WorkbenchProvider({
         dispatchMessages({ type: 'reset', messages: [] })
       }
     },
-    [state.projects, user.id]
+    [state.devices, state.projects, state.standaloneDeviceId, user.id]
+  )
+
+  const selectStandaloneDevice = useCallback(
+    (deviceId: string | null) => {
+      dispatch({
+        type: 'project_cleared',
+        standaloneDeviceId: getPreferredStandaloneDeviceId(
+          state.devices,
+          deviceId ?? state.standaloneDeviceId
+        ),
+      })
+      dispatchMessages({ type: 'reset', messages: [] })
+    },
+    [state.devices, state.standaloneDeviceId]
   )
 
   const startNewChat = useCallback(() => {
@@ -347,15 +375,27 @@ export function WorkbenchProvider({
     if (project) {
       dispatch({ type: 'project_selected', project })
     } else {
-      dispatch({ type: 'project_cleared' })
+      dispatch({
+        type: 'project_cleared',
+        standaloneDeviceId: getPreferredStandaloneDeviceId(
+          state.devices,
+          state.standaloneDeviceId
+        ),
+      })
     }
     dispatchMessages({ type: 'reset', messages: [] })
-  }, [state.projects, user.id])
+  }, [state.devices, state.projects, state.standaloneDeviceId, user.id])
 
   const startStandaloneChat = useCallback(() => {
-    dispatch({ type: 'project_cleared' })
+    dispatch({
+      type: 'project_cleared',
+      standaloneDeviceId: getPreferredStandaloneDeviceId(
+        state.devices,
+        state.standaloneDeviceId
+      ),
+    })
     dispatchMessages({ type: 'reset', messages: [] })
-  }, [])
+  }, [state.devices, state.standaloneDeviceId])
 
   const startNewProjectChat = useCallback(
     (projectId: number) => {
@@ -377,14 +417,25 @@ export function WorkbenchProvider({
       if (project) {
         writeLastProjectId(user.id, project.id)
       }
-      dispatch({ type: 'task_opened', task: detail as Task, project })
+      dispatch({
+        type: 'task_opened',
+        task: detail as Task,
+        project,
+        standaloneDeviceId:
+          project === null
+            ? getPreferredStandaloneDeviceId(
+                state.devices,
+                (detail as Task).device_id ?? state.standaloneDeviceId
+              )
+            : undefined,
+      })
       dispatchMessages({
         type: 'reset',
         messages: (detail.subtasks ?? []).map(subtaskToMessage),
       })
       await resolvedServices.chatStream.joinTask(taskId)
     },
-    [resolvedServices, state.projects, user.id]
+    [resolvedServices, state.devices, state.projects, state.standaloneDeviceId, user.id]
   )
 
   const setInput = useCallback((input: string) => {
@@ -541,11 +592,17 @@ export function WorkbenchProvider({
       },
     })
 
+    const activeDeviceId =
+      state.currentTask?.device_id ??
+      state.currentProject?.config?.execution?.deviceId ??
+      state.currentProject?.config?.device_id ??
+      (!state.currentProject ? state.standaloneDeviceId ?? undefined : undefined)
+
     const payload: ChatSendPayload = {
       task_id: state.currentTask?.id,
       team_id: state.defaultTeam.id,
       project_id: state.currentTask ? undefined : state.currentProject?.id,
-      device_id: state.currentProject?.config?.execution?.deviceId ?? state.currentProject?.config?.device_id,
+      device_id: activeDeviceId,
       task_type: 'code',
       message,
     }
@@ -584,6 +641,7 @@ export function WorkbenchProvider({
           task_type: 'code',
           team_id: state.defaultTeam.id,
           project_id: projectId,
+          device_id: activeDeviceId,
           created_at: new Date().toISOString(),
         },
       })
@@ -601,11 +659,11 @@ export function WorkbenchProvider({
     modelSelection.selectedModel,
     resolvedServices,
     skillSelection.selectedSkills,
-    state.currentProject?.id,
-    state.currentProject?.config,
+    state.currentProject,
     state.currentTask,
     state.defaultTeam,
     state.input,
+    state.standaloneDeviceId,
   ])
 
   const runningTaskIds = useMemo(() => {
@@ -648,6 +706,7 @@ export function WorkbenchProvider({
       resetAttachments: attachmentSelection.resetAttachments,
     },
     selectProject,
+    selectStandaloneDevice,
     startNewChat,
     startStandaloneChat,
     startNewProjectChat,
