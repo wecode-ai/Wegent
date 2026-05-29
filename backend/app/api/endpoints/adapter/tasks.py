@@ -115,7 +115,9 @@ def archive_all_user_chats(
             db=db, user_id=current_user.id
         )
     else:
-        count = task_kinds_service.archive_all_user_chats(db=db, user_id=current_user.id)
+        count = task_kinds_service.archive_all_user_chats(
+            db=db, user_id=current_user.id
+        )
     return {"message": "Chats archived successfully", "count": count}
 
 
