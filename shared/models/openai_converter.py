@@ -377,6 +377,7 @@ class OpenAIEventConverter:
         "response.function_call_arguments.delta": "tool_start",
         "response.function_call_arguments.done": "tool_result",
         "response.reasoning_summary_part.added": "thinking",
+        "response.reasoning_summary_text.delta": "thinking",
     }
 
     # Lifecycle events that should be skipped

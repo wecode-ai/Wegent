@@ -45,6 +45,30 @@ async def test_stream_tool_use_start_does_not_emit_incomplete_tool_block():
 
 
 @pytest.mark.asyncio
+async def test_stream_thinking_delta_emits_reasoning_event():
+    emitter = MagicMock()
+    emitter.reasoning = AsyncMock()
+
+    msg = StreamEvent(
+        uuid="event-thinking-1",
+        session_id="session-1",
+        event={
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {
+                "type": "thinking_delta",
+                "thinking": "目标",
+            },
+        },
+    )
+
+    sent = await _handle_stream_event(msg, emitter, DummyStateManager())
+
+    assert sent is False
+    emitter.reasoning.assert_awaited_once_with("目标")
+
+
+@pytest.mark.asyncio
 async def test_assistant_message_emits_tool_start_when_text_was_streamed():
     emitter = MagicMock()
     emitter.flush = AsyncMock()

@@ -722,6 +722,17 @@ async def _handle_stream_event(
                 f"StreamEvent: input_json_delta with {len(partial_json)} chars"
             )
 
+        elif delta_type == "thinking_delta":
+            thinking = delta.get("thinking", "")
+            if thinking:
+                try:
+                    await emitter.reasoning(thinking)
+                    logger.debug(
+                        f"StreamEvent: sent thinking_delta with {len(thinking)} chars"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send stream thinking_delta: {e}")
+
     elif event_type == "content_block_start":
         # A new content block is starting
         content_block = event.get("content_block", {})
