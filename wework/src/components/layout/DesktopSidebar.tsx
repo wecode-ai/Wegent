@@ -38,6 +38,7 @@ interface DesktopSidebarProps {
   runningTaskIds: Set<number>
   currentProjectId?: number
   currentTaskId?: number
+  preferredDeviceId?: string | null
   activeItem?: 'chat' | 'plugins' | 'automation'
   onCollapse: () => void
   onNewChat: () => void
@@ -45,6 +46,7 @@ interface DesktopSidebarProps {
   onSelectProject: (projectId: number) => void
   onStartNewProjectChat: (projectId: number) => void
   onOpenTask: (taskId: number, projectId?: number) => void
+  onRememberExecutionDevice?: (deviceId: string) => void
   onOpenPlugins: () => void
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
@@ -378,7 +380,7 @@ function RecentTaskRow({
       <button
         type="button"
         data-testid="history-task-button"
-        onClick={() => onOpenTask(task.id, task.project_id)}
+        onClick={() => onOpenTask(task.id, task.project_id ?? 0)}
         className="min-w-0 flex-1 truncate text-left"
       >
         {task.title}
@@ -434,6 +436,7 @@ export function DesktopSidebar({
   runningTaskIds,
   currentProjectId,
   currentTaskId,
+  preferredDeviceId,
   activeItem = 'chat',
   onCollapse,
   onNewChat,
@@ -441,6 +444,7 @@ export function DesktopSidebar({
   onSelectProject,
   onStartNewProjectChat,
   onOpenTask,
+  onRememberExecutionDevice,
   onOpenPlugins,
   onCreateProject,
   onUpdateProjectName,
@@ -714,6 +718,8 @@ export function DesktopSidebar({
         devices={devices}
         onClose={() => setProjectCreateMode(null)}
         onCreateProject={onCreateProject}
+        preferredDeviceId={preferredDeviceId}
+        onSelectDevicePreference={onRememberExecutionDevice}
         onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
         onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
         onListDeviceDirectories={onListDeviceDirectories}

@@ -574,7 +574,7 @@ describe('ChatInput', () => {
     expect(onSelectProject).toHaveBeenCalledWith(8)
   })
 
-  test('shows no-project transition only when a concrete project is selected', async () => {
+  test('shows no-project transition from the standalone entry', async () => {
     const onSelectStandaloneDevice = vi.fn()
 
     render(
@@ -593,6 +593,33 @@ describe('ChatInput', () => {
     )
 
     await userEvent.click(screen.getByTestId('project-work-button'))
+    await userEvent.click(screen.getByTestId('no-project-option'))
+
+    expect(onSelectStandaloneDevice).toHaveBeenCalledWith(null)
+  })
+
+  test('shows no-project option before selecting a concrete project', async () => {
+    const onSelectStandaloneDevice = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects: [{ id: 7, name: 'Wegent', tasks: [] }],
+          currentProjectId: undefined,
+          onSelectStandaloneDevice,
+        })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    expect(screen.getByTestId('no-project-option')).toHaveTextContent('不使用项目')
+
     await userEvent.click(screen.getByTestId('no-project-option'))
 
     expect(onSelectStandaloneDevice).toHaveBeenCalledWith(null)
@@ -658,6 +685,88 @@ describe('ChatInput', () => {
     expect(onSelectStandaloneDevice).toHaveBeenLastCalledWith('local-online')
   })
 
+  test('marks the current project instead of a remembered standalone device', async () => {
+    const devices: DeviceInfo[] = [
+      {
+        id: 1,
+        device_id: 'cloud-online',
+        name: 'Cloud Online',
+        status: 'online',
+        is_default: false,
+        device_type: 'cloud',
+      },
+    ]
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects: [{ id: 7, name: 'hello', tasks: [] }],
+          devices,
+          currentProjectId: 7,
+          currentStandaloneDeviceId: 'cloud-online',
+        })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    expect(screen.getByTestId('project-selected-icon-7')).toBeInTheDocument()
+    expect(
+      screen.queryByTestId('standalone-device-selected-icon-cloud-online')
+    ).not.toBeInTheDocument()
+  })
+
+  test('marks the current standalone device when no project is selected', async () => {
+    const devices: DeviceInfo[] = [
+      {
+        id: 1,
+        device_id: 'local-online',
+        name: 'Local Online',
+        status: 'online',
+        is_default: false,
+        device_type: 'local',
+      },
+      {
+        id: 2,
+        device_id: 'cloud-online',
+        name: 'Cloud Online',
+        status: 'online',
+        is_default: false,
+        device_type: 'cloud',
+      },
+    ]
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects: [{ id: 7, name: 'hello', tasks: [] }],
+          devices,
+          currentProjectId: undefined,
+          currentStandaloneDeviceId: 'local-online',
+        })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    expect(
+      screen.getByTestId('standalone-device-selected-icon-local-online')
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByTestId('standalone-device-selected-icon-cloud-online')
+    ).not.toBeInTheDocument()
+  })
+
   test('does not include enter-project work as a menu item', async () => {
     render(
       <ChatInput
@@ -677,7 +786,7 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('project-work-button'))
 
-    expect(screen.queryByTestId('no-project-option')).not.toBeInTheDocument()
+    expect(screen.getByTestId('no-project-option')).toHaveTextContent('不使用项目')
     expect(screen.getByTestId('project-work-menu')).not.toHaveTextContent('进入项目工作')
   })
 
@@ -728,9 +837,11 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('project-work-button'))
 
-    expect(screen.getByText('online-executor')).toHaveClass('text-text-secondary')
-    expect(screen.getByText('online-executor')).not.toHaveClass('text-primary')
-    expect(screen.getByText('offline-executor')).toHaveClass('text-text-muted')
+    const projectDeviceLabel = screen.getAllByText('online-executor')[0]
+    const offlineProjectDeviceLabel = screen.getAllByText('offline-executor')[0]
+    expect(projectDeviceLabel).toHaveClass('text-text-secondary')
+    expect(projectDeviceLabel).not.toHaveClass('text-primary')
+    expect(offlineProjectDeviceLabel).toHaveClass('text-text-muted')
   })
 
   test('marks projects with offline devices as unavailable and prevents selection', async () => {

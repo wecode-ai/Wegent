@@ -7,7 +7,7 @@ import json
 import logging
 import re
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db, with_task_telemetry
 from app.core import security
 from app.core.config import settings
+from app.core.constants import CLIENT_ORIGIN_FRONTEND, SUPPORTED_CLIENT_ORIGINS
 from app.db.session import get_async_db
 from app.models.user import User
 from app.schemas.remote_workspace import (
@@ -60,6 +61,14 @@ from shared.telemetry.decorators import trace_sync
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+ClientOriginQuery = Annotated[
+    str,
+    Query(
+        pattern=f"^({'|'.join(SUPPORTED_CLIENT_ORIGINS)})$",
+        description="Client surface to scope task lists and chat operations",
+    ),
+]
 
 
 @router.post("", response_model=dict)
@@ -106,17 +115,18 @@ def archive_all_user_chats(
             "'all' preserves the legacy behavior."
         ),
     ),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
     """Archive all active personal chat/code tasks owned by the current user."""
     if scope == "standalone":
         count = task_kinds_service.archive_standalone_chats(
-            db=db, user_id=current_user.id
+            db=db, user_id=current_user.id, client_origin=client_origin
         )
     else:
         count = task_kinds_service.archive_all_user_chats(
-            db=db, user_id=current_user.id
+            db=db, user_id=current_user.id, client_origin=client_origin
         )
     return {"message": "Chats archived successfully", "count": count}
 
@@ -189,6 +199,7 @@ def get_personal_tasks_lite(
         "online,offline",
         description="Comma-separated task types to include: online (chat), offline (code), flow",
     ),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -203,7 +214,12 @@ def get_personal_tasks_lite(
     skip = (page - 1) * limit
     type_list = [t.strip() for t in types.split(",") if t.strip()]
     items, total = task_kinds_service.get_user_personal_tasks_lite(
-        db=db, user_id=current_user.id, skip=skip, limit=limit, types=type_list
+        db=db,
+        user_id=current_user.id,
+        skip=skip,
+        limit=limit,
+        types=type_list,
+        client_origin=client_origin,
     )
     return {"total": total, "items": items}
 
@@ -217,6 +233,7 @@ def get_personal_task_groups_lite(
         "online,offline",
         description="Comma-separated task types to include: online (chat), offline (code), flow",
     ),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -228,7 +245,12 @@ def get_personal_task_groups_lite(
     skip = (page - 1) * limit
     type_list = [t.strip() for t in types.split(",") if t.strip()]
     items, total = task_kinds_service.get_user_personal_task_groups_lite(
-        db=db, user_id=current_user.id, skip=skip, limit=limit, types=type_list
+        db=db,
+        user_id=current_user.id,
+        skip=skip,
+        limit=limit,
+        types=type_list,
+        client_origin=client_origin,
     )
     return {"total": total, "items": items}
 
@@ -253,58 +275,76 @@ def search_tasks_by_title(
 def get_archived_tasks(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(100, ge=1, le=200, description="Items per page"),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
     """Get archived chats owned by the current user."""
     skip = (page - 1) * limit
     items, total = task_kinds_service.list_archived_tasks(
-        db=db, user_id=current_user.id, skip=skip, limit=limit
+        db=db,
+        user_id=current_user.id,
+        skip=skip,
+        limit=limit,
+        client_origin=client_origin,
     )
     return {"total": total, "items": items}
 
 
 @router.delete("/archived", response_model=TaskArchiveBatchResponse)
 def delete_archived_tasks(
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
     """Soft delete all archived chats owned by the current user."""
-    count = task_kinds_service.delete_all_archived_tasks(db=db, user_id=current_user.id)
+    count = task_kinds_service.delete_all_archived_tasks(
+        db=db, user_id=current_user.id, client_origin=client_origin
+    )
     return {"message": "Archived chats deleted successfully", "count": count}
 
 
 @router.get("/{task_id}", response_model=TaskDetail)
 def get_task(
     task_id: int = Depends(with_task_telemetry),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
     """Get specified task details with related entities"""
     return task_kinds_service.get_task_detail(
-        db=db, task_id=task_id, user_id=current_user.id
+        db=db,
+        task_id=task_id,
+        user_id=current_user.id,
+        client_origin=client_origin,
     )
 
 
 @router.post("/{task_id}/archive", response_model=TaskArchiveResponse)
 def archive_task(
     task_id: int = Depends(with_task_telemetry),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
     """Archive one chat owned by the current user."""
-    task_kinds_service.archive_task(db=db, task_id=task_id, user_id=current_user.id)
+    task_kinds_service.archive_task(
+        db=db, task_id=task_id, user_id=current_user.id, client_origin=client_origin
+    )
     return {"message": "Chat archived successfully", "task_id": task_id}
 
 
 @router.post("/{task_id}/unarchive", response_model=TaskArchiveResponse)
 def unarchive_task(
     task_id: int = Depends(with_task_telemetry),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
     """Restore one archived chat owned by the current user."""
-    task_kinds_service.unarchive_task(db=db, task_id=task_id, user_id=current_user.id)
+    task_kinds_service.unarchive_task(
+        db=db, task_id=task_id, user_id=current_user.id, client_origin=client_origin
+    )
     return {"message": "Chat unarchived successfully", "task_id": task_id}
 
 
@@ -486,23 +526,31 @@ async def generate_task_prompt_draft_stream(
 def update_task(
     task_update: TaskUpdate,
     task_id: int = Depends(with_task_telemetry),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
     """Update task information"""
     return task_kinds_service.update_task(
-        db=db, task_id=task_id, obj_in=task_update, user_id=current_user.id
+        db=db,
+        task_id=task_id,
+        obj_in=task_update,
+        user_id=current_user.id,
+        client_origin=client_origin,
     )
 
 
 @router.delete("/{task_id}")
 def delete_task(
     task_id: int = Depends(with_task_telemetry),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
     """Delete task"""
-    task_kinds_service.delete_task(db=db, task_id=task_id, user_id=current_user.id)
+    task_kinds_service.delete_task(
+        db=db, task_id=task_id, user_id=current_user.id, client_origin=client_origin
+    )
     return {"message": "Task deleted successfully"}
 
 

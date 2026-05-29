@@ -331,10 +331,12 @@ describe('DesktopWorkbenchLayout', () => {
 
   test('shows project header menus and creates a scratch project workspace', async () => {
     const onCreateProject = vi.fn().mockResolvedValue({ id: 2, name: 'alpha', tasks: [] })
+    const onRememberExecutionDevice = vi.fn()
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
         onCreateProject={onCreateProject}
+        onRememberExecutionDevice={onRememberExecutionDevice}
         state={{
           ...baseProps.state,
           devices: [
@@ -367,6 +369,8 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('project-start-from-scratch-button'))
 
     expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
+    await userEvent.selectOptions(screen.getByTestId('project-device-select'), 'local-device')
+    expect(onRememberExecutionDevice).toHaveBeenCalledWith('local-device')
     await userEvent.type(screen.getByTestId('project-name-input'), 'alpha app')
     expect(screen.getByText(/\/workspace\/projects\/alpha-app/)).toBeInTheDocument()
     expect(screen.queryByText(/默认目录位于/)).not.toBeInTheDocument()
@@ -381,7 +385,7 @@ describe('DesktopWorkbenchLayout', () => {
             mode: 'workspace',
             execution: {
               targetType: 'local',
-              deviceId: 'cloud-device',
+              deviceId: 'local-device',
             },
             workspace: {
               source: 'local_path',
@@ -601,7 +605,7 @@ describe('DesktopWorkbenchLayout', () => {
       'group-hover/task:opacity-100',
     )
     await userEvent.click(rows[0])
-    expect(baseProps.onOpenTask).toHaveBeenCalledWith(5, undefined)
+    expect(baseProps.onOpenTask).toHaveBeenCalledWith(5, 0)
 
     await userEvent.click(screen.getByTestId('history-task-menu-5'))
     expect(screen.getByTestId('archive-history-chat-5')).toHaveTextContent('归档会话')

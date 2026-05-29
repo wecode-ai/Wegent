@@ -8,6 +8,7 @@ from typing import Any, List, Optional
 
 from pydantic import BaseModel, model_validator
 
+from app.core.constants import CLIENT_ORIGIN_FRONTEND, SUPPORTED_CLIENT_ORIGINS
 from app.schemas.kind import SkillRefMeta
 from app.schemas.subtask import SubtaskWithBot
 from app.schemas.team import TeamInDB
@@ -82,6 +83,7 @@ class TaskCreate(BaseModel):
     task_type: Optional[str] = "chat"  # chat、code
     auto_delete_executor: Optional[str] = "false"  # true、fasle
     source: Optional[str] = "web"
+    client_origin: str = CLIENT_ORIGIN_FRONTEND
     project_id: Optional[int] = 0
     # Model selection fields
     model_id: Optional[str] = None  # Model name (not database ID)
@@ -101,6 +103,8 @@ class TaskCreate(BaseModel):
         """Treat an explicit model_id as an override selection."""
         if self.model_id:
             self.force_override_bot_model = True
+        if self.client_origin not in SUPPORTED_CLIENT_ORIGINS:
+            raise ValueError("Unsupported client_origin")
         return self
 
 
@@ -139,6 +143,7 @@ class TaskInDB(TaskBase):
     user_id: int
     user_name: str
     project_id: int = 0
+    client_origin: str = CLIENT_ORIGIN_FRONTEND
     created_at: datetime
     updated_at: datetime
     completed_at: Optional[datetime] = None
@@ -167,6 +172,7 @@ class TaskDetail(BaseModel):
     status: TaskStatus = TaskStatus.PENDING
     task_type: str = "chat"  # Task type: 'chat', 'code', 'knowledge', 'task'
     project_id: int = 0
+    client_origin: str = CLIENT_ORIGIN_FRONTEND
     progress: int = 0
     result: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
@@ -221,6 +227,7 @@ class TaskLite(BaseModel):
     team_display_name: Optional[str] = None
     team_icon: Optional[str] = None
     project_id: int = 0
+    client_origin: str = CLIENT_ORIGIN_FRONTEND
     device_id: Optional[str] = None
     device_name: Optional[str] = None
     git_repo: Optional[str] = None
@@ -276,6 +283,7 @@ class ArchivedTask(BaseModel):
     updated_at: datetime
     completed_at: Optional[datetime] = None
     project_id: int = 0
+    client_origin: str = CLIENT_ORIGIN_FRONTEND
     project_name: Optional[str] = None
 
 

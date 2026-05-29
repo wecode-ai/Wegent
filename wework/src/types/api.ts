@@ -2,6 +2,19 @@ export interface User {
   id: number
   user_name: string
   email: string
+  preferences?: UserPreferences | null
+}
+
+export interface UserPreferences {
+  send_key?: 'enter' | 'cmd_enter'
+  search_key?: 'cmd_k' | 'cmd_f' | 'disabled'
+  memory_enabled?: boolean
+  mcp_provider_keys?: Record<string, unknown> | null
+  quick_access?: {
+    version?: number | null
+    teams?: number[]
+  } | null
+  default_execution_target?: string | null
 }
 
 export interface Team {
@@ -60,6 +73,7 @@ export interface ProjectWithTasks {
   name: string
   description?: string | null
   color?: string | null
+  client_origin?: string
   config?: ProjectConfig | null
   tasks?: ProjectTask[]
 }
@@ -73,6 +87,7 @@ export interface CreateProjectRequest {
   name: string
   description?: string
   color?: string
+  client_origin?: string
   config?: ProjectConfig
 }
 
@@ -90,6 +105,7 @@ export interface Task {
   task_type?: 'chat' | 'code' | 'task' | 'knowledge' | 'video' | 'image'
   team_id?: number
   project_id?: number
+  client_origin?: string
   device_id?: string | null
   created_at: string
   updated_at?: string
@@ -113,6 +129,7 @@ export interface ArchivedTask {
   updated_at: string
   completed_at?: string | null
   project_id: number
+  client_origin?: string
   project_name?: string | null
 }
 
@@ -207,6 +224,7 @@ export interface ChatSendPayload {
   title?: string
   task_type?: 'chat' | 'code' | 'task' | 'knowledge' | 'video' | 'image'
   project_id?: number
+  client_origin?: string
   device_id?: string
   model_id?: string
   force_override_bot_model?: string

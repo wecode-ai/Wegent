@@ -57,6 +57,10 @@ from executor.agents.claude_code.skill_deployer import (
     setup_claudecode_dir,
     setup_coordinate_mode,
 )
+from executor.agents.claude_code.standalone_chat_workspace import (
+    prepared_standalone_chat_workspace_path,
+    prepare_standalone_chat_workspace,
+)
 from executor.config import config
 from executor.hooks.pre_execute_hook import get_pre_execute_hook
 from executor.services.task_identity import build_task_identity_context
@@ -462,7 +466,11 @@ class ClaudeCodeAgent(Agent):
                     # Continue execution with original systemPrompt
 
             # Setup SubAgent configuration files for coordinate mode
-            setup_coordinate_mode(self.task_data, self.project_path, self.options)
+            setup_coordinate_mode(
+                self.task_data,
+                self._coordinate_mode_workspace_path(),
+                self.options,
+            )
 
             # Download attachments for this task
             self._download_attachments()
@@ -501,6 +509,16 @@ class ClaudeCodeAgent(Agent):
         workspace_source = getattr(self.task_data, "workspace_source", None)
         project_path = getattr(self.task_data, "project_workspace_path", None)
         if not workspace_source:
+            standalone_path = prepare_standalone_chat_workspace(
+                self.task_data, self.prompt
+            )
+            if standalone_path:
+                self.task_data.workspace_source = "local_path"
+                self.task_data.project_workspace_path = standalone_path
+                workspace_source = "local_path"
+                project_path = standalone_path
+
+        if not workspace_source:
             return
         if not project_id and not project_path:
             return
@@ -537,6 +555,16 @@ class ClaudeCodeAgent(Agent):
         logger.info(
             "Using project workspace path for task %s: %s", self.task_id, project_path
         )
+
+    def _coordinate_mode_workspace_path(self) -> Optional[str]:
+        """Return where coordinate-mode Claude internals should be written."""
+
+        if (
+            prepared_standalone_chat_workspace_path(self.task_data)
+            and self._claude_config_dir
+        ):
+            return os.path.dirname(self._claude_config_dir)
+        return self.project_path
 
     def execute(self) -> TaskStatus:
         """

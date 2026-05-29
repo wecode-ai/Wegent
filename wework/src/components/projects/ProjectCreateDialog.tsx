@@ -11,6 +11,8 @@ interface ProjectCreateDialogProps {
   devices: DeviceInfo[]
   onClose: () => void
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
+  preferredDeviceId?: string | null
+  onSelectDevicePreference?: (deviceId: string) => void
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onGetProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
@@ -62,7 +64,17 @@ function sortDevicesForProjectCreation(devices: DeviceInfo[]): DeviceInfo[] {
   })
 }
 
-function getDefaultDeviceId(devices: DeviceInfo[]): string {
+function getDefaultDeviceId(
+  devices: DeviceInfo[],
+  preferredDeviceId?: string | null
+): string {
+  const preferredDevice = preferredDeviceId
+    ? devices.find(device => device.device_id === preferredDeviceId)
+    : undefined
+  if (preferredDevice && isUsableDevice(preferredDevice)) {
+    return preferredDevice.device_id
+  }
+
   return sortDevicesForProjectCreation(devices).find(isUsableDevice)?.device_id ?? ''
 }
 
@@ -78,6 +90,8 @@ export function ProjectCreateDialog({
   devices = [],
   onClose,
   onCreateProject,
+  preferredDeviceId,
+  onSelectDevicePreference,
   onGetDeviceHomeDirectory,
   onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
@@ -91,6 +105,8 @@ export function ProjectCreateDialog({
       devices={devices}
       onClose={onClose}
       onCreateProject={onCreateProject}
+      preferredDeviceId={preferredDeviceId}
+      onSelectDevicePreference={onSelectDevicePreference}
       onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
       onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
       onListDeviceDirectories={onListDeviceDirectories}
@@ -103,13 +119,18 @@ function ProjectCreateDialogContent({
   devices,
   onClose,
   onCreateProject,
+  preferredDeviceId,
+  onSelectDevicePreference,
   onGetDeviceHomeDirectory,
   onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
 }: Omit<ProjectCreateDialogProps, 'open'>) {
   const { t } = useTranslation('common')
   const sortedDevices = useMemo(() => sortDevicesForProjectCreation(devices), [devices])
-  const firstDeviceId = useMemo(() => getDefaultDeviceId(sortedDevices), [sortedDevices])
+  const firstDeviceId = useMemo(
+    () => getDefaultDeviceId(sortedDevices, preferredDeviceId),
+    [preferredDeviceId, sortedDevices]
+  )
   const [deviceId, setDeviceId] = useState(firstDeviceId)
   const [projectName, setProjectName] = useState('')
   const [projectRoot, setProjectRoot] = useState(FALLBACK_PROJECTS_ROOT)
@@ -212,6 +233,9 @@ function ProjectCreateDialogContent({
 
   const handleDeviceChange = (nextDeviceId: string) => {
     setDeviceId(nextDeviceId)
+    if (nextDeviceId) {
+      onSelectDevicePreference?.(nextDeviceId)
+    }
     setProjectRoot(FALLBACK_PROJECTS_ROOT)
     setCurrentPath('')
     setSelectedPath('')

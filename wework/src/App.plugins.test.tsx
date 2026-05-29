@@ -50,6 +50,7 @@ const workbenchValue: WorkbenchContextValue = {
   startStandaloneChat: vi.fn(),
   startNewProjectChat: vi.fn(),
   openTask: vi.fn(),
+  rememberExecutionDevice: vi.fn(),
   refreshWorkLists: vi.fn(),
   createProject: vi.fn(),
   updateProjectName: vi.fn(),

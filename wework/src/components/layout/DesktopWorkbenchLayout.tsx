@@ -20,6 +20,7 @@ interface DesktopWorkbenchLayoutProps {
   onSelectProject: (projectId: number | null) => void
   onStartNewProjectChat: (projectId: number) => void
   onOpenTask: (taskId: number, projectId?: number) => void
+  onRememberExecutionDevice?: (deviceId: string) => void
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
   onRemoveProject: (projectId: number) => Promise<void>
@@ -58,6 +59,7 @@ export function DesktopWorkbenchLayout({
   onSelectProject,
   onStartNewProjectChat,
   onOpenTask,
+  onRememberExecutionDevice,
   onCreateProject,
   onUpdateProjectName,
   onRemoveProject,
@@ -155,6 +157,10 @@ export function DesktopWorkbenchLayout({
           runningTaskIds={runningTaskIds}
           currentProjectId={state.currentProject?.id}
           currentTaskId={state.currentTask?.id}
+          preferredDeviceId={
+            state.standaloneDeviceId ??
+            state.user?.preferences?.default_execution_target
+          }
           activeItem={activeItem}
           onCollapse={() => setSidebarCollapsed(true)}
           onNewChat={onNewChat}
@@ -162,6 +168,7 @@ export function DesktopWorkbenchLayout({
           onSelectProject={onSelectProject}
           onStartNewProjectChat={onStartNewProjectChat}
           onOpenTask={onOpenTask}
+          onRememberExecutionDevice={onRememberExecutionDevice}
           onOpenPlugins={onOpenPlugins}
           onCreateProject={onCreateProject}
           onUpdateProjectName={onUpdateProjectName}

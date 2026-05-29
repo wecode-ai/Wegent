@@ -162,6 +162,11 @@ def prepare_execution_session(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Task {task_id} not found",
             )
+        if task.client_origin != resolved_task_params.client_origin:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Task {task_id} not found",
+            )
         if not resolved_task_params.skip_status_check:
             check_task_status(db, task)
         if should_trigger_ai:
