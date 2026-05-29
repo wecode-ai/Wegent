@@ -6,7 +6,20 @@ import { navigateTo } from '@/lib/navigation'
 
 export function PluginsPage() {
   const { logout } = useAuth()
-  const { state, selectProject, openTask } = useWorkbench()
+  const {
+    state,
+    selectProject,
+    startNewProjectChat,
+    openTask,
+    createProject,
+    updateProjectName,
+    removeProject,
+    archiveAllChats,
+    archiveProjectChats,
+    archiveTask,
+    renameTask,
+    listDeviceDirectories,
+  } = useWorkbench()
 
   const handleSelectProject = (projectId: number) => {
     navigateTo('/')
@@ -23,14 +36,25 @@ export function PluginsPage() {
       <DesktopSidebar
         user={state.user}
         projects={state.projects}
+        devices={state.devices}
         recentTasks={state.recentTasks}
         currentProjectId={state.currentProject?.id}
         activeItem="plugins"
         onCollapse={() => {}}
         onNewChat={() => navigateTo('/')}
         onSelectProject={handleSelectProject}
+        onStartNewProjectChat={startNewProjectChat}
         onOpenTask={handleOpenTask}
         onOpenPlugins={() => navigateTo('/plugins')}
+        onCreateProject={createProject}
+        onUpdateProjectName={updateProjectName}
+        onRemoveProject={removeProject}
+        onArchiveAllChats={archiveAllChats}
+        onArchiveProjectChats={archiveProjectChats}
+        onArchiveTask={archiveTask}
+        onRenameTask={renameTask}
+        onListDeviceDirectories={listDeviceDirectories}
+        onOpenSettings={() => navigateTo('/')}
         onLogout={logout}
       />
       <PluginsWorkspace />

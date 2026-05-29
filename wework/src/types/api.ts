@@ -87,6 +87,7 @@ export interface Task {
   status: string
   task_type?: 'chat' | 'code' | 'task' | 'knowledge' | 'video' | 'image'
   team_id?: number
+  project_id?: number
   created_at: string
   updated_at?: string
   is_group_chat?: boolean

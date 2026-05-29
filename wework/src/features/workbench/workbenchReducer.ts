@@ -32,7 +32,7 @@ export type WorkbenchAction =
     }
   | { type: 'bootstrap_failed'; error: string }
   | { type: 'project_selected'; project: ProjectWithTasks }
-  | { type: 'task_opened'; task: Task }
+  | { type: 'task_opened'; task: Task; project?: ProjectWithTasks | null }
   | { type: 'input_changed'; input: string }
   | { type: 'sending_started' }
   | { type: 'sending_finished' }
@@ -69,7 +69,12 @@ export function workbenchReducer(
     case 'project_selected':
       return { ...state, currentProject: action.project, currentTask: null }
     case 'task_opened':
-      return { ...state, currentTask: action.task }
+      return {
+        ...state,
+        currentProject:
+          action.project === undefined ? state.currentProject : action.project,
+        currentTask: action.task,
+      }
     case 'input_changed':
       return { ...state, input: action.input }
     case 'sending_started':

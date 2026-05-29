@@ -5,6 +5,7 @@ import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat
 import { useTranslation } from '@/hooks/useTranslation'
 import { MessageList } from '@/components/chat/MessageList'
 import type { ArchivedTaskListResponse, CreateProjectRequest, ProjectWithTasks } from '@/types/api'
+import type { EnvironmentInfo } from '@/types/environment'
 import type { WorkbenchMessage, WorkbenchState } from '@/types/workbench'
 import { MobileDrawer } from './MobileDrawer'
 
@@ -15,7 +16,7 @@ interface MobileWorkbenchLayoutProps {
   projectWork: ProjectWorkControls
   onSelectProject: (projectId: number) => void
   onStartNewProjectChat?: (projectId: number) => void
-  onOpenTask: (taskId: number) => void
+  onOpenTask: (taskId: number, projectId?: number) => void
   onCreateProject?: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onUpdateProjectName?: (projectId: number, name: string) => Promise<void>
   onRemoveProject?: (projectId: number) => Promise<void>
@@ -28,6 +29,11 @@ interface MobileWorkbenchLayoutProps {
   onDeleteTask?: (taskId: number) => Promise<void>
   onDeleteArchivedTasks?: () => Promise<void>
   onListDeviceDirectories?: (deviceId: string, path: string) => Promise<string[]>
+  onLoadEnvironmentInfo?: (project: ProjectWithTasks | null) => Promise<EnvironmentInfo>
+  onCommitEnvironmentChanges?: (
+    project: ProjectWithTasks | null,
+    message: string,
+  ) => Promise<void>
   onInputChange: (value: string) => void
   onSend: () => void
   onLogout: () => void

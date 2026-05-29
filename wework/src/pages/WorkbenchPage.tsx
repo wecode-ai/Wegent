@@ -27,6 +27,8 @@ export function WorkbenchPage() {
     deleteTask,
     deleteArchivedTasks,
     listDeviceDirectories,
+    loadEnvironmentInfo,
+    commitEnvironmentChanges,
     setInput,
     sendCurrentInput,
   } = useWorkbench()
@@ -61,6 +63,8 @@ export function WorkbenchPage() {
       onDeleteTask={deleteTask}
       onDeleteArchivedTasks={deleteArchivedTasks}
       onListDeviceDirectories={listDeviceDirectories}
+      onLoadEnvironmentInfo={loadEnvironmentInfo}
+      onCommitEnvironmentChanges={commitEnvironmentChanges}
       onInputChange={setInput}
       onSend={sendCurrentInput}
       onLogout={logout}

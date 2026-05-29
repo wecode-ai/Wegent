@@ -7,6 +7,12 @@ describe('DesktopWorkbenchLayout', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: vi.fn().mockResolvedValue(undefined),
+      },
+    })
   })
 
   const baseProps = {
@@ -74,6 +80,16 @@ describe('DesktopWorkbenchLayout', () => {
     onDeleteTask: vi.fn(),
     onDeleteArchivedTasks: vi.fn(),
     onListDeviceDirectories: vi.fn(),
+    onLoadEnvironmentInfo: vi.fn().mockResolvedValue({
+      additions: '+173',
+      deletions: '-13366',
+      executionTarget: 'local' as const,
+      deviceId: 'e13e1a10-5377-4a87-a3b3-634a098d0bb4',
+      branchName: 'human/narwhal-20260528-073440',
+      createPullRequestUrl:
+        'https://github.com/wecode-ai/Wegent/compare/human%2Fnarwhal-20260528-073440?expand=1',
+    }),
+    onCommitEnvironmentChanges: vi.fn().mockResolvedValue(undefined),
     onInputChange: vi.fn(),
     onSend: vi.fn(),
     onLogout: vi.fn(),
@@ -112,6 +128,41 @@ describe('DesktopWorkbenchLayout', () => {
       'min-w-[32rem]',
       'max-w-[calc(100vw-4rem)]',
     )
+  })
+
+  test('renders the conversation composer as a floating overlay', () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'assistant',
+            content: 'Ready',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass(
+      'h-full',
+      'overflow-y-auto',
+      'pb-40',
+    )
+    expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass(
+      'pointer-events-none',
+      'absolute',
+      'bottom-4',
+      'left-1/2',
+      'z-50',
+      '-translate-x-1/2',
+    )
+    expect(screen.getByTestId('desktop-floating-composer-card')).toHaveClass(
+      'pointer-events-auto',
+    )
+    expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
   })
 
   test('restores and stores sidebar width in localStorage', () => {
@@ -307,6 +358,9 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByText('Implement archive')).toBeInTheDocument()
     expect(screen.getByText(/10:25/)).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('project-chat-button'))
+    expect(baseProps.onOpenTask).toHaveBeenCalledWith(11, 1)
+
     await userEvent.click(screen.getByTestId('project-chat-menu-11'))
     expect(screen.getByTestId('archive-chat-11')).toHaveTextContent('Archive chat')
     expect(screen.getByTestId('rename-chat-11')).toHaveTextContent('Rename chat')
@@ -332,6 +386,7 @@ describe('DesktopWorkbenchLayout', () => {
               title: 'Newest session',
               status: 'COMPLETED',
               task_type: 'code',
+              project_id: 7,
               created_at: '2026-05-28T09:00:00',
               updated_at: '2026-05-28T11:30:00',
             },
@@ -344,6 +399,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(rows[0]).toHaveTextContent('Newest session')
     expect(rows[1]).toHaveTextContent('Older session')
     expect(screen.getByText(/11:30/)).toBeInTheDocument()
+    await userEvent.click(rows[0])
+    expect(baseProps.onOpenTask).toHaveBeenCalledWith(5, 7)
 
     await userEvent.click(screen.getByTestId('history-task-menu-5'))
     expect(screen.getByTestId('archive-history-chat-5')).toHaveTextContent('Archive chat')
@@ -476,6 +533,271 @@ describe('DesktopWorkbenchLayout', () => {
     fireEvent.pointerUp(document)
 
     expect(panel).toHaveStyle({ width: '480px' })
+  })
+
+  test('opens the environment info popover and closes it from outside click', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+
+    expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
+    expect(screen.getByTestId('environment-info-popover')).toHaveClass('w-[340px]')
+    expect(screen.getByText('环境信息')).toBeInTheDocument()
+    expect(screen.getByText('变更')).toBeInTheDocument()
+    const deviceButton = await screen.findByTestId('environment-device-button')
+    expect(deviceButton).toHaveTextContent('本地')
+    const deviceId = screen.getByTestId('environment-device-id')
+    expect(deviceId).toHaveTextContent('e13e1a10...0bb4')
+    expect(deviceId).toHaveClass('ml-auto', 'text-right')
+    expect(deviceButton).toHaveAttribute(
+      'title',
+      '本地 · e13e1a10-5377-4a87-a3b3-634a098d0bb4',
+    )
+    expect(await screen.findByText('+173')).toBeInTheDocument()
+    expect(await screen.findByText('-13366')).toBeInTheDocument()
+    expect(await screen.findByText('human/narwhal-20260528-073440')).toBeInTheDocument()
+    expect(screen.getByText('提交')).toBeInTheDocument()
+    expect(screen.getByText('创建拉取请求')).toBeInTheDocument()
+    expect(screen.getByText('来源')).toBeInTheDocument()
+    expect(screen.getByText('暂无来源')).toBeInTheDocument()
+
+    await userEvent.click(deviceButton)
+
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      'e13e1a10-5377-4a87-a3b3-634a098d0bb4',
+    )
+    expect(screen.getByText('已复制')).toBeInTheDocument()
+
+    await userEvent.click(document.body)
+
+    expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
+  })
+
+  test('submits environment commits from the popover', async () => {
+    const onCommitEnvironmentChanges = vi.fn().mockResolvedValue(undefined)
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onCommitEnvironmentChanges={onCommitEnvironmentChanges}
+        state={{
+          ...baseProps.state,
+          currentProject: {
+            id: 1,
+            name: 'github_wegent',
+            tasks: [],
+            config: {
+              mode: 'workspace',
+              execution: {
+                targetType: 'local',
+                deviceId: 'device-1',
+              },
+              workspace: {
+                source: 'local_path',
+                localPath: '/workspace/github_wegent',
+              },
+            },
+          },
+        }}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+    await userEvent.click(screen.getByTestId('environment-commit-button'))
+    await userEvent.type(screen.getByTestId('environment-commit-message-input'), 'feat: ship')
+    await userEvent.click(screen.getByTestId('environment-confirm-commit-button'))
+
+    await waitFor(() =>
+      expect(onCommitEnvironmentChanges).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 1, name: 'github_wegent' }),
+        'feat: ship',
+      ),
+    )
+    expect(screen.getByText('已提交')).toBeInTheDocument()
+  })
+
+  test('loads environment info from the first workspace project when the popover opens', async () => {
+    const onLoadEnvironmentInfo = vi.fn().mockResolvedValue({
+      additions: '+8',
+      deletions: '-3',
+      executionTarget: 'local' as const,
+      deviceId: 'device-from-fallback',
+      branchName: 'feature/fallback',
+    })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onLoadEnvironmentInfo={onLoadEnvironmentInfo}
+        state={{
+          ...baseProps.state,
+          currentProject: null,
+          projects: [
+            { id: 1, name: 'legacy', tasks: [] },
+            {
+              id: 2,
+              name: 'workspace',
+              tasks: [],
+              config: {
+                mode: 'workspace',
+                execution: {
+                  targetType: 'local',
+                  deviceId: 'device-from-fallback',
+                },
+                workspace: {
+                  source: 'local_path',
+                  localPath: '/repo',
+                },
+              },
+            },
+          ],
+        }}
+      />,
+    )
+
+    expect(onLoadEnvironmentInfo).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+
+    await waitFor(() =>
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 2, name: 'workspace' }),
+      ),
+    )
+  })
+
+  test('loads environment info from the current task project before the fallback project', async () => {
+    const onLoadEnvironmentInfo = vi.fn().mockResolvedValue({
+      additions: '+1',
+      deletions: '-1',
+      executionTarget: 'local' as const,
+      deviceId: 'device-sina',
+      branchName: 'human/seal-20260529-104820',
+    })
+    const sinaProject = {
+      id: 9,
+      name: 'sina-sso',
+      tasks: [],
+      config: {
+        mode: 'workspace',
+        execution: {
+          targetType: 'local' as const,
+          deviceId: 'device-sina',
+        },
+        workspace: {
+          source: 'local_path' as const,
+          localPath: '/Users/hongyu9/Downloads/sina-sso',
+        },
+      },
+    }
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onLoadEnvironmentInfo={onLoadEnvironmentInfo}
+        state={{
+          ...baseProps.state,
+          currentProject: null,
+          currentTask: {
+            id: 99,
+            title: 'sina task',
+            status: 'RUNNING',
+            task_type: 'code',
+            project_id: 9,
+            created_at: '2026-05-29T00:00:00.000Z',
+          },
+          projects: [
+            {
+              id: 2,
+              name: 'agno',
+              tasks: [],
+              config: {
+                mode: 'workspace',
+                execution: {
+                  targetType: 'local',
+                  deviceId: 'device-agno',
+                },
+                workspace: {
+                  source: 'local_path',
+                  localPath: '/Volumes/OuterHD/OuterIdeaProjects/agno',
+                },
+              },
+            },
+            sinaProject,
+          ],
+        }}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+
+    await waitFor(() => expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(sinaProject))
+  })
+
+  test('refreshes environment info when an assistant message completes', async () => {
+    const onLoadEnvironmentInfo = vi.fn().mockResolvedValue({
+      additions: '+4',
+      deletions: '-1',
+      executionTarget: 'local' as const,
+      deviceId: 'device-1',
+      branchName: 'feature/done',
+    })
+    const workspaceProject = {
+      id: 1,
+      name: 'workspace',
+      tasks: [],
+      config: {
+        mode: 'workspace',
+        execution: {
+          targetType: 'local' as const,
+          deviceId: 'device-1',
+        },
+        workspace: {
+          source: 'local_path' as const,
+          localPath: '/repo',
+        },
+      },
+    }
+    const streamingMessage = {
+      id: 'assistant-1',
+      role: 'assistant' as const,
+      content: 'Working',
+      status: 'streaming' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
+    const { rerender } = render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onLoadEnvironmentInfo={onLoadEnvironmentInfo}
+        state={{
+          ...baseProps.state,
+          currentProject: workspaceProject,
+        }}
+        messages={[streamingMessage]}
+      />,
+    )
+
+    expect(onLoadEnvironmentInfo).not.toHaveBeenCalled()
+
+    rerender(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onLoadEnvironmentInfo={onLoadEnvironmentInfo}
+        state={{
+          ...baseProps.state,
+          currentProject: workspaceProject,
+        }}
+        messages={[
+          {
+            ...streamingMessage,
+            status: 'done' as const,
+          },
+        ]}
+      />,
+    )
+
+    await waitFor(() =>
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(workspaceProject),
+    )
   })
 
   test('opens and resizes the bottom workspace panel', async () => {

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port 1420",
+    "dev:mac": "bash scripts/dev-mac-app.sh",
     "tauri": "tauri dev",
     "build": "tsc -b && vite build",
     "tauri:build": "tauri build",

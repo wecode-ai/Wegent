@@ -21,6 +21,23 @@ class LocalDeviceCommandDefinition:
     post_processor: str | None = None
 
 
+GIT_BRANCH_DIFF_SHORTSTAT_COMMAND = (
+    'bash -lc \'base=""; '
+    "for candidate in "
+    '"$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" '
+    "origin/main main origin/master master; do "
+    '[ -n "$candidate" ] || continue; '
+    'if git rev-parse --verify --quiet "$candidate^{commit}" >/dev/null; then '
+    'base="$candidate"; break; '
+    "fi; "
+    "done; "
+    '[ -n "$base" ] || { git diff --shortstat HEAD --; exit 0; }; '
+    'merge_base=$(git merge-base "$base" HEAD 2>/dev/null || true); '
+    '[ -n "$merge_base" ] || { git diff --shortstat HEAD --; exit 0; }; '
+    'git diff --shortstat "$merge_base" --\''
+)
+
+
 DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "pwd": LocalDeviceCommandDefinition(command="pwd"),
     "ls_a": LocalDeviceCommandDefinition(
@@ -32,6 +49,14 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
         post_processor="directory_list",
     ),
     "git_clone": LocalDeviceCommandDefinition(command="git clone"),
+    "git_branch": LocalDeviceCommandDefinition(command="git branch --show-current"),
+    "git_diff_shortstat": LocalDeviceCommandDefinition(command="git diff --shortstat"),
+    "git_branch_diff_shortstat": LocalDeviceCommandDefinition(
+        command=GIT_BRANCH_DIFF_SHORTSTAT_COMMAND
+    ),
+    "git_remote_url": LocalDeviceCommandDefinition(command="git remote get-url origin"),
+    "git_add_all": LocalDeviceCommandDefinition(command="git add --all"),
+    "git_commit": LocalDeviceCommandDefinition(command="git commit"),
 }
 
 
