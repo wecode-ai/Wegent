@@ -87,6 +87,22 @@ done
 exit 1
 EOF
 
+cat > "$STUB_DIR/route" <<'EOF'
+#!/bin/bash
+if [ "$1" = "-n" ] && [ "$2" = "get" ] && [ "$3" = "default" ]; then
+    echo "   route to: default"
+    echo "interface: en0"
+fi
+EOF
+
+cat > "$STUB_DIR/ifconfig" <<'EOF'
+#!/bin/bash
+if [ "$1" = "en0" ] || [ $# -eq 0 ]; then
+    echo "en0: flags=8863<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST> mtu 1500"
+    echo "        inet 192.0.2.10 netmask 0xffffff00 broadcast 192.0.2.255"
+fi
+EOF
+
 cat > "$STUB_DIR/docker" <<'EOF'
 #!/bin/bash
 case "$1" in
@@ -243,6 +259,40 @@ if [ "$(cat "$REPO_ROOT/.pids/frontend.port")" != "3001" ]; then
 fi
 
 echo "start.sh service selection and auto port test passed"
+
+reset_runtime_files
+cat > "$ROOT_ENV" <<'EOF'
+BACKEND_PORT=8000
+CHAT_SHELL_PORT=8100
+EXECUTOR_MANAGER_PORT=8001
+KNOWLEDGE_RUNTIME_PORT=8200
+WEGENT_FRONTEND_PORT=3000
+WEWORK_PORT=1420
+EXECUTOR_IMAGE=test-executor:latest
+WEGENT_SOCKET_URL=http://10.0.0.99:8000
+EOF
+
+run_start_with_stubs "y\n" be fe
+
+if [ "$status" -ne 0 ]; then
+    echo "Expected start.sh be fe with stale socket IP to succeed"
+    echo "$output"
+    exit 1
+fi
+
+if grep -q "IP Address Mismatch Warning" <<< "$output"; then
+    echo "Expected stale socket IP to auto-refresh without warning"
+    echo "$output"
+    exit 1
+fi
+
+if ! grep -q "Socket URL:          http://192.0.2.10:8002" <<< "$output"; then
+    echo "Expected Socket URL to use current machine IP and resolved backend port"
+    echo "$output"
+    exit 1
+fi
+
+echo "start.sh stale socket IP auto-refresh test passed"
 
 reset_runtime_files
 rm -f "$ROOT_ENV"

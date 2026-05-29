@@ -9,7 +9,7 @@ interface MobileDrawerProps {
   recentTasks: Task[]
   onClose: () => void
   onSelectProject: (projectId: number) => void
-  onOpenTask: (taskId: number) => void
+  onOpenTask: (taskId: number, projectId?: number) => void
 }
 
 export function MobileDrawer({
@@ -105,7 +105,7 @@ export function MobileDrawer({
               data-testid="mobile-recent-task-button"
               className="block min-h-[44px] w-full truncate text-left text-xl"
               onClick={() => {
-                onOpenTask(task.id)
+                onOpenTask(task.id, task.project_id)
                 onClose()
               }}
             >

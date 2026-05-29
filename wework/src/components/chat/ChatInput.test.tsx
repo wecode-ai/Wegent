@@ -56,6 +56,22 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('project-work-button')).toBeInTheDocument()
   })
 
+  test('hides the project work bar when requested', () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        showProjectWorkBar={false}
+      />,
+    )
+
+    expect(screen.getByTestId('chat-message-input')).toBeInTheDocument()
+    expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
+  })
+
   test('opens the desktop model menu with real model options', async () => {
     const model: UnifiedModel = {
       name: 'gpt-5.5-medium',
