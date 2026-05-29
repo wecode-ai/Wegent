@@ -726,7 +726,10 @@ export function useChatStreamHandlers({
 
           if (completedTaskId && !selectedTaskDetail?.id) {
             if (taskType === 'knowledge' && knowledgeBaseId && pathname === '/knowledge') {
-              router.push(`/knowledge/document/${knowledgeBaseId}?taskId=${completedTaskId}`)
+              const params = new URLSearchParams(Array.from(searchParams.entries()))
+              params.set('taskId', String(completedTaskId))
+              params.set('kb', String(knowledgeBaseId))
+              router.push(`?${params.toString()}`)
             } else if (taskType === 'task' && !pathname?.startsWith('/devices')) {
               const params = new URLSearchParams()
               params.set('taskId', String(completedTaskId))
