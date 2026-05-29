@@ -1,16 +1,19 @@
 import { Bot, ChevronRight } from 'lucide-react'
 import { useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
-import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
+import { MessageList } from '@/components/chat/MessageList'
+import { useTranslation } from '@/hooks/useTranslation'
 import type { ProjectWithTasks, Task } from '@/types/api'
+import type { EnvironmentInfo } from '@/types/environment'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
 import { RightWorkspacePanel } from './workspace-panels/RightWorkspacePanel'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
 
 const DESKTOP_COMPOSER_FRAME_CLASS = 'mx-auto w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100vw-4rem)]'
+const DESKTOP_FLOATING_COMPOSER_CLASS =
+  'pointer-events-none absolute bottom-4 left-1/2 z-50 w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100%_-_3rem)] -translate-x-1/2'
 
 interface DesktopWorkbenchMainProps {
   sidebarCollapsed: boolean
@@ -21,6 +24,9 @@ interface DesktopWorkbenchMainProps {
   projectWork: ProjectWorkControls
   input: string
   isSending: boolean
+  environmentInfo: EnvironmentInfo
+  onRefreshEnvironmentInfo: () => Promise<void>
+  onCommitEnvironmentChanges: (message: string) => Promise<void>
   onExpandSidebar: () => void
   onInputChange: (value: string) => void
   onSend: () => void
@@ -35,6 +41,9 @@ export function DesktopWorkbenchMain({
   projectWork,
   input,
   isSending,
+  environmentInfo,
+  onRefreshEnvironmentInfo,
+  onCommitEnvironmentChanges,
   onExpandSidebar,
   onInputChange,
   onSend,
@@ -65,10 +74,15 @@ export function DesktopWorkbenchMain({
           </button>
         )}
         {hasConversation ? (
-          <>
-            <ScrollableMessageArea messages={messages} />
-            <div className="px-6 pb-8">
-              <div className={DESKTOP_COMPOSER_FRAME_CLASS}>
+          <div className="relative min-h-0 flex-1 overflow-hidden">
+            <div className="h-full overflow-y-auto pb-40" data-testid="desktop-chat-scroll">
+              <MessageList messages={messages} />
+            </div>
+            <div
+              className={DESKTOP_FLOATING_COMPOSER_CLASS}
+              data-testid="desktop-floating-composer-layer"
+            >
+              <div className="pointer-events-auto" data-testid="desktop-floating-composer-card">
                 <ChatInput
                   value={input}
                   onChange={onInputChange}
@@ -78,10 +92,11 @@ export function DesktopWorkbenchMain({
                   variant="desktop"
                   projectChat={projectChat}
                   projectWork={projectWork}
+                  showProjectWorkBar={false}
                 />
               </div>
             </div>
-          </>
+          </div>
         ) : (
           <div className="flex flex-1 items-center justify-center px-10">
             <div className={DESKTOP_COMPOSER_FRAME_CLASS} data-testid="desktop-empty-composer-frame">
@@ -112,6 +127,9 @@ export function DesktopWorkbenchMain({
         )}
       </div>
       <WorkspacePanelActions
+        environmentInfo={environmentInfo}
+        onRefreshEnvironmentInfo={onRefreshEnvironmentInfo}
+        onCommitEnvironmentChanges={onCommitEnvironmentChanges}
         rightPanelOpen={rightPanelOpen}
         bottomPanelOpen={bottomPanelOpen}
         onToggleRightPanel={() => setRightPanelOpen(open => !open)}

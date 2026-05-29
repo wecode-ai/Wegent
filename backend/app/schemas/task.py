@@ -138,6 +138,7 @@ class TaskInDB(TaskBase):
     id: int
     user_id: int
     user_name: str
+    project_id: int = 0
     created_at: datetime
     updated_at: datetime
     completed_at: Optional[datetime] = None
@@ -165,6 +166,7 @@ class TaskDetail(BaseModel):
     prompt: str
     status: TaskStatus = TaskStatus.PENDING
     task_type: str = "chat"  # Task type: 'chat', 'code', 'knowledge', 'task'
+    project_id: int = 0
     progress: int = 0
     result: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
@@ -218,6 +220,7 @@ class TaskLite(BaseModel):
     team_namespace: Optional[str] = None
     team_display_name: Optional[str] = None
     team_icon: Optional[str] = None
+    project_id: int = 0
     device_id: Optional[str] = None
     device_name: Optional[str] = None
     git_repo: Optional[str] = None

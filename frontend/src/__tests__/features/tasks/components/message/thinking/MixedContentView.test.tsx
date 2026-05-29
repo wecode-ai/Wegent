@@ -264,7 +264,7 @@ describe('MixedContentView', () => {
     expect(screen.getByText('雨后的清晨')).toBeInTheDocument()
     const indicator = screen.getByTestId('streaming-wait-indicator')
 
-    expect(screen.getAllByText('thinking.processing')).toHaveLength(2)
+    expect(screen.getAllByText('thinking.processing')).toHaveLength(1)
     expect(screen.getByTestId('streaming-wait-runner-dot')).toBeInTheDocument()
     expect(indicator.querySelectorAll('.animate-pulse')).toHaveLength(0)
   })

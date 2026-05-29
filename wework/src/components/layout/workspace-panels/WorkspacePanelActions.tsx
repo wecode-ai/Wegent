@@ -1,7 +1,14 @@
 import { PanelBottom, PanelRight } from 'lucide-react'
-import { useTranslation } from 'react-i18next'
+import { useTranslation } from '@/hooks/useTranslation'
+import {
+  EnvironmentInfoPopover,
+} from '../EnvironmentInfoPopover'
+import type { EnvironmentInfo } from '@/types/environment'
 
 interface WorkspacePanelActionsProps {
+  environmentInfo: EnvironmentInfo
+  onRefreshEnvironmentInfo: () => Promise<void>
+  onCommitEnvironmentChanges: (message: string) => Promise<void>
   rightPanelOpen: boolean
   bottomPanelOpen: boolean
   onToggleRightPanel: () => void
@@ -9,6 +16,9 @@ interface WorkspacePanelActionsProps {
 }
 
 export function WorkspacePanelActions({
+  environmentInfo,
+  onRefreshEnvironmentInfo,
+  onCommitEnvironmentChanges,
   rightPanelOpen,
   bottomPanelOpen,
   onToggleRightPanel,
@@ -18,6 +28,11 @@ export function WorkspacePanelActions({
 
   return (
     <div className="absolute right-5 top-4 z-50 flex items-center gap-3">
+      <EnvironmentInfoPopover
+        info={environmentInfo}
+        onRefresh={onRefreshEnvironmentInfo}
+        onCommitChanges={onCommitEnvironmentChanges}
+      />
       <button
         type="button"
         data-testid="toggle-bottom-workspace-panel-button"

@@ -35,9 +35,9 @@ export function PluginManagementPage() {
     selectProject(projectId)
   }
 
-  const handleOpenTask = (taskId: number) => {
+  const handleOpenTask = (taskId: number, projectId?: number) => {
     navigateTo('/')
-    void openTask(taskId)
+    void openTask(taskId, projectId)
   }
 
   if (settingsOpen) {
