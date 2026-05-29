@@ -206,19 +206,35 @@ async def test_session_gateway_logs_in_to_code_server_with_configured_password(
 @pytest.mark.asyncio
 async def test_start_terminal_session_uses_writable_once_ttyd(tmp_path, monkeypatch):
     """Terminal sessions should start a writable ttyd that exits on disconnect."""
-    from executor.modes.local.session_handler import LocalSessionHandler
+    from executor.modes.local import session_handler
 
     created = []
+    waited_ports = []
 
     async def fake_create_process(*argv, **kwargs):
         created.append((argv, kwargs))
         return AsyncMock(pid=1234)
 
+    async def fake_wait_for_session_port(host, port, process):
+        waited_ports.append((host, port, process.pid))
+        return True
+
     monkeypatch.setattr(
         "executor.modes.local.session_handler.asyncio.create_subprocess_exec",
         fake_create_process,
     )
-    handler = LocalSessionHandler(public_base_url="http://localhost:17888")
+    monkeypatch.setattr(
+        "executor.modes.local.session_handler._find_free_port", lambda: 45678
+    )
+    monkeypatch.setattr(
+        session_handler,
+        "_wait_for_session_port",
+        fake_wait_for_session_port,
+        raising=False,
+    )
+    handler = session_handler.LocalSessionHandler(
+        public_base_url="http://localhost:17888"
+    )
 
     result = await handler.handle_start_session(
         {
@@ -232,6 +248,7 @@ async def test_start_terminal_session_uses_writable_once_ttyd(tmp_path, monkeypa
 
     assert result["success"] is True
     assert result["url"] == "http://localhost:17888/s/terminal-1/?token=secret"
+    assert waited_ports == [("127.0.0.1", 45678, 1234)]
     argv = created[0][0]
     assert argv[:2] == ("ttyd", "-i")
     assert "-o" in argv
@@ -309,6 +326,11 @@ async def test_start_session_resolves_relative_default_path(
     monkeypatch.setattr(
         "executor.modes.local.session_handler.asyncio.create_subprocess_exec",
         fake_create_process,
+    )
+    monkeypatch.setattr(
+        "executor.modes.local.session_handler._wait_for_session_port",
+        AsyncMock(return_value=True),
+        raising=False,
     )
     handler = LocalSessionHandler(public_base_url="http://localhost:17888")
 
