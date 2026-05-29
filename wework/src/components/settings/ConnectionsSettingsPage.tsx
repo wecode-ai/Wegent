@@ -8,7 +8,6 @@ import {
   Folder,
   Globe2,
   Loader2,
-  Monitor,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -23,9 +22,10 @@ import { createDeviceApi } from '@/api/devices'
 import { createHttpClient } from '@/api/http'
 import { getRuntimeConfig } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
-import { buildVncPageUrl } from '@/lib/vnc'
 import type { ArchivedTask } from '@/types/api'
-import type { CloudDeviceMetricsResponse, DeviceInfo } from '@/types/devices'
+import type { DeviceInfo } from '@/types/devices'
+import { DeviceMetrics } from '@wecode/components/DeviceMetrics'
+import { VncDesktopButton } from '@wecode/components/VncDesktopButton'
 import { AddCloudDeviceDialog } from './AddCloudDeviceDialog'
 
 interface ConnectionsSettingsPageProps {
@@ -134,85 +134,6 @@ function DeviceIconActionButton({
     >
       <Icon className="h-3.5 w-3.5" />
     </button>
-  )
-}
-
-function createSettingsDeviceApi() {
-  const { apiBaseUrl } = getRuntimeConfig()
-  return createDeviceApi(createHttpClient({ baseUrl: apiBaseUrl }))
-}
-
-function formatMetricPercent(value: number | null | undefined): string {
-  if (value === null || value === undefined) return '--%'
-  if (value < 1) return '<1%'
-  return `${Math.round(value)}%`
-}
-
-function DeviceMetrics({ deviceId }: { deviceId: string }) {
-  const [metrics, setMetrics] = useState<CloudDeviceMetricsResponse | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-
-    createSettingsDeviceApi()
-      .getMetrics(deviceId)
-      .then(data => {
-        if (!cancelled) setMetrics(data)
-      })
-      .catch(() => {
-        if (!cancelled) setMetrics(null)
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [deviceId])
-
-  return (
-    <div
-      data-testid="device-metrics"
-      className="flex flex-wrap items-center gap-3 text-xs text-[#6b6f76]"
-    >
-      <span className="inline-flex items-center gap-1">
-        <span>CPU</span>
-        <span>{formatMetricPercent(metrics?.cpu_usage)}</span>
-      </span>
-      <span className="inline-flex items-center gap-1">
-        <span>MEM</span>
-        <span>{formatMetricPercent(metrics?.memory_usage)}</span>
-      </span>
-      <span className="inline-flex items-center gap-1">
-        <span>磁盘</span>
-        <span>{formatMetricPercent(metrics?.disk_usage)}</span>
-      </span>
-    </div>
-  )
-}
-
-function VncDesktopButton({ deviceId }: { deviceId: string }) {
-  const [loading, setLoading] = useState(false)
-
-  const handleClick = useCallback(async () => {
-    if (loading) return
-    setLoading(true)
-    try {
-      const config = await createSettingsDeviceApi().getVncConfig(deviceId)
-      window.open(buildVncPageUrl(deviceId, config.sandbox_id), '_blank', 'noopener')
-    } catch (e) {
-      console.error('Failed to open device desktop:', e)
-    } finally {
-      setLoading(false)
-    }
-  }, [deviceId, loading])
-
-  return (
-    <DeviceActionButton
-      testId={`connection-vnc-button-${deviceId}`}
-      icon={Monitor}
-      label="桌面"
-      onClick={handleClick}
-      disabled={loading}
-    />
   )
 }
 

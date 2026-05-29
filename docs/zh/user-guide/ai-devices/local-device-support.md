@@ -132,6 +132,14 @@ docker run -d --platform linux/amd64 \
 
 如果项目配置了 `workspace.localPath` 或 `workspace.checkoutPath`，设备会在启动 terminal 或 code-server 前自动创建该目录。
 
+### 非项目会话工作区
+
+当聊天未选择项目但绑定到在线设备时，Wegent 会为该会话创建独立的 Chats 工作区。首轮任务先在临时任务目录中执行；回复完成后，Executor 会根据日期和回复摘要生成目录名，并把临时目录移动到 Chats 工作区树中。
+
+默认根目录为 `~/.wecode/wegent-executor/workspace/chats`。如需自定义位置，可在设备运行环境中设置 `WEGENT_EXECUTOR_CHATS_DIR`。Backend 会把最终路径写入任务元数据标签 `standaloneChatWorkspacePath`，后续继续该会话或打开历史会话时会复用同一目录。
+
+项目会话不使用此路径；项目会话仍然使用项目配置中的 `workspace.localPath` 或 `workspace.checkoutPath`。
+
 #### 安装指定版本
 
 **macOS / Linux：**
@@ -192,6 +200,12 @@ EXECUTOR_MODE=local wegent-executor
    - 🟡 **繁忙**：设备已达最大容量
 3. 选择您想使用的设备
 4. 像往常一样发送消息
+
+### 不使用项目的会话
+
+在聊天输入区选择 **不使用项目** 时，任务会直接绑定到选中的在线设备。系统优先选择在线云设备；如果您手动选择其他在线设备，新会话会在该设备的 Chats 工作区中运行。离线设备不会作为可选执行目标。
+
+这种模式适合临时命令、资料整理、问题排查等不需要绑定代码项目的工作。需要项目目录、项目终端或项目 IDE 时，请切换回具体项目。
 
 ### 设备状态指示
 
