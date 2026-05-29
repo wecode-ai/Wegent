@@ -727,6 +727,38 @@ class TaskOperationsMixin:
         )
         return self._archive_tasks(db, tasks)
 
+    def archive_standalone_chats(self, db: Session, *, user_id: int) -> int:
+        """Archive all active chat/code tasks that are not associated with projects."""
+
+        tasks = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.user_id == user_id,
+                TaskResource.project_id == 0,
+                TaskResource.kind == "Task",
+                TaskResource.namespace != "system",
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
+            )
+            .all()
+        )
+        return self._archive_tasks(db, tasks)
+
+    def archive_all_project_chats(self, db: Session, *, user_id: int) -> int:
+        """Archive all active chat/code tasks associated with any project."""
+
+        tasks = (
+            db.query(TaskResource)
+            .filter(
+                TaskResource.user_id == user_id,
+                TaskResource.project_id > 0,
+                TaskResource.kind == "Task",
+                TaskResource.namespace != "system",
+                TaskResource.is_active == TaskResource.STATE_ACTIVE,
+            )
+            .all()
+        )
+        return self._archive_tasks(db, tasks)
+
     def archive_project_chats(
         self, db: Session, *, project_id: int, user_id: int
     ) -> int:

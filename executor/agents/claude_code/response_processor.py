@@ -18,6 +18,9 @@ from claude_agent_sdk.types import (
     UserMessage,
 )
 
+from executor.agents.claude_code.standalone_chat_workspace import (
+    finalize_standalone_chat_workspace,
+)
 from shared.logger import setup_logger
 from shared.models import ResponsesAPIEmitter
 from shared.models.task import ExecutionResult
@@ -46,6 +49,16 @@ API_ERROR_PATTERNS = [
 
 def contains_api_error(text: str) -> bool:
     return any(pattern in text for pattern in API_ERROR_PATTERNS)
+
+
+def _standalone_workspace_result_fields(state_manager, content: str) -> dict[str, str]:
+    """Return extra response.completed fields for a new standalone chat workspace."""
+
+    task_data = getattr(state_manager, "task_data", None) if state_manager else None
+    workspace_path = finalize_standalone_chat_workspace(task_data, content)
+    if not workspace_path:
+        return {}
+    return {"standalone_chat_workspace_path": workspace_path}
 
 
 def _tool_result_completion(block: ToolResultBlock) -> tuple[str, str | None]:
@@ -947,6 +960,9 @@ async def _process_result_message(
                 )
 
                 # Send done event (response.completed) via emitter
+                extra_fields = _standalone_workspace_result_fields(
+                    state_manager, content
+                )
                 await emitter.done(
                     content=content,
                     usage=msg.usage,
@@ -954,6 +970,7 @@ async def _process_result_message(
                     silent_exit_reason=(
                         silent_exit_reason if silent_exit_reason else None
                     ),
+                    **extra_fields,
                 )
                 logger.info(f"Sent done event for task {task_id}")
             except Exception as e:
@@ -975,9 +992,13 @@ async def _process_result_message(
             state_manager.set_task_status(TaskStatus.COMPLETED.value)
 
             # Send done event (response.completed) via emitter
+            extra_fields = _standalone_workspace_result_fields(
+                state_manager, result_str
+            )
             await emitter.done(
                 content=result_str,
                 usage=msg.usage,
+                **extra_fields,
             )
             logger.info(f"Sent done event for task {task_id}")
         return TaskStatus.COMPLETED

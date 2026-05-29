@@ -94,7 +94,9 @@ export function ProjectChatComposer({
           projects={projectWork.projects}
           devices={projectWork.devices}
           currentProjectId={projectWork.currentProjectId}
+          currentStandaloneDeviceId={projectWork.currentStandaloneDeviceId}
           onSelectProject={projectWork.onSelectProject}
+          onSelectStandaloneDevice={projectWork.onSelectStandaloneDevice}
         />
       )}
     </div>

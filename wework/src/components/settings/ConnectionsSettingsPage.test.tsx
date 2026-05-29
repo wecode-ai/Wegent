@@ -17,18 +17,6 @@ vi.mock('@/api/devices', () => ({
   createDeviceApi: vi.fn(),
 }))
 
-vi.mock('@wecode/components/DeviceMetrics', () => ({
-  DeviceMetrics: () => <div data-testid="device-metrics">metrics</div>,
-}))
-
-vi.mock('@wecode/components/VncDesktopButton', () => ({
-  VncDesktopButton: ({ deviceId }: { deviceId: string }) => (
-    <button type="button" data-testid={`connection-vnc-button-${deviceId}`}>
-      桌面
-    </button>
-  ),
-}))
-
 const createDeviceApiMock = vi.mocked(createDeviceApi)
 
 function cloudDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
@@ -57,10 +45,28 @@ describe('ConnectionsSettingsPage', () => {
     renameDevice: vi.fn(),
     restartCloudDevice: vi.fn(),
     deleteCloudDevice: vi.fn(),
+    getMetrics: vi.fn(),
+    getMetricsHistory: vi.fn(),
+    getVncConfig: vi.fn(),
   }
 
   beforeEach(() => {
     vi.clearAllMocks()
+    api.getMetrics.mockResolvedValue({
+      cpu_usage: 42,
+      memory_usage: 68,
+      disk_usage: 57,
+    })
+    api.getMetricsHistory.mockResolvedValue({
+      cpu: [],
+      memory: [],
+      disk: [],
+    })
+    api.getVncConfig.mockResolvedValue({
+      wss_url: 'wss://example.com/vnc',
+      signature: 'signature',
+      sandbox_id: 'sandbox-1',
+    })
     createDeviceApiMock.mockReturnValue(api)
   })
 

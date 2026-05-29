@@ -1,5 +1,5 @@
 import { Code2, Folder, Image, MoreHorizontal, Pencil, Search, X } from 'lucide-react'
-import { useTranslation } from 'react-i18next'
+import { useTranslation } from '@/hooks/useTranslation'
 import type { ProjectWithTasks, Task, User } from '@/types/api'
 
 interface MobileDrawerProps {
@@ -22,6 +22,7 @@ export function MobileDrawer({
   onOpenTask,
 }: MobileDrawerProps) {
   const { t } = useTranslation('common')
+  const standaloneRecentTasks = recentTasks.filter(task => !task.project_id)
 
   if (!open) return null
 
@@ -98,7 +99,7 @@ export function MobileDrawer({
               {project.name}
             </button>
           ))}
-          {recentTasks.map(task => (
+          {standaloneRecentTasks.map(task => (
             <button
               key={`task-${task.id}`}
               type="button"

@@ -10,13 +10,17 @@ export function PluginManagementPage() {
   const { logout } = useAuth()
   const {
     state,
+    runningTaskIds,
     selectProject,
+    startNewChat,
+    startStandaloneChat,
     startNewProjectChat,
     openTask,
     createProject,
     updateProjectName,
     removeProject,
     archiveAllChats,
+    archiveAllProjectChats,
     archiveProjectChats,
     archiveTask,
     renameTask,
@@ -57,6 +61,16 @@ export function PluginManagementPage() {
     startNewProjectChat(projectId)
   }
 
+  const handleNewChat = () => {
+    navigateTo('/')
+    startNewChat()
+  }
+
+  const handleStartStandaloneChat = () => {
+    navigateTo('/')
+    startStandaloneChat()
+  }
+
   return (
     <div className="flex h-screen overflow-hidden bg-base text-text-primary">
       <DesktopSidebar
@@ -64,11 +78,13 @@ export function PluginManagementPage() {
         projects={state.projects}
         devices={state.devices}
         recentTasks={state.recentTasks}
+        runningTaskIds={runningTaskIds}
         currentProjectId={state.currentProject?.id}
         currentTaskId={state.currentTask?.id}
         activeItem="plugins"
         onCollapse={() => {}}
-        onNewChat={() => navigateTo('/')}
+        onNewChat={handleNewChat}
+        onStartStandaloneChat={handleStartStandaloneChat}
         onSelectProject={handleSelectProject}
         onStartNewProjectChat={handleStartNewProjectChat}
         onOpenTask={handleOpenTask}
@@ -77,6 +93,7 @@ export function PluginManagementPage() {
         onUpdateProjectName={updateProjectName}
         onRemoveProject={removeProject}
         onArchiveAllChats={archiveAllChats}
+        onArchiveAllProjectChats={archiveAllProjectChats}
         onArchiveProjectChats={archiveProjectChats}
         onArchiveTask={archiveTask}
         onRenameTask={renameTask}

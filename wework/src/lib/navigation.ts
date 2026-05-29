@@ -1,6 +1,13 @@
-export function navigateTo(path: string) {
-  if (window.location.pathname === path) return
+import { getRuntimeConfig, joinAppPath } from '@/config/runtime'
 
-  window.history.pushState({}, '', path)
+export function toBrowserPath(path: string): string {
+  return joinAppPath(getRuntimeConfig().appBasePath, path)
+}
+
+export function navigateTo(path: string) {
+  const browserPath = toBrowserPath(path)
+  if (window.location.pathname === browserPath) return
+
+  window.history.pushState({}, '', browserPath)
   window.dispatchEvent(new PopStateEvent('popstate'))
 }

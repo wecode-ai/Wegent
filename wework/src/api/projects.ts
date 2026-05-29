@@ -39,6 +39,9 @@ export function createProjectApi(client: HttpClient) {
     startCodeServerSession(projectId: number): Promise<ProjectDeviceSessionResponse> {
       return client.post(`/projects/${projectId}/code-server`)
     },
+    archiveAllProjectChats(): Promise<TaskArchiveBatchResponse> {
+      return client.post('/projects/archive-chats')
+    },
     createConversation(
       projectId: number,
       data: CreateProjectConversationRequest
