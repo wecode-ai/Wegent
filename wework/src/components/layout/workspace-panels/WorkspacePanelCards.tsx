@@ -66,13 +66,19 @@ export function WorkspacePanelCards({ currentProject }: WorkspacePanelCardsProps
     void startTerminalSession()
   }
 
-  const handleCloseActiveTerminal = () => {
-    if (!activeTerminalSession) return
+  const handleCloseTerminalSession = (sessionId: string) => {
     setTerminalSessions(sessions => {
-      const remaining = sessions.filter(
-        session => session.session_id !== activeTerminalSession.session_id,
-      )
-      setActiveTerminalSessionId(remaining[remaining.length - 1]?.session_id ?? null)
+      const closeIndex = sessions.findIndex(session => session.session_id === sessionId)
+      const remaining = sessions.filter(session => session.session_id !== sessionId)
+      const shouldSelectNext =
+        sessionId === activeTerminalSessionId ||
+        !remaining.some(session => session.session_id === activeTerminalSessionId)
+
+      if (shouldSelectNext) {
+        const nextSession = remaining[Math.max(closeIndex - 1, 0)] ?? remaining[0] ?? null
+        setActiveTerminalSessionId(nextSession?.session_id ?? null)
+      }
+
       return remaining
     })
   }
@@ -117,23 +123,38 @@ export function WorkspacePanelCards({ currentProject }: WorkspacePanelCardsProps
       >
         <div className="flex h-10 shrink-0 items-center gap-2 overflow-hidden border-b border-border bg-[#fafafa] px-2">
           <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
-            {terminalSessions.map(session => (
-              <button
-                type="button"
-                key={session.session_id}
-                data-testid="workspace-terminal-tab"
-                onClick={() => setActiveTerminalSessionId(session.session_id)}
-                className={`flex h-8 max-w-[180px] shrink-0 items-center gap-2 rounded-md px-2.5 text-left text-sm ${
-                  session.session_id === activeTerminalSession.session_id
-                    ? 'bg-surface text-text-primary'
-                    : 'text-text-secondary hover:bg-muted'
-                }`}
-                title={session.device_id}
-              >
-                <SquareTerminal className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
-                <span className="truncate">{session.device_id}</span>
-              </button>
-            ))}
+            {terminalSessions.map(session => {
+              const isActive = session.session_id === activeTerminalSession.session_id
+
+              return (
+                <div
+                  key={session.session_id}
+                  className={`flex h-8 max-w-[200px] shrink-0 items-center overflow-hidden rounded-md ${
+                    isActive ? 'bg-surface text-text-primary' : 'text-text-secondary hover:bg-muted'
+                  }`}
+                  title={session.device_id}
+                >
+                  <button
+                    type="button"
+                    data-testid="workspace-terminal-tab"
+                    onClick={() => setActiveTerminalSessionId(session.session_id)}
+                    className="flex min-w-0 flex-1 items-center gap-2 px-2.5 text-left text-sm"
+                  >
+                    <SquareTerminal className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
+                    <span className="truncate">{session.device_id}</span>
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="workspace-terminal-close-button"
+                    onClick={() => handleCloseTerminalSession(session.session_id)}
+                    className="flex h-8 w-7 shrink-0 items-center justify-center text-text-secondary hover:bg-muted"
+                    aria-label={t('workbench.close_terminal', '关闭终端')}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              )
+            })}
           </div>
           <button
             type="button"
@@ -148,15 +169,6 @@ export function WorkspacePanelCards({ currentProject }: WorkspacePanelCardsProps
             ) : (
               <Plus className="h-4 w-4" />
             )}
-          </button>
-          <button
-            type="button"
-            data-testid="workspace-terminal-close-button"
-            onClick={handleCloseActiveTerminal}
-            className="ml-auto mr-2 flex h-8 w-8 items-center justify-center rounded-md text-text-secondary hover:bg-muted"
-            aria-label={t('workbench.close_terminal', '关闭终端')}
-          >
-            <X className="h-4 w-4" />
           </button>
         </div>
         <iframe

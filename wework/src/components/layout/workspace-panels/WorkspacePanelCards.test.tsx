@@ -121,9 +121,18 @@ describe('WorkspacePanelCards', () => {
       expect(api.startTerminalSession).toHaveBeenCalledTimes(2),
     )
     expect(screen.getAllByTestId('workspace-terminal-tab')).toHaveLength(2)
+    expect(screen.getAllByTestId('workspace-terminal-close-button')).toHaveLength(2)
     expect(screen.getByTestId('workspace-terminal-frame')).toHaveAttribute(
       'src',
       'http://localhost/terminal-2?embed=1',
+    )
+
+    await userEvent.click(screen.getAllByTestId('workspace-terminal-close-button')[1])
+
+    expect(screen.getAllByTestId('workspace-terminal-tab')).toHaveLength(1)
+    expect(screen.getByTestId('workspace-terminal-frame')).toHaveAttribute(
+      'src',
+      'http://localhost/terminal-1?embed=1',
     )
   })
 
