@@ -10,6 +10,7 @@ import { cloudDeviceInternalApis } from '@wecode/api/devices'
 
 interface WorkspacePanelCardsProps {
   currentProject: ProjectWithTasks | null
+  onRequestClose?: () => void
 }
 
 type WorkspaceTool = 'terminal' | 'ide' | 'desktop'
@@ -33,7 +34,7 @@ function toEmbeddedSessionUrl(url: string): string {
   }
 }
 
-export function WorkspacePanelCards({ currentProject }: WorkspacePanelCardsProps) {
+export function WorkspacePanelCards({ currentProject, onRequestClose }: WorkspacePanelCardsProps) {
   const { t } = useTranslation('common')
   const [terminalSessions, setTerminalSessions] = useState<ProjectDeviceSessionResponse[]>([])
   const [activeTerminalSessionId, setActiveTerminalSessionId] = useState<string | null>(null)
@@ -87,16 +88,21 @@ export function WorkspacePanelCards({ currentProject }: WorkspacePanelCardsProps
     if (!currentProject || loadingTool) return
     setLoadingTool('ide')
     setError(null)
+    let shouldClosePanel = false
     try {
       const session = await createProjectSessionApi().startCodeServerSession(currentProject.id)
       if (session.url) {
         window.open(session.url, '_blank', 'noopener')
+        shouldClosePanel = true
       }
     } catch (e) {
       console.error('Failed to start project IDE:', e)
       setError(t('workbench.project_tool_start_failed', '启动失败'))
     } finally {
       setLoadingTool(null)
+      if (shouldClosePanel) {
+        onRequestClose?.()
+      }
     }
   }
 
@@ -104,14 +110,19 @@ export function WorkspacePanelCards({ currentProject }: WorkspacePanelCardsProps
     if (!projectDeviceId || loadingTool) return
     setLoadingTool('desktop')
     setError(null)
+    let shouldClosePanel = false
     try {
       const config = await cloudDeviceInternalApis.getVncConfig(projectDeviceId)
       window.open(buildVncPageUrl(projectDeviceId, config.sandbox_id), '_blank', 'noopener')
+      shouldClosePanel = true
     } catch (e) {
       console.error('Failed to open project desktop:', e)
       setError(t('workbench.project_tool_start_failed', '启动失败'))
     } finally {
       setLoadingTool(null)
+      if (shouldClosePanel) {
+        onRequestClose?.()
+      }
     }
   }
 

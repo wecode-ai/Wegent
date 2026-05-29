@@ -138,7 +138,8 @@ describe('WorkspacePanelCards', () => {
 
   test('opens the project IDE in a new page', async () => {
     const api = createProjectApiMock()
-    render(<WorkspacePanelCards currentProject={project} />)
+    const onRequestClose = vi.fn()
+    render(<WorkspacePanelCards currentProject={project} onRequestClose={onRequestClose} />)
 
     await userEvent.click(screen.getByTestId('workspace-ide-card'))
 
@@ -150,10 +151,12 @@ describe('WorkspacePanelCards', () => {
       '_blank',
       'noopener',
     )
+    expect(onRequestClose).toHaveBeenCalledTimes(1)
   })
 
   test('opens the project desktop using the cloud device VNC page', async () => {
-    render(<WorkspacePanelCards currentProject={project} />)
+    const onRequestClose = vi.fn()
+    render(<WorkspacePanelCards currentProject={project} onRequestClose={onRequestClose} />)
 
     await userEvent.click(screen.getByTestId('workspace-desktop-card'))
 
@@ -170,5 +173,6 @@ describe('WorkspacePanelCards', () => {
       '_blank',
       'noopener',
     )
+    expect(onRequestClose).toHaveBeenCalledTimes(1)
   })
 })

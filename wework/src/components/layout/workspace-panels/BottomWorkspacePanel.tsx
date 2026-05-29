@@ -5,9 +5,10 @@ import { WorkspacePanelCards } from './WorkspacePanelCards'
 
 interface BottomWorkspacePanelProps {
   currentProject: ProjectWithTasks | null
+  onRequestClose: () => void
 }
 
-export function BottomWorkspacePanel({ currentProject }: BottomWorkspacePanelProps) {
+export function BottomWorkspacePanel({ currentProject, onRequestClose }: BottomWorkspacePanelProps) {
   const { t } = useTranslation('common')
   const { height, handleResizeStart } = useResizableBottomPanel()
 
@@ -24,7 +25,7 @@ export function BottomWorkspacePanel({ currentProject }: BottomWorkspacePanelPro
         aria-label={t('workbench.resize_bottom_workspace_panel', '调整底部栏高度')}
       />
       <div className="flex min-h-0 flex-1">
-        <WorkspacePanelCards currentProject={currentProject} />
+        <WorkspacePanelCards currentProject={currentProject} onRequestClose={onRequestClose} />
       </div>
     </section>
   )

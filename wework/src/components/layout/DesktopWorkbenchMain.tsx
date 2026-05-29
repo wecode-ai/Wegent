@@ -104,7 +104,12 @@ export function DesktopWorkbenchMain({
             </div>
           </div>
         )}
-        {bottomPanelOpen && <BottomWorkspacePanel currentProject={currentProject} />}
+        {bottomPanelOpen && (
+          <BottomWorkspacePanel
+            currentProject={currentProject}
+            onRequestClose={() => setBottomPanelOpen(false)}
+          />
+        )}
       </div>
       <WorkspacePanelActions
         rightPanelOpen={rightPanelOpen}
