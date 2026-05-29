@@ -17,6 +17,7 @@ from app.models.user import User
 from app.services.chat.storage.task_manager import (
     TaskCreationParams,
     create_assistant_subtask,
+    create_new_task,
     create_task_and_subtasks,
 )
 
@@ -64,6 +65,41 @@ def test_create_assistant_subtask_inherits_deleted_executor_state_for_recovery(
     assert assistant_subtask.executor_name == previous_subtask.executor_name
     assert assistant_subtask.executor_namespace == previous_subtask.executor_namespace
     assert assistant_subtask.executor_deleted_at is True
+
+
+def test_create_new_task_uses_auto_delete_executor_label(
+    test_db: Session,
+    test_user: User,
+):
+    """New task labels should honor auto_delete_executor from API headers."""
+    team = SimpleNamespace(
+        id=1256,
+        user_id=test_user.id,
+        name="quickstart",
+        namespace="default",
+    )
+    params = TaskCreationParams(
+        message="run tests",
+        auto_delete_executor="true",
+    )
+
+    with (
+        patch(
+            "app.services.adapters.task_kinds.task_kinds_service.create_task_id",
+            return_value=1385,
+        ),
+        patch(
+            "app.services.adapters.task_kinds.task_kinds_service.validate_task_id",
+            return_value=True,
+        ),
+        patch(
+            "app.services.chat.storage.task_manager.build_initial_task_knowledge_base_refs",
+            return_value=[],
+        ),
+    ):
+        task = create_new_task(test_db, test_user, team, params)
+
+    assert task.json["metadata"]["labels"]["autoDeleteExecutor"] == "true"
 
 
 def test_create_assistant_subtask_inherits_active_executor_state(
