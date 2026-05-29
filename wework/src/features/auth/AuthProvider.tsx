@@ -7,7 +7,7 @@ import {
   type LoginRequest,
 } from '@/api/auth'
 import { createHttpClient } from '@/api/http'
-import { getRuntimeConfig } from '@/config/runtime'
+import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import type { User } from '@/types/api'
 import {
   LOGIN_PATH,
@@ -29,7 +29,8 @@ function createDefaultAuthApi(): AuthApi {
 }
 
 function isAuthRoute(pathname: string) {
-  return pathname === LOGIN_PATH || pathname === OIDC_CALLBACK_PATH
+  const appPath = stripAppBasePath(pathname)
+  return appPath === LOGIN_PATH || appPath === OIDC_CALLBACK_PATH
 }
 
 export function AuthProvider({ children, authApi }: AuthProviderProps) {

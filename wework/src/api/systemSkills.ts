@@ -7,6 +7,7 @@ import type {
   SystemSkillListResponse,
   SystemSkillProviderListResponse,
 } from '@/types/api'
+import { getRuntimeConfig } from '@/config/runtime'
 import type { HttpClient } from './http'
 
 export interface SystemSkillListParams {
@@ -69,7 +70,9 @@ export function createSystemSkillApi(client: HttpClient) {
       formData.append('name', name)
       formData.append('namespace', 'default')
 
-      return fetch('/api/v1/kinds/skills/upload', {
+      const { apiBaseUrl } = getRuntimeConfig()
+
+      return fetch(`${apiBaseUrl}/v1/kinds/skills/upload`, {
         method: 'POST',
         headers: {
           ...(localStorage.getItem('auth_token')
