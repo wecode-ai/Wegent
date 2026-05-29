@@ -75,6 +75,157 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('project-work-button')).toBeInTheDocument()
   })
 
+  test('keeps the compact mobile composer close to one-line input height', () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+      />,
+    )
+
+    const form = screen.getByTestId('chat-message-input').closest('form')
+
+    expect(form).toHaveClass('items-end')
+    expect(screen.getByTestId('add-context-button')).toHaveClass(
+      'h-[52px]',
+      'w-[52px]',
+      'rounded-[26px]',
+    )
+    expect(screen.getByTestId('compact-input-pill')).toHaveClass('min-h-[52px]')
+    expect(screen.getByTestId('chat-message-input')).toHaveClass(
+      'py-[14px]',
+      'scrollbar-none',
+    )
+    expect(screen.getByTestId('send-message-button')).toHaveClass(
+      'absolute',
+      'bottom-1',
+      'right-1',
+      'h-11',
+      'w-11',
+      'rounded-[22px]',
+    )
+  })
+
+  test('hides voice input after typing in the compact composer', async () => {
+    render(<ControlledChatInput />)
+
+    expect(screen.getByTestId('voice-input-button')).toBeInTheDocument()
+    await userEvent.type(screen.getByTestId('chat-message-input'), 'hello')
+
+    expect(screen.queryByTestId('voice-input-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('compact-input-pill')).toHaveClass('pr-14')
+    expect(screen.getByTestId('send-message-button')).toHaveClass(
+      'bottom-1',
+      'right-1',
+    )
+  })
+
+  test('opens a mobile context sheet that only uploads images', async () => {
+    const handleFileSelect = vi.fn().mockResolvedValue(undefined)
+    const image = new File(['image'], 'photo.png', { type: 'image/png' })
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        projectChat={projectChatControls({ handleFileSelect })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('add-context-button'))
+
+    expect(screen.getByTestId('mobile-context-sheet')).toBeInTheDocument()
+    expect(screen.getByTestId('mobile-take-photo-button')).toHaveTextContent('拍照')
+    expect(screen.getByTestId('mobile-upload-image-button')).toHaveTextContent('上传图片')
+    expect(screen.queryByText('添加照片和文件')).not.toBeInTheDocument()
+    expect(screen.getByTestId('mobile-camera-file-input')).toHaveAttribute(
+      'accept',
+      'image/*',
+    )
+    expect(screen.getByTestId('mobile-camera-file-input')).toHaveAttribute(
+      'capture',
+      'environment',
+    )
+    expect(screen.getByTestId('mobile-image-file-input')).toHaveAttribute(
+      'accept',
+      'image/*',
+    )
+
+    await userEvent.upload(screen.getByTestId('mobile-image-file-input'), image)
+
+    expect(handleFileSelect).toHaveBeenCalledWith([image])
+    expect(screen.queryByTestId('mobile-context-sheet')).not.toBeInTheDocument()
+  })
+
+  test('enables compact send when only image attachments are present', async () => {
+    const onSubmit = vi.fn()
+    const attachment: Attachment = {
+      id: 45,
+      filename: 'photo.png',
+      file_size: 1200,
+      mime_type: 'image/png',
+      status: 'ready',
+      file_extension: '.png',
+      created_at: '2026-05-27T00:00:00.000Z',
+    }
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={onSubmit}
+        disabled={false}
+        projectChat={projectChatControls({ attachments: [attachment] })}
+      />,
+    )
+
+    expect(screen.getByTestId('attachment-badge')).toBeInTheDocument()
+    expect(screen.getByTestId('send-message-button')).toBeEnabled()
+    await userEvent.click(screen.getByTestId('send-message-button'))
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+  })
+
+  test('expands compact input to fullscreen after more than four lines', async () => {
+    render(<ControlledChatInput />)
+
+    await userEvent.type(
+      screen.getByTestId('chat-message-input'),
+      ['one', 'two', 'three', 'four', 'five'].join('{shift>}{enter}{/shift}'),
+    )
+
+    await userEvent.click(screen.getByTestId('expand-input-button'))
+
+    expect(screen.getByTestId('fullscreen-input-sheet')).toBeInTheDocument()
+    expect(screen.queryByText('编辑消息')).not.toBeInTheDocument()
+    expect(screen.getByTestId('collapse-input-button')).toHaveClass(
+      'absolute',
+      'right-3',
+      'top-3',
+    )
+    expect(screen.getByTestId('fullscreen-message-input')).toHaveClass(
+      'h-full',
+      'pt-14',
+    )
+    expect(screen.getByTestId('fullscreen-message-input')).toHaveValue(
+      ['one', 'two', 'three', 'four', 'five'].join('\n'),
+    )
+
+    await userEvent.type(screen.getByTestId('fullscreen-message-input'), '!')
+    expect(screen.getByTestId('fullscreen-message-input')).toHaveValue(
+      `${['one', 'two', 'three', 'four', 'five'].join('\n')}!`,
+    )
+
+    await userEvent.click(screen.getByTestId('collapse-input-button'))
+    expect(screen.queryByTestId('fullscreen-input-sheet')).not.toBeInTheDocument()
+    expect(screen.getByTestId('chat-message-input')).toHaveValue(
+      `${['one', 'two', 'three', 'four', 'five'].join('\n')}!`,
+    )
+  })
+
   test('hides the project work bar when requested', () => {
     render(
       <ChatInput

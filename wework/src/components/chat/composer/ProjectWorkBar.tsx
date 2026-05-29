@@ -7,6 +7,7 @@ import {
   isOnlineDevice,
   sortStandaloneDevices,
 } from '@/lib/device-selection'
+import { cn } from '@/lib/utils'
 import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
 import { useOutsideClick } from './useOutsideClick'
 
@@ -17,6 +18,10 @@ interface ProjectWorkBarProps {
   currentStandaloneDeviceId?: string | null
   onSelectProject: (projectId: number | null) => void
   onSelectStandaloneDevice: (deviceId: string | null) => void
+  className?: string
+  buttonClassName?: string
+  menuClassName?: string
+  emptyLabel?: string
 }
 
 export function ProjectWorkBar({
@@ -26,6 +31,10 @@ export function ProjectWorkBar({
   currentStandaloneDeviceId,
   onSelectProject,
   onSelectStandaloneDevice,
+  className,
+  buttonClassName,
+  menuClassName,
+  emptyLabel,
 }: ProjectWorkBarProps) {
   const { t } = useTranslation('common')
   const containerRef = useRef<HTMLDivElement>(null)
@@ -87,12 +96,15 @@ export function ProjectWorkBar({
   }
 
   return (
-    <div className="flex min-h-[56px] items-center px-6">
+    <div className={cn('flex min-h-[56px] items-center px-6', className)}>
       <div ref={containerRef} className="relative">
         {open && (
           <div
             data-testid="project-work-menu"
-            className="absolute bottom-[52px] left-0 z-40 max-h-72 w-80 overflow-y-auto rounded-2xl border border-border bg-base p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
+            className={cn(
+              'absolute bottom-[52px] left-0 z-40 max-h-72 w-80 overflow-y-auto rounded-2xl border border-border bg-base p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+              menuClassName,
+            )}
           >
             <div className="px-4 pb-2 pt-1 text-sm font-semibold text-text-muted">
               {t('workbench.projects', '项目')}
@@ -205,7 +217,10 @@ export function ProjectWorkBar({
           type="button"
           data-testid="project-work-button"
           onClick={() => setOpen(current => !current)}
-          className="flex h-11 min-w-[44px] items-center gap-2 rounded-full px-1 text-sm font-medium text-text-secondary hover:bg-muted"
+          className={cn(
+            'flex h-11 min-w-[44px] items-center gap-2 rounded-full px-1 text-sm font-medium text-text-secondary hover:bg-muted',
+            buttonClassName,
+          )}
           aria-expanded={open}
           aria-label={t('workbench.enter_project_work', '进入项目工作')}
         >
@@ -217,7 +232,7 @@ export function ProjectWorkBar({
           ) : (
             <>
               <FolderPlus className="h-5 w-5" />
-              <span>{t('workbench.enter_project_work', '进入项目工作')}</span>
+              <span>{emptyLabel ?? t('workbench.enter_project_work', '进入项目工作')}</span>
             </>
           )}
           <ChevronDown className="h-4 w-4" />

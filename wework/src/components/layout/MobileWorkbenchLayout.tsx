@@ -1,10 +1,20 @@
-import { Bot, Code2, Folder, Image, Menu, MoreHorizontal } from 'lucide-react'
+import { Bot, Menu } from 'lucide-react'
 import { useState } from 'react'
 import { ChatInput } from '@/components/chat/ChatInput'
-import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
+import type {
+  ProjectChatControls,
+  ProjectWorkControls,
+} from '@/components/chat/ChatInput'
+import { ModelSelector } from '@/components/chat/composer/ModelSelector'
+import { ProjectWorkBar } from '@/components/chat/composer/ProjectWorkBar'
+import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
 import { useTranslation } from '@/hooks/useTranslation'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
-import type { ArchivedTaskListResponse, CreateProjectRequest, ProjectWithTasks } from '@/types/api'
+import type {
+  ArchivedTaskListResponse,
+  CreateProjectRequest,
+  ProjectWithTasks,
+} from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { WorkbenchMessage, WorkbenchState } from '@/types/workbench'
 import { MobileDrawer } from './MobileDrawer'
@@ -36,8 +46,13 @@ interface MobileWorkbenchLayoutProps {
   onDeleteArchivedTasks?: () => Promise<void>
   onGetDeviceHomeDirectory?: (deviceId: string) => Promise<string>
   onGetProjectWorkspaceRoot?: (deviceId: string) => Promise<string>
-  onListDeviceDirectories?: (deviceId: string, path: string) => Promise<string[]>
-  onLoadEnvironmentInfo?: (project: ProjectWithTasks | null) => Promise<EnvironmentInfo>
+  onListDeviceDirectories?: (
+    deviceId: string,
+    path: string,
+  ) => Promise<string[]>
+  onLoadEnvironmentInfo?: (
+    project: ProjectWithTasks | null,
+  ) => Promise<EnvironmentInfo>
   onCommitEnvironmentChanges?: (
     project: ProjectWithTasks | null,
     message: string,
@@ -47,30 +62,14 @@ interface MobileWorkbenchLayoutProps {
   onLogout: () => void
 }
 
-function QuickEntry({
-  icon: Icon,
-  label,
-  testId,
-}: {
-  icon: typeof Folder
-  label: string
-  testId: string
-}) {
-  return (
-    <button
-      type="button"
-      data-testid={testId}
-      className="flex h-11 min-w-[44px] items-center gap-2 rounded-full bg-surface px-4 text-sm font-medium text-text-primary"
-    >
-      <Icon className="h-4 w-4 text-text-secondary" />
-      <span>{label}</span>
-    </button>
-  )
-}
-
 export function MobileWorkbenchLayout({
   state,
   messages,
+  runningTaskIds,
+  activeItem,
+  onNewChat,
+  onStartStandaloneChat,
+  onOpenPlugins,
   projectChat,
   projectWork,
   onSelectProject,
@@ -80,106 +79,156 @@ export function MobileWorkbenchLayout({
 }: MobileWorkbenchLayoutProps) {
   const { t } = useTranslation('common')
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const hasConversation = messages.length > 0 || state.currentTask
+  const effectiveProjectChat = projectChat ?? {
+    models: [],
+    selectedModel: null,
+    isOptionsLocked: false,
+    setSelectedModel: () => {},
+  }
   const emptyTitle = state.currentProject
     ? t('workbench.project_empty_title', {
         defaultValue: `我们应该在 ${state.currentProject.name} 中构建什么？`,
         projectName: state.currentProject.name,
       })
     : t('workbench.empty_title', '我们该做什么？')
+  const effectiveProjectWork = projectWork ?? {
+    projects: state.projects,
+    devices: state.devices,
+    currentProjectId: state.currentProject?.id,
+    currentStandaloneDeviceId: state.standaloneDeviceId,
+    onSelectProject,
+    onSelectStandaloneDevice: () => {},
+  }
+
+  if (settingsOpen) {
+    return (
+      <MobileSettingsPage
+        onBack={() => setSettingsOpen(false)}
+        onOpenPlugins={onOpenPlugins}
+      />
+    )
+  }
 
   return (
-    <div className="flex min-h-screen bg-base text-text-primary">
-      <main className="flex min-h-screen w-full flex-col overflow-hidden">
+    <div className="flex h-dvh overflow-hidden bg-base text-text-primary">
+      <main className="flex h-dvh min-h-0 w-full flex-col overflow-hidden">
         {hasConversation ? (
-          <>
-            <header className="flex items-center justify-between px-4 pb-3 pt-[max(16px,env(safe-area-inset-top))]">
+          <div className="relative min-h-0 flex-1 overflow-hidden">
+            <header
+              data-testid="mobile-conversation-header"
+              className="pointer-events-none absolute left-0 right-0 top-0 z-20 flex min-h-[56px] items-center gap-2 border-b border-border/60 bg-base/95 px-3 pb-2 pt-[max(6px,env(safe-area-inset-top))] backdrop-blur"
+            >
               <button
                 type="button"
                 data-testid="open-mobile-drawer-button"
                 onClick={() => setDrawerOpen(true)}
-                className="flex h-11 min-w-[44px] items-center justify-center rounded-full bg-surface"
+                className="pointer-events-auto flex h-10 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
                 aria-label={t('workbench.open_menu', '打开菜单')}
               >
-                <Menu className="h-6 w-6" />
+                <Menu className="h-5 w-5" />
               </button>
-              <h1 className="min-w-0 flex-1 truncate px-4 text-center text-base font-semibold">
-                {state.currentTask?.title ||
-                  state.currentProject?.name ||
-                  t('workbench.brand', 'Wework')}
-              </h1>
-              <div className="h-11 min-w-[44px]" />
-            </header>
-            <ScrollableMessageArea messages={messages} />
-            <div className="px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3">
-              <ChatInput
-                value={state.input}
-                onChange={onInputChange}
-                onSubmit={onSend}
-                disabled={state.isSending}
-                placeholder={t('workbench.mobile_input_placeholder', '询问 Wework')}
-                projectChat={projectChat}
-                projectWork={projectWork}
-              />
-            </div>
-          </>
-        ) : (
-          <div className="flex min-h-screen flex-col px-5 pb-[max(16px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))]">
-            <header className="flex items-center justify-between">
-              <button
-                type="button"
-                data-testid="open-mobile-drawer-button"
-                onClick={() => setDrawerOpen(true)}
-                className="flex h-11 min-w-[44px] items-center justify-center rounded-full bg-surface"
-                aria-label={t('workbench.open_menu', '打开菜单')}
-              >
-                <Menu className="h-6 w-6" />
-              </button>
-              <div className="flex h-11 min-w-[44px] items-center justify-center rounded-full bg-[#9b59b6] text-sm font-medium text-white">
-                {state.user?.user_name?.slice(0, 2).toUpperCase() ||
-                  t('workbench.user_fallback', '我')}
+              <div className="pointer-events-auto flex min-w-0 flex-1 justify-start">
+                <ModelSelector
+                  models={effectiveProjectChat.models}
+                  selectedModel={effectiveProjectChat.selectedModel}
+                  disabled={effectiveProjectChat.isOptionsLocked}
+                  onSelectModel={effectiveProjectChat.setSelectedModel}
+                  menuPlacement="below"
+                  buttonClassName="max-w-[min(14rem,calc(100vw-6rem))] bg-surface px-3"
+                  menuClassName="left-0 right-auto w-[min(18rem,calc(100vw-2rem))]"
+                />
               </div>
+              <div className="h-10 min-w-[44px]" />
+            </header>
+            <ScrollableMessageArea
+              messages={messages}
+              conversationKey={state.currentTask?.id ?? null}
+              className="h-full"
+              scrollerClassName="pb-28 pt-16"
+            />
+            <div
+              data-testid="mobile-chat-input-dock"
+              className="pointer-events-none absolute bottom-0 left-0 right-0 z-20 px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3"
+            >
+              <div className="pointer-events-auto">
+                <ChatInput
+                  value={state.input}
+                  onChange={onInputChange}
+                  onSubmit={onSend}
+                  disabled={state.isSending}
+                  placeholder={t(
+                    'workbench.mobile_input_placeholder',
+                    '询问 Wework',
+                  )}
+                  projectChat={projectChat}
+                  projectWork={projectWork}
+                />
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="flex h-dvh min-h-0 flex-col pb-[max(16px,env(safe-area-inset-bottom))]">
+            <header
+              data-testid="mobile-empty-header"
+              className="flex min-h-[56px] shrink-0 items-center gap-2 border-b border-transparent bg-base/95 px-3 pb-2 pt-[max(6px,env(safe-area-inset-top))]"
+            >
+              <button
+                type="button"
+                data-testid="open-mobile-drawer-button"
+                onClick={() => setDrawerOpen(true)}
+                className="flex h-10 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
+                aria-label={t('workbench.open_menu', '打开菜单')}
+              >
+                <Menu className="h-5 w-5" />
+              </button>
+              <div className="flex min-w-0 flex-1 justify-start">
+                <ModelSelector
+                  models={effectiveProjectChat.models}
+                  selectedModel={effectiveProjectChat.selectedModel}
+                  disabled={effectiveProjectChat.isOptionsLocked}
+                  onSelectModel={effectiveProjectChat.setSelectedModel}
+                  menuPlacement="below"
+                  buttonClassName="max-w-[min(14rem,calc(100vw-6rem))] bg-surface px-3"
+                  menuClassName="left-0 right-auto w-[min(18rem,calc(100vw-2rem))]"
+                />
+              </div>
+              <div className="h-10 min-w-[44px]" />
             </header>
 
-            <section className="flex flex-1 flex-col justify-end pb-5">
+            <section className="flex min-h-0 flex-1 flex-col justify-end px-5 pb-32">
               <div className="mb-10 flex justify-center">
                 <Bot className="h-8 w-8 text-text-muted" />
               </div>
               <h1 className="mb-8 text-center text-2xl font-semibold tracking-normal">
                 {emptyTitle}
               </h1>
-              <div className="mb-5 flex flex-wrap justify-center gap-3">
-                <QuickEntry
-                  icon={Folder}
-                  label={t('workbench.quick_project_work', '项目工作')}
-                  testId="mobile-projects-quick-entry-button"
-                />
-                <QuickEntry
-                  icon={Image}
-                  label={t('workbench.quick_search', '查找资料')}
-                  testId="mobile-images-quick-entry-button"
-                />
-                <QuickEntry
-                  icon={Code2}
-                  label={t('workbench.quick_new_task', '新任务')}
-                  testId="mobile-code-quick-entry-button"
-                />
-                <QuickEntry
-                  icon={MoreHorizontal}
-                  label={t('workbench.more', '更多')}
-                  testId="mobile-more-quick-entry-button"
-                />
-              </div>
+              <ProjectWorkBar
+                {...effectiveProjectWork}
+                className="mb-5 min-h-0 justify-center px-0"
+                buttonClassName="bg-surface px-4 text-text-primary"
+                menuClassName="left-1/2 w-[min(20rem,calc(100vw-2.5rem))] -translate-x-1/2"
+                emptyLabel={t('workbench.select_project', '选择项目')}
+              />
+            </section>
+            <div
+              data-testid="mobile-empty-chat-input-dock"
+              className="px-4 pb-0 pt-3"
+            >
               <ChatInput
                 value={state.input}
                 onChange={onInputChange}
                 onSubmit={onSend}
                 disabled={state.isSending}
-                placeholder={t('workbench.mobile_input_placeholder', '询问 Wework')}
+                placeholder={t(
+                  'workbench.mobile_input_placeholder',
+                  '询问 Wework',
+                )}
                 projectChat={projectChat}
                 projectWork={projectWork}
               />
-            </section>
+            </div>
           </div>
         )}
       </main>
@@ -189,7 +238,14 @@ export function MobileWorkbenchLayout({
         user={state.user}
         projects={state.projects}
         recentTasks={state.recentTasks}
+        runningTaskIds={runningTaskIds}
+        currentProjectId={state.currentProject?.id}
+        currentTaskId={state.currentTask?.id}
+        activeItem={activeItem}
         onClose={() => setDrawerOpen(false)}
+        onNewChat={onNewChat}
+        onStartStandaloneChat={onStartStandaloneChat}
+        onOpenSettings={() => setSettingsOpen(true)}
         onSelectProject={onSelectProject}
         onOpenTask={onOpenTask}
       />
