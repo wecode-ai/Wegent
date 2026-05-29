@@ -370,6 +370,97 @@ Once the skill is ready for distribution, **ask the user** how they want to dist
 
 ---
 
+## Wegent Publish Target Selection
+
+When publishing inside a Wegent task, always use an interactive card before uploading the Skill.
+Do not ask the publish target as a plain text question.
+
+1. Build publish target options:
+
+   ```bash
+   bash "$SKILLS_DIR/skill-creator/scripts/list_publish_targets.sh"
+   ```
+
+   If `SKILLS_DIR` is unavailable, resolve the script relative to this Skill directory and run `scripts/list_publish_targets.sh`.
+
+2. Convert the returned JSON into `interactive_form_question` options:
+   - Use every object in `targets` as a choice.
+   - Use `label` for the option label.
+   - Use `namespace` for the option value.
+   - Mark the `default` namespace as recommended.
+   - If `custom_allowed` is true, include a "Custom namespace" option with value `__custom_namespace__`.
+
+3. Call `interactive_form_question` with one required choice question:
+
+   ```python
+   interactive_form_question(
+       questions=[
+           {
+               "id": "publish_namespace",
+               "question": "Where should I upload this Skill?",
+               "input_type": "choice",
+               "options": [
+                   {"label": "Personal Skill Library", "value": "default", "recommended": True},
+                   {"label": "Custom namespace", "value": "__custom_namespace__"},
+               ],
+           }
+       ]
+   )
+   ```
+
+   Replace the example options with the actual targets from `list_publish_targets.sh`.
+
+4. If the user chooses `__custom_namespace__`, call `interactive_form_question` again with a required text question:
+
+   ```python
+   interactive_form_question(
+       questions=[
+           {
+               "id": "custom_namespace",
+               "question": "Enter the namespace to upload this Skill to.",
+               "input_type": "text",
+               "placeholder": "default or a group namespace",
+           }
+       ]
+   )
+   ```
+
+5. Publish with the selected namespace:
+
+   ```bash
+   bash "$SKILLS_DIR/skill-creator/scripts/publish_skill.sh" "<skill_path>" "<skill_name>" "<namespace>"
+   ```
+
+6. If publishing fails because the Skill already exists, ask for overwrite confirmation with `interactive_form_question` before retrying:
+
+   ```python
+   interactive_form_question(
+       questions=[
+           {
+               "id": "overwrite_existing_skill",
+               "question": "A Skill with this name already exists in the target namespace. Overwrite it?",
+               "input_type": "choice",
+               "options": [
+                   {"label": "Cancel publish", "value": "cancel", "recommended": True},
+                   {"label": "Overwrite and publish", "value": "overwrite"},
+               ],
+           }
+       ]
+   )
+   ```
+
+   Only retry with `--overwrite` if the user selects `overwrite`:
+
+   ```bash
+   bash "$SKILLS_DIR/skill-creator/scripts/publish_skill.sh" "<skill_path>" "<skill_name>" "<namespace>" --overwrite
+   ```
+
+7. After successful publishing, report the Skill ID, namespace, and status. Include a Wegent settings link:
+
+   ```markdown
+   [Open Settings](wegent://open/settings)
+   ```
+
 ## Distribution Scripts
 
 ### Export Skill (Download as ZIP)
