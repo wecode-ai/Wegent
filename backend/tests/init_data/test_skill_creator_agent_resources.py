@@ -13,7 +13,6 @@ import yaml
 
 from app.services.skill_service import SkillValidator
 
-
 pytestmark = pytest.mark.unit
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
@@ -78,7 +77,7 @@ def test_skill_creator_agent_resources_exist() -> None:
     team_spec = team["spec"]
     assert team["metadata"]["displayName"] == "Skill Creator"
     assert team_spec["collaborationModel"] == "solo"
-    assert team_spec["bind_mode"] == ["task"]
+    assert team_spec["bind_mode"] == ["chat", "task"]
     assert team_spec["workflow"]["mode"] == "solo"
     assert team_spec["members"][0]["botRef"] == {
         "name": "skill-creator-bot",
