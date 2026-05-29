@@ -34,6 +34,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { useGroupPermissions } from '@/hooks/useGroupPermissions'
 import { useToast } from '@/hooks/use-toast'
 interface BotListProps {
   scope?: 'personal' | 'group' | 'all'
@@ -194,26 +195,8 @@ export default function BotList({ scope = 'personal', groupName, groupRoleMap }:
     return bot.namespace && bot.namespace !== 'default'
   }
 
-  // Helper function to check permissions for a specific group resource
-  const canEditGroupResource = (namespace: string) => {
-    if (!groupRoleMap) return false
-    const role = groupRoleMap.get(namespace)
-    return role === 'Owner' || role === 'Maintainer' || role === 'Developer'
-  }
-
-  const canDeleteGroupResource = (namespace: string) => {
-    if (!groupRoleMap) return false
-    const role = groupRoleMap.get(namespace)
-    return role === 'Owner' || role === 'Maintainer'
-  }
-
-  // Check if user can create in the current group context
-  // When scope is 'group', check the specific groupName; only Owner/Maintainer can create
-  const canCreateInCurrentGroup = (() => {
-    if (scope !== 'group' || !groupName || !groupRoleMap) return false
-    const role = groupRoleMap.get(groupName)
-    return role === 'Owner' || role === 'Maintainer'
-  })()
+  const { canEditGroupResource, canDeleteGroupResource, canCreateInCurrentGroup } =
+    useGroupPermissions({ scope, groupName, groupRoleMap })
 
   // Check if edit button should be shown
   const shouldShowEdit = (bot: Bot) => {

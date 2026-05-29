@@ -37,6 +37,7 @@ import TeamShareModal from './TeamShareModal'
 import TeamCreationWizard from './wizard/TeamCreationWizard'
 import { TeamApiCallButton } from './TeamApiCallButton'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useGroupPermissions } from '@/hooks/useGroupPermissions'
 import { useToast } from '@/hooks/use-toast'
 import { getTeamDisplayName, sortTeamsByUpdatedAt } from '@/utils/team'
 import { isGroupTeam, isPublicTeam, isSharedTeam } from '@/utils/team-permissions'
@@ -318,26 +319,8 @@ export default function TeamList({
     return filterTeamsByMode(teams, modeFilter)
   }, [teams, modeFilter])
 
-  // Helper function to check permissions for a specific group resource
-  const canEditGroupResource = (namespace: string) => {
-    if (!groupRoleMap) return false
-    const role = groupRoleMap.get(namespace)
-    return role === 'Owner' || role === 'Maintainer' || role === 'Developer'
-  }
-
-  const canDeleteGroupResource = (namespace: string) => {
-    if (!groupRoleMap) return false
-    const role = groupRoleMap.get(namespace)
-    return role === 'Owner' || role === 'Maintainer'
-  }
-
-  // Check if user can create in the current group context
-  // When scope is 'group', check the specific groupName; only Owner/Maintainer can create
-  const canCreateInCurrentGroup = (() => {
-    if (scope !== 'group' || !groupName || !groupRoleMap) return false
-    const role = groupRoleMap.get(groupName)
-    return role === 'Owner' || role === 'Maintainer'
-  })()
+  const { canEditGroupResource, canDeleteGroupResource, canCreateInCurrentGroup } =
+    useGroupPermissions({ scope, groupName, groupRoleMap })
 
   const handleDelete = async (teamId: number) => {
     setTeamToDelete(teamId)

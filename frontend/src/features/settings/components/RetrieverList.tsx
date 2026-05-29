@@ -19,6 +19,7 @@ import {
 } from '@heroicons/react/24/outline'
 import { Loader2 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
+import { useGroupPermissions } from '@/hooks/useGroupPermissions'
 import { useTranslation } from '@/hooks/useTranslation'
 import RetrieverEditDialog from './RetrieverEditDialog'
 import {
@@ -105,32 +106,15 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
 
   const totalRetrievers = groupRetrievers.length + userRetrievers.length + publicRetrievers.length
 
-  // Helper function to check permissions for a specific group resource
-  const canEditGroupResource = (namespace: string) => {
-    if (!groupRoleMap) return false
-    const role = groupRoleMap.get(namespace)
-    return role === 'Owner' || role === 'Maintainer' || role === 'Developer'
-  }
+  const {
+    canEditGroupResource,
+    canDeleteGroupResource,
+    canCreateInCurrentGroup,
+    canCreateInAnyGroup,
+  } = useGroupPermissions({ scope, groupName, groupRoleMap })
 
-  const canDeleteGroupResource = (namespace: string) => {
-    if (!groupRoleMap) return false
-    const role = groupRoleMap.get(namespace)
-    return role === 'Owner' || role === 'Maintainer'
-  }
-
-  // Check if user can create in the current group (when scope is 'group')
-  const canCreateInGroup = (targetGroupName: string | undefined): boolean => {
-    if (!targetGroupName || !groupRoleMap) return false
-    const role = groupRoleMap.get(targetGroupName)
-    return role === 'Owner' || role === 'Maintainer'
-  }
-
-  // For group scope, check specific group; otherwise check any group
   const canCreateInCurrentContext =
-    scope === 'group'
-      ? canCreateInGroup(groupName)
-      : groupRoleMap &&
-        Array.from(groupRoleMap.values()).some(role => role === 'Owner' || role === 'Maintainer')
+    scope === 'group' ? canCreateInCurrentGroup : canCreateInAnyGroup
 
   const handleTestConnection = async (retriever: UnifiedRetriever) => {
     setTestingRetrieverName(retriever.name)
