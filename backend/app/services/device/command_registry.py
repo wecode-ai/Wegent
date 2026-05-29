@@ -40,6 +40,14 @@ GIT_BRANCH_DIFF_SHORTSTAT_COMMAND = (
 
 DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "pwd": LocalDeviceCommandDefinition(command="pwd"),
+    "home_dir": LocalDeviceCommandDefinition(command="printenv HOME"),
+    "project_workspace_root": LocalDeviceCommandDefinition(
+        command=(
+            "sh -c "
+            "'printf %s "
+            '"${WEGENT_EXECUTOR_PROJECTS_DIR:-${WECODE_HOME:-$HOME/.wecode}/wegent-executor/workspace/projects}"\''
+        ),
+    ),
     "ls_a": LocalDeviceCommandDefinition(
         command="ls -a",
         post_processor="file_list",

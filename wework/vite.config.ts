@@ -10,6 +10,7 @@ const socketProxyTarget = process.env.VITE_SOCKET_PROXY_TARGET || apiProxyTarget
 export default defineConfig({
   plugins: [react()],
   server: {
+    host: '0.0.0.0',
     proxy: {
       '/api': {
         target: apiProxyTarget,
@@ -25,6 +26,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      '@wecode': path.resolve(__dirname, './wecode'),
     },
   },
   test: {

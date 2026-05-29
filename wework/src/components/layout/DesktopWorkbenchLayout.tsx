@@ -29,6 +29,8 @@ interface DesktopWorkbenchLayoutProps {
   onUnarchiveTask: (taskId: number) => Promise<void>
   onDeleteTask: (taskId: number) => Promise<void>
   onDeleteArchivedTasks: () => Promise<void>
+  onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
+  onGetProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   onLoadEnvironmentInfo: (project: ProjectWithTasks | null) => Promise<EnvironmentInfo>
   onCommitEnvironmentChanges: (
@@ -62,6 +64,8 @@ export function DesktopWorkbenchLayout({
   onUnarchiveTask,
   onDeleteTask,
   onDeleteArchivedTasks,
+  onGetDeviceHomeDirectory,
+  onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
   onLoadEnvironmentInfo,
   onCommitEnvironmentChanges,
@@ -143,6 +147,7 @@ export function DesktopWorkbenchLayout({
           devices={state.devices}
           recentTasks={state.recentTasks}
           currentProjectId={state.currentProject?.id}
+          currentTaskId={state.currentTask?.id}
           activeItem={activeItem}
           onCollapse={() => setSidebarCollapsed(true)}
           onNewChat={onNewChat}
@@ -157,6 +162,8 @@ export function DesktopWorkbenchLayout({
           onArchiveProjectChats={onArchiveProjectChats}
           onArchiveTask={onArchiveTask}
           onRenameTask={onRenameTask}
+          onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+          onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
           onListDeviceDirectories={onListDeviceDirectories}
           onOpenSettings={() => setSettingsOpen(true)}
           onLogout={onLogout}

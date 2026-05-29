@@ -26,6 +26,8 @@ export function WorkbenchPage() {
     unarchiveTask,
     deleteTask,
     deleteArchivedTasks,
+    getDeviceHomeDirectory,
+    getProjectWorkspaceRoot,
     listDeviceDirectories,
     loadEnvironmentInfo,
     commitEnvironmentChanges,
@@ -62,6 +64,8 @@ export function WorkbenchPage() {
       onUnarchiveTask={unarchiveTask}
       onDeleteTask={deleteTask}
       onDeleteArchivedTasks={deleteArchivedTasks}
+      onGetDeviceHomeDirectory={getDeviceHomeDirectory}
+      onGetProjectWorkspaceRoot={getProjectWorkspaceRoot}
       onListDeviceDirectories={listDeviceDirectories}
       onLoadEnvironmentInfo={loadEnvironmentInfo}
       onCommitEnvironmentChanges={commitEnvironmentChanges}

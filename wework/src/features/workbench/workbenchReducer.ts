@@ -33,6 +33,7 @@ export type WorkbenchAction =
   | { type: 'bootstrap_failed'; error: string }
   | { type: 'project_selected'; project: ProjectWithTasks }
   | { type: 'task_opened'; task: Task; project?: ProjectWithTasks | null }
+  | { type: 'current_task_cleared' }
   | { type: 'input_changed'; input: string }
   | { type: 'sending_started' }
   | { type: 'sending_finished' }
@@ -75,6 +76,8 @@ export function workbenchReducer(
           action.project === undefined ? state.currentProject : action.project,
         currentTask: action.task,
       }
+    case 'current_task_cleared':
+      return { ...state, currentTask: null }
     case 'input_changed':
       return { ...state, input: action.input }
     case 'sending_started':

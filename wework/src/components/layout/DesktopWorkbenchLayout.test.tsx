@@ -1,7 +1,22 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { createDeviceApi } from '@/api/devices'
 import { DesktopWorkbenchLayout } from './DesktopWorkbenchLayout'
+
+vi.mock('@/config/runtime', () => ({
+  getRuntimeConfig: () => ({ apiBaseUrl: '/api' }),
+}))
+
+vi.mock('@/api/http', () => ({
+  createHttpClient: vi.fn(() => ({})),
+}))
+
+vi.mock('@/api/devices', () => ({
+  createDeviceApi: vi.fn(),
+}))
+
+const createDeviceApiMock = vi.mocked(createDeviceApi)
 
 describe('DesktopWorkbenchLayout', () => {
   beforeEach(() => {
@@ -12,6 +27,33 @@ describe('DesktopWorkbenchLayout', () => {
       value: {
         writeText: vi.fn().mockResolvedValue(undefined),
       },
+    })
+    createDeviceApiMock.mockReturnValue({
+      getHomeDirectory: vi.fn().mockResolvedValue('/home/ubuntu'),
+      getProjectWorkspaceRoot: vi.fn().mockResolvedValue('/workspace/projects'),
+      listDirectories: vi.fn().mockResolvedValue([]),
+      executeCommand: vi.fn(),
+      getAllDevices: vi.fn().mockResolvedValue([
+        {
+          id: 1,
+          device_id: '24a59054-4638-4744-983d-372706c30fcd',
+          name: 'yunpeng7-executor-372706c30fcd',
+          status: 'online',
+          is_default: false,
+          device_type: 'cloud',
+          bind_shell: 'claudecode',
+          executor_version: '1.712',
+          cpu_usage: 42,
+          memory_usage: 68,
+          disk_usage: 57,
+        },
+      ]),
+      startTerminal: vi.fn(),
+      startCodeServer: vi.fn(),
+      createCloudDevice: vi.fn(),
+      renameDevice: vi.fn(),
+      restartCloudDevice: vi.fn(),
+      deleteCloudDevice: vi.fn(),
     })
   })
 
@@ -79,6 +121,8 @@ describe('DesktopWorkbenchLayout', () => {
     onUnarchiveTask: vi.fn(),
     onDeleteTask: vi.fn(),
     onDeleteArchivedTasks: vi.fn(),
+    onGetDeviceHomeDirectory: vi.fn().mockResolvedValue('/home/ubuntu'),
+    onGetProjectWorkspaceRoot: vi.fn().mockResolvedValue('/workspace/projects'),
     onListDeviceDirectories: vi.fn(),
     onLoadEnvironmentInfo: vi.fn().mockResolvedValue({
       additions: '+173',
@@ -222,10 +266,18 @@ describe('DesktopWorkbenchLayout', () => {
           devices: [
             {
               id: 1,
-              device_id: 'device-1',
-              name: 'sifang-executor',
+              device_id: 'local-device',
+              name: 'local-executor',
               status: 'online',
               is_default: true,
+            },
+            {
+              id: 2,
+              device_id: 'cloud-device',
+              name: 'cloud-executor',
+              status: 'online',
+              is_default: false,
+              device_type: 'cloud',
             },
           ],
         }}
@@ -233,9 +285,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('projects-more-button'))
-    expect(screen.getByTestId('archive-all-chats-button')).toHaveTextContent(
-      'Archive all chats',
-    )
+    expect(screen.getByTestId('archive-all-chats-button')).toHaveTextContent('归档所有会话')
     await userEvent.click(screen.getByTestId('archive-all-chats-button'))
     expect(baseProps.onArchiveAllChats).toHaveBeenCalledTimes(1)
 
@@ -244,7 +294,8 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
     await userEvent.type(screen.getByTestId('project-name-input'), 'alpha app')
-    expect(screen.getByText(/~\/\.wecode\/wegent-executor\/workspace\/alpha-app/)).toBeInTheDocument()
+    expect(screen.getByText(/\/workspace\/projects\/alpha-app/)).toBeInTheDocument()
+    expect(screen.queryByText(/默认目录位于/)).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('create-project-button'))
 
@@ -256,11 +307,11 @@ describe('DesktopWorkbenchLayout', () => {
             mode: 'workspace',
             execution: {
               targetType: 'local',
-              deviceId: 'device-1',
+              deviceId: 'cloud-device',
             },
             workspace: {
               source: 'local_path',
-              localPath: '~/.wecode/wegent-executor/workspace/alpha-app',
+              localPath: '/workspace/projects/alpha-app',
             },
           }),
         }),
@@ -268,14 +319,32 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
+  test('keeps project create menu open until clicking outside', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    expect(screen.getByTestId('project-start-from-scratch-button')).toBeInTheDocument()
+
+    fireEvent.pointerMove(document, { clientX: 500, clientY: 500 })
+    expect(screen.getByTestId('project-start-from-scratch-button')).toBeInTheDocument()
+
+    await userEvent.hover(screen.getByTestId('project-row-1'))
+    expect(screen.getByTestId('project-start-from-scratch-button')).toBeInTheDocument()
+
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByTestId('project-start-from-scratch-button')).not.toBeInTheDocument()
+  })
+
   test('creates a project from an existing folder selected in the directory tree', async () => {
     const onCreateProject = vi.fn().mockResolvedValue({ id: 2, name: 'repo', tasks: [] })
-    const onListDeviceDirectories = vi.fn().mockResolvedValue(['repo'])
+    const onGetDeviceHomeDirectory = vi.fn().mockResolvedValue('/home/ubuntu')
+    const onListDeviceDirectories = vi.fn().mockResolvedValue(['.cache', 'repo'])
 
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
         onCreateProject={onCreateProject}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
         onListDeviceDirectories={onListDeviceDirectories}
         state={{
           ...baseProps.state,
@@ -296,10 +365,27 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('project-existing-folder-button'))
 
     await waitFor(() =>
-      expect(onListDeviceDirectories).toHaveBeenCalledWith('device-1', '/'),
+      expect(onGetDeviceHomeDirectory).toHaveBeenCalledWith('device-1'),
     )
-    await userEvent.click(await screen.findByText('repo'))
-    await userEvent.click(screen.getByTestId('select-current-directory-button'))
+    await waitFor(() =>
+      expect(onListDeviceDirectories).toHaveBeenCalledWith('device-1', '/home/ubuntu'),
+    )
+    expect(screen.queryByText('.cache')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('select-current-directory-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('project-name-input')).not.toBeInTheDocument()
+
+    const repoEntry = await screen.findByText('repo')
+    await userEvent.click(repoEntry)
+    expect(onListDeviceDirectories).not.toHaveBeenCalledWith('device-1', '/home/ubuntu/repo')
+
+    await userEvent.click(screen.getByTestId('project-hidden-directories-toggle'))
+    expect(screen.getByText('.cache')).toBeInTheDocument()
+
+    await userEvent.dblClick(repoEntry)
+    await waitFor(() =>
+      expect(onListDeviceDirectories).toHaveBeenCalledWith('device-1', '/home/ubuntu/repo'),
+    )
+
     await userEvent.click(screen.getByTestId('create-project-button'))
 
     await waitFor(() =>
@@ -309,7 +395,7 @@ describe('DesktopWorkbenchLayout', () => {
           config: expect.objectContaining({
             workspace: {
               source: 'local_path',
-              localPath: '/repo',
+              localPath: '/home/ubuntu/repo',
             },
           }),
         }),
@@ -318,11 +404,22 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('shows project row actions and chat row actions', async () => {
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
         state={{
           ...baseProps.state,
+          currentProject: { id: 1, name: 'publish', tasks: [] },
+          currentTask: {
+            id: 11,
+            title: 'Implement archive',
+            status: 'COMPLETED',
+            task_type: 'code',
+            created_at: twoHoursAgo,
+            updated_at: twoHoursAgo,
+          },
           projects: [
             {
               id: 1,
@@ -333,7 +430,7 @@ describe('DesktopWorkbenchLayout', () => {
                   task_id: 11,
                   task_title: 'Implement archive',
                   task_status: 'COMPLETED',
-                  updated_at: '2026-05-28T10:25:00',
+                  updated_at: twoHoursAgo,
                 },
               ],
             },
@@ -346,9 +443,9 @@ describe('DesktopWorkbenchLayout', () => {
     expect(baseProps.onStartNewProjectChat).toHaveBeenCalledWith(1)
 
     await userEvent.click(screen.getByTestId('project-menu-1'))
-    expect(screen.getByTestId('rename-project-1')).toHaveTextContent('Rename project')
-    expect(screen.getByTestId('archive-project-chats-1')).toHaveTextContent('Archive chats')
-    expect(screen.getByTestId('remove-project-1')).toHaveTextContent('Remove')
+    expect(screen.getByTestId('rename-project-1')).toHaveTextContent('重命名项目')
+    expect(screen.getByTestId('archive-project-chats-1')).toHaveTextContent('归档会话')
+    expect(screen.getByTestId('remove-project-1')).toHaveTextContent('移除')
 
     await userEvent.click(screen.getByTestId('rename-project-1'))
     await userEvent.clear(screen.getByTestId('rename-project-input'))
@@ -356,17 +453,22 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('confirm-rename-project-button'))
     expect(baseProps.onUpdateProjectName).toHaveBeenCalledWith(1, 'publish-v2')
 
+    await userEvent.click(screen.getByTestId('project-item-button'))
     expect(screen.getByText('Implement archive')).toBeInTheDocument()
-    expect(screen.getByText(/10:25/)).toBeInTheDocument()
+    expect(screen.getByText('2h')).toBeInTheDocument()
+    expect(screen.getByTestId('project-chat-row-11')).toHaveClass('bg-white')
     await userEvent.click(screen.getByTestId('project-chat-button'))
     expect(baseProps.onOpenTask).toHaveBeenCalledWith(11, 1)
 
     await userEvent.click(screen.getByTestId('project-chat-menu-11'))
-    expect(screen.getByTestId('archive-chat-11')).toHaveTextContent('Archive chat')
-    expect(screen.getByTestId('rename-chat-11')).toHaveTextContent('Rename chat')
+    expect(screen.getByTestId('archive-chat-11')).toHaveTextContent('归档会话')
+    expect(screen.getByTestId('rename-chat-11')).toHaveTextContent('重命名会话')
   })
 
   test('sorts recent sessions by updated time and exposes chat archive actions', async () => {
+    const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString()
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
@@ -378,8 +480,8 @@ describe('DesktopWorkbenchLayout', () => {
               title: 'Older session',
               status: 'COMPLETED',
               task_type: 'code',
-              created_at: '2026-05-28T08:00:00',
-              updated_at: '2026-05-28T08:00:00',
+              created_at: threeHoursAgo,
+              updated_at: threeHoursAgo,
             },
             {
               id: 5,
@@ -387,8 +489,8 @@ describe('DesktopWorkbenchLayout', () => {
               status: 'COMPLETED',
               task_type: 'code',
               project_id: 7,
-              created_at: '2026-05-28T09:00:00',
-              updated_at: '2026-05-28T11:30:00',
+              created_at: oneHourAgo,
+              updated_at: oneHourAgo,
             },
           ],
         }}
@@ -398,13 +500,71 @@ describe('DesktopWorkbenchLayout', () => {
     const rows = screen.getAllByTestId('history-task-button')
     expect(rows[0]).toHaveTextContent('Newest session')
     expect(rows[1]).toHaveTextContent('Older session')
-    expect(screen.getByText(/11:30/)).toBeInTheDocument()
+    expect(screen.getByText('1h')).toBeInTheDocument()
     await userEvent.click(rows[0])
     expect(baseProps.onOpenTask).toHaveBeenCalledWith(5, 7)
 
     await userEvent.click(screen.getByTestId('history-task-menu-5'))
-    expect(screen.getByTestId('archive-history-chat-5')).toHaveTextContent('Archive chat')
-    expect(screen.getByTestId('rename-history-chat-5')).toHaveTextContent('Rename chat')
+    expect(screen.getByTestId('archive-history-chat-5')).toHaveTextContent('归档会话')
+      expect(screen.getByTestId('rename-history-chat-5')).toHaveTextContent('重命名会话')
+  })
+
+  test('toggles an empty project chat list without persistent project highlight', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(screen.queryByText('暂无会话')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-row-1')).not.toHaveClass('bg-white')
+
+    await userEvent.click(screen.getByTestId('project-item-button'))
+
+    expect(baseProps.onSelectProject).toHaveBeenCalledWith(1)
+    expect(screen.getByText('暂无会话')).toBeInTheDocument()
+    expect(screen.getByTestId('project-row-1')).not.toHaveClass('bg-white')
+
+    await userEvent.click(screen.getByTestId('project-item-button'))
+
+    expect(screen.queryByText('暂无会话')).not.toBeInTheDocument()
+    expect(baseProps.onSelectProject).toHaveBeenCalledTimes(1)
+  })
+
+  test('limits project chats to five and toggles show more and show less', async () => {
+    const projectTasks = Array.from({ length: 6 }, (_, index) => {
+      const taskNumber = index + 1
+      return {
+        id: taskNumber,
+        task_id: taskNumber,
+        task_title: `Chat ${taskNumber}`,
+        task_status: 'COMPLETED',
+        updated_at: new Date(Date.now() - index * 60 * 1000).toISOString(),
+      }
+    })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          projects: [{ id: 1, name: 'github_wegent', tasks: projectTasks }],
+        }}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('project-item-button'))
+
+    expect(screen.getByText('Chat 1')).toBeInTheDocument()
+    expect(screen.getByText('Chat 5')).toBeInTheDocument()
+    expect(screen.queryByText('Chat 6')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-task-limit-toggle-1')).toHaveTextContent('显示更多')
+
+    await userEvent.click(screen.getByTestId('project-task-limit-toggle-1'))
+
+    expect(screen.getByText('Chat 6')).toBeInTheDocument()
+    expect(screen.getByTestId('project-task-limit-toggle-1')).toHaveTextContent('收起')
+
+    await userEvent.click(screen.getByTestId('project-task-limit-toggle-1'))
+
+    expect(screen.queryByText('Chat 6')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-task-limit-toggle-1')).toHaveTextContent('显示更多')
   })
 
   test('opens archived chats settings and supports unarchive and delete actions', async () => {
@@ -473,13 +633,10 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByText('Linux-Device-481b616e8e0b')).not.toBeInTheDocument()
     expect(screen.getByText('可连接的设备')).toBeInTheDocument()
     expect(screen.queryByText('可连接这台设备的云设备')).not.toBeInTheDocument()
-    expect(screen.getByText('云设备')).toBeInTheDocument()
+    expect(await screen.findByText('云设备')).toBeInTheDocument()
     expect(
-      screen.getByTestId('connection-device-icon-24a59054-4638-4744-983d-372706c30fcd'),
-    ).toHaveClass('text-[#3c4043]')
-    expect(
-      screen.getByTestId('connection-device-icon-24a59054-4638-4744-983d-372706c30fcd'),
-    ).not.toHaveClass('bg-[#f7f7f8]')
+      screen.getByTestId('connection-device-24a59054-4638-4744-983d-372706c30fcd'),
+    ).toBeInTheDocument()
     expect(screen.getByText('yunpeng7-executor-372706c30fcd')).toBeInTheDocument()
     expect(screen.getByText('v1.712')).toBeInTheDocument()
     expect(screen.getByText('在线')).toBeInTheDocument()

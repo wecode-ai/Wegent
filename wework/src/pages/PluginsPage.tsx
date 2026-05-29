@@ -1,5 +1,7 @@
+import { useState } from 'react'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
 import { PluginsWorkspace } from '@/components/plugins/PluginsWorkspace'
+import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
 import { useAuth } from '@/features/auth/useAuth'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { navigateTo } from '@/lib/navigation'
@@ -18,17 +20,41 @@ export function PluginsPage() {
     archiveProjectChats,
     archiveTask,
     renameTask,
+    listArchivedTasks,
+    unarchiveTask,
+    deleteTask,
+    deleteArchivedTasks,
+    getDeviceHomeDirectory,
+    getProjectWorkspaceRoot,
     listDeviceDirectories,
   } = useWorkbench()
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   const handleSelectProject = (projectId: number) => {
     navigateTo('/')
     selectProject(projectId)
   }
 
-  const handleOpenTask = (taskId: number) => {
+  const handleOpenTask = (taskId: number, projectId?: number) => {
     navigateTo('/')
-    void openTask(taskId)
+    void openTask(taskId, projectId)
+  }
+
+  if (settingsOpen) {
+    return (
+      <ConnectionsSettingsPage
+        onBack={() => setSettingsOpen(false)}
+        onListArchivedTasks={listArchivedTasks}
+        onUnarchiveTask={unarchiveTask}
+        onDeleteTask={deleteTask}
+        onDeleteArchivedTasks={deleteArchivedTasks}
+      />
+    )
+  }
+
+  const handleStartNewProjectChat = (projectId: number) => {
+    navigateTo('/')
+    startNewProjectChat(projectId)
   }
 
   return (
@@ -39,11 +65,12 @@ export function PluginsPage() {
         devices={state.devices}
         recentTasks={state.recentTasks}
         currentProjectId={state.currentProject?.id}
+        currentTaskId={state.currentTask?.id}
         activeItem="plugins"
         onCollapse={() => {}}
         onNewChat={() => navigateTo('/')}
         onSelectProject={handleSelectProject}
-        onStartNewProjectChat={startNewProjectChat}
+        onStartNewProjectChat={handleStartNewProjectChat}
         onOpenTask={handleOpenTask}
         onOpenPlugins={() => navigateTo('/plugins')}
         onCreateProject={createProject}
@@ -53,8 +80,10 @@ export function PluginsPage() {
         onArchiveProjectChats={archiveProjectChats}
         onArchiveTask={archiveTask}
         onRenameTask={renameTask}
+        onGetDeviceHomeDirectory={getDeviceHomeDirectory}
+        onGetProjectWorkspaceRoot={getProjectWorkspaceRoot}
         onListDeviceDirectories={listDeviceDirectories}
-        onOpenSettings={() => navigateTo('/')}
+        onOpenSettings={() => setSettingsOpen(true)}
         onLogout={logout}
       />
       <PluginsWorkspace />

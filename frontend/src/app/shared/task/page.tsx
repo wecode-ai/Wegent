@@ -5,6 +5,7 @@
 'use client'
 
 import React, { useEffect, useState, Suspense } from 'react'
+import dynamic from 'next/dynamic'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -14,12 +15,16 @@ import { LogIn } from 'lucide-react'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import TopNavigation from '@/features/layout/TopNavigation'
 import { GithubStarButton } from '@/features/layout/GithubStarButton'
-import { MessageBubble, type Message } from '@/features/tasks/components/message'
+import type { Message } from '@/features/tasks/components/message'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { User, SubtaskContextBrief } from '@/types/api'
 import { InAppBrowserGuard } from '@/components/InAppBrowserGuard'
 import { detectInAppBrowser } from '@/utils/browserDetection'
 import '@/features/common/scrollbar.css'
+
+const MessageBubble = dynamic(() => import('@/features/tasks/components/message/MessageBubble'), {
+  ssr: false,
+})
 
 /**
  * Public shared task page - no authentication required

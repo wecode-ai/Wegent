@@ -1,5 +1,5 @@
 import type { ComponentType, MouseEvent } from 'react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { MoreHorizontal } from 'lucide-react'
 
 interface ActionMenuItem {
@@ -26,14 +26,38 @@ export function ActionMenu({
   variant = 'horizontal',
 }: ActionMenuProps) {
   const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const pointerSelectionRef = useRef(false)
 
   const handleTriggerClick = (event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation()
     setOpen(value => !value)
   }
 
+  const handleItemSelect = async (item: ActionMenuItem) => {
+    setOpen(false)
+    await item.onSelect()
+  }
+
+  useEffect(() => {
+    if (!open) return
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!containerRef.current?.contains(event.target as Node)) {
+        setOpen(false)
+      }
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    return () => document.removeEventListener('pointerdown', handlePointerDown)
+  }, [open])
+
   return (
-    <div className="relative shrink-0" onClick={event => event.stopPropagation()}>
+    <div
+      ref={containerRef}
+      className="relative shrink-0"
+      onClick={event => event.stopPropagation()}
+    >
       <button
         type="button"
         data-testid={testId}
@@ -54,9 +78,18 @@ export function ActionMenu({
               key={item.testId}
               type="button"
               data-testid={item.testId}
-              onClick={async () => {
-                setOpen(false)
-                await item.onSelect()
+              onPointerDown={event => {
+                event.preventDefault()
+                event.stopPropagation()
+                pointerSelectionRef.current = true
+                void handleItemSelect(item)
+              }}
+              onClick={() => {
+                if (pointerSelectionRef.current) {
+                  pointerSelectionRef.current = false
+                  return
+                }
+                void handleItemSelect(item)
               }}
               className={[
                 'flex h-9 w-full items-center gap-2 px-3 text-left text-sm',
