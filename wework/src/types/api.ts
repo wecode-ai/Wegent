@@ -161,10 +161,12 @@ export interface TaskContextData {
 
 export interface Subtask {
   id: number
+  task_id?: number
   role: string
   prompt?: string
   result?: unknown
   status: string
+  message_id?: number
   created_at: string
   updated_at?: string
   contexts?: TaskContextData[]
