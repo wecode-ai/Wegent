@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.subtask_context import (
     ContextStatus,
     ContextType,
@@ -716,10 +717,45 @@ class ContextService:
                 f"{max_text_length} characters. The following is only partial content.)\n"
             )
 
-        prefix += f"{context.extracted_text}\n\n"
+        prefix += self._build_document_prompt_content(
+            extracted_text=context.extracted_text,
+            sandbox_path=sandbox_path,
+        )
 
         # Wrap in <attachment> XML tags
         return prefix
+
+    @staticmethod
+    def _build_document_prompt_content(
+        extracted_text: str,
+        sandbox_path: Optional[str],
+    ) -> str:
+        """Build prompt-safe document text, using a short preview for large files."""
+        preview_threshold = settings.LARGE_ATTACHMENT_PREVIEW_THRESHOLD
+        preview_length = settings.LARGE_ATTACHMENT_PREVIEW_LENGTH
+
+        if len(extracted_text) <= preview_threshold:
+            return f"{extracted_text}\n\n"
+
+        preview = extracted_text[: max(preview_length, 0)]
+        if sandbox_path:
+            guidance = (
+                "Note: This attachment is large. Only a short content preview is "
+                "included here to protect the model context. To inspect the full "
+                "content, read the full file from the sandbox path above.\n"
+            )
+        else:
+            guidance = (
+                "Note: This attachment is large. Only a short content preview is "
+                "included here to protect the model context. Use the attachment "
+                "download URL if the full content is required.\n"
+            )
+
+        return (
+            guidance
+            + f"Content preview ({len(preview)} of {len(extracted_text)} characters):\n"
+            + f"{preview}\n\n"
+        )
 
     # ==================== Knowledge Base Operations ====================
 
