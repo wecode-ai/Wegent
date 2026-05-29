@@ -1,8 +1,8 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { createDeviceApi } from '@/api/devices'
 import { createProjectApi } from '@/api/projects'
-import { cloudDeviceInternalApis } from '@wecode/api/devices'
 import { WorkspacePanelCards } from './WorkspacePanelCards'
 
 vi.mock('@/config/runtime', () => ({
@@ -17,14 +17,13 @@ vi.mock('@/api/projects', () => ({
   createProjectApi: vi.fn(),
 }))
 
-vi.mock('@wecode/api/devices', () => ({
-  cloudDeviceInternalApis: {
-    getVncConfig: vi.fn(),
-  },
+vi.mock('@/api/devices', () => ({
+  createDeviceApi: vi.fn(),
 }))
 
+const createDeviceApiMock = vi.mocked(createDeviceApi)
 const createProjectApiMock = vi.mocked(createProjectApi)
-const getVncConfigMock = vi.mocked(cloudDeviceInternalApis.getVncConfig)
+const getVncConfigMock = vi.fn()
 
 const project = {
   id: 7,
@@ -63,6 +62,9 @@ describe('WorkspacePanelCards', () => {
         path: '/workspace/projects/project38',
       }),
     } as unknown as ReturnType<typeof createProjectApi>)
+    createDeviceApiMock.mockReturnValue({
+      getVncConfig: getVncConfigMock,
+    } as unknown as ReturnType<typeof createDeviceApi>)
     getVncConfigMock.mockResolvedValue({
       wss_url: 'wss://example.com/vnc',
       signature: 'signature',

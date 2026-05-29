@@ -1,12 +1,12 @@
 import { Code2, Loader2, Monitor, Plus, SquareTerminal, X } from 'lucide-react'
 import { useState } from 'react'
+import { createDeviceApi } from '@/api/devices'
 import { createHttpClient } from '@/api/http'
 import { createProjectApi } from '@/api/projects'
 import { getRuntimeConfig } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
 import { buildVncPageUrl } from '@/lib/vnc'
 import type { ProjectDeviceSessionResponse, ProjectWithTasks } from '@/types/api'
-import { cloudDeviceInternalApis } from '@wecode/api/devices'
 
 interface WorkspacePanelCardsProps {
   currentProject: ProjectWithTasks | null
@@ -22,6 +22,11 @@ function getProjectDeviceId(project: ProjectWithTasks | null): string | undefine
 function createProjectSessionApi() {
   const { apiBaseUrl } = getRuntimeConfig()
   return createProjectApi(createHttpClient({ baseUrl: apiBaseUrl }))
+}
+
+function createDeviceSessionApi() {
+  const { apiBaseUrl } = getRuntimeConfig()
+  return createDeviceApi(createHttpClient({ baseUrl: apiBaseUrl }))
 }
 
 function toEmbeddedSessionUrl(url: string): string {
@@ -112,7 +117,7 @@ export function WorkspacePanelCards({ currentProject, onRequestClose }: Workspac
     setError(null)
     let shouldClosePanel = false
     try {
-      const config = await cloudDeviceInternalApis.getVncConfig(projectDeviceId)
+      const config = await createDeviceSessionApi().getVncConfig(projectDeviceId)
       window.open(buildVncPageUrl(projectDeviceId, config.sandbox_id), '_blank', 'noopener')
       shouldClosePanel = true
     } catch (e) {

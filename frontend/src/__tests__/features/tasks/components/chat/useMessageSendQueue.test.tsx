@@ -44,7 +44,9 @@ describe('useMessageSendQueue', () => {
       'first',
       'second',
     ])
-    expect(result.current.activeTaskQueue).toEqual([])
+    await waitFor(() => {
+      expect(result.current.activeTaskQueue).toEqual([])
+    })
   })
 
   it('pauses later queued messages when one dispatch fails', async () => {

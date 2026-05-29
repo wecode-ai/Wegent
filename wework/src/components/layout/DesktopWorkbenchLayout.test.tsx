@@ -21,22 +21,6 @@ vi.mock('@/api/quota', () => ({
   createQuotaApi: vi.fn(),
 }))
 
-vi.mock('@wecode/api/devices', () => ({
-  cloudDeviceInternalApis: {
-    getMetrics: vi.fn().mockResolvedValue({
-      cpu_usage: 42,
-      memory_usage: 68,
-      disk_usage: 57,
-    }),
-    getMetricsHistory: vi.fn().mockResolvedValue({
-      cpu: [],
-      memory: [],
-      disk: [],
-    }),
-    getVncConfig: vi.fn(),
-  },
-}))
-
 const createDeviceApiMock = vi.mocked(createDeviceApi)
 const createQuotaApiMock = vi.mocked(createQuotaApi)
 const fetchQuotaMock = vi.fn()
