@@ -12,7 +12,7 @@
 
 'use client'
 
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Library, FileText, Shield } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -158,6 +158,11 @@ export function KnowledgeDetailPanel({
   // Determine KB type
   const isNotebook = selectedKb?.kb_type === 'notebook'
 
+  // Use ref for taskIdFromUrl to avoid resetting panel state when taskId changes
+  // (e.g., when router.push adds ?taskId=... after sending a message)
+  const taskIdFromUrlRef = useRef(taskIdFromUrl)
+  taskIdFromUrlRef.current = taskIdFromUrl
+
   // Reset state when KB changes
   // For notebook mode, also clear the selected task to show a fresh chat interface
   // BUT only if there's no taskId in URL - preserve task when navigating from history
@@ -169,10 +174,10 @@ export function KnowledgeDetailPanel({
     // Clear selected task when entering notebook mode to prevent showing
     // a previously selected task from the tasks page
     // Skip if URL contains taskId (user navigating from history/conversation)
-    if (selectedKb?.kb_type === 'notebook' && !taskIdFromUrl) {
+    if (selectedKb?.kb_type === 'notebook' && !taskIdFromUrlRef.current) {
       setSelectedTask(null)
     }
-  }, [selectedKb?.id, selectedKb?.kb_type, setSelectedTask, taskIdFromUrl])
+  }, [selectedKb?.id, selectedKb?.kb_type, setSelectedTask])
 
   // When a notebook KB is selected, show chat interface with document panel
   // Simplified layout: direct left-right split without extra header bars
