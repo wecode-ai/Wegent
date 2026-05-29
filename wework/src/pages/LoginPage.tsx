@@ -1,14 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Eye, EyeOff } from 'lucide-react'
-import { useTranslation } from 'react-i18next'
 import { getRuntimeConfig } from '@/config/runtime'
 import { POST_LOGIN_REDIRECT_KEY, sanitizeRedirectPath } from '@/features/auth/redirect'
 import { useAuth } from '@/features/auth/useAuth'
-
-function navigateTo(path: string) {
-  window.history.pushState({}, '', path)
-  window.dispatchEvent(new PopStateEvent('popstate'))
-}
+import { useTranslation } from '@/hooks/useTranslation'
+import { navigateTo } from '@/lib/navigation'
 
 function getRedirectTarget(): string {
   const search = new URLSearchParams(window.location.search)
@@ -60,8 +56,8 @@ export function LoginPage() {
   function handleOidcLogin() {
     const redirect = sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY)
     const oidcUrl = redirect
-      ? `/api/auth/oidc/login?redirect=${encodeURIComponent(redirect)}`
-      : '/api/auth/oidc/login'
+      ? `${config.apiBaseUrl}/auth/oidc/login?redirect=${encodeURIComponent(redirect)}`
+      : `${config.apiBaseUrl}/auth/oidc/login`
     window.location.href = oidcUrl
   }
 
