@@ -6,11 +6,16 @@
 
 import { isEditor, isManager, type BaseRole } from '@/types/base-role'
 
+/** Context scope for permission evaluation. */
 type Scope = 'personal' | 'group' | 'all'
 
+/** Input options for the useGroupPermissions hook. */
 interface UseGroupPermissionsOptions {
+  /** Current scope context (personal, group, or all). */
   scope?: Scope
+  /** Current group namespace (required when scope is 'group'). */
   groupName?: string
+  /** Map of group namespace to user's role in that group. */
   groupRoleMap?: Map<string, BaseRole>
 }
 
@@ -41,11 +46,19 @@ export function useGroupPermissions({
   groupName,
   groupRoleMap,
 }: UseGroupPermissionsOptions): GroupPermissions {
+  /**
+   * Check if user can edit resources in a specific namespace.
+   * Requires Owner, Maintainer, or Developer role.
+   */
   const canEditGroupResource = (namespace: string): boolean => {
     if (!groupRoleMap) return false
     return isEditor(groupRoleMap.get(namespace))
   }
 
+  /**
+   * Check if user can delete resources in a specific namespace.
+   * Requires Owner or Maintainer role.
+   */
   const canDeleteGroupResource = (namespace: string): boolean => {
     if (!groupRoleMap) return false
     return isManager(groupRoleMap.get(namespace))
