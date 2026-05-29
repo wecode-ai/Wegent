@@ -1,8 +1,13 @@
 import { useTranslation } from 'react-i18next'
+import type { ProjectWithTasks } from '@/types/api'
 import { useResizableRightPanel } from './useResizableWorkspacePanel'
 import { WorkspacePanelCards } from './WorkspacePanelCards'
 
-export function RightWorkspacePanel() {
+interface RightWorkspacePanelProps {
+  currentProject: ProjectWithTasks | null
+}
+
+export function RightWorkspacePanel({ currentProject }: RightWorkspacePanelProps) {
   const { t } = useTranslation('common')
   const { width, handleResizeStart } = useResizableRightPanel()
 
@@ -18,8 +23,8 @@ export function RightWorkspacePanel() {
         onPointerDown={handleResizeStart}
         aria-label={t('workbench.resize_right_workspace_panel', '调整右侧栏宽度')}
       />
-      <div className="flex flex-1 items-center px-8">
-        <WorkspacePanelCards />
+      <div className="flex min-h-0 flex-1 px-8 py-6">
+        <WorkspacePanelCards currentProject={currentProject} />
       </div>
     </section>
   )

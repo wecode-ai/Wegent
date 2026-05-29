@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
-import { MessageList } from '@/components/chat/MessageList'
+import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import type { ProjectWithTasks, Task } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
@@ -66,9 +66,7 @@ export function DesktopWorkbenchMain({
         )}
         {hasConversation ? (
           <>
-            <div className="flex-1 overflow-auto">
-              <MessageList messages={messages} />
-            </div>
+            <ScrollableMessageArea messages={messages} />
             <div className="px-6 pb-8">
               <div className={DESKTOP_COMPOSER_FRAME_CLASS}>
                 <ChatInput
@@ -106,7 +104,7 @@ export function DesktopWorkbenchMain({
             </div>
           </div>
         )}
-        {bottomPanelOpen && <BottomWorkspacePanel />}
+        {bottomPanelOpen && <BottomWorkspacePanel currentProject={currentProject} />}
       </div>
       <WorkspacePanelActions
         rightPanelOpen={rightPanelOpen}
@@ -114,7 +112,7 @@ export function DesktopWorkbenchMain({
         onToggleRightPanel={() => setRightPanelOpen(open => !open)}
         onToggleBottomPanel={() => setBottomPanelOpen(open => !open)}
       />
-      {rightPanelOpen && <RightWorkspacePanel />}
+      {rightPanelOpen && <RightWorkspacePanel currentProject={currentProject} />}
     </main>
   )
 }

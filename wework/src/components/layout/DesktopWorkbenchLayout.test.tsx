@@ -16,6 +16,22 @@ vi.mock('@/api/devices', () => ({
   createDeviceApi: vi.fn(),
 }))
 
+vi.mock('@wecode/api/devices', () => ({
+  cloudDeviceInternalApis: {
+    getMetrics: vi.fn().mockResolvedValue({
+      cpu_usage: 42,
+      memory_usage: 68,
+      disk_usage: 57,
+    }),
+    getMetricsHistory: vi.fn().mockResolvedValue({
+      cpu: [],
+      memory: [],
+      disk: [],
+    }),
+    getVncConfig: vi.fn(),
+  },
+}))
+
 const createDeviceApiMock = vi.mocked(createDeviceApi)
 
 describe('DesktopWorkbenchLayout', () => {
@@ -598,7 +614,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByText('CPU')).toBeInTheDocument()
     expect(screen.getByText('MEM')).toBeInTheDocument()
     expect(screen.getByText('磁盘')).toBeInTheDocument()
-    expect(screen.getByText('42%')).toBeInTheDocument()
+    expect(await screen.findByText('42%')).toBeInTheDocument()
     expect(screen.getByText('68%')).toBeInTheDocument()
     expect(screen.getByText('57%')).toBeInTheDocument()
     expect(screen.getByTestId('connection-scale-wiki')).toBeInTheDocument()
@@ -621,8 +637,9 @@ describe('DesktopWorkbenchLayout', () => {
     expect(panel).toBeInTheDocument()
     expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
     expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
-    expect(screen.getByText('浏览器')).toBeInTheDocument()
     expect(screen.getByText('终端')).toBeInTheDocument()
+    expect(screen.getByText('IDE')).toBeInTheDocument()
+    expect(screen.getByText('桌面')).toBeInTheDocument()
 
     fireEvent.pointerDown(screen.getByTestId('right-workspace-resize-handle'), { clientX: 700 })
     fireEvent.pointerMove(document, { clientX: 640 })
@@ -640,8 +657,9 @@ describe('DesktopWorkbenchLayout', () => {
     expect(panel).toBeInTheDocument()
     expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
     expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
-    expect(screen.getByText('浏览器')).toBeInTheDocument()
     expect(screen.getByText('终端')).toBeInTheDocument()
+    expect(screen.getByText('IDE')).toBeInTheDocument()
+    expect(screen.getByText('桌面')).toBeInTheDocument()
 
     fireEvent.pointerDown(screen.getByTestId('bottom-workspace-resize-handle'), { clientY: 700 })
     fireEvent.pointerMove(document, { clientY: 620 })

@@ -1,8 +1,13 @@
 import { useTranslation } from 'react-i18next'
+import type { ProjectWithTasks } from '@/types/api'
 import { useResizableBottomPanel } from './useResizableWorkspacePanel'
 import { WorkspacePanelCards } from './WorkspacePanelCards'
 
-export function BottomWorkspacePanel() {
+interface BottomWorkspacePanelProps {
+  currentProject: ProjectWithTasks | null
+}
+
+export function BottomWorkspacePanel({ currentProject }: BottomWorkspacePanelProps) {
   const { t } = useTranslation('common')
   const { height, handleResizeStart } = useResizableBottomPanel()
 
@@ -18,8 +23,8 @@ export function BottomWorkspacePanel() {
         onPointerDown={handleResizeStart}
         aria-label={t('workbench.resize_bottom_workspace_panel', '调整底部栏高度')}
       />
-      <div className="flex flex-1 items-center px-8">
-        <WorkspacePanelCards />
+      <div className="flex min-h-0 flex-1 px-8 py-6">
+        <WorkspacePanelCards currentProject={currentProject} />
       </div>
     </section>
   )

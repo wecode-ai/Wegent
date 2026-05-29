@@ -1,37 +1,186 @@
-import { Globe, SquareTerminal } from 'lucide-react'
+import { ArrowLeft, Code2, Loader2, Monitor, SquareTerminal } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { createHttpClient } from '@/api/http'
+import { createProjectApi } from '@/api/projects'
+import { getRuntimeConfig } from '@/config/runtime'
+import { buildVncPageUrl } from '@/lib/vnc'
+import type { ProjectDeviceSessionResponse, ProjectWithTasks } from '@/types/api'
+import { cloudDeviceInternalApis } from '@wecode/api/devices'
 
-export function WorkspacePanelCards() {
+interface WorkspacePanelCardsProps {
+  currentProject: ProjectWithTasks | null
+}
+
+type WorkspaceTool = 'terminal' | 'ide' | 'desktop'
+
+function getProjectDeviceId(project: ProjectWithTasks | null): string | undefined {
+  return project?.config?.execution?.deviceId ?? project?.config?.device_id
+}
+
+function createProjectSessionApi() {
+  const { apiBaseUrl } = getRuntimeConfig()
+  return createProjectApi(createHttpClient({ baseUrl: apiBaseUrl }))
+}
+
+export function WorkspacePanelCards({ currentProject }: WorkspacePanelCardsProps) {
   const { t } = useTranslation('common')
+  const [terminalSession, setTerminalSession] = useState<ProjectDeviceSessionResponse | null>(null)
+  const [loadingTool, setLoadingTool] = useState<WorkspaceTool | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const projectDeviceId = getProjectDeviceId(currentProject)
+  const toolsDisabled = !currentProject || Boolean(loadingTool)
+
+  const handleTerminalClick = async () => {
+    if (!currentProject || loadingTool) return
+    setLoadingTool('terminal')
+    setError(null)
+    try {
+      const session = await createProjectSessionApi().startTerminalSession(currentProject.id)
+      setTerminalSession(session)
+    } catch (e) {
+      console.error('Failed to start project terminal:', e)
+      setError(t('workbench.project_tool_start_failed', '启动失败'))
+    } finally {
+      setLoadingTool(null)
+    }
+  }
+
+  const handleIdeClick = async () => {
+    if (!currentProject || loadingTool) return
+    setLoadingTool('ide')
+    setError(null)
+    try {
+      const session = await createProjectSessionApi().startCodeServerSession(currentProject.id)
+      if (session.url) {
+        window.open(session.url, '_blank', 'noopener')
+      }
+    } catch (e) {
+      console.error('Failed to start project IDE:', e)
+      setError(t('workbench.project_tool_start_failed', '启动失败'))
+    } finally {
+      setLoadingTool(null)
+    }
+  }
+
+  const handleDesktopClick = async () => {
+    if (!projectDeviceId || loadingTool) return
+    setLoadingTool('desktop')
+    setError(null)
+    try {
+      const config = await cloudDeviceInternalApis.getVncConfig(projectDeviceId)
+      window.open(buildVncPageUrl(projectDeviceId, config.sandbox_id), '_blank', 'noopener')
+    } catch (e) {
+      console.error('Failed to open project desktop:', e)
+      setError(t('workbench.project_tool_start_failed', '启动失败'))
+    } finally {
+      setLoadingTool(null)
+    }
+  }
+
+  if (terminalSession) {
+    return (
+      <div className="flex h-full min-h-0 w-full flex-col overflow-hidden rounded-lg border border-border bg-white">
+        <div className="flex min-h-12 items-center gap-3 border-b border-border px-3">
+          <button
+            type="button"
+            data-testid="workspace-terminal-back-button"
+            onClick={() => setTerminalSession(null)}
+            className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary hover:bg-muted"
+            aria-label={t('workbench.back_to_workspace_tools', '返回工具')}
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-text-primary">
+              {t('workbench.terminal', '终端')}
+            </div>
+            <div className="truncate text-xs text-text-secondary">
+              {terminalSession.path}
+            </div>
+          </div>
+        </div>
+        <iframe
+          data-testid="workspace-terminal-frame"
+          title={t('workbench.project_terminal_frame_title', '项目终端')}
+          src={terminalSession.url}
+          className="min-h-0 flex-1 border-0"
+        />
+      </div>
+    )
+  }
 
   return (
-    <div className="mx-auto grid w-full max-w-3xl grid-cols-2 gap-4">
-      <button
-        type="button"
-        data-testid="workspace-browser-card"
-        className="flex min-h-[132px] flex-col items-center justify-center rounded-lg bg-surface text-center hover:bg-muted"
-      >
-        <Globe className="mb-5 h-7 w-7 text-text-secondary" />
-        <span className="text-base font-semibold text-text-primary">
-          {t('workbench.browser', '浏览器')}
-        </span>
-        <span className="mt-2 text-sm text-text-secondary">
-          {t('workbench.open_website', '打开网站')}
-        </span>
-      </button>
-      <button
-        type="button"
-        data-testid="workspace-terminal-card"
-        className="flex min-h-[132px] flex-col items-center justify-center rounded-lg bg-surface text-center hover:bg-muted"
-      >
-        <SquareTerminal className="mb-5 h-7 w-7 text-text-secondary" />
-        <span className="text-base font-semibold text-text-primary">
-          {t('workbench.terminal', '终端')}
-        </span>
-        <span className="mt-2 text-sm text-text-secondary">
-          {t('workbench.start_shell', '启动交互式 shell')}
-        </span>
-      </button>
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-3">
+      {!currentProject && (
+        <p className="text-center text-sm text-text-secondary">
+          {t('workbench.project_tool_requires_project', '请选择项目后使用')}
+        </p>
+      )}
+      {error && (
+        <p className="text-center text-sm text-red-500" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="grid w-full grid-cols-[repeat(auto-fit,minmax(120px,1fr))] gap-4">
+        <button
+          type="button"
+          data-testid="workspace-terminal-card"
+          onClick={handleTerminalClick}
+          disabled={toolsDisabled}
+          className="flex min-h-[132px] flex-col items-center justify-center rounded-lg bg-surface text-center hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {loadingTool === 'terminal' ? (
+            <Loader2 className="mb-5 h-7 w-7 animate-spin text-text-secondary" />
+          ) : (
+            <SquareTerminal className="mb-5 h-7 w-7 text-text-secondary" />
+          )}
+          <span className="text-base font-semibold text-text-primary">
+            {t('workbench.terminal', '终端')}
+          </span>
+          <span className="mt-2 text-sm text-text-secondary">
+            {t('workbench.start_shell', '启动交互式 shell')}
+          </span>
+        </button>
+        <button
+          type="button"
+          data-testid="workspace-ide-card"
+          onClick={handleIdeClick}
+          disabled={toolsDisabled}
+          className="flex min-h-[132px] flex-col items-center justify-center rounded-lg bg-surface text-center hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {loadingTool === 'ide' ? (
+            <Loader2 className="mb-5 h-7 w-7 animate-spin text-text-secondary" />
+          ) : (
+            <Code2 className="mb-5 h-7 w-7 text-text-secondary" />
+          )}
+          <span className="text-base font-semibold text-text-primary">
+            {t('workbench.ide', 'IDE')}
+          </span>
+          <span className="mt-2 text-sm text-text-secondary">
+            {t('workbench.open_project_ide', '打开项目 IDE')}
+          </span>
+        </button>
+        <button
+          type="button"
+          data-testid="workspace-desktop-card"
+          onClick={handleDesktopClick}
+          disabled={toolsDisabled || !projectDeviceId}
+          className="flex min-h-[132px] flex-col items-center justify-center rounded-lg bg-surface text-center hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {loadingTool === 'desktop' ? (
+            <Loader2 className="mb-5 h-7 w-7 animate-spin text-text-secondary" />
+          ) : (
+            <Monitor className="mb-5 h-7 w-7 text-text-secondary" />
+          )}
+          <span className="text-base font-semibold text-text-primary">
+            {t('workbench.desktop', '桌面')}
+          </span>
+          <span className="mt-2 text-sm text-text-secondary">
+            {t('workbench.open_project_desktop', '打开项目桌面')}
+          </span>
+        </button>
+      </div>
     </div>
   )
 }

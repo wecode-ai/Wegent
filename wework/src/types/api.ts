@@ -186,6 +186,16 @@ export interface CreateProjectConversationResponse {
   task: unknown
 }
 
+export interface ProjectDeviceSessionResponse {
+  session_id: string
+  project_id: number
+  device_id: string
+  type: 'terminal' | 'code_server'
+  path: string
+  url: string
+  expires_at?: string | null
+}
+
 export interface ChatSendPayload {
   task_id?: number
   team_id: number
