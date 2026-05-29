@@ -1199,6 +1199,20 @@ replace_url_port() {
     echo "$url" | sed -E "s#(^[a-zA-Z][a-zA-Z0-9+.-]*://[^/:]+):[0-9]+#\1:$port#"
 }
 
+extract_url_host() {
+    local url=$1
+
+    echo "$url" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##' | cut -d/ -f1 | cut -d: -f1
+}
+
+replace_url_host_and_port() {
+    local url=$1
+    local host=$2
+    local port=$3
+
+    echo "$url" | sed -E "s#(^[a-zA-Z][a-zA-Z0-9+.-]*://)[^/:]+(:[0-9]+)?#\1$host:$port#"
+}
+
 update_url_port_if_matches() {
     local url=$1
     local old_port=$2
@@ -1216,13 +1230,19 @@ compute_derived_urls() {
     local previous_executor_manager_port="${2:-}"
     local previous_knowledge_runtime_port="${3:-}"
     local previous_socket_url="$WEGENT_SOCKET_URL"
+    local socket_host=""
 
     LOCAL_IP=$(get_local_ip)
 
     if [ -z "$WEGENT_SOCKET_URL" ]; then
         WEGENT_SOCKET_URL="http://$LOCAL_IP:$BACKEND_PORT"
-    elif [ -n "$previous_backend_port" ] && [ "$BACKEND_PORT" != "$previous_backend_port" ] && [ -z "$CLI_WEGENT_SOCKET_URL" ]; then
-        WEGENT_SOCKET_URL=$(update_url_port_if_matches "$WEGENT_SOCKET_URL" "$previous_backend_port" "$BACKEND_PORT")
+    elif [ -z "$CLI_WEGENT_SOCKET_URL" ]; then
+        socket_host=$(extract_url_host "$WEGENT_SOCKET_URL")
+        if [ -n "$socket_host" ] && [ "$socket_host" != "localhost" ] && [ "$socket_host" != "127.0.0.1" ] && [ "$socket_host" != "$LOCAL_IP" ]; then
+            WEGENT_SOCKET_URL=$(replace_url_host_and_port "$WEGENT_SOCKET_URL" "$LOCAL_IP" "$BACKEND_PORT")
+        elif [ -n "$previous_backend_port" ] && [ "$BACKEND_PORT" != "$previous_backend_port" ]; then
+            WEGENT_SOCKET_URL=$(update_url_port_if_matches "$WEGENT_SOCKET_URL" "$previous_backend_port" "$BACKEND_PORT")
+        fi
     fi
 
     if [ -z "$TASK_API_DOMAIN" ] || [ "$TASK_API_DOMAIN" = "$previous_socket_url" ]; then
@@ -1403,17 +1423,8 @@ check_socket_url_ip() {
         echo -e "  • Connection failure or timeout on the page"
         echo -e "  • Real-time messages cannot be pushed"
         echo ""
-        echo -e "${YELLOW}Recommended actions:${NC}"
-        echo -e "  1. Update WEGENT_SOCKET_URL in .env file to:"
-        echo -e "     ${GREEN}http://$local_ip:$BACKEND_PORT${NC}"
-        echo -e "  2. Or re-run configuration: ${BLUE}./start.sh --init${NC}"
-        echo ""
-        echo -e "${YELLOW}Continue startup? [y/N]:${NC} \c"
-        read -r confirm
-        if [[ "$confirm" =~ ^[Nn]$ ]]; then
-            echo -e "${YELLOW}Startup cancelled${NC}"
-            exit 1
-        fi
+        echo -e "${YELLOW}If this was not intentional, update WEGENT_SOCKET_URL in .env to:${NC}"
+        echo -e "  ${GREEN}http://$local_ip:$BACKEND_PORT${NC}"
         echo ""
     fi
 }
