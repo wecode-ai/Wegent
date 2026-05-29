@@ -68,6 +68,24 @@ export function createDeviceApi(client: HttpClient) {
       return Array.isArray(response.stdout) ? response.stdout : []
     },
 
+    executeCommand(
+      deviceId: string,
+      data: {
+        command_key: string
+        path?: string
+        cwd?: string
+        args?: string[]
+        env?: Record<string, unknown>
+        timeout_seconds?: number
+        max_output_bytes?: number
+      },
+    ): Promise<DeviceCommandResponse> {
+      return client.post<DeviceCommandResponse>(
+        `/devices/${encodeURIComponent(deviceId)}/commands`,
+        data,
+      )
+    },
+
     async startTerminal(deviceId: string): Promise<DeviceSessionResponse> {
       return client.post<DeviceSessionResponse>(
         `/devices/${encodeURIComponent(deviceId)}/terminal`,

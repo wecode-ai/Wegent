@@ -41,7 +41,7 @@ interface DesktopSidebarProps {
   onNewChat: () => void
   onSelectProject: (projectId: number) => void
   onStartNewProjectChat: (projectId: number) => void
-  onOpenTask: (taskId: number) => void
+  onOpenTask: (taskId: number, projectId?: number) => void
   onOpenPlugins: () => void
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
@@ -135,12 +135,14 @@ function ProjectTaskRow({
   task,
   selected,
   onOpenTask,
+  projectId,
   onArchiveTask,
   onRenameTask,
 }: {
   task: ProjectTask
   selected: boolean
-  onOpenTask: (taskId: number) => void
+  onOpenTask: (taskId: number, projectId?: number) => void
+  projectId: number
   onArchiveTask: (taskId: number) => Promise<void>
   onRenameTask: (task: ProjectTask) => void
 }) {
@@ -157,7 +159,7 @@ function ProjectTaskRow({
       <button
         type="button"
         data-testid="project-chat-button"
-        onClick={() => onOpenTask(task.task_id)}
+        onClick={() => onOpenTask(task.task_id, projectId)}
         className="min-w-0 flex-1 truncate text-left"
       >
         {title}
@@ -215,7 +217,7 @@ function ProjectItem({
   onArchiveProjectChats: (projectId: number) => Promise<void>
   onRemoveProject: (projectId: number) => Promise<void>
   onRenameProject: (project: ProjectWithTasks) => void
-  onOpenTask: (taskId: number) => void
+  onOpenTask: (taskId: number, projectId?: number) => void
   onArchiveTask: (taskId: number) => Promise<void>
   onRenameTask: (task: ProjectTask) => void
 }) {
@@ -293,6 +295,7 @@ function ProjectItem({
                 task={task}
                 selected={activeTaskId === task.task_id}
                 onOpenTask={onOpenTask}
+                projectId={project.id}
                 onArchiveTask={onArchiveTask}
                 onRenameTask={onRenameTask}
               />
@@ -325,7 +328,7 @@ function RecentTaskRow({
 }: {
   task: Task
   selected: boolean
-  onOpenTask: (taskId: number) => void
+  onOpenTask: (taskId: number, projectId?: number) => void
   onArchiveTask: (taskId: number) => Promise<void>
   onRenameTask: (task: Task) => void
 }) {
@@ -342,7 +345,7 @@ function RecentTaskRow({
       <button
         type="button"
         data-testid="history-task-button"
-        onClick={() => onOpenTask(task.id)}
+        onClick={() => onOpenTask(task.id, task.project_id)}
         className="min-w-0 flex-1 truncate text-left"
       >
         {task.title}

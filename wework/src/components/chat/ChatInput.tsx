@@ -41,6 +41,7 @@ interface ChatInputProps {
   variant?: 'compact' | 'desktop'
   projectChat?: ProjectChatControls
   projectWork?: ProjectWorkControls
+  showProjectWorkBar?: boolean
 }
 
 export function ChatInput({
@@ -52,6 +53,7 @@ export function ChatInput({
   variant = 'compact',
   projectChat,
   projectWork,
+  showProjectWorkBar = true,
 }: ChatInputProps) {
   const { t } = useTranslation('common')
   const inputPlaceholder = placeholder ?? t('workbench.input_placeholder', '尽管问')
@@ -101,6 +103,7 @@ export function ChatInput({
             onSelectProject: () => {},
           }
         }
+        showProjectWorkBar={showProjectWorkBar}
       />
     )
   }

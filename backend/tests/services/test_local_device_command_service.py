@@ -31,6 +31,24 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     git_clone_definition = resolve_local_device_command(
         "git_clone", settings.LOCAL_DEVICE_COMMANDS
     )
+    git_branch_definition = resolve_local_device_command(
+        "git_branch", settings.LOCAL_DEVICE_COMMANDS
+    )
+    git_diff_shortstat_definition = resolve_local_device_command(
+        "git_diff_shortstat", settings.LOCAL_DEVICE_COMMANDS
+    )
+    git_branch_diff_shortstat_definition = resolve_local_device_command(
+        "git_branch_diff_shortstat", settings.LOCAL_DEVICE_COMMANDS
+    )
+    git_remote_url_definition = resolve_local_device_command(
+        "git_remote_url", settings.LOCAL_DEVICE_COMMANDS
+    )
+    git_add_all_definition = resolve_local_device_command(
+        "git_add_all", settings.LOCAL_DEVICE_COMMANDS
+    )
+    git_commit_definition = resolve_local_device_command(
+        "git_commit", settings.LOCAL_DEVICE_COMMANDS
+    )
 
     assert pwd_definition is not None
     assert pwd_definition.command == "pwd"
@@ -51,6 +69,28 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert git_clone_definition is not None
     assert git_clone_definition.command == "git clone"
     assert git_clone_definition.post_processor is None
+    assert git_branch_definition is not None
+    assert git_branch_definition.command == "git branch --show-current"
+    assert git_branch_definition.post_processor is None
+    assert git_diff_shortstat_definition is not None
+    assert git_diff_shortstat_definition.command == "git diff --shortstat"
+    assert git_diff_shortstat_definition.post_processor is None
+    assert git_branch_diff_shortstat_definition is not None
+    assert "git merge-base" in git_branch_diff_shortstat_definition.command
+    assert "git diff --shortstat" in git_branch_diff_shortstat_definition.command
+    assert (
+        "git diff --shortstat HEAD --" in git_branch_diff_shortstat_definition.command
+    )
+    assert git_branch_diff_shortstat_definition.post_processor is None
+    assert git_remote_url_definition is not None
+    assert git_remote_url_definition.command == "git remote get-url origin"
+    assert git_remote_url_definition.post_processor is None
+    assert git_add_all_definition is not None
+    assert git_add_all_definition.command == "git add --all"
+    assert git_add_all_definition.post_processor is None
+    assert git_commit_definition is not None
+    assert git_commit_definition.command == "git commit"
+    assert git_commit_definition.post_processor is None
 
 
 def test_local_device_command_registry_supports_inline_post_processor():
