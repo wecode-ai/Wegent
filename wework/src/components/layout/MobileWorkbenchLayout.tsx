@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
 import { useTranslation } from '@/hooks/useTranslation'
-import { MessageList } from '@/components/chat/MessageList'
+import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import type { ArchivedTaskListResponse, CreateProjectRequest, ProjectWithTasks } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { WorkbenchMessage, WorkbenchState } from '@/types/workbench'
@@ -110,9 +110,7 @@ export function MobileWorkbenchLayout({
               </h1>
               <div className="h-11 min-w-[44px]" />
             </header>
-            <div className="min-h-0 flex-1 overflow-auto">
-              <MessageList messages={messages} />
-            </div>
+            <ScrollableMessageArea messages={messages} />
             <div className="px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3">
               <ChatInput
                 value={state.input}

@@ -159,6 +159,19 @@ describe('REST adapters', () => {
     expect(client.delete).toHaveBeenCalledWith('/tasks/archived')
   })
 
+  test('starts project-scoped terminal and IDE sessions', async () => {
+    const client = mockClient()
+    vi.mocked(client.post).mockResolvedValue({ url: 'http://localhost/session' })
+
+    const api = createProjectApi(client)
+
+    await api.startTerminalSession(7)
+    await api.startCodeServerSession(7)
+
+    expect(client.post).toHaveBeenNthCalledWith(1, '/projects/7/terminal')
+    expect(client.post).toHaveBeenNthCalledWith(2, '/projects/7/code-server')
+  })
+
   test('resolves device home and project workspace root', async () => {
     const client = mockClient()
     vi.mocked(client.post)

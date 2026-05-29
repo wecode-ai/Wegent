@@ -3,6 +3,7 @@ import type {
   CreateProjectConversationResponse,
   CreateProjectRequest,
   ProjectListResponse,
+  ProjectDeviceSessionResponse,
   ProjectWithTasks,
   TaskArchiveBatchResponse,
   UpdateProjectRequest,
@@ -31,6 +32,12 @@ export function createProjectApi(client: HttpClient) {
     },
     archiveProjectChats(projectId: number): Promise<TaskArchiveBatchResponse> {
       return client.post(`/projects/${projectId}/archive-chats`)
+    },
+    startTerminalSession(projectId: number): Promise<ProjectDeviceSessionResponse> {
+      return client.post(`/projects/${projectId}/terminal`)
+    },
+    startCodeServerSession(projectId: number): Promise<ProjectDeviceSessionResponse> {
+      return client.post(`/projects/${projectId}/code-server`)
     },
     archiveAllProjectChats(): Promise<TaskArchiveBatchResponse> {
       return client.post('/projects/archive-chats')

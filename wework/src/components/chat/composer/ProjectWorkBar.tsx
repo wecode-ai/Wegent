@@ -105,22 +105,40 @@ export function ProjectWorkBar({
               <div className="space-y-1">
                 {sortedProjects.map(project => {
                   const device = getDeviceForProject(project)
+                  const isUnavailable = Boolean(device && device.status !== 'online')
+                  const ProjectIcon = isUnavailable ? FolderX : FolderOpen
+                  const projectTextClass = isUnavailable
+                    ? 'text-text-muted'
+                    : project.id === currentProjectId
+                      ? 'text-text-primary'
+                      : 'text-text-secondary'
                   return (
                     <button
                       key={project.id}
                       type="button"
                       data-testid={`project-option-${project.id}`}
-                      onClick={() => handleSelectProject(project.id)}
-                      className={`flex w-full flex-col rounded-xl px-4 py-2 text-left hover:bg-muted ${
-                        project.id === currentProjectId ? 'text-text-primary' : 'text-text-secondary'
-                      }`}
+                      disabled={isUnavailable}
+                      aria-disabled={isUnavailable}
+                      onClick={() => {
+                        if (!isUnavailable) handleSelectProject(project.id)
+                      }}
+                      className={`flex w-full flex-col rounded-xl px-4 py-2 text-left hover:bg-muted disabled:cursor-not-allowed disabled:hover:bg-transparent ${projectTextClass}`}
                     >
                       <div className="flex min-h-7 items-center gap-3">
-                        <FolderOpen className="h-4 w-4 shrink-0 text-text-secondary" />
+                        <ProjectIcon
+                          data-testid={
+                            isUnavailable
+                              ? `project-unavailable-icon-${project.id}`
+                              : `project-available-icon-${project.id}`
+                          }
+                          className={`h-4 w-4 shrink-0 ${
+                            isUnavailable ? 'text-text-muted' : 'text-text-secondary'
+                          }`}
+                        />
                         <span className="min-w-0 flex-1 truncate text-sm font-medium">{project.name}</span>
                       </div>
                       {device && (
-                        <span className={`ml-7 text-xs ${device.status === 'online' ? 'text-primary' : 'text-text-muted'}`}>
+                        <span className={`ml-7 text-xs ${device.status === 'online' ? 'text-text-secondary' : 'text-text-muted'}`}>
                           {device.name}
                         </span>
                       )}
