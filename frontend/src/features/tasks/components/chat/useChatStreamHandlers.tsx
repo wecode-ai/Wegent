@@ -5,6 +5,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import { useTaskContext } from '../../contexts/taskContext'
+import { Task } from '@/types/api'
 import { useChatStreamContext } from '../../contexts/chatStreamContext'
 import { useSocket } from '@/contexts/SocketContext'
 import { useDevices } from '@/contexts/DeviceContext'
@@ -241,8 +242,13 @@ export function useChatStreamHandlers({
   const searchParams = useSearchParams()
   const pathname = usePathname()
 
-  const { selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, markTaskAsViewed } =
-    useTaskContext()
+  const {
+    selectedTaskDetail,
+    setSelectedTask,
+    refreshTasks,
+    refreshSelectedTaskDetail,
+    markTaskAsViewed,
+  } = useTaskContext()
 
   const {
     sendMessage: contextSendMessage,
