@@ -1446,10 +1446,10 @@ stop_services() {
 
     local tracked_services=()
     local tracked_service
-    while IFS= read -r tracked_service; do
+    for tracked_service in $(get_tracked_services); do
         [ -n "$tracked_service" ] || continue
         tracked_services+=("$tracked_service")
-    done < <(get_tracked_services)
+    done
 
     # Determine which services to stop
     local services=()
