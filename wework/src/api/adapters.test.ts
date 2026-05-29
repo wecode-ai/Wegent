@@ -143,6 +143,7 @@ describe('REST adapters', () => {
     vi.mocked(client.delete).mockResolvedValue({ message: 'ok', count: 0 })
 
     await createProjectApi(client).archiveProjectChats(7)
+    await createProjectApi(client).archiveAllProjectChats()
     await createTaskApi(client).archiveAllChats()
     await createTaskApi(client).archiveTask(8)
     await createTaskApi(client).listArchivedTasks()
@@ -150,11 +151,25 @@ describe('REST adapters', () => {
     await createTaskApi(client).deleteArchivedTasks()
 
     expect(client.post).toHaveBeenNthCalledWith(1, '/projects/7/archive-chats')
-    expect(client.post).toHaveBeenNthCalledWith(2, '/tasks/archive')
-    expect(client.post).toHaveBeenNthCalledWith(3, '/tasks/8/archive')
+    expect(client.post).toHaveBeenNthCalledWith(2, '/projects/archive-chats')
+    expect(client.post).toHaveBeenNthCalledWith(3, '/tasks/archive?scope=standalone')
+    expect(client.post).toHaveBeenNthCalledWith(4, '/tasks/8/archive')
     expect(client.get).toHaveBeenCalledWith('/tasks/archived?limit=200&page=1')
-    expect(client.post).toHaveBeenNthCalledWith(4, '/tasks/8/unarchive')
+    expect(client.post).toHaveBeenNthCalledWith(5, '/tasks/8/unarchive')
     expect(client.delete).toHaveBeenCalledWith('/tasks/archived')
+  })
+
+  test('starts project-scoped terminal and IDE sessions', async () => {
+    const client = mockClient()
+    vi.mocked(client.post).mockResolvedValue({ url: 'http://localhost/session' })
+
+    const api = createProjectApi(client)
+
+    await api.startTerminalSession(7)
+    await api.startCodeServerSession(7)
+
+    expect(client.post).toHaveBeenNthCalledWith(1, '/projects/7/terminal')
+    expect(client.post).toHaveBeenNthCalledWith(2, '/projects/7/code-server')
   })
 
   test('resolves device home and project workspace root', async () => {

@@ -1,9 +1,12 @@
 import type { DeviceCommandResponse } from '@/types/api'
 import type {
   CloudDeviceResponse,
+  CloudDeviceMetricsResponse,
   DeviceInfo,
   DeviceListResponse,
   DeviceSessionResponse,
+  MetricsHistoryResponse,
+  VncConfigResponse,
 } from '@/types/devices'
 import type { HttpClient } from './http'
 
@@ -111,6 +114,24 @@ export function createDeviceApi(client: HttpClient) {
     async deleteCloudDevice(deviceId: string): Promise<{ message: string }> {
       return client.delete<{ message: string }>(
         `/cloud-devices/${encodeURIComponent(deviceId)}`,
+      )
+    },
+
+    getMetrics(deviceId: string): Promise<CloudDeviceMetricsResponse> {
+      return client.post<CloudDeviceMetricsResponse>(
+        `/cloud-devices/${encodeURIComponent(deviceId)}/metrics`,
+      )
+    },
+
+    getMetricsHistory(deviceId: string): Promise<MetricsHistoryResponse> {
+      return client.post<MetricsHistoryResponse>(
+        `/cloud-devices/${encodeURIComponent(deviceId)}/metrics/history`,
+      )
+    },
+
+    getVncConfig(deviceId: string): Promise<VncConfigResponse> {
+      return client.get<VncConfigResponse>(
+        `/cloud-devices/${encodeURIComponent(deviceId)}/vnc-config`,
       )
     },
 

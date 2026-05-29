@@ -326,6 +326,12 @@ def archive_project_chats(db: Session, project_id: int, user_id: int) -> int:
     )
 
 
+def archive_all_project_chats(db: Session, user_id: int) -> int:
+    """Archive all active chats belonging to any project owned by the user."""
+
+    return task_kinds_service.archive_all_project_chats(db=db, user_id=user_id)
+
+
 def add_task_to_project(
     db: Session, project_id: int, task_id: int, user_id: int
 ) -> ProjectTaskResponse:

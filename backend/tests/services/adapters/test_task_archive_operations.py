@@ -12,6 +12,12 @@ from app.models.project import Project
 from app.models.task import TaskResource
 from app.models.user import User
 from app.services.adapters.task_kinds import task_kinds_service
+from app.services.chat.standalone_workspace import (
+    WORKSPACE_PATH_LABEL,
+    WORKSPACE_SOURCE_LABEL,
+    extract_workspace_path,
+    persist_standalone_workspace_path,
+)
 
 
 def _task_json(
@@ -198,6 +204,93 @@ def test_archive_all_and_project_archive_only_archive_chat_like_tasks(
     assert all_count == 1
     assert standalone_chat.is_active == TaskResource.STATE_ARCHIVED
     assert subscription_task.is_active == TaskResource.STATE_ACTIVE
+
+
+def test_archive_standalone_chats_leaves_project_chats(
+    test_db: Session,
+    test_user: User,
+):
+    project = _create_project(test_db, test_user.id, 703, "wegent-dev")
+    project_task = _create_task(
+        test_db,
+        test_user.id,
+        7010,
+        "Project chat",
+        project_id=project.id,
+    )
+    standalone_chat = _create_task(
+        test_db,
+        test_user.id,
+        7011,
+        "Standalone chat",
+    )
+
+    count = task_kinds_service.archive_standalone_chats(
+        test_db,
+        user_id=test_user.id,
+    )
+    test_db.refresh(project_task)
+    test_db.refresh(standalone_chat)
+
+    assert count == 1
+    assert project_task.is_active == TaskResource.STATE_ACTIVE
+    assert standalone_chat.is_active == TaskResource.STATE_ARCHIVED
+
+
+def test_archive_all_project_chats_leaves_standalone_chats(
+    test_db: Session,
+    test_user: User,
+):
+    project = _create_project(test_db, test_user.id, 704, "daily-tasks")
+    project_task = _create_task(
+        test_db,
+        test_user.id,
+        7012,
+        "Project chat",
+        project_id=project.id,
+    )
+    standalone_chat = _create_task(
+        test_db,
+        test_user.id,
+        7013,
+        "Standalone chat",
+    )
+
+    count = task_kinds_service.archive_all_project_chats(
+        test_db,
+        user_id=test_user.id,
+    )
+    test_db.refresh(project_task)
+    test_db.refresh(standalone_chat)
+
+    assert count == 1
+    assert project_task.is_active == TaskResource.STATE_ARCHIVED
+    assert standalone_chat.is_active == TaskResource.STATE_ACTIVE
+
+
+def test_persist_standalone_workspace_path_updates_task_labels(
+    test_db: Session,
+    test_user: User,
+):
+    task = _create_task(test_db, test_user.id, 7014, "Standalone chat")
+
+    changed = persist_standalone_workspace_path(
+        test_db,
+        task_id=task.id,
+        workspace_path="/tmp/chats/2026-05-29/standalone-chat",
+    )
+    test_db.refresh(task)
+
+    labels = task.json["metadata"]["labels"]
+    assert changed is True
+    assert labels[WORKSPACE_PATH_LABEL] == "/tmp/chats/2026-05-29/standalone-chat"
+    assert labels[WORKSPACE_SOURCE_LABEL] == "local_path"
+    assert (
+        extract_workspace_path(
+            {"standalone_chat_workspace_path": " /tmp/chats/example "}
+        )
+        == "/tmp/chats/example"
+    )
 
 
 def test_unarchive_restores_task_to_active_lists(

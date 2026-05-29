@@ -169,6 +169,9 @@ def extract_completed_result(response_data: dict) -> dict:
         "loaded_skills": response_data.get("loaded_skills"),
         "stop_reason": response_data.get("stop_reason"),
         "messages_chain": response_data.get("messages_chain"),
+        "standalone_chat_workspace_path": response_data.get(
+            "standalone_chat_workspace_path"
+        ),
         "reasoning_content": reasoning_content,
     }
 

@@ -1,4 +1,5 @@
-import { useTranslation } from 'react-i18next'
+import { useTranslation } from '@/hooks/useTranslation'
+import { toBrowserPath } from '@/lib/navigation'
 
 interface SidebarProps {
   isOpen?: boolean
@@ -28,7 +29,7 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
         <div className="flex flex-col h-full p-4 pt-16 lg:pt-4">
           <nav className="flex-1">
             <a
-              href="/"
+              href={toBrowserPath('/')}
               className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-text-primary hover:bg-muted"
             >
               {t('navigation.home')}

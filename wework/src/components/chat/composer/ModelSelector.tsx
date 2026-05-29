@@ -35,18 +35,6 @@ export function ModelSelector({
             {t('workbench.select_model', '选择模型')}
           </div>
           <div className="space-y-1">
-            <button
-              type="button"
-              data-testid="model-option-default"
-              onClick={() => {
-                onSelectModel(null)
-                setOpen(false)
-              }}
-              className="flex min-h-11 w-full items-center rounded-xl px-4 text-left text-sm font-medium text-text-primary hover:bg-muted"
-            >
-              <span className="flex-1">{t('workbench.default_model', '默认模型')}</span>
-              {!selectedModel && <Check className="h-4 w-4 text-text-secondary" />}
-            </button>
             {models.length === 0 ? (
               <div className="px-4 py-3 text-sm text-text-muted">
                 {t('workbench.no_models', '暂无可用模型')}

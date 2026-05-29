@@ -22,6 +22,16 @@ export interface ChatStreamHandlers {
 
 const SEND_TIMEOUT_MS = 30_000
 
+function normalizeSendAck(response: ChatSendAck | undefined): ChatSendAck {
+  if (!response) {
+    return { success: false, error: '发送失败' }
+  }
+  if (response.error) {
+    return { ...response, success: false }
+  }
+  return { ...response, success: response.success ?? true }
+}
+
 export function createChatStream(socket: Pick<WorkbenchSocket, 'emit' | 'on' | 'off' | 'connected'>) {
   return {
     joinTask(taskId: number): Promise<TaskJoinResponse> {
@@ -47,7 +57,7 @@ export function createChatStream(socket: Pick<WorkbenchSocket, 'emit' | 'on' | '
 
         socket.emit('chat:send', payload, (response: ChatSendAck) => {
           clearTimeout(timer)
-          resolve(response)
+          resolve(normalizeSendAck(response))
         })
       })
     },

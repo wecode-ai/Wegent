@@ -10,18 +10,21 @@ import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettin
 interface DesktopWorkbenchLayoutProps {
   state: WorkbenchState
   messages: WorkbenchMessage[]
+  runningTaskIds: Set<number>
   activeItem?: 'chat' | 'plugins' | 'automation'
   onNewChat: () => void
+  onStartStandaloneChat: () => void
   onOpenPlugins: () => void
   projectChat: ProjectChatControls
   projectWork: ProjectWorkControls
-  onSelectProject: (projectId: number) => void
+  onSelectProject: (projectId: number | null) => void
   onStartNewProjectChat: (projectId: number) => void
   onOpenTask: (taskId: number, projectId?: number) => void
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
   onRemoveProject: (projectId: number) => Promise<void>
   onArchiveAllChats: () => Promise<void>
+  onArchiveAllProjectChats: () => Promise<void>
   onArchiveProjectChats: (projectId: number) => Promise<void>
   onArchiveTask: (taskId: number) => Promise<void>
   onRenameTask: (taskId: number, title: string) => Promise<void>
@@ -45,8 +48,10 @@ interface DesktopWorkbenchLayoutProps {
 export function DesktopWorkbenchLayout({
   state,
   messages,
+  runningTaskIds,
   activeItem = 'chat',
   onNewChat,
+  onStartStandaloneChat,
   onOpenPlugins,
   projectChat,
   projectWork,
@@ -57,6 +62,7 @@ export function DesktopWorkbenchLayout({
   onUpdateProjectName,
   onRemoveProject,
   onArchiveAllChats,
+  onArchiveAllProjectChats,
   onArchiveProjectChats,
   onArchiveTask,
   onRenameTask,
@@ -146,11 +152,13 @@ export function DesktopWorkbenchLayout({
           projects={state.projects}
           devices={state.devices}
           recentTasks={state.recentTasks}
+          runningTaskIds={runningTaskIds}
           currentProjectId={state.currentProject?.id}
           currentTaskId={state.currentTask?.id}
           activeItem={activeItem}
           onCollapse={() => setSidebarCollapsed(true)}
           onNewChat={onNewChat}
+          onStartStandaloneChat={onStartStandaloneChat}
           onSelectProject={onSelectProject}
           onStartNewProjectChat={onStartNewProjectChat}
           onOpenTask={onOpenTask}
@@ -159,6 +167,7 @@ export function DesktopWorkbenchLayout({
           onUpdateProjectName={onUpdateProjectName}
           onRemoveProject={onRemoveProject}
           onArchiveAllChats={onArchiveAllChats}
+          onArchiveAllProjectChats={onArchiveAllProjectChats}
           onArchiveProjectChats={onArchiveProjectChats}
           onArchiveTask={onArchiveTask}
           onRenameTask={onRenameTask}

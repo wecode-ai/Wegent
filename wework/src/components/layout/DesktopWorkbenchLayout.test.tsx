@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { createDeviceApi } from '@/api/devices'
+import { createQuotaApi } from '@/api/quota'
 import { DesktopWorkbenchLayout } from './DesktopWorkbenchLayout'
 
 vi.mock('@/config/runtime', () => ({
@@ -16,7 +17,13 @@ vi.mock('@/api/devices', () => ({
   createDeviceApi: vi.fn(),
 }))
 
+vi.mock('@/api/quota', () => ({
+  createQuotaApi: vi.fn(),
+}))
+
 const createDeviceApiMock = vi.mocked(createDeviceApi)
+const createQuotaApiMock = vi.mocked(createQuotaApi)
+const fetchQuotaMock = vi.fn()
 
 describe('DesktopWorkbenchLayout', () => {
   beforeEach(() => {
@@ -27,6 +34,16 @@ describe('DesktopWorkbenchLayout', () => {
       value: {
         writeText: vi.fn().mockResolvedValue(undefined),
       },
+    })
+    fetchQuotaMock.mockResolvedValue({
+      quota: 748,
+      usage: 747.74,
+      remaining: 0.26,
+      usage_rate: 0.9997,
+      user: 'yunpeng7',
+    })
+    createQuotaApiMock.mockReturnValue({
+      fetchQuota: fetchQuotaMock,
     })
     createDeviceApiMock.mockReturnValue({
       getHomeDirectory: vi.fn().mockResolvedValue('/home/ubuntu'),
@@ -54,6 +71,17 @@ describe('DesktopWorkbenchLayout', () => {
       renameDevice: vi.fn(),
       restartCloudDevice: vi.fn(),
       deleteCloudDevice: vi.fn(),
+      getMetrics: vi.fn().mockResolvedValue({
+        cpu_usage: 42,
+        memory_usage: 68,
+        disk_usage: 57,
+      }),
+      getMetricsHistory: vi.fn().mockResolvedValue({
+        cpu: [],
+        memory: [],
+        disk: [],
+      }),
+      getVncConfig: vi.fn(),
     })
   })
 
@@ -74,6 +102,7 @@ describe('DesktopWorkbenchLayout', () => {
         },
       ],
       currentProject: null,
+      standaloneDeviceId: null,
       currentTask: null,
       input: '',
       isBootstrapping: false,
@@ -81,7 +110,9 @@ describe('DesktopWorkbenchLayout', () => {
       error: null,
     },
     messages: [],
+    runningTaskIds: new Set<number>(),
     onNewChat: vi.fn(),
+    onStartStandaloneChat: vi.fn(),
     onOpenPlugins: vi.fn(),
     projectChat: {
       models: [],
@@ -114,6 +145,7 @@ describe('DesktopWorkbenchLayout', () => {
     onUpdateProjectName: vi.fn(),
     onRemoveProject: vi.fn(),
     onArchiveAllChats: vi.fn(),
+    onArchiveAllProjectChats: vi.fn(),
     onArchiveProjectChats: vi.fn(),
     onArchiveTask: vi.fn(),
     onRenameTask: vi.fn(),
@@ -255,6 +287,42 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByText('退出登录')).toBeInTheDocument()
   })
 
+  test('closes the settings menu when clicking outside it', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await userEvent.click(screen.getByTestId('settings-button'))
+    expect(screen.getByTestId('settings-menu')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('heading', { name: '我们该做什么？' }))
+
+    expect(screen.queryByTestId('settings-menu')).not.toBeInTheDocument()
+  })
+
+  test('expands remaining usage details from the settings menu', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await userEvent.click(screen.getByTestId('settings-button'))
+    await userEvent.click(screen.getByTestId('usage-menu-button'))
+
+    await waitFor(() => expect(fetchQuotaMock).toHaveBeenCalledTimes(1))
+
+    const usagePanel = await screen.findByTestId('usage-detail-panel')
+    expect(usagePanel).toHaveTextContent('模型额度')
+    expect(usagePanel).toHaveTextContent('747.74 / 748 元')
+    expect(usagePanel).toHaveTextContent('剩余 0.26 元')
+    expect(usagePanel).not.toHaveTextContent('使用率')
+    expect(usagePanel).not.toHaveTextContent('总额度')
+    const quotaLink = await screen.findByRole('link', {
+      name: '额度与计费说明',
+    })
+    expect(quotaLink).toHaveAttribute(
+      'href',
+      'https://space.intra.weibo.com/develop/model-quota'
+    )
+    expect(quotaLink).toHaveClass('text-text-secondary')
+    expect(quotaLink).not.toHaveClass('text-primary')
+  })
+
   test('shows project header menus and creates a scratch project workspace', async () => {
     const onCreateProject = vi.fn().mockResolvedValue({ id: 2, name: 'alpha', tasks: [] })
     render(
@@ -287,7 +355,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('projects-more-button'))
     expect(screen.getByTestId('archive-all-chats-button')).toHaveTextContent('归档所有会话')
     await userEvent.click(screen.getByTestId('archive-all-chats-button'))
-    expect(baseProps.onArchiveAllChats).toHaveBeenCalledTimes(1)
+    expect(baseProps.onArchiveAllProjectChats).toHaveBeenCalledTimes(1)
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
     await userEvent.click(screen.getByTestId('project-start-from-scratch-button'))
@@ -488,6 +556,14 @@ describe('DesktopWorkbenchLayout', () => {
               title: 'Newest session',
               status: 'COMPLETED',
               task_type: 'code',
+              created_at: oneHourAgo,
+              updated_at: oneHourAgo,
+            },
+            {
+              id: 6,
+              title: 'Project session',
+              status: 'COMPLETED',
+              task_type: 'code',
               project_id: 7,
               created_at: oneHourAgo,
               updated_at: oneHourAgo,
@@ -500,13 +576,112 @@ describe('DesktopWorkbenchLayout', () => {
     const rows = screen.getAllByTestId('history-task-button')
     expect(rows[0]).toHaveTextContent('Newest session')
     expect(rows[1]).toHaveTextContent('Older session')
+    expect(screen.queryByText('Project session')).not.toBeInTheDocument()
     expect(screen.getByText('1h')).toBeInTheDocument()
     await userEvent.click(rows[0])
-    expect(baseProps.onOpenTask).toHaveBeenCalledWith(5, 7)
+    expect(baseProps.onOpenTask).toHaveBeenCalledWith(5, undefined)
 
     await userEvent.click(screen.getByTestId('history-task-menu-5'))
     expect(screen.getByTestId('archive-history-chat-5')).toHaveTextContent('归档会话')
-      expect(screen.getByTestId('rename-history-chat-5')).toHaveTextContent('重命名会话')
+    expect(screen.getByTestId('rename-history-chat-5')).toHaveTextContent('重命名会话')
+
+    await userEvent.click(screen.getByTestId('chats-more-button'))
+    expect(screen.getByTestId('archive-standalone-chats-button')).toHaveTextContent('归档所有会话')
+    await userEvent.click(screen.getByTestId('archive-standalone-chats-button'))
+    expect(baseProps.onArchiveAllChats).toHaveBeenCalledTimes(1)
+
+    await userEvent.click(screen.getByTestId('chats-new-conversation-button'))
+    expect(baseProps.onStartStandaloneChat).toHaveBeenCalledTimes(1)
+  })
+
+  test('shows running spinners for project and standalone chats', () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        runningTaskIds={new Set([31, 41])}
+        state={{
+          ...baseProps.state,
+          projects: [
+            {
+              id: 1,
+              name: 'github_wegent',
+              tasks: [
+                {
+                  id: 31,
+                  task_id: 31,
+                  task_title: 'Running project chat',
+                  task_status: 'RUNNING',
+                  updated_at: new Date().toISOString(),
+                },
+              ],
+            },
+          ],
+          recentTasks: [
+            {
+              id: 41,
+              title: 'Running standalone chat',
+              status: 'RUNNING',
+              task_type: 'code',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            },
+          ],
+        }}
+      />,
+    )
+
+    expect(screen.getByTestId('project-spinner-1')).toBeInTheDocument()
+    expect(screen.getByTestId('history-task-spinner-41')).toBeInTheDocument()
+  })
+
+  test('does not show spinners for stale server running statuses on initial lists', () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        runningTaskIds={new Set()}
+        state={{
+          ...baseProps.state,
+          projects: [
+            {
+              id: 1,
+              name: 'github_wegent',
+              tasks: [
+                {
+                  id: 31,
+                  task_id: 31,
+                  task_title: 'Stale project chat',
+                  task_status: 'RUNNING',
+                  updated_at: new Date().toISOString(),
+                },
+              ],
+            },
+          ],
+          recentTasks: [
+            {
+              id: 41,
+              title: 'Stale standalone chat',
+              status: 'PENDING',
+              task_type: 'code',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            },
+          ],
+        }}
+      />,
+    )
+
+    expect(screen.queryByTestId('project-spinner-1')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('history-task-spinner-41')).not.toBeInTheDocument()
+  })
+
+  test('keeps projects and chats in the scrollable sidebar region above settings', () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(screen.getByTestId('sidebar-worklists-scroll')).toHaveClass(
+      'flex-1',
+      'overflow-y-auto',
+    )
+    expect(screen.getByTestId('settings-button')).toHaveClass('shrink-0')
   })
 
   test('toggles an empty project chat list without persistent project highlight', async () => {
@@ -659,7 +834,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByText('CPU')).toBeInTheDocument()
     expect(screen.getByText('MEM')).toBeInTheDocument()
     expect(screen.getByText('磁盘')).toBeInTheDocument()
-    expect(screen.getByText('42%')).toBeInTheDocument()
+    expect(await screen.findByText('42%')).toBeInTheDocument()
     expect(screen.getByText('68%')).toBeInTheDocument()
     expect(screen.getByText('57%')).toBeInTheDocument()
     expect(screen.getByTestId('connection-scale-wiki')).toBeInTheDocument()
@@ -682,8 +857,9 @@ describe('DesktopWorkbenchLayout', () => {
     expect(panel).toBeInTheDocument()
     expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
     expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
-    expect(screen.getByText('浏览器')).toBeInTheDocument()
     expect(screen.getByText('终端')).toBeInTheDocument()
+    expect(screen.getByText('IDE')).toBeInTheDocument()
+    expect(screen.getByText('桌面')).toBeInTheDocument()
 
     fireEvent.pointerDown(screen.getByTestId('right-workspace-resize-handle'), { clientX: 700 })
     fireEvent.pointerMove(document, { clientX: 640 })
@@ -957,6 +1133,18 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
+  test('closes the right workspace panel from the panel edge', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    expect(screen.getByTestId('right-workspace-panel')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('close-right-workspace-panel-button'))
+
+    expect(screen.queryByTestId('right-workspace-panel')).not.toBeInTheDocument()
+    expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
+  })
+
   test('opens and resizes the bottom workspace panel', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
@@ -966,13 +1154,26 @@ describe('DesktopWorkbenchLayout', () => {
     expect(panel).toBeInTheDocument()
     expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
     expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
-    expect(screen.getByText('浏览器')).toBeInTheDocument()
     expect(screen.getByText('终端')).toBeInTheDocument()
+    expect(screen.getByText('IDE')).toBeInTheDocument()
+    expect(screen.getByText('桌面')).toBeInTheDocument()
 
     fireEvent.pointerDown(screen.getByTestId('bottom-workspace-resize-handle'), { clientY: 700 })
     fireEvent.pointerMove(document, { clientY: 620 })
     fireEvent.pointerUp(document)
 
     expect(panel).toHaveStyle({ height: '400px' })
+  })
+
+  test('closes the bottom workspace panel from the panel edge', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
+    expect(screen.getByTestId('bottom-workspace-panel')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('close-bottom-workspace-panel-button'))
+
+    expect(screen.queryByTestId('bottom-workspace-panel')).not.toBeInTheDocument()
+    expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
   })
 })

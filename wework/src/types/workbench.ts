@@ -34,6 +34,7 @@ export interface WorkbenchState {
   devices: DeviceInfo[]
   recentTasks: Task[]
   currentProject: ProjectWithTasks | null
+  standaloneDeviceId: string | null
   currentTask: Task | null
   input: string
   isBootstrapping: boolean
