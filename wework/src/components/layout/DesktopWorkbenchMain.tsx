@@ -135,7 +135,12 @@ export function DesktopWorkbenchMain({
         onToggleRightPanel={() => setRightPanelOpen(open => !open)}
         onToggleBottomPanel={() => setBottomPanelOpen(open => !open)}
       />
-      {rightPanelOpen && <RightWorkspacePanel currentProject={currentProject} />}
+      {rightPanelOpen && (
+        <RightWorkspacePanel
+          currentProject={currentProject}
+          onRequestClose={() => setRightPanelOpen(false)}
+        />
+      )}
     </main>
   )
 }

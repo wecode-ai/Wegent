@@ -1,3 +1,4 @@
+import { X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { ProjectWithTasks } from '@/types/api'
 import { useResizableRightPanel } from './useResizableWorkspacePanel'
@@ -5,9 +6,10 @@ import { WorkspacePanelCards } from './WorkspacePanelCards'
 
 interface RightWorkspacePanelProps {
   currentProject: ProjectWithTasks | null
+  onRequestClose: () => void
 }
 
-export function RightWorkspacePanel({ currentProject }: RightWorkspacePanelProps) {
+export function RightWorkspacePanel({ currentProject, onRequestClose }: RightWorkspacePanelProps) {
   const { t } = useTranslation('common')
   const { width, handleResizeStart } = useResizableRightPanel()
 
@@ -23,8 +25,17 @@ export function RightWorkspacePanel({ currentProject }: RightWorkspacePanelProps
         onPointerDown={handleResizeStart}
         aria-label={t('workbench.resize_right_workspace_panel', '调整右侧栏宽度')}
       />
+      <button
+        type="button"
+        data-testid="close-right-workspace-panel-button"
+        onClick={onRequestClose}
+        className="absolute left-2 top-2 z-30 flex h-9 w-9 items-center justify-center rounded-md bg-base text-text-secondary hover:bg-muted hover:text-text-primary"
+        aria-label={t('workbench.close_right_workspace_panel', '关闭右侧栏')}
+      >
+        <X className="h-4 w-4" />
+      </button>
       <div className="flex min-h-0 flex-1 pt-14">
-        <WorkspacePanelCards currentProject={currentProject} />
+        <WorkspacePanelCards currentProject={currentProject} onRequestClose={onRequestClose} />
       </div>
     </section>
   )
