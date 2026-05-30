@@ -190,7 +190,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('projects-section-toggle'))
 
-    expect(screen.getByTestId('projects-section-chevron-right')).toHaveClass('opacity-100')
+    expect(screen.getByTestId('projects-section-chevron-right')).toHaveClass('opacity-0')
     expect(screen.queryByText('github_wegent')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('projects-section-toggle'))
@@ -200,7 +200,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('chats-section-toggle'))
 
-    expect(screen.getByTestId('chats-section-chevron-right')).toHaveClass('opacity-100')
+    expect(screen.getByTestId('chats-section-chevron-right')).toHaveClass('opacity-0')
     expect(screen.queryByText('远程连接 Claude Code')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('chats-section-toggle'))
@@ -401,7 +401,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.selectOptions(screen.getByTestId('project-device-select'), 'local-device')
     expect(onRememberExecutionDevice).toHaveBeenCalledWith('local-device')
     await userEvent.type(screen.getByTestId('project-name-input'), 'alpha app')
-    expect(screen.getByText(/\/workspace\/projects\/alpha-app/)).toBeInTheDocument()
+    expect(screen.queryByText(/\/workspace\/projects\/alpha-app/)).not.toBeInTheDocument()
     expect(screen.queryByText(/默认目录位于/)).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('create-project-button'))

@@ -115,9 +115,7 @@ function SidebarSectionHeader({
   children: ReactNode
 }) {
   const ToggleIcon = expanded ? ChevronDown : ChevronRight
-  const iconVisibilityClass = expanded
-    ? 'opacity-0 group-hover/section:opacity-100'
-    : 'opacity-100'
+  const iconVisibilityClass = 'opacity-0 group-hover/section:opacity-100'
 
   return (
     <div className="group/section mb-3 flex h-8 items-center justify-between px-3">

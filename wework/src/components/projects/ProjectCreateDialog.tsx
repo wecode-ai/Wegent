@@ -1,5 +1,6 @@
-import { Check, ChevronLeft, Folder, FolderPlus, X } from 'lucide-react'
+import { Check, ChevronLeft, Folder, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { CreateProjectRequest, DeviceInfo, ProjectWithTasks } from '@/types/api'
 
@@ -248,6 +249,8 @@ function ProjectCreateDialogContent({
     setCurrentPath(path)
   }
 
+  useEscapeKey(onClose)
+
   const title =
     mode === 'existing'
       ? t('workbench.project_create_existing_title', '选择项目目录')
@@ -318,12 +321,6 @@ function ProjectCreateDialogContent({
               placeholder={t('workbench.project_name_placeholder', '输入项目名称')}
               className="mt-2 h-11 w-full rounded-lg border border-[#d8d8d8] px-3 text-sm outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20"
             />
-            <div className="mt-5 rounded-lg border border-[#e3e5e8] bg-[#f7f8f9] px-3 py-2">
-              <div className="flex items-center gap-2 text-sm text-[#3c4043]">
-                <FolderPlus className="h-4 w-4 shrink-0" />
-                <span className="min-w-0 truncate font-mono">{scratchPath}</span>
-              </div>
-            </div>
           </>
         ) : (
           <>

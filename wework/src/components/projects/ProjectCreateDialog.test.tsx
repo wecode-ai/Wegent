@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
@@ -62,5 +62,26 @@ describe('ProjectCreateDialog', () => {
 
     expect(onSelectDevicePreference).toHaveBeenCalledWith('cloud-device')
     expect(projectNameInput).toHaveValue('hello')
+  })
+
+  test('closes when Escape is pressed', () => {
+    const onClose = vi.fn()
+
+    render(
+      <ProjectCreateDialog
+        open
+        mode="scratch"
+        devices={devices}
+        onClose={onClose}
+        onCreateProject={vi.fn()}
+        onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
+        onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
+        onListDeviceDirectories={vi.fn().mockResolvedValue([])}
+      />,
+    )
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 })
