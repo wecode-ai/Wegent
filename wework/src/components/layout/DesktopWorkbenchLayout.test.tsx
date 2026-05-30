@@ -180,6 +180,35 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByText('我们该做什么？')).toBeInTheDocument()
   })
 
+  test('collapses and expands project and chat sections from the sidebar headers', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(screen.getByTestId('projects-section-chevron-down')).toHaveClass('opacity-0')
+    expect(screen.getByText('github_wegent')).toBeInTheDocument()
+    expect(screen.getByTestId('chats-section-chevron-down')).toHaveClass('opacity-0')
+    expect(screen.getByText('远程连接 Claude Code')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('projects-section-toggle'))
+
+    expect(screen.getByTestId('projects-section-chevron-right')).toHaveClass('opacity-100')
+    expect(screen.queryByText('github_wegent')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('projects-section-toggle'))
+
+    expect(screen.getByTestId('projects-section-chevron-down')).toHaveClass('opacity-0')
+    expect(screen.getByText('github_wegent')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('chats-section-toggle'))
+
+    expect(screen.getByTestId('chats-section-chevron-right')).toHaveClass('opacity-100')
+    expect(screen.queryByText('远程连接 Claude Code')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('chats-section-toggle'))
+
+    expect(screen.getByTestId('chats-section-chevron-down')).toHaveClass('opacity-0')
+    expect(screen.getByText('远程连接 Claude Code')).toBeInTheDocument()
+  })
+
   test('renders project-specific empty prompt after selecting a project', () => {
     render(
       <DesktopWorkbenchLayout

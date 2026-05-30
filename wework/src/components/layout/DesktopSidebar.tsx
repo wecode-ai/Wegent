@@ -1,6 +1,8 @@
 import {
   Archive,
+  ChevronDown,
   ChevronLeft,
+  ChevronRight,
   Clock,
   Edit3,
   Folder,
@@ -15,6 +17,7 @@ import {
   X,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
@@ -95,6 +98,48 @@ function SidebarButton({
 }
 
 const INITIAL_PROJECT_CHAT_COUNT = 5
+
+function SidebarSectionHeader({
+  title,
+  expanded,
+  toggleTestId,
+  iconTestId,
+  onToggle,
+  children,
+}: {
+  title: string
+  expanded: boolean
+  toggleTestId: string
+  iconTestId: string
+  onToggle: () => void
+  children: ReactNode
+}) {
+  const ToggleIcon = expanded ? ChevronDown : ChevronRight
+  const iconVisibilityClass = expanded
+    ? 'opacity-0 group-hover/section:opacity-100'
+    : 'opacity-100'
+
+  return (
+    <div className="group/section mb-3 flex h-8 items-center justify-between px-3">
+      <button
+        type="button"
+        data-testid={toggleTestId}
+        onClick={onToggle}
+        aria-expanded={expanded}
+        className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md text-left"
+      >
+        <span className="truncate text-sm font-semibold text-[#8a8a8a]">{title}</span>
+        <ToggleIcon
+          data-testid={iconTestId}
+          className={`h-4 w-4 shrink-0 text-[#8a8a8a] transition-opacity ${iconVisibilityClass}`}
+        />
+      </button>
+      <div className="flex items-center opacity-0 transition-opacity group-hover/section:opacity-100 focus-within:opacity-100">
+        {children}
+      </div>
+    </div>
+  )
+}
 
 function formatRelativeSidebarTime(value?: string) {
   if (!value) return ''
@@ -467,6 +512,8 @@ export function DesktopSidebar({
   const [projectCreateMode, setProjectCreateMode] = useState<ProjectCreateMode | null>(null)
   const [renamingProject, setRenamingProject] = useState<ProjectWithTasks | null>(null)
   const [renamingTask, setRenamingTask] = useState<{ id: number; title: string } | null>(null)
+  const [projectsExpanded, setProjectsExpanded] = useState(true)
+  const [chatsExpanded, setChatsExpanded] = useState(true)
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<number>>(new Set())
   const [expandedTaskListIds, setExpandedTaskListIds] = useState<Set<number>>(new Set())
   const sortedRecentTasks = useMemo(
@@ -573,111 +620,121 @@ export function DesktopSidebar({
         className="mt-8 min-h-0 flex-1 overflow-y-auto pr-1"
       >
         <section>
-          <div className="group/projects mb-3 flex h-8 items-center justify-between px-3">
-            <h2 className="text-sm font-semibold text-[#8a8a8a]">
-              {t('workbench.projects', '项目')}
-            </h2>
-            <div className="flex items-center opacity-0 transition-opacity group-hover/projects:opacity-100 focus-within:opacity-100">
-              <ActionMenu
-                ariaLabel={t('workbench.project_list_actions', '项目列表操作')}
-                testId="projects-more-button"
-                items={[
-                  {
-                    label: t('workbench.archive_all_chats', '归档所有会话'),
-                    icon: Archive,
-                    testId: 'archive-all-chats-button',
-                    onSelect: onArchiveAllProjectChats,
-                  },
-                ]}
-              />
-              <ActionMenu
-                ariaLabel={t('workbench.new_project', '新建项目')}
-                testId="projects-create-button"
-                icon={FolderPlus}
-                items={[
-                  {
-                    label: t('workbench.start_from_scratch', '从头开始'),
-                    icon: FolderPlus,
-                    testId: 'project-start-from-scratch-button',
-                    onSelect: () => setProjectCreateMode('scratch'),
-                  },
-                  {
-                    label: t('workbench.using_existing_folder', '使用现有目录'),
-                    icon: Folder,
-                    testId: 'project-existing-folder-button',
-                    onSelect: () => setProjectCreateMode('existing'),
-                  },
-                ]}
-              />
+          <SidebarSectionHeader
+            title={t('workbench.projects', '项目')}
+            expanded={projectsExpanded}
+            toggleTestId="projects-section-toggle"
+            iconTestId={
+              projectsExpanded ? 'projects-section-chevron-down' : 'projects-section-chevron-right'
+            }
+            onToggle={() => setProjectsExpanded(expanded => !expanded)}
+          >
+            <ActionMenu
+              ariaLabel={t('workbench.project_list_actions', '项目列表操作')}
+              testId="projects-more-button"
+              items={[
+                {
+                  label: t('workbench.archive_all_chats', '归档所有会话'),
+                  icon: Archive,
+                  testId: 'archive-all-chats-button',
+                  onSelect: onArchiveAllProjectChats,
+                },
+              ]}
+            />
+            <ActionMenu
+              ariaLabel={t('workbench.new_project', '新建项目')}
+              testId="projects-create-button"
+              icon={FolderPlus}
+              items={[
+                {
+                  label: t('workbench.start_from_scratch', '从头开始'),
+                  icon: FolderPlus,
+                  testId: 'project-start-from-scratch-button',
+                  onSelect: () => setProjectCreateMode('scratch'),
+                },
+                {
+                  label: t('workbench.using_existing_folder', '使用现有目录'),
+                  icon: Folder,
+                  testId: 'project-existing-folder-button',
+                  onSelect: () => setProjectCreateMode('existing'),
+                },
+              ]}
+            />
+          </SidebarSectionHeader>
+          {projectsExpanded && (
+            <div className="space-y-1">
+              {projects.map(project => (
+                <ProjectItem
+                  key={project.id}
+                  project={project}
+                  expanded={expandedProjectIds.has(project.id)}
+                  showAllTasks={expandedTaskListIds.has(project.id)}
+                  activeTaskId={currentTaskId}
+                  runningTaskIds={runningTaskIds}
+                  onToggleProject={handleToggleProject}
+                  onToggleTaskLimit={handleToggleProjectTaskLimit}
+                  onStartNewProjectChat={onStartNewProjectChat}
+                  onArchiveProjectChats={onArchiveProjectChats}
+                  onRemoveProject={onRemoveProject}
+                  onRenameProject={setRenamingProject}
+                  onOpenTask={onOpenTask}
+                  onArchiveTask={onArchiveTask}
+                  onRenameTask={task =>
+                    setRenamingTask({ id: task.task_id, title: getProjectTaskTitle(task) })
+                  }
+                />
+              ))}
             </div>
-          </div>
-          <div className="space-y-1">
-            {projects.map(project => (
-              <ProjectItem
-                key={project.id}
-                project={project}
-                expanded={expandedProjectIds.has(project.id)}
-                showAllTasks={expandedTaskListIds.has(project.id)}
-                activeTaskId={currentTaskId}
-                runningTaskIds={runningTaskIds}
-                onToggleProject={handleToggleProject}
-                onToggleTaskLimit={handleToggleProjectTaskLimit}
-                onStartNewProjectChat={onStartNewProjectChat}
-                onArchiveProjectChats={onArchiveProjectChats}
-                onRemoveProject={onRemoveProject}
-                onRenameProject={setRenamingProject}
-                onOpenTask={onOpenTask}
-                onArchiveTask={onArchiveTask}
-                onRenameTask={task =>
-                  setRenamingTask({ id: task.task_id, title: getProjectTaskTitle(task) })
-                }
-              />
-            ))}
-          </div>
+          )}
         </section>
 
         <section className="mt-8">
-          <div className="group/chats mb-3 flex h-8 items-center justify-between px-3">
-            <h2 className="text-sm font-semibold text-[#8a8a8a]">
-              {t('workbench.history', '对话')}
-            </h2>
-            <div className="flex items-center opacity-0 transition-opacity group-hover/chats:opacity-100 focus-within:opacity-100">
-              <ActionMenu
-                ariaLabel={t('workbench.chat_list_actions', '对话列表操作')}
-                testId="chats-more-button"
-                items={[
-                  {
-                    label: t('workbench.archive_all_chats', '归档所有会话'),
-                    icon: Archive,
-                    testId: 'archive-standalone-chats-button',
-                    onSelect: onArchiveAllChats,
-                  },
-                ]}
-              />
-              <button
-                type="button"
-                data-testid="chats-new-conversation-button"
-                onClick={onStartStandaloneChat}
-                className="flex h-7 w-7 items-center justify-center rounded-md text-[#606368] hover:bg-white/80 hover:text-[#2d2d2d]"
-                aria-label={t('workbench.new_chat', '新对话')}
-              >
-                <MessageSquarePlus className="h-4 w-4" />
-              </button>
+          <SidebarSectionHeader
+            title={t('workbench.history', '对话')}
+            expanded={chatsExpanded}
+            toggleTestId="chats-section-toggle"
+            iconTestId={
+              chatsExpanded ? 'chats-section-chevron-down' : 'chats-section-chevron-right'
+            }
+            onToggle={() => setChatsExpanded(expanded => !expanded)}
+          >
+            <ActionMenu
+              ariaLabel={t('workbench.chat_list_actions', '对话列表操作')}
+              testId="chats-more-button"
+              items={[
+                {
+                  label: t('workbench.archive_all_chats', '归档所有会话'),
+                  icon: Archive,
+                  testId: 'archive-standalone-chats-button',
+                  onSelect: onArchiveAllChats,
+                },
+              ]}
+            />
+            <button
+              type="button"
+              data-testid="chats-new-conversation-button"
+              onClick={onStartStandaloneChat}
+              className="flex h-7 w-7 items-center justify-center rounded-md text-[#606368] hover:bg-white/80 hover:text-[#2d2d2d]"
+              aria-label={t('workbench.new_chat', '新对话')}
+            >
+              <MessageSquarePlus className="h-4 w-4" />
+            </button>
+          </SidebarSectionHeader>
+          {chatsExpanded && (
+            <div className="space-y-1 pb-2">
+              {sortedRecentTasks.map(task => (
+                <RecentTaskRow
+                  key={task.id}
+                  task={task}
+                  selected={currentTaskId === task.id && currentProjectId === undefined}
+                  running={runningTaskIds.has(task.id)}
+                  onOpenTask={onOpenTask}
+                  onArchiveTask={onArchiveTask}
+                  onRenameTask={item => setRenamingTask({ id: item.id, title: item.title })}
+                />
+              ))}
             </div>
-          </div>
-          <div className="space-y-1 pb-2">
-            {sortedRecentTasks.map(task => (
-              <RecentTaskRow
-                key={task.id}
-                task={task}
-                selected={currentTaskId === task.id && currentProjectId === undefined}
-                running={runningTaskIds.has(task.id)}
-                onOpenTask={onOpenTask}
-                onArchiveTask={onArchiveTask}
-                onRenameTask={item => setRenamingTask({ id: item.id, title: item.title })}
-              />
-            ))}
-          </div>
+          )}
         </section>
       </div>
 
