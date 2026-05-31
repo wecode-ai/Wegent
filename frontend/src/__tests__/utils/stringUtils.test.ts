@@ -7,11 +7,13 @@ import { truncateMiddle } from '@/utils/stringUtils'
 describe('truncateMiddle', () => {
   describe('no truncation needed', () => {
     it('returns text unchanged when length < maxLength', () => {
-      expect(truncateMiddle('hello', 10)).toBe('hello')
+      const result = truncateMiddle('hello', 10)
+      expect(result).toBe('hello')
     })
 
     it('returns text unchanged when length === maxLength (boundary)', () => {
-      expect(truncateMiddle('1234567890', 10)).toBe('1234567890')
+      const result = truncateMiddle('1234567890', 10)
+      expect(result).toBe('1234567890')
     })
   })
 
@@ -40,27 +42,33 @@ describe('truncateMiddle', () => {
 
   describe('edge cases', () => {
     it('handles empty string', () => {
-      expect(truncateMiddle('', 10)).toBe('')
+      const result = truncateMiddle('', 10)
+      expect(result).toBe('')
     })
 
     it('returns only ellipsis when startChars=0 and endChars=0', () => {
-      expect(truncateMiddle('abcdefghijklmnop', 10, 0, 0)).toBe('...')
+      const result = truncateMiddle('abcdefghijklmnop', 10, 0, 0)
+      expect(result).toBe('...')
     })
 
     it('returns ellipsis + suffix when startChars=0', () => {
-      expect(truncateMiddle('abcdefghijklmnop', 10, 0, 4)).toBe('...mnop')
+      const result = truncateMiddle('abcdefghijklmnop', 10, 0, 4)
+      expect(result).toBe('...mnop')
     })
 
     it('returns prefix + ellipsis when endChars=0', () => {
-      expect(truncateMiddle('abcdefghijklmnop', 10, 4, 0)).toBe('abcd...')
+      const result = truncateMiddle('abcdefghijklmnop', 10, 4, 0)
+      expect(result).toBe('abcd...')
     })
 
     it('clamps negative startChars to 0', () => {
-      expect(truncateMiddle('abcdefghijklmnop', 10, -2, 4)).toBe('...mnop')
+      const result = truncateMiddle('abcdefghijklmnop', 10, -2, 4)
+      expect(result).toBe('...mnop')
     })
 
     it('clamps negative endChars to 0', () => {
-      expect(truncateMiddle('abcdefghijklmnop', 10, 4, -2)).toBe('abcd...')
+      const result = truncateMiddle('abcdefghijklmnop', 10, 4, -2)
+      expect(result).toBe('abcd...')
     })
   })
 

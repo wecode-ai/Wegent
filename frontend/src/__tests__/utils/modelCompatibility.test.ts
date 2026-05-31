@@ -7,57 +7,69 @@ import { getCompatibleProviderFromAgentType } from '@/utils/modelCompatibility'
 describe('getCompatibleProviderFromAgentType', () => {
   describe('null-like inputs', () => {
     it('returns null for undefined', () => {
-      expect(getCompatibleProviderFromAgentType(undefined)).toBeNull()
+      const result = getCompatibleProviderFromAgentType(undefined)
+      expect(result).toBeNull()
     })
 
     it('returns null for null', () => {
-      expect(getCompatibleProviderFromAgentType(null)).toBeNull()
+      const result = getCompatibleProviderFromAgentType(null)
+      expect(result).toBeNull()
     })
 
     it('returns null for empty string', () => {
-      expect(getCompatibleProviderFromAgentType('')).toBeNull()
+      const result = getCompatibleProviderFromAgentType('')
+      expect(result).toBeNull()
     })
   })
 
   describe('agno mapping', () => {
     it('maps "agno" to "openai"', () => {
-      expect(getCompatibleProviderFromAgentType('agno')).toBe('openai')
+      const result = getCompatibleProviderFromAgentType('agno')
+      expect(result).toBe('openai')
     })
 
     it('maps "AGNO" to "openai" (case-insensitive)', () => {
-      expect(getCompatibleProviderFromAgentType('AGNO')).toBe('openai')
+      const result = getCompatibleProviderFromAgentType('AGNO')
+      expect(result).toBe('openai')
     })
 
     it('maps "Agno" to "openai" (mixed case)', () => {
-      expect(getCompatibleProviderFromAgentType('Agno')).toBe('openai')
+      const result = getCompatibleProviderFromAgentType('Agno')
+      expect(result).toBe('openai')
     })
   })
 
   describe('claude mapping', () => {
     it('maps "claude" to "claude"', () => {
-      expect(getCompatibleProviderFromAgentType('claude')).toBe('claude')
+      const result = getCompatibleProviderFromAgentType('claude')
+      expect(result).toBe('claude')
     })
 
     it('maps "claudecode" to "claude"', () => {
-      expect(getCompatibleProviderFromAgentType('claudecode')).toBe('claude')
+      const result = getCompatibleProviderFromAgentType('claudecode')
+      expect(result).toBe('claude')
     })
 
     it('maps "ClaudeCode" to "claude" (real-world casing)', () => {
-      expect(getCompatibleProviderFromAgentType('ClaudeCode')).toBe('claude')
+      const result = getCompatibleProviderFromAgentType('ClaudeCode')
+      expect(result).toBe('claude')
     })
   })
 
   describe('unknown inputs', () => {
     it('returns null for unknown agent type "dify"', () => {
-      expect(getCompatibleProviderFromAgentType('dify')).toBeNull()
+      const result = getCompatibleProviderFromAgentType('dify')
+      expect(result).toBeNull()
     })
 
     it('returns null for provider name "openai" (not a valid agent type)', () => {
-      expect(getCompatibleProviderFromAgentType('openai')).toBeNull()
+      const result = getCompatibleProviderFromAgentType('openai')
+      expect(result).toBeNull()
     })
 
     it('returns null for whitespace-padded "  agno  " (no trim)', () => {
-      expect(getCompatibleProviderFromAgentType('  agno  ')).toBeNull()
+      const result = getCompatibleProviderFromAgentType('  agno  ')
+      expect(result).toBeNull()
     })
   })
 })
