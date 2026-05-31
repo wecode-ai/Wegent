@@ -80,6 +80,14 @@ interface TeamListProps {
   onEditResource?: (namespace: string) => void
 }
 
+/**
+ * Displays a list of Team (user-facing agent) resources grouped by ownership.
+ * Supports CRUD operations with group-role-based permission controls.
+ *
+ * @param props.scope - Current scope context (personal/group/all)
+ * @param props.groupName - Current group name when scope is 'group'
+ * @param props.groupRoleMap - Map of group namespace to user's role
+ */
 export default function TeamList({
   scope = 'personal',
   groupName,

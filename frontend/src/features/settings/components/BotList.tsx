@@ -42,6 +42,14 @@ interface BotListProps {
   groupRoleMap?: Map<string, BaseRole>
 }
 
+/**
+ * Displays a list of Bot resources grouped by ownership (user, group, public).
+ * Supports CRUD operations with group-role-based permission controls.
+ *
+ * @param props.scope - Current scope context (personal/group/all)
+ * @param props.groupName - Current group name when scope is 'group'
+ * @param props.groupRoleMap - Map of group namespace to user's role
+ */
 export default function BotList({ scope = 'personal', groupName, groupRoleMap }: BotListProps) {
   const { t } = useTranslation()
   const { toast } = useToast()

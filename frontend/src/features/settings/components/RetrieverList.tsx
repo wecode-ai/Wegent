@@ -43,6 +43,15 @@ interface RetrieverListProps {
   onEditResource?: (namespace: string) => void
 }
 
+/**
+ * Displays a list of Retriever (knowledge base retriever) resources grouped by ownership.
+ * Unlike other List components, allows creation in personal/all scope if the user
+ * has Owner or Maintainer role in any group, because Retrievers must belong to a group.
+ *
+ * @param props.scope - Current scope context (personal/group/all)
+ * @param props.groupName - Current group name when scope is 'group'
+ * @param props.groupRoleMap - Map of group namespace to user's role
+ */
 const RetrieverList: React.FC<RetrieverListProps> = ({
   scope = 'personal',
   groupName,
