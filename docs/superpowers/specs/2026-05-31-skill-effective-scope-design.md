@@ -168,13 +168,15 @@ Skill 有两个不同问题，必须分开：
 建议抽象：
 
 ```text
-SkillUsage
+SkillBinding
   skillRef
   targetType: user | agent | project | message
   targetId
   ownerUserId
   createdBy
 ```
+
+这里用 `SkillBinding` 而不是 `SkillUsage`。它表达的是“把某个 Skill 加到某个使用位置”的配置关系，不是一次调用记录，也不是统计数据。产品界面不需要展示这个技术名，只展示“加入我的默认能力”“智能体自带能力”“本次临时使用”。
 
 解释：
 
