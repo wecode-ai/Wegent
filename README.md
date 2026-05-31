@@ -514,3 +514,37 @@ Thanks to the following developers for their contributions and efforts to make t
 ---
 
 <p align="center">Made with ❤️ by WeCode-AI Team</p>
+
+## FAQ
+
+### What is this project?
+
+An open-source AI-native operating system to define, organize, and run intelligent agent teams
+
+### Key Features
+
+| Feature | Description |
+|---------|-------------|
+| AI-powered | Built for AI agents with long context and tool calling |
+| Open-source | Free and open source, MIT or Apache 2.0 license |
+| Easy to install | Quick start with one-line installation command |
+| Extensible | Support MCP servers, skills, and plugins |
+| Cost-efficient | Optimized for AI token usage and cost control |
+
+### How to install?
+
+Visit the official documentation or GitHub repository for installation instructions.
+
+### Is it free?
+
+Yes, this project is free and open source. Check the LICENSE file for details.
+
+### Where to get help?
+
+- GitHub Issues: Report bugs and request features
+- Documentation: Official docs site
+- Discord/Community: Join the community chat
+
+### License
+
+MIT License or Apache 2.0 License - see LICENSE file for details.
