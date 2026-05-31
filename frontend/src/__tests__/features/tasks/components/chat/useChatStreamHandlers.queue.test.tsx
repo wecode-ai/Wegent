@@ -283,6 +283,42 @@ describe('useChatStreamHandlers queue integration', () => {
     expect(mockRefreshSelectedTaskDetail).toHaveBeenCalledWith(false)
   })
 
+  it('sends a ready attachment even when the text input is empty', async () => {
+    isMachineStreamingMock = false
+    taskInputMessageMock = ''
+    selectedTaskDetailMock = {
+      id: 42,
+      status: 'COMPLETED',
+      is_group_chat: false,
+      subtasks: [],
+    } as unknown as TaskDetail
+
+    const { result } = renderQueueableHook()
+
+    await act(async () => {
+      await result.current.handleSendMessage()
+    })
+
+    expect(mockContextSendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: '',
+        attachment_ids: [11],
+      }),
+      expect.objectContaining({
+        pendingUserMessage: '',
+        pendingAttachments: [
+          expect.objectContaining({
+            id: 11,
+            filename: 'ready.txt',
+          }),
+        ],
+      })
+    )
+    expect(mockSetTaskInputMessage).toHaveBeenCalledWith('')
+    expect(mockResetAttachment).toHaveBeenCalled()
+    expect(mockResetContexts).toHaveBeenCalled()
+  })
+
   it('shows a retry action that resends a failed queued message', async () => {
     mockContextSendMessage.mockImplementationOnce(async (_request, options) => {
       options?.onError?.(new Error('network down'))

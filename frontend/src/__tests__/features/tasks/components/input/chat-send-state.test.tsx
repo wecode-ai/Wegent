@@ -280,6 +280,32 @@ describe('getChatSendState', () => {
     })
   })
 
+  it('allows normal send when the input only has ready attachments', () => {
+    expect(
+      getChatSendState({
+        isLoading: false,
+        isStreaming: false,
+        isAwaitingResponseStart: false,
+        isStopping: false,
+        isModelSelectionRequired: false,
+        isAttachmentReadyToSend: true,
+        hasNoTeams: false,
+        shouldHideChatInput: false,
+        taskInputMessage: '',
+        hasAttachments: true,
+        selectedTaskStatus: undefined,
+        isSubtaskStreaming: false,
+        isGroupChat: false,
+        canQueueMessage: false,
+      })
+    ).toEqual({
+      primaryAction: 'send',
+      isPrimaryDisabled: false,
+      showStopAction: false,
+      showPendingAction: false,
+    })
+  })
+
   it('uses cancel as the primary action for non-group pending task', () => {
     expect(
       getChatSendState({
