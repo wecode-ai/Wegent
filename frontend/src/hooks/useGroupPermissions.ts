@@ -26,7 +26,7 @@ interface GroupPermissions {
   canDeleteGroupResource: (namespace: string) => boolean
   /** Whether user can create resources in the current group scope. Only true when scope='group' and role is Owner/Maintainer. */
   canCreateInCurrentGroup: boolean
-  /** Whether user has Manager role in any group. Used for cross-group resource creation. */
+  /** Whether user has Owner or Maintainer role in any group. Used for cross-group resource creation. */
   canCreateInAnyGroup: boolean
 }
 
