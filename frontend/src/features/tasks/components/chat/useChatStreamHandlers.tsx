@@ -1033,8 +1033,10 @@ export function useChatStreamHandlers({
   // Core message sending logic
   const handleSendMessage = useCallback(
     async (overrideMessage?: string) => {
-      const message = overrideMessage?.trim() || taskInputMessage.trim()
-      if (!message && !shouldHideChatInput) return
+      const message =
+        overrideMessage !== undefined ? overrideMessage.trim() : taskInputMessage.trim()
+      const hasAttachments = attachments.length > 0
+      if (!message && !hasAttachments && !shouldHideChatInput) return
 
       if (!isAttachmentReadyToSend) {
         toast({
@@ -1122,6 +1124,7 @@ export function useChatStreamHandlers({
     },
     [
       taskInputMessage,
+      attachments.length,
       shouldHideChatInput,
       isAttachmentReadyToSend,
       toast,

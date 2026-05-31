@@ -214,7 +214,7 @@ export function ChatInputControls({
   onCorrectionModeToggle,
   selectedContexts,
   setSelectedContexts,
-  attachmentState: _attachmentState,
+  attachmentState,
   onFileSelect,
   onAttachmentRemove: _onAttachmentRemove,
   isLoading,
@@ -292,6 +292,7 @@ export function ChatInputControls({
       hasNoTeams,
       shouldHideChatInput,
       taskInputMessage,
+      hasAttachments: attachmentState.attachments.length > 0,
       selectedTaskStatus: selectedTaskDetail?.status,
       isSubtaskStreaming,
       isGroupChat: selectedTaskDetail?.is_group_chat,
@@ -419,6 +420,7 @@ export function ChatInputControls({
         isModelSelectionRequired={isModelSelectionRequired}
         isAttachmentReadyToSend={isAttachmentReadyToSend}
         taskInputMessage={taskInputMessage}
+        hasAttachments={attachmentState.attachments.length > 0}
         isSubtaskStreaming={isSubtaskStreaming}
         canQueueMessage={canQueueMessage}
         canSendGuidance={canSendGuidance}
