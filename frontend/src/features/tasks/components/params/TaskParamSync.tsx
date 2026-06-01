@@ -7,7 +7,7 @@
 import { useEffect, useRef } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
-import { Task } from '@/types/api'
+import type { Task } from '@/types/api'
 import { useToast } from '@/hooks/use-toast'
 
 /**
@@ -20,12 +20,14 @@ import { useToast } from '@/hooks/use-toast'
 export default function TaskParamSync() {
   const { toast } = useToast()
   const searchParams = useSearchParams()
-  const { selectedTaskDetail, setSelectedTask } = useTaskContext()
+  const { selectedTask, selectedTaskDetail, setSelectedTask } = useTaskContext()
 
   const router = useRouter()
 
-  // Use ref to track selectedTaskDetail without triggering effect re-runs
+  // Use refs to track selected task state without triggering effect re-runs
   // This prevents race conditions when user clicks "New Task" button
+  const selectedTaskRef = useRef(selectedTask)
+  selectedTaskRef.current = selectedTask
   const selectedTaskDetailRef = useRef(selectedTaskDetail)
   selectedTaskDetailRef.current = selectedTaskDetail
 
@@ -37,14 +39,15 @@ export default function TaskParamSync() {
     // If no taskId in URL, clear selection
     // Use ref to check current state without adding to dependencies
     if (!taskId) {
-      if (selectedTaskDetailRef.current) {
+      if (selectedTaskRef.current || selectedTaskDetailRef.current) {
         setSelectedTask(null)
       }
       return
     }
 
     // If taskId in URL already matches selected task, do nothing
-    if (String(selectedTaskDetailRef.current?.id) === taskId) {
+    const currentTaskId = selectedTaskRef.current?.id ?? selectedTaskDetailRef.current?.id
+    if (String(currentTaskId) === taskId) {
       return
     }
 

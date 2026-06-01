@@ -115,6 +115,169 @@ async def test_completed_managed_subscription_deletes_executor_immediately():
 
 
 @pytest.mark.asyncio
+async def test_auto_delete_task_without_background_execution_deletes_executor():
+    """Non-subscription tasks with autoDeleteExecutor=true should clean runtime on completion."""
+    from app.core.events import TaskCompletedEvent
+    from app.models.subtask import Subtask
+    from app.models.task import TaskResource
+    from app.services.subscription.task_completion_handler import (
+        SubscriptionTaskCompletionHandler,
+    )
+
+    handler = SubscriptionTaskCompletionHandler()
+    task = SimpleNamespace(
+        id=44,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Task",
+            "metadata": {
+                "name": "task-44",
+                "namespace": "default",
+                "labels": {"autoDeleteExecutor": "true"},
+            },
+            "spec": {
+                "title": "hello",
+                "prompt": "hello",
+                "teamRef": {"name": "team", "namespace": "default"},
+                "workspaceRef": {"name": "workspace-44", "namespace": "default"},
+            },
+        },
+    )
+    subtask = SimpleNamespace(
+        id=33,
+        task_id=44,
+        executor_name="executor-api-1",
+        executor_namespace="default",
+        executor_deleted_at=False,
+    )
+
+    task_query = MagicMock()
+    task_query.filter.return_value = task_query
+    task_query.first.return_value = task
+
+    subtask_query = MagicMock()
+    subtask_query.filter.return_value = subtask_query
+    subtask_query.all.return_value = [subtask]
+
+    db = MagicMock()
+
+    def query_side_effect(model):
+        if model == TaskResource:
+            return task_query
+        if model == Subtask:
+            return subtask_query
+        raise AssertionError(f"Unexpected model query: {model}")
+
+    db.query.side_effect = query_side_effect
+
+    @contextmanager
+    def fake_db_session():
+        yield db
+
+    event = TaskCompletedEvent(
+        task_id=44,
+        subtask_id=33,
+        user_id=1,
+        status="COMPLETED",
+        result={"value": "done"},
+        error=None,
+    )
+
+    with (
+        patch.object(handler, "_find_execution_by_task_id", return_value=None),
+        patch(
+            "app.services.subscription.task_completion_handler.get_db_session",
+            fake_db_session,
+        ),
+        patch(
+            "app.services.subscription.task_completion_handler.get_executor_runtime_client"
+        ) as runtime_client_factory,
+        patch(
+            "app.services.subscription.task_completion_handler.executor_kinds_service"
+        ) as executor_service,
+    ):
+        runtime_client = MagicMock()
+        runtime_client.get_sandbox = AsyncMock(return_value=(None, None))
+        runtime_client_factory.return_value = runtime_client
+        executor_service.delete_executor_task_async = AsyncMock(
+            return_value={"status": "success"}
+        )
+        await handler.on_task_completed(event)
+
+    executor_service.delete_executor_task_async.assert_awaited_once_with(
+        "executor-api-1",
+        "default",
+    )
+    assert subtask.executor_deleted_at is True
+    db.commit.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_task_without_auto_delete_label_keeps_executor():
+    """Non-subscription tasks should not clean runtime unless autoDeleteExecutor is true."""
+    from app.core.events import TaskCompletedEvent
+    from app.models.task import TaskResource
+    from app.services.subscription.task_completion_handler import (
+        SubscriptionTaskCompletionHandler,
+    )
+
+    handler = SubscriptionTaskCompletionHandler()
+    task = SimpleNamespace(
+        id=44,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Task",
+            "metadata": {
+                "name": "task-44",
+                "namespace": "default",
+                "labels": {"autoDeleteExecutor": "false"},
+            },
+            "spec": {
+                "title": "hello",
+                "prompt": "hello",
+                "teamRef": {"name": "team", "namespace": "default"},
+                "workspaceRef": {"name": "workspace-44", "namespace": "default"},
+            },
+        },
+    )
+
+    task_query = MagicMock()
+    task_query.filter.return_value = task_query
+    task_query.first.return_value = task
+
+    db = MagicMock()
+    db.query.return_value = task_query
+
+    @contextmanager
+    def fake_db_session():
+        yield db
+
+    event = TaskCompletedEvent(
+        task_id=44,
+        subtask_id=33,
+        user_id=1,
+        status="COMPLETED",
+        result={"value": "done"},
+        error=None,
+    )
+
+    with (
+        patch.object(handler, "_find_execution_by_task_id", return_value=None),
+        patch(
+            "app.services.subscription.task_completion_handler.get_db_session",
+            fake_db_session,
+        ),
+        patch(
+            "app.services.subscription.task_completion_handler.executor_kinds_service"
+        ) as executor_service,
+    ):
+        await handler.on_task_completed(event)
+
+    db.query.assert_called_once_with(TaskResource)
+    executor_service.delete_executor_task_async.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_completed_subscription_deletes_executor_without_managed_target():
     """Executor-backed subscription tasks should be cleaned even without managed target metadata."""
     from app.core.events import TaskCompletedEvent

@@ -48,8 +48,15 @@ export function useKnowledgeUrlSync({
   useEffect(() => {
     if (isGroupsLoading) return
 
-    const currentUrlKey = `${pathname}?${searchParams.toString()}`
-    if (lastSyncedUrlRef.current === currentUrlKey && initialUrlSyncDone) return
+    // Exclude taskId-related params so that adding/removing taskId doesn't trigger re-sync
+    // (which would call clearSelection and lose the current KB selection)
+    // Support all three param formats for backward compatibility with existing URLs
+    const navParams = new URLSearchParams(searchParams.toString())
+    navParams.delete('taskId')
+    navParams.delete('task_id')
+    navParams.delete('taskid')
+    const navUrlKey = `${pathname}?${navParams.toString()}`
+    if (lastSyncedUrlRef.current === navUrlKey && initialUrlSyncDone) return
 
     const parsedKbUrl = pathname ? parseKbUrl(pathname) : null
 
@@ -73,7 +80,7 @@ export function useKnowledgeUrlSync({
       } else {
         clearSelection()
       }
-      lastSyncedUrlRef.current = currentUrlKey
+      lastSyncedUrlRef.current = navUrlKey
       setInitialUrlSyncDone(true)
       return
     }
@@ -98,7 +105,7 @@ export function useKnowledgeUrlSync({
     } else {
       clearSelection()
     }
-    lastSyncedUrlRef.current = currentUrlKey
+    lastSyncedUrlRef.current = navUrlKey
     setInitialUrlSyncDone(true)
   }, [
     pathname,

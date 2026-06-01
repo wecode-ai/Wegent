@@ -1,6 +1,7 @@
 {
   "title": "Automation",
   "subtitle": "AI-powered information tracking and updates",
+  "automation_hint": "Create scheduled tasks, event-triggered tasks, or automation subscriptions for agents to run on plan.",
   "tab_timeline": "Feed",
   "notification_level": {
     "silent": "Silent",

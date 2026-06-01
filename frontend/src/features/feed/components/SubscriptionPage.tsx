@@ -231,6 +231,10 @@ function SubscriptionPageContent() {
         )}
       </div>
 
+      <div className="border-b border-border bg-base px-4 py-2">
+        <p className="text-sm text-text-secondary">{t('automation_hint')}</p>
+      </div>
+
       {/* Tab content */}
       <div className="flex-1 overflow-hidden flex flex-col">
         {activeTab === 'all' && (

@@ -16,6 +16,16 @@ function getRedirectTarget(): string {
   return queryRedirect || storedRedirect || '/'
 }
 
+function buildOidcLoginUrl(apiBaseUrl: string, redirect: string, appBasePath: string): string {
+  const params = new URLSearchParams()
+  params.set('redirect', redirect)
+  if (appBasePath) {
+    params.set('frontend_base_path', appBasePath)
+  }
+
+  return `${apiBaseUrl}/auth/oidc/login?${params.toString()}`
+}
+
 export function LoginPage() {
   const { t } = useTranslation('common')
   const { login, user, isLoading: authLoading } = useAuth()
@@ -38,6 +48,17 @@ export function LoginPage() {
     }
   }, [authLoading, redirectTarget, user])
 
+  useEffect(() => {
+    if (config.loginMode === 'oidc') {
+      sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, redirectTarget)
+      window.location.href = buildOidcLoginUrl(
+        config.apiBaseUrl,
+        redirectTarget,
+        config.appBasePath,
+      )
+    }
+  }, [config.apiBaseUrl, config.appBasePath, config.loginMode, redirectTarget])
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError(null)
@@ -54,11 +75,16 @@ export function LoginPage() {
   }
 
   function handleOidcLogin() {
-    const redirect = sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY)
-    const oidcUrl = redirect
-      ? `${config.apiBaseUrl}/auth/oidc/login?redirect=${encodeURIComponent(redirect)}`
-      : `${config.apiBaseUrl}/auth/oidc/login`
-    window.location.href = oidcUrl
+    const redirect = sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY) || redirectTarget
+    window.location.href = buildOidcLoginUrl(
+      config.apiBaseUrl,
+      redirect,
+      config.appBasePath,
+    )
+  }
+
+  if (config.loginMode === 'oidc') {
+    return null
   }
 
   return (

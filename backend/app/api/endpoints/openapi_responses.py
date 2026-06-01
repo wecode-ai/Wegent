@@ -72,6 +72,23 @@ class _DispatchWithoutTerminalError(RuntimeError):
     """Raised when dispatch fails before any terminal event is emitted."""
 
 
+def _normalize_auto_delete_executor_header(value: Optional[str]) -> Optional[str]:
+    """Normalize auto-delete header values to task label strings."""
+    if value is None:
+        return None
+
+    normalized = value.strip().lower()
+    if normalized in {"true", "1", "yes", "on"}:
+        return "true"
+    if normalized in {"false", "0", "no", "off", ""}:
+        return "false"
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Invalid auto_delete_executor header value. Expected true or false.",
+    )
+
+
 def _task_to_response_object(
     task_dict: Dict[str, Any],
     model_string: str,
@@ -213,6 +230,10 @@ async def create_response(
     # Extract user and api_key_name from auth context
     current_user = auth_context.user
     api_key_name = auth_context.api_key_name
+    auto_delete_executor = _normalize_auto_delete_executor_header(
+        request.headers.get("auto_delete_executor")
+        or request.headers.get("auto-delete-executor")
+    )
 
     # Parse model string
     model_info = parse_model_string(request_body.model)
@@ -361,6 +382,7 @@ async def create_response(
             tool_settings=tool_settings,
             task_id=task_id,
             api_key_name=api_key_name,
+            auto_delete_executor=auto_delete_executor,
         )
     else:
         # Non-streaming mode: background or sync
@@ -374,6 +396,7 @@ async def create_response(
             tool_settings=tool_settings,
             task_id=task_id,
             api_key_name=api_key_name,
+            auto_delete_executor=auto_delete_executor,
             background=request_body.background,
         )
 
@@ -388,6 +411,7 @@ async def _create_non_streaming_response_unified(
     tool_settings: Dict[str, Any],
     task_id: Optional[int] = None,
     api_key_name: Optional[str] = None,
+    auto_delete_executor: Optional[str] = None,
     background: bool = False,
 ) -> ResponseObject:
     """Create non-streaming response using unified trigger architecture.
@@ -418,6 +442,7 @@ async def _create_non_streaming_response_unified(
         tool_settings,
         task_id,
         api_key_name,
+        auto_delete_executor,
     )
 
     response_id = f"resp_{setup.task_id}"
@@ -659,13 +684,14 @@ async def _create_non_streaming_response_unified(
 @trace_async(
     span_name="openapi.streaming_response",
     tracer_name="backend.openapi",
-    extract_attributes=lambda db, user, team, model_info, request_body, input_text, tool_settings, task_id, api_key_name: {
+    extract_attributes=lambda db, user, team, model_info, request_body, input_text, tool_settings, task_id, api_key_name, auto_delete_executor=None: {
         "task.id": str(task_id) if task_id else "new",
         "user.id": str(user.id),
         "team.name": model_info.get("team_name"),
         "team.namespace": model_info.get("namespace"),
         "model.id": model_info.get("model_id", "default"),
         "stream.enabled": True,
+        "task.auto_delete_executor": auto_delete_executor or "default",
     },
 )
 async def _create_streaming_response_unified(
@@ -678,6 +704,7 @@ async def _create_streaming_response_unified(
     tool_settings: Dict[str, Any],
     task_id: Optional[int] = None,
     api_key_name: Optional[str] = None,
+    auto_delete_executor: Optional[str] = None,
 ) -> StreamingResponse:
     """Create streaming response using unified trigger architecture.
 
@@ -701,6 +728,7 @@ async def _create_streaming_response_unified(
         tool_settings,
         task_id,
         api_key_name,
+        auto_delete_executor,
     )
 
     # Add trace events for session setup
