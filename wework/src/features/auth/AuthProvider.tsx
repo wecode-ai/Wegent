@@ -95,6 +95,22 @@ export function AuthProvider({ children, authApi }: AuthProviderProps) {
     [resolvedAuthApi],
   )
 
+  const createWeiboQrcodeChallenge = useCallback(
+    () => resolvedAuthApi.createWeiboQrcodeChallenge(),
+    [resolvedAuthApi],
+  )
+
+  const loginWithWeiboQrcode = useCallback(
+    async (sid: string, qrData: string) => {
+      const loggedInUser = await resolvedAuthApi.loginWithWeiboQrcode(sid, qrData)
+      if (loggedInUser) {
+        setUser(loggedInUser)
+      }
+      return loggedInUser
+    },
+    [resolvedAuthApi],
+  )
+
   const logout = useCallback(() => {
     resolvedAuthApi.logout()
     setUser(null)
@@ -112,6 +128,8 @@ export function AuthProvider({ children, authApi }: AuthProviderProps) {
     user,
     isLoading,
     login,
+    createWeiboQrcodeChallenge,
+    loginWithWeiboQrcode,
     logout,
     refresh,
     loginWithOidcToken,

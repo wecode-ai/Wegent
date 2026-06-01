@@ -259,6 +259,14 @@
     "login_failed": "Login failed",
     "toggle_password_visibility": "Toggle password visibility",
     "login_or_continue": "Or continue with",
+    "mobile_qrcode_login_title": "Scan to log in",
+    "mobile_qrcode_login_description": "Scan with the Weibo app and confirm to enter Wework",
+    "mobile_qrcode_loading": "Generating QR code...",
+    "mobile_qrcode_waiting": "Waiting for scan confirmation",
+    "mobile_qrcode_expired": "QR code expired",
+    "mobile_qrcode_failed": "Failed to load QR code",
+    "mobile_qrcode_refresh": "Refresh QR code",
+    "mobile_qrcode_alt": "Weibo QR code login",
     "oidc_login": "Login with OpenID Connect",
     "oidc_processing": "Processing OpenID Connect login..."
   }

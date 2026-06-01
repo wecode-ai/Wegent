@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Eye, EyeOff } from 'lucide-react'
+import { Eye, EyeOff, QrCode, RefreshCw } from 'lucide-react'
+import type { WeiboQrcodeChallenge } from '@/api/auth'
 import { getRuntimeConfig } from '@/config/runtime'
 import { POST_LOGIN_REDIRECT_KEY, sanitizeRedirectPath } from '@/features/auth/redirect'
 import { useAuth } from '@/features/auth/useAuth'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
+
+const QRCODE_POLL_INTERVAL_MS = 2000
 
 function getRedirectTarget(): string {
   const search = new URLSearchParams(window.location.search)
@@ -28,8 +32,15 @@ function buildOidcLoginUrl(apiBaseUrl: string, redirect: string, appBasePath: st
 
 export function LoginPage() {
   const { t } = useTranslation('common')
-  const { login, user, isLoading: authLoading } = useAuth()
+  const {
+    login,
+    user,
+    isLoading: authLoading,
+    createWeiboQrcodeChallenge,
+    loginWithWeiboQrcode,
+  } = useAuth()
   const config = useMemo(() => getRuntimeConfig(), [])
+  const isMobile = useIsMobile()
   const [formData, setFormData] = useState({
     user_name: 'admin',
     password: 'Wegent2025!',
@@ -37,9 +48,16 @@ export function LoginPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [qrcodeChallenge, setQrcodeChallenge] =
+    useState<WeiboQrcodeChallenge | null>(null)
+  const [qrcodeStatus, setQrcodeStatus] = useState<
+    'idle' | 'loading' | 'waiting' | 'expired' | 'error'
+  >('idle')
+  const [qrcodeNonce, setQrcodeNonce] = useState(0)
   const redirectTarget = getRedirectTarget()
   const showPasswordLogin = config.loginMode === 'password' || config.loginMode === 'all'
   const showOidcLogin = config.loginMode === 'oidc' || config.loginMode === 'all'
+  const showWeiboQrcodeLogin = isMobile
 
   useEffect(() => {
     if (!authLoading && user) {
@@ -58,6 +76,81 @@ export function LoginPage() {
       )
     }
   }, [config.apiBaseUrl, config.appBasePath, config.loginMode, redirectTarget])
+
+  useEffect(() => {
+    if (!showWeiboQrcodeLogin) return
+
+    let isCancelled = false
+
+    async function loadQrcode() {
+      setQrcodeStatus('loading')
+      setQrcodeChallenge(null)
+      try {
+        const challenge = await createWeiboQrcodeChallenge()
+        if (isCancelled) return
+        setQrcodeChallenge(challenge)
+        setQrcodeStatus('waiting')
+      } catch {
+        if (isCancelled) return
+        setQrcodeStatus('error')
+      }
+    }
+
+    void Promise.resolve().then(() => loadQrcode())
+
+    return () => {
+      isCancelled = true
+    }
+  }, [createWeiboQrcodeChallenge, qrcodeNonce, showWeiboQrcodeLogin])
+
+  useEffect(() => {
+    if (!showWeiboQrcodeLogin || !qrcodeChallenge || qrcodeStatus !== 'waiting') {
+      return
+    }
+
+    let isCancelled = false
+    const expiresAt = Date.now() + qrcodeChallenge.expires_in * 1000
+
+    const poll = async () => {
+      if (Date.now() >= expiresAt) {
+        if (!isCancelled) {
+          setQrcodeStatus('expired')
+        }
+        return
+      }
+
+      try {
+        const loggedInUser = await loginWithWeiboQrcode(
+          qrcodeChallenge.sid,
+          qrcodeChallenge.qr_data,
+        )
+        if (!loggedInUser || isCancelled) return
+        sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY)
+        navigateTo(redirectTarget)
+      } catch {
+        if (!isCancelled) {
+          setQrcodeStatus('error')
+        }
+      }
+    }
+
+    const interval = window.setInterval(() => {
+      void poll()
+    }, QRCODE_POLL_INTERVAL_MS)
+
+    void poll()
+
+    return () => {
+      isCancelled = true
+      window.clearInterval(interval)
+    }
+  }, [
+    loginWithWeiboQrcode,
+    qrcodeChallenge,
+    qrcodeStatus,
+    redirectTarget,
+    showWeiboQrcodeLogin,
+  ])
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -83,6 +176,10 @@ export function LoginPage() {
     )
   }
 
+  function refreshQrcode() {
+    setQrcodeNonce(current => current + 1)
+  }
+
   if (config.loginMode === 'oidc') {
     return null
   }
@@ -99,6 +196,52 @@ export function LoginPage() {
           </p>
         </div>
         <div className="rounded-2xl border border-border bg-surface px-8 py-8 shadow-[0_16px_44px_rgba(0,0,0,0.08)]">
+          {showWeiboQrcodeLogin && (
+            <div
+              data-testid="mobile-weibo-qrcode-login"
+              className="mb-6 rounded-xl border border-border bg-base p-5 text-center"
+            >
+              <div className="mb-4 flex items-center justify-center gap-2 text-text-primary">
+                <QrCode className="h-5 w-5" />
+                <h2 className="text-lg font-semibold">
+                  {t('workbench.mobile_qrcode_login_title')}
+                </h2>
+              </div>
+              <p className="mb-4 text-sm text-text-muted">
+                {t('workbench.mobile_qrcode_login_description')}
+              </p>
+              <div className="mx-auto flex aspect-square w-full max-w-[220px] items-center justify-center rounded-lg border border-border bg-white p-3">
+                {qrcodeChallenge && qrcodeStatus === 'waiting' ? (
+                  <img
+                    data-testid="mobile-weibo-qrcode-image"
+                    src={qrcodeChallenge.qr_code_image}
+                    alt={t('workbench.mobile_qrcode_alt')}
+                    className="h-full w-full"
+                  />
+                ) : (
+                  <div className="px-3 text-sm text-text-muted">
+                    {qrcodeStatus === 'loading' && t('workbench.mobile_qrcode_loading')}
+                    {qrcodeStatus === 'expired' && t('workbench.mobile_qrcode_expired')}
+                    {qrcodeStatus === 'error' && t('workbench.mobile_qrcode_failed')}
+                  </div>
+                )}
+              </div>
+              <div className="mt-4 text-sm text-text-secondary">
+                {qrcodeStatus === 'waiting' && t('workbench.mobile_qrcode_waiting')}
+              </div>
+              {(qrcodeStatus === 'expired' || qrcodeStatus === 'error') && (
+                <button
+                  type="button"
+                  data-testid="refresh-mobile-weibo-qrcode-button"
+                  className="mt-4 inline-flex h-11 min-w-[44px] items-center justify-center gap-2 rounded-lg border border-border px-4 text-sm font-semibold text-text-primary"
+                  onClick={refreshQrcode}
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  {t('workbench.mobile_qrcode_refresh')}
+                </button>
+              )}
+            </div>
+          )}
           {showPasswordLogin && (
             <form data-testid="login-form" className="space-y-5" onSubmit={handleSubmit}>
               <div>

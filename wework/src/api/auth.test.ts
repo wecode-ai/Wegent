@@ -81,4 +81,52 @@ describe('createAuthApi', () => {
     expect(user.user_name).toBe('alice')
     expect(isAuthenticated()).toBe(true)
   })
+
+  test('completes Weibo QR code login after scan success', async () => {
+    const token = createJwt(Math.floor(Date.now() / 1000) + 3600)
+    const client = {
+      get: vi.fn().mockResolvedValue({ id: 2, user_name: 'bob', email: 'b@c.d' }),
+      post: vi.fn().mockResolvedValue({
+        status: 'success',
+        access_token: token,
+        token_type: 'bearer',
+      }),
+      put: vi.fn(),
+      delete: vi.fn(),
+    }
+
+    const user = await createAuthApi(client).loginWithWeiboQrcode(
+      'sid-1',
+      'https://koudai.sina.com/qr',
+    )
+
+    expect(client.post).toHaveBeenCalledWith('/internal/auth/weibo-qrcode/status', {
+      sid: 'sid-1',
+      qr_data: 'https://koudai.sina.com/qr',
+    })
+    expect(client.get).toHaveBeenCalledWith('/users/me')
+    expect(user?.user_name).toBe('bob')
+    expect(getToken()).toBe(token)
+  })
+
+  test('keeps waiting when Weibo QR code login is pending', async () => {
+    const client = {
+      get: vi.fn(),
+      post: vi.fn().mockResolvedValue({
+        status: 'pending',
+        token_type: 'bearer',
+      }),
+      put: vi.fn(),
+      delete: vi.fn(),
+    }
+
+    const user = await createAuthApi(client).loginWithWeiboQrcode(
+      'sid-1',
+      'https://koudai.sina.com/qr',
+    )
+
+    expect(user).toBeNull()
+    expect(client.get).not.toHaveBeenCalled()
+    expect(getToken()).toBeNull()
+  })
 })

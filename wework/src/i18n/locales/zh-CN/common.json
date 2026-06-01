@@ -259,6 +259,14 @@
     "login_failed": "登录失败",
     "toggle_password_visibility": "切换密码可见性",
     "login_or_continue": "或继续使用",
+    "mobile_qrcode_login_title": "扫码登录",
+    "mobile_qrcode_login_description": "使用微博客户端扫码，确认后自动进入 Wework",
+    "mobile_qrcode_loading": "正在生成二维码...",
+    "mobile_qrcode_waiting": "等待扫码确认",
+    "mobile_qrcode_expired": "二维码已过期",
+    "mobile_qrcode_failed": "二维码加载失败",
+    "mobile_qrcode_refresh": "刷新二维码",
+    "mobile_qrcode_alt": "微博扫码登录二维码",
     "oidc_login": "使用 OpenID Connect 登录",
     "oidc_processing": "正在处理 OpenID Connect 登录..."
   }
