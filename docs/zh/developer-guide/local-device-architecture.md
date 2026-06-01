@@ -159,6 +159,49 @@ sequenceDiagram
 - 孤立任务检测
 - 断开连接时自动清理
 
+### 全局能力状态上报
+
+本地设备还会通过心跳上报 Claude Code 全局能力状态。完整上报包含：
+
+- `capabilities.revision`：本地 Wegent 管理清单版本
+- `capabilities.digest`：`skills`、`plugins`、`mcps` 的内容摘要
+- `capabilities.skills`：`~/.claude/skills` 中可用的 Skill
+- `capabilities.plugins`：`~/.claude/plugins/installed_plugins.json` 中已安装的 Plugin
+- `capabilities.mcps`：Wegent 管理的全局 MCP 配置
+
+Plugin 上报必须包含其内部 Skill 列表。Executor 会扫描每个 Plugin 安装目录下的 `SKILL.md`，并在 `plugins[].skills[]` 中返回：
+
+```json
+{
+  "name": "context7",
+  "marketplace": "claude-plugins-official",
+  "version": "1057d02c5307",
+  "source": "wegent",
+  "installed_plugin_id": 301,
+  "skills": [
+    {
+      "name": "context7",
+      "description": "Look up version-specific documentation.",
+      "path": "skills/context7"
+    }
+  ]
+}
+```
+
+后端只在 `capabilities.full = true` 时保存完整能力状态；后续心跳如果只有相同 `digest`，只刷新在线状态，不重复写入完整列表。
+
+### 全局能力同步
+
+后端可以通过 `device:sync_capabilities` 向在线本地设备下发全局能力期望状态。当前同步内容包括：
+
+- `skills`：通过 backend 解析后的 `InstalledSkill` / `Skill`，由 executor 下载到 `~/.claude/skills`
+- `plugins`：通过 backend 解析后的 `InstalledPlugin`，由 executor 写入 `~/.claude/plugins/installed_plugins.json`
+- `mcps`：通过 backend 解析后的 `InstalledMCP`，由 executor 写入 Wegent 管理清单
+
+`replace` 模式只会清理由 Wegent manifest 标记为 `managed` 且不在期望状态中的能力。用户直接在本机安装的 plugin 不会因为一次 Wegent 同步被删除。
+
+项目任务使用本地 executor 执行时，任务级 `CLAUDE_CONFIG_DIR` 会同时暴露全局 `skills` 和 `plugins` 目录，并从本机 `~/.claude/settings.json` 继承 `enabledPlugins`、`extraKnownMarketplaces` 等非敏感插件配置，使 Claude Code 能加载全局 Skill 以及 Plugin 内部提供的 Skill。模型、Token 等敏感配置仍通过运行时环境变量注入，不会从全局 settings 写入任务目录。
+
 ---
 
 ## 🔄 任务执行流程

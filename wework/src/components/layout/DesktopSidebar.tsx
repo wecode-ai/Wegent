@@ -46,6 +46,7 @@ interface DesktopSidebarProps {
   onStartNewProjectChat: (projectId: number) => void
   onOpenTask: (taskId: number, projectId?: number) => void
   onOpenPlugins: () => void
+  onRefreshDevices?: () => Promise<void>
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
   onRemoveProject: (projectId: number) => Promise<void>
@@ -442,6 +443,7 @@ export function DesktopSidebar({
   onStartNewProjectChat,
   onOpenTask,
   onOpenPlugins,
+  onRefreshDevices,
   onCreateProject,
   onUpdateProjectName,
   onRemoveProject,
@@ -496,6 +498,14 @@ export function DesktopSidebar({
       }
       return next
     })
+  }
+
+  const openProjectCreateDialog = async (mode: ProjectCreateMode) => {
+    try {
+      await onRefreshDevices?.()
+    } finally {
+      setProjectCreateMode(mode)
+    }
   }
 
   useEffect(() => {
@@ -595,13 +605,13 @@ export function DesktopSidebar({
                     label: t('workbench.start_from_scratch', '从头开始'),
                     icon: FolderPlus,
                     testId: 'project-start-from-scratch-button',
-                    onSelect: () => setProjectCreateMode('scratch'),
+                    onSelect: () => openProjectCreateDialog('scratch'),
                   },
                   {
                     label: t('workbench.using_existing_folder', '使用现有目录'),
                     icon: Folder,
                     testId: 'project-existing-folder-button',
-                    onSelect: () => setProjectCreateMode('existing'),
+                    onSelect: () => openProjectCreateDialog('existing'),
                   },
                 ]}
               />
