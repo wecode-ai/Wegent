@@ -148,7 +148,7 @@
       "defaultScopeDescription": "Enabled for every mode and agent by default. Unchecked items become exceptions.",
       "forcePreload": "Force Activate",
       "forcePreloadDescription": "When enabled, this Skill is injected into context directly instead of waiting for on-demand loading.",
-      "forcePreloadBadge": "Force Activate",
+      "forcePreloadDisabled": "On demand",
       "modeEnableLabel": "Enable {{mode}} mode",
       "agentEnableLabel": "Enable {{name}}",
       "agentGroupEnableLabel": "Enable all {{group}}",

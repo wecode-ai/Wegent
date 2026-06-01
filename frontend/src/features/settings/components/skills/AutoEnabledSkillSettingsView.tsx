@@ -226,18 +226,17 @@ export function AutoEnabledSkillSettingsView({
           <h2 className="text-lg font-semibold text-text-primary">
             {t('skills.autoSettings.title')}
           </h2>
-          <p className="text-sm text-text-secondary">
-            {t('skills.autoSettings.description')}
-          </p>
+          <p className="text-sm text-text-secondary">{t('skills.autoSettings.description')}</p>
         </div>
       </div>
 
       <div className="overflow-hidden rounded-lg border border-border">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] text-sm">
+          <table className="w-full min-w-[860px] text-sm">
             <thead className="bg-surface text-left text-xs font-medium text-text-secondary">
               <tr>
                 <th className="px-4 py-3">{t('skills.autoSettings.skillColumn')}</th>
+                <th className="px-4 py-3">{t('skills.autoSettings.forcePreload')}</th>
                 <th className="px-4 py-3">{t('skills.autoSettings.modeColumn')}</th>
                 <th className="px-4 py-3">{t('skills.autoSettings.agentColumn')}</th>
                 <th className="px-4 py-3">{t('skills.autoSettings.exceptionColumn')}</th>
@@ -247,7 +246,7 @@ export function AutoEnabledSkillSettingsView({
             <tbody className="divide-y divide-border bg-base">
               {skills.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-text-secondary">
+                  <td colSpan={6} className="px-4 py-8 text-center text-text-secondary">
                     {t('skills.defaultEnabled.emptyTitle')}
                   </td>
                 </tr>
@@ -273,16 +272,20 @@ export function AutoEnabledSkillSettingsView({
                                 {skill.namespace}
                               </Badge>
                             )}
-                            {forcePreload && (
-                              <Badge variant="secondary" className="text-xs">
-                                {t('skills.autoSettings.forcePreloadBadge')}
-                              </Badge>
-                            )}
                           </div>
                           <p className="line-clamp-1 text-xs text-text-secondary">
                             {skill.description}
                           </p>
                         </div>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-text-secondary">
+                        {forcePreload ? (
+                          <span className="font-medium text-text-primary">
+                            {t('skills.autoSettings.forcePreload')}
+                          </span>
+                        ) : (
+                          t('skills.autoSettings.forcePreloadDisabled')
+                        )}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-text-secondary">
                         {getModeSummary(exceptions)}
@@ -325,9 +328,7 @@ export function AutoEnabledSkillSettingsView({
         >
           <DialogHeader>
             <DialogTitle>{selectedSkill ? getSkillName(selectedSkill) : ''}</DialogTitle>
-            <DialogDescription>
-              {t('skills.autoSettings.drawerDescription')}
-            </DialogDescription>
+            <DialogDescription>{t('skills.autoSettings.drawerDescription')}</DialogDescription>
           </DialogHeader>
 
           <div className="max-h-[calc(90vh-12rem)] space-y-5 overflow-y-auto pr-1">
@@ -473,9 +474,7 @@ export function AutoEnabledSkillSettingsView({
                                   })}
                                   data-testid={`agent-enable-checkbox-${team.id}`}
                                 />
-                                <span className="min-w-0 truncate text-text-primary">
-                                  {label}
-                                </span>
+                                <span className="min-w-0 truncate text-text-primary">{label}</span>
                               </label>
                             )
                           })}

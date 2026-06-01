@@ -142,7 +142,7 @@ const translations: Record<string, string> = {
   'skills.autoSettings.forcePreload': '强制激活',
   'skills.autoSettings.forcePreloadDescription':
     '打开后，这个技能会直接进入上下文，不等待模型按需加载。',
-  'skills.autoSettings.forcePreloadBadge': '强制激活',
+  'skills.autoSettings.forcePreloadDisabled': '按需加载',
   'skills.autoSettings.modeEnableLabel': '启用{{mode}}模式',
   'skills.autoSettings.agentEnableLabel': '启用 {{name}}',
   'skills.autoSettings.agentGroupEnableLabel': '启用所有{{group}}',
@@ -550,7 +550,40 @@ describe('SkillListWithScope default enabled skills', () => {
         true
       )
     })
-    expect(screen.getByText('强制激活')).toBeInTheDocument()
+    const updatedRow = screen.getByTestId('auto-enabled-settings-skill-1')
+    expect(within(updatedRow).getAllByRole('cell')[1]).toHaveTextContent(/^强制激活$/)
+  })
+
+  it('shows force activation as a standalone column instead of a skill badge', async () => {
+    const user = userEvent.setup()
+    mockedFetchMyDefaultSkillBindings.mockResolvedValue([
+      {
+        id: 91,
+        target_type: 'user',
+        target_id: 'user:1',
+        skill_ref: {
+          skill_id: 1,
+          name: 'default-enabled-skill',
+          namespace: 'default',
+          is_public: false,
+        },
+        exceptions: [],
+        force_preload: true,
+      },
+    ])
+
+    render(<SkillListWithScope scope="personal" />)
+
+    const defaultSection = await screen.findByTestId('default-enabled-skills-section')
+    await user.click(within(defaultSection).getByRole('button', { name: '管理' }))
+
+    expect(await screen.findByRole('columnheader', { name: '强制激活' })).toBeInTheDocument()
+    const row = await screen.findByTestId('auto-enabled-settings-skill-1')
+    const cells = within(row).getAllByRole('cell')
+    expect(cells).toHaveLength(6)
+    expect(cells[0]).toHaveTextContent('Default Enabled Skill')
+    expect(cells[0]).not.toHaveTextContent('强制激活')
+    expect(cells[1]).toHaveTextContent(/^强制激活$/)
   })
 
   it('keeps the source filter inside the skill library and applies it only to library items', async () => {

@@ -148,7 +148,7 @@
       "defaultScopeDescription": "默认对所有模式和智能体启用；取消勾选的项目会成为例外。",
       "forcePreload": "强制激活",
       "forcePreloadDescription": "打开后，这个技能会直接进入上下文，不等待模型按需加载。",
-      "forcePreloadBadge": "强制激活",
+      "forcePreloadDisabled": "按需加载",
       "modeEnableLabel": "启用{{mode}}模式",
       "agentEnableLabel": "启用 {{name}}",
       "agentGroupEnableLabel": "启用所有{{group}}",
