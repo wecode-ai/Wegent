@@ -11,6 +11,10 @@ RUN npm config set registry http://registry.npmmirror.com
 COPY wework/package.json wework/package-lock.json ./
 RUN npm ci
 COPY wework .
+
+ENV VITE_LOGIN_MODE=oidc
+ENV VITE_OIDC_LOGIN_TEXT=使用 CAS 登录
+
 RUN npm run build
 
 # ---- Production runtime stage ----

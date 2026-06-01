@@ -38,6 +38,13 @@ export function LoginPage() {
     }
   }, [authLoading, redirectTarget, user])
 
+  useEffect(() => {
+    if (config.loginMode === 'oidc') {
+      sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, redirectTarget)
+      window.location.href = `${config.apiBaseUrl}/auth/oidc/login?redirect=${encodeURIComponent(redirectTarget)}`
+    }
+  }, [config.apiBaseUrl, config.loginMode, redirectTarget])
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError(null)
@@ -59,6 +66,10 @@ export function LoginPage() {
       ? `${config.apiBaseUrl}/auth/oidc/login?redirect=${encodeURIComponent(redirect)}`
       : `${config.apiBaseUrl}/auth/oidc/login`
     window.location.href = oidcUrl
+  }
+
+  if (config.loginMode === 'oidc') {
+    return null
   }
 
   return (
