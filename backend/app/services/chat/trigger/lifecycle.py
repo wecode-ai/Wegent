@@ -166,7 +166,10 @@ def prepare_execution_session(
             check_task_status(db, task)
         if should_trigger_ai:
             mark_task_pending(task)
-        if resolved_task_params.model_id:
+        if (
+            resolved_task_params.model_id
+            or resolved_task_params.auto_delete_executor is not None
+        ):
             from sqlalchemy.orm.attributes import flag_modified
 
             from app.schemas.kind import Task
@@ -174,19 +177,25 @@ def prepare_execution_session(
             task_crd = Task.model_validate(task.json)
             if not task_crd.metadata.labels:
                 task_crd.metadata.labels = {}
-            task_crd.metadata.labels["modelId"] = resolved_task_params.model_id
+            if resolved_task_params.model_id:
+                task_crd.metadata.labels["modelId"] = resolved_task_params.model_id
             if resolved_task_params.force_override_bot_model:
                 task_crd.metadata.labels["forceOverrideBotModel"] = "true"
             if resolved_task_params.force_override_bot_model_type:
                 task_crd.metadata.labels["forceOverrideBotModelType"] = (
                     resolved_task_params.force_override_bot_model_type
                 )
+            if resolved_task_params.auto_delete_executor is not None:
+                task_crd.metadata.labels["autoDeleteExecutor"] = (
+                    resolved_task_params.auto_delete_executor
+                )
             task.json = task_crd.model_dump(mode="json")
             flag_modified(task, "json")
             logger.info(
-                "[prepare_execution_session] Updated model override metadata for existing task %s to modelId=%s",
+                "[prepare_execution_session] Updated metadata for existing task %s to modelId=%s autoDeleteExecutor=%s",
                 task.id,
                 resolved_task_params.model_id,
+                resolved_task_params.auto_delete_executor,
             )
 
     if not task:

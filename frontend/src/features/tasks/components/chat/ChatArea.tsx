@@ -774,7 +774,8 @@ function ChatAreaContent({
   const sendOrConfirmPendingReplacement = useCallback(
     async (message: string) => {
       const trimmedMessage = message.trim()
-      if (!trimmedMessage && !chatState.shouldHideChatInput) return
+      const hasAttachments = chatState.attachmentState.attachments.length > 0
+      if (!trimmedMessage && !hasAttachments && !chatState.shouldHideChatInput) return
 
       if (shouldConfirmPendingReplacement) {
         setPendingReplacementMessage(trimmedMessage)
@@ -784,11 +785,16 @@ function ChatAreaContent({
 
       await streamHandlers.handleSendMessage(trimmedMessage)
     },
-    [chatState.shouldHideChatInput, shouldConfirmPendingReplacement, streamHandlers]
+    [
+      chatState.attachmentState.attachments.length,
+      chatState.shouldHideChatInput,
+      shouldConfirmPendingReplacement,
+      streamHandlers,
+    ]
   )
 
   const handleConfirmPendingReplacement = useCallback(async () => {
-    if (!pendingReplacementMessage || isPendingReplacementConfirming) return
+    if (pendingReplacementMessage === null || isPendingReplacementConfirming) return
 
     setIsPendingReplacementConfirming(true)
     try {

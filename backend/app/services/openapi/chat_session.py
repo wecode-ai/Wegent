@@ -44,6 +44,7 @@ def setup_chat_session(
     tool_settings: Dict[str, Any],
     task_id: Optional[int] = None,
     api_key_name: Optional[str] = None,
+    auto_delete_executor: Optional[str] = None,
 ) -> ChatSessionSetup:
     """
     Set up chat session: build config, create task and subtasks.
@@ -74,6 +75,7 @@ def setup_chat_session(
         source="chat_shell",
         is_api_call=True,
         api_key_name=api_key_name,
+        auto_delete_executor=auto_delete_executor,
     )
 
     session = prepare_execution_session(
