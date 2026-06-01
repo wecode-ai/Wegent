@@ -122,7 +122,7 @@ class InteractiveFormQuestionItem(BaseModel):
 
 
 class RenderedInteractiveFormQuestion(BaseModel):
-    """Strict frontend-renderable question schema emitted in tool_output.form."""
+    """Strict frontend-renderable question schema emitted in render_payload."""
 
     id: str
     question: str
@@ -158,7 +158,7 @@ class RenderedInteractiveFormQuestion(BaseModel):
 
 
 class RenderedInteractiveForm(BaseModel):
-    """Strict frontend-renderable form schema emitted in tool_output.form."""
+    """Strict frontend-renderable form schema emitted in render_payload."""
 
     type: Literal["interactive_form_question"]
     ask_id: str
@@ -222,15 +222,20 @@ def _parse_record(value: Any) -> Dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
-def _build_form_tool_result(form_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Build the tool result payload consumed by the frontend renderer."""
-    rendered_form = RenderedInteractiveForm.model_validate(form_data).model_dump()
+def _build_form_render_payload(form_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Build the UI-only render payload consumed by the frontend renderer."""
+    return RenderedInteractiveForm.model_validate(form_data).model_dump()
+
+
+def _build_deferred_tool_result(ask_id: str) -> Dict[str, Any]:
+    """Build the minimal model-visible tool result for deferred user input."""
     return {
         "__silent_exit__": True,
+        "__deferred_user_input__": True,
         "reason": FORM_RENDERED_REASON,
         "success": True,
-        "status": "form_rendered",
-        "form": rendered_form,
+        "status": "waiting_for_user_response",
+        "ask_id": ask_id,
     }
 
 
@@ -245,17 +250,12 @@ def _has_interactive_form_payload(block: Dict[str, Any]) -> bool:
     if not _is_interactive_form_tool_block(block):
         return False
 
-    tool_output = _parse_record(block.get("tool_output"))
-    if not tool_output:
-        return False
-
-    result = _parse_record(tool_output.get("result")) or tool_output
-    form = _parse_record(result.get("form"))
-    if result.get("success") is not True or not form:
+    render_payload = _parse_record(block.get("render_payload"))
+    if not render_payload:
         return False
 
     try:
-        RenderedInteractiveForm.model_validate(form)
+        RenderedInteractiveForm.model_validate(render_payload)
     except ValueError:
         return False
     return True
@@ -298,7 +298,7 @@ async def _notify_frontend(
 ) -> None:
     """Send WebSocket notification to frontend to render the interactive_form_question form card.
 
-    Finds the interactive_form_question tool block in session_manager, updates its tool_input,
+    Finds the interactive_form_question tool block in session_manager, updates its render_payload,
     and emits a chat:block_updated event so the frontend can render the form.
 
     Args:
@@ -306,12 +306,13 @@ async def _notify_frontend(
         subtask_id: Subtask ID for block lookup
         question_data: The question data to send to frontend
     """
+    render_payload = _build_form_render_payload(question_data)
+    tool_result = _build_deferred_tool_result(render_payload["ask_id"])
+
     try:
         from app.services.chat.storage.session import session_manager
         from app.services.chat.webpage_ws_chat_emitter import get_webpage_ws_emitter
         from shared.models.blocks import BlockStatus
-
-        tool_result = _build_form_tool_result(question_data)
 
         # Find the interactive_form_question tool block in session_manager blocks.
         # The tool_name may be "interactive_form_question" (Chat Shell path) or
@@ -345,6 +346,7 @@ async def _notify_frontend(
                 subtask_id=subtask_id,
                 tool_use_id=synthetic_tool_use_id,
                 tool_output=tool_result,
+                render_payload=render_payload,
             )
 
             ws_emitter = get_webpage_ws_emitter()
@@ -361,6 +363,7 @@ async def _notify_frontend(
                 "tool_name": "interactive_form_question",
                 "tool_input": {},
                 "tool_output": tool_result,
+                "render_payload": render_payload,
                 "display_name": "interactive_form_question",
                 "status": BlockStatus.PENDING.value,
             }
@@ -371,11 +374,12 @@ async def _notify_frontend(
             )
             return
 
-        # Update tool block in session_manager with the normalized form result.
+        # Update tool block in session_manager with the UI-only render payload.
         await session_manager.update_tool_block_status(
             subtask_id=subtask_id,
             tool_use_id=tool_use_id,
             tool_output=tool_result,
+            render_payload=render_payload,
         )
 
         # Emit chat:block_updated event to frontend
@@ -391,6 +395,7 @@ async def _notify_frontend(
             subtask_id=subtask_id,
             block_id=tool_use_id,
             tool_output=tool_result,
+            render_payload=render_payload,
             status=BlockStatus.PENDING.value,
         )
     except Exception as e:
@@ -516,4 +521,4 @@ async def interactive_form_question(
         question_data=question_data,
     )
 
-    return _build_form_tool_result(question_data)
+    return _build_deferred_tool_result(ask_id)

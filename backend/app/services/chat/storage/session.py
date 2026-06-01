@@ -792,6 +792,7 @@ class SessionManager:
         status: Optional[str] = None,
         tool_output: Optional[str] = None,
         tool_input: Optional[Dict[str, Any]] = None,
+        render_payload: Optional[Dict[str, Any]] = None,
         tool_protocol: Optional[str] = None,
         server_label: Optional[str] = None,
     ) -> None:
@@ -806,7 +807,8 @@ class SessionManager:
             tool_use_id: Tool use ID
             status: New status (optional, e.g. "done", "error")
             tool_output: Optional tool output to set
-            tool_input: Optional tool input/arguments to update (used by interactive_form_question MCP tool)
+            tool_input: Optional tool input/arguments to update
+            render_payload: Optional UI-only renderer payload to update
             tool_protocol: Optional Responses protocol type
             server_label: Optional MCP server label
         """
@@ -830,6 +832,8 @@ class SessionManager:
                     existing_block["tool_output"] = tool_output
                 if tool_input is not None:
                     existing_block["tool_input"] = tool_input
+                if render_payload is not None:
+                    existing_block["render_payload"] = render_payload
                 if tool_protocol is not None:
                     existing_block["tool_protocol"] = tool_protocol
                 if server_label is not None:

@@ -180,6 +180,67 @@ version: "1.1.0"
         assert data["spec"]["description"] == "Updated with skill identity token"
         assert data["spec"]["version"] == "1.1.0"
 
+    def test_list_skills_with_skill_identity_token(
+        self, test_client: TestClient, test_token: str, test_user: User
+    ):
+        """Skill identity tokens should be accepted when listing skills."""
+        skill_md = "---\ndescription: Skill identity list skill\n---\n"
+        zip_content = self.create_test_zip(skill_md)
+        create_response = test_client.post(
+            "/api/v1/kinds/skills/upload",
+            headers={"Authorization": f"Bearer {test_token}"},
+            data={"name": "skill-identity-list-skill", "namespace": "default"},
+            files={"file": ("test.zip", io.BytesIO(zip_content), "application/zip")},
+        )
+        assert create_response.status_code == 201
+
+        skill_identity_token = create_skill_identity_token(
+            user_id=test_user.id,
+            user_name=test_user.user_name,
+            runtime_type="executor",
+            runtime_name="skill-creator",
+        )
+
+        response = test_client.get(
+            "/api/v1/kinds/skills?limit=1",
+            headers={"Authorization": f"Bearer {skill_identity_token}"},
+        )
+
+        assert response.status_code == 200
+        assert "items" in response.json()
+
+    def test_exact_match_skill_lookup_with_skill_identity_token(
+        self, test_client: TestClient, test_token: str, test_user: User
+    ):
+        """Skill identity tokens should support publish duplicate checks."""
+        skill_md = "---\ndescription: Skill identity exact match skill\n---\n"
+        zip_content = self.create_test_zip(skill_md)
+        create_response = test_client.post(
+            "/api/v1/kinds/skills/upload",
+            headers={"Authorization": f"Bearer {test_token}"},
+            data={"name": "skill-identity-exact-match", "namespace": "default"},
+            files={"file": ("test.zip", io.BytesIO(zip_content), "application/zip")},
+        )
+        assert create_response.status_code == 201
+
+        skill_identity_token = create_skill_identity_token(
+            user_id=test_user.id,
+            user_name=test_user.user_name,
+            runtime_type="executor",
+            runtime_name="skill-creator",
+        )
+
+        response = test_client.get(
+            "/api/v1/kinds/skills?name=skill-identity-exact-match"
+            "&namespace=default&exact_match=true",
+            headers={"Authorization": f"Bearer {skill_identity_token}"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["items"]) == 1
+        assert data["items"][0]["metadata"]["name"] == "skill-identity-exact-match"
+
     def test_upload_skill_rejects_task_token(
         self, test_client: TestClient, test_user: User
     ):

@@ -68,6 +68,16 @@
     "confirm_hint": "Start this new message",
     "confirming": "Processing..."
   },
+  "pending_form_confirm": {
+    "eyebrow": "Form waiting",
+    "title": "The agent is waiting for this form result",
+    "description": "Before sending a new message, submit the current form or cancel it and use this message as the new instruction.",
+    "keep": "Keep editing",
+    "keep_hint": "Keep the current form",
+    "confirm": "Cancel form and send",
+    "confirm_hint": "Continue with this message",
+    "confirming": "Processing..."
+  },
   "status": {
     "typing": "AI is typing...",
     "thinking": "AI is thinking...",

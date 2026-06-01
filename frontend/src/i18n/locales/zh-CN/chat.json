@@ -68,6 +68,16 @@
     "confirm_hint": "开始这条新消息",
     "confirming": "处理中..."
   },
+  "pending_form_confirm": {
+    "eyebrow": "表单待提交",
+    "title": "当前智能体正在等待表单结果",
+    "description": "发送新消息前，需要先提交当前表单，或取消表单并把这条消息作为新的说明交给智能体。",
+    "keep": "继续填写",
+    "keep_hint": "保留当前表单",
+    "confirm": "取消表单并发送",
+    "confirm_hint": "用这条消息继续",
+    "confirming": "处理中..."
+  },
   "status": {
     "typing": "AI 正在输入...",
     "thinking": "AI 正在思考...",

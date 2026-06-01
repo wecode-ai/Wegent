@@ -36,6 +36,7 @@ import type {
   Attachment,
   SubtaskContextBrief,
   TaskType,
+  InteractiveFormAnswerPayload,
 } from '@/types/api'
 import type { ContextItem } from '@/types/context'
 import type { SkillRef } from '../../hooks/useSkillSelector'
@@ -145,7 +146,10 @@ export interface ChatStreamHandlers {
   sendExpiredGuidanceAsMessage: (id: string) => Promise<void>
 
   // Actions
-  handleSendMessage: (overrideMessage?: string) => Promise<void>
+  handleSendMessage: (
+    overrideMessage?: string,
+    options?: { interactiveFormAnswer?: InteractiveFormAnswerPayload }
+  ) => Promise<void>
   /**
    * Send a message with a temporary model override (used for regeneration).
    * @param overrideMessage - The message content to send
@@ -301,7 +305,13 @@ export function useChatStreamHandlers({
 
   // Refs
   const lastFailedMessageRef = useRef<string | null>(null)
-  const handleSendMessageRef = useRef<((message?: string) => Promise<void>) | null>(null)
+  const handleSendMessageRef = useRef<
+    | ((
+        message?: string,
+        options?: { interactiveFormAnswer?: InteractiveFormAnswerPayload }
+      ) => Promise<void>)
+    | null
+  >(null)
   const previousTaskIdRef = useRef<number | null | undefined>(undefined)
   const prevTaskIdForModelRef = useRef<number | null | undefined>(undefined)
   const prevClearVersionRef = useRef(clearVersion)
@@ -529,7 +539,11 @@ export function useChatStreamHandlers({
       message: string,
       localMessageId: string,
       immediateTaskId: number,
-      effectiveRepo: Pick<GitRepoInfo, 'git_url' | 'git_repo' | 'git_repo_id' | 'git_domain'> | null
+      effectiveRepo: Pick<
+        GitRepoInfo,
+        'git_url' | 'git_repo' | 'git_repo_id' | 'git_domain'
+      > | null,
+      sendOptions?: { interactiveFormAnswer?: InteractiveFormAnswerPayload }
     ): PreparedChatSend => {
       const snapshotAttachments = [...attachments]
       const snapshotContexts = [...selectedContexts]
@@ -708,9 +722,15 @@ export function useChatStreamHandlers({
             ? snapshotAdditionalSkills
             : undefined,
         generate_params: generateParams,
+        interactive_form_answer: sendOptions?.interactiveFormAnswer
+          ? {
+              ...sendOptions.interactiveFormAnswer,
+              message: messageWithQueueContent,
+            }
+          : undefined,
       }
 
-      const options: ContextSendOptions = {
+      const contextOptions: ContextSendOptions = {
         pendingUserMessage: messageWithQueueContent,
         pendingAttachments: snapshotAttachments,
         pendingContexts: pendingContexts.length > 0 ? pendingContexts : undefined,
@@ -763,7 +783,7 @@ export function useChatStreamHandlers({
         displayMessage: message,
         sourceMessage: messageWithQueueContent,
         request,
-        options,
+        options: contextOptions,
       }
     },
     [
@@ -1034,7 +1054,10 @@ export function useChatStreamHandlers({
 
   // Core message sending logic
   const handleSendMessage = useCallback(
-    async (overrideMessage?: string) => {
+    async (
+      overrideMessage?: string,
+      sendOptions?: { interactiveFormAnswer?: InteractiveFormAnswerPayload }
+    ) => {
       const message = overrideMessage?.trim() || taskInputMessage.trim()
       if (!message && !shouldHideChatInput) return
 
@@ -1072,7 +1095,13 @@ export function useChatStreamHandlers({
 
       const immediateTaskId = selectedTaskDetail?.id || -Date.now()
       const localMessageId = generateMessageId('user')
-      const prepared = prepareChatSend(message, localMessageId, immediateTaskId, effectiveRepo)
+      const prepared = prepareChatSend(
+        message,
+        localMessageId,
+        immediateTaskId,
+        effectiveRepo,
+        sendOptions
+      )
 
       if (canQueueMessage && activeTaskId) {
         const mergeTarget = [...activeTaskQueue]

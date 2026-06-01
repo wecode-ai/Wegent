@@ -348,7 +348,7 @@ describe('ChatArea queue message handler mounting', () => {
     fireEvent.click(screen.getByTestId('quick-phrase-trigger'))
 
     expect(mockSetTaskInputMessage).toHaveBeenCalledWith('quick phrase')
-    expect(screen.queryByText('chat:quick_launch.overwrite_confirm_title')).not.toBeInTheDocument()
+    expect(screen.queryByText('quick_launch.overwrite_confirm_title')).not.toBeInTheDocument()
     await waitFor(() => {
       expect(mockChatInputCard).toHaveBeenLastCalledWith(
         expect.objectContaining({ focusInputAtEndSignal: 1 })
@@ -364,7 +364,7 @@ describe('ChatArea queue message handler mounting', () => {
     fireEvent.click(screen.getByTestId('quick-phrase-trigger'))
 
     expect(mockSetTaskInputMessage).not.toHaveBeenCalledWith('quick phrase')
-    expect(screen.getByText('chat:quick_launch.overwrite_confirm_title')).toBeInTheDocument()
+    expect(screen.getByText('quick_launch.overwrite_confirm_title')).toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('quick-phrase-overwrite-confirm'))
 

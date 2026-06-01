@@ -541,6 +541,18 @@ export interface AskUserFormData {
   tool_output?: Record<string, unknown> | null
 }
 
+export interface InteractiveFormAnswerPayload {
+  type: 'interactive_form_question'
+  ask_id: string
+  tool_use_id?: string | null
+  task_id?: number | null
+  subtask_id?: number | null
+  success?: boolean
+  status?: 'answered' | 'cancelled'
+  answers: Record<string, string | string[]>
+  message?: string
+}
+
 export interface AskUserAnswer {
   ask_id: string
   /** Tool use ID for fallback lookup when ask_id doesn't match */

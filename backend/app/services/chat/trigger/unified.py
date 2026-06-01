@@ -295,6 +295,16 @@ async def build_execution_request(
             "reasoning"
         )
 
+        if payload is not None:
+            interactive_form_answer = getattr(payload, "interactive_form_answer", None)
+            if interactive_form_answer:
+                if hasattr(interactive_form_answer, "model_dump"):
+                    request.interactive_form_answer = (
+                        interactive_form_answer.model_dump(mode="json")
+                    )
+                elif isinstance(interactive_form_answer, dict):
+                    request.interactive_form_answer = dict(interactive_form_answer)
+
         # Merge user-selected generate_params into videoConfig for video models
         # Validates params against model capabilities to reject invalid values
         if payload is not None:

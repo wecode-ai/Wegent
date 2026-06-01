@@ -18,7 +18,7 @@ import VideoPlayer from '../VideoPlayer'
 import { ImageGallery } from '../ImageGallery'
 import StreamingWaitIndicator from '../StreamingWaitIndicator'
 import { AskUserForm } from '../../clarification'
-import type { AskUserFormData } from '@/types/api'
+import type { AskUserFormData, InteractiveFormAnswerPayload } from '@/types/api'
 import { blockRendererRegistry } from '../block-registry'
 import {
   SubscriptionPreviewCard,
@@ -58,12 +58,12 @@ const isRenderableInteractiveQuestion = (question: Record<string, unknown>): boo
   )
 }
 
-const parseToolOutputRecord = (toolOutput: unknown): Record<string, unknown> | null => {
-  if (!toolOutput) return null
+const parseRecord = (value: unknown): Record<string, unknown> | null => {
+  if (!value) return null
 
-  if (typeof toolOutput === 'string') {
+  if (typeof value === 'string') {
     try {
-      const parsed = JSON.parse(toolOutput)
+      const parsed = JSON.parse(value)
       return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
         ? (parsed as Record<string, unknown>)
         : null
@@ -72,25 +72,18 @@ const parseToolOutputRecord = (toolOutput: unknown): Record<string, unknown> | n
     }
   }
 
-  return typeof toolOutput === 'object' && !Array.isArray(toolOutput)
-    ? (toolOutput as Record<string, unknown>)
+  return typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
     : null
 }
 
 const getRenderableInteractiveFormPayload = (
-  toolOutput: unknown
+  renderPayload: unknown
 ): {
-  result: Record<string, unknown>
   form: Record<string, unknown>
   questions: Array<Record<string, unknown>>
 } | null => {
-  const parsedOutput = parseToolOutputRecord(toolOutput)
-  if (!parsedOutput) return null
-
-  const parsedResult = parseToolOutputRecord(parsedOutput.result) || parsedOutput
-  if (parsedResult.success !== true) return null
-
-  const form = parseToolOutputRecord(parsedResult.form)
+  const form = parseRecord(renderPayload)
   if (form?.type !== 'interactive_form_question') return null
 
   const questions = Array.isArray(form.questions)
@@ -100,7 +93,6 @@ const getRenderableInteractiveFormPayload = (
   if (questions.length === 0) return null
 
   return {
-    result: parsedResult,
     form,
     questions,
   }
@@ -122,7 +114,11 @@ interface MixedContentViewProps {
   /** Current message index for AskUserForm submission tracking */
   currentMessageIndex?: number
   /** Callback when user submits an ask_user_question form - receives pre-formatted message string */
-  onAskUserSubmit?: (askId: string, formattedMessage: string) => void
+  onAskUserSubmit?: (
+    askId: string,
+    formattedMessage: string,
+    answer: InteractiveFormAnswerPayload
+  ) => void
 }
 
 /**
@@ -231,9 +227,9 @@ const MixedContentView = memo(function MixedContentView({
               blockId: block.id,
             }
           } else if (block.type === 'tool') {
-            const formPayload = getRenderableInteractiveFormPayload(block.tool_output)
+            const formPayload = getRenderableInteractiveFormPayload(block.render_payload)
 
-            // Only render an interactive form from the validated tool result.
+            // Only render an interactive form from the UI-only render payload.
             if (block.tool_name?.includes('interactive_form_question') && formPayload) {
               // Helper function to parse boolean values (handles string "True"/"False" from AI)
               const parseBoolean = (value: unknown, defaultValue: boolean): boolean => {
@@ -293,8 +289,10 @@ const MixedContentView = memo(function MixedContentView({
                 task_id: formTaskId,
                 subtask_id: formSubtaskId,
                 questions: parsedQuestions,
-                // Pass tool_output so AskUserForm can detect timeout vs normal completion
-                tool_output: formPayload.result,
+                tool_output:
+                  typeof block.tool_output === 'object' && block.tool_output !== null
+                    ? (block.tool_output as Record<string, unknown>)
+                    : null,
               }
               return {
                 type: 'interactive_form_question' as const,

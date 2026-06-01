@@ -85,53 +85,6 @@ def _build_shell_call_item(
     }
 
 
-def _parse_mcp_arguments(arguments: Any) -> Dict[str, Any]:
-    if isinstance(arguments, dict):
-        return arguments
-    if not isinstance(arguments, str) or not arguments:
-        return {}
-    try:
-        parsed = json.loads(arguments)
-    except (TypeError, ValueError):
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
-def _extract_pending_user_input_state(
-    *,
-    tool_name: str,
-    arguments: Any,
-    tool_output: Any,
-) -> tuple[bool, Optional[Dict[str, Any]]]:
-    if (
-        not isinstance(tool_output, dict)
-        or tool_output.get("pending_user_input") is not True
-    ):
-        return False, None
-
-    payload = tool_output.get("pending_user_input_payload")
-    if isinstance(payload, dict):
-        return True, payload
-
-    fallback_payload: Dict[str, Any] = {}
-    ask_id = tool_output.get("ask_id")
-    if isinstance(ask_id, str) and ask_id:
-        fallback_payload["ask_id"] = ask_id
-
-    parsed_arguments = _parse_mcp_arguments(arguments)
-    questions = parsed_arguments.get("questions")
-    if isinstance(questions, list) and questions:
-        fallback_payload["questions"] = questions
-
-    if fallback_payload:
-        fallback_payload["type"] = (
-            str(tool_output.get("type") or tool_name) or "interactive_form_question"
-        )
-        return True, fallback_payload
-
-    return True, None
-
-
 @dataclass
 class StreamingChunk:
     """A chunk of streaming data for Responses API streaming."""
@@ -193,8 +146,6 @@ class OpenAPIStreamingService:
         message_output_index: Optional[int] = None
         tool_output_indexes: Dict[str, int] = {}
         completed_output_items: Dict[int, Any] = {}
-        pending_user_input = False
-        pending_user_input_payload: Optional[Dict[str, Any]] = None
 
         def allocate_output_index() -> int:
             nonlocal next_output_index
@@ -521,23 +472,6 @@ class OpenAPIStreamingService:
                             ),
                             output=tool_output,
                         )
-                        (
-                            chunk_pending_user_input,
-                            chunk_pending_user_input_payload,
-                        ) = _extract_pending_user_input_state(
-                            tool_name=name,
-                            arguments=arguments,
-                            tool_output=tool_output,
-                        )
-                        if chunk_pending_user_input:
-                            pending_user_input = True
-                            if (
-                                pending_user_input_payload is None
-                                and chunk_pending_user_input_payload is not None
-                            ):
-                                pending_user_input_payload = (
-                                    chunk_pending_user_input_payload
-                                )
                         yield _format_sse_event(
                             {
                                 "type": "response.mcp_call_arguments.done",
@@ -676,8 +610,6 @@ class OpenAPIStreamingService:
                 status="completed",
                 model=model_string,
                 output=output_items,
-                pending_user_input=pending_user_input or None,
-                pending_user_input_payload=pending_user_input_payload,
                 previous_response_id=previous_response_id,
             )
             yield _format_sse_event(

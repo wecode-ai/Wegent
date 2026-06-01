@@ -4,13 +4,15 @@
 
 """Tests for interactive_form_question MCP tool."""
 
+import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools.interactive_form_question import (
-    _build_form_tool_result,
+    _build_deferred_tool_result,
+    _build_form_render_payload,
     _generate_ask_id,
     _notify_frontend,
     interactive_form_question,
@@ -42,6 +44,17 @@ class TestInteractiveFormTool:
             user_id=9,
             user_name="tester",
         )
+
+    def test_tool_signature_only_accepts_form_questions(self):
+        """The MCP tool owns form creation, not deferred answer injection."""
+        signature = inspect.signature(interactive_form_question)
+
+        assert "token_info" in signature.parameters
+        assert "questions" in signature.parameters
+        assert "answers" not in signature.parameters
+        assert "success" not in signature.parameters
+        assert "status" not in signature.parameters
+        assert "message" not in signature.parameters
 
     @pytest.mark.asyncio
     async def test_returns_silent_exit(self):
@@ -89,8 +102,8 @@ class TestInteractiveFormTool:
         assert "pending_user_input_payload" not in result
 
     @pytest.mark.asyncio
-    async def test_returns_normalized_form_schema_in_result(self):
-        """The renderable form schema is returned in tool result, not tool input."""
+    async def test_returns_minimal_deferred_result(self):
+        """The tool result must not expose the renderable form schema to the model."""
         token = self._make_token(task_id=10, subtask_id=20)
         with (
             patch(
@@ -115,14 +128,11 @@ class TestInteractiveFormTool:
             )
 
         assert result["success"] is True
-        assert result["status"] == "form_rendered"
-        form = result["form"]
-        assert form["type"] == "interactive_form_question"
-        assert form["ask_id"] == "ask_20"
-        assert form["task_id"] == 10
-        assert form["subtask_id"] == 20
-        assert form["questions"][0]["input_type"] == "choice"
-        assert form["questions"][0]["multi_select"] is True
+        assert result["status"] == "waiting_for_user_response"
+        assert result["ask_id"] == "ask_20"
+        assert result["__deferred_user_input__"] is True
+        assert "form" not in result
+        assert "questions" not in result
 
     @pytest.mark.asyncio
     async def test_rejects_empty_question_text(self):
@@ -462,27 +472,23 @@ class TestInteractiveFormTool:
                     "tool_name": "interactive_form_question",
                     "tool_use_id": "tool-1",
                     "tool_input": {"questions": [{"id": "q1", "question": "Raw?"}]},
-                    "tool_output": {
-                        "success": True,
-                        "status": "form_rendered",
-                        "form": {
-                            "type": "interactive_form_question",
-                            "ask_id": "ask_2",
-                            "task_id": 1,
-                            "subtask_id": 2,
-                            "questions": [
-                                {
-                                    "id": "q1",
-                                    "question": "Raw?",
-                                    "input_type": "text",
-                                    "options": None,
-                                    "multi_select": False,
-                                    "required": True,
-                                    "default": None,
-                                    "placeholder": None,
-                                }
-                            ],
-                        },
+                    "render_payload": {
+                        "type": "interactive_form_question",
+                        "ask_id": "ask_2",
+                        "task_id": 1,
+                        "subtask_id": 2,
+                        "questions": [
+                            {
+                                "id": "q1",
+                                "question": "Raw?",
+                                "input_type": "text",
+                                "options": None,
+                                "multi_select": False,
+                                "required": True,
+                                "default": None,
+                                "placeholder": None,
+                            }
+                        ],
                     },
                 }
             ]
@@ -582,13 +588,13 @@ class TestInteractiveFormTool:
         mock_notify.assert_awaited_once()
 
 
-class TestFormToolResultSchema:
-    """Tests for the strict form schema emitted to frontend."""
+class TestFormRenderPayloadSchema:
+    """Tests for the strict UI-only form schema emitted to frontend."""
 
     def test_rejects_choice_question_without_options(self):
         """Backend must not emit a choice question that frontend cannot render."""
         with pytest.raises(ValueError, match="choice questions"):
-            _build_form_tool_result(
+            _build_form_render_payload(
                 {
                     "type": "interactive_form_question",
                     "ask_id": "ask_1",
@@ -612,7 +618,7 @@ class TestFormToolResultSchema:
     def test_rejects_unknown_input_type(self):
         """Backend must emit only frontend-supported input types."""
         with pytest.raises(ValueError, match="Input should be"):
-            _build_form_tool_result(
+            _build_form_render_payload(
                 {
                     "type": "interactive_form_question",
                     "ask_id": "ask_1",
@@ -688,15 +694,13 @@ class TestNotifyFrontendFallback:
         mock_session_manager.update_tool_block_status.assert_awaited_once_with(
             subtask_id=2,
             tool_use_id="ask_123",
-            tool_output={
-                "__silent_exit__": True,
-                "reason": "interactive_form_question form displayed; STOP here and waiting for user response via new conversation",
-                "success": True,
-                "status": "form_rendered",
-                "form": question_data,
-            },
+            tool_output=_build_deferred_tool_result("ask_123"),
+            render_payload=question_data,
         )
         mock_ws_emitter.emit_block_created.assert_awaited_once()
+        created_block = mock_ws_emitter.emit_block_created.await_args.kwargs["block"]
+        assert created_block["tool_output"] == _build_deferred_tool_result("ask_123")
+        assert created_block["render_payload"] == question_data
 
     @pytest.mark.asyncio
     async def test_updates_existing_block_with_form_payload(self):
@@ -750,24 +754,14 @@ class TestNotifyFrontendFallback:
         mock_session_manager.update_tool_block_status.assert_awaited_once_with(
             subtask_id=2,
             tool_use_id="tool-123",
-            tool_output={
-                "__silent_exit__": True,
-                "reason": "interactive_form_question form displayed; STOP here and waiting for user response via new conversation",
-                "success": True,
-                "status": "form_rendered",
-                "form": question_data,
-            },
+            tool_output=_build_deferred_tool_result("ask_123"),
+            render_payload=question_data,
         )
         mock_ws_emitter.emit_block_updated.assert_awaited_once_with(
             task_id=1,
             subtask_id=2,
             block_id="tool-123",
-            tool_output={
-                "__silent_exit__": True,
-                "reason": "interactive_form_question form displayed; STOP here and waiting for user response via new conversation",
-                "success": True,
-                "status": "form_rendered",
-                "form": question_data,
-            },
+            tool_output=_build_deferred_tool_result("ask_123"),
+            render_payload=question_data,
             status="pending",
         )

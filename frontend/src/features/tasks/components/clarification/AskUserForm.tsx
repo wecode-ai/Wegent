@@ -11,7 +11,12 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Checkbox } from '@/components/ui/checkbox'
-import type { AskUserFormData, AskUserQuestion, AskUserOption } from '@/types/api'
+import type {
+  AskUserFormData,
+  AskUserQuestion,
+  AskUserOption,
+  InteractiveFormAnswerPayload,
+} from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useTaskStateMachine } from '../../hooks/useTaskStateMachine'
 
@@ -25,7 +30,7 @@ interface AskUserFormProps {
    * Callback when user submits the answer.
    * Receives the formatted message string ready to be sent as a new conversation.
    */
-  onSubmit?: (askId: string, formattedMessage: string) => void
+  onSubmit?: (askId: string, formattedMessage: string, answer: InteractiveFormAnswerPayload) => void
 }
 
 // ─── Single Question Widget ───────────────────────────────────────────────────
@@ -334,15 +339,20 @@ export default function AskUserForm({
     // MessageBubble can parse it and render ClarificationAnswerSummary
     let formattedMessage = '## 📝 我的回答 (My Answers)\n\n'
 
+    const answers: Record<string, string | string[]> = {}
+
     normalizedQuestions.forEach(q => {
       const qId = q.id.toUpperCase()
       formattedMessage += `### ${qId}: ${q.question}\n`
       formattedMessage += '**Answer**: '
 
       if (q.input_type === 'text' || customModes[q.id]) {
-        formattedMessage += `${customTexts[q.id] ?? ''}\n\n`
+        const value = customTexts[q.id] ?? ''
+        answers[q.id] = value
+        formattedMessage += `${value}\n\n`
       } else {
         const vals = selectedValues[q.id] ?? []
+        answers[q.id] = q.multi_select ? vals : (vals[0] ?? '')
         if (vals.length > 1) {
           formattedMessage += '\n'
           vals.forEach(v => {
@@ -361,7 +371,17 @@ export default function AskUserForm({
     setLocalSubmitted(true)
 
     if (onSubmit) {
-      onSubmit(data.ask_id, formattedMessage)
+      onSubmit(data.ask_id, formattedMessage, {
+        type: 'interactive_form_question',
+        ask_id: data.ask_id,
+        tool_use_id: data.tool_use_id ?? null,
+        task_id: data.task_id,
+        subtask_id: data.subtask_id,
+        success: true,
+        status: 'answered',
+        answers,
+        message: formattedMessage,
+      })
     }
   }
 

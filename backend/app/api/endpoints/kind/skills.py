@@ -87,6 +87,42 @@ def _get_current_user_or_skill_identity(
     return user
 
 
+def _get_current_user_or_skill_query_identity(
+    db: Session = Depends(get_db),
+    oauth2_token: Optional[str] = Security(security.oauth2_scheme_optional),
+    x_api_key_security: Optional[str] = Security(security.api_key_header_optional),
+    authorization: str = Header(default="", include_in_schema=False),
+    x_api_key: str = Header(
+        default="",
+        alias="X-API-Key",
+        include_in_schema=False,
+    ),
+) -> User:
+    """Authenticate Skill read requests, including runtime Skill identity tokens."""
+    try:
+        return security.get_current_user_jwt_apikey_tasktoken(
+            db=db,
+            oauth2_token=oauth2_token,
+            x_api_key_security=x_api_key_security,
+            authorization=authorization,
+            x_api_key=x_api_key,
+        )
+    except HTTPException as auth_error:
+        token = _extract_bearer_token(authorization, oauth2_token)
+        if not token:
+            raise auth_error
+
+        token_info = verify_skill_identity_token(token)
+        if not token_info:
+            raise auth_error
+
+    user = db.query(User).filter(User.id == token_info.user_id).first()
+    if not user or not user.is_active or user.user_name != token_info.user_name:
+        raise HTTPException(status_code=401, detail="Could not validate credentials")
+
+    return user
+
+
 def _resolve_manageable_skill(
     db: Session, skill_id: int, current_user: User, action: str
 ) -> Kind:
@@ -311,7 +347,7 @@ def list_skills(
         description="Task ID for task-based authorization. "
         "If provided, also searches skills owned by the task owner.",
     ),
-    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
+    current_user: User = Depends(_get_current_user_or_skill_query_identity),
     db: Session = Depends(get_db),
 ):
     """

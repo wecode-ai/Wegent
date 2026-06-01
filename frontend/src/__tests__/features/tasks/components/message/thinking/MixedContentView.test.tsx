@@ -70,6 +70,104 @@ const createSuccessfulFormOutput = (form: Record<string, unknown>) =>
   })
 
 describe('MixedContentView', () => {
+  it('renders interactive forms from render_payload', () => {
+    const renderPayload = {
+      type: 'interactive_form_question',
+      ask_id: 'ask_render_payload',
+      task_id: 2493,
+      subtask_id: 2730,
+      questions: [
+        {
+          id: 'target_lang',
+          question: '目标语言',
+          input_type: 'choice',
+          required: true,
+          multi_select: false,
+          options: [{ label: 'English', value: 'en' }],
+          default: null,
+          placeholder: null,
+        },
+      ],
+    }
+
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        theme="light"
+        taskId={2493}
+        subtaskId={2730}
+        currentMessageIndex={0}
+        blocks={[
+          {
+            id: 'tool_render_payload',
+            type: 'tool',
+            status: 'pending',
+            tool_name: 'interactive_form_question',
+            tool_use_id: 'tool_render_payload',
+            tool_input: {
+              questions: [{ id: 'raw', question: 'raw should not render' }],
+            },
+            tool_output: createToolOutput({
+              __deferred_user_input__: true,
+              success: true,
+              status: 'waiting_for_user_response',
+              ask_id: 'ask_render_payload',
+            }),
+            render_payload: renderPayload,
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('ask-user-form-block')).toHaveTextContent('ask_render_payload:1')
+  })
+
+  it('does not render interactive forms from tool_output.form', () => {
+    const form = {
+      type: 'interactive_form_question',
+      ask_id: 'ask_tool_output_form',
+      task_id: 2493,
+      subtask_id: 2730,
+      questions: [
+        {
+          id: 'target_lang',
+          question: '目标语言',
+          input_type: 'choice',
+          required: true,
+          multi_select: false,
+          options: [{ label: 'English', value: 'en' }],
+          default: null,
+          placeholder: null,
+        },
+      ],
+    }
+
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        theme="light"
+        taskId={2493}
+        subtaskId={2730}
+        currentMessageIndex={0}
+        blocks={[
+          {
+            id: 'tool_output_form',
+            type: 'tool',
+            status: 'pending',
+            tool_name: 'interactive_form_question',
+            tool_use_id: 'tool_output_form',
+            tool_input: {},
+            tool_output: createSuccessfulFormOutput(form),
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('ask-user-form-block')).not.toBeInTheDocument()
+  })
+
   it('renders only the interactive form block that contains questions', () => {
     const form = {
       type: 'interactive_form_question',
@@ -105,8 +203,14 @@ describe('MixedContentView', () => {
             status: 'pending',
             tool_name: 'interactive_form_question',
             tool_use_id: 'ask_2730',
-            tool_output: createSuccessfulFormOutput(form),
+            tool_output: createToolOutput({
+              __deferred_user_input__: true,
+              success: true,
+              status: 'waiting_for_user_response',
+              ask_id: 'ask_2730',
+            }),
             tool_input: {},
+            render_payload: form,
           },
           {
             id: 'chatcmpl-tool-426bdd2d71374862a96c40baae380e92',
@@ -183,7 +287,13 @@ describe('MixedContentView', () => {
               subtask_id: 2716,
               questions: [{}, {}, {}],
             },
-            tool_output: createSuccessfulFormOutput(form),
+            tool_output: createToolOutput({
+              __deferred_user_input__: true,
+              success: true,
+              status: 'waiting_for_user_response',
+              ask_id: 'ask_2716',
+            }),
+            render_payload: form,
           },
         ]}
       />
