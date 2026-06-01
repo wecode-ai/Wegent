@@ -4,10 +4,9 @@
 
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState, type ComponentType } from 'react'
 import dynamic from 'next/dynamic'
-import { useRouter } from 'next/navigation'
-import { Boxes, Check, ChevronDown, Settings2, Users } from 'lucide-react'
+import { Building2, Check, ChevronDown, Globe2, Layers3, UserRound } from 'lucide-react'
 
 import { listGroups } from '@/apis/groups'
 import { Button } from '@/components/ui/button'
@@ -15,16 +14,12 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown'
-import { paths } from '@/config/paths'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { Group } from '@/types/group'
-import type { ManagedResourceType } from '../types'
-
-type ResourceScope = 'personal' | 'group'
+import type { ManagedResourceSourceFilter, ManagedResourceType } from '../types'
 
 const managedResourceTypes: ManagedResourceType[] = [
   'agent',
@@ -77,10 +72,6 @@ function getInitialSearchParam(name: string): string | null {
   return new URLSearchParams(window.location.search).get(name)
 }
 
-function getGroupDisplayName(group: Group): string {
-  return group.display_name || group.name
-}
-
 function getInitialResourceType(): ManagedResourceType {
   const type = getInitialSearchParam('type')
   return managedResourceTypes.includes(type as ManagedResourceType)
@@ -88,8 +79,32 @@ function getInitialResourceType(): ManagedResourceType {
     : 'agent'
 }
 
-function getInitialScope(): ResourceScope {
-  return getInitialSearchParam('scope') === 'group' ? 'group' : 'personal'
+function getInitialSourceFilter(): ManagedResourceSourceFilter {
+  const source = getInitialSearchParam('source')
+  if (source === 'all' || source === 'personal' || source === 'group' || source === 'system') {
+    return source
+  }
+
+  const legacyScope = getInitialSearchParam('scope')
+  if (legacyScope === 'personal' || legacyScope === 'group') {
+    return legacyScope
+  }
+
+  return 'all'
+}
+
+function getInitialGroupName(): string | null {
+  return getInitialSearchParam('group')
+}
+
+function getGroupDisplayName(group: Group): string {
+  return group.display_name || group.name
+}
+
+function useResourceLibraryTranslation() {
+  const { t: tBase } = useTranslation('resource-library')
+  return (key: string, options?: Record<string, unknown>) =>
+    tBase(`resource-library:${key}`, options)
 }
 
 function ManagedResourceTabs({
@@ -99,10 +114,15 @@ function ManagedResourceTabs({
   value: ManagedResourceType
   onValueChange: (value: ManagedResourceType) => void
 }) {
-  const { t } = useTranslation('resource-library')
+  const t = useResourceLibraryTranslation()
 
   return (
-    <div className="flex flex-wrap items-center gap-2" role="tablist" aria-label={t('fields.type')}>
+    <div
+      className="flex flex-wrap items-center gap-2"
+      role="tablist"
+      aria-label={t('fields.type')}
+      data-testid="managed-resource-type-tabs"
+    >
       {managedResourceTypes.map(type => {
         const isActive = value === type
 
@@ -124,129 +144,177 @@ function ManagedResourceTabs({
   )
 }
 
-function ResourceScopeControls({
-  scope,
+function ResourceSourceFilterControls({
+  value,
+  onValueChange,
   groups,
   selectedGroup,
-  onScopeChange,
   onGroupChange,
 }: {
-  scope: ResourceScope
+  value: ManagedResourceSourceFilter
+  onValueChange: (value: ManagedResourceSourceFilter) => void
   groups: Group[]
   selectedGroup: string | null
-  onScopeChange: (scope: ResourceScope) => void
   onGroupChange: (groupName: string | null) => void
 }) {
-  const { t } = useTranslation('resource-library')
-  const router = useRouter()
+  const t = useResourceLibraryTranslation()
+  const regularOptions: Array<{
+    value: ManagedResourceSourceFilter
+    label: string
+    icon: ComponentType<{ className?: string; 'aria-hidden'?: boolean }>
+  }> = [
+    { value: 'all', label: t('sources.all'), icon: Layers3 },
+    { value: 'personal', label: t('sources.personal'), icon: UserRound },
+  ]
   const selectedGroupInfo = groups.find(group => group.name === selectedGroup)
-  const selectedGroupLabel =
-    scope === 'group'
-      ? selectedGroupInfo
-        ? getGroupDisplayName(selectedGroupInfo)
-        : selectedGroup
-      : null
-  const groupButtonLabel = selectedGroupLabel || t('scopes.group')
-
-  const handleGroupSelect = (groupName: string) => {
-    onGroupChange(groupName)
-    onScopeChange('group')
-  }
+  const selectedGroupLabel = selectedGroupInfo ? getGroupDisplayName(selectedGroupInfo) : null
+  const groupButtonLabel =
+    value === 'group' ? selectedGroupLabel || t('sources.all_groups') : t('sources.group')
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <Button
-        type="button"
-        variant={scope === 'personal' ? 'primary' : 'outline'}
-        aria-pressed={scope === 'personal'}
-        className="h-11 min-w-[44px] px-4 lg:h-9"
-        onClick={() => onScopeChange('personal')}
-        data-testid="resource-scope-personal-button"
-      >
-        <Boxes className="h-4 w-4" aria-hidden="true" />
-        {t('scopes.personal')}
-      </Button>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            type="button"
-            variant={scope === 'group' ? 'primary' : 'outline'}
-            aria-pressed={scope === 'group'}
-            className={cn(
-              'h-11 min-w-[180px] max-w-full justify-between px-4 lg:h-9 lg:max-w-[260px]',
-              scope === 'group' ? 'text-white' : 'text-text-primary'
-            )}
-            data-testid="resource-group-select"
-          >
-            <span className="flex min-w-0 items-center gap-2">
-              <Users className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
-              <span className="truncate" title={groupButtonLabel}>
-                {groupButtonLabel}
-              </span>
-            </span>
-            <ChevronDown className="h-4 w-4 flex-shrink-0 opacity-70" aria-hidden="true" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
-          align="end"
-          sideOffset={6}
-          className="max-h-[320px] w-[var(--radix-dropdown-menu-trigger-width)] min-w-[220px] max-w-[min(320px,calc(100vw-2rem))] overflow-y-auto"
-        >
-          {groups.length === 0 ? (
-            <DropdownMenuItem
-              disabled
-              className="min-h-11 text-text-muted lg:min-h-9"
-              data-testid="resource-group-empty-option"
-            >
-              {t('states.no_groups')}
-            </DropdownMenuItem>
-          ) : (
-            groups.map(group => {
-              const isSelected = scope === 'group' && selectedGroup === group.name
-              const displayName = getGroupDisplayName(group)
+    <div
+      className="flex flex-col gap-2 sm:flex-row sm:items-center"
+      data-testid="managed-resource-source-filter"
+    >
+      <span className="text-xs font-medium text-text-muted">{t('fields.source')}</span>
+      <div className="flex flex-wrap items-center gap-2">
+        {regularOptions.map(option => {
+          const Icon = option.icon
+          const isActive = value === option.value
 
-              return (
-                <DropdownMenuItem
-                  key={group.id}
-                  className={cn(
-                    'min-h-11 gap-2 lg:min-h-9',
-                    isSelected && 'bg-primary/10 text-primary focus:text-primary'
-                  )}
-                  data-testid={`resource-group-option-${group.id}`}
-                  onClick={() => handleGroupSelect(group.name)}
-                >
-                  <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
-                    {isSelected && <Check className="h-4 w-4" aria-hidden="true" />}
-                  </span>
-                  <span className="truncate" title={displayName}>
-                    {displayName}
-                  </span>
-                </DropdownMenuItem>
-              )
-            })
-          )}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            className="min-h-11 gap-2 lg:min-h-9"
-            data-testid="resource-group-manage-option"
-            onClick={() => router.push(paths.settings.groupManager.getHref())}
+          return (
+            <Button
+              key={option.value}
+              type="button"
+              variant={isActive ? 'primary' : 'outline'}
+              aria-pressed={isActive}
+              className="h-11 min-w-[44px] px-4 lg:h-9"
+              onClick={() => onValueChange(option.value)}
+              data-testid={`resource-source-${option.value}-button`}
+            >
+              <Icon className="h-4 w-4" aria-hidden />
+              {option.label}
+            </Button>
+          )
+        })}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant={value === 'group' ? 'primary' : 'outline'}
+              aria-pressed={value === 'group'}
+              className={cn(
+                'h-11 min-w-[44px] max-w-full justify-between px-4 lg:h-9 lg:max-w-[260px]',
+                value === 'group' ? 'text-white' : 'text-text-primary'
+              )}
+              data-testid="resource-source-group-button"
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <Building2 className="h-4 w-4 flex-shrink-0" aria-hidden />
+                <span className="truncate" title={groupButtonLabel}>
+                  {groupButtonLabel}
+                </span>
+              </span>
+              <ChevronDown className="h-4 w-4 flex-shrink-0 opacity-70" aria-hidden />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="start"
+            sideOffset={6}
+            className="max-h-[320px] min-w-[220px] max-w-[min(320px,calc(100vw-2rem))] overflow-y-auto"
           >
-            <Settings2 className="h-4 w-4 flex-shrink-0 text-text-muted" aria-hidden="true" />
-            <span className="truncate">{t('actions.manage_groups')}</span>
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+            <DropdownMenuItem
+              className={cn(
+                'min-h-11 gap-2 lg:min-h-9',
+                value === 'group' &&
+                  !selectedGroup &&
+                  'bg-primary/10 text-primary focus:text-primary'
+              )}
+              data-testid="resource-source-all-groups-option"
+              onClick={() => {
+                onGroupChange(null)
+                onValueChange('group')
+              }}
+            >
+              <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
+                {value === 'group' && !selectedGroup && <Check className="h-4 w-4" aria-hidden />}
+              </span>
+              <span className="truncate">{t('sources.all_groups')}</span>
+            </DropdownMenuItem>
+            {groups.length === 0 ? (
+              <DropdownMenuItem
+                disabled
+                className="min-h-11 text-text-muted lg:min-h-9"
+                data-testid="resource-source-group-empty-option"
+              >
+                {t('states.no_groups')}
+              </DropdownMenuItem>
+            ) : (
+              groups.map(group => {
+                const isSelected = value === 'group' && selectedGroup === group.name
+                const displayName = getGroupDisplayName(group)
+
+                return (
+                  <DropdownMenuItem
+                    key={group.id}
+                    className={cn(
+                      'min-h-11 gap-2 lg:min-h-9',
+                      isSelected && 'bg-primary/10 text-primary focus:text-primary'
+                    )}
+                    data-testid={`resource-source-group-option-${group.id}`}
+                    onClick={() => {
+                      onGroupChange(group.name)
+                      onValueChange('group')
+                    }}
+                  >
+                    <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
+                      {isSelected && <Check className="h-4 w-4" aria-hidden />}
+                    </span>
+                    <span className="truncate" title={displayName}>
+                      {displayName}
+                    </span>
+                  </DropdownMenuItem>
+                )
+              })
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <Button
+          type="button"
+          variant={value === 'system' ? 'primary' : 'outline'}
+          aria-pressed={value === 'system'}
+          className="h-11 min-w-[44px] px-4 lg:h-9"
+          onClick={() => onValueChange('system')}
+          data-testid="resource-source-system-button"
+        >
+          <Globe2 className="h-4 w-4" aria-hidden />
+          {t('sources.system')}
+        </Button>
+      </div>
     </div>
   )
 }
 
-export function MyResources() {
+function sourceFilterToScope(
+  sourceFilter: ManagedResourceSourceFilter
+): 'personal' | 'group' | 'all' {
+  if (sourceFilter === 'personal' || sourceFilter === 'group') {
+    return sourceFilter
+  }
+
+  return 'all'
+}
+
+interface MyResourcesProps {
+  title?: string
+}
+
+export function MyResources({ title }: MyResourcesProps = {}) {
   const [resourceType, setResourceType] = useState<ManagedResourceType>(getInitialResourceType)
-  const [scope, setScope] = useState<ResourceScope>(getInitialScope)
+  const [sourceFilter, setSourceFilter] =
+    useState<ManagedResourceSourceFilter>(getInitialSourceFilter)
   const [groups, setGroups] = useState<Group[]>([])
-  const [selectedGroup, setSelectedGroup] = useState<string | null>(() =>
-    getInitialSearchParam('group')
-  )
+  const [selectedGroup, setSelectedGroup] = useState<string | null>(getInitialGroupName)
 
   useEffect(() => {
     let isMounted = true
@@ -266,58 +334,88 @@ export function MyResources() {
     }
   }, [])
 
-  useEffect(() => {
-    if (scope === 'group' && !selectedGroup && groups.length > 0) {
-      setSelectedGroup(groups[0].name)
-    }
-  }, [groups, scope, selectedGroup])
-
-  const handleScopeChange = useCallback(
-    (nextScope: ResourceScope) => {
-      setScope(nextScope)
-      if (nextScope === 'group' && !selectedGroup && groups.length > 0) {
-        setSelectedGroup(groups[0].name)
-      }
-    },
-    [groups, selectedGroup]
-  )
-
   const renderManager = () => {
-    const managerScope = scope
-    const groupName = scope === 'group' ? selectedGroup : null
+    const managerScope = sourceFilterToScope(sourceFilter)
+    const sourceControls = (
+      <ResourceSourceFilterControls
+        value={sourceFilter}
+        onValueChange={setSourceFilter}
+        groups={groups}
+        selectedGroup={selectedGroup}
+        onGroupChange={setSelectedGroup}
+      />
+    )
+    const groupName = sourceFilter === 'group' ? selectedGroup : null
 
     if (resourceType === 'agent') {
-      return <TeamListWithScope scope={managerScope} selectedGroup={groupName} />
+      return (
+        <TeamListWithScope
+          scope={managerScope}
+          selectedGroup={groupName}
+          sourceFilter={sourceFilter}
+          sourceControls={sourceControls}
+          groups={groups}
+        />
+      )
     }
     if (resourceType === 'model') {
-      return <ModelListWithScope scope={managerScope} selectedGroup={groupName} />
+      return (
+        <ModelListWithScope
+          scope={managerScope}
+          selectedGroup={groupName}
+          sourceFilter={sourceFilter}
+          sourceControls={sourceControls}
+          groups={groups}
+        />
+      )
     }
     if (resourceType === 'shell') {
-      return <ShellListWithScope scope={managerScope} selectedGroup={groupName} />
+      return (
+        <ShellListWithScope
+          scope={managerScope}
+          selectedGroup={groupName}
+          sourceFilter={sourceFilter}
+          sourceControls={sourceControls}
+          groups={groups}
+        />
+      )
     }
     if (resourceType === 'skill') {
-      return <SkillListWithScope scope={managerScope} selectedGroup={groupName} />
+      return (
+        <SkillListWithScope
+          scope={managerScope}
+          selectedGroup={groupName}
+          sourceFilter={sourceFilter}
+          sourceControls={sourceControls}
+          groups={groups}
+        />
+      )
     }
     if (resourceType === 'retriever') {
-      return <RetrieverListWithScope scope={managerScope} selectedGroup={groupName} />
+      return (
+        <RetrieverListWithScope
+          scope={managerScope}
+          selectedGroup={groupName}
+          sourceFilter={sourceFilter}
+          sourceControls={sourceControls}
+          groups={groups}
+        />
+      )
     }
 
     return null
   }
 
   return (
-    <div className="flex flex-col gap-5" data-testid="my-resources">
-      <div className="flex flex-col gap-3 border-b border-border pb-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <ManagedResourceTabs value={resourceType} onValueChange={setResourceType} />
-          <ResourceScopeControls
-            scope={scope}
-            groups={groups}
-            selectedGroup={selectedGroup}
-            onScopeChange={handleScopeChange}
-            onGroupChange={setSelectedGroup}
-          />
-        </div>
+    <div className="flex flex-col gap-4" data-testid="my-resources">
+      <div
+        className="flex flex-col gap-3 border-b border-border pb-3 sm:flex-row sm:items-center sm:justify-between"
+        data-testid="managed-resource-header"
+      >
+        {title && (
+          <h1 className="shrink-0 text-xl font-semibold text-text-primary">{title}</h1>
+        )}
+        <ManagedResourceTabs value={resourceType} onValueChange={setResourceType} />
       </div>
 
       <div>{renderManager()}</div>

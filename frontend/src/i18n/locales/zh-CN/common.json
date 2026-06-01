@@ -359,6 +359,7 @@
     "filter_all": "全部",
     "filter_chat": "聊天",
     "filter_code": "编码",
+    "filter_mode": "模式",
     "go_to_chat": "去聊天",
     "go_to_code": "去编码",
     "system": "系统",
@@ -1509,9 +1510,17 @@
     "search_skills": "搜索技能...",
     "no_matching_skills": "没有匹配的技能",
     "already_selected": "已选择",
-    "skill_button_tooltip": "选择要在此消息中使用的技能",
+    "skill_button_tooltip": "选择本次临时使用的技能",
     "skill_button_label": "技能",
-    "manage_skills": "管理技能"
+    "manage_skills": "管理技能",
+    "autoAvailable": "已自动启用",
+    "temporaryUse": "本次临时使用",
+    "agentBuiltin": "智能体自带",
+    "myDefault": "自动启用",
+    "manageDefault": "管理自动启用技能",
+    "emptyAutoAvailable": "当前没有自动启用的技能。",
+    "temporaryPreloadHint": "这些技能只会在本次消息中加载",
+    "temporaryDownloadHint": "这些技能只会在本次任务中下载使用"
   },
   "mcpProviders": {
     "title": "MCP 提供商",
