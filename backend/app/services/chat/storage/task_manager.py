@@ -87,6 +87,8 @@ class TaskCreationParams:
     is_api_call: bool = False
     # Optional API key name for tracing/audit
     api_key_name: Optional[str] = None
+    # Whether executor runtime should be deleted immediately after completion
+    auto_delete_executor: Optional[str] = None
     # Video generation parameters (user-selected at generation time)
     # Used to save video_config to user subtask.result for display
     generate_params: Optional[Dict[str, Any]] = None
@@ -333,7 +335,7 @@ def create_new_task(
             "labels": {
                 "type": "online",
                 "taskType": task_type,
-                "autoDeleteExecutor": "false",
+                "autoDeleteExecutor": params.auto_delete_executor or "false",
                 "source": params.source,
                 **({"is_api_call": "true"} if params.is_api_call else {}),
                 **({"modelId": params.model_id} if params.model_id else {}),
