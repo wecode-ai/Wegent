@@ -19,6 +19,7 @@ export function WorkbenchPage() {
     startStandaloneChat,
     startNewProjectChat,
     openTask,
+    refreshDevices,
     createProject,
     updateProjectName,
     removeProject,
@@ -62,6 +63,7 @@ export function WorkbenchPage() {
       onSelectProject={selectProject}
       onStartNewProjectChat={startNewProjectChat}
       onOpenTask={openTask}
+      onRefreshDevices={refreshDevices}
       onCreateProject={createProject}
       onUpdateProjectName={updateProjectName}
       onRemoveProject={removeProject}
