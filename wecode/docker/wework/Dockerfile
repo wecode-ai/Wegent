@@ -6,12 +6,17 @@
 FROM registry.api.weibo.com/wecode/node:22-slim AS builder
 
 WORKDIR /app
+ARG VITE_APP_BASE_PATH=/wework/
 
 RUN npm config set registry http://registry.npmmirror.com
 COPY wework/package.json wework/package-lock.json ./
 RUN npm ci
 COPY wework .
-RUN npm run build
+
+ENV VITE_LOGIN_MODE=oidc
+ENV VITE_OIDC_LOGIN_TEXT="使用 CAS 登录"
+
+RUN VITE_APP_BASE_PATH="${VITE_APP_BASE_PATH}" npm run build
 
 # ---- Production runtime stage ----
 FROM registry.api.weibo.com/hongyu9/nginx:1.25-alpine
