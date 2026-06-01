@@ -76,6 +76,7 @@ export interface WorkbenchContextValue {
   startNewProjectChat: (projectId: number) => void
   openTask: (taskId: number, projectId?: number) => Promise<void>
   refreshWorkLists: () => Promise<void>
+  refreshDevices: () => Promise<void>
   createProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   updateProjectName: (projectId: number, name: string) => Promise<void>
   removeProject: (projectId: number) => Promise<void>
@@ -311,8 +312,27 @@ export function WorkbenchProvider({
     })
   }, [resolvedServices, state.standaloneDeviceId])
 
+  const refreshDevices = useCallback(async () => {
+    const devices = await resolvedServices.deviceApi.listDevices()
+    dispatch({
+      type: 'devices_refreshed',
+      devices,
+      standaloneDeviceId: getPreferredStandaloneDeviceId(
+        devices,
+        state.standaloneDeviceId
+      ),
+    })
+  }, [resolvedServices, state.standaloneDeviceId])
+
   useEffect(() => {
+    const handleDeviceChanged = () => {
+      void refreshDevices()
+    }
+
     return resolvedServices.chatStream.subscribe({
+      onDeviceOnline: handleDeviceChanged,
+      onDeviceOffline: handleDeviceChanged,
+      onDeviceStatus: handleDeviceChanged,
       onChatStart: payload => {
         dispatch({
           type: 'task_status_changed',
@@ -391,7 +411,7 @@ export function WorkbenchProvider({
         })
       },
     })
-  }, [resolvedServices])
+  }, [refreshDevices, resolvedServices])
 
   const selectProject = useCallback(
     (projectId: number | null) => {
@@ -777,6 +797,7 @@ export function WorkbenchProvider({
     startNewProjectChat,
     openTask,
     refreshWorkLists,
+    refreshDevices,
     createProject,
     updateProjectName,
     removeProject,
