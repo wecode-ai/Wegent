@@ -5,7 +5,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import { useTaskContext } from '../../contexts/taskContext'
-import { Task } from '@/types/api'
+import type { Task } from '@/types/api'
 import { useChatStreamContext } from '../../contexts/chatStreamContext'
 import { useSocket } from '@/contexts/SocketContext'
 import { useDevices } from '@/contexts/DeviceContext'
@@ -40,6 +40,10 @@ import type {
 } from '@/types/api'
 import type { ContextItem } from '@/types/context'
 import type { SkillRef } from '../../hooks/useSkillSelector'
+
+function isVirtualKnowledgeBasePath(path: string): boolean {
+  return path.startsWith('/knowledge/') && !path.startsWith('/knowledge/document/')
+}
 
 export interface UseChatStreamHandlersOptions {
   // Team and model
@@ -259,9 +263,7 @@ export function useChatStreamHandlers({
       const params = new URLSearchParams(Array.from(searchParams.entries()))
       params.set('taskId', String(taskId))
       const currentPath = window.location.pathname || pathname || ''
-      const hasVirtualKbPath =
-        currentPath.startsWith('/knowledge/') && !currentPath.startsWith('/knowledge/document/')
-      if (!hasVirtualKbPath) {
+      if (!isVirtualKnowledgeBasePath(currentPath)) {
         params.set('kb', String(kbId))
       }
       window.history.replaceState({}, '', `?${params.toString()}`)
