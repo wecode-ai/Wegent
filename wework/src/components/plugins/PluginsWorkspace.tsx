@@ -783,11 +783,11 @@ export function PluginsWorkspace() {
     ) : null
 
   return (
-    <main className="min-w-0 flex-1 overflow-y-auto bg-base px-8 py-5 text-text-primary">
-      <div className="mx-auto flex w-full max-w-[1000px] flex-col gap-10">
-        <header className="flex items-start justify-between">
+    <main className="min-w-0 flex-1 overflow-y-auto bg-base px-4 pb-5 pt-20 text-text-primary sm:px-8 sm:py-5">
+      <div className="mx-auto flex w-full max-w-[1000px] flex-col gap-8 sm:gap-10">
+        <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div
-            className="inline-flex rounded-2xl bg-surface p-1"
+            className="inline-flex w-fit rounded-2xl bg-surface p-1"
             role="tablist"
           >
             <button
@@ -810,7 +810,7 @@ export function PluginsWorkspace() {
             </button>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 overflow-x-auto">
             <button
               type="button"
               data-testid="plugins-manage-button"
@@ -842,11 +842,11 @@ export function PluginsWorkspace() {
           </div>
         </header>
 
-        <section className="flex flex-col items-center gap-8 pt-3">
-          <h1 className="text-center text-[38px] font-medium leading-tight tracking-normal">
+        <section className="flex flex-col items-center gap-6 pt-3 sm:gap-8">
+          <h1 className="max-w-[12em] text-center text-3xl font-medium leading-tight tracking-normal sm:max-w-none sm:text-[38px]">
             {t('workbench.plugins_title', '让 Codex 按你的方式工作')}
           </h1>
-          <div className="flex w-full max-w-[760px] gap-3">
+          <div className="flex w-full max-w-[760px] flex-col gap-3 sm:flex-row">
             <label className="relative min-w-0 flex-1">
               <span className="sr-only">
                 {t('workbench.plugins_search_placeholder', '搜索技能')}

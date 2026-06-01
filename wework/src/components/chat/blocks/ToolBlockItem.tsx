@@ -12,14 +12,14 @@ export function ToolBlockItem({ block }: ToolBlockItemProps) {
   const { icon, label } = getBlockLabel(block)
 
   return (
-    <div className="text-sm">
+    <div className="min-w-0 overflow-x-hidden text-sm">
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-1.5 text-[#666] hover:text-[#1a1a1a]"
+        className="flex max-w-full items-center gap-1.5 text-[#666] hover:text-[#1a1a1a]"
       >
         {icon}
-        <span>{label}</span>
+        <span className="min-w-0 truncate">{label}</span>
         {isRunning && <span className="animate-pulse text-xs">...</span>}
         <svg
           className={`h-3 w-3 transition-transform ${expanded ? '' : '-rotate-90'}`}
@@ -32,7 +32,7 @@ export function ToolBlockItem({ block }: ToolBlockItemProps) {
         </svg>
       </button>
       {expanded && (
-        <div className="mt-2">
+        <div className="mt-2 min-w-0 overflow-x-hidden">
           {renderBlockDetail(block)}
         </div>
       )}
@@ -114,7 +114,7 @@ function renderBlockDetail(block: ToolBlock) {
   const input = block.toolInput
   if (!input) return null
   return (
-    <pre className="max-h-32 overflow-auto rounded-lg bg-[#f7f7f8] px-3 py-2 text-xs text-[#666]">
+    <pre className="max-h-32 max-w-full overflow-auto rounded-lg bg-[#f7f7f8] px-3 py-2 text-xs text-[#666]">
       {JSON.stringify(input, null, 2)}
     </pre>
   )
@@ -135,7 +135,7 @@ function BashBlockDetail({ block }: { block: ToolBlock }) {
   }
 
   return (
-    <div className="rounded-lg bg-[#f7f7f8] px-4 py-3">
+    <div className="min-w-0 overflow-x-hidden rounded-lg bg-[#f7f7f8] px-4 py-3">
       <div className="mb-2 flex items-center justify-between">
         <span className="text-xs text-[#999]">Shell</span>
         <button type="button" onClick={handleCopy} className="p-0.5 text-[#ccc] hover:text-[#999]">
@@ -151,12 +151,12 @@ function BashBlockDetail({ block }: { block: ToolBlock }) {
         </button>
       </div>
       {command && (
-        <div className="font-mono text-xs leading-5 text-[#1a1a1a]">
+        <div className="overflow-x-auto font-mono text-xs leading-5 text-[#1a1a1a]">
           <span className="text-[#999]">$ </span>{command}
         </div>
       )}
       {outputText && (
-        <pre className="mt-1 max-h-48 overflow-auto font-mono text-xs leading-5 text-[#666]">
+        <pre className="mt-1 max-h-48 max-w-full overflow-auto font-mono text-xs leading-5 text-[#666]">
           {outputText.length > 2000 ? outputText.substring(0, 2000) + '...' : outputText}
         </pre>
       )}
@@ -183,10 +183,10 @@ function FileWriteDetail({ block }: { block: ToolBlock }) {
   const filePath = getInputField(block, 'file_path', 'path')
   const content = getInputField(block, 'content', 'file_text')
   return (
-    <div className="space-y-1">
-      {filePath && <p className="text-xs text-[#999]">{filePath}</p>}
+    <div className="min-w-0 space-y-1 overflow-x-hidden">
+      {filePath && <p className="break-words text-xs text-[#999]">{filePath}</p>}
       {content && (
-        <pre className="max-h-40 overflow-auto rounded-lg bg-[#f7f7f8] px-3 py-2 text-xs leading-5 text-[#1a1a1a]">
+        <pre className="max-h-40 max-w-full overflow-auto rounded-lg bg-[#f7f7f8] px-3 py-2 text-xs leading-5 text-[#1a1a1a]">
           {content.length > 500 ? content.substring(0, 500) + '...' : content}
         </pre>
       )}
@@ -199,15 +199,15 @@ function FileEditDetail({ block }: { block: ToolBlock }) {
   const oldStr = getInputField(block, 'old_string', 'old_str')
   const newStr = getInputField(block, 'new_string', 'new_str')
   return (
-    <div className="space-y-1">
-      {filePath && <p className="text-xs text-[#999]">{filePath}</p>}
+    <div className="min-w-0 space-y-1 overflow-x-hidden">
+      {filePath && <p className="break-words text-xs text-[#999]">{filePath}</p>}
       {oldStr && (
-        <pre className="max-h-24 overflow-auto rounded-lg bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
+        <pre className="max-h-24 max-w-full overflow-auto rounded-lg bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
           {oldStr.length > 300 ? oldStr.substring(0, 300) + '...' : oldStr}
         </pre>
       )}
       {newStr && (
-        <pre className="max-h-24 overflow-auto rounded-lg bg-green-50 px-3 py-2 text-xs leading-5 text-green-700">
+        <pre className="max-h-24 max-w-full overflow-auto rounded-lg bg-green-50 px-3 py-2 text-xs leading-5 text-green-700">
           {newStr.length > 300 ? newStr.substring(0, 300) + '...' : newStr}
         </pre>
       )}
