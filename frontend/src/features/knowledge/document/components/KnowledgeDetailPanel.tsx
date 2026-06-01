@@ -193,7 +193,9 @@ export function KnowledgeDetailPanel({
       }
     }
 
-    prevKbIdRef.current = selectedKb?.id ?? null
+    if (selectedKb?.id != null) {
+      prevKbIdRef.current = selectedKb.id
+    }
   }, [selectedKb?.id, selectedKb?.kb_type, setSelectedTask])
 
   // When a notebook KB is selected, show chat interface with document panel
