@@ -4,26 +4,36 @@
 
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type ReactNode } from 'react'
 import RetrieverList from './RetrieverList'
 import { GroupSelector } from './groups/GroupSelector'
 import { listGroups } from '@/apis/groups'
 import type { BaseRole } from '@/types/base-role'
+import type { Group } from '@/types/group'
+import type { ManagedResourceSourceFilter } from '@/features/resource-library/types'
 
 interface RetrieverListWithScopeProps {
   scope: 'personal' | 'group' | 'all'
   selectedGroup?: string | null
   onGroupChange?: (groupName: string | null) => void
+  sourceControls?: ReactNode
+  sourceFilter?: ManagedResourceSourceFilter
+  groups?: Group[]
 }
 
 export function RetrieverListWithScope({
   scope,
   selectedGroup: externalSelectedGroup,
   onGroupChange,
+  sourceControls,
+  sourceFilter,
+  groups: externalGroups,
 }: RetrieverListWithScopeProps) {
   // Use external state if provided, otherwise use internal state
   const [internalSelectedGroup, setInternalSelectedGroup] = useState<string | null>(null)
   const [groupRoleMap, setGroupRoleMap] = useState<Map<string, BaseRole>>(new Map())
+  const [internalGroups, setInternalGroups] = useState<Group[]>([])
+  const groups = externalGroups ?? internalGroups
 
   const selectedGroup =
     externalSelectedGroup !== undefined ? externalSelectedGroup : internalSelectedGroup
@@ -46,6 +56,7 @@ export function RetrieverListWithScope({
             roleMap.set(group.name, group.my_role)
           }
         })
+        setInternalGroups(response.items || [])
         setGroupRoleMap(roleMap)
       })
       .catch(error => {
@@ -61,7 +72,26 @@ export function RetrieverListWithScope({
   }
 
   if (scope === 'personal') {
-    return <RetrieverList scope="personal" />
+    return (
+      <RetrieverList
+        scope="personal"
+        sourceControls={sourceControls}
+        sourceFilter={sourceFilter}
+        groups={groups}
+      />
+    )
+  }
+
+  if (scope === 'all') {
+    return (
+      <RetrieverList
+        scope="all"
+        groupRoleMap={groupRoleMap}
+        sourceControls={sourceControls}
+        sourceFilter={sourceFilter}
+        groups={groups}
+      />
+    )
   }
 
   // When selectedGroup is provided externally (from nav), don't show GroupSelector
@@ -79,6 +109,9 @@ export function RetrieverListWithScope({
         groupName={selectedGroup || undefined}
         groupRoleMap={groupRoleMap}
         onEditResource={handleEditResource}
+        sourceControls={sourceControls}
+        sourceFilter={sourceFilter}
+        groups={groups}
       />
     </div>
   )

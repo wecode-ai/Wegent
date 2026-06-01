@@ -15,6 +15,10 @@ from app.models.kind import Kind
 from app.models.subscription import BackgroundExecution
 from app.models.task import TaskResource
 from app.schemas.kind import Bot, Ghost, Task, Team
+from app.services.skill_binding_service import (
+    SkillBindingContext,
+    skill_binding_service,
+)
 from app.services.skill_resolution import (
     build_skill_ref_meta,
     find_skill_by_name,
@@ -142,6 +146,11 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
         db, task_owner_id, KindType.TEAM, team_namespace, team_name
     )
     team_owner_id = _resolve_team_owner_id(task=task, task_crd=task_crd, team=team)
+    binding_context = _build_skill_binding_context(
+        task=task,
+        task_crd=task_crd,
+        team=team,
+    )
     if not team:
         logger.warning(
             "[get_task_skills] Team not found for task %s: namespace=%s, name=%s",
@@ -152,6 +161,17 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
         fallback_skills = list(user_selected_skills)
         fallback_skill_refs: Dict[str, Dict[str, Any]] = {}
         fallback_preload_skill_refs: Dict[str, Dict[str, Any]] = {}
+        fallback_preload_skills = set(fallback_skills)
+        _merge_user_default_skill_refs(
+            db,
+            user_id=user_id,
+            skills=set(fallback_skills),
+            skill_refs=fallback_skill_refs,
+            preload_skills=fallback_preload_skills,
+            preload_skill_refs=fallback_preload_skill_refs,
+            context=binding_context,
+        )
+        fallback_skills = list(fallback_skill_refs.keys() | set(fallback_skills))
         for requested_ref in requested_skill_refs:
             skill_name = requested_ref["name"]
             if skill_name not in fallback_skills:
@@ -167,13 +187,14 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
             if skill:
                 ref_meta = build_skill_ref_meta(skill)
                 fallback_skill_refs[skill_name] = ref_meta
+                fallback_preload_skills.add(skill_name)
                 fallback_preload_skill_refs[skill_name] = ref_meta
         return {
             "task_id": task_id,
             "team_id": None,
             "team_namespace": team_namespace,
             "skills": fallback_skills,
-            "preload_skills": fallback_skills,
+            "preload_skills": sorted(fallback_preload_skills),
             "skill_refs": fallback_skill_refs,
             "preload_skill_refs": fallback_preload_skill_refs,
         }
@@ -276,6 +297,16 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
                     requested_ref.is_public,
                 )
 
+    _merge_user_default_skill_refs(
+        db,
+        user_id=user_id,
+        skills=all_skills,
+        skill_refs=skill_refs,
+        preload_skills=all_preload_skills,
+        preload_skill_refs=preload_skill_refs,
+        context=binding_context,
+    )
+
     if requested_skill_refs:
         for requested_ref in requested_skill_refs:
             skill_name = requested_ref["name"]
@@ -337,6 +368,50 @@ def resolve_task_skills(db: Session, *, task_id: int, user_id: int) -> Dict[str,
         "skill_refs": skill_refs,
         "preload_skill_refs": preload_skill_refs,
     }
+
+
+def _merge_user_default_skill_refs(
+    db: Session,
+    *,
+    user_id: int,
+    skills: set[str],
+    skill_refs: Dict[str, Dict[str, Any]],
+    preload_skills: set[str],
+    preload_skill_refs: Dict[str, Dict[str, Any]],
+    context: SkillBindingContext,
+) -> None:
+    """Merge the user's automatic Skill bindings into available/preloaded Skills."""
+    for ref in skill_binding_service.list_user_default_skill_refs(
+        db,
+        user_id,
+        context=context,
+    ):
+        skill_name = ref["name"]
+        skills.add(skill_name)
+        if skill_name not in skill_refs:
+            skill_refs[skill_name] = {
+                "skill_id": ref["skill_id"],
+                "namespace": ref.get("namespace", "default"),
+                "is_public": ref.get("is_public", False),
+            }
+        if ref.get("force_preload"):
+            preload_skills.add(skill_name)
+            preload_skill_refs[skill_name] = skill_refs[skill_name]
+
+
+def _derive_task_mode(task_crd: Task) -> str:
+    labels = task_crd.metadata.labels or {}
+    return str(labels.get("taskType") or labels.get("type") or "chat")
+
+
+def _build_skill_binding_context(
+    *, task: TaskResource, task_crd: Task, team: Kind | None
+) -> SkillBindingContext:
+    return SkillBindingContext(
+        mode=_derive_task_mode(task_crd),
+        agent_id=team.id if team else None,
+        project_id=getattr(task, "project_id", None),
+    )
 
 
 def _resolve_team_owner_id(

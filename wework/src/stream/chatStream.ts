@@ -18,6 +18,9 @@ export interface ChatStreamHandlers {
   onChatError?: (payload: ChatErrorPayload) => void
   onBlockCreated?: (payload: ChatBlockCreatedPayload) => void
   onBlockUpdated?: (payload: ChatBlockUpdatedPayload) => void
+  onDeviceOnline?: (payload: unknown) => void
+  onDeviceOffline?: (payload: unknown) => void
+  onDeviceStatus?: (payload: unknown) => void
 }
 
 const SEND_TIMEOUT_MS = 30_000
@@ -68,6 +71,9 @@ export function createChatStream(socket: Pick<WorkbenchSocket, 'emit' | 'on' | '
       if (handlers.onChatError) socket.on('chat:error', handlers.onChatError)
       if (handlers.onBlockCreated) socket.on('chat:block_created', handlers.onBlockCreated)
       if (handlers.onBlockUpdated) socket.on('chat:block_updated', handlers.onBlockUpdated)
+      if (handlers.onDeviceOnline) socket.on('device:online', handlers.onDeviceOnline)
+      if (handlers.onDeviceOffline) socket.on('device:offline', handlers.onDeviceOffline)
+      if (handlers.onDeviceStatus) socket.on('device:status', handlers.onDeviceStatus)
 
       return () => {
         if (handlers.onChatStart) socket.off('chat:start', handlers.onChatStart)
@@ -76,6 +82,9 @@ export function createChatStream(socket: Pick<WorkbenchSocket, 'emit' | 'on' | '
         if (handlers.onChatError) socket.off('chat:error', handlers.onChatError)
         if (handlers.onBlockCreated) socket.off('chat:block_created', handlers.onBlockCreated)
         if (handlers.onBlockUpdated) socket.off('chat:block_updated', handlers.onBlockUpdated)
+        if (handlers.onDeviceOnline) socket.off('device:online', handlers.onDeviceOnline)
+        if (handlers.onDeviceOffline) socket.off('device:offline', handlers.onDeviceOffline)
+        if (handlers.onDeviceStatus) socket.off('device:status', handlers.onDeviceStatus)
       }
     },
   }

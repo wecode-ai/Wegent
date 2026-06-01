@@ -9,7 +9,7 @@ import { Team } from '@/types/api'
 /**
  * Get team list
  * @param scope - Resource scope: 'personal', 'group', or 'all'
- * @param groupName - Group name (required when scope is 'group')
+ * @param groupName - Optional group name. When omitted with group scope, all accessible groups are returned.
  */
 export async function fetchTeamsList(
   scope?: 'personal' | 'group' | 'all',

@@ -244,7 +244,7 @@ export const modelApis = {
    * @param shellType - Optional shell type to filter compatible models
    * @param includeConfig - Whether to include full model config in response
    * @param scope - Resource scope: 'personal', 'group', or 'all'
-   * @param groupName - Group name (required when scope is 'group')
+   * @param groupName - Optional group name. When omitted with group scope, all accessible groups are returned.
    * @param modelCategoryType - Optional model category type filter (llm, tts, stt, embedding, rerank)
    */
   async getUnifiedModels(
@@ -293,7 +293,7 @@ export const modelApis = {
   /**
    * Get all models as CRD resources (user's own models)
    * @param scope - Resource scope: 'personal', 'group', or 'all'
-   * @param groupName - Group name (also used as namespace when scope is 'group')
+   * @param groupName - Optional group name. Also used as namespace when creating in group scope.
    */
   async getAllModels(
     scope?: 'personal' | 'group' | 'all',

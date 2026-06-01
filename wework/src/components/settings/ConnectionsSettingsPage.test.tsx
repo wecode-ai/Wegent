@@ -133,4 +133,33 @@ describe('ConnectionsSettingsPage', () => {
     expect(api.restartCloudDevice).toHaveBeenCalledWith('device-1')
     expect(api.deleteCloudDevice).toHaveBeenCalledWith('device-1')
   })
+
+  test('only lists cloud Claude Code devices', async () => {
+    api.getAllDevices.mockResolvedValue([
+      cloudDevice({
+        device_id: 'cloud-claude',
+        name: 'Cloud Claude Device',
+        device_type: 'cloud',
+        bind_shell: 'claudecode',
+      }),
+      cloudDevice({
+        device_id: 'cloud-openclaw',
+        name: 'Cloud OpenClaw Device',
+        device_type: 'cloud',
+        bind_shell: 'openclaw',
+      }),
+      cloudDevice({
+        device_id: 'local-claude',
+        name: 'Local Claude Device',
+        device_type: 'local',
+        bind_shell: 'claudecode',
+      }),
+    ])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    expect(await screen.findByText('Cloud Claude Device')).toBeInTheDocument()
+    expect(screen.queryByText('Cloud OpenClaw Device')).not.toBeInTheDocument()
+    expect(screen.queryByText('Local Claude Device')).not.toBeInTheDocument()
+  })
 })

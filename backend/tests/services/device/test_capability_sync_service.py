@@ -96,3 +96,60 @@ def test_resolve_payload_rejects_unauthorized_skill(test_db):
         )
 
     assert exc.value.status_code == 404
+
+
+def test_resolve_payload_includes_selected_installed_plugins(test_db):
+    installed = Kind(
+        id=301,
+        user_id=7,
+        kind="InstalledPlugin",
+        name="context7",
+        namespace="default",
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "InstalledPlugin",
+            "metadata": {"name": "context7", "namespace": "default"},
+            "spec": {
+                "source": {
+                    "type": "marketplace",
+                    "marketplace": "claude-plugins-official",
+                    "plugin": "context7",
+                },
+                "marketplace": "claude-plugins-official",
+                "version": "1057d02c5307",
+                "displayName": "Context7",
+                "description": "Docs lookup",
+                "installState": "installed",
+                "enabled": True,
+            },
+        },
+    )
+    test_db.add(installed)
+    test_db.flush()
+    user = User(id=7, user_name="alice")
+
+    resolved = device_capability_sync_service.resolve_payload(
+        test_db,
+        user=user,
+        skill_ids=[],
+        installed_plugin_ids=[301],
+        mcp_ids=[],
+        mode="merge",
+    )
+
+    assert resolved["plugins"] == [
+        {
+            "installed_plugin_id": 301,
+            "name": "context7",
+            "display_name": "Context7",
+            "description": "Docs lookup",
+            "marketplace": "claude-plugins-official",
+            "version": "1057d02c5307",
+            "source": {
+                "type": "marketplace",
+                "marketplace": "claude-plugins-official",
+                "plugin": "context7",
+            },
+        }
+    ]

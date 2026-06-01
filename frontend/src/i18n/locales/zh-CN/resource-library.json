@@ -15,9 +15,24 @@
     "retriever": "检索器"
   },
   "scopes": {
-    "personal": "个人资源",
-    "group": "组资源",
+    "personal": "我创建的",
+    "group": "团队共享",
     "group_placeholder": "选择组"
+  },
+  "sources": {
+    "all": "全部",
+    "personal": "我创建的",
+    "group": "团队",
+    "system": "系统",
+    "all_groups": "全部团队"
+  },
+  "targets": {
+    "personal": "我的资源",
+    "personal_description": "仅你可见和管理",
+    "personal_section": "个人",
+    "group_description": "团队成员可见，按团队权限管理",
+    "group_section": "团队",
+    "select": "选择"
   },
   "actions": {
     "install": "安装",
@@ -30,6 +45,10 @@
     "details": "详情",
     "manage_groups": "管理...",
     "retry": "重试",
+    "create_to_personal": "创建到我的资源",
+    "create_to_group": "创建到 {{group}}",
+    "choose_create_target": "{{action}}保存到哪里？",
+    "choose_create_target_description": "保存位置会影响谁能看到和管理这个资源。",
     "search": "搜索",
     "close": "关闭",
     "cancel": "取消"
@@ -47,6 +66,7 @@
     "description": "描述",
     "tags": "标签",
     "type": "资源类型",
+    "source": "来源",
     "source_id": "源资源 ID",
     "version": "版本",
     "publisher": "发布者",
@@ -65,7 +85,9 @@
     "no_groups": "暂无组资源"
   },
   "search": {
-    "placeholder": "搜索资源"
+    "placeholder": "搜索资源",
+    "groups_placeholder": "搜索团队",
+    "groups_empty": "没有匹配的团队"
   },
   "messages": {
     "install_success": "安装成功",

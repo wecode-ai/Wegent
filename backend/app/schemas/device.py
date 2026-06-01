@@ -199,6 +199,10 @@ class DeviceCapabilitySyncRequest(BaseModel):
         default_factory=list,
         description="InstalledMCP Kind IDs to resolve and sync.",
     )
+    installed_plugin_ids: List[int] = Field(
+        default_factory=list,
+        description="InstalledPlugin Kind IDs to resolve and sync.",
+    )
     mcp_ids: List[str] = Field(
         default_factory=list,
         description="Deprecated server-key based MCP IDs; use installed_mcp_ids.",
@@ -226,6 +230,7 @@ class DeviceCapabilitySyncResult(BaseModel):
     success: bool
     error: Optional[str] = None
     skills: List[DeviceCapabilityItemResult] = Field(default_factory=list)
+    plugins: List[DeviceCapabilityItemResult] = Field(default_factory=list)
     mcps: List[DeviceCapabilityItemResult] = Field(default_factory=list)
     errors: List[Dict[str, Any]] = Field(default_factory=list)
 
@@ -237,6 +242,7 @@ class DeviceCapabilitySyncResponse(BaseModel):
     device_id: str = ""
     mode: Literal["merge", "replace"] = "merge"
     skills: List[DeviceCapabilityItemResult] = Field(default_factory=list)
+    plugins: List[DeviceCapabilityItemResult] = Field(default_factory=list)
     mcps: List[DeviceCapabilityItemResult] = Field(default_factory=list)
     errors: List[Dict[str, Any]] = Field(default_factory=list)
     synced: int = 0

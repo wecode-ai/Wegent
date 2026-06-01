@@ -15,9 +15,24 @@
     "retriever": "Retriever"
   },
   "scopes": {
-    "personal": "Personal Resources",
-    "group": "Group Resources",
+    "personal": "Created by me",
+    "group": "Team shared",
     "group_placeholder": "Select group"
+  },
+  "sources": {
+    "all": "All",
+    "personal": "Created by me",
+    "group": "Team",
+    "system": "System",
+    "all_groups": "All teams"
+  },
+  "targets": {
+    "personal": "My Resources",
+    "personal_description": "Only you can see and manage it.",
+    "personal_section": "Personal",
+    "group_description": "Team members can see it and manage it by team permissions.",
+    "group_section": "Team",
+    "select": "Select"
   },
   "actions": {
     "install": "Install",
@@ -30,6 +45,10 @@
     "details": "Details",
     "manage_groups": "Manage...",
     "retry": "Retry",
+    "create_to_personal": "Create in My Resources",
+    "create_to_group": "Create in {{group}}",
+    "choose_create_target": "Where should {{action}} be saved?",
+    "choose_create_target_description": "The save location controls who can see and manage this resource.",
     "search": "Search",
     "close": "Close",
     "cancel": "Cancel"
@@ -47,6 +66,7 @@
     "description": "Description",
     "tags": "Tags",
     "type": "Resource type",
+    "source": "Source",
     "source_id": "Source resource ID",
     "version": "Version",
     "publisher": "Publisher",
@@ -65,7 +85,9 @@
     "no_groups": "No group resources"
   },
   "search": {
-    "placeholder": "Search resources"
+    "placeholder": "Search resources",
+    "groups_placeholder": "Search teams",
+    "groups_empty": "No matching teams"
   },
   "messages": {
     "install_success": "Installed",

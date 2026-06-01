@@ -12,6 +12,7 @@ import '@/features/common/scrollbar.css'
 import { paths } from '@/config/paths'
 import ResourceLibraryPage from '@/features/resource-library/ResourceLibraryPage'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
+import { useTranslation } from '@/hooks/useTranslation'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
   CollapsedSidebarButtons,
@@ -20,7 +21,6 @@ import {
 } from '@/features/tasks/components/sidebar'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
-import { useTranslation } from '@/hooks/useTranslation'
 
 export default function Page() {
   const router = useRouter()
