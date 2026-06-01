@@ -20,12 +20,10 @@ import {
 } from '@/features/tasks/components/sidebar'
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
-import { useTranslation } from '@/hooks/useTranslation'
 
 export default function Page() {
   const router = useRouter()
   const isMobile = useIsMobile()
-  const { t } = useTranslation('resource-library')
   const { clearAllStreams } = useChatStreamContext()
   const { setSelectedTask } = useTaskContext()
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
@@ -71,7 +69,6 @@ export default function Page() {
       <div className="flex min-w-0 flex-1 flex-col">
         <TopNavigation
           variant="with-sidebar"
-          title={t('title')}
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           isSidebarCollapsed={isCollapsed}
         />

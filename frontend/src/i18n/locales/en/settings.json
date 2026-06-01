@@ -96,7 +96,87 @@
     "private_skill": "Private",
     "search_failed": "Search failed",
     "request_permission": "Request Permission",
-    "go_to_market": "Go to Market"
+    "go_to_market": "Go to Market",
+    "libraryTitle": "Skill Library",
+    "libraryDescription": "Upload and manage skills. Skills can be auto-enabled for your conversations or bound to agents as built-in capabilities.",
+    "defaultEnabled": {
+      "title": "Auto-Enabled Skills",
+      "description": "These skills automatically take effect in all your conversations. You can add exceptions for modes or agents.",
+      "add": "Add",
+      "settings": "Manage",
+      "summaryCount": "{{count}} enabled",
+      "overflowCount": "+{{count}}",
+      "addDialogTitle": "Add Auto-Enabled Skill",
+      "addDialogDescription": "Choose from all skills available to you and enable them automatically.",
+      "emptyTitle": "No auto-enabled skills yet",
+      "emptyDescription": "Set a skill to auto-enable from the Skill Library, and it will be added to your conversations automatically.",
+      "noAvailableToAdd": "No skills are available to add."
+    },
+    "availability": {
+      "inMyDefault": "Auto-Enabled",
+      "notInMyDefault": "Not Auto-Enabled",
+      "addToMyDefault": "Auto-Enable",
+      "removeFromMyDefault": "Stop Auto-Enabling",
+      "addSuccess": "Skill will auto-enable",
+      "removeSuccess": "Skill will no longer auto-enable",
+      "updateFailed": "Failed to update auto-enabled skills",
+      "groupScopeHint": "Only affects you. Other group members are unchanged."
+    },
+    "autoSettings": {
+      "title": "Auto-Enable Settings",
+      "description": "Manage exception scenarios by Skill.",
+      "back": "Back to Skill Library",
+      "allConversations": "Auto-enabled in all conversations",
+      "exceptionCount": "{{count}} exceptions",
+      "noExceptions": "No exceptions",
+      "skillColumn": "Skill",
+      "modeColumn": "Enabled Modes",
+      "agentColumn": "Enabled Agents",
+      "exceptionColumn": "Exceptions",
+      "actionColumn": "Action",
+      "configure": "Configure",
+      "configureSkill": "Configure {{name}}",
+      "allModesEnabled": "All modes",
+      "enabledModeCount": "{{enabled}}/{{total}} modes enabled",
+      "allAgentsEnabled": "All agents",
+      "enabledAgentCount": "{{enabled}}/{{total}} agents enabled",
+      "noAgentsAvailable": "No agents available",
+      "modeExceptions": "Enabled modes",
+      "agentExceptions": "Enabled agents",
+      "drawerDescription": "These exceptions only affect your own automatic Skill settings.",
+      "defaultScopeTitle": "Auto-enabled by default",
+      "defaultScopeDescription": "Enabled for every mode and agent by default. Unchecked items become exceptions.",
+      "forcePreload": "Force Activate",
+      "forcePreloadDescription": "When enabled, this Skill is injected into context directly instead of waiting for on-demand loading.",
+      "forcePreloadBadge": "Force Activate",
+      "modeEnableLabel": "Enable {{mode}} mode",
+      "agentEnableLabel": "Enable {{name}}",
+      "agentGroupEnableLabel": "Enable all {{group}}",
+      "agentGroups": {
+        "personal": "My Agents",
+        "group": "Team Agents",
+        "system": "System Agents"
+      },
+      "emptyAgentGroup": "No agents",
+      "clearExceptions": "Enable All",
+      "save": "Save Settings",
+      "saveSuccess": "Auto-enable settings saved",
+      "saveFailed": "Failed to save auto-enable settings",
+      "modes": {
+        "chat": "Chat",
+        "code": "Code",
+        "knowledge": "Knowledge",
+        "task": "Task",
+        "video": "Video",
+        "image": "Image"
+      }
+    },
+    "source": {
+      "personal": "My Skill",
+      "group": "Team Skill",
+      "system": "System Skill",
+      "library": "Library Skill"
+    }
   },
   "bot": {
     "allowed_models": {

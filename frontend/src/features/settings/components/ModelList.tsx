@@ -5,10 +5,9 @@
 'use client'
 import '@/features/common/scrollbar.css'
 
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { Tag } from '@/components/ui/tag'
 import { ResourceListItem } from '@/components/common/ResourceListItem'
 import {
   CpuChipIcon,
@@ -31,16 +30,16 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { modelApis, ModelCRD, UnifiedModel, ModelCategoryType } from '@/apis/models'
-import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 import type { BaseRole } from '@/types/base-role'
+import type { Group } from '@/types/group'
+import type { ManagedResourceSourceFilter } from '@/features/resource-library/types'
+import {
+  hasResourceCreateTargets,
+  ResourceCreateButton,
+  type ResourceCreateTarget,
+} from '@/features/resource-library/components/ResourceCreateButton'
+import { ResourceManagementLayout } from './resource-management/ResourceManagementLayout'
 
 // Model category type filter options
 const MODEL_CATEGORY_FILTER_OPTIONS: { value: ModelCategoryType | 'all'; labelKey: string }[] = [
@@ -73,6 +72,7 @@ interface DisplayModel {
   modelId: string
   isPublic: boolean
   isGroup: boolean // Whether it's a group resource
+  sourceType: UnifiedModel['type']
   namespace: string // Resource namespace (group name or 'default')
   config: Record<string, unknown> // Full config from unified API
   modelCategoryType: ModelCategoryType // Model category type: llm, tts, stt, embedding, rerank
@@ -83,6 +83,9 @@ interface ModelListProps {
   groupName?: string
   groupRoleMap?: Map<string, BaseRole>
   onEditResource?: (namespace: string) => void
+  sourceControls?: ReactNode
+  sourceFilter?: ManagedResourceSourceFilter
+  groups?: Group[]
 }
 
 const ModelList: React.FC<ModelListProps> = ({
@@ -90,6 +93,9 @@ const ModelList: React.FC<ModelListProps> = ({
   groupName,
   groupRoleMap,
   onEditResource,
+  sourceControls,
+  sourceFilter = 'all',
+  groups = [],
 }) => {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -102,6 +108,7 @@ const ModelList: React.FC<ModelListProps> = ({
   const [testingModelName, setTestingModelName] = useState<string | null>(null)
   const [loadingModelName, setLoadingModelName] = useState<string | null>(null)
   const [categoryFilter, setCategoryFilter] = useState<ModelCategoryType | 'all'>('all')
+  const [createTarget, setCreateTarget] = useState<ResourceCreateTarget>({ scope: 'personal' })
 
   const fetchModels = useCallback(async () => {
     setLoading(true)
@@ -133,48 +140,42 @@ const ModelList: React.FC<ModelListProps> = ({
   }, [fetchModels])
 
   // Convert unified models to display format and categorize
-  const { groupModels, publicModels, userModels } = React.useMemo(() => {
-    const group: DisplayModel[] = []
-    const publicList: DisplayModel[] = []
-    const user: DisplayModel[] = []
+  const sourceFilteredModels = React.useMemo(() => {
+    if (sourceFilter === 'personal') {
+      return unifiedModels.filter(model => model.type === 'user')
+    }
+    if (sourceFilter === 'group') {
+      return unifiedModels.filter(model => model.type === 'group')
+    }
+    if (sourceFilter === 'system') {
+      return unifiedModels.filter(model => model.type === 'public')
+    }
+    return unifiedModels
+  }, [unifiedModels, sourceFilter])
 
-    for (const model of unifiedModels) {
+  const displayModels = React.useMemo(() => {
+    return sourceFilteredModels.map(model => {
+      const config = (model.config as Record<string, unknown>) || {}
+      const env = (config?.env as Record<string, unknown>) || {}
       const isPublic = model.type === 'public'
       const isGroup = model.type === 'group'
 
-      // Extract config info from unified model
-      const config = (model.config as Record<string, unknown>) || {}
-      const env = (config?.env as Record<string, unknown>) || {}
-
-      const displayModel: DisplayModel = {
+      return {
         name: model.name,
         displayName: model.displayName || model.name,
         modelType: model.provider || (env.model as string) || 'claude',
         modelId: model.modelId || (env.model_id as string) || '',
         isPublic,
         isGroup,
+        sourceType: model.type,
         namespace: model.namespace || 'default',
         config,
         modelCategoryType: (model.modelCategoryType as ModelCategoryType) || 'llm',
       }
+    })
+  }, [sourceFilteredModels])
 
-      if (isGroup) {
-        group.push(displayModel)
-      } else if (isPublic) {
-        publicList.push(displayModel)
-      } else {
-        user.push(displayModel)
-      }
-    }
-
-    return {
-      groupModels: group,
-      publicModels: publicList,
-      userModels: user,
-    }
-  }, [unifiedModels])
-
-  const totalModels = groupModels.length + publicModels.length + userModels.length
+  const totalModels = displayModels.length
 
   // Helper function to check permissions for a specific group resource
   const canEditGroupResource = (namespace: string) => {
@@ -189,13 +190,6 @@ const ModelList: React.FC<ModelListProps> = ({
     return role === 'Owner' || role === 'Maintainer'
   }
 
-  // Check if user can create in the current group context
-  // When scope is 'group', check the specific groupName; only Owner/Maintainer can create
-  const canCreateInCurrentGroup = (() => {
-    if (scope !== 'group' || !groupName || !groupRoleMap) return false
-    const role = groupRoleMap.get(groupName)
-    return role === 'Owner' || role === 'Maintainer'
-  })()
   // Convert DisplayModel to ModelCRD for editing
   const convertToModelCRD = (displayModel: DisplayModel): ModelCRD => {
     const env = (displayModel.config?.env as Record<string, unknown>) || {}
@@ -329,10 +323,12 @@ const ModelList: React.FC<ModelListProps> = ({
   const handleEditClose = () => {
     setEditingModel(null)
     setDialogOpen(false)
+    setCreateTarget({ scope: 'personal' })
     fetchModels()
   }
 
-  const handleCreate = () => {
+  const handleCreate = (target: ResourceCreateTarget) => {
+    setCreateTarget(target)
     setEditingModel(null)
     setDialogOpen(true)
   }
@@ -348,51 +344,84 @@ const ModelList: React.FC<ModelListProps> = ({
     }
   }
 
-  return (
-    <div className="space-y-3">
-      {/* Header */}
-      <div className="flex items-start justify-between">
-        <div>
-          <h2
-            className="text-xl font-semibold text-text-primary mb-1"
-            data-testid="model-management-title"
-          >
-            {t('common:models.title')}
-          </h2>
-          <p className="text-sm text-text-muted mb-1">{t('common:models.description')}</p>
-        </div>
-        {/* Category Filter */}
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-text-muted">
-            {t('common:models.filter_by_category_type')}:
-          </span>
-          <Select
-            value={categoryFilter}
-            onValueChange={(value: ModelCategoryType | 'all') => setCategoryFilter(value)}
-          >
-            <SelectTrigger className="w-48 bg-base">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {MODEL_CATEGORY_FILTER_OPTIONS.map(option => (
-                <SelectItem key={option.value} value={option.value}>
-                  {t(option.labelKey)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
+  const getSourceLabel = (displayModel: DisplayModel) => {
+    if (displayModel.isPublic) return t('common:models.public')
+    if (displayModel.isGroup) return t('common:models.group')
+    return t('common:models.my_models')
+  }
 
-      {/* Content Container */}
-      <div className="bg-base border border-border rounded-md p-2 w-full max-h-[70vh] flex flex-col overflow-y-auto custom-scrollbar">
-        {/* Loading State */}
+  const canEditModel = (displayModel: DisplayModel) => {
+    if (displayModel.isPublic) return false
+    if (displayModel.isGroup) return canEditGroupResource(displayModel.namespace)
+    return true
+  }
+
+  const canDeleteModel = (displayModel: DisplayModel) => {
+    if (displayModel.isPublic) return false
+    if (displayModel.isGroup) return canDeleteGroupResource(displayModel.namespace)
+    return true
+  }
+
+  const createAction = hasResourceCreateTargets({ scope, groupName, sourceFilter, groups }) ? (
+    <ResourceCreateButton
+      label={t('common:models.create')}
+      scope={scope}
+      groupName={groupName}
+      sourceFilter={sourceFilter}
+      groups={groups}
+      onCreate={handleCreate}
+      data-testid="create-model-button"
+    />
+  ) : null
+
+  const categoryFilterControls = (
+    <div
+      className="flex flex-col gap-2 sm:flex-row sm:items-center"
+      data-testid="model-category-filter"
+    >
+      <span className="text-xs font-medium text-text-muted">
+        {t('common:models.filter_by_category_type')}
+      </span>
+      <div className="flex flex-wrap items-center gap-2">
+        {MODEL_CATEGORY_FILTER_OPTIONS.map(option => (
+          <Button
+            key={option.value}
+            type="button"
+            variant={categoryFilter === option.value ? 'primary' : 'outline'}
+            aria-pressed={categoryFilter === option.value}
+            onClick={() => setCategoryFilter(option.value)}
+            className="h-11 min-w-[44px] px-4 lg:h-9"
+            data-testid={`model-category-filter-${option.value}`}
+          >
+            {t(option.labelKey)}
+          </Button>
+        ))}
+      </div>
+    </div>
+  )
+
+  const filters = (
+    <>
+      {sourceControls}
+      {categoryFilterControls}
+    </>
+  )
+
+  return (
+    <>
+      <ResourceManagementLayout
+        title={t('common:models.title')}
+        description={t('common:models.description')}
+        actions={createAction}
+        filters={filters}
+        titleTestId="model-management-title"
+      >
         {loading && (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="w-6 h-6 animate-spin text-text-muted" />
           </div>
         )}
-        {/* Empty State */}
+
         {!loading && totalModels === 0 && (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <CpuChipIcon className="w-12 h-12 text-text-muted mb-4" />
@@ -401,246 +430,121 @@ const ModelList: React.FC<ModelListProps> = ({
           </div>
         )}
 
-        {/* Model List - Categorized */}
         {!loading && totalModels > 0 && (
-          <>
-            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-4 p-1">
-              {/* User Models Section - 我的模型放在最上面 */}
-              {userModels.length > 0 && (
-                <div className="space-y-2">
-                  <h3 className="text-sm font-medium text-text-secondary px-2">
-                    {t('common:models.my_models')} ({userModels.length})
-                  </h3>
-                  <div className="space-y-3">
-                    {userModels.map(displayModel => (
-                      <Card
-                        key={`user-${displayModel.name}`}
-                        className="p-4 bg-base hover:bg-hover transition-colors"
+          <div className="space-y-3" data-testid="model-list-items">
+            {displayModels.map(displayModel => (
+              <Card
+                key={`${displayModel.sourceType}-${displayModel.namespace}-${displayModel.name}`}
+                className="overflow-hidden bg-base p-3 transition-colors hover:bg-hover sm:p-4"
+              >
+                <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <ResourceListItem
+                    name={displayModel.name}
+                    displayName={displayModel.displayName}
+                    showId={true}
+                    isPublic={displayModel.isPublic}
+                    publicLabel={t('common:models.public')}
+                    icon={
+                      displayModel.isPublic ? (
+                        <GlobeAltIcon className="w-5 h-5 text-primary" />
+                      ) : (
+                        <CpuChipIcon className="w-5 h-5 text-primary" />
+                      )
+                    }
+                    tags={[
+                      {
+                        key: 'source',
+                        label: getSourceLabel(displayModel),
+                        variant: displayModel.isPublic
+                          ? 'info'
+                          : displayModel.isGroup
+                            ? 'success'
+                            : 'default',
+                      },
+                      ...(displayModel.isGroup
+                        ? [
+                            {
+                              key: 'namespace',
+                              label: displayModel.namespace,
+                              variant: 'info' as const,
+                            },
+                          ]
+                        : []),
+                      {
+                        key: 'category',
+                        label: t(`models.model_category_type_${displayModel.modelCategoryType}`),
+                        variant:
+                          MODEL_CATEGORY_BADGE_VARIANT[displayModel.modelCategoryType] || 'default',
+                      },
+                      {
+                        key: 'provider',
+                        label: getProviderLabel(displayModel.modelType),
+                        variant: 'default',
+                        className: 'capitalize',
+                      },
+                      ...(displayModel.modelId
+                        ? [
+                            {
+                              key: 'model-id',
+                              label: displayModel.modelId,
+                              variant: 'info' as const,
+                              className: 'hidden sm:inline-flex',
+                            },
+                          ]
+                        : []),
+                    ]}
+                  />
+                  <div className="flex flex-shrink-0 items-center gap-1 self-end sm:ml-3 sm:self-auto">
+                    {!displayModel.isPublic && !displayModel.isGroup && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => handleTestConnection(displayModel)}
+                        disabled={testingModelName === displayModel.name}
+                        title={t('common:models.test_connection')}
                       >
-                        <div className="flex items-center justify-between min-w-0">
-                          <ResourceListItem
-                            name={displayModel.name}
-                            displayName={displayModel.displayName}
-                            showId={true}
-                            icon={<CpuChipIcon className="w-5 h-5 text-primary" />}
-                            tags={[
-                              {
-                                key: 'category',
-                                label: t(
-                                  `models.model_category_type_${displayModel.modelCategoryType}`
-                                ),
-                                variant:
-                                  MODEL_CATEGORY_BADGE_VARIANT[displayModel.modelCategoryType] ||
-                                  'default',
-                              },
-                              {
-                                key: 'provider',
-                                label: getProviderLabel(displayModel.modelType),
-                                variant: 'default',
-                                className: 'capitalize',
-                              },
-                              {
-                                key: 'model-id',
-                                label: displayModel.modelId,
-                                variant: 'info',
-                                className: 'hidden sm:inline-flex',
-                              },
-                            ]}
-                          />
-                          <div className="flex items-center gap-1 flex-shrink-0 ml-3">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8"
-                              onClick={() => handleTestConnection(displayModel)}
-                              disabled={testingModelName === displayModel.name}
-                              title={t('common:models.test_connection')}
-                            >
-                              {testingModelName === displayModel.name ? (
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                              ) : (
-                                <BeakerIcon className="w-4 h-4" />
-                              )}
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8"
-                              onClick={() => handleEdit(displayModel)}
-                              disabled={loadingModelName === displayModel.name}
-                              title={t('common:models.edit')}
-                            >
-                              {loadingModelName === displayModel.name ? (
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                              ) : (
-                                <PencilIcon className="w-4 h-4" />
-                              )}
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 hover:text-error"
-                              onClick={() => setDeleteConfirmModel(displayModel)}
-                              title={t('common:models.delete')}
-                            >
-                              <TrashIcon className="w-4 h-4" />
-                            </Button>
-                          </div>
-                        </div>
-                      </Card>
-                    ))}
+                        {testingModelName === displayModel.name ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <BeakerIcon className="w-4 h-4" />
+                        )}
+                      </Button>
+                    )}
+                    {canEditModel(displayModel) && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => handleEdit(displayModel)}
+                        disabled={loadingModelName === displayModel.name}
+                        title={t('common:models.edit')}
+                      >
+                        {loadingModelName === displayModel.name ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <PencilIcon className="w-4 h-4" />
+                        )}
+                      </Button>
+                    )}
+                    {canDeleteModel(displayModel) && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 hover:text-error"
+                        onClick={() => setDeleteConfirmModel(displayModel)}
+                        title={t('common:models.delete')}
+                      >
+                        <TrashIcon className="w-4 h-4" />
+                      </Button>
+                    )}
                   </div>
                 </div>
-              )}
-
-              {/* Group Models Section */}
-              {groupModels.length > 0 && (
-                <div className="space-y-2">
-                  <h3 className="text-sm font-medium text-text-secondary px-2">
-                    {t('common:models.group_models')} ({groupModels.length})
-                  </h3>
-                  <div className="space-y-3">
-                    {groupModels.map(displayModel => (
-                      <Card
-                        key={`group-${displayModel.name}`}
-                        className="p-4 bg-base hover:bg-hover transition-colors border-l-2 border-l-primary"
-                      >
-                        <div className="flex items-center justify-between min-w-0">
-                          <ResourceListItem
-                            name={displayModel.name}
-                            displayName={displayModel.displayName}
-                            showId={true}
-                            icon={<CpuChipIcon className="w-5 h-5 text-primary" />}
-                            tags={[
-                              {
-                                key: 'category',
-                                label: t(
-                                  `models.model_category_type_${displayModel.modelCategoryType}`
-                                ),
-                                variant:
-                                  MODEL_CATEGORY_BADGE_VARIANT[displayModel.modelCategoryType] ||
-                                  'default',
-                              },
-                              {
-                                key: 'provider',
-                                label: getProviderLabel(displayModel.modelType),
-                                variant: 'default',
-                                className: 'capitalize',
-                              },
-                              {
-                                key: 'model-id',
-                                label: displayModel.modelId,
-                                variant: 'info',
-                                className: 'hidden sm:inline-flex',
-                              },
-                            ]}
-                          >
-                            <Tag variant="success" className="text-xs">
-                              {t('common:models.group')}
-                            </Tag>
-                          </ResourceListItem>
-                          {/* Action buttons for group resources */}
-                          <div className="flex items-center gap-1 flex-shrink-0 ml-3">
-                            {canEditGroupResource(displayModel.namespace) && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                                onClick={() => handleEdit(displayModel)}
-                                disabled={loadingModelName === displayModel.name}
-                                title={t('common:models.edit')}
-                              >
-                                {loadingModelName === displayModel.name ? (
-                                  <Loader2 className="w-4 h-4 animate-spin" />
-                                ) : (
-                                  <PencilIcon className="w-4 h-4" />
-                                )}
-                              </Button>
-                            )}
-                            {canDeleteGroupResource(displayModel.namespace) && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 hover:text-error"
-                                onClick={() => setDeleteConfirmModel(displayModel)}
-                                title={t('common:models.delete')}
-                              >
-                                <TrashIcon className="w-4 h-4" />
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      </Card>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Public Models Section */}
-              {publicModels.length > 0 && (
-                <div className="space-y-2">
-                  <h3 className="text-sm font-medium text-text-secondary px-2">
-                    {t('common:models.public_models')} ({publicModels.length})
-                  </h3>
-                  <div className="space-y-3">
-                    {publicModels.map(displayModel => (
-                      <Card
-                        key={`public-${displayModel.name}`}
-                        className="p-4 bg-base hover:bg-hover transition-colors border-l-2 border-l-primary"
-                      >
-                        <div className="flex items-center justify-between min-w-0">
-                          <ResourceListItem
-                            name={displayModel.name}
-                            displayName={displayModel.displayName}
-                            showId={true}
-                            isPublic={true}
-                            publicLabel={t('common:models.public')}
-                            icon={<GlobeAltIcon className="w-5 h-5 text-primary" />}
-                            tags={[
-                              {
-                                key: 'category',
-                                label: t(
-                                  `models.model_category_type_${displayModel.modelCategoryType}`
-                                ),
-                                variant:
-                                  MODEL_CATEGORY_BADGE_VARIANT[displayModel.modelCategoryType] ||
-                                  'default',
-                              },
-                              {
-                                key: 'provider',
-                                label: getProviderLabel(displayModel.modelType),
-                                variant: 'default',
-                                className: 'capitalize',
-                              },
-                              {
-                                key: 'model-id',
-                                label: displayModel.modelId,
-                                variant: 'info',
-                                className: 'hidden sm:inline-flex',
-                              },
-                            ]}
-                          />
-                        </div>
-                      </Card>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </>
-        )}
-
-        {/* Add Button */}
-        {!loading && (scope === 'personal' || canCreateInCurrentGroup) && (
-          <div className="border-t border-border pt-3 mt-3 bg-base">
-            <div className="flex justify-center">
-              <UnifiedAddButton onClick={handleCreate}>
-                {t('common:models.create')}
-              </UnifiedAddButton>
-            </div>
+              </Card>
+            ))}
           </div>
         )}
-      </div>
+      </ResourceManagementLayout>
 
       {/* Model Edit/Create Dialog */}
       <ModelEditDialog
@@ -648,8 +552,8 @@ const ModelList: React.FC<ModelListProps> = ({
         model={editingModel}
         onClose={handleEditClose}
         toast={toast}
-        groupName={groupName}
-        scope={scope === 'all' || scope === undefined ? 'personal' : scope}
+        groupName={createTarget.scope === 'group' ? createTarget.groupName : groupName}
+        scope={editingModel ? (scope === 'group' ? 'group' : 'personal') : createTarget.scope}
       />
 
       {/* Delete Confirmation Dialog */}
@@ -704,7 +608,7 @@ const ModelList: React.FC<ModelListProps> = ({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </>
   )
 }
 
