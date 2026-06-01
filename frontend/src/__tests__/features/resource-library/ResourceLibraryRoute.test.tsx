@@ -65,11 +65,6 @@ jest.mock('@/features/tasks/components/sidebar', () => ({
 jest.mock('@/features/tasks/session/TaskSession', () => ({
   useTaskSession: () => ({
     clearAllStreams: jest.fn(),
-  }),
-}))
-
-jest.mock('@/features/tasks/session/TaskSession', () => ({
-  useTaskSession: () => ({
     selectTask: jest.fn(),
   }),
 }))

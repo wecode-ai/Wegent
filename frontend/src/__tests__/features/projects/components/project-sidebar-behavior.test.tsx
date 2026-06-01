@@ -126,11 +126,6 @@ jest.mock('@/components/ui/dropdown', () => ({
 jest.mock('@/features/tasks/session/TaskSession', () => ({
   useTaskSession: () => ({
     clearAllStreams: clearAllStreamsMock,
-  }),
-}))
-
-jest.mock('@/features/tasks/session/TaskSession', () => ({
-  useTaskSession: () => ({
     selectTask: setSelectedTaskMock,
     refreshTasks: jest.fn(),
   }),

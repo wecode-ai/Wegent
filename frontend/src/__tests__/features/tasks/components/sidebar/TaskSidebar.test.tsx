@@ -53,6 +53,7 @@ const mockTaskSessionContext = {
   markAllTasksAsViewed: jest.fn(),
   viewStatusVersion: 0,
   selectTask: jest.fn(),
+  clearAllStreams: jest.fn(),
   isRefreshing: false,
 }
 
@@ -86,12 +87,6 @@ jest.mock('@/config/paths', () => ({
 
 jest.mock('@/features/tasks/session/TaskSession', () => ({
   useTaskSession: () => mockTaskSessionContext,
-}))
-
-jest.mock('@/features/tasks/session/TaskSession', () => ({
-  useTaskSession: () => ({
-    clearAllStreams: jest.fn(),
-  }),
 }))
 
 jest.mock('@/features/inbox', () => ({
@@ -195,6 +190,7 @@ describe('TaskSidebar scroll structure', () => {
       markAllTasksAsViewed: jest.fn(),
       viewStatusVersion: 0,
       selectTask: jest.fn(),
+      clearAllStreams: jest.fn(),
       isRefreshing: false,
     })
   })

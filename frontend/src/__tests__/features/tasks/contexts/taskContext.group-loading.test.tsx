@@ -11,7 +11,11 @@ import type { Task } from '@/types/api'
 
 const mockSocketContext = {
   registerTaskHandlers: jest.fn(() => jest.fn()),
+  registerChatHandlers: jest.fn(() => jest.fn()),
+  registerSkillHandlers: jest.fn(() => jest.fn()),
   isConnected: false,
+  joinTask: jest.fn().mockResolvedValue({ subtasks: [] }),
+  sendChatMessage: jest.fn(),
   leaveTask: jest.fn(),
   onReconnect: jest.fn(() => jest.fn()),
 }
