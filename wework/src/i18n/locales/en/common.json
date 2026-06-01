@@ -265,6 +265,7 @@
     "mobile_qrcode_waiting": "Waiting for scan confirmation",
     "mobile_qrcode_expired": "QR code expired",
     "mobile_qrcode_failed": "Failed to load QR code",
+    "mobile_qrcode_backend_unavailable": "QR code login is not enabled on this backend",
     "mobile_qrcode_refresh": "Refresh QR code",
     "mobile_qrcode_alt": "Weibo QR code login",
     "oidc_login": "Login with OpenID Connect",

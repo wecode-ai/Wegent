@@ -33,7 +33,7 @@ describe('LoginPage', () => {
       </AuthProvider>,
     )
 
-    expect(screen.queryByTestId('mobile-weibo-qrcode-login')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('qrcode-login-page')).not.toBeInTheDocument()
     await userEvent.clear(screen.getByTestId('login-username-input'))
     await userEvent.type(screen.getByTestId('login-username-input'), 'alice')
     await userEvent.clear(screen.getByTestId('login-password-input'))
@@ -68,7 +68,9 @@ describe('LoginPage', () => {
       </AuthProvider>,
     )
 
-    expect(await screen.findByTestId('mobile-weibo-qrcode-login')).toBeInTheDocument()
+    expect(await screen.findByTestId('qrcode-login-page')).toBeInTheDocument()
+    expect(screen.queryByTestId('login-form')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('oidc-login-button')).not.toBeInTheDocument()
     expect(await screen.findByTestId('mobile-weibo-qrcode-image')).toHaveAttribute(
       'src',
       'data:image/png;base64,abc',
