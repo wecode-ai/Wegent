@@ -258,10 +258,15 @@ export function useChatStreamHandlers({
       setSelectedTask({ id: taskId } as Task)
       const params = new URLSearchParams(Array.from(searchParams.entries()))
       params.set('taskId', String(taskId))
-      params.set('kb', String(kbId))
+      const currentPath = window.location.pathname || pathname || ''
+      const hasVirtualKbPath =
+        currentPath.startsWith('/knowledge/') && !currentPath.startsWith('/knowledge/document/')
+      if (!hasVirtualKbPath) {
+        params.set('kb', String(kbId))
+      }
       window.history.replaceState({}, '', `?${params.toString()}`)
     },
-    [setSelectedTask, searchParams]
+    [setSelectedTask, searchParams, pathname]
   )
 
   const {

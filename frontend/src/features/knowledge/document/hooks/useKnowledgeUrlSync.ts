@@ -51,16 +51,10 @@ export function useKnowledgeUrlSync({
     // Exclude taskId-related params so that adding/removing taskId doesn't trigger re-sync
     // (which would call clearSelection and lose the current KB selection)
     // Support all three param formats for backward compatibility with existing URLs
-    // Also exclude kb param - it's only needed for page-refresh restoration,
-    // not for runtime sync (selectKb handles KB selection via React state)
-    // INVARIANT: Runtime KB navigation must use pathname (via navigateToKbViaHistory)
-    // or updateUrlParams (which deletes kb), never router.push with only ?kb= changes.
-    // Violating this invariant would cause URL sync to miss KB switches.
     const navParams = new URLSearchParams(searchParams.toString())
     navParams.delete('taskId')
     navParams.delete('task_id')
     navParams.delete('taskid')
-    navParams.delete('kb')
     const navUrlKey = `${pathname}?${navParams.toString()}`
     if (lastSyncedUrlRef.current === navUrlKey && initialUrlSyncDone) return
 

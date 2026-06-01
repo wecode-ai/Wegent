@@ -475,18 +475,9 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
   // Ref to track the latest intended KB selection, used to discard stale async responses
   const latestSelectedKbIdRef = useRef<number | null>(null)
 
-  // Ref to track the currently selected KB ID for idempotency check in selectKb
-  const selectedKbIdRef = useRef<number | null>(selectedKbId)
-  selectedKbIdRef.current = selectedKbId
-
   // Selection management
   const selectKb = useCallback(
     (kb: KnowledgeBase) => {
-      // Skip if already selected to prevent unnecessary re-renders
-      // (especially important for notebook KBs where selectKb overwrites
-      // full data with basic data then async-fetches full data again)
-      if (kb.id === selectedKbIdRef.current) return
-
       // Record the intended selection before starting any async work
       latestSelectedKbIdRef.current = kb.id
       setSelectedKbId(kb.id)
@@ -512,7 +503,6 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
             if (latestSelectedKbIdRef.current === kb.id) {
               setSelectedKb(null)
               setSelectedKbId(null)
-              selectedKbIdRef.current = null
             }
           })
       } else {
