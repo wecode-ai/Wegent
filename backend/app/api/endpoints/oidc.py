@@ -44,9 +44,42 @@ CLI_SESSION_EXPIRE_SECONDS = 300
 CLI_SESSION_KEY_PREFIX = "cli_login_session:"
 
 
+def _normalize_frontend_base_path(value: str | None) -> str:
+    if not value or value == "/":
+        return ""
+
+    trimmed = value.strip()
+    if not trimmed.startswith("/") or trimmed.startswith("//"):
+        return ""
+    if "\\" in trimmed or "?" in trimmed or "#" in trimmed:
+        return ""
+
+    parts: list[str] = []
+    for part in trimmed.split("/"):
+        if not part or part == ".":
+            continue
+        if part == "..":
+            parts.pop() if parts else None
+            continue
+        parts.append(part)
+
+    return f"/{'/'.join(parts)}" if parts else ""
+
+
+def _build_frontend_url(path: str, frontend_base_path: str | None = None) -> str:
+    base_url = settings.FRONTEND_URL.rstrip("/")
+    app_base_path = _normalize_frontend_base_path(frontend_base_path)
+    normalized_path = path if path.startswith("/") else f"/{path}"
+    return f"{base_url}{app_base_path}{normalized_path}"
+
+
 @router.get("/login")
 async def oidc_login(
     redirect: str = Query(None, description="Optional redirect URL after login"),
+    frontend_base_path: str = Query(
+        None,
+        description="Optional frontend base path for callback page, e.g. /wework",
+    ),
 ):
     """
     OpenID Connect login endpoint
@@ -62,11 +95,17 @@ async def oidc_login(
             "iat": now,
             "exp": now + STATE_EXPIRE_TIME,
             "redirect": redirect,  # Store redirect URL in state
+            "frontend_base_path": _normalize_frontend_base_path(frontend_base_path),
         }
         state = jwt.encode(payload, STATE_JWT_SECRET, algorithm="HS256")
         auth_url = await oidc_service.get_authorization_url(state, nonce)
 
-        logger.info(f"OIDC login redirect: {auth_url}, redirect_after_login={redirect}")
+        logger.info(
+            "OIDC login redirect: %s, redirect_after_login=%s, frontend_base_path=%s",
+            auth_url,
+            redirect,
+            frontend_base_path,
+        )
         return RedirectResponse(url=auth_url)
 
     except Exception as e:
@@ -88,23 +127,32 @@ async def oidc_callback(
     """
     if error:
         logger.error(f"OIDC callback error: {error}")
-        error_url = f"{settings.FRONTEND_URL}/login?error=oidc_error&message={error}"
+        error_url = _build_frontend_url(
+            f"/login?error=oidc_error&message={error}",
+        )
         return RedirectResponse(url=error_url, status_code=302)
 
     # Verify state parameter (JWT)
     redirect_after_login = None
+    frontend_base_path = None
     try:
         payload = jwt.decode(state, STATE_JWT_SECRET, algorithms=["HS256"])
         nonce = payload["nonce"]
         redirect_after_login = payload.get("redirect")
+        frontend_base_path = payload.get("frontend_base_path")
         now = int(time.time())
         if now > payload["exp"]:
             logger.error(f"State parameter expired: {state}")
-            error_url = f"{settings.FRONTEND_URL}/login?error=expired_state&message=State parameter expired"
+            error_url = _build_frontend_url(
+                "/login?error=expired_state&message=State parameter expired",
+                frontend_base_path,
+            )
             return RedirectResponse(url=error_url, status_code=302)
     except Exception as e:
         logger.error(f"Invalid state parameter: {state}, error: {e}")
-        error_url = f"{settings.FRONTEND_URL}/login?error=invalid_state&message=Invalid state parameter"
+        error_url = _build_frontend_url(
+            "/login?error=invalid_state&message=Invalid state parameter",
+        )
         return RedirectResponse(url=error_url, status_code=302)
 
     try:
@@ -191,7 +239,10 @@ async def oidc_callback(
         # Build redirect URL with optional redirect parameter
         from urllib.parse import quote
 
-        redirect_url = f"{settings.FRONTEND_URL}/login/oidc?access_token={jwt_token}&token_type=bearer&login_success=true"
+        redirect_url = _build_frontend_url(
+            f"/login/oidc?access_token={jwt_token}&token_type=bearer&login_success=true",
+            frontend_base_path,
+        )
         if redirect_after_login:
             redirect_url += f"&redirect={quote(redirect_after_login)}"
 
@@ -199,7 +250,10 @@ async def oidc_callback(
 
     except Exception as e:
         logger.error(f"OIDC callback processing failed: {e}")
-        error_url = f"{settings.FRONTEND_URL}/login?error=authentication_failed&message={str(e)}"
+        error_url = _build_frontend_url(
+            f"/login?error=authentication_failed&message={str(e)}",
+            frontend_base_path,
+        )
         return RedirectResponse(url=error_url, status_code=302)
 
 

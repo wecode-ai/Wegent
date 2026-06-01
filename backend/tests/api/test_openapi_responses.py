@@ -470,6 +470,62 @@ class TestOpenAPIResponsesCreate:
         assert data["status"] == "completed"
         assert len(data["output"]) == 1
 
+    @patch("app.api.endpoints.openapi_responses._create_non_streaming_response_unified")
+    def test_create_response_passes_auto_delete_executor_header(
+        self,
+        mock_create_sync,
+        test_client: TestClient,
+        test_api_key,
+        test_team: Kind,
+        test_bot: Kind,
+        test_model: Kind,
+        test_public_shell: Kind,
+    ):
+        """Header auto_delete_executor should be passed into task setup."""
+        from app.schemas.openapi_response import ResponseObject
+
+        mock_create_sync.return_value = ResponseObject(
+            id="resp_123",
+            created_at=int(datetime.now().timestamp()),
+            status="queued",
+            model="default#test-team",
+            output=[],
+        )
+
+        response = test_client.post(
+            "/api/v1/responses",
+            headers={
+                "X-API-Key": test_api_key[0],
+                "auto_delete_executor": "true",
+            },
+            json={"model": "default#test-team", "input": "Hello", "stream": False},
+        )
+
+        assert response.status_code == 200
+        assert mock_create_sync.call_args.kwargs["auto_delete_executor"] == "true"
+
+    def test_create_response_rejects_invalid_auto_delete_executor_header(
+        self,
+        test_client: TestClient,
+        test_api_key,
+        test_team: Kind,
+        test_bot: Kind,
+        test_model: Kind,
+        test_public_shell: Kind,
+    ):
+        """Invalid auto_delete_executor header values should fail fast."""
+        response = test_client.post(
+            "/api/v1/responses",
+            headers={
+                "X-API-Key": test_api_key[0],
+                "auto_delete_executor": "maybe",
+            },
+            json={"model": "default#test-team", "input": "Hello", "stream": False},
+        )
+
+        assert response.status_code == 400
+        assert "Invalid auto_delete_executor" in response.json()["detail"]
+
     @pytest.mark.asyncio
     async def test_create_non_streaming_response_unified_sets_pending_user_input(
         self,
