@@ -162,5 +162,7 @@ describe('ChatPageDesktop remote workspace integration', () => {
     render(<ChatPageDesktop />)
 
     expect(screen.getByTestId('remote-workspace-entry')).toHaveTextContent('42:false')
+    expect(screen.queryByText('search-dialog')).not.toBeInTheDocument()
+    expect(screen.queryByText('create-group-chat-dialog')).not.toBeInTheDocument()
   })
 })

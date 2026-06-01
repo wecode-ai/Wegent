@@ -29,6 +29,7 @@ import type {
 import type { ContextItem } from '@/types/context'
 import type { UnifiedSkill } from '@/apis/skills'
 import {
+  canSwitchModelAfterMessages,
   canUseChatContexts,
   isChatShell,
   teamRequiresWorkspace,
@@ -92,6 +93,7 @@ export interface MobileChatInputControlsProps {
   isModelSelectionRequired: boolean
   isAttachmentReadyToSend: boolean
   taskInputMessage: string
+  hasAttachments?: boolean
   isSubtaskStreaming: boolean
   canQueueMessage?: boolean
   canSendGuidance?: boolean
@@ -159,6 +161,7 @@ export function MobileChatInputControls({
   isModelSelectionRequired,
   isAttachmentReadyToSend,
   taskInputMessage,
+  hasAttachments = false,
   isSubtaskStreaming,
   canQueueMessage = false,
   canSendGuidance = false,
@@ -219,6 +222,7 @@ export function MobileChatInputControls({
       hasNoTeams,
       shouldHideChatInput,
       taskInputMessage,
+      hasAttachments,
       selectedTaskStatus: selectedTaskDetail?.status,
       isSubtaskStreaming,
       isGroupChat: selectedTaskDetail?.is_group_chat,
@@ -453,7 +457,11 @@ export function MobileChatInputControls({
               forceOverride={forceOverride}
               setForceOverride={setForceOverride}
               selectedTeam={selectedTeam}
-              disabled={isLoading || isStreaming || (hasMessages && !isChatShell(selectedTeam))}
+              disabled={
+                isLoading ||
+                isStreaming ||
+                (hasMessages && !canSwitchModelAfterMessages(selectedTeam))
+              }
               teamId={teamId}
               taskId={taskId}
               taskModelId={taskModelId}

@@ -6,9 +6,12 @@ import os
 from typing import List, Optional
 
 import httpx
+from sqlalchemy.orm import Session
 
+from app.schemas.installed_mcp import InstalledMCPServerConfig, MCPInstallCatalogItem
 from app.schemas.mcp_providers import MCPProviderInfo, MCPServer
 from app.schemas.user import UserPreferences
+from app.services.installed_mcp_service import installed_mcp_service
 from app.services.mcp_providers.core.registry import MCPProviderRegistry
 from app.services.mcp_providers.security import decrypt_mcp_provider_key
 from shared.logger import setup_logger
@@ -79,6 +82,8 @@ class MCPProviderService:
         provider_key: str,
         preferences: Optional[UserPreferences],
         user_name: Optional[str] = None,
+        db: Optional[Session] = None,
+        user_id: Optional[int] = None,
     ) -> tuple[bool, str, List[MCPServer], Optional[str]]:
         """Sync MCP servers from a provider"""
         # Get provider config
@@ -170,6 +175,13 @@ class MCPProviderService:
                 provider_key,
                 len(servers),
             )
+            if db is not None and user_id is not None:
+                servers = MCPProviderService.apply_install_state_to_servers(
+                    db=db,
+                    user_id=user_id,
+                    provider_key=provider_key,
+                    servers=servers,
+                )
             return True, f"Successfully synced {len(servers)} servers", servers, None
         except httpx.ProxyError as e:
             MCPProviderService.logger.warning(
@@ -224,3 +236,59 @@ class MCPProviderService:
                 error_details,
             )
             return False, "Failed to sync servers", [], error_details
+
+    @staticmethod
+    def apply_install_state_to_servers(
+        *,
+        db: Session,
+        user_id: int,
+        provider_key: str,
+        servers: List[MCPServer],
+    ) -> List[MCPServer]:
+        """Merge InstalledMCP state into provider catalog server results."""
+        catalog_items = [
+            MCPInstallCatalogItem(
+                id=server.id,
+                providerKey=provider_key,
+                serverKey=MCPProviderService._server_key_from_id(server.id),
+                name=server.name,
+                description=server.description,
+                providerName=server.provider,
+                providerUrl=server.provider_url,
+                logoUrl=server.logo_url,
+                tags=server.tags or [],
+                server=InstalledMCPServerConfig(
+                    type=server.type,
+                    url=server.base_url,
+                    base_url=server.base_url,
+                    command=server.command or None,
+                    args=server.args or None,
+                    env=server.env or None,
+                    headers=server.headers or None,
+                ),
+            )
+            for server in servers
+        ]
+        merged_items = installed_mcp_service.merge_catalog_state(
+            db=db,
+            user_id=user_id,
+            items=catalog_items,
+        )
+        install_state_by_id = {item.id: item for item in merged_items}
+
+        return [
+            server.model_copy(
+                update={
+                    "installState": install_state_by_id[server.id].installState,
+                    "installedMcpId": install_state_by_id[server.id].installedMcpId,
+                    "enabled": install_state_by_id[server.id].enabled,
+                }
+            )
+            for server in servers
+        ]
+
+    @staticmethod
+    def _server_key_from_id(server_id: str) -> str:
+        if "/" in server_id:
+            return server_id.split("/", 1)[1]
+        return server_id

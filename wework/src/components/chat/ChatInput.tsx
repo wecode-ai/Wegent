@@ -1,4 +1,4 @@
-import { useTranslation } from 'react-i18next'
+import { useTranslation } from '@/hooks/useTranslation'
 import type {
   Attachment,
   DeviceInfo,
@@ -29,7 +29,9 @@ export interface ProjectWorkControls {
   projects: ProjectWithTasks[]
   devices: DeviceInfo[]
   currentProjectId?: number
-  onSelectProject: (projectId: number) => void
+  currentStandaloneDeviceId?: string | null
+  onSelectProject: (projectId: number | null) => void
+  onSelectStandaloneDevice: (deviceId: string | null) => void
 }
 
 interface ChatInputProps {
@@ -41,6 +43,7 @@ interface ChatInputProps {
   variant?: 'compact' | 'desktop'
   projectChat?: ProjectChatControls
   projectWork?: ProjectWorkControls
+  showProjectWorkBar?: boolean
 }
 
 export function ChatInput({
@@ -52,6 +55,7 @@ export function ChatInput({
   variant = 'compact',
   projectChat,
   projectWork,
+  showProjectWorkBar = true,
 }: ChatInputProps) {
   const { t } = useTranslation('common')
   const inputPlaceholder = placeholder ?? t('workbench.input_placeholder', '尽管问')
@@ -98,12 +102,28 @@ export function ChatInput({
             projects: [],
             devices: [],
             currentProjectId: undefined,
+            currentStandaloneDeviceId: null,
             onSelectProject: () => {},
+            onSelectStandaloneDevice: () => {},
           }
         }
+        showProjectWorkBar={showProjectWorkBar}
       />
     )
   }
 
-  return <CompactChatComposer {...composerProps} />
+  return (
+    <CompactChatComposer
+      {...composerProps}
+      attachments={controls.attachments}
+      uploadingFiles={controls.uploadingFiles}
+      attachmentErrors={controls.errors}
+      onImageSelect={files => {
+        void controls.handleFileSelect(files)
+      }}
+      onRemoveAttachment={attachmentId => {
+        void controls.removeAttachment(attachmentId)
+      }}
+    />
+  )
 }

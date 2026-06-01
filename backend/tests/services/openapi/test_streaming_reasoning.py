@@ -455,3 +455,75 @@ class TestStreamingServiceReasoning:
             message_added["output_index"],
         }
         assert len(indexes) == 3
+
+    @pytest.mark.asyncio
+    async def test_reasoning_segments_stay_split_around_tool_calls(
+        self, streaming_service
+    ):
+        async def mixed_stream():
+            yield StreamingChunk(type="reasoning", content="Before tool.")
+            yield StreamingChunk(
+                type="shell_call_added",
+                data={
+                    "call_id": "shell_123",
+                    "name": "exec",
+                    "arguments": {"command": "cat /etc/os-release"},
+                },
+            )
+            yield StreamingChunk(
+                type="shell_call_done",
+                data={
+                    "call_id": "shell_123",
+                    "name": "exec",
+                    "arguments": {"command": "cat /etc/os-release"},
+                    "status": "completed",
+                },
+            )
+            yield StreamingChunk(type="reasoning", content="After tool.")
+            yield StreamingChunk(type="text", content="Final answer.")
+
+        events = []
+        async for event in streaming_service.create_streaming_response(
+            response_id="resp_123",
+            model_string="gpt-4",
+            chat_stream=mixed_stream(),
+            created_at=1234567890,
+        ):
+            events.append(json.loads(event.replace("data: ", "").strip()))
+
+        reasoning_parts = [
+            e for e in events if e["type"] == "response.reasoning_summary_part.added"
+        ]
+        reasoning_deltas = [
+            e for e in events if e["type"] == "response.reasoning_summary_text.delta"
+        ]
+        assert len(reasoning_parts) == 2
+        assert [e["delta"] for e in reasoning_deltas] == [
+            "Before tool.",
+            "After tool.",
+        ]
+        assert reasoning_deltas[0]["item_id"] == reasoning_parts[0]["item"]["id"]
+        assert reasoning_deltas[1]["item_id"] == reasoning_parts[1]["item"]["id"]
+        assert reasoning_deltas[0]["output_index"] == reasoning_parts[0]["output_index"]
+        assert reasoning_deltas[1]["output_index"] == reasoning_parts[1]["output_index"]
+
+        completed = next(e for e in events if e["type"] == "response.completed")
+        output = completed["response"]["output"]
+        assert [item["type"] for item in output] == [
+            "message",
+            "shell_call",
+            "message",
+            "message",
+        ]
+        assert output[0]["content"][0] == {
+            "type": "reasoning",
+            "text": "Before tool.",
+            "annotations": [],
+        }
+        assert output[2]["content"][0] == {
+            "type": "reasoning",
+            "text": "After tool.",
+            "annotations": [],
+        }
+        assert output[3]["content"][0]["type"] == "output_text"
+        assert output[3]["content"][0]["text"] == "Final answer."

@@ -16,6 +16,7 @@ supporting page refresh recovery during streaming.
 import asyncio
 import json
 import logging
+import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -735,6 +736,10 @@ class SessionManager:
         """Generate Redis key for current text block ID."""
         return f"{STREAMING_KEY_PREFIX}text_block:{subtask_id}"
 
+    def _get_current_thinking_block_key(self, subtask_id: int) -> str:
+        """Generate Redis key for current thinking block ID."""
+        return f"{STREAMING_KEY_PREFIX}thinking_block:{subtask_id}"
+
     async def add_tool_block(
         self,
         subtask_id: int,
@@ -762,6 +767,7 @@ class SessionManager:
         try:
             # Finalize current text block before adding tool block
             await self._finalize_current_text_block(subtask_id)
+            await self._finalize_current_thinking_block(subtask_id)
 
             # Create tool block using unified function
             block = create_tool_block(
@@ -872,6 +878,7 @@ class SessionManager:
         try:
             # Finalize current text block before adding new block (to maintain order)
             await self._finalize_current_text_block(subtask_id)
+            await self._finalize_current_thinking_block(subtask_id)
 
             # Ensure block has id
             block_id = block.get("id")
@@ -935,6 +942,8 @@ class SessionManager:
             return
 
         try:
+            await self._finalize_current_thinking_block(subtask_id)
+
             # Append to accumulated content using Redis APPEND (O(1))
             streaming_key = self._get_streaming_key(subtask_id)
             text_block_key = self._get_current_text_block_key(subtask_id)
@@ -994,6 +1003,63 @@ class SessionManager:
                 f"[SessionManager] Failed to add text content for subtask {subtask_id}: {e}"
             )
 
+    async def add_thinking_content(self, subtask_id: int, content: str) -> None:
+        """Add reasoning content to the current thinking block."""
+        if not content:
+            return
+
+        try:
+            await self._finalize_current_text_block(subtask_id)
+
+            thinking_block_key = self._get_current_thinking_block_key(subtask_id)
+            blocks_key = self._get_blocks_key(subtask_id)
+
+            redis_client = await self._cache._get_client()
+            try:
+                current_block_id = await redis_client.get(thinking_block_key)
+
+                if current_block_id:
+                    block_id = (
+                        current_block_id.decode()
+                        if isinstance(current_block_id, bytes)
+                        else current_block_id
+                    )
+                    blocks_raw = await redis_client.lrange(blocks_key, -1, -1)
+                    if blocks_raw:
+                        last_block = json.loads(blocks_raw[0])
+                        if last_block.get("id") == block_id:
+                            last_block["content"] = (
+                                last_block.get("content", "") + content
+                            )
+                            await redis_client.lset(
+                                blocks_key, -1, json.dumps(last_block)
+                            )
+                else:
+                    ts = int(asyncio.get_event_loop().time() * 1000)
+                    block = {
+                        "id": f"thinking-{uuid.uuid4().hex[:12]}",
+                        "type": "thinking",
+                        "content": content,
+                        "status": BlockStatus.STREAMING.value,
+                        "timestamp": ts,
+                    }
+                    await redis_client.rpush(blocks_key, json.dumps(block))
+                    await redis_client.set(
+                        thinking_block_key, block["id"], ex=STREAMING_TTL
+                    )
+                    logger.info(
+                        f"[SessionManager] Created thinking block for subtask {subtask_id}: "
+                        f"id={block['id']}"
+                    )
+
+                await redis_client.expire(blocks_key, STREAMING_TTL)
+            finally:
+                await redis_client.aclose()
+        except Exception as e:
+            logger.error(
+                f"[SessionManager] Failed to add thinking content for subtask {subtask_id}: {e}"
+            )
+
     async def _finalize_current_text_block(self, subtask_id: int) -> None:
         """Finalize the current text block by setting status to done."""
         try:
@@ -1028,6 +1094,40 @@ class SessionManager:
         except Exception as e:
             logger.warning(
                 f"[SessionManager] Failed to finalize text block for subtask {subtask_id}: {e}"
+            )
+
+    async def _finalize_current_thinking_block(self, subtask_id: int) -> None:
+        """Finalize the current thinking block by setting status to done."""
+        try:
+            thinking_block_key = self._get_current_thinking_block_key(subtask_id)
+            blocks_key = self._get_blocks_key(subtask_id)
+
+            redis_client = await self._cache._get_client()
+            try:
+                current_block_id = await redis_client.get(thinking_block_key)
+                if not current_block_id:
+                    return
+
+                block_id = (
+                    current_block_id.decode()
+                    if isinstance(current_block_id, bytes)
+                    else current_block_id
+                )
+
+                blocks_raw = await redis_client.lrange(blocks_key, 0, -1)
+                for i, block_json in enumerate(blocks_raw):
+                    block = json.loads(block_json)
+                    if block.get("id") == block_id:
+                        block["status"] = BlockStatus.DONE.value
+                        await redis_client.lset(blocks_key, i, json.dumps(block))
+                        break
+
+                await redis_client.delete(thinking_block_key)
+            finally:
+                await redis_client.aclose()
+        except Exception as e:
+            logger.warning(
+                f"[SessionManager] Failed to finalize thinking block for subtask {subtask_id}: {e}"
             )
 
     async def get_blocks(self, subtask_id: int) -> List[Dict[str, Any]]:
@@ -1075,6 +1175,7 @@ class SessionManager:
         try:
             # Finalize current text block
             await self._finalize_current_text_block(subtask_id)
+            await self._finalize_current_thinking_block(subtask_id)
 
             # Get all blocks
             blocks_key = self._get_blocks_key(subtask_id)
@@ -1121,10 +1222,16 @@ class SessionManager:
             streaming_key = self._get_streaming_key(subtask_id)
             blocks_key = self._get_blocks_key(subtask_id)
             text_block_key = self._get_current_text_block_key(subtask_id)
+            thinking_block_key = self._get_current_thinking_block_key(subtask_id)
 
             redis_client = await self._cache._get_client()
             try:
-                await redis_client.delete(streaming_key, blocks_key, text_block_key)
+                await redis_client.delete(
+                    streaming_key,
+                    blocks_key,
+                    text_block_key,
+                    thinking_block_key,
+                )
                 logger.debug(
                     f"[SessionManager] Cleaned up streaming state for subtask {subtask_id}"
                 )

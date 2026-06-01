@@ -13,7 +13,7 @@ import {
   ResizableSidebar,
   CollapsedSidebarButtons,
 } from '@/features/tasks/components/sidebar'
-import { SubscriptionPage as SubscriptionPageContent } from '@/features/feed/components'
+import { SubscriptionPage as SubscriptionPageContent } from '@/features/feed/components/SubscriptionPage'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import '@/app/tasks/tasks.css'

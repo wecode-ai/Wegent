@@ -1,3 +1,6 @@
+import { stripAppBasePath } from '@/config/runtime'
+import { navigateTo } from '@/lib/navigation'
+
 export const POST_LOGIN_REDIRECT_KEY = 'postLoginRedirectPath'
 export const LOGIN_PATH = '/login'
 export const OIDC_CALLBACK_PATH = '/login/oidc'
@@ -61,7 +64,7 @@ export function sanitizeRedirectPath(
 }
 
 export function getCurrentRedirectTarget(): string | null {
-  const currentPath = `${window.location.pathname}${window.location.search}`
+  const currentPath = `${stripAppBasePath(window.location.pathname)}${window.location.search}`
   return sanitizeRedirectPath(currentPath, [LOGIN_PATH, OIDC_CALLBACK_PATH])
 }
 
@@ -72,5 +75,5 @@ export function redirectToLogin() {
   } else {
     sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY)
   }
-  window.history.pushState({}, '', LOGIN_PATH)
+  navigateTo(LOGIN_PATH)
 }

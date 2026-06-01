@@ -510,6 +510,11 @@ const MessageBubble = memo(
       return hasClarificationMarker || hasFinalPromptMarker
     }, [msg.content, msg.type, msg.result?.blocks])
 
+    const hasInlineThinkingBlocks = React.useMemo(
+      () => msg.result?.blocks?.some(block => block.type === 'thinking') ?? false,
+      [msg.result?.blocks]
+    )
+
     const renderProgressBar = (status: string, progress: number) => {
       const normalizedStatus = (status ?? '').toUpperCase()
       const isActiveStatus = ['RUNNING', 'PENDING', 'PROCESSING'].includes(normalizedStatus)
@@ -1376,12 +1381,14 @@ const MessageBubble = memo(
                 </div>
               )}
               {/* Show reasoning display for DeepSeek R1 and similar models */}
-              {!isUserTypeMessage && (msg.reasoningContent || msg.result?.reasoning_content) && (
-                <ReasoningDisplay
-                  reasoningContent={msg.reasoningContent || msg.result?.reasoning_content || ''}
-                  isStreaming={!!msg.isReasoningStreaming}
-                />
-              )}
+              {!isUserTypeMessage &&
+                !hasInlineThinkingBlocks &&
+                (msg.reasoningContent || msg.result?.reasoning_content) && (
+                  <ReasoningDisplay
+                    reasoningContent={msg.reasoningContent || msg.result?.reasoning_content || ''}
+                    isStreaming={!!msg.isReasoningStreaming}
+                  />
+                )}
               {/* Show tool blocks for messages with thinking but no blocks */}
               {!isUserTypeMessage &&
                 msg.thinking &&

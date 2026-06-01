@@ -1,6 +1,8 @@
 import { test, expect, TestData } from '../fixtures/test-fixtures'
 import type { Page } from '@playwright/test'
 
+const AGENT_RESOURCES_URL = '/resource-library?tab=mine&type=agent&scope=personal'
+
 // Detect current language environment and return appropriate text
 async function detectLanguage(page: Page): Promise<'en' | 'zh'> {
   // Check if Chinese text is visible on the page
@@ -24,10 +26,15 @@ test.describe('Settings - Bot Management', () => {
   let lang: 'en' | 'zh' = 'en'
 
   test.beforeEach(async ({ page }) => {
-    // Bot management is accessed through "Manage Bots" button in team tab
-    await page.goto('/settings?tab=team')
+    // Bot management moved with agent resources into Resource Library.
+    await page.goto(AGENT_RESOURCES_URL)
     await page.waitForLoadState('domcontentloaded')
-    // Wait for team page content to fully load - the title is "Team List" or "智能体列表"
+    await expect(page.locator('[data-testid="my-resources"]')).toBeVisible({ timeout: 15000 })
+    await expect(page.locator('[data-testid="managed-resource-agent-tab"]')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    // Wait for agent resource content to fully load - the title is "Team List" or "智能体列表"
     await expect(page.locator('h2:has-text("Team List"), h2:has-text("智能体列表")')).toBeVisible({
       timeout: 15000,
     })
@@ -37,7 +44,7 @@ test.describe('Settings - Bot Management', () => {
   })
 
   test('should access bot management via manage bots button', async ({ page }) => {
-    await expect(page).toHaveURL(/\/settings/)
+    await expect(page).toHaveURL(/\/resource-library/)
     const texts = getLocalizedText(lang)
 
     // Click "Manage Bots" button to open bot list dialog

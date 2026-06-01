@@ -368,7 +368,20 @@ def _build_items_from_blocks(
         return []
 
     output: list[ResponseOutputItem] = []
-    text_parts: list[str] = []
+    emitted_text = False
+    emitted_reasoning = False
+
+    def append_message(content: list[OutputTextContent]) -> None:
+        output.append(
+            OutputMessage(
+                type="message",
+                id=f"msg_{subtask.id}_{len(output)}",
+                status=_message_status(subtask, status_override),
+                role="assistant",
+                content=content,
+            )
+        )
+
     for block in blocks:
         if not isinstance(block, dict):
             continue
@@ -377,23 +390,31 @@ def _build_items_from_blocks(
         elif block.get("type") == "text":
             content = block.get("content")
             if isinstance(content, str) and content:
-                text_parts.append(content)
+                emitted_text = True
+                append_message(
+                    [
+                        OutputTextContent(
+                            type="output_text", text=content, annotations=[]
+                        )
+                    ]
+                )
+        elif block.get("type") == "thinking":
+            content = block.get("content")
+            if isinstance(content, str) and content:
+                emitted_reasoning = True
+                append_message(
+                    [OutputTextContent(type="reasoning", text=content, annotations=[])]
+                )
 
     final_text = (
-        content_override or "\n".join(text_parts) or str(result.get("value") or "")
+        "" if emitted_text else content_override or str(result.get("value") or "")
     )
     final_reasoning = str(result.get("reasoning_content") or "")
-    if final_text or final_reasoning:
-        output.append(
-            OutputMessage(
-                type="message",
-                id=f"msg_{subtask.id}",
-                status=_message_status(subtask, status_override),
-                role="assistant",
-                content=_build_message_content(
-                    text=final_text,
-                    reasoning=final_reasoning,
-                ),
+    if final_text or (final_reasoning and not emitted_reasoning):
+        append_message(
+            _build_message_content(
+                text=final_text,
+                reasoning="" if emitted_reasoning else final_reasoning,
             )
         )
 

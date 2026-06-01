@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from app.schemas.kind import SkillRefMeta
 from app.schemas.subtask import SubtaskWithBot
@@ -96,6 +96,13 @@ class TaskCreate(BaseModel):
     # Backend determines preload vs download based on executor type
     additional_skills: Optional[List[SkillRef]] = None
 
+    @model_validator(mode="after")
+    def default_model_selection_to_override(self) -> "TaskCreate":
+        """Treat an explicit model_id as an override selection."""
+        if self.model_id:
+            self.force_override_bot_model = True
+        return self
+
 
 class TaskUpdate(BaseModel):
     """Task update model"""
@@ -131,6 +138,7 @@ class TaskInDB(TaskBase):
     id: int
     user_id: int
     user_name: str
+    project_id: int = 0
     created_at: datetime
     updated_at: datetime
     completed_at: Optional[datetime] = None
@@ -158,6 +166,7 @@ class TaskDetail(BaseModel):
     prompt: str
     status: TaskStatus = TaskStatus.PENDING
     task_type: str = "chat"  # Task type: 'chat', 'code', 'knowledge', 'task'
+    project_id: int = 0
     progress: int = 0
     result: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
@@ -211,6 +220,7 @@ class TaskLite(BaseModel):
     team_namespace: Optional[str] = None
     team_display_name: Optional[str] = None
     team_icon: Optional[str] = None
+    project_id: int = 0
     device_id: Optional[str] = None
     device_name: Optional[str] = None
     git_repo: Optional[str] = None
@@ -252,6 +262,42 @@ class TaskLiteGroupedListResponse(BaseModel):
 
     total: int
     items: list[TaskLiteGroup]
+
+
+class ArchivedTask(BaseModel):
+    """Archived chat item for settings and restore/delete actions."""
+
+    id: int
+    title: str
+    status: str
+    task_type: str
+    type: str
+    created_at: datetime
+    updated_at: datetime
+    completed_at: Optional[datetime] = None
+    project_id: int = 0
+    project_name: Optional[str] = None
+
+
+class ArchivedTaskListResponse(BaseModel):
+    """Archived chat list response."""
+
+    total: int
+    items: list[ArchivedTask]
+
+
+class TaskArchiveResponse(BaseModel):
+    """Response for a single archive state transition."""
+
+    message: str
+    task_id: int
+
+
+class TaskArchiveBatchResponse(BaseModel):
+    """Response for batch archive/delete operations."""
+
+    message: str
+    count: int
 
 
 class ConfirmStageRequest(BaseModel):

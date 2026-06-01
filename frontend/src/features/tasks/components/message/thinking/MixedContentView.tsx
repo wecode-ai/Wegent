@@ -9,6 +9,7 @@ import type { ThinkingStep, MessageBlock, ToolPair } from './types'
 import { useToolExtraction } from './hooks/useToolExtraction'
 import { ToolBlock } from './components/ToolBlock'
 import { GuidanceBlock } from './components/GuidanceBlock'
+import ReasoningDisplay from './ReasoningDisplay'
 import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import { normalizeToolName, normalizeStepDetails } from './utils/toolExtractor'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -185,6 +186,13 @@ const MixedContentView = memo(function MixedContentView({
               type: 'content' as const,
               content: textContent,
               blockId: block.id,
+            }
+          } else if (block.type === 'thinking') {
+            return {
+              type: 'thinking' as const,
+              content: block.content || '',
+              blockId: block.id,
+              status: block.status,
             }
           } else if (block.type === 'video') {
             // Video block - render VideoPlayer component
@@ -559,6 +567,17 @@ const MixedContentView = memo(function MixedContentView({
                 <div className="text-xs text-text-muted">{item.message}</div>
               )}
             </div>
+          )
+        } else if (item.type === 'thinking') {
+          if (!item.content || typeof item.content !== 'string' || !item.content.trim()) {
+            return null
+          }
+          return (
+            <ReasoningDisplay
+              key={item.blockId}
+              reasoningContent={item.content}
+              isStreaming={item.status === 'streaming'}
+            />
           )
         } else if (item.type === 'image') {
           // Render image block using ImageGallery component

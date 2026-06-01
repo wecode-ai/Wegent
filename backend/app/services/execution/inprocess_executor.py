@@ -32,6 +32,7 @@ from shared.status import TaskStatus
 
 from .dispatcher import (
     _build_shell_call_context,
+    _extract_reasoning_event_content,
     _extract_shell_call_input,
     _require_non_empty_tool_use_id,
     extract_completed_result,
@@ -389,15 +390,17 @@ class EmitterBridgeTransport(EventTransport):
                 message_id=message_id,
             )
 
-        # response.reasoning_summary_part.added -> THINKING
-        elif event_type == ResponsesAPIStreamEvents.RESPONSE_PART_ADDED.value:
-            part = data.get("part", {})
-            if part.get("type") == "reasoning":
+        elif event_type in (
+            ResponsesAPIStreamEvents.RESPONSE_PART_ADDED.value,
+            ResponsesAPIStreamEvents.REASONING_SUMMARY_TEXT_DELTA.value,
+        ):
+            reasoning_content = _extract_reasoning_event_content(event_type, data)
+            if reasoning_content is not None:
                 return ExecutionEvent(
                     type=EventType.THINKING.value,
                     task_id=self.task_id,
                     subtask_id=self.subtask_id,
-                    content=part.get("text", ""),
+                    content=reasoning_content,
                     message_id=message_id,
                 )
             return None

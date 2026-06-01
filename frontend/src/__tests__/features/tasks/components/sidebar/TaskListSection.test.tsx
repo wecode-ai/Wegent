@@ -146,4 +146,43 @@ describe('TaskListSection', () => {
     expect(screen.queryAllByText('Conversation 6')).toHaveLength(0)
     expect(moreButton).toHaveTextContent('common:tasks.show_more')
   })
+
+  it('keeps the hover menu out of normal layout so titles can use the full row width', () => {
+    const task = createTask(1)
+
+    render(<TaskListSection tasks={[task]} title="History" />)
+
+    const taskTitle = screen.getAllByText('Conversation 1')[0]
+    const taskRow = taskTitle.closest('.cursor-pointer')
+    const actionLayer = screen.getByTestId('task-menu').parentElement
+
+    expect(taskRow).toHaveClass('relative')
+    expect(actionLayer).toHaveClass('absolute')
+  })
+
+  it('adds title clearance for the hover menu only while the row is hovered', () => {
+    const task = createTask(1)
+
+    render(<TaskListSection tasks={[task]} title="History" />)
+
+    const taskTitle = screen.getAllByText('Conversation 1')[0]
+    const taskRow = taskTitle.closest('.cursor-pointer')
+
+    expect(taskTitle).not.toHaveClass('pr-8')
+
+    fireEvent.mouseEnter(taskRow!)
+
+    expect(taskTitle).toHaveClass('pr-8')
+  })
+
+  it('uses theme-aware text color for task titles', () => {
+    const task = createTask(1)
+
+    render(<TaskListSection tasks={[task]} title="History" />)
+
+    const taskTitle = screen.getAllByText('Conversation 1')[0]
+
+    expect(taskTitle).toHaveClass('text-text-primary')
+    expect(taskTitle).not.toHaveClass('text-[#444746]')
+  })
 })

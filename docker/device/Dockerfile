@@ -148,7 +148,7 @@ ENV PATH="/home/wegent/.wecode/wegent-executor/bin:/home/wegent/.wecode/bin:/hom
 ENV EXECUTOR_MODE=local
 ENV WEGENT_BACKEND_URL=http://localhost:8000
 ENV WEGENT_EXECUTOR_HOME=/home/wegent/.wecode/wegent-executor
-ENV DEVICE_PUBLIC_BASE_URL=http://localhost:17888
+ENV DEVICE_PUBLIC_BASE_URL=
 ENV DEVICE_SESSION_GATEWAY_HOST=0.0.0.0
 ENV DEVICE_SESSION_GATEWAY_PORT=17888
 

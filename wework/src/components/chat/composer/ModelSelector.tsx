@@ -9,6 +9,9 @@ interface ModelSelectorProps {
   selectedModel: UnifiedModel | null
   disabled: boolean
   onSelectModel: (model: UnifiedModel | null) => void
+  menuPlacement?: 'above' | 'below'
+  buttonClassName?: string
+  menuClassName?: string
 }
 
 export function ModelSelector({
@@ -16,6 +19,9 @@ export function ModelSelector({
   selectedModel,
   disabled,
   onSelectModel,
+  menuPlacement = 'above',
+  buttonClassName = '',
+  menuClassName = '',
 }: ModelSelectorProps) {
   const { t } = useTranslation('common')
   const containerRef = useRef<HTMLDivElement>(null)
@@ -23,30 +29,24 @@ export function ModelSelector({
   const closeMenu = useCallback(() => setOpen(false), [])
 
   useOutsideClick(containerRef, open, closeMenu)
+  const menuPositionClass =
+    menuPlacement === 'below' ? 'top-[52px] right-0' : 'bottom-[52px] right-0'
 
   return (
     <div ref={containerRef} className="relative">
       {open && (
         <div
           data-testid="model-selector-menu"
-          className="absolute bottom-[52px] right-0 z-40 w-72 overflow-hidden rounded-2xl border border-border bg-base p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
+          className={[
+            'absolute z-40 w-72 overflow-hidden rounded-2xl border border-border bg-base p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+            menuPositionClass,
+            menuClassName,
+          ].join(' ')}
         >
           <div className="px-4 pb-2 pt-1 text-sm font-semibold text-text-muted">
             {t('workbench.select_model', '选择模型')}
           </div>
           <div className="space-y-1">
-            <button
-              type="button"
-              data-testid="model-option-default"
-              onClick={() => {
-                onSelectModel(null)
-                setOpen(false)
-              }}
-              className="flex min-h-11 w-full items-center rounded-xl px-4 text-left text-sm font-medium text-text-primary hover:bg-muted"
-            >
-              <span className="flex-1">{t('workbench.default_model', '默认模型')}</span>
-              {!selectedModel && <Check className="h-4 w-4 text-text-secondary" />}
-            </button>
             {models.length === 0 ? (
               <div className="px-4 py-3 text-sm text-text-muted">
                 {t('workbench.no_models', '暂无可用模型')}
@@ -79,7 +79,10 @@ export function ModelSelector({
         data-testid="model-selector-button"
         onClick={() => !disabled && setOpen(current => !current)}
         disabled={disabled}
-        className="flex h-11 min-w-[44px] items-center gap-1 rounded-full px-2 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+        className={[
+          'flex h-11 min-w-[44px] items-center gap-1 rounded-full px-2 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50',
+          buttonClassName,
+        ].join(' ')}
         aria-expanded={open}
         aria-label={t('workbench.model_selector', '模型选择')}
       >

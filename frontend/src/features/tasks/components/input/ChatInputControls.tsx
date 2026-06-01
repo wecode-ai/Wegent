@@ -24,7 +24,11 @@ import type {
 } from '@/types/api'
 import type { ContextItem } from '@/types/context'
 import type { UnifiedSkill } from '@/apis/skills'
-import { canUseChatContexts, isChatShell } from '../../service/messageService'
+import {
+  canSwitchModelAfterMessages,
+  canUseChatContexts,
+  isChatShell,
+} from '../../service/messageService'
 import { supportsAttachments } from '../../service/attachmentService'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { MobileChatInputControls } from './MobileChatInputControls'
@@ -210,7 +214,7 @@ export function ChatInputControls({
   onCorrectionModeToggle,
   selectedContexts,
   setSelectedContexts,
-  attachmentState: _attachmentState,
+  attachmentState,
   onFileSelect,
   onAttachmentRemove: _onAttachmentRemove,
   isLoading,
@@ -288,6 +292,7 @@ export function ChatInputControls({
       hasNoTeams,
       shouldHideChatInput,
       taskInputMessage,
+      hasAttachments: attachmentState.attachments.length > 0,
       selectedTaskStatus: selectedTaskDetail?.status,
       isSubtaskStreaming,
       isGroupChat: selectedTaskDetail?.is_group_chat,
@@ -415,6 +420,7 @@ export function ChatInputControls({
         isModelSelectionRequired={isModelSelectionRequired}
         isAttachmentReadyToSend={isAttachmentReadyToSend}
         taskInputMessage={taskInputMessage}
+        hasAttachments={attachmentState.attachments.length > 0}
         isSubtaskStreaming={isSubtaskStreaming}
         canQueueMessage={canQueueMessage}
         canSendGuidance={canSendGuidance}
@@ -628,7 +634,11 @@ export function ChatInputControls({
                 forceOverride={forceOverride}
                 setForceOverride={setForceOverride}
                 selectedTeam={selectedTeam}
-                disabled={isLoading || isStreaming || (hasMessages && !isChatShell(selectedTeam))}
+                disabled={
+                  isLoading ||
+                  isStreaming ||
+                  (hasMessages && !canSwitchModelAfterMessages(selectedTeam))
+                }
                 compact={shouldCollapseSelectors}
                 teamId={teamId}
                 taskId={taskId}

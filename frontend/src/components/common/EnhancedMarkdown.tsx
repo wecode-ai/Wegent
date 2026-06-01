@@ -19,6 +19,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { createSchemeAwareUrlTransform } from '@/lib/scheme'
 import { createSmartMarkdownComponents } from '@/components/common/SmartUrlRenderer'
+import { SandboxedHtmlFrame } from '@/components/common/SandboxedHtmlFrame'
 
 import 'katex/dist/katex.min.css'
 
@@ -41,6 +42,113 @@ interface EnhancedMarkdownProps {
   /** Custom components to override default rendering */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   components?: Record<string, React.ComponentType<any>>
+}
+
+type ContentPart =
+  | { type: 'markdown' | 'mermaid' | 'latex'; content: string }
+  | { type: 'artifact'; title: string; content: string }
+
+const DEFAULT_ARTIFACT_TITLE = 'Artifact'
+
+function parseArtifactTitle(attributes: string): string {
+  const match = attributes.match(/\btitle\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i)
+  const title = (match?.[1] || match?.[2] || match?.[3] || '').trim()
+  return title || DEFAULT_ARTIFACT_TITLE
+}
+
+function isInsideFencedCodeBlock(source: string, index: number): boolean {
+  const precedingText = source.slice(0, index)
+  const fenceMatches = precedingText.match(/^```/gm)
+  return (fenceMatches?.length ?? 0) % 2 === 1
+}
+
+function splitArtifactBlocks(source: string): ContentPart[] {
+  const parts: ContentPart[] = []
+  const artifactRegex = /<artifact\b([^>]*)>([\s\S]*?)<\/artifact>/gi
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+
+  while ((match = artifactRegex.exec(source)) !== null) {
+    if (isInsideFencedCodeBlock(source, match.index)) {
+      continue
+    }
+
+    const markdownContent = source.slice(lastIndex, match.index)
+    if (markdownContent.trim()) {
+      parts.push({ type: 'markdown', content: markdownContent })
+    }
+
+    const artifactContent = match[2].trim()
+    if (artifactContent) {
+      parts.push({
+        type: 'artifact',
+        title: parseArtifactTitle(match[1]),
+        content: artifactContent,
+      })
+    }
+
+    lastIndex = match.index + match[0].length
+  }
+
+  const remainingContent = source.slice(lastIndex)
+  if (remainingContent.trim()) {
+    parts.push({ type: 'markdown', content: remainingContent })
+  }
+
+  return parts
+}
+
+function splitSpecialMarkdownBlocks(markdown: string): ContentPart[] {
+  const parts: ContentPart[] = []
+  const specialBlockRegex = /```(mermaid|latex)\s*\n([\s\S]*?)```/g
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+
+  while ((match = specialBlockRegex.exec(markdown)) !== null) {
+    if (match.index > lastIndex) {
+      const markdownContent = markdown.slice(lastIndex, match.index)
+      if (markdownContent.trim()) {
+        parts.push({ type: 'markdown', content: markdownContent })
+      }
+    }
+
+    const blockType = match[1] as 'mermaid' | 'latex'
+    const blockCode = match[2].trim()
+    if (blockCode) {
+      parts.push({ type: blockType, content: blockCode })
+    }
+
+    lastIndex = match.index + match[0].length
+  }
+
+  if (lastIndex < markdown.length) {
+    const remainingContent = markdown.slice(lastIndex)
+    if (remainingContent.trim()) {
+      parts.push({ type: 'markdown', content: remainingContent })
+    }
+  }
+
+  if (parts.length === 0 && markdown.trim()) {
+    parts.push({ type: 'markdown', content: markdown })
+  }
+
+  return parts
+}
+
+function ArtifactPreview({ title, html }: { title: string; html: string }) {
+  return (
+    <div className="my-4 overflow-hidden rounded-lg border border-border bg-surface">
+      <div className="flex items-center justify-between border-b border-border px-3 py-2">
+        <span className="text-xs font-medium text-text-secondary">{title}</span>
+      </div>
+      <SandboxedHtmlFrame
+        title={title}
+        content={html}
+        className="block h-[520px] max-h-[70vh] min-h-[320px] w-full border-0 bg-white"
+        testId="artifact-preview-iframe"
+      />
+    </div>
+  )
 }
 
 /**
@@ -533,61 +641,30 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
   // Extract frontmatter before processing
   const { frontmatter, body } = useMemo(() => extractFrontmatter(source), [source])
 
-  // Pre-process source:
-  // 1. Convert \[...\] and \(...\) to dollar syntax for LaTeX
-  // 2. Fix CJK punctuation + ** edge cases (CommonMark right-flanking delimiter rule)
-  // 3. Convert bare URLs to markdown link format (iOS 16 Safari compatibility)
-  const processedSource = useMemo(
-    () => autolinkUrls(preprocessCjkBoldEdgeCases(preprocessLatexSyntax(body))),
-    [body]
-  )
+  const contentParts = useMemo(() => {
+    const rawParts = splitArtifactBlocks(body)
+    const normalizedParts =
+      rawParts.length > 0 ? rawParts : [{ type: 'markdown' as const, content: body }]
+
+    return normalizedParts.flatMap(part => {
+      if (part.type === 'artifact') return [part]
+
+      const processedMarkdown = autolinkUrls(
+        preprocessCjkBoldEdgeCases(preprocessLatexSyntax(part.content))
+      )
+      return splitSpecialMarkdownBlocks(processedMarkdown)
+    })
+  }, [body])
 
   // Check if source contains math formulas
-  const hasMath = useMemo(() => containsMathFormulas(processedSource), [processedSource])
-
-  // Parse the source to extract mermaid blocks, latex blocks, and regular content
-  const contentParts = useMemo(() => {
-    const parts: Array<{ type: 'markdown' | 'mermaid' | 'latex'; content: string }> = []
-    // Combined regex to match both mermaid and latex code blocks
-    const specialBlockRegex = /```(mermaid|latex)\s*\n([\s\S]*?)```/g
-
-    let lastIndex = 0
-    let match
-
-    while ((match = specialBlockRegex.exec(processedSource)) !== null) {
-      // Add markdown content before this special block
-      if (match.index > lastIndex) {
-        const markdownContent = processedSource.slice(lastIndex, match.index)
-        if (markdownContent.trim()) {
-          parts.push({ type: 'markdown', content: markdownContent })
-        }
-      }
-
-      // Add the special block (mermaid or latex)
-      const blockType = match[1] as 'mermaid' | 'latex'
-      const blockCode = match[2].trim()
-      if (blockCode) {
-        parts.push({ type: blockType, content: blockCode })
-      }
-
-      lastIndex = match.index + match[0].length
-    }
-
-    // Add remaining markdown content after the last special block
-    if (lastIndex < processedSource.length) {
-      const remainingContent = processedSource.slice(lastIndex)
-      if (remainingContent.trim()) {
-        parts.push({ type: 'markdown', content: remainingContent })
-      }
-    }
-
-    // If no special blocks found, return the entire source as markdown
-    if (parts.length === 0 && processedSource.trim()) {
-      parts.push({ type: 'markdown', content: processedSource })
-    }
-
-    return parts
-  }, [processedSource])
+  const hasMath = useMemo(
+    () =>
+      contentParts.some(
+        part =>
+          (part.type === 'markdown' || part.type === 'latex') && containsMathFormulas(part.content)
+      ),
+    [contentParts]
+  )
 
   // Default components with link handling and code block rendering
   const defaultComponents = useMemo(
@@ -701,7 +778,7 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
     return (
       <div className="wmde-markdown markdown-content" data-color-mode={theme}>
         {frontmatter && <FrontmatterBlock yaml={frontmatter} />}
-        {renderMarkdown(processedSource)}
+        {renderMarkdown(contentParts[0].content)}
       </div>
     )
   }
@@ -717,6 +794,12 @@ export const EnhancedMarkdown = memo(function EnhancedMarkdown({
 
         if (part.type === 'latex') {
           return <LaTeXBlock key={`latex-${index}`} code={part.content} />
+        }
+
+        if (part.type === 'artifact') {
+          return (
+            <ArtifactPreview key={`artifact-${index}`} title={part.title} html={part.content} />
+          )
         }
 
         return (
