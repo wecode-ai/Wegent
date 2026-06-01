@@ -387,6 +387,27 @@ trigger_update_wework_web:
         UPSTREAM_CI_PIPELINE_ID: $CI_PIPELINE_ID
         UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
         UPSTREAM_CI_COMMIT_SHA: $CI_COMMIT_SHA
+    trigger:
+        project: weibo_rd/cloudnative/aigc_gitops_manifest
+        branch: master
+        strategy: depend
+    rules:
+      - if: '$CI_COMMIT_BRANCH == "main"'
+        changes:
+          - wework/**/*
+          - wecode/docker/wework/**/*
+
+trigger_update_simulation_wework_web:
+    stage: production
+    variables:
+        APP: simulation-wegent-wework-web
+        SERVICE: wegent-wework-web
+        IMAGE_NAME: wegent-wework-web
+        MASTER_BRANCH: master
+        UPSTREAM_CI_PROJECT_ID: $CI_PROJECT_ID
+        UPSTREAM_CI_PIPELINE_ID: $CI_PIPELINE_ID
+        UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
+        UPSTREAM_CI_COMMIT_SHA: $CI_COMMIT_SHA
         CD_AUTO_PRODUCTION: 1
     trigger:
         project: weibo_rd/cloudnative/aigc_gitops_manifest
