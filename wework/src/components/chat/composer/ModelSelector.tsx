@@ -80,7 +80,7 @@ export function ModelSelector({
         onClick={() => !disabled && setOpen(current => !current)}
         disabled={disabled}
         className={[
-          'flex h-11 min-w-[44px] items-center gap-1 rounded-full px-2 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50',
+          'flex h-9 min-w-9 items-center gap-1 rounded-full px-2 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50',
           buttonClassName,
         ].join(' ')}
         aria-expanded={open}

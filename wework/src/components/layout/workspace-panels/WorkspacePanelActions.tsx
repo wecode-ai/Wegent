@@ -27,7 +27,7 @@ export function WorkspacePanelActions({
   const { t } = useTranslation('common')
 
   return (
-    <div className="absolute right-5 top-4 z-50 flex items-center gap-3">
+    <div className="absolute right-5 top-1 z-50 flex items-center gap-3">
       <EnvironmentInfoPopover
         info={environmentInfo}
         onRefresh={onRefreshEnvironmentInfo}

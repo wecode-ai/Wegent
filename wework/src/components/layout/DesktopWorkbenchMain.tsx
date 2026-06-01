@@ -71,7 +71,7 @@ export function DesktopWorkbenchMain({
             type="button"
             data-testid="expand-sidebar-button"
             onClick={onExpandSidebar}
-            className="absolute left-4 top-4 z-10 flex h-9 w-9 items-center justify-center rounded-md bg-surface text-[#555] hover:bg-muted"
+            className="absolute left-4 top-1 z-10 flex h-9 w-9 items-center justify-center rounded-md bg-surface text-[#555] hover:bg-muted"
             aria-label={t('workbench.expand_sidebar', '展开侧边栏')}
           >
             <ChevronRight className="h-4 w-4" />

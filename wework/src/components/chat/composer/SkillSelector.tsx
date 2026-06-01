@@ -93,11 +93,11 @@ export function SkillSelector({
         data-testid="skill-selector-button"
         onClick={() => !disabled && setOpen(current => !current)}
         disabled={disabled}
-        className="flex h-11 min-w-[44px] items-center gap-2 rounded-full px-2 text-sm font-medium text-text-secondary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex h-9 min-w-9 items-center gap-2 rounded-full px-2 text-sm font-medium text-text-secondary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
         aria-expanded={open}
         aria-label={t('workbench.select_skills', '选择技能')}
       >
-        <Sparkles className="h-5 w-5" />
+        <Sparkles className="h-[18px] w-[18px]" />
         <span>{selectedLabel}</span>
         <ChevronDown className="h-4 w-4" />
       </button>

@@ -520,10 +520,10 @@ export function DesktopSidebar({
 
   return (
     <aside
-      className="relative flex shrink-0 flex-col bg-[#d9dadd] px-4 py-4"
+      className="relative flex shrink-0 flex-col border-r border-white/45 bg-[#e5e5e7]/70 px-4 py-4 shadow-[inset_-1px_0_0_rgba(255,255,255,0.28)] backdrop-blur-xl backdrop-saturate-150"
       style={{ width: sidebarWidth }}
     >
-      <div className="mb-1 flex justify-end">
+      <div className="-mt-3 mb-1 flex justify-end">
         <button
           type="button"
           data-testid="collapse-sidebar-button"
@@ -566,7 +566,7 @@ export function DesktopSidebar({
 
       <div
         data-testid="sidebar-worklists-scroll"
-        className="mt-8 min-h-0 flex-1 overflow-y-auto pr-1"
+        className="scrollbar-none mt-8 min-h-0 flex-1 overflow-y-auto"
       >
         <section>
           <div className="group/projects mb-3 flex h-8 items-center justify-between px-3">

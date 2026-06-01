@@ -702,6 +702,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('sidebar-worklists-scroll')).toHaveClass(
       'flex-1',
       'overflow-y-auto',
+      'scrollbar-none',
     )
     expect(screen.getByTestId('settings-button')).toHaveClass('shrink-0')
   })

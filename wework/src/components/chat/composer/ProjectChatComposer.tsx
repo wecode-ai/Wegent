@@ -55,7 +55,7 @@ export function ProjectChatComposer({
   return (
     <div className="w-full rounded-[28px] bg-surface shadow-[0_16px_44px_rgba(0,0,0,0.08)]">
       <form
-        className="flex min-h-[88px] w-full flex-col rounded-[28px] border border-border bg-base px-6 pb-3 pt-4"
+        className="flex min-h-[112px] w-full flex-col rounded-[28px] border border-border bg-base pb-2 pl-4 pr-2 pt-3.5"
         onSubmit={event => {
           event.preventDefault()
           if (canSend) onSubmit()
@@ -75,7 +75,7 @@ export function ProjectChatComposer({
           canSend={canSend}
           placeholder={placeholder}
           rows={2}
-          className="max-h-[128px] min-h-8 w-full resize-none overflow-y-auto bg-transparent text-base leading-6 text-text-primary outline-none placeholder:text-text-muted"
+          className="max-h-[128px] min-h-10 w-full resize-none overflow-y-auto bg-transparent p-0 text-base leading-6 text-text-primary outline-none placeholder:text-text-muted"
         />
         <ComposerToolbar
           canSend={canSend}
@@ -97,6 +97,7 @@ export function ProjectChatComposer({
           currentStandaloneDeviceId={projectWork.currentStandaloneDeviceId}
           onSelectProject={projectWork.onSelectProject}
           onSelectStandaloneDevice={projectWork.onSelectStandaloneDevice}
+          className="min-h-12 px-4"
         />
       )}
     </div>
