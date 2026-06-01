@@ -197,6 +197,27 @@ class TaskDetail(BaseModel):
         from_attributes = True
 
 
+class TaskRuntimeActiveStream(BaseModel):
+    """Lightweight active stream checkpoint for runtime consistency checks."""
+
+    subtask_id: int
+    cursor: int = 0
+    last_activity_at: Optional[datetime] = None
+
+
+class TaskRuntimeCheck(BaseModel):
+    """Lightweight task runtime checkpoint.
+
+    Message content is intentionally excluded and recovered through WebSocket
+    join/resume only.
+    """
+
+    task_id: int
+    task_status: TaskStatus
+    status_updated_at: Optional[datetime] = None
+    active_stream: Optional[TaskRuntimeActiveStream] = None
+
+
 class TaskListResponse(BaseModel):
     """Task paginated response model"""
 

@@ -179,6 +179,7 @@ function ChatAreaContent({
 
   // Use useTaskStateMachine hook for reactive state updates (SINGLE SOURCE OF TRUTH per AGENTS.md)
   const { state: taskState } = useTaskStateMachine(effectiveTaskId)
+  const runtimeTaskStatus = taskState?.runtime.taskStatus
 
   // Video model selection state - only enabled for video mode
   // Uses unified useModelSelection hook with modelCategoryType='video'
@@ -769,7 +770,7 @@ function ChatAreaContent({
   selectedContextsRef.current = chatState.selectedContexts
 
   const shouldConfirmPendingReplacement =
-    selectedTaskDetail?.status === 'PENDING' && !selectedTaskDetail?.is_group_chat
+    runtimeTaskStatus === 'PENDING' && !selectedTaskDetail?.is_group_chat
 
   const sendOrConfirmPendingReplacement = useCallback(
     async (message: string) => {
@@ -1218,6 +1219,7 @@ function ChatAreaContent({
     onDrop: handleDrop,
     canSubmit,
     canQueueMessage: streamHandlers.canQueueMessage,
+    canCancelTask: streamHandlers.canCancelTask,
     queuedMessages: streamHandlers.queuedMessages,
     onCancelQueuedMessage: streamHandlers.cancelQueuedMessage,
     onSendQueuedAsGuidance: streamHandlers.sendQueuedAsGuidance,
@@ -1283,7 +1285,6 @@ function ChatAreaContent({
     shouldHideChatInput: chatState.shouldHideChatInput,
     isModelSelectionRequired,
     isAttachmentReadyToSend: chatState.isAttachmentReadyToSend,
-    isSubtaskStreaming: streamHandlers.isSubtaskStreaming,
     onStopStream: streamHandlers.stopStream,
     onCancelTask: streamHandlers.handleCancelTask,
     isCancelling: streamHandlers.isCancelling,

@@ -14,6 +14,7 @@ const mockUpdateUserMessage = jest.fn()
 const mockToast = jest.fn()
 const mockSendChatGuidance = jest.fn().mockResolvedValue({ success: true })
 const mockRefreshSelectedTaskDetail = jest.fn()
+const mockCheckHealth = jest.fn().mockResolvedValue(undefined)
 
 let isMachineStreamingMock = true
 let taskInputMessageMock = 'next question'
@@ -88,17 +89,40 @@ jest.mock('@/hooks/useTraceAction', () => ({
 
 jest.mock('@/features/tasks/hooks/useTaskStateMachine', () => ({
   useTaskStateMachine: () => ({
-    state: { messages: new Map(), isStopping: false, streamingInfo: { subtask_id: 77 } },
+    state: {
+      messages: new Map(),
+      isStopping: false,
+      streamingInfo: { subtask_id: 77 },
+      runtime: { taskStatus: selectedTaskDetailMock.status },
+    },
     isStreaming: isMachineStreamingMock,
+    derived: {
+      isExecutionActive:
+        selectedTaskDetailMock.status === 'RUNNING' || selectedTaskDetailMock.status === 'PENDING',
+      isTerminal:
+        selectedTaskDetailMock.status === 'COMPLETED' ||
+        selectedTaskDetailMock.status === 'FAILED' ||
+        selectedTaskDetailMock.status === 'CANCELLED',
+      isStreaming: isMachineStreamingMock,
+      shouldJoinRoom: false,
+      canSendMessage: selectedTaskDetailMock.status === 'COMPLETED',
+      canQueueMessage: isMachineStreamingMock,
+      canCancelTask:
+        selectedTaskDetailMock.status === 'RUNNING' || selectedTaskDetailMock.status === 'PENDING',
+      blocksQueuedDispatch:
+        selectedTaskDetailMock.status === 'RUNNING' || selectedTaskDetailMock.status === 'PENDING',
+    },
   }),
 }))
 
 jest.mock('@/features/tasks/state', () => ({
   generateMessageId: () => 'local-user-1',
   taskStateManager: {
+    get: () => ({ checkHealth: mockCheckHealth }),
     getOrCreate: () => ({
       addUserMessage: mockAddUserMessage,
       updateUserMessage: mockUpdateUserMessage,
+      checkHealth: mockCheckHealth,
     }),
   },
 }))
@@ -249,6 +273,33 @@ describe('useChatStreamHandlers queue integration', () => {
     })
   })
 
+  it('checks runtime health when stream ended but task status still blocks a queued message', async () => {
+    const { result, rerender } = renderQueueableHook()
+
+    await act(async () => {
+      await result.current.handleSendMessage()
+    })
+
+    expect(result.current.queuedMessages).toHaveLength(1)
+
+    mockRefreshSelectedTaskDetail.mockClear()
+    mockCheckHealth.mockClear()
+    isMachineStreamingMock = false
+    selectedTaskDetailMock = {
+      id: 42,
+      status: 'RUNNING',
+      is_group_chat: false,
+      subtasks: [],
+    } as unknown as TaskDetail
+    rerender()
+
+    await waitFor(() => {
+      expect(mockCheckHealth).toHaveBeenCalledWith('queued-message-blocked')
+    })
+    expect(mockRefreshSelectedTaskDetail).not.toHaveBeenCalled()
+    expect(mockContextSendMessage).not.toHaveBeenCalled()
+  })
+
   it('does not expose queue availability for a pending task unless it is streaming or awaiting response', () => {
     isMachineStreamingMock = false
     selectedTaskDetailMock = {
@@ -280,7 +331,8 @@ describe('useChatStreamHandlers queue integration', () => {
     })
 
     expect(mockToast).not.toHaveBeenCalledWith(expect.objectContaining({ variant: 'destructive' }))
-    expect(mockRefreshSelectedTaskDetail).toHaveBeenCalledWith(false)
+    expect(mockCheckHealth).toHaveBeenCalledWith('manual-refresh')
+    expect(mockRefreshSelectedTaskDetail).not.toHaveBeenCalled()
   })
 
   it('shows a retry action that resends a failed queued message', async () => {

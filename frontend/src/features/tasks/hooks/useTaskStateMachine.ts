@@ -21,6 +21,10 @@ export interface UseTaskStateMachineResult {
   isStreaming: boolean
   /** Current task status */
   status: TaskStateData['status'] | null
+  /** Runtime lifecycle state */
+  runtime: TaskStateData['runtime'] | null
+  /** Derived runtime flags for UI decisions */
+  derived: TaskStateData['derived'] | null
   /** Trigger recovery - subtasks are now fetched from joinTask response */
   recover: (options?: { force?: boolean }) => Promise<void>
   /** Whether the state machine is initialized */
@@ -120,12 +124,16 @@ export function useTaskStateMachine(
   }, [state?.status])
 
   const status = state?.status || null
+  const runtime = state?.runtime || null
+  const derived = state?.derived || null
 
   return {
     state,
     messages,
     isStreaming,
     status,
+    runtime,
+    derived,
     recover,
     isInitialized,
   }

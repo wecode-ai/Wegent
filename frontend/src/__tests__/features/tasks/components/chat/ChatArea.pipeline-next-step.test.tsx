@@ -141,7 +141,6 @@ jest.mock('@/features/tasks/components/chat/useChatStreamHandlers', () => ({
     pendingTaskId: null,
     isStreaming: false,
     isAwaitingResponseStart: false,
-    isSubtaskStreaming: false,
     isStopping: false,
     hasPendingUserMessage: false,
     localPendingMessage: null,
@@ -151,8 +150,6 @@ jest.mock('@/features/tasks/components/chat/useChatStreamHandlers', () => ({
     handleCancelTask: jest.fn(),
     stopStream: jest.fn(),
     resetStreamingState: jest.fn(),
-    handleNewMessages: jest.fn(),
-    handleStreamComplete: jest.fn(),
     isCancelling: false,
   }),
 }))
@@ -181,7 +178,10 @@ jest.mock('@/features/tasks/contexts/chatStreamContext', () => ({
 
 jest.mock('@/features/tasks/hooks/useTaskStateMachine', () => ({
   useTaskStateMachine: () => ({
-    state: { messages: mockTaskMessages },
+    state: {
+      messages: mockTaskMessages,
+      runtime: { taskStatus: undefined },
+    },
   }),
 }))
 

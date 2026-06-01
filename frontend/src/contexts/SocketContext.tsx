@@ -60,7 +60,6 @@ import {
 import { fetchRuntimeConfig, getSocketUrl } from '@/lib/runtime-config'
 import { paths } from '@/config/paths'
 import { POST_LOGIN_REDIRECT_KEY } from '@/features/login/constants'
-import { taskStateManager } from '@/features/tasks/state'
 
 const SOCKETIO_PATH = '/socket.io'
 
@@ -212,6 +211,25 @@ export function SocketProvider({ children }: { children: ReactNode }) {
    * Internal function to create socket connection
    */
   const createSocketConnection = useCallback((token: string, socketUrl: string) => {
+    let hasConnectedBefore = false
+    let lastReconnectNotificationAt = 0
+
+    const notifyReconnectSubscribers = () => {
+      const now = Date.now()
+      if (now - lastReconnectNotificationAt < 500) {
+        return
+      }
+      lastReconnectNotificationAt = now
+
+      reconnectCallbacksRef.current.forEach(callback => {
+        try {
+          callback()
+        } catch (err) {
+          console.error('[Socket.IO] Error in reconnect callback:', err)
+        }
+      })
+    }
+
     // Create new socket connection
     // Transport strategy:
     // 1. Try WebSocket first (preferred for load-balanced environments without sticky sessions)
@@ -236,18 +254,25 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       // This prevents "Invalid transport" errors when switching transports
       upgrade: true,
     })
+    hasConnectedBefore = newSocket.connected
 
     // Store in ref immediately
     socketRef.current = newSocket
 
     // Connection event handlers
     newSocket.on('connect', () => {
+      const shouldNotifyReconnect = hasConnectedBefore
+      hasConnectedBefore = true
       setIsConnected(true)
       setConnectionError(null)
       setReconnectAttempts(0)
+      if (shouldNotifyReconnect) {
+        notifyReconnectSubscribers()
+      }
     })
 
     newSocket.on('disconnect', (_: string) => {
+      hasConnectedBefore = true
       setIsConnected(false)
       // Don't clear joinedTasksRef here - we need it for rejoining after reconnect
     })
@@ -260,24 +285,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       setIsConnected(true)
       setConnectionError(null)
       setReconnectAttempts(0)
-
-      // Trigger recovery for all active tasks via TaskStateManager
-      // This handles message state recovery after WebSocket reconnection
-      if (taskStateManager.isInitialized()) {
-        taskStateManager.recoverAll().catch(err => {
-          console.error('[Socket.IO] Error recovering tasks after reconnect:', err)
-        })
-      }
-
-      // Notify all registered reconnect callbacks
-      // This is the single source of truth for reconnection events
-      reconnectCallbacksRef.current.forEach(callback => {
-        try {
-          callback()
-        } catch (err) {
-          console.error('[Socket.IO] Error in reconnect callback:', err)
-        }
-      })
+      notifyReconnectSubscribers()
     })
 
     newSocket.io.on('reconnect_error', (error: Error) => {

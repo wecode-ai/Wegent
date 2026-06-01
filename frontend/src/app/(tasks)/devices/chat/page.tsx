@@ -116,7 +116,7 @@ export default function DeviceChatPage() {
   // Handle members changed
   const handleMembersChanged = () => {
     refreshTasks()
-    refreshSelectedTaskDetail(false)
+    refreshSelectedTaskDetail()
   }
 
   // Handle refresh teams

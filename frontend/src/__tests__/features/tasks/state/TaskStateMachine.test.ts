@@ -2,7 +2,21 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { TaskStateMachine } from '@/features/tasks/state'
+import { TaskStateMachine, type TaskStateMachineDeps } from '@/features/tasks/state'
+
+function createRuntimeActions(overrides: Partial<TaskStateMachineDeps> = {}): TaskStateMachineDeps {
+  return {
+    joinTask: jest.fn().mockResolvedValue({ subtasks: [] }),
+    verifyRuntime: jest.fn().mockResolvedValue({
+      task_id: 42,
+      task_status: 'COMPLETED',
+      status_updated_at: '2026-06-01T10:00:00',
+      active_stream: null,
+    }),
+    isConnected: jest.fn(() => true),
+    ...overrides,
+  }
+}
 
 describe('TaskStateMachine', () => {
   it('stores reasoning chunks as chronological thinking blocks', () => {
@@ -165,5 +179,706 @@ describe('TaskStateMachine', () => {
     expect(afterError?.timestamp).toBeGreaterThan(beforeError?.timestamp ?? 0)
 
     nowSpy.mockRestore()
+  })
+
+  it('enters running runtime phase and requests room join for active task status', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('RUNNING', '2026-05-31T10:00:00.000Z')
+
+    const state = machine.getState()
+    expect(state.runtime).toMatchObject({
+      taskId: 100,
+      taskStatus: 'RUNNING',
+      phase: 'running',
+      joinedRoom: false,
+      lastStatusUpdatedAt: '2026-05-31T10:00:00.000Z',
+    })
+    expect(state.derived).toMatchObject({
+      isExecutionActive: true,
+      isTerminal: false,
+      shouldJoinRoom: true,
+      blocksQueuedDispatch: true,
+    })
+  })
+
+  it('marks runtime as streaming when chat starts for an active task', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('RUNNING')
+    machine.handleChatStart(42, 'Chat', 7)
+
+    const state = machine.getState()
+    expect(state.runtime.phase).toBe('streaming')
+    expect(state.runtime.activeStreamSubtaskId).toBe(42)
+    expect(state.derived.isStreaming).toBe(true)
+    expect(state.derived.canQueueMessage).toBe(true)
+  })
+
+  it('terminal task status clears streaming runtime and unblocks queued dispatch', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('RUNNING')
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.setStopping(true)
+    machine.handleTaskStatus('COMPLETED', '2026-05-31T10:01:00.000Z')
+
+    const state = machine.getState()
+    const message = state.messages.get('ai-42')
+    expect(state.status).toBe('ready')
+    expect(state.streamingSubtaskId).toBeNull()
+    expect(state.isStopping).toBe(false)
+    expect(state.runtime).toMatchObject({
+      taskStatus: 'COMPLETED',
+      phase: 'terminal',
+      activeStreamSubtaskId: undefined,
+    })
+    expect(state.derived).toMatchObject({
+      isTerminal: true,
+      blocksQueuedDispatch: false,
+      canSendMessage: true,
+    })
+    expect(message?.status).toBe('completed')
+    expect(message?.subtaskStatus).toBe('COMPLETED')
+  })
+
+  it('terminal task status discards pending chunks from a stale stream', async () => {
+    const consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
+    const joinTask = jest.fn().mockResolvedValue({
+      subtasks: [
+        {
+          id: 42,
+          task_id: 100,
+          team_id: 1,
+          title: 'done',
+          bot_ids: [],
+          role: 'TEAM',
+          message_id: 7,
+          parent_id: 0,
+          prompt: '',
+          executor_namespace: '',
+          executor_name: '',
+          status: 'COMPLETED',
+          progress: 100,
+          batch: 0,
+          result: { value: 'done' },
+          error_message: '',
+          user_id: 1,
+          created_at: '2026-05-31T10:00:00.000Z',
+          updated_at: '2026-05-31T10:00:00.000Z',
+          completed_at: '2026-05-31T10:00:00.000Z',
+          bots: [],
+        },
+      ],
+    })
+    const machine = new TaskStateMachine(100, {
+      joinTask,
+      isConnected: () => true,
+    })
+
+    machine.handleChatChunk(42, ' stale')
+    machine.handleTaskStatus('COMPLETED')
+    await machine.recover({ force: true })
+
+    const message = machine.getState().messages.get('ai-42')
+    expect(message?.content).toBe('done')
+    expect(message?.status).toBe('completed')
+
+    consoleInfoSpy.mockRestore()
+  })
+
+  it('ignores stale lifecycle updates after a newer terminal status', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('COMPLETED', '2026-05-31T10:01:00.000Z')
+    machine.syncTaskDetail({
+      id: 100,
+      status: 'RUNNING',
+      updated_at: '2026-05-31T10:00:00.000Z',
+    })
+
+    const state = machine.getState()
+    expect(state.runtime.taskStatus).toBe('COMPLETED')
+    expect(state.runtime.phase).toBe('terminal')
+    expect(state.derived.blocksQueuedDispatch).toBe(false)
+  })
+
+  it('ignores active lifecycle snapshots after an untimestamped terminal status', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('COMPLETED')
+    machine.syncTaskDetail({
+      id: 100,
+      status: 'RUNNING',
+      updated_at: '2026-05-31T10:00:00.000Z',
+    })
+
+    const state = machine.getState()
+    expect(state.runtime.taskStatus).toBe('COMPLETED')
+    expect(state.runtime.phase).toBe('terminal')
+    expect(state.derived.blocksQueuedDispatch).toBe(false)
+  })
+
+  it('uses later chat done content when terminal status arrived first', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('RUNNING')
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.handleChatChunk(42, 'partial')
+    machine.handleTaskStatus('COMPLETED', '2026-05-31T10:01:00.000Z')
+    machine.handleChatDone(42, 'partial final')
+
+    const state = machine.getState()
+    const message = state.messages.get('ai-42')
+    expect(state.runtime.phase).toBe('terminal')
+    expect(message?.content).toBe('partial final')
+    expect(message?.status).toBe('completed')
+  })
+
+  it('keeps failed terminal status authoritative when chat done arrives late', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('RUNNING')
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.handleChatChunk(42, 'partial')
+    machine.handleTaskStatus('FAILED', '2026-05-31T10:01:00.000Z')
+    machine.handleChatDone(42, 'partial final')
+
+    const message = machine.getState().messages.get('ai-42')
+    expect(message?.status).toBe('error')
+    expect(message?.subtaskStatus).toBe('FAILED')
+  })
+
+  it('keeps completed terminal status authoritative when chat error arrives late', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('RUNNING')
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.handleChatChunk(42, 'done')
+    machine.handleTaskStatus('COMPLETED', '2026-05-31T10:01:00.000Z')
+    machine.handleChatError(42, 'late error', 7, 'transport')
+
+    const message = machine.getState().messages.get('ai-42')
+    expect(message?.status).toBe('completed')
+    expect(message?.subtaskStatus).toBe('COMPLETED')
+    expect(message?.error).toBeUndefined()
+  })
+
+  it('keeps completed terminal status authoritative when chat cancelled arrives late', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('RUNNING')
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.handleChatChunk(42, 'done')
+    machine.handleTaskStatus('COMPLETED', '2026-05-31T10:01:00.000Z')
+    machine.handleChatCancelled(42)
+
+    const message = machine.getState().messages.get('ai-42')
+    expect(message?.status).toBe('completed')
+    expect(message?.subtaskStatus).toBe('COMPLETED')
+  })
+
+  it('updates completed backend content after terminal status finalized a partial stream', async () => {
+    const consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
+    const joinTask = jest.fn().mockResolvedValue({
+      subtasks: [
+        {
+          id: 42,
+          task_id: 100,
+          team_id: 1,
+          title: 'done',
+          bot_ids: [],
+          role: 'TEAM',
+          message_id: 7,
+          parent_id: 0,
+          prompt: '',
+          executor_namespace: '',
+          executor_name: '',
+          status: 'COMPLETED',
+          progress: 100,
+          batch: 0,
+          result: { value: 'partial final from backend' },
+          error_message: '',
+          user_id: 1,
+          created_at: '2026-05-31T10:00:00.000Z',
+          updated_at: '2026-05-31T10:00:00.000Z',
+          completed_at: '2026-05-31T10:00:00.000Z',
+          bots: [],
+        },
+      ],
+    })
+    const machine = new TaskStateMachine(100, {
+      joinTask,
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('RUNNING')
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.handleChatChunk(42, 'partial')
+    machine.handleTaskStatus('COMPLETED', '2026-05-31T10:01:00.000Z')
+    await machine.recover({ force: true })
+
+    const message = machine.getState().messages.get('ai-42')
+    expect(message?.content).toBe('partial final from backend')
+    expect(message?.status).toBe('completed')
+
+    consoleInfoSpy.mockRestore()
+  })
+
+  it('does not mark existing streaming message completed from a pending backend snapshot', async () => {
+    const consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
+    const joinTask = jest.fn().mockResolvedValue({
+      subtasks: [
+        {
+          id: 42,
+          task_id: 100,
+          team_id: 1,
+          title: 'pending',
+          bot_ids: [],
+          role: 'TEAM',
+          message_id: 7,
+          parent_id: 0,
+          prompt: '',
+          executor_namespace: '',
+          executor_name: '',
+          status: 'PENDING',
+          progress: 0,
+          batch: 0,
+          result: {},
+          error_message: '',
+          user_id: 1,
+          created_at: '2026-05-31T10:00:00.000Z',
+          updated_at: '2026-05-31T10:00:00.000Z',
+          completed_at: '',
+          bots: [],
+        },
+      ],
+    })
+    const machine = new TaskStateMachine(100, {
+      joinTask,
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('RUNNING')
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.handleChatChunk(42, 'partial')
+    await machine.recover({ force: true })
+
+    const state = machine.getState()
+    const message = state.messages.get('ai-42')
+    expect(state.status).toBe('streaming')
+    expect(state.runtime.phase).toBe('streaming')
+    expect(message?.status).toBe('streaming')
+    expect(message?.content).toBe('partial')
+
+    consoleInfoSpy.mockRestore()
+  })
+
+  it('ignores duplicate chat start for an already finalized terminal message', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('RUNNING')
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.handleTaskStatus('COMPLETED', '2026-05-31T10:01:00.000Z')
+    machine.handleChatStart(42, 'Chat', 7)
+
+    const state = machine.getState()
+    expect(state.status).toBe('ready')
+    expect(state.streamingSubtaskId).toBeNull()
+    expect(state.runtime.phase).toBe('terminal')
+    expect(state.runtime.activeStreamSubtaskId).toBeUndefined()
+    expect(state.derived.isTerminal).toBe(true)
+    expect(state.derived.isStreaming).toBe(false)
+    expect(state.derived.canQueueMessage).toBe(false)
+    expect(state.messages.get('ai-42')?.status).toBe('completed')
+  })
+
+  it('allows a new chat start after terminal lifecycle status for follow-up sends', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('COMPLETED', '2026-05-31T10:01:00.000Z')
+    machine.handleChatStart(43, 'Chat', 8)
+
+    const state = machine.getState()
+    expect(state.status).toBe('streaming')
+    expect(state.streamingSubtaskId).toBe(43)
+    expect(state.runtime.taskStatus).toBe('RUNNING')
+    expect(state.runtime.phase).toBe('streaming')
+    expect(state.runtime.activeStreamSubtaskId).toBe(43)
+    expect(state.derived.isTerminal).toBe(false)
+    expect(state.derived.isStreaming).toBe(true)
+    expect(state.derived.canQueueMessage).toBe(true)
+  })
+
+  it('ignores old terminal snapshots after a follow-up chat start', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('COMPLETED', '2026-05-31T10:01:00.000Z')
+    machine.handleChatStart(43, 'Chat', 8)
+    machine.syncTaskDetail({
+      id: 100,
+      status: 'COMPLETED',
+      updated_at: '2026-05-31T10:01:00.000Z',
+    })
+
+    const state = machine.getState()
+    expect(state.status).toBe('streaming')
+    expect(state.runtime.taskStatus).toBe('RUNNING')
+    expect(state.runtime.phase).toBe('streaming')
+    expect(state.runtime.activeStreamSubtaskId).toBe(43)
+  })
+
+  it('ignores old terminal snapshots after an untimestamped terminal and follow-up chat start', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('COMPLETED')
+    machine.handleChatStart(43, 'Chat', 8)
+    machine.syncTaskDetail({
+      id: 100,
+      status: 'COMPLETED',
+      updated_at: '2026-05-31T10:01:00.000Z',
+    })
+
+    const state = machine.getState()
+    expect(state.status).toBe('streaming')
+    expect(state.runtime.taskStatus).toBe('RUNNING')
+    expect(state.runtime.phase).toBe('streaming')
+    expect(state.runtime.activeStreamSubtaskId).toBe(43)
+  })
+
+  it('applies deferred terminal snapshot when the active follow-up stream ends', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('COMPLETED')
+    machine.handleChatStart(43, 'Chat', 8)
+    machine.syncTaskDetail({
+      id: 100,
+      status: 'COMPLETED',
+      updated_at: '2026-05-31T10:01:00.000Z',
+    })
+    machine.handleChatDone(43, 'follow-up done')
+
+    const state = machine.getState()
+    expect(state.status).toBe('ready')
+    expect(state.runtime.taskStatus).toBe('COMPLETED')
+    expect(state.runtime.phase).toBe('terminal')
+    expect(state.runtime.activeStreamSubtaskId).toBeUndefined()
+    expect(state.derived.isTerminal).toBe(true)
+  })
+
+  it('applies deferred terminal snapshot when the active follow-up stream errors', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('COMPLETED')
+    machine.handleChatStart(43, 'Chat', 8)
+    machine.syncTaskDetail({
+      id: 100,
+      status: 'FAILED',
+      updated_at: '2026-05-31T10:01:00.000Z',
+    })
+    machine.handleChatError(43, 'follow-up failed', 8, 'transport')
+
+    const state = machine.getState()
+    expect(state.status).toBe('error')
+    expect(state.runtime.taskStatus).toBe('FAILED')
+    expect(state.runtime.phase).toBe('terminal')
+    expect(state.runtime.activeStreamSubtaskId).toBeUndefined()
+    expect(state.derived.isTerminal).toBe(true)
+  })
+
+  it('applies deferred terminal snapshot when the active follow-up stream is cancelled', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('COMPLETED')
+    machine.handleChatStart(43, 'Chat', 8)
+    machine.syncTaskDetail({
+      id: 100,
+      status: 'CANCELLED',
+      updated_at: '2026-05-31T10:01:00.000Z',
+    })
+    machine.handleChatCancelled(43)
+
+    const state = machine.getState()
+    expect(state.status).toBe('ready')
+    expect(state.runtime.taskStatus).toBe('CANCELLED')
+    expect(state.runtime.phase).toBe('terminal')
+    expect(state.runtime.activeStreamSubtaskId).toBeUndefined()
+    expect(state.derived.isTerminal).toBe(true)
+  })
+
+  it('keeps follow-up stream active when old chat done arrives late', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('RUNNING')
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.handleTaskStatus('COMPLETED', '2026-05-31T10:01:00.000Z')
+    machine.handleChatStart(43, 'Chat', 8)
+    machine.handleChatDone(42, 'old done')
+
+    const state = machine.getState()
+    expect(state.status).toBe('streaming')
+    expect(state.streamingSubtaskId).toBe(43)
+    expect(state.runtime.phase).toBe('streaming')
+    expect(state.runtime.activeStreamSubtaskId).toBe(43)
+    expect(state.derived.isStreaming).toBe(true)
+  })
+
+  it('keeps old failed message immutable when chat done arrives after follow-up starts', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('RUNNING')
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.handleTaskStatus('FAILED', '2026-05-31T10:01:00.000Z')
+    machine.handleChatStart(43, 'Chat', 8)
+    machine.handleChatDone(42, 'late success')
+
+    const oldMessage = machine.getState().messages.get('ai-42')
+    expect(oldMessage?.status).toBe('error')
+    expect(oldMessage?.subtaskStatus).toBe('FAILED')
+  })
+
+  it('keeps old completed message immutable when late chat done reports an error after follow-up starts', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('RUNNING')
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.handleTaskStatus('COMPLETED', '2026-05-31T10:01:00.000Z')
+    machine.handleChatStart(43, 'Chat', 8)
+    machine.handleChatDone(42, 'late error', undefined, undefined, undefined, true, 'old error')
+
+    const oldMessage = machine.getState().messages.get('ai-42')
+    expect(oldMessage?.status).toBe('completed')
+    expect(oldMessage?.subtaskStatus).toBe('COMPLETED')
+    expect(oldMessage?.error).toBeUndefined()
+  })
+
+  it('applies equal-timestamp terminal status for the current active stream', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('RUNNING', '2026-05-31T10:01:00.000Z')
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.handleTaskStatus('COMPLETED', '2026-05-31T10:01:00.000Z')
+
+    const state = machine.getState()
+    expect(state.status).toBe('ready')
+    expect(state.runtime.taskStatus).toBe('COMPLETED')
+    expect(state.runtime.phase).toBe('terminal')
+    expect(state.streamingSubtaskId).toBeNull()
+  })
+
+  it('keeps follow-up stream active when old chat error arrives late', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('RUNNING')
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.handleTaskStatus('COMPLETED', '2026-05-31T10:01:00.000Z')
+    machine.handleChatStart(43, 'Chat', 8)
+    machine.handleChatError(42, 'old error', 7, 'transport')
+
+    const state = machine.getState()
+    expect(state.status).toBe('streaming')
+    expect(state.streamingSubtaskId).toBe(43)
+    expect(state.runtime.phase).toBe('streaming')
+    expect(state.runtime.activeStreamSubtaskId).toBe(43)
+    expect(state.error).toBeNull()
+  })
+
+  it('keeps follow-up stream active when old chat cancelled arrives late', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('RUNNING')
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.handleTaskStatus('COMPLETED', '2026-05-31T10:01:00.000Z')
+    machine.handleChatStart(43, 'Chat', 8)
+    machine.handleChatCancelled(42)
+
+    const state = machine.getState()
+    expect(state.status).toBe('streaming')
+    expect(state.streamingSubtaskId).toBe(43)
+    expect(state.runtime.phase).toBe('streaming')
+    expect(state.runtime.activeStreamSubtaskId).toBe(43)
+    expect(state.derived.isStreaming).toBe(true)
+  })
+
+  it('chat done ends the active stream but does not force terminal lifecycle', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('RUNNING')
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.handleChatDone(42, 'done')
+
+    const state = machine.getState()
+    expect(state.status).toBe('ready')
+    expect(state.runtime.taskStatus).toBe('RUNNING')
+    expect(state.runtime.phase).toBe('running')
+    expect(state.derived.blocksQueuedDispatch).toBe(true)
+  })
+
+  it('chat error ends the active stream runtime without forcing terminal lifecycle', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('RUNNING')
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.handleChatError(42, 'network error', 7, 'transport')
+
+    const state = machine.getState()
+    expect(state.status).toBe('error')
+    expect(state.streamingSubtaskId).toBeNull()
+    expect(state.runtime.taskStatus).toBe('RUNNING')
+    expect(state.runtime.phase).toBe('running')
+    expect(state.runtime.activeStreamSubtaskId).toBeUndefined()
+    expect(state.derived.isStreaming).toBe(false)
+    expect(state.derived.blocksQueuedDispatch).toBe(true)
+  })
+
+  it('chat cancelled ends the active stream runtime without forcing terminal lifecycle', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('RUNNING')
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.handleChatCancelled(42)
+
+    const state = machine.getState()
+    expect(state.status).toBe('ready')
+    expect(state.streamingSubtaskId).toBeNull()
+    expect(state.runtime.taskStatus).toBe('RUNNING')
+    expect(state.runtime.phase).toBe('running')
+    expect(state.runtime.activeStreamSubtaskId).toBeUndefined()
+    expect(state.derived.isStreaming).toBe(false)
+    expect(state.derived.blocksQueuedDispatch).toBe(true)
+  })
+
+  it('checkHealth joins when server has an active stream and local room is not joined', async () => {
+    const actions = createRuntimeActions({
+      verifyRuntime: jest.fn().mockResolvedValue({
+        task_id: 42,
+        task_status: 'RUNNING',
+        status_updated_at: '2026-06-01T10:00:00',
+        active_stream: {
+          subtask_id: 77,
+          cursor: 12,
+          last_activity_at: '2026-06-01T10:00:01',
+        },
+      }),
+      joinTask: jest.fn().mockResolvedValue({
+        streaming: { subtask_id: 77, offset: 12, cached_content: 'hello world!' },
+        subtasks: [],
+      }),
+    })
+    const machine = new TaskStateMachine(42, actions)
+
+    await machine.loadTask({
+      id: 42,
+      status: 'RUNNING',
+      updated_at: '2026-06-01T10:00:00',
+    })
+    await machine.checkHealth('page-visible')
+
+    expect(actions.verifyRuntime).toHaveBeenCalledTimes(1)
+    expect(actions.joinTask).toHaveBeenCalledWith(42, {
+      forceRefresh: true,
+      afterMessageId: undefined,
+      resumeFromCursor: 0,
+      activeStreamSubtaskId: 77,
+    })
+    expect(machine.getState().runtime.joinedRoom).toBe(true)
+    expect(machine.getState().runtime.activeStreamSubtaskId).toBe(77)
+  })
+
+  it('checkHealth clears local streaming when server is terminal with no active stream', async () => {
+    const actions = createRuntimeActions({
+      verifyRuntime: jest.fn().mockResolvedValue({
+        task_id: 42,
+        task_status: 'COMPLETED',
+        status_updated_at: '2026-06-01T10:00:10',
+        active_stream: null,
+      }),
+    })
+    const machine = new TaskStateMachine(42, actions)
+
+    machine.handleChatStart(77)
+    machine.handleChatChunk(77, 'partial')
+    await machine.checkHealth('page-visible')
+
+    const state = machine.getState()
+    expect(state.runtime.taskStatus).toBe('COMPLETED')
+    expect(state.runtime.phase).toBe('terminal')
+    expect(state.streamingSubtaskId).toBeNull()
+    expect(state.derived.blocksQueuedDispatch).toBe(false)
   })
 })

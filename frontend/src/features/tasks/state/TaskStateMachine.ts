@@ -26,9 +26,16 @@
  * - Queued recovery: RECOVER events during joining/syncing are queued
  */
 
-import type { TaskDetailSubtask } from '@/types/api'
+import type { TaskDetail, TaskDetailSubtask, TaskStatus as ApiTaskStatus } from '@/types/api'
 import type { MessageBlock } from '../components/message/thinking/types'
 import { mergeBlocksForDone, mergeStreamingBlocks } from './TaskStateMachine.blockMerging'
+import {
+  getRuntimePhaseForTaskStatus,
+  isActiveExecutionTaskStatus,
+  isTerminalTaskStatus,
+  isWaitingForUserTaskStatus,
+  type TaskRuntimePhase,
+} from './taskStatusClassifier'
 
 /**
  * Task state machine status
@@ -111,6 +118,58 @@ export interface StreamingInfo {
   /** Blocks from Redis for page refresh recovery (tool blocks and text blocks) */
   blocks?: MessageBlock[]
 }
+
+export type TaskRecoveryReason =
+  | 'task-selected'
+  | 'page-visible'
+  | 'websocket-reconnect'
+  | 'task-status-event'
+  | 'join-ack'
+  | 'queued-message-blocked'
+  | 'manual-refresh'
+
+export interface TaskRuntimeState {
+  taskId: number
+  phase: TaskRuntimePhase
+  taskStatus?: ApiTaskStatus
+  joinedRoom: boolean
+  activeStreamSubtaskId?: number
+  localStreamCursor: number
+  localLastChunkAt?: number
+  lastVerifiedServerCursor?: number
+  lastVerifiedAt?: number
+  lastSyncedAt?: number
+  lastStatusUpdatedAt?: string
+  lastTerminalStatusUpdatedAt?: string
+  hasTerminalStatus?: boolean
+  deferredTerminalStatus?: ApiTaskStatus
+  deferredTerminalUpdatedAt?: string
+  recoveryReason?: TaskRecoveryReason
+  recoveryError?: string
+}
+
+export interface TaskRuntimeDerivedState {
+  isExecutionActive: boolean
+  isTerminal: boolean
+  isStreaming: boolean
+  shouldJoinRoom: boolean
+  canSendMessage: boolean
+  canQueueMessage: boolean
+  canCancelTask: boolean
+  blocksQueuedDispatch: boolean
+}
+
+export interface TaskRuntimeVerifyResult {
+  task_id: number
+  task_status: ApiTaskStatus
+  status_updated_at?: string | null
+  active_stream: {
+    subtask_id: number
+    cursor: number
+    last_activity_at?: string | null
+  } | null
+}
+
 /**
  * Pending chunk event to be applied after sync completes
  */
@@ -133,13 +192,21 @@ export interface TaskStateData {
   streamingInfo: StreamingInfo | null
   error: string | null
   isStopping: boolean
+  runtime: TaskRuntimeState
+  derived: TaskRuntimeDerivedState
 }
 
 /**
  * State machine events
  */
 type Event =
-  | { type: 'RECOVER'; force?: boolean }
+  | {
+      type: 'RECOVER'
+      force?: boolean
+      reason?: TaskRecoveryReason
+      resumeFromCursor?: number
+      activeStreamSubtaskId?: number
+    }
   | { type: 'JOIN_SUCCESS'; streamingInfo?: StreamingInfo; subtasks?: TaskDetailSubtask[] }
   | { type: 'JOIN_FAILURE'; error: string }
   | { type: 'SYNC_DONE' }
@@ -166,6 +233,8 @@ type Event =
     }
   | { type: 'CHAT_ERROR'; subtaskId: number; error: string; messageId?: number; errorType?: string }
   | { type: 'CHAT_CANCELLED'; subtaskId: number }
+  | { type: 'TASK_STATUS_RECEIVED'; taskStatus: ApiTaskStatus; updatedAt?: string }
+  | { type: 'TASK_DETAIL_SYNCED'; taskStatus: ApiTaskStatus; updatedAt?: string }
   | { type: 'LEAVE' }
 
 /**
@@ -193,6 +262,8 @@ export interface TaskStateMachineDeps {
     options?: {
       forceRefresh?: boolean
       afterMessageId?: number
+      resumeFromCursor?: number
+      activeStreamSubtaskId?: number
     }
   ) => Promise<{
     streaming?: StreamingInfo
@@ -200,6 +271,7 @@ export interface TaskStateMachineDeps {
     subtasks?: Array<Record<string, unknown>>
     error?: string
   }>
+  verifyRuntime?: (taskId: number) => Promise<TaskRuntimeVerifyResult>
   isConnected: () => boolean
 }
 
@@ -220,6 +292,11 @@ export class TaskStateMachine {
   private state: TaskStateData
   private listeners: Set<StateListener> = new Set()
   private pendingRecovery: boolean = false
+  private pendingRecoveryReason?: TaskRecoveryReason
+  private pendingRecoveryOptions?: {
+    resumeFromCursor?: number
+    activeStreamSubtaskId?: number
+  }
   private lastRecoveryTime: number = 0
   private recoveryDebounceMs: number = 1000
   private deps: TaskStateMachineDeps
@@ -229,6 +306,13 @@ export class TaskStateMachine {
   private pendingChunks: PendingChunkEvent[] = []
 
   constructor(taskId: number, deps: TaskStateMachineDeps) {
+    const runtime: TaskRuntimeState = {
+      taskId,
+      phase: 'unknown',
+      joinedRoom: false,
+      localStreamCursor: 0,
+    }
+
     this.state = {
       taskId,
       status: 'idle',
@@ -237,8 +321,46 @@ export class TaskStateMachine {
       streamingInfo: null,
       error: null,
       isStopping: false,
+      runtime,
+      derived: this.deriveRuntimeState(runtime),
     }
     this.deps = deps
+  }
+
+  renameTaskId(taskId: number): void {
+    if (taskId === this.state.taskId) return
+
+    const runtime: TaskRuntimeState = {
+      ...this.state.runtime,
+      taskId,
+    }
+
+    this.state = {
+      ...this.state,
+      taskId,
+      runtime,
+      derived: this.deriveRuntimeState(runtime),
+    }
+
+    this.notifyListeners()
+  }
+
+  private deriveRuntimeState(runtime: TaskRuntimeState): TaskRuntimeDerivedState {
+    const isExecutionActive = isActiveExecutionTaskStatus(runtime.taskStatus)
+    const isTerminal = isTerminalTaskStatus(runtime.taskStatus)
+    const isWaitingForUser = isWaitingForUserTaskStatus(runtime.taskStatus)
+    const isStreaming = runtime.phase === 'streaming' && Boolean(runtime.activeStreamSubtaskId)
+
+    return {
+      isExecutionActive,
+      isTerminal,
+      isStreaming,
+      shouldJoinRoom: isExecutionActive && !runtime.joinedRoom,
+      canSendMessage: isTerminal || isWaitingForUser || runtime.phase === 'running',
+      canQueueMessage: isStreaming,
+      canCancelTask: isExecutionActive && !isTerminal,
+      blocksQueuedDispatch: isExecutionActive,
+    }
   }
 
   /**
@@ -277,12 +399,62 @@ export class TaskStateMachine {
    *
    * Subtasks are now fetched from joinTask response, not passed as parameter.
    */
-  async recover(options?: { force?: boolean }): Promise<void> {
+  async recover(options?: {
+    force?: boolean
+    reason?: TaskRecoveryReason
+    resumeFromCursor?: number
+    activeStreamSubtaskId?: number
+  }): Promise<void> {
     const event: Event = {
       type: 'RECOVER',
       force: options?.force,
+      reason: options?.reason,
+      resumeFromCursor: options?.resumeFromCursor,
+      activeStreamSubtaskId: options?.activeStreamSubtaskId,
     }
     await this.dispatch(event)
+  }
+
+  loadTask(taskDetail: Pick<TaskDetail, 'id' | 'status' | 'updated_at'>): void {
+    if (taskDetail.id !== this.state.taskId) return
+    this.applyTaskLifecycleStatus(taskDetail.status, taskDetail.updated_at)
+    this.notifyListeners()
+  }
+
+  async checkHealth(reason: TaskRecoveryReason): Promise<void> {
+    if (!this.deps.isConnected()) return
+    if (!this.deps.verifyRuntime) {
+      throw new Error('[TaskStateMachine] verifyRuntime action is required for checkHealth().')
+    }
+
+    const server = await this.deps.verifyRuntime(this.state.taskId)
+    this.applyTaskLifecycleStatus(server.task_status, server.status_updated_at ?? undefined)
+
+    const shouldJoinOrResume = this.shouldJoinOrResume(server)
+    this.recordRuntimeVerification(server)
+
+    if (shouldJoinOrResume) {
+      await this.joinOrResumeFromRuntime(server, reason)
+      return
+    }
+
+    if (!server.active_stream && this.state.streamingSubtaskId !== null) {
+      this.clearLocalStream()
+    }
+
+    this.notifyListeners()
+  }
+
+  handleTaskStatus(taskStatus: ApiTaskStatus, updatedAt?: string): void {
+    this.dispatch({
+      type: 'TASK_STATUS_RECEIVED',
+      taskStatus,
+      updatedAt,
+    })
+  }
+
+  syncTaskDetail(taskDetail: Pick<TaskDetail, 'id' | 'status' | 'updated_at'>): void {
+    this.loadTask(taskDetail)
   }
 
   /**
@@ -406,6 +578,207 @@ export class TaskStateMachine {
     this.notifyListeners()
   }
 
+  private recordRuntimeVerification(server: TaskRuntimeVerifyResult): void {
+    const runtime: TaskRuntimeState = {
+      ...this.state.runtime,
+      lastVerifiedAt: Date.now(),
+      lastVerifiedServerCursor: server.active_stream?.cursor,
+    }
+    this.state = {
+      ...this.state,
+      runtime,
+      derived: this.deriveRuntimeState(runtime),
+    }
+  }
+
+  private shouldJoinOrResume(server: TaskRuntimeVerifyResult): boolean {
+    if (!isActiveExecutionTaskStatus(server.task_status)) return false
+    if (!server.active_stream) return !this.state.runtime.joinedRoom
+    if (!this.state.runtime.joinedRoom) return true
+    if (this.state.streamingSubtaskId !== server.active_stream.subtask_id) return true
+
+    const serverCursor = server.active_stream.cursor
+    const localCursor = this.state.runtime.localStreamCursor
+    const previousServerCursor = this.state.runtime.lastVerifiedServerCursor ?? serverCursor
+    const localLastChunkAt = this.state.runtime.localLastChunkAt ?? 0
+    const serverIsProgressing = serverCursor > previousServerCursor
+    const localIsStalled = Date.now() - localLastChunkAt > 10000
+    return serverCursor > localCursor && serverIsProgressing && localIsStalled
+  }
+
+  private async joinOrResumeFromRuntime(
+    server: TaskRuntimeVerifyResult,
+    reason: TaskRecoveryReason
+  ): Promise<void> {
+    await this.recover({
+      force: true,
+      reason,
+      resumeFromCursor: this.state.runtime.localStreamCursor,
+      activeStreamSubtaskId: server.active_stream?.subtask_id,
+    })
+  }
+
+  private clearLocalStream(): void {
+    const runtime: TaskRuntimeState = {
+      ...this.state.runtime,
+      phase: getRuntimePhaseForTaskStatus(this.state.runtime.taskStatus, false),
+      activeStreamSubtaskId: undefined,
+    }
+    this.state = {
+      ...this.state,
+      status: 'ready',
+      streamingSubtaskId: null,
+      streamingInfo: null,
+      runtime,
+      derived: this.deriveRuntimeState(runtime),
+    }
+  }
+
+  private applyTaskLifecycleStatus(taskStatus: ApiTaskStatus, updatedAt?: string): void {
+    if (this.shouldDeferLifecycleStatus(taskStatus)) {
+      const runtime: TaskRuntimeState = {
+        ...this.state.runtime,
+        deferredTerminalStatus: taskStatus,
+        deferredTerminalUpdatedAt: updatedAt,
+      }
+      this.state = {
+        ...this.state,
+        runtime,
+        derived: this.deriveRuntimeState(runtime),
+      }
+      return
+    }
+
+    if (this.shouldIgnoreLifecycleStatus(taskStatus, updatedAt)) return
+
+    const isTerminal = isTerminalTaskStatus(taskStatus)
+    const activeStreamSubtaskId = isTerminal
+      ? undefined
+      : (this.state.streamingSubtaskId ?? undefined)
+    const phase = getRuntimePhaseForTaskStatus(taskStatus, Boolean(activeStreamSubtaskId))
+    const runtime: TaskRuntimeState = {
+      ...this.state.runtime,
+      taskId: this.state.taskId,
+      taskStatus,
+      phase,
+      activeStreamSubtaskId,
+      lastStatusUpdatedAt: updatedAt ?? this.state.runtime.lastStatusUpdatedAt,
+      lastTerminalStatusUpdatedAt: isTerminal
+        ? (updatedAt ?? this.state.runtime.lastTerminalStatusUpdatedAt)
+        : this.state.runtime.lastTerminalStatusUpdatedAt,
+      hasTerminalStatus: isTerminal ? true : this.state.runtime.hasTerminalStatus,
+      deferredTerminalStatus:
+        isTerminal || isActiveExecutionTaskStatus(taskStatus)
+          ? undefined
+          : this.state.runtime.deferredTerminalStatus,
+      deferredTerminalUpdatedAt:
+        isTerminal || isActiveExecutionTaskStatus(taskStatus)
+          ? undefined
+          : this.state.runtime.deferredTerminalUpdatedAt,
+    }
+
+    let messages = this.state.messages
+    if (isTerminal) {
+      messages = this.finalizeStreamingMessagesForTerminal(taskStatus)
+      this.pendingChunks = []
+    }
+
+    this.state = {
+      ...this.state,
+      status: isTerminal ? 'ready' : this.state.status,
+      streamingSubtaskId: isTerminal ? null : this.state.streamingSubtaskId,
+      streamingInfo: isTerminal ? null : this.state.streamingInfo,
+      isStopping: isTerminal ? false : this.state.isStopping,
+      messages,
+      runtime,
+      derived: this.deriveRuntimeState(runtime),
+    }
+  }
+
+  private shouldIgnoreLifecycleStatus(taskStatus: ApiTaskStatus, updatedAt?: string): boolean {
+    const previousUpdatedAt = this.state.runtime.lastStatusUpdatedAt
+    const previousStatus = this.state.runtime.taskStatus
+
+    if (previousUpdatedAt && updatedAt) {
+      const previousTime = Date.parse(previousUpdatedAt)
+      const nextTime = Date.parse(updatedAt)
+      if (!Number.isNaN(previousTime) && !Number.isNaN(nextTime)) {
+        if (nextTime < previousTime) return true
+        if (
+          nextTime === previousTime &&
+          isTerminalTaskStatus(previousStatus) &&
+          isActiveExecutionTaskStatus(taskStatus)
+        ) {
+          return true
+        }
+        if (
+          nextTime === previousTime &&
+          isTerminalTaskStatus(taskStatus) &&
+          updatedAt === this.state.runtime.lastTerminalStatusUpdatedAt &&
+          this.state.runtime.phase === 'streaming' &&
+          this.state.runtime.activeStreamSubtaskId !== undefined
+        ) {
+          return true
+        }
+      }
+    }
+
+    return (
+      isTerminalTaskStatus(previousStatus) &&
+      isActiveExecutionTaskStatus(taskStatus) &&
+      (!previousUpdatedAt || !updatedAt)
+    )
+  }
+
+  private shouldDeferLifecycleStatus(taskStatus: ApiTaskStatus): boolean {
+    return (
+      isTerminalTaskStatus(taskStatus) &&
+      this.state.runtime.phase === 'streaming' &&
+      this.state.runtime.activeStreamSubtaskId !== undefined &&
+      this.state.runtime.hasTerminalStatus === true &&
+      !this.state.runtime.lastTerminalStatusUpdatedAt
+    )
+  }
+
+  private applyDeferredTerminalRuntime(runtime: TaskRuntimeState): TaskRuntimeState {
+    if (!runtime.deferredTerminalStatus) return runtime
+
+    return {
+      ...runtime,
+      taskStatus: runtime.deferredTerminalStatus,
+      phase: 'terminal',
+      activeStreamSubtaskId: undefined,
+      lastStatusUpdatedAt: runtime.deferredTerminalUpdatedAt ?? runtime.lastStatusUpdatedAt,
+      lastTerminalStatusUpdatedAt:
+        runtime.deferredTerminalUpdatedAt ?? runtime.lastTerminalStatusUpdatedAt,
+      hasTerminalStatus: true,
+      deferredTerminalStatus: undefined,
+      deferredTerminalUpdatedAt: undefined,
+    }
+  }
+
+  private finalizeStreamingMessagesForTerminal(
+    taskStatus: ApiTaskStatus
+  ): Map<string, UnifiedMessage> {
+    const messages = new Map(this.state.messages)
+    const finalMessageStatus: MessageStatus =
+      taskStatus === 'FAILED' || taskStatus === 'CANCELLED' ? 'error' : 'completed'
+    const finalSubtaskStatus =
+      taskStatus === 'FAILED' || taskStatus === 'CANCELLED' ? taskStatus : 'COMPLETED'
+
+    messages.forEach((message, id) => {
+      if (message.type !== 'ai' || message.status !== 'streaming') return
+      messages.set(id, {
+        ...message,
+        status: finalMessageStatus,
+        subtaskStatus: finalSubtaskStatus,
+        isReasoningStreaming: false,
+      })
+    })
+
+    return messages
+  }
+
   /**
    * Dispatch an event to the state machine
    */
@@ -419,10 +792,17 @@ export class TaskStateMachine {
 
       case 'JOIN_SUCCESS':
         if (prevStatus === 'joining') {
+          const runtime: TaskRuntimeState = {
+            ...this.state.runtime,
+            joinedRoom: true,
+            recoveryError: undefined,
+          }
           this.state = {
             ...this.state,
             status: 'syncing',
             streamingInfo: event.streamingInfo || null,
+            runtime,
+            derived: this.deriveRuntimeState(runtime),
           }
           // Sync messages immediately using subtasks from joinTask response
           await this.doSync(event.subtasks)
@@ -431,22 +811,56 @@ export class TaskStateMachine {
 
       case 'JOIN_FAILURE':
         if (prevStatus === 'joining') {
-          this.state = { ...this.state, status: 'error', error: event.error }
+          const runtime: TaskRuntimeState = {
+            ...this.state.runtime,
+            recoveryError: event.error,
+          }
+          this.state = {
+            ...this.state,
+            status: 'error',
+            error: event.error,
+            runtime,
+            derived: this.deriveRuntimeState(runtime),
+          }
         }
         break
 
       case 'SYNC_DONE':
         if (prevStatus === 'syncing') {
-          this.state = { ...this.state, status: 'ready', streamingSubtaskId: null }
+          const runtime: TaskRuntimeState = {
+            ...this.state.runtime,
+            phase: getRuntimePhaseForTaskStatus(this.state.runtime.taskStatus, false),
+            activeStreamSubtaskId: undefined,
+            localStreamCursor: 0,
+            lastSyncedAt: Date.now(),
+          }
+          this.state = {
+            ...this.state,
+            status: 'ready',
+            streamingSubtaskId: null,
+            runtime,
+            derived: this.deriveRuntimeState(runtime),
+          }
         }
         break
 
       case 'SYNC_DONE_STREAMING':
         if (prevStatus === 'syncing') {
+          const cachedContentLength = this.state.streamingInfo?.cached_content?.length ?? 0
+          const runtime: TaskRuntimeState = {
+            ...this.state.runtime,
+            phase: getRuntimePhaseForTaskStatus(this.state.runtime.taskStatus, true),
+            activeStreamSubtaskId: event.subtaskId,
+            localStreamCursor: cachedContentLength,
+            localLastChunkAt: Date.now(),
+            lastSyncedAt: Date.now(),
+          }
           this.state = {
             ...this.state,
             status: 'streaming',
             streamingSubtaskId: event.subtaskId,
+            runtime,
+            derived: this.deriveRuntimeState(runtime),
           }
         }
         break
@@ -477,7 +891,18 @@ export class TaskStateMachine {
         this.handleChatCancelledEvent(event)
         break
 
-      case 'LEAVE':
+      case 'TASK_STATUS_RECEIVED':
+      case 'TASK_DETAIL_SYNCED':
+        this.applyTaskLifecycleStatus(event.taskStatus, event.updatedAt)
+        break
+
+      case 'LEAVE': {
+        const runtime: TaskRuntimeState = {
+          taskId: this.state.taskId,
+          phase: 'unknown',
+          joinedRoom: false,
+          localStreamCursor: 0,
+        }
         this.state = {
           ...this.state,
           status: 'idle',
@@ -486,10 +911,15 @@ export class TaskStateMachine {
           streamingInfo: null,
           error: null,
           isStopping: false,
+          runtime,
+          derived: this.deriveRuntimeState(runtime),
         }
         this.pendingRecovery = false
+        this.pendingRecoveryReason = undefined
+        this.pendingRecoveryOptions = undefined
         this.pendingChunks = [] // Clear pending chunks queue on leave
         break
+      }
     }
 
     this.notifyListeners()
@@ -501,8 +931,12 @@ export class TaskStateMachine {
         this.state.status === 'streaming' ||
         this.state.status === 'error')
     ) {
+      const recoveryReason = this.pendingRecoveryReason
+      const recoveryOptions = this.pendingRecoveryOptions
       this.pendingRecovery = false
-      await this.recover({ force: true })
+      this.pendingRecoveryReason = undefined
+      this.pendingRecoveryOptions = undefined
+      await this.recover({ force: true, reason: recoveryReason, ...recoveryOptions })
     }
   }
 
@@ -516,6 +950,11 @@ export class TaskStateMachine {
     // Queue if in joining/syncing state
     if (this.state.status === 'joining' || this.state.status === 'syncing') {
       this.pendingRecovery = true
+      this.pendingRecoveryReason = event.reason
+      this.pendingRecoveryOptions = {
+        resumeFromCursor: event.resumeFromCursor,
+        activeStreamSubtaskId: event.activeStreamSubtaskId,
+      }
       return
     }
 
@@ -534,7 +973,19 @@ export class TaskStateMachine {
     this.lastRecoveryTime = now
 
     // Transition to joining
-    this.state = { ...this.state, status: 'joining', error: null }
+    const runtime: TaskRuntimeState = {
+      ...this.state.runtime,
+      phase: 'syncing',
+      recoveryReason: event.reason,
+      recoveryError: undefined,
+    }
+    this.state = {
+      ...this.state,
+      status: 'joining',
+      error: null,
+      runtime,
+      derived: this.deriveRuntimeState(runtime),
+    }
     this.notifyListeners()
 
     try {
@@ -552,10 +1003,23 @@ export class TaskStateMachine {
 
       // Join WebSocket room and get streaming info + subtasks
       // Pass afterMessageId for incremental sync on reconnect
-      const response = await this.deps.joinTask(this.state.taskId, {
+      const joinOptions: {
+        forceRefresh: boolean
+        afterMessageId?: number
+        resumeFromCursor?: number
+        activeStreamSubtaskId?: number
+      } = {
         forceRefresh: true,
         afterMessageId: maxMessageId,
-      })
+      }
+      if (event.resumeFromCursor !== undefined) {
+        joinOptions.resumeFromCursor = event.resumeFromCursor
+      }
+      if (event.activeStreamSubtaskId !== undefined) {
+        joinOptions.activeStreamSubtaskId = event.activeStreamSubtaskId
+      }
+
+      const response = await this.deps.joinTask(this.state.taskId, joinOptions)
 
       if (response.error) {
         await this.dispatch({ type: 'JOIN_FAILURE', error: response.error })
@@ -772,7 +1236,19 @@ export class TaskStateMachine {
       }
 
       newMessages.set(aiMessageId, updatedMessage)
-      this.state = { ...this.state, messages: newMessages }
+      const runtime: TaskRuntimeState = {
+        ...this.state.runtime,
+        phase: 'streaming',
+        activeStreamSubtaskId: chunk.subtaskId,
+        localStreamCursor: updatedMessage.content.length,
+        localLastChunkAt: Date.now(),
+      }
+      this.state = {
+        ...this.state,
+        messages: newMessages,
+        runtime,
+        derived: this.deriveRuntimeState(runtime),
+      }
     }
 
     // Clear the pending chunks queue
@@ -907,8 +1383,35 @@ export class TaskStateMachine {
         continue
       }
 
-      // Skip if already exists by message ID (for non-RUNNING messages)
-      if (messages.has(messageId)) {
+      // Skip PENDING AI messages
+      if (!isUserMessage && subtask.status === 'PENDING') {
+        continue
+      }
+
+      const existingSnapshotMessage = messages.get(messageId)
+      if (existingSnapshotMessage && !isUserMessage) {
+        const backendContent = typeof subtask.result?.value === 'string' ? subtask.result.value : ''
+        const nextStatus: MessageStatus =
+          subtask.status === 'FAILED' || subtask.status === 'CANCELLED' || hasFrontendError
+            ? 'error'
+            : 'completed'
+
+        messages.set(messageId, {
+          ...existingSnapshotMessage,
+          status: nextStatus,
+          content:
+            backendContent.length > existingSnapshotMessage.content.length
+              ? backendContent
+              : existingSnapshotMessage.content,
+          messageId: subtask.message_id,
+          subtaskStatus: subtask.status,
+          result: subtask.result as UnifiedMessage['result'],
+          error: hasFrontendError ? existingMessage?.error : subtask.error_message || undefined,
+          errorType: hasFrontendError
+            ? existingMessage?.errorType
+            : ((subtask.result as Record<string, unknown>)?.error_type as string | undefined),
+          isReasoningStreaming: false,
+        })
         continue
       }
 
@@ -917,13 +1420,13 @@ export class TaskStateMachine {
         continue
       }
 
-      // Skip USER messages if we already have enough
-      if (isUserMessage && existingUserMessageCount >= incomingUserSubtasks.length) {
+      // Skip if already exists by message ID (for user messages)
+      if (messages.has(messageId)) {
         continue
       }
 
-      // Skip PENDING AI messages
-      if (!isUserMessage && subtask.status === 'PENDING') {
+      // Skip USER messages if we already have enough
+      if (isUserMessage && existingUserMessageCount >= incomingUserSubtasks.length) {
         continue
       }
 
@@ -982,6 +1485,12 @@ export class TaskStateMachine {
    */
   private handleChatStartEvent(event: Extract<Event, { type: 'CHAT_START' }>): void {
     const aiMessageId = generateMessageId('ai', event.subtaskId)
+    const existingMessage = this.state.messages.get(aiMessageId)
+    const isRestartingAfterTerminal =
+      isTerminalTaskStatus(this.state.runtime.taskStatus) && !existingMessage
+
+    if (isTerminalTaskStatus(this.state.runtime.taskStatus) && existingMessage) return
+
     const initialResult = event.shellType ? { shell_type: event.shellType } : undefined
 
     const newMessages = new Map(this.state.messages)
@@ -995,12 +1504,22 @@ export class TaskStateMachine {
       messageId: event.messageId, // Set messageId from chat:start event for proper ordering
       result: initialResult,
     })
+    const runtime: TaskRuntimeState = {
+      ...this.state.runtime,
+      taskStatus: isRestartingAfterTerminal ? 'RUNNING' : this.state.runtime.taskStatus,
+      phase: 'streaming',
+      activeStreamSubtaskId: event.subtaskId,
+      localStreamCursor: 0,
+      localLastChunkAt: Date.now(),
+    }
 
     this.state = {
       ...this.state,
       status: 'streaming',
       streamingSubtaskId: event.subtaskId,
       messages: newMessages,
+      runtime,
+      derived: this.deriveRuntimeState(runtime),
     }
   }
 
@@ -1117,7 +1636,19 @@ export class TaskStateMachine {
     }
 
     newMessages.set(aiMessageId, updatedMessage)
-    this.state = { ...this.state, messages: newMessages }
+    const runtime: TaskRuntimeState = {
+      ...this.state.runtime,
+      phase: 'streaming',
+      activeStreamSubtaskId: event.subtaskId,
+      localStreamCursor: updatedMessage.content.length,
+      localLastChunkAt: Date.now(),
+    }
+    this.state = {
+      ...this.state,
+      messages: newMessages,
+      runtime,
+      derived: this.deriveRuntimeState(runtime),
+    }
 
     // CRITICAL: Notify listeners after updating state
     // Without this, UI won't update when receiving chunks
@@ -1174,17 +1705,50 @@ export class TaskStateMachine {
       }
     }
 
-    const finalStatus = event.hasError ? 'error' : 'completed'
-    const finalSubtaskStatus = event.hasError ? 'FAILED' : 'COMPLETED'
+    const isActiveStreamEvent =
+      this.state.status === 'streaming' && this.state.streamingSubtaskId === event.subtaskId
+    if (
+      !isActiveStreamEvent &&
+      (existingMessage.status === 'error' ||
+        existingMessage.subtaskStatus === 'FAILED' ||
+        existingMessage.subtaskStatus === 'CANCELLED')
+    ) {
+      return
+    }
+    if (!isActiveStreamEvent && existingMessage.status === 'completed' && event.hasError) return
+
+    const terminalTaskStatus =
+      isActiveStreamEvent && this.state.runtime.deferredTerminalStatus
+        ? this.state.runtime.deferredTerminalStatus
+        : this.state.runtime.taskStatus
+    const hasTerminalLifecycle = isTerminalTaskStatus(terminalTaskStatus)
+    const finalStatus: MessageStatus = hasTerminalLifecycle
+      ? terminalTaskStatus === 'FAILED' || terminalTaskStatus === 'CANCELLED'
+        ? 'error'
+        : 'completed'
+      : event.hasError
+        ? 'error'
+        : 'completed'
+    const finalSubtaskStatus = hasTerminalLifecycle
+      ? terminalTaskStatus === 'FAILED' || terminalTaskStatus === 'CANCELLED'
+        ? terminalTaskStatus
+        : 'COMPLETED'
+      : event.hasError
+        ? 'FAILED'
+        : 'COMPLETED'
 
     // CRITICAL FIX: Preserve accumulated content from streaming
     // Only use event.content if existingMessage.content is empty
     // This prevents losing mixed content (tool-text-tool-text) when chat:done arrives
     // because event.content (result.value) may only contain the final text segment
+    const incomingContent =
+      !hasTerminalLifecycle || terminalTaskStatus === 'COMPLETED'
+        ? event.content || (typeof event.result?.value === 'string' ? event.result.value : '')
+        : ''
     const finalContent =
-      existingMessage.content && existingMessage.content.length > 0
-        ? existingMessage.content
-        : event.content || ''
+      incomingContent.length > existingMessage.content.length
+        ? incomingContent
+        : existingMessage.content || incomingContent
 
     // CRITICAL FIX: Merge blocks instead of replacing
     // Preserve blocks accumulated during streaming (tool blocks and text blocks)
@@ -1221,17 +1785,28 @@ export class TaskStateMachine {
     })
 
     // Update status to ready if this was the streaming subtask
-    const newStatus =
-      this.state.status === 'streaming' && this.state.streamingSubtaskId === event.subtaskId
-        ? 'ready'
-        : this.state.status
+    const newStatus = isActiveStreamEvent ? 'ready' : this.state.status
+    let runtime: TaskRuntimeState = {
+      ...this.state.runtime,
+      phase: isActiveStreamEvent
+        ? getRuntimePhaseForTaskStatus(this.state.runtime.taskStatus, false)
+        : this.state.runtime.phase,
+      activeStreamSubtaskId: isActiveStreamEvent
+        ? undefined
+        : this.state.runtime.activeStreamSubtaskId,
+    }
+    if (isActiveStreamEvent && this.state.runtime.deferredTerminalStatus) {
+      runtime = this.applyDeferredTerminalRuntime(runtime)
+    }
 
     this.state = {
       ...this.state,
       status: newStatus,
       streamingSubtaskId: newStatus === 'ready' ? null : this.state.streamingSubtaskId,
       messages: newMessages,
-      isStopping: false,
+      isStopping: isActiveStreamEvent ? false : this.state.isStopping,
+      runtime,
+      derived: this.deriveRuntimeState(runtime),
     }
   }
 
@@ -1247,6 +1822,11 @@ export class TaskStateMachine {
       return
     }
 
+    if (isTerminalTaskStatus(this.state.runtime.taskStatus)) return
+    const isActiveStreamEvent =
+      this.state.status === 'streaming' && this.state.streamingSubtaskId === event.subtaskId
+    if (!isActiveStreamEvent) return
+
     const newMessages = new Map(this.state.messages)
     newMessages.set(aiMessageId, {
       ...existingMessage,
@@ -1258,12 +1838,22 @@ export class TaskStateMachine {
       messageId: event.messageId ?? existingMessage.messageId,
     })
 
+    let runtime: TaskRuntimeState = {
+      ...this.state.runtime,
+      phase: getRuntimePhaseForTaskStatus(this.state.runtime.taskStatus, false),
+      activeStreamSubtaskId: undefined,
+    }
+    runtime = this.applyDeferredTerminalRuntime(runtime)
+
     this.state = {
       ...this.state,
       status: 'error',
+      streamingSubtaskId: null,
       messages: newMessages,
       error: event.error,
       isStopping: false,
+      runtime,
+      derived: this.deriveRuntimeState(runtime),
     }
   }
 
@@ -1275,6 +1865,7 @@ export class TaskStateMachine {
     const existingMessage = this.state.messages.get(aiMessageId)
 
     if (!existingMessage) return
+    if (isTerminalTaskStatus(this.state.runtime.taskStatus)) return
 
     const newMessages = new Map(this.state.messages)
     newMessages.set(aiMessageId, {
@@ -1287,6 +1878,14 @@ export class TaskStateMachine {
       this.state.status === 'streaming' && this.state.streamingSubtaskId === event.subtaskId
         ? 'ready'
         : this.state.status
+    if (newStatus === this.state.status) return
+
+    let runtime: TaskRuntimeState = {
+      ...this.state.runtime,
+      phase: getRuntimePhaseForTaskStatus(this.state.runtime.taskStatus, false),
+      activeStreamSubtaskId: undefined,
+    }
+    runtime = this.applyDeferredTerminalRuntime(runtime)
 
     this.state = {
       ...this.state,
@@ -1294,6 +1893,8 @@ export class TaskStateMachine {
       streamingSubtaskId: newStatus === 'ready' ? null : this.state.streamingSubtaskId,
       messages: newMessages,
       isStopping: false,
+      runtime,
+      derived: this.deriveRuntimeState(runtime),
     }
   }
 

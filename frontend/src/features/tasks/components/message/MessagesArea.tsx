@@ -687,8 +687,7 @@ function MessagesArea({
     prepareExport('docx')
   }, [prepareExport])
 
-  // Removed polling - relying entirely on WebSocket real-time updates
-  // Task details will be updated via WebSocket events in taskContext
+  // Message content is driven by the socket-backed TaskStateMachine state.
 
   // Notify parent component when content changes (for scroll management)
   useLayoutEffect(() => {
@@ -707,7 +706,7 @@ function MessagesArea({
     // Refresh both task list (to move task to correct category)
     // and task detail (to update is_group_chat flag and enable @ feature)
     refreshTasks()
-    refreshSelectedTaskDetail(false)
+    refreshSelectedTaskDetail()
   }, [refreshTasks, refreshSelectedTaskDetail])
 
   // Handle edit button click - enter edit mode for a message
@@ -748,7 +747,7 @@ function MessagesArea({
           }
 
           // Refresh task detail to reload messages from backend
-          await refreshSelectedTaskDetail(true)
+          await refreshSelectedTaskDetail()
 
           // Automatically resend the edited message to trigger AI response
           // This is the ChatGPT-style behavior: edit message -> delete all from edited -> resend as new
@@ -830,7 +829,7 @@ function MessagesArea({
       try {
         // 4.5. Refresh task detail first to ensure we have latest state from backend
         // This helps detect any running subtasks that frontend might have missed
-        await refreshSelectedTaskDetail(false)
+        await refreshSelectedTaskDetail()
 
         // 5. Call the edit message API with the SAME content (this will delete the AI response)
         const response = await subtaskApis.editMessage(userSubtaskId, originalUserContent)
@@ -842,7 +841,7 @@ function MessagesArea({
           }
 
           // 7. Refresh task detail to sync with backend
-          await refreshSelectedTaskDetail(true)
+          await refreshSelectedTaskDetail()
 
           // 8. Resend the same user message with the selected model to trigger new AI response
           // Pass the original contexts (attachments, knowledge bases, etc.) to preserve them
@@ -860,7 +859,7 @@ function MessagesArea({
         // If backend says AI is generating, refresh task detail to sync frontend state
         if (errorMessage.includes('AI is generating')) {
           // Refresh to get latest state from backend
-          await refreshSelectedTaskDetail(false)
+          await refreshSelectedTaskDetail()
         }
 
         toast({

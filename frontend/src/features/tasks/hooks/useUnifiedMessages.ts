@@ -5,14 +5,12 @@
 /**
  * useUnifiedMessages Hook
  *
- * This hook manages the unified message list for chat display.
- * It is the SINGLE SOURCE OF TRUTH for all messages in the chat UI.
+ * This hook adapts TaskStateMachine messages for chat display.
  *
  * Key Design Principles:
  * 1. SINGLE SOURCE OF TRUTH: TaskStateMachine.messages is the ONLY source for rendering
- * 2. AUTOMATIC RECOVERY: State machine handles all recovery scenarios (page refresh, reconnect, visibility)
- * 3. PROPER ORDERING: Messages are sorted by messageId (primary) and timestamp (secondary)
- * 4. STATE ISOLATION: Each message maintains its own state independently
+ * 2. PROPER ORDERING: Messages are sorted by messageId (primary) and timestamp (secondary)
+ * 3. STATE ISOLATION: Each message maintains its own state independently
  *
  * Message Flow:
  * 1. Select task -> TaskStateMachine.recover() syncs from backend
@@ -22,11 +20,10 @@
  * 5. chat:done -> Update AI message status to 'completed'
  */
 
-import { useMemo, useEffect } from 'react'
+import { useMemo } from 'react'
 import { useTaskStateMachine } from './useTaskStateMachine'
 import { useUser } from '@/features/common/UserContext'
 import { useTaskContext } from '../contexts/taskContext'
-import { useSocket } from '@/contexts/SocketContext'
 import type { Team, Attachment, SubtaskContextBrief } from '@/types/api'
 import type { SourceReference } from '@/types/socket'
 import type { MessageBlock } from '../components/message/thinking/types'
@@ -126,17 +123,6 @@ interface UseUnifiedMessagesResult {
   isStreaming: boolean
   /** Set of subtask IDs that are currently streaming */
   streamingSubtaskIds: number[]
-  /** Whether there are any pending user messages */
-  hasPendingMessages: boolean
-  /** Map of subtask ID to streaming state (for StreamingMessageBubble) */
-  subtasksMap: Map<number, { content: string; isStreaming: boolean }>
-  /** Pending messages that are not yet in displayMessages */
-  pendingMessages: Array<{
-    id: string
-    content: string
-    timestamp: number
-    attachment?: Attachment
-  }>
 }
 
 /**
@@ -189,7 +175,6 @@ function toDisplayMessage(
  * Hook to manage unified message list
  *
  * This hook uses TaskStateMachine.messages as the ONLY data source for rendering.
- * When a task is selected, it triggers recovery via the state machine.
  */
 export function useUnifiedMessages({
   team,
@@ -198,7 +183,6 @@ export function useUnifiedMessages({
 }: UseUnifiedMessagesOptions): UseUnifiedMessagesResult {
   const { selectedTask, selectedTaskDetail } = useTaskContext()
   const { user } = useUser()
-  const { isConnected } = useSocket()
 
   const taskId = selectedTask?.id ?? selectedTaskDetail?.id
 
@@ -219,27 +203,7 @@ export function useUnifiedMessages({
   )
 
   // Use the state machine hook
-  const {
-    messages: stateMessages,
-    isStreaming,
-    recover,
-    isInitialized,
-  } = useTaskStateMachine(effectiveTaskId, syncOptions)
-
-  // Trigger recovery when the task and socket are both ready.
-  // recover() is not a connection probe: it intentionally no-ops while disconnected.
-  // On page refresh, task detail can load before Socket.IO connects, so wait for
-  // the connected state before asking the state machine to join and sync messages.
-  // IMPORTANT: Do NOT recover if already streaming - this would interrupt the stream
-  useEffect(() => {
-    if (!effectiveTaskId || !isInitialized || !isConnected) return
-
-    // Only recover for positive task IDs (real tasks, not pending)
-    // Skip recovery if already streaming to avoid interrupting active streams
-    if (effectiveTaskId > 0 && !isStreaming) {
-      recover()
-    }
-  }, [effectiveTaskId, isInitialized, isConnected, recover, isStreaming])
+  const { messages: stateMessages, isStreaming } = useTaskStateMachine(effectiveTaskId, syncOptions)
 
   // Build unified message list from state machine messages
   const result = useMemo<UseUnifiedMessagesResult>(() => {
@@ -248,21 +212,10 @@ export function useUnifiedMessages({
         messages: [],
         isStreaming: false,
         streamingSubtaskIds: [],
-        hasPendingMessages: false,
-        subtasksMap: new Map(),
-        pendingMessages: [],
       }
     }
 
     const streamingSubtaskIds: number[] = []
-    let hasPendingMessages = false
-    const subtasksMap = new Map<number, { content: string; isStreaming: boolean }>()
-    const pendingMessages: Array<{
-      id: string
-      content: string
-      timestamp: number
-      attachment?: Attachment
-    }> = []
 
     // Convert state messages to DisplayMessage array
     const messages: DisplayMessage[] = []
@@ -271,24 +224,9 @@ export function useUnifiedMessages({
       const displayMsg = toDisplayMessage(msg, team, isGroupChat, user?.id)
       messages.push(displayMsg)
 
-      // Track pending user messages
-      if (msg.type === 'user' && msg.status === 'pending') {
-        hasPendingMessages = true
-        pendingMessages.push({
-          id: msg.id,
-          content: msg.content,
-          timestamp: msg.timestamp,
-          attachment: msg.attachment as Attachment | undefined,
-        })
-      }
-
       // Track streaming AI messages
       if (msg.type === 'ai' && msg.status === 'streaming' && msg.subtaskId) {
         streamingSubtaskIds.push(msg.subtaskId)
-        subtasksMap.set(msg.subtaskId, {
-          content: msg.content,
-          isStreaming: true,
-        })
       }
     }
 
@@ -313,9 +251,6 @@ export function useUnifiedMessages({
       messages: sortedMessages,
       isStreaming: streamingSubtaskIds.length > 0 || isStreaming,
       streamingSubtaskIds,
-      hasPendingMessages,
-      subtasksMap,
-      pendingMessages,
     }
   }, [effectiveTaskId, stateMessages, team, isGroupChat, user?.id, isStreaming])
 

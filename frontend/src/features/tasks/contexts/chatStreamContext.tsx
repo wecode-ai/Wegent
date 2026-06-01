@@ -24,7 +24,7 @@
 
 import React, { createContext, useContext, useCallback, useRef, useEffect, ReactNode } from 'react'
 import { useSocket, ChatEventHandlers, SkillEventHandlers } from '@/contexts/SocketContext'
-import { usePageVisibility } from '@/hooks/usePageVisibility'
+import { taskApis } from '@/apis/tasks'
 import {
   ChatSendPayload,
   ChatStartPayload,
@@ -40,21 +40,9 @@ import {
 } from '@/types/socket'
 import type { TaskDetailSubtask, Team, TaskType } from '@/types/api'
 import type { MessageBlock } from '../components/message/thinking/types'
-import { taskStateManager, generateMessageId, UnifiedMessage } from '../state'
+import { taskStateManager, generateMessageId } from '../state'
+import type { UnifiedMessage } from '../state'
 import DOMPurify from 'dompurify'
-
-/**
- * Message type enum (re-exported for backward compatibility)
- */
-export type MessageType = 'user' | 'ai'
-
-/**
- * Message status enum (re-exported for backward compatibility)
- */
-export type MessageStatus = 'pending' | 'streaming' | 'completed' | 'error'
-
-// Re-export UnifiedMessage for backward compatibility
-export type { UnifiedMessage }
 
 /**
  * Request parameters for sending a chat message
@@ -225,23 +213,11 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     if (!taskStateManager.isInitialized()) {
       taskStateManager.initialize({
         joinTask: joinTask,
+        verifyRuntime: taskApis.getTaskRuntimeCheck,
         isConnected: () => isConnectedRef.current,
       })
     }
   }, [joinTask])
-
-  // Page visibility recovery: recover all tasks when page becomes visible after being hidden
-  // This handles the case where WebSocket events might have been missed while the page was in background
-  usePageVisibility({
-    minHiddenTime: 3000, // Recover if page was hidden for more than 3 seconds
-    onVisible: (_: number) => {
-      if (taskStateManager.isInitialized() && isConnected) {
-        taskStateManager.recoverAll().catch(err => {
-          console.error('[ChatStreamContext] Error recovering tasks after page visible:', err)
-        })
-      }
-    },
-  })
 
   /**
    * Check if a task is currently streaming
@@ -965,17 +941,4 @@ export function useChatStreamContext(): ChatStreamContextType {
  */
 export function useOptionalChatStreamContext(): ChatStreamContextType | null {
   return useContext(ChatStreamContext) ?? null
-}
-
-/**
- * Helper function to compute isStreaming from messages (for backward compatibility)
- */
-export function computeIsStreaming(messages: Map<string, UnifiedMessage> | undefined): boolean {
-  if (!messages) return false
-  for (const msg of messages.values()) {
-    if (msg.type === 'ai' && msg.status === 'streaming') {
-      return true
-    }
-  }
-  return false
 }

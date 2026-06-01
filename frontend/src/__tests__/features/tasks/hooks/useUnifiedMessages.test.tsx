@@ -3,14 +3,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import React from 'react'
-import { render, waitFor } from '@testing-library/react'
+import { render } from '@testing-library/react'
 import { useUnifiedMessages } from '@/features/tasks/hooks/useUnifiedMessages'
+import type { DisplayMessage } from '@/features/tasks/hooks/useUnifiedMessages'
 
-const recoverMock = jest.fn(() => Promise.resolve())
-
-let socketConnected = false
 let mockSelectedTask: { id: number } | null = null
 let mockSelectedTaskDetail: { id: number } | null = { id: 42 }
+let mockMessages = new Map()
+let latestMessages: {
+  messages: DisplayMessage[]
+  isStreaming: boolean
+  streamingSubtaskIds: number[]
+} | null = null
+
+const useTaskStateMachineMock = jest.fn((_taskId?: unknown, _syncOptions?: unknown) => ({
+  messages: mockMessages,
+  isStreaming: false,
+}))
 
 jest.mock('@/features/tasks/contexts/taskContext', () => ({
   useTaskContext: () => ({
@@ -25,23 +34,13 @@ jest.mock('@/features/common/UserContext', () => ({
   }),
 }))
 
-jest.mock('@/contexts/SocketContext', () => ({
-  useSocket: () => ({
-    isConnected: socketConnected,
-  }),
-}))
-
 jest.mock('@/features/tasks/hooks/useTaskStateMachine', () => ({
-  useTaskStateMachine: () => ({
-    messages: new Map(),
-    isStreaming: false,
-    recover: recoverMock,
-    isInitialized: true,
-  }),
+  useTaskStateMachine: (taskId: unknown, syncOptions: unknown) =>
+    useTaskStateMachineMock(taskId, syncOptions),
 }))
 
 function Probe() {
-  useUnifiedMessages({
+  latestMessages = useUnifiedMessages({
     team: null,
     isGroupChat: false,
   })
@@ -51,34 +50,67 @@ function Probe() {
 
 describe('useUnifiedMessages', () => {
   beforeEach(() => {
-    socketConnected = false
     mockSelectedTask = null
     mockSelectedTaskDetail = { id: 42 }
-    recoverMock.mockClear()
+    mockMessages = new Map()
+    latestMessages = null
+    useTaskStateMachineMock.mockClear()
   })
 
-  it('waits for the socket connection before recovering task messages', async () => {
-    const { rerender } = render(<Probe />)
+  it('uses the selected task detail id for the state machine subscription', () => {
+    render(<Probe />)
 
-    expect(recoverMock).not.toHaveBeenCalled()
-
-    socketConnected = true
-    rerender(<Probe />)
-
-    await waitFor(() => {
-      expect(recoverMock).toHaveBeenCalledTimes(1)
-    })
+    expect(useTaskStateMachineMock).toHaveBeenCalledWith(
+      42,
+      expect.objectContaining({
+        currentUserId: 1,
+        currentUserName: 'tester',
+      })
+    )
   })
 
-  it('recovers messages from selectedTask while task detail is still loading', async () => {
-    socketConnected = true
-    mockSelectedTask = { id: 42 }
+  it('uses selectedTask while task detail is still loading', () => {
+    mockSelectedTask = { id: 99 }
     mockSelectedTaskDetail = null
 
     render(<Probe />)
 
-    await waitFor(() => {
-      expect(recoverMock).toHaveBeenCalledTimes(1)
+    expect(useTaskStateMachineMock).toHaveBeenCalledWith(99, expect.any(Object))
+  })
+
+  it('adapts state machine messages for display without owning recovery', () => {
+    mockMessages = new Map([
+      [
+        'user-1',
+        {
+          id: 'user-1',
+          type: 'user',
+          status: 'completed',
+          content: 'question',
+          timestamp: 1,
+        },
+      ],
+      [
+        'ai-5',
+        {
+          id: 'ai-5',
+          type: 'ai',
+          status: 'streaming',
+          content: 'answer',
+          timestamp: 2,
+          subtaskId: 5,
+        },
+      ],
+    ])
+    useTaskStateMachineMock.mockReturnValueOnce({
+      messages: mockMessages,
+      isStreaming: false,
     })
+
+    render(<Probe />)
+
+    expect(latestMessages?.messages.map(message => message.content)).toEqual(['question', 'answer'])
+    expect(latestMessages?.isStreaming).toBe(true)
+    expect(latestMessages?.streamingSubtaskIds).toEqual([5])
   })
 })

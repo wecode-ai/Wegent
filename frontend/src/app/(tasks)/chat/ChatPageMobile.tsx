@@ -99,7 +99,7 @@ export function ChatPageMobile() {
   // Handle members changed (when converting to group chat or adding/removing members)
   const handleMembersChanged = () => {
     refreshTasks()
-    refreshSelectedTaskDetail(false)
+    refreshSelectedTaskDetail()
   }
 
   // Chat stream context
@@ -221,7 +221,7 @@ export function ChatPageMobile() {
     deps: teamEditDeps,
     onTeamUpdated: useCallback(() => {
       refreshTasks()
-      refreshSelectedTaskDetail(false)
+      refreshSelectedTaskDetail()
     }, [refreshTasks, refreshSelectedTaskDetail]),
   })
 

@@ -6,15 +6,16 @@
  * TaskStateManager
  *
  * Singleton manager for TaskStateMachine instances.
- * Provides global access to task state machines and coordinates
- * recovery across all active tasks.
+ * Provides global access to task state machines.
  */
 
+import type { TaskDetail, TaskStatus as ApiTaskStatus } from '@/types/api'
 import {
   TaskStateMachine,
   TaskStateMachineDeps,
   SyncOptions,
   TaskStateData,
+  TaskRecoveryReason,
 } from './TaskStateMachine'
 
 /**
@@ -72,7 +73,7 @@ class TaskStateManagerImpl {
 
     // Subscribe to state changes and notify global listeners
     machine.subscribe(state => {
-      this.notifyGlobalListeners(taskId, state)
+      this.notifyGlobalListeners(state.taskId, state)
     })
 
     return machine
@@ -85,24 +86,20 @@ class TaskStateManagerImpl {
     return this.machines.get(taskId)
   }
 
-  /**
-   * Recover all active tasks
-   * Called after WebSocket reconnection
-   *
-   * Note: Uses Set to dedupe by machine instance since migrateState()
-   * keeps both temp and real task IDs pointing to the same machine.
-   */
-  async recoverAll(): Promise<void> {
-    // Dedupe by machine instance to avoid recovering the same machine twice
-    // This is needed because migrateState() keeps both temp and real IDs
+  handleTaskStatus(taskId: number, taskStatus: ApiTaskStatus, updatedAt?: string): TaskStateData {
+    const machine = this.getOrCreate(taskId)
+    machine.handleTaskStatus(taskStatus, updatedAt)
+    return machine.getState()
+  }
+
+  syncTaskDetail(taskDetail: Pick<TaskDetail, 'id' | 'status' | 'updated_at'>): void {
+    const machine = this.getOrCreate(taskDetail.id)
+    machine.loadTask(taskDetail)
+  }
+
+  async checkHealthAll(reason: TaskRecoveryReason): Promise<void> {
     const uniqueMachines = new Set(this.machines.values())
-    const recoveryPromises: Promise<void>[] = []
-
-    for (const machine of uniqueMachines) {
-      recoveryPromises.push(machine.recover({ force: true }))
-    }
-
-    await Promise.allSettled(recoveryPromises)
+    await Promise.allSettled(Array.from(uniqueMachines).map(machine => machine.checkHealth(reason)))
   }
 
   /**
@@ -158,19 +155,9 @@ class TaskStateManagerImpl {
   }
 
   /**
-   * Migrate state from a temporary task ID to a real task ID.
-   * This is needed when a new task is created - the UI uses a negative temp ID
-   * until the server returns the real task ID.
-   *
-   * IMPORTANT: This method makes BOTH the temp and real task IDs point to the
-   * SAME state machine instance. This ensures:
-   * - All WebSocket events (chat:start, chat:done, etc.) work with either ID
-   * - Components using either ID will get the same state machine
-   * - No state copying is needed - both IDs reference the same machine
-   * - The streaming state is preserved automatically
-   *
-   * The temp ID mapping is kept so that components still using the temp ID
-   * (e.g., useTaskStateMachine with pendingTaskId) will continue to work.
+   * Migrate state from a temporary task ID to the real server task ID.
+   * The real task ID becomes the only active key so recovery never talks to the
+   * backend with a local placeholder ID.
    *
    * @param tempTaskId - The temporary (negative) task ID
    * @param realTaskId - The real (positive) task ID from server
@@ -194,12 +181,9 @@ class TaskStateManagerImpl {
       return
     }
 
-    // Make real task ID point to the same state machine instance
-    // IMPORTANT: Keep BOTH mappings so components using either ID work correctly
-    // This is the key: both IDs now reference the SAME machine
+    tempMachine.renameTaskId(realTaskId)
+    this.machines.delete(tempTaskId)
     this.machines.set(realTaskId, tempMachine)
-    // DO NOT delete tempTaskId mapping - components may still be using it
-    // this.machines.delete(tempTaskId)  // REMOVED - keep both mappings
   }
 
   /**

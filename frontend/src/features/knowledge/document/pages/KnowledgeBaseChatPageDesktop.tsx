@@ -105,7 +105,7 @@ export function KnowledgeBaseChatPageDesktop({ knowledgeBaseId, initialDocPath }
   // Handle members changed
   const handleMembersChanged = () => {
     refreshTasks()
-    refreshSelectedTaskDetail(false)
+    refreshSelectedTaskDetail()
   }
 
   // Chat stream context
