@@ -860,6 +860,42 @@ describe('TaskStateMachine', () => {
     expect(machine.getState().runtime.activeStreamSubtaskId).toBe(77)
   })
 
+  it('uses chat chunk offsets to ignore content already covered by cached recovery', async () => {
+    const consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
+    const actions = createRuntimeActions({
+      joinTask: jest.fn().mockResolvedValue({
+        streaming: {
+          subtask_id: 77,
+          offset: 11,
+          cached_content: 'hello world',
+        },
+        subtasks: [],
+      }),
+    })
+    const machine = new TaskStateMachine(42, actions)
+
+    machine.loadTask({
+      id: 42,
+      status: 'RUNNING',
+      updated_at: '2026-06-01T10:00:00',
+    })
+    await machine.recover({ force: true })
+
+    machine.handleChatChunk(77, 'hello', undefined, undefined, undefined, 0)
+    machine.handleChatChunk(77, ' world', undefined, undefined, undefined, 5)
+    machine.handleChatChunk(77, '!', undefined, undefined, undefined, 11)
+
+    const message = machine.getState().messages.get('ai-77')
+    expect(message?.content).toBe('hello world!')
+    expect(
+      message?.result?.blocks
+        ?.map(block => (block.type === 'text' || block.type === 'thinking' ? block.content : ''))
+        .join('')
+    ).toBe('!')
+
+    consoleInfoSpy.mockRestore()
+  })
+
   it('checkHealth clears local streaming when server is terminal with no active stream', async () => {
     const actions = createRuntimeActions({
       verifyRuntime: jest.fn().mockResolvedValue({

@@ -176,6 +176,7 @@ export interface TaskRuntimeVerifyResult {
 interface PendingChunkEvent {
   subtaskId: number
   content: string
+  offset?: number
   result?: UnifiedMessage['result']
   sources?: UnifiedMessage['sources']
   blockId?: string
@@ -217,6 +218,7 @@ type Event =
       type: 'CHAT_CHUNK'
       subtaskId: number
       content: string
+      offset?: number
       result?: UnifiedMessage['result']
       sources?: UnifiedMessage['sources']
       blockId?: string
@@ -283,6 +285,56 @@ export function generateMessageId(type: 'user' | 'ai', subtaskId?: number): stri
     return `ai-${subtaskId}`
   }
   return `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+}
+
+function mergeChunkContent(
+  existingContent: string,
+  incomingContent: string,
+  offset?: number
+): { content: string; appendedContent: string } {
+  if (!incomingContent) {
+    return { content: existingContent, appendedContent: '' }
+  }
+
+  if (offset === undefined || offset < 0) {
+    return {
+      content: existingContent + incomingContent,
+      appendedContent: incomingContent,
+    }
+  }
+
+  if (offset > existingContent.length) {
+    return {
+      content: existingContent + incomingContent,
+      appendedContent: incomingContent,
+    }
+  }
+
+  const existingAtOffset = existingContent.slice(offset, offset + incomingContent.length)
+  if (existingAtOffset === incomingContent) {
+    return { content: existingContent, appendedContent: '' }
+  }
+
+  if (offset < existingContent.length) {
+    const overlapLength = existingContent.length - offset
+    const existingOverlap = existingContent.slice(offset)
+    const incomingOverlap = incomingContent.slice(0, overlapLength)
+
+    if (existingOverlap === incomingOverlap) {
+      const appendedContent = incomingContent.slice(overlapLength)
+      return {
+        content: existingContent + appendedContent,
+        appendedContent,
+      }
+    }
+
+    return { content: existingContent, appendedContent: '' }
+  }
+
+  return {
+    content: existingContent + incomingContent,
+    appendedContent: incomingContent,
+  }
 }
 
 /**
@@ -472,9 +524,10 @@ export class TaskStateMachine {
     content: string,
     result?: UnifiedMessage['result'],
     sources?: UnifiedMessage['sources'],
-    blockId?: string
+    blockId?: string,
+    offset?: number
   ): void {
-    this.dispatch({ type: 'CHAT_CHUNK', subtaskId, content, result, sources, blockId })
+    this.dispatch({ type: 'CHAT_CHUNK', subtaskId, content, offset, result, sources, blockId })
   }
 
   /**
@@ -1184,12 +1237,11 @@ export class TaskStateMachine {
       }
 
       // Apply the chunk to the message
-      // CRITICAL FIX: Always append content to message.content, regardless of block_id
-      // This ensures that cached_content + new chunks are all in message.content
+      const contentMerge = mergeChunkContent(existingMessage.content, chunk.content, chunk.offset)
       const newMessages = new Map(this.state.messages)
       const updatedMessage: UnifiedMessage = {
         ...existingMessage,
-        content: existingMessage.content + chunk.content,
+        content: contentMerge.content,
       }
 
       // Handle reasoning content
@@ -1210,7 +1262,11 @@ export class TaskStateMachine {
       // CRITICAL: Always call mergeBlocksFromPendingChunk and update result.blocks
       // This ensures text blocks are created for ClaudeCode executor
       // which sends chat:chunk without block_id or result
-      const mergedBlocks = this.mergeBlocksFromPendingChunk(existingMessage, chunk)
+      const mergedBlocks = this.mergeBlocksFromPendingChunk(
+        existingMessage,
+        chunk,
+        contentMerge.appendedContent
+      )
 
       if (chunk.result) {
         updatedMessage.result = {
@@ -1271,12 +1327,13 @@ export class TaskStateMachine {
    */
   private mergeBlocksFromPendingChunk(
     existingMessage: UnifiedMessage,
-    chunk: PendingChunkEvent
+    chunk: PendingChunkEvent,
+    appendedContent: string
   ): MessageBlock[] {
     return mergeStreamingBlocks({
       existingBlocks: existingMessage.result?.blocks || [],
       incomingBlocks: chunk.result?.blocks || [],
-      content: chunk.content,
+      content: appendedContent,
       blockId: chunk.blockId,
       reasoningChunk: chunk.result?.reasoning_chunk,
     })
@@ -1555,6 +1612,7 @@ export class TaskStateMachine {
       this.pendingChunks.push({
         subtaskId: event.subtaskId,
         content: event.content,
+        offset: event.offset,
         result: event.result,
         sources: event.sources,
         blockId: event.blockId,
@@ -1578,17 +1636,11 @@ export class TaskStateMachine {
       return
     }
 
+    const contentMerge = mergeChunkContent(existingMessage.content, event.content, event.offset)
     const newMessages = new Map(this.state.messages)
-    // CRITICAL FIX: Always append content to message.content, regardless of block_id
-    // This ensures that:
-    // 1. When page refreshes, cached_content is in message.content
-    // 2. New chunks are appended to message.content
-    // 3. UI can render from either message.content or result.blocks
-    // Previously, when block_id existed, content was only added to blocks, causing
-    // the UI to lose the cached_content after page refresh
     const updatedMessage: UnifiedMessage = {
       ...existingMessage,
-      content: existingMessage.content + event.content,
+      content: contentMerge.content,
     }
 
     // Handle reasoning content
@@ -1609,7 +1661,7 @@ export class TaskStateMachine {
     // CRITICAL: Always call mergeBlocks and update result.blocks
     // This ensures text blocks are created for ClaudeCode executor
     // which sends chat:chunk without block_id or result
-    const mergedBlocks = this.mergeBlocks(existingMessage, event)
+    const mergedBlocks = this.mergeBlocks(existingMessage, event, contentMerge.appendedContent)
 
     if (event.result) {
       updatedMessage.result = {
@@ -1670,12 +1722,13 @@ export class TaskStateMachine {
    */
   private mergeBlocks(
     existingMessage: UnifiedMessage,
-    event: Extract<Event, { type: 'CHAT_CHUNK' }>
+    event: Extract<Event, { type: 'CHAT_CHUNK' }>,
+    appendedContent: string
   ): MessageBlock[] {
     return mergeStreamingBlocks({
       existingBlocks: existingMessage.result?.blocks || [],
       incomingBlocks: event.result?.blocks || [],
-      content: event.content,
+      content: appendedContent,
       blockId: event.blockId,
       reasoningChunk: event.result?.reasoning_chunk,
     })
