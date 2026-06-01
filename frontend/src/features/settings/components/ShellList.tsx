@@ -5,11 +5,10 @@
 'use client'
 import '@/features/common/scrollbar.css'
 
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { ResourceListItem } from '@/components/common/ResourceListItem'
-import { Tag } from '@/components/ui/tag'
 import { CommandLineIcon, PencilIcon, TrashIcon, GlobeAltIcon } from '@heroicons/react/24/outline'
 import { Loader2 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
@@ -26,14 +25,24 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { shellApis, UnifiedShell } from '@/apis/shells'
-import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 import type { BaseRole } from '@/types/base-role'
+import type { Group } from '@/types/group'
+import type { ManagedResourceSourceFilter } from '@/features/resource-library/types'
+import {
+  hasResourceCreateTargets,
+  ResourceCreateButton,
+  type ResourceCreateTarget,
+} from '@/features/resource-library/components/ResourceCreateButton'
+import { ResourceManagementLayout } from './resource-management/ResourceManagementLayout'
 
 interface ShellListProps {
   scope?: 'personal' | 'group' | 'all'
   groupName?: string
   groupRoleMap?: Map<string, BaseRole>
   onEditResource?: (namespace: string) => void
+  sourceControls?: ReactNode
+  sourceFilter?: ManagedResourceSourceFilter
+  groups?: Group[]
 }
 
 const ShellList: React.FC<ShellListProps> = ({
@@ -41,6 +50,9 @@ const ShellList: React.FC<ShellListProps> = ({
   groupName,
   groupRoleMap,
   onEditResource,
+  sourceControls,
+  sourceFilter = 'all',
+  groups = [],
 }) => {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -50,6 +62,7 @@ const ShellList: React.FC<ShellListProps> = ({
   const [dialogOpen, setDialogOpen] = useState(false)
   const [deleteConfirmShell, setDeleteConfirmShell] = useState<UnifiedShell | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [createTarget, setCreateTarget] = useState<ResourceCreateTarget>({ scope: 'personal' })
 
   const fetchShells = useCallback(async () => {
     setLoading(true)
@@ -72,29 +85,20 @@ const ShellList: React.FC<ShellListProps> = ({
   }, [fetchShells, scope, groupName])
 
   // Categorize shells by type
-  const { groupShells, publicShells, userShells } = React.useMemo(() => {
-    const group: UnifiedShell[] = []
-    const publicList: UnifiedShell[] = []
-    const user: UnifiedShell[] = []
-
-    for (const shell of shells) {
-      if (shell.type === 'group') {
-        group.push(shell)
-      } else if (shell.type === 'public') {
-        publicList.push(shell)
-      } else {
-        user.push(shell)
-      }
+  const sourceFilteredShells = React.useMemo(() => {
+    if (sourceFilter === 'personal') {
+      return shells.filter(shell => shell.type === 'user')
     }
-
-    return {
-      groupShells: group,
-      publicShells: publicList,
-      userShells: user,
+    if (sourceFilter === 'group') {
+      return shells.filter(shell => shell.type === 'group')
     }
-  }, [shells])
+    if (sourceFilter === 'system') {
+      return shells.filter(shell => shell.type === 'public')
+    }
+    return shells
+  }, [shells, sourceFilter])
 
-  const totalShells = groupShells.length + publicShells.length + userShells.length
+  const totalShells = sourceFilteredShells.length
 
   // Helper function to check permissions for a specific group resource
   const canEditGroupResource = (namespace: string) => {
@@ -108,14 +112,6 @@ const ShellList: React.FC<ShellListProps> = ({
     const role = groupRoleMap.get(namespace)
     return role === 'Owner' || role === 'Maintainer'
   }
-
-  // Check if user can create in the current group context
-  // When scope is 'group', check the specific groupName; only Owner/Maintainer can create
-  const canCreateInCurrentGroup = (() => {
-    if (scope !== 'group' || !groupName || !groupRoleMap) return false
-    const role = groupRoleMap.get(groupName)
-    return role === 'Owner' || role === 'Maintainer'
-  })()
 
   const handleDelete = async () => {
     if (!deleteConfirmShell) return
@@ -154,10 +150,12 @@ const ShellList: React.FC<ShellListProps> = ({
   const handleEditClose = () => {
     setEditingShell(null)
     setDialogOpen(false)
+    setCreateTarget({ scope: 'personal' })
     fetchShells()
   }
 
-  const handleCreate = () => {
+  const handleCreate = (target: ResourceCreateTarget) => {
+    setCreateTarget(target)
     setEditingShell(null)
     setDialogOpen(true)
   }
@@ -168,24 +166,50 @@ const ShellList: React.FC<ShellListProps> = ({
     return executionType || 'Unknown'
   }
 
-  return (
-    <div className="space-y-3">
-      {/* Header */}
-      <div>
-        <h2 className="text-xl font-semibold text-text-primary mb-1">{t('common:shells.title')}</h2>
-        <p className="text-sm text-text-muted mb-1">{t('common:shells.description')}</p>
-      </div>
+  const getSourceLabel = (shell: UnifiedShell) => {
+    if (shell.type === 'public') return t('common:shells.public')
+    if (shell.type === 'group') return t('common:shells.group')
+    return t('common:shells.my_shells')
+  }
 
-      {/* Content Container */}
-      <div className="bg-base border border-border rounded-md p-2 w-full max-h-[70vh] flex flex-col overflow-y-auto custom-scrollbar">
-        {/* Loading State */}
+  const canEditShell = (shell: UnifiedShell) => {
+    if (shell.type === 'public') return false
+    if (shell.type === 'group') return canEditGroupResource(shell.namespace || 'default')
+    return true
+  }
+
+  const canDeleteShell = (shell: UnifiedShell) => {
+    if (shell.type === 'public') return false
+    if (shell.type === 'group') return canDeleteGroupResource(shell.namespace || 'default')
+    return true
+  }
+
+  const createAction = hasResourceCreateTargets({ scope, groupName, sourceFilter, groups }) ? (
+    <ResourceCreateButton
+      label={t('common:shells.create')}
+      scope={scope}
+      groupName={groupName}
+      sourceFilter={sourceFilter}
+      groups={groups}
+      onCreate={handleCreate}
+      data-testid="create-shell-button"
+    />
+  ) : null
+
+  return (
+    <>
+      <ResourceManagementLayout
+        title={t('common:shells.title')}
+        description={t('common:shells.description')}
+        actions={createAction}
+        filters={sourceControls}
+      >
         {loading && (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="w-6 h-6 animate-spin text-text-muted" />
           </div>
         )}
 
-        {/* Empty State */}
         {!loading && totalShells === 0 && (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <CommandLineIcon className="w-12 h-12 text-text-muted mb-4" />
@@ -194,228 +218,101 @@ const ShellList: React.FC<ShellListProps> = ({
           </div>
         )}
 
-        {/* Shell List - Categorized */}
         {!loading && totalShells > 0 && (
-          <>
-            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-4 p-1">
-              {/* User Shells Section - 我的执行器放在最上面 */}
-              {userShells.length > 0 && (
-                <div className="space-y-2">
-                  <h3 className="text-sm font-medium text-text-secondary px-2">
-                    {t('common:shells.my_shells')} ({userShells.length})
-                  </h3>
-                  <div className="space-y-3">
-                    {userShells.map(shell => (
-                      <Card
-                        key={`user-${shell.name}`}
-                        className="p-4 bg-base hover:bg-hover transition-colors"
+          <div className="space-y-3" data-testid="shell-list-items">
+            {sourceFilteredShells.map(shell => (
+              <Card
+                key={`${shell.type}-${shell.namespace || 'default'}-${shell.name}`}
+                className="overflow-hidden bg-base p-3 transition-colors hover:bg-hover sm:p-4"
+              >
+                <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <ResourceListItem
+                    name={shell.name}
+                    displayName={shell.displayName || undefined}
+                    showId={true}
+                    isPublic={shell.type === 'public'}
+                    publicLabel={t('common:shells.public')}
+                    icon={
+                      shell.type === 'public' ? (
+                        <GlobeAltIcon className="w-5 h-5 text-primary" />
+                      ) : (
+                        <CommandLineIcon className="w-5 h-5 text-primary" />
+                      )
+                    }
+                    tags={[
+                      {
+                        key: 'source',
+                        label: getSourceLabel(shell),
+                        variant:
+                          shell.type === 'public'
+                            ? 'info'
+                            : shell.type === 'group'
+                              ? 'success'
+                              : 'default',
+                      },
+                      ...(shell.type === 'group' && shell.namespace
+                        ? [
+                            {
+                              key: 'namespace',
+                              label: shell.namespace,
+                              variant: 'info' as const,
+                            },
+                          ]
+                        : []),
+                      {
+                        key: 'shell-type',
+                        label: shell.shellType,
+                        variant: 'default',
+                        className: 'capitalize',
+                      },
+                      {
+                        key: 'execution-type',
+                        label: getExecutionTypeLabel(shell.executionType),
+                        variant: 'info',
+                        className: 'hidden sm:inline-flex text-xs',
+                      },
+                      ...(shell.baseImage
+                        ? [
+                            {
+                              key: 'base-image',
+                              label: shell.baseImage,
+                              variant: 'default' as const,
+                              className: 'hidden md:inline-flex text-xs truncate max-w-[200px]',
+                            },
+                          ]
+                        : []),
+                    ]}
+                  />
+                  <div className="flex flex-shrink-0 items-center gap-1 self-end sm:ml-3 sm:self-auto">
+                    {canEditShell(shell) && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => handleEdit(shell)}
+                        title={t('common:shells.edit')}
                       >
-                        <div className="flex items-center justify-between min-w-0">
-                          <ResourceListItem
-                            name={shell.name}
-                            displayName={shell.displayName || undefined}
-                            showId={true}
-                            icon={<CommandLineIcon className="w-5 h-5 text-primary" />}
-                            tags={[
-                              {
-                                key: 'shell-type',
-                                label: shell.shellType,
-                                variant: 'default',
-                                className: 'capitalize',
-                              },
-                              {
-                                key: 'execution-type',
-                                label: getExecutionTypeLabel(shell.executionType),
-                                variant: 'info',
-                                className: 'hidden sm:inline-flex text-xs',
-                              },
-                              ...(shell.baseImage
-                                ? [
-                                    {
-                                      key: 'base-image',
-                                      label: shell.baseImage,
-                                      variant: 'default' as const,
-                                      className:
-                                        'hidden md:inline-flex text-xs truncate max-w-[200px]',
-                                    },
-                                  ]
-                                : []),
-                            ]}
-                          />
-                          <div className="flex items-center gap-1 flex-shrink-0 ml-3">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8"
-                              onClick={() => handleEdit(shell)}
-                              title={t('common:shells.edit')}
-                            >
-                              <PencilIcon className="w-4 h-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 hover:text-error"
-                              onClick={() => setDeleteConfirmShell(shell)}
-                              title={t('common:shells.delete')}
-                            >
-                              <TrashIcon className="w-4 h-4" />
-                            </Button>
-                          </div>
-                        </div>
-                      </Card>
-                    ))}
+                        <PencilIcon className="w-4 h-4" />
+                      </Button>
+                    )}
+                    {canDeleteShell(shell) && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 hover:text-error"
+                        onClick={() => setDeleteConfirmShell(shell)}
+                        title={t('common:shells.delete')}
+                      >
+                        <TrashIcon className="w-4 h-4" />
+                      </Button>
+                    )}
                   </div>
                 </div>
-              )}
-
-              {/* Group Shells Section */}
-              {groupShells.length > 0 && (
-                <div className="space-y-2">
-                  <h3 className="text-sm font-medium text-text-secondary px-2">
-                    {t('common:shells.group_shells')} ({groupShells.length})
-                  </h3>
-                  <div className="space-y-3">
-                    {groupShells.map(shell => (
-                      <Card
-                        key={`group-${shell.name}`}
-                        className="p-4 bg-base hover:bg-hover transition-colors border-l-2 border-l-primary"
-                      >
-                        <div className="flex items-center justify-between min-w-0">
-                          <ResourceListItem
-                            name={shell.name}
-                            displayName={shell.displayName || undefined}
-                            showId={true}
-                            icon={<CommandLineIcon className="w-5 h-5 text-primary" />}
-                            tags={[
-                              {
-                                key: 'shell-type',
-                                label: shell.shellType,
-                                variant: 'default',
-                                className: 'capitalize',
-                              },
-                              {
-                                key: 'execution-type',
-                                label: getExecutionTypeLabel(shell.executionType),
-                                variant: 'info',
-                                className: 'hidden sm:inline-flex text-xs',
-                              },
-                              ...(shell.baseImage
-                                ? [
-                                    {
-                                      key: 'base-image',
-                                      label: shell.baseImage,
-                                      variant: 'default' as const,
-                                      className:
-                                        'hidden md:inline-flex text-xs truncate max-w-[200px]',
-                                    },
-                                  ]
-                                : []),
-                            ]}
-                          >
-                            <Tag variant="success" className="text-xs">
-                              {t('common:shells.group')}
-                            </Tag>
-                          </ResourceListItem>
-                          {/* Action buttons for group resources */}
-                          <div className="flex items-center gap-1 flex-shrink-0 ml-3">
-                            {canEditGroupResource(shell.namespace || 'default') && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                                onClick={() => handleEdit(shell)}
-                                title={t('common:shells.edit')}
-                              >
-                                <PencilIcon className="w-4 h-4" />
-                              </Button>
-                            )}
-                            {canDeleteGroupResource(shell.namespace || 'default') && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 hover:text-error"
-                                onClick={() => setDeleteConfirmShell(shell)}
-                                title={t('common:shells.delete')}
-                              >
-                                <TrashIcon className="w-4 h-4" />
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      </Card>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Public Shells Section */}
-              {publicShells.length > 0 && (
-                <div className="space-y-2">
-                  <h3 className="text-sm font-medium text-text-secondary px-2">
-                    {t('common:shells.public_shells')} ({publicShells.length})
-                  </h3>
-                  <div className="space-y-3">
-                    {publicShells.map(shell => (
-                      <Card
-                        key={`public-${shell.name}`}
-                        className="p-4 bg-base hover:bg-hover transition-colors border-l-2 border-l-primary"
-                      >
-                        <div className="flex items-center justify-between min-w-0">
-                          <ResourceListItem
-                            name={shell.name}
-                            displayName={shell.displayName || undefined}
-                            showId={true}
-                            isPublic={true}
-                            publicLabel={t('common:shells.public')}
-                            icon={<GlobeAltIcon className="w-5 h-5 text-primary" />}
-                            tags={[
-                              {
-                                key: 'shell-type',
-                                label: shell.shellType,
-                                variant: 'default',
-                                className: 'capitalize',
-                              },
-                              {
-                                key: 'execution-type',
-                                label: getExecutionTypeLabel(shell.executionType),
-                                variant: 'info',
-                                className: 'hidden sm:inline-flex text-xs',
-                              },
-                              ...(shell.baseImage
-                                ? [
-                                    {
-                                      key: 'base-image',
-                                      label: shell.baseImage,
-                                      variant: 'default' as const,
-                                      className:
-                                        'hidden md:inline-flex text-xs truncate max-w-[200px]',
-                                    },
-                                  ]
-                                : []),
-                            ]}
-                          />
-                        </div>
-                      </Card>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </>
-        )}
-
-        {/* Add Button */}
-        {!loading && (scope === 'personal' || canCreateInCurrentGroup) && (
-          <div className="border-t border-border pt-3 mt-3 bg-base">
-            <div className="flex justify-center">
-              <UnifiedAddButton onClick={handleCreate}>
-                {t('common:shells.create')}
-              </UnifiedAddButton>
-            </div>
+              </Card>
+            ))}
           </div>
         )}
-      </div>
+      </ResourceManagementLayout>
 
       {/* Shell Edit/Create Dialog */}
       <ShellEditDialog
@@ -423,8 +320,8 @@ const ShellList: React.FC<ShellListProps> = ({
         shell={editingShell}
         onClose={handleEditClose}
         toast={toast}
-        scope={scope}
-        groupName={groupName}
+        scope={editingShell ? scope : createTarget.scope}
+        groupName={createTarget.scope === 'group' ? createTarget.groupName : groupName}
       />
 
       {/* Delete Confirmation Dialog */}
@@ -479,7 +376,7 @@ const ShellList: React.FC<ShellListProps> = ({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </>
   )
 }
 

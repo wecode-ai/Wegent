@@ -359,6 +359,7 @@
     "filter_all": "All",
     "filter_chat": "Chat",
     "filter_code": "Code",
+    "filter_mode": "Mode",
     "go_to_chat": "Go to Chat",
     "go_to_code": "Go to Code",
     "system": "System",
@@ -1515,9 +1516,17 @@
     "search_skills": "Search skills...",
     "no_matching_skills": "No matching skills",
     "already_selected": "Already selected",
-    "skill_button_tooltip": "Select skills to use with this message",
+    "skill_button_tooltip": "Select skills to use temporarily",
     "skill_button_label": "Skills",
-    "manage_skills": "Manage"
+    "manage_skills": "Manage",
+    "autoAvailable": "Automatically Enabled",
+    "temporaryUse": "This Message Only",
+    "agentBuiltin": "Agent Built-in",
+    "myDefault": "Auto-Enabled",
+    "manageDefault": "Manage Auto-Enabled Skills",
+    "emptyAutoAvailable": "No skills are automatically enabled.",
+    "temporaryPreloadHint": "These skills will load only for this message",
+    "temporaryDownloadHint": "These skills will download only for this task"
   },
   "mcpProviders": {
     "title": "MCP Providers",
