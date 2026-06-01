@@ -132,6 +132,14 @@ docker run -d --platform linux/amd64 \
 
 如果项目配置了 `workspace.localPath` 或 `workspace.checkoutPath`，设备会在启动 terminal 或 code-server 前自动创建该目录。
 
+### 非项目会话工作区
+
+当聊天未选择项目但绑定到在线设备时，Wegent 会为该会话创建独立的 Chats 工作区。首轮任务先在临时任务目录中执行；回复完成后，Executor 会根据日期和回复摘要生成目录名，并把临时目录移动到 Chats 工作区树中。
+
+默认根目录为 `~/.wecode/wegent-executor/workspace/chats`。如需自定义位置，可在设备运行环境中设置 `WEGENT_EXECUTOR_CHATS_DIR`。Backend 会把最终路径写入任务元数据标签 `standaloneChatWorkspacePath`，后续继续该会话或打开历史会话时会复用同一目录。
+
+项目会话不使用此路径；项目会话仍然使用项目配置中的 `workspace.localPath` 或 `workspace.checkoutPath`。
+
 #### 安装指定版本
 
 **macOS / Linux：**
@@ -193,6 +201,12 @@ EXECUTOR_MODE=local wegent-executor
 3. 选择您想使用的设备
 4. 像往常一样发送消息
 
+### 不使用项目的会话
+
+在聊天输入区选择 **不使用项目** 时，任务会直接绑定到选中的在线设备。系统优先选择在线云设备；如果您手动选择其他在线设备，新会话会在该设备的 Chats 工作区中运行。离线设备不会作为可选执行目标。
+
+这种模式适合临时命令、资料整理、问题排查等不需要绑定代码项目的工作。需要项目目录、项目终端或项目 IDE 时，请切换回具体项目。
+
 ### 设备状态指示
 
 | 状态 | 图标 | 描述 |
@@ -236,7 +250,31 @@ EXECUTOR_MODE=local wegent-executor
 通过以下方式访问您的设备：
 
 1. **设备选择器**：聊天界面中快速访问
-2. **API**：`GET /devices` 用于程序化访问
+2. **设置页**：进入 **设置** → **连接** 查看可连接设备
+3. **API**：`GET /devices` 用于程序化访问
+
+### 管理云设备
+
+**设置** → **连接** 页面会列出当前账号可连接的 Claude Code 云设备。页面仅展示 `device_type=cloud` 且 `bind_shell=claudecode` 的设备，并显示在线状态、executor 版本、CPU、内存和磁盘使用率。
+
+当没有云设备时，点击 **添加** 可以创建一台新的云设备。创建请求返回后，页面会保留“云设备创建中”的提示；初始化通常需要 2-3 分钟，设备上线后会自动出现在列表中。
+
+在线云设备支持直接打开交互式会话：
+
+| 操作 | 后端接口 | 说明 |
+|------|----------|------|
+| **终端** | `POST /api/devices/{device_id}/terminal` | 在默认工作目录 `/home/ubuntu/.wegent-executor/workspace` 启动 ttyd |
+| **IDE** | `POST /api/devices/{device_id}/code-server` | 打开 code-server 会话 |
+
+返回的访问地址带有短期 session token，并通过设备侧 session gateway 暴露。设备离线时，终端和 IDE 按钮不可用。
+
+更多菜单提供低频管理操作：
+
+| 操作 | 说明 |
+|------|------|
+| **重命名** | 点击设备名称或编辑图标，保存后会刷新列表 |
+| **重启设备** | 需要二次确认；设备会短暂离线，进行中的连接可能中断 |
+| **删除设备** | 需要二次确认；云资源会被释放 |
 
 ### 设备信息
 
@@ -246,6 +284,8 @@ EXECUTOR_MODE=local wegent-executor
 |------|------|
 | **名称** | 设备主机名（如 "Darwin - MacBook-Pro.local"） |
 | **状态** | 在线/离线指示器 |
+| **版本** | executor 版本（如适用） |
+| **资源使用率** | CPU、内存、磁盘使用率（如设备上报） |
 | **槽位** | 并发任务容量（X/5） |
 | **默认** | 如果设为默认则显示星号 |
 
@@ -257,7 +297,7 @@ EXECUTOR_MODE=local wegent-executor
 | **取消默认** | 再次点击当前默认设备的星号 |
 | **删除设备** | 点击删除图标 |
 
-> **注意**：删除设备只是移除注册记录。如果设备重新连接，它会自动重新注册。
+> **注意**：本地设备的删除只是移除注册记录。如果设备重新连接，它会自动重新注册。云设备在连接设置页删除时会释放对应云资源。
 
 ### 离线设备处理
 

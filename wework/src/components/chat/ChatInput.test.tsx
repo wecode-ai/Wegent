@@ -1,8 +1,15 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
-import type { Attachment, ProjectWithTasks, SkillRef, UnifiedModel, UnifiedSkill } from '@/types/api'
+import type {
+  Attachment,
+  DeviceInfo,
+  ProjectWithTasks,
+  SkillRef,
+  UnifiedModel,
+  UnifiedSkill,
+} from '@/types/api'
 import { ChatInput } from './ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from './ChatInput'
 
@@ -37,13 +44,25 @@ function projectChatControls(overrides: Partial<ProjectChatControls> = {}): Proj
 function projectWorkControls(overrides: Partial<ProjectWorkControls> = {}): ProjectWorkControls {
   return {
     projects: [],
+    devices: [],
     currentProjectId: undefined,
+    currentStandaloneDeviceId: null,
     onSelectProject: vi.fn(),
+    onSelectStandaloneDevice: vi.fn(),
     ...overrides,
   }
 }
 
 describe('ChatInput', () => {
+  const originalCreateObjectUrl = URL.createObjectURL
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+    localStorage.clear()
+    URL.createObjectURL = originalCreateObjectUrl
+  })
+
   test('renders the desktop composer sections', () => {
     render(
       <ChatInput value="" onChange={vi.fn()} onSubmit={vi.fn()} disabled={false} variant="desktop" />,
@@ -54,6 +73,173 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-selector-button')).toBeInTheDocument()
     expect(screen.getByTestId('skill-selector-button')).toBeInTheDocument()
     expect(screen.getByTestId('project-work-button')).toBeInTheDocument()
+  })
+
+  test('keeps the compact mobile composer close to one-line input height', () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+      />,
+    )
+
+    const form = screen.getByTestId('chat-message-input').closest('form')
+
+    expect(form).toHaveClass('items-end')
+    expect(screen.getByTestId('add-context-button')).toHaveClass(
+      'h-[52px]',
+      'w-[52px]',
+      'rounded-[26px]',
+    )
+    expect(screen.getByTestId('compact-input-pill')).toHaveClass('min-h-[52px]')
+    expect(screen.getByTestId('chat-message-input')).toHaveClass(
+      'py-[14px]',
+      'scrollbar-none',
+    )
+    expect(screen.getByTestId('send-message-button')).toHaveClass(
+      'absolute',
+      'bottom-1',
+      'right-1',
+      'h-11',
+      'w-11',
+      'rounded-[22px]',
+    )
+  })
+
+  test('hides voice input after typing in the compact composer', async () => {
+    render(<ControlledChatInput />)
+
+    expect(screen.getByTestId('voice-input-button')).toBeInTheDocument()
+    await userEvent.type(screen.getByTestId('chat-message-input'), 'hello')
+
+    expect(screen.queryByTestId('voice-input-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('compact-input-pill')).toHaveClass('pr-14')
+    expect(screen.getByTestId('send-message-button')).toHaveClass(
+      'bottom-1',
+      'right-1',
+    )
+  })
+
+  test('opens a mobile context sheet that only uploads images', async () => {
+    const handleFileSelect = vi.fn().mockResolvedValue(undefined)
+    const image = new File(['image'], 'photo.png', { type: 'image/png' })
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        projectChat={projectChatControls({ handleFileSelect })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('add-context-button'))
+
+    expect(screen.getByTestId('mobile-context-sheet')).toBeInTheDocument()
+    expect(screen.getByTestId('mobile-take-photo-button')).toHaveTextContent('拍照')
+    expect(screen.getByTestId('mobile-upload-image-button')).toHaveTextContent('上传图片')
+    expect(screen.queryByText('添加照片和文件')).not.toBeInTheDocument()
+    expect(screen.getByTestId('mobile-camera-file-input')).toHaveAttribute(
+      'accept',
+      'image/*',
+    )
+    expect(screen.getByTestId('mobile-camera-file-input')).toHaveAttribute(
+      'capture',
+      'environment',
+    )
+    expect(screen.getByTestId('mobile-image-file-input')).toHaveAttribute(
+      'accept',
+      'image/*',
+    )
+
+    await userEvent.upload(screen.getByTestId('mobile-image-file-input'), image)
+
+    expect(handleFileSelect).toHaveBeenCalledWith([image])
+    expect(screen.queryByTestId('mobile-context-sheet')).not.toBeInTheDocument()
+  })
+
+  test('enables compact send when only image attachments are present', async () => {
+    const onSubmit = vi.fn()
+    const attachment: Attachment = {
+      id: 45,
+      filename: 'photo.png',
+      file_size: 1200,
+      mime_type: 'image/png',
+      status: 'ready',
+      file_extension: '.png',
+      created_at: '2026-05-27T00:00:00.000Z',
+    }
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={onSubmit}
+        disabled={false}
+        projectChat={projectChatControls({ attachments: [attachment] })}
+      />,
+    )
+
+    expect(screen.getByTestId('attachment-badge')).toBeInTheDocument()
+    expect(screen.getByTestId('send-message-button')).toBeEnabled()
+    await userEvent.click(screen.getByTestId('send-message-button'))
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+  })
+
+  test('expands compact input to fullscreen after more than four lines', async () => {
+    render(<ControlledChatInput />)
+
+    await userEvent.type(
+      screen.getByTestId('chat-message-input'),
+      ['one', 'two', 'three', 'four', 'five'].join('{shift>}{enter}{/shift}'),
+    )
+
+    await userEvent.click(screen.getByTestId('expand-input-button'))
+
+    expect(screen.getByTestId('fullscreen-input-sheet')).toBeInTheDocument()
+    expect(screen.queryByText('编辑消息')).not.toBeInTheDocument()
+    expect(screen.getByTestId('collapse-input-button')).toHaveClass(
+      'absolute',
+      'right-3',
+      'top-3',
+    )
+    expect(screen.getByTestId('fullscreen-message-input')).toHaveClass(
+      'h-full',
+      'pt-14',
+    )
+    expect(screen.getByTestId('fullscreen-message-input')).toHaveValue(
+      ['one', 'two', 'three', 'four', 'five'].join('\n'),
+    )
+
+    await userEvent.type(screen.getByTestId('fullscreen-message-input'), '!')
+    expect(screen.getByTestId('fullscreen-message-input')).toHaveValue(
+      `${['one', 'two', 'three', 'four', 'five'].join('\n')}!`,
+    )
+
+    await userEvent.click(screen.getByTestId('collapse-input-button'))
+    expect(screen.queryByTestId('fullscreen-input-sheet')).not.toBeInTheDocument()
+    expect(screen.getByTestId('chat-message-input')).toHaveValue(
+      `${['one', 'two', 'three', 'four', 'five'].join('\n')}!`,
+    )
+  })
+
+  test('hides the project work bar when requested', () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        showProjectWorkBar={false}
+      />,
+    )
+
+    expect(screen.getByTestId('chat-message-input')).toBeInTheDocument()
+    expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
   })
 
   test('opens the desktop model menu with real model options', async () => {
@@ -81,6 +267,7 @@ describe('ChatInput', () => {
 
     expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
     expect(screen.getByText('选择模型')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-option-default')).not.toBeInTheDocument()
     expect(screen.getByText('GPT 5.5 Medium')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('model-option-gpt-5.5-medium'))
@@ -175,7 +362,43 @@ describe('ChatInput', () => {
     expect(removeAttachment).toHaveBeenCalledWith(42)
   })
 
-  test('renders an image preview for image attachments', () => {
+  test('renders document attachments as fixed two-line cards', () => {
+    const attachment: Attachment = {
+      id: 42,
+      filename: 'brief.pdf',
+      file_size: 1200,
+      mime_type: 'application/pdf',
+      status: 'ready',
+      file_extension: '.pdf',
+      created_at: '2026-05-27T00:00:00.000Z',
+    }
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({ attachments: [attachment] })}
+      />,
+    )
+
+    expect(screen.getByTestId('attachment-badge')).toHaveClass('h-14', 'w-[220px]', 'rounded-xl')
+    expect(screen.getByTestId('attachment-document-icon')).toHaveTextContent('PDF')
+    expect(screen.getByText('brief.pdf')).toHaveClass('truncate')
+    expect(screen.getAllByText('PDF')).toHaveLength(2)
+  })
+
+  test('renders an image preview for image attachments', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        blob: () => Promise.resolve(new Blob(['image'], { type: 'image/png' })),
+      })
+    )
+    URL.createObjectURL = vi.fn(() => 'blob:attachment-preview')
     const attachment: Attachment = {
       id: 43,
       filename: 'screenshot.png',
@@ -197,10 +420,96 @@ describe('ChatInput', () => {
       />,
     )
 
-    expect(screen.getByTestId('attachment-image-preview')).toHaveAttribute(
-      'src',
-      '/api/attachments/43/download'
+    await waitFor(() => {
+      expect(screen.getByTestId('attachment-image-preview')).toHaveAttribute(
+        'src',
+        'blob:attachment-preview'
+      )
+    })
+  })
+
+  test('loads image previews with the auth token from local storage', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      blob: () => Promise.resolve(new Blob(['image'], { type: 'image/png' })),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    URL.createObjectURL = vi.fn(() => 'blob:attachment-preview')
+    localStorage.setItem('auth_token', 'token-123')
+
+    const attachment: Attachment = {
+      id: 43,
+      filename: 'screenshot.png',
+      file_size: 1200,
+      mime_type: 'image/png',
+      status: 'ready',
+      file_extension: '.png',
+      created_at: '2026-05-27T00:00:00.000Z',
+    }
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({ attachments: [attachment] })}
+      />
     )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('attachment-image-preview')).toHaveAttribute(
+        'src',
+        'blob:attachment-preview'
+      )
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/attachments/43/download', {
+      headers: { Authorization: 'Bearer token-123' },
+    })
+  })
+
+  test('uses matching overlay remove buttons for image and document attachments', () => {
+    const attachments: Attachment[] = [
+      {
+        id: 43,
+        filename: 'screenshot.png',
+        file_size: 1200,
+        mime_type: 'image/png',
+        status: 'ready',
+        file_extension: '.png',
+        created_at: '2026-05-27T00:00:00.000Z',
+      },
+      {
+        id: 44,
+        filename: 'brief.pdf',
+        file_size: 1200,
+        mime_type: 'application/pdf',
+        status: 'ready',
+        file_extension: '.pdf',
+        created_at: '2026-05-27T00:00:00.000Z',
+      },
+    ]
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({ attachments })}
+      />,
+    )
+
+    const removeButtons = screen.getAllByTestId('remove-attachment-button')
+
+    expect(removeButtons).toHaveLength(2)
+    removeButtons.forEach(button => {
+      expect(button).toHaveClass('absolute', '-right-1.5', '-top-1.5')
+      expect(button).toHaveClass('rounded-full', 'bg-text-primary', 'text-white')
+    })
   })
 
   test('enables send when only attachments are present', async () => {
@@ -256,12 +565,231 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('project-work-button'))
 
     expect(screen.getByTestId('project-work-menu')).toBeInTheDocument()
-    expect(screen.getByText('Wegent')).toBeInTheDocument()
+    expect(screen.getAllByText('Wegent').length).toBeGreaterThan(0)
     expect(screen.getByText('Docs')).toBeInTheDocument()
+    expect(screen.getByTestId('no-project-option')).toHaveTextContent('不使用项目')
 
     await userEvent.click(screen.getByTestId('project-option-8'))
 
     expect(onSelectProject).toHaveBeenCalledWith(8)
+  })
+
+  test('shows no-project transition only when a concrete project is selected', async () => {
+    const onSelectStandaloneDevice = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects: [{ id: 7, name: 'Wegent', tasks: [] }],
+          currentProjectId: 7,
+          onSelectStandaloneDevice,
+        })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+    await userEvent.click(screen.getByTestId('no-project-option'))
+
+    expect(onSelectStandaloneDevice).toHaveBeenCalledWith(null)
+  })
+
+  test('lists standalone devices under no-project and defaults to online cloud devices', async () => {
+    const onSelectStandaloneDevice = vi.fn()
+    const devices: DeviceInfo[] = [
+      {
+        id: 1,
+        device_id: 'local-online',
+        name: 'Local Online',
+        status: 'online',
+        is_default: false,
+        device_type: 'local',
+      },
+      {
+        id: 2,
+        device_id: 'cloud-online',
+        name: 'Cloud Online',
+        status: 'online',
+        is_default: false,
+        device_type: 'cloud',
+      },
+      {
+        id: 3,
+        device_id: 'local-offline',
+        name: 'Local Offline',
+        status: 'offline',
+        is_default: false,
+        device_type: 'local',
+      },
+    ]
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects: [{ id: 7, name: 'Wegent', tasks: [] }],
+          devices,
+          currentProjectId: 7,
+          onSelectStandaloneDevice,
+        })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    expect(screen.getByTestId('standalone-device-list')).toBeInTheDocument()
+    expect(screen.getByText('Cloud Online')).toBeInTheDocument()
+    expect(screen.getByText('Local Online')).toBeInTheDocument()
+    expect(screen.getByTestId('standalone-device-option-local-offline')).toBeDisabled()
+
+    await userEvent.click(screen.getByTestId('no-project-option'))
+    expect(onSelectStandaloneDevice).toHaveBeenCalledWith('cloud-online')
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+    await userEvent.click(screen.getByTestId('standalone-device-option-local-online'))
+    expect(onSelectStandaloneDevice).toHaveBeenLastCalledWith('local-online')
+  })
+
+  test('does not include enter-project work as a menu item', async () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects: [{ id: 7, name: 'Wegent', tasks: [] }],
+          currentProjectId: undefined,
+        })}
+      />,
+    )
+
+    expect(screen.getByTestId('project-work-button')).toHaveTextContent('进入项目工作')
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    expect(screen.queryByTestId('no-project-option')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-work-menu')).not.toHaveTextContent('进入项目工作')
+  })
+
+  test('renders online project devices with neutral secondary text', async () => {
+    const projects: ProjectWithTasks[] = [
+      {
+        id: 7,
+        name: 'Wegent',
+        config: { execution: { targetType: 'cloud', deviceId: 'device-online' } },
+        tasks: [],
+      },
+      {
+        id: 8,
+        name: 'Docs',
+        config: { execution: { targetType: 'local', deviceId: 'device-offline' } },
+        tasks: [],
+      },
+    ]
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects,
+          devices: [
+            {
+              id: 1,
+              device_id: 'device-online',
+              name: 'online-executor',
+              status: 'online',
+              is_default: false,
+            },
+            {
+              id: 2,
+              device_id: 'device-offline',
+              name: 'offline-executor',
+              status: 'offline',
+              is_default: false,
+            },
+          ],
+        })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    expect(screen.getByText('online-executor')).toHaveClass('text-text-secondary')
+    expect(screen.getByText('online-executor')).not.toHaveClass('text-primary')
+    expect(screen.getByText('offline-executor')).toHaveClass('text-text-muted')
+  })
+
+  test('marks projects with offline devices as unavailable and prevents selection', async () => {
+    const onSelectProject = vi.fn()
+    const projects: ProjectWithTasks[] = [
+      {
+        id: 7,
+        name: 'Online Project',
+        config: { execution: { targetType: 'cloud', deviceId: 'device-online' } },
+        tasks: [],
+      },
+      {
+        id: 8,
+        name: 'Offline Project',
+        config: { execution: { targetType: 'local', deviceId: 'device-offline' } },
+        tasks: [],
+      },
+    ]
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects,
+          onSelectProject,
+          devices: [
+            {
+              id: 1,
+              device_id: 'device-online',
+              name: 'online-executor',
+              status: 'online',
+              is_default: false,
+            },
+            {
+              id: 2,
+              device_id: 'device-offline',
+              name: 'offline-executor',
+              status: 'offline',
+              is_default: false,
+            },
+          ],
+        })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    const offlineProject = screen.getByTestId('project-option-8')
+    expect(offlineProject).toBeDisabled()
+    expect(offlineProject).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('project-unavailable-icon-8')).toBeInTheDocument()
+
+    await userEvent.click(offlineProject)
+
+    expect(onSelectProject).not.toHaveBeenCalledWith(8)
   })
 
   test('disables model and skill selectors when options are locked', () => {

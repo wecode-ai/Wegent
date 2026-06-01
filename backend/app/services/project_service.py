@@ -307,13 +307,29 @@ def delete_project(db: Session, project_id: int, user_id: int) -> None:
         raise HTTPException(status_code=404, detail="Project not found")
 
     # Clear project_id for all tasks in this project (set to 0, not NULL)
-    db.query(TaskResource).filter(TaskResource.project_id == project_id).update(
-        {TaskResource.project_id: 0}
-    )
+    db.query(TaskResource).filter(
+        TaskResource.project_id == project_id,
+        TaskResource.user_id == user_id,
+    ).update({TaskResource.project_id: 0})
 
     # Soft delete the project
     project.is_active = False
     db.commit()
+
+
+def archive_project_chats(db: Session, project_id: int, user_id: int) -> int:
+    """Archive all active chats belonging to a project."""
+
+    _get_active_project(db, project_id, user_id)
+    return task_kinds_service.archive_project_chats(
+        db=db, project_id=project_id, user_id=user_id
+    )
+
+
+def archive_all_project_chats(db: Session, user_id: int) -> int:
+    """Archive all active chats belonging to any project owned by the user."""
+
+    return task_kinds_service.archive_all_project_chats(db=db, user_id=user_id)
 
 
 def add_task_to_project(

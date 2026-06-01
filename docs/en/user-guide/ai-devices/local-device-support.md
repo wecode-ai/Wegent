@@ -130,6 +130,14 @@ Both entrypoints are exposed under the `/s/{session_id}/` path on `DEVICE_PUBLIC
 
 When a project configures `workspace.localPath` or `workspace.checkoutPath`, the device creates that directory before starting terminal or code-server.
 
+### Standalone Chat Workspaces
+
+When a chat has no selected project but is bound to an online device, Wegent creates an independent Chats workspace for that conversation. The first task runs in a temporary task directory. After the response finishes, the Executor generates a dated directory name from the response summary and moves the temporary directory into the Chats workspace tree.
+
+The default root is `~/.wecode/wegent-executor/workspace/chats`. To use another location, set `WEGENT_EXECUTOR_CHATS_DIR` in the device runtime environment. Backend stores the final path in the task metadata label `standaloneChatWorkspacePath`, so continuing the conversation or opening it from history reuses the same directory.
+
+Project chats do not use this path. They continue to use the project's configured `workspace.localPath` or `workspace.checkoutPath`.
+
 #### Installing a Specific Version
 
 **macOS / Linux:**
@@ -191,6 +199,12 @@ In the chat interface, you'll see a device selector dropdown:
 3. Select your preferred device
 4. Send your message as usual
 
+### Conversations Without a Project
+
+When you select **No project** in the chat input area, the task is bound directly to the selected online device. Wegent prefers an online cloud device by default. If you manually choose another online device, the new conversation runs in that device's Chats workspace. Offline devices are not selectable execution targets.
+
+This mode is useful for temporary commands, organizing notes, or troubleshooting work that does not need a code project. Switch back to a specific project when you need the project directory, project terminal, or project IDE.
+
 ### Device Status Indicators
 
 | Status | Icon | Description |
@@ -234,7 +248,31 @@ Simply change the device selection before sending each message.
 Access your devices through:
 
 1. **Device Selector**: Quick access in chat interface
-2. **API**: `GET /devices` for programmatic access
+2. **Settings Page**: Go to **Settings** → **Connections** to view connectable devices
+3. **API**: `GET /devices` for programmatic access
+
+### Managing Cloud Devices
+
+The **Settings** → **Connections** page lists Claude Code cloud devices that the current account can connect to. It only shows devices with `device_type=cloud` and `bind_shell=claudecode`, and displays online status, executor version, CPU, memory, and disk usage.
+
+When no cloud device exists, click **Add** to create one. After the create request returns, the page keeps a "cloud device creating" notice visible. Initialization usually takes 2-3 minutes, and the device appears in the list automatically when it comes online.
+
+Online cloud devices can open interactive sessions directly:
+
+| Action | Backend API | Description |
+|--------|-------------|-------------|
+| **Terminal** | `POST /api/devices/{device_id}/terminal` | Starts ttyd in the default working directory `/home/ubuntu/.wegent-executor/workspace` |
+| **IDE** | `POST /api/devices/{device_id}/code-server` | Opens a code-server session |
+
+The returned URL includes a short-lived session token and is exposed through the device-side session gateway. Terminal and IDE buttons are disabled while the device is offline.
+
+The more menu contains lower-frequency management actions:
+
+| Action | Description |
+|--------|-------------|
+| **Rename** | Click the device name or edit icon; the list refreshes after saving |
+| **Restart Device** | Requires confirmation; the device briefly goes offline and active connections may be interrupted |
+| **Delete Device** | Requires confirmation; the cloud resources are released |
 
 ### Device Information
 
@@ -244,6 +282,8 @@ Each device shows:
 |-------|-------------|
 | **Name** | Device hostname (e.g., "Darwin - MacBook-Pro.local") |
 | **Status** | Online/Offline indicator |
+| **Version** | Executor version, when available |
+| **Resource Usage** | CPU, memory, and disk usage, when reported by the device |
 | **Slots** | Concurrent task capacity (X/5) |
 | **Default** | Star indicator if set as default |
 
@@ -255,7 +295,7 @@ Each device shows:
 | **Remove Default** | Click star again on current default |
 | **Delete Device** | Click delete icon |
 
-> **Note**: Deleting a device only removes the registration. If the device reconnects, it will automatically re-register.
+> **Note**: Deleting a local device only removes the registration. If the device reconnects, it will automatically re-register. Deleting a cloud device from the Connections settings page releases the corresponding cloud resources.
 
 ### Offline Device Handling
 

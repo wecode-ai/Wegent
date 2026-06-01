@@ -28,6 +28,9 @@ DEFAULT_GATEWAY_PORT = 17888
 DEFAULT_PUBLIC_BASE_URL = "http://localhost:17888"
 DEFAULT_SESSION_TTL_SECONDS = 60 * 60
 SESSION_IDLE_GRACE_SECONDS = 3
+SESSION_PORT_READY_TIMEOUT_SECONDS = 5.0
+SESSION_PORT_CONNECT_TIMEOUT_SECONDS = 0.2
+SESSION_PORT_RETRY_INTERVAL_SECONDS = 0.05
 
 SessionType = Literal["terminal", "code_server"]
 
@@ -100,10 +103,7 @@ class SessionGateway:
 
         # On first authenticated request, set auth cookies and redirect to
         # the clean URL so the token does not remain visible in the address bar.
-        if (
-            request.query.get("token")
-            and request.headers.get("Upgrade", "").lower() != "websocket"
-        ):
+        if self._should_redirect_authenticated_request(request, session):
             query_items = [
                 (k, v)
                 for k, v in parse_qsl(request.query_string, keep_blank_values=True)
@@ -132,7 +132,26 @@ class SessionGateway:
             return None
         return self.sessions.get(session_id)
 
+    def _should_redirect_authenticated_request(
+        self,
+        request: web.Request,
+        session: LocalSession,
+    ) -> bool:
+        return (
+            session.session_type == "code_server"
+            and request.query.get("token")
+            and request.query.get("embed") != "1"
+            and request.headers.get("Upgrade", "").lower() != "websocket"
+        )
+
     def _is_authorized(self, request: web.Request, session: LocalSession) -> bool:
+        terminal_prefix = f"/s/{session.session_id}"
+        if session.session_type == "terminal" and (
+            request.path == terminal_prefix
+            or request.path.startswith(f"{terminal_prefix}/")
+        ):
+            return True
+
         token = request.query.get("token") or request.cookies.get(
             self._token_cookie_name(session.session_id)
         )
@@ -498,6 +517,11 @@ class LocalSessionHandler:
             logger.exception("[LocalSessionHandler] Failed to start session")
             return self._error(str(exc))
 
+        is_ready = await _wait_for_session_port("127.0.0.1", port, process)
+        if not is_ready:
+            await terminate_session_process(process)
+            return self._error("Terminal session failed to become ready")
+
         session = LocalSession(
             session_id=session_id,
             session_type=session_type,
@@ -541,6 +565,7 @@ class LocalSessionHandler:
             "-m",
             "1",
             "-o",
+            "-W",
             "-b",
             f"/s/{session_id}",
             "bash",
@@ -614,6 +639,36 @@ def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
+
+
+async def _wait_for_session_port(
+    host: str,
+    port: int,
+    process: asyncio.subprocess.Process,
+    timeout: float = SESSION_PORT_READY_TIMEOUT_SECONDS,
+) -> bool:
+    """Wait until the session process accepts TCP connections."""
+    deadline = time.monotonic() + timeout
+    loop = asyncio.get_running_loop()
+
+    while time.monotonic() < deadline:
+        if getattr(process, "returncode", None) is not None:
+            return False
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setblocking(False)
+        try:
+            await asyncio.wait_for(
+                loop.sock_connect(sock, (host, port)),
+                timeout=SESSION_PORT_CONNECT_TIMEOUT_SECONDS,
+            )
+            return True
+        except (OSError, asyncio.TimeoutError):
+            await asyncio.sleep(SESSION_PORT_RETRY_INTERVAL_SECONDS)
+        finally:
+            sock.close()
+
+    return False
 
 
 async def terminate_session_process(process: asyncio.subprocess.Process) -> None:

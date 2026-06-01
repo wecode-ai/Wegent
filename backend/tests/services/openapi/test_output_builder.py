@@ -91,6 +91,59 @@ def test_build_response_output_includes_reasoning_content():
     assert output[0].status == "completed"
 
 
+def test_build_response_output_preserves_thinking_block_order():
+    subtask = _assistant_subtask(
+        subtask_id=109,
+        result={
+            "value": "Final answer",
+            "reasoning_content": "Before tool.After tool.",
+            "blocks": [
+                {
+                    "id": "thinking-1",
+                    "type": "thinking",
+                    "content": "Before tool.",
+                    "status": "done",
+                },
+                {
+                    "id": "shell_1",
+                    "type": "tool",
+                    "tool_use_id": "shell_1",
+                    "tool_name": "exec",
+                    "tool_input": {"command": "cat /etc/os-release"},
+                    "status": "done",
+                },
+                {
+                    "id": "thinking-2",
+                    "type": "thinking",
+                    "content": "After tool.",
+                    "status": "done",
+                },
+                {
+                    "id": "text-1",
+                    "type": "text",
+                    "content": "Final answer",
+                    "status": "done",
+                },
+            ],
+        },
+    )
+
+    output = build_response_output([subtask])
+
+    assert [item.type for item in output] == [
+        "message",
+        "shell_call",
+        "message",
+        "message",
+    ]
+    assert output[0].content[0].type == "reasoning"
+    assert output[0].content[0].text == "Before tool."
+    assert output[2].content[0].type == "reasoning"
+    assert output[2].content[0].text == "After tool."
+    assert output[3].content[0].type == "output_text"
+    assert output[3].content[0].text == "Final answer"
+
+
 def test_build_response_output_matches_tool_block_by_id():
     subtask = _assistant_subtask(
         subtask_id=103,

@@ -54,6 +54,7 @@ class ReasoningContent(TypedDict):
 
     type: Literal["reasoning"]
     text: str
+    annotations: NotRequired[List[Any]]
 
 
 class MessageItem(TypedDict, total=False):
@@ -63,7 +64,7 @@ class MessageItem(TypedDict, total=False):
     id: str
     status: str
     role: Literal["assistant"]
-    content: List[OutputTextContent]
+    content: List[Union[OutputTextContent, ReasoningContent]]
 
 
 class FunctionCallItem(TypedDict, total=False):
@@ -263,6 +264,16 @@ class ResponsePartAddedEvent(TypedDict):
     part: ReasoningContent
 
 
+class ReasoningSummaryTextDeltaEvent(TypedDict):
+    """response.reasoning_summary_text.delta event."""
+
+    type: Literal["response.reasoning_summary_text.delta"]
+    item_id: str
+    output_index: int
+    content_index: int
+    delta: str
+
+
 class BlockCreatedEvent(TypedDict):
     """response.block.created event."""
 
@@ -296,6 +307,7 @@ ResponsesAPIStreamingResponse = Union[
     FunctionCallArgumentsDeltaEvent,
     FunctionCallArgumentsDoneEvent,
     ResponsePartAddedEvent,
+    ReasoningSummaryTextDeltaEvent,
     BlockCreatedEvent,
     ErrorEvent,
 ]

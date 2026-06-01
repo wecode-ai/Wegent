@@ -233,6 +233,66 @@ class NevisClient:
                 logger.error(f"Nevis API request error: {str(e)}")
                 raise NevisClientError(f"Failed to connect to Nevis API: {str(e)}")
 
+    async def query_metrics(
+        self,
+        sandbox_id: str,
+        query: str,
+        start: int,
+        end: int,
+        step: str = "1m",
+    ) -> Dict[str, Any]:
+        """Query sandbox metrics via Nevis raw_query API.
+
+        Args:
+            sandbox_id: The sandbox ID to query metrics for
+            query: Prometheus-style query string
+            start: Start timestamp (unix seconds)
+            end: End timestamp (unix seconds)
+            step: Query step interval (default "1m")
+
+        Returns:
+            Raw metrics response from Nevis API
+
+        Raises:
+            NevisClientError: If API call fails
+        """
+        if not self.is_configured():
+            raise NevisClientError("Nevis client is not properly configured")
+
+        url = f"{self._get_sandboxes_url(sandbox_id)}/metrics/raw_query"
+        payload = {
+            "query": query,
+            "start": start,
+            "end": end,
+            "step": step,
+        }
+
+        logger.debug(f"Querying metrics for sandbox {sandbox_id}: {query}")
+
+        async with httpx.AsyncClient(timeout=NEVIS_TIMEOUT) as client:
+            try:
+                response = await client.post(
+                    url,
+                    headers=self._get_headers(),
+                    json=payload,
+                )
+                response.raise_for_status()
+                return response.json()
+            except httpx.HTTPStatusError as e:
+                logger.error(
+                    f"Nevis metrics API error: status={e.response.status_code}, "
+                    f"body={e.response.text}"
+                )
+                raise NevisClientError(
+                    f"Failed to query metrics: {e.response.text}",
+                    status_code=e.response.status_code,
+                )
+            except httpx.RequestError as e:
+                logger.error(f"Nevis metrics request error: {str(e)}")
+                raise NevisClientError(
+                    f"Failed to connect to Nevis metrics API: {str(e)}"
+                )
+
     async def delete_sandbox(self, sandbox_id: str) -> bool:
         """Delete a sandbox VM.
 

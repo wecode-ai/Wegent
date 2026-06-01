@@ -2216,7 +2216,7 @@ Response template:
 
             workspace_ref = task_crd.spec.workspaceRef
             if not workspace_ref:
-                self._merge_project_workspace(task, workspace_data)
+                self._merge_task_execution_workspace(task, workspace_data)
                 return workspace_data
 
             # Query the actual Workspace resource to get repository info
@@ -2257,8 +2257,17 @@ Response template:
         except Exception as e:
             logger.warning("[TaskRequestBuilder] Failed to build workspace: %s", str(e))
 
-        self._merge_project_workspace(task, workspace_data)
+        self._merge_task_execution_workspace(task, workspace_data)
         return workspace_data
+
+    def _merge_task_execution_workspace(
+        self, task: TaskResource, workspace_data: dict
+    ) -> None:
+        """Merge project or standalone chat workspace metadata for execution."""
+
+        self._merge_project_workspace(task, workspace_data)
+        if not workspace_data.get("project"):
+            self._merge_standalone_chat_workspace(task, workspace_data)
 
     def _merge_project_workspace(
         self, task: TaskResource, workspace_data: dict
@@ -2334,6 +2343,35 @@ Response template:
                 "checkout_path": None,
                 "local_path": default_path,
             }
+
+    def _merge_standalone_chat_workspace(
+        self, task: TaskResource, workspace_data: dict
+    ) -> None:
+        """Merge persisted standalone chat workspace metadata."""
+
+        from app.services.chat.standalone_workspace import (
+            WORKSPACE_PATH_LABEL,
+            WORKSPACE_SOURCE_LABEL,
+        )
+
+        labels = (task.json or {}).get("metadata", {}).get("labels", {})
+        workspace_path = labels.get(WORKSPACE_PATH_LABEL)
+        if not isinstance(workspace_path, str) or not workspace_path.strip():
+            return
+
+        workspace_source = labels.get(WORKSPACE_SOURCE_LABEL)
+        if not isinstance(workspace_source, str) or not workspace_source.strip():
+            workspace_source = "local_path"
+
+        workspace_data["project"] = {
+            "project_id": None,
+            "workspace_source": workspace_source,
+            "project_workspace_path": workspace_path.strip(),
+            "execution_target_type": "local",
+            "device_id": None,
+            "checkout_path": None,
+            "local_path": workspace_path.strip(),
+        }
 
     def _is_group_chat(self, task: TaskResource) -> bool:
         """Determine if task is a group chat.

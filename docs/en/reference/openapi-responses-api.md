@@ -1,3 +1,7 @@
+---
+sidebar_position: 1
+---
+
 # OpenAPI v1/responses API
 
 This document describes the OpenAPI v1/responses endpoint, which provides an OpenAI Responses API compatible interface for interacting with Wegent agents (Teams).
@@ -308,11 +312,19 @@ When `stream=true` is set (Chat Shell type only), the API returns Server-Sent Ev
 | `response.output_item.added` | New output item (message) added |
 | `response.content_part.added` | New content part added to message |
 | `response.output_text.delta` | Text chunk received |
+| `response.reasoning_summary_part.added` | New reasoning summary output item added |
+| `response.reasoning_summary_text.delta` | Reasoning summary text chunk received |
 | `response.output_text.done` | Text output completed |
 | `response.content_part.done` | Content part completed |
 | `response.output_item.done` | Output item completed |
 | `response.completed` | Response fully completed |
 | `response.failed` | Response failed with error |
+
+### Reasoning Output Order
+
+When deep thinking is enabled or the model returns reasoning summaries, the stream may contain multiple independent `reasoning` output items. Tool calls or regular text output close the current reasoning block; later reasoning content creates a new `reasoning` output item.
+
+The final `response.completed.response.output` preserves the chronological order of these items, for example `reasoning -> shell_call -> reasoning -> message`. Clients should render the `output` array in order and should not merge multiple `reasoning` items into one block.
 
 ### Example SSE Stream
 

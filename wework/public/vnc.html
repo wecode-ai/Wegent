@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>云桌面</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1a1a; }
+    #vnc-container { width: 100%; height: 100%; }
+    #status-overlay {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: #1a1a1a; color: #999; font-family: system-ui, sans-serif;
+    }
+    #status-overlay.hidden { display: none; }
+    .status-text { text-align: center; }
+    .status-text p { margin: 8px 0; font-size: 14px; }
+    .spinner {
+      width: 32px; height: 32px; margin: 0 auto 12px;
+      border: 3px solid #333; border-top-color: #14B8A6;
+      border-radius: 50%; animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .error { color: #f87171; }
+    .retry-btn {
+      margin-top: 12px; padding: 6px 16px;
+      background: transparent; border: 1px solid #14B8A6;
+      color: #14B8A6; border-radius: 6px; cursor: pointer;
+      font-size: 13px;
+    }
+    .retry-btn:hover { background: rgba(20,184,166,0.1); }
+  </style>
+</head>
+<body>
+  <div id="vnc-container"></div>
+  <div id="status-overlay">
+    <div class="status-text">
+      <div class="spinner"></div>
+      <p>正在连接云桌面...</p>
+    </div>
+  </div>
+
+  <script src="/novnc/rfb.min.js"></script>
+  <script>
+    (function() {
+      const params = new URLSearchParams(window.location.search);
+      const wsUrl = params.get('wsUrl');
+      const sandboxId = params.get('sandboxId');
+
+      const container = document.getElementById('vnc-container');
+      const overlay = document.getElementById('status-overlay');
+
+      if (!wsUrl) {
+        showError('缺少 WebSocket 连接参数');
+        return;
+      }
+
+      function showError(msg) {
+        overlay.classList.remove('hidden');
+        overlay.innerHTML = '<div class="status-text">' +
+          '<p class="error">' + msg + '</p>' +
+          '<button class="retry-btn" onclick="location.reload()">重试</button>' +
+          '</div>';
+      }
+
+      function connect() {
+        overlay.classList.remove('hidden');
+        overlay.innerHTML = '<div class="status-text"><div class="spinner"></div><p>正在连接云桌面...</p></div>';
+        container.innerHTML = '';
+
+        try {
+          var mod = window.noVNC;
+          var RFB = mod && mod.__esModule && mod.default ? mod.default : (typeof mod === 'function' ? mod : (mod && mod.default ? mod.default : mod));
+
+          if (!RFB) {
+            showError('noVNC 加载失败');
+            return;
+          }
+
+          var rfb = new RFB(container, wsUrl);
+          rfb.scaleViewport = true;
+          rfb.resizeSession = false;
+          rfb.showDotCursor = true;
+          rfb.background = '#1a1a1a';
+
+          rfb.addEventListener('connect', function() {
+            overlay.classList.add('hidden');
+            document.title = '云桌面' + (sandboxId ? ' - ' + sandboxId : '');
+          });
+
+          rfb.addEventListener('disconnect', function(e) {
+            var clean = e.detail && e.detail.clean;
+            if (!clean) {
+              showError('连接已断开');
+            } else {
+              showError('会话已结束');
+            }
+          });
+
+          rfb.addEventListener('securityfailure', function(e) {
+            showError('认证失败: ' + (e.detail && e.detail.reason || '未知错误'));
+          });
+        } catch (err) {
+          showError('连接失败: ' + err.message);
+        }
+      }
+
+      if (window.noVNC) {
+        connect();
+      } else {
+        showError('noVNC 库加载失败，请刷新页面重试');
+      }
+    })();
+  </script>
+</body>
+</html>

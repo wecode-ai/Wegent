@@ -55,7 +55,7 @@
     "reset_to_default": "Reset to Default"
   },
   "resourceGuide": {
-    "title": "Resource management moved to Resource Library",
+    "title": "Agent management moved to Resource Library",
     "description": "Agents, models, executors, skills, and retrievers are now managed in Resource Library.",
     "action": "Go to Resource Library"
   },

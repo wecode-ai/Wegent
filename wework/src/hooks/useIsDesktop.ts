@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react'
-
-const DESKTOP_BREAKPOINT = 1024
+import { desktopMediaQuery, isDesktopViewport } from '@/lib/responsive'
 
 export function useIsDesktop(): boolean {
   const [isDesktop, setIsDesktop] = useState(
-    () => window.innerWidth >= DESKTOP_BREAKPOINT
+    () => isDesktopViewport(window.innerWidth)
   )
 
   useEffect(() => {
-    const mql = window.matchMedia(`(min-width: ${DESKTOP_BREAKPOINT}px)`)
+    if (typeof window.matchMedia !== 'function') return
+
+    const mql = window.matchMedia(desktopMediaQuery())
     const handler = (e: MediaQueryListEvent) => setIsDesktop(e.matches)
     mql.addEventListener('change', handler)
     return () => mql.removeEventListener('change', handler)

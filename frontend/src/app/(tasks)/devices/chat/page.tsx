@@ -5,6 +5,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
+import dynamic from 'next/dynamic'
 import { useRouter, useSearchParams } from 'next/navigation'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
@@ -25,13 +26,16 @@ import { paths } from '@/config/paths'
 import { useDevices } from '@/contexts/DeviceContext'
 import { useTeamContext } from '@/contexts/TeamContext'
 import { Monitor, WifiOff } from 'lucide-react'
-import { ChatArea } from '@/features/tasks/components/chat'
 import { TaskParamSync, DeviceTaskSync, DeviceParamSync } from '@/features/tasks/components/params'
 import { isOpenClawDevice } from '@/features/devices/utils/device-status'
 import { CloudDeviceVncPanel, DeviceVncPanel } from '@wecode/components/cloud-device'
 import { useDeviceVncState } from '@wecode/hooks'
 import { getPreferredExecutionDevice } from '@/features/devices/utils/execution-target'
 import { useProjectContext } from '@/features/projects/contexts/projectContext'
+
+const ChatArea = dynamic(() => import('@/features/tasks/components/chat/ChatArea'), {
+  ssr: false,
+})
 
 export default function DeviceChatPage() {
   const { t } = useTranslation('devices')

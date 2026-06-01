@@ -1,6 +1,6 @@
 import { useState, type PointerEvent } from 'react'
 
-const DEFAULT_SIDEBAR_WIDTH = 280
+const DEFAULT_SIDEBAR_WIDTH = 320
 const MIN_SIDEBAR_WIDTH = 220
 const MAX_SIDEBAR_WIDTH = 420
 const SIDEBAR_WIDTH_STORAGE_KEY = 'wework.desktop.sidebar.width'

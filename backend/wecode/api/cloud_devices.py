@@ -24,6 +24,7 @@ from app.models.user import User
 from wecode.config.nevis_config import nevis_settings
 from wecode.schemas.cloud_device import (
     CloudDeviceFileConfigResponse,
+    CloudDeviceMetricsResponse,
     CloudDeviceResponse,
     CreateCloudDeviceRequest,
     NevisSandboxStatus,
@@ -57,14 +58,6 @@ def _get_backend_url(request: Request) -> str:
     scheme = request.url.scheme
     host = request.headers.get("host", request.url.netloc)
     return f"{scheme}://{host}"
-
-def _get_bearer_token(request: Request) -> str:
-    """Extract the raw Bearer token from the incoming request."""
-    authorization = request.headers.get("authorization", "")
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer":
-        return ""
-    return token.strip()
 
 
 def _get_bearer_token(request: Request) -> str:
@@ -282,6 +275,64 @@ async def delete_cloud_device(
         )
 
 
+@router.post("/{device_id}/restart")
+async def restart_cloud_device(
+    device_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Restart a cloud device owned by the current user.
+
+    Args:
+        device_id: Cloud device ID.
+
+    Returns:
+        Success message with the resolved sandbox ID.
+
+    Raises:
+        HTTPException 404: If device not found
+        HTTPException 400: If the device cannot be restarted
+        HTTPException 500: If Nevis API call fails
+    """
+    try:
+        restart_result = await cloud_device_provider.restart_device(
+            db=db,
+            user_id=current_user.id,
+            device_id=device_id,
+        )
+        return {
+            "message": "Restart command sent successfully",
+            "device_id": restart_result["device_id"],
+            "sandbox_id": restart_result["sandbox_id"],
+        }
+
+    except ValueError as e:
+        message = str(e)
+        if "not found" in message.lower():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=message,
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=message,
+        )
+
+    except NevisClientError as e:
+        logger.error(f"Nevis API error restarting cloud device: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to restart cloud device: {str(e)}",
+        )
+
+    except Exception as e:
+        logger.exception(f"Unexpected error restarting cloud device: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to restart cloud device",
+        )
+
+
 @router.get("/{device_id}/status", response_model=NevisSandboxStatus)
 async def get_cloud_device_nevis_status(
     device_id: str,
@@ -448,6 +499,140 @@ async def get_cloud_device_file_config(
         files_url=files_url,
         available=available,
     )
+
+
+@router.post("/{device_id}/metrics", response_model=CloudDeviceMetricsResponse)
+async def get_cloud_device_metrics(
+    device_id: str,
+    user_id: int | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Get CPU, memory, and disk usage metrics for a cloud device.
+
+    Queries Nevis raw_query API for sandbox resource utilization.
+    Does not require the device to be online.
+
+    Args:
+        device_id: Cloud device ID
+
+    Returns:
+        CloudDeviceMetricsResponse with cpu_usage, memory_usage, disk_usage
+    """
+    if not cloud_device_provider.is_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cloud device provider is not configured",
+        )
+
+    device_status = await _get_accessible_cloud_device_status(
+        device_id, db, current_user, user_id
+    )
+    sandbox_id = _resolve_sandbox_id(device_id, device_status)
+
+    import time
+
+    from wecode.service.nevis_client import nevis_client
+
+    now = int(time.time())
+    start = now - 300  # last 5 minutes
+    queries = {
+        "cpu": "max_over_time(syscpuidle:busy{cpu='cpu'})",
+        "memory": "max_over_time(sysmeminfo:memused_percentage)",
+        "disk": "max_over_time(sysdiskinfo:used_size_percentage)",
+    }
+
+    results: dict[str, float | None] = {"cpu": None, "memory": None, "disk": None}
+
+    async def _fetch_metric(key: str, query: str):
+        try:
+            resp = await nevis_client.query_metrics(
+                sandbox_id=sandbox_id,
+                query=query,
+                start=start,
+                end=now,
+                step="1m",
+            )
+            data = resp.get("data", {}).get("data", {}).get("result", [])
+            if data and len(data) > 0:
+                values = data[0].get("values", [])
+                if values:
+                    results[key] = float(values[-1][1])
+        except Exception as e:
+            logger.warning(f"Failed to fetch {key} metric for {sandbox_id}: {e}")
+
+    await asyncio.gather(
+        _fetch_metric("cpu", queries["cpu"]),
+        _fetch_metric("memory", queries["memory"]),
+        _fetch_metric("disk", queries["disk"]),
+    )
+
+    return CloudDeviceMetricsResponse(
+        cpu_usage=results["cpu"],
+        memory_usage=results["memory"],
+        disk_usage=results["disk"],
+    )
+
+
+@router.post("/{device_id}/metrics/history")
+async def get_cloud_device_metrics_history(
+    device_id: str,
+    user_id: int | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Get 1-hour metrics history for a cloud device.
+
+    Returns time-series data points for CPU, memory, and disk usage.
+    """
+    if not cloud_device_provider.is_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cloud device provider is not configured",
+        )
+
+    device_status = await _get_accessible_cloud_device_status(
+        device_id, db, current_user, user_id
+    )
+    sandbox_id = _resolve_sandbox_id(device_id, device_status)
+
+    import time
+
+    from wecode.service.nevis_client import nevis_client
+
+    now = int(time.time())
+    start = now - 3600  # last 1 hour
+    queries = {
+        "cpu": "max_over_time(syscpuidle:busy{cpu='cpu'})",
+        "memory": "max_over_time(sysmeminfo:memused_percentage)",
+        "disk": "max_over_time(sysdiskinfo:used_size_percentage)",
+    }
+
+    results: dict[str, list] = {"cpu": [], "memory": [], "disk": []}
+
+    async def _fetch_series(key: str, query: str):
+        try:
+            resp = await nevis_client.query_metrics(
+                sandbox_id=sandbox_id,
+                query=query,
+                start=start,
+                end=now,
+                step="1m",
+            )
+            data = resp.get("data", {}).get("data", {}).get("result", [])
+            if data and len(data) > 0:
+                values = data[0].get("values", [])
+                results[key] = [[v[0], float(v[1])] for v in values]
+        except Exception as e:
+            logger.warning(f"Failed to fetch {key} history for {sandbox_id}: {e}")
+
+    await asyncio.gather(
+        _fetch_series("cpu", queries["cpu"]),
+        _fetch_series("memory", queries["memory"]),
+        _fetch_series("disk", queries["disk"]),
+    )
+
+    return results
 
 
 def _build_vnc_wss_url(sandbox_id: str) -> str:

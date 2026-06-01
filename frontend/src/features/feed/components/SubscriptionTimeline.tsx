@@ -9,6 +9,7 @@
  * Displays background executions as posts similar to social media feeds.
  */
 import { useMemo, useState } from 'react'
+import dynamic from 'next/dynamic'
 import {
   AlertCircle,
   Bot,
@@ -47,7 +48,14 @@ import { useTheme } from '@/features/theme/ThemeProvider'
 import { useSubscriptionContext } from '../contexts/subscriptionContext'
 import type { BackgroundExecution, BackgroundExecutionStatus } from '@/types/subscription'
 import { parseUTCDate } from '@/lib/utils'
-import { SubscriptionConversationDialog } from './SubscriptionConversationDialog'
+
+const SubscriptionConversationDialog = dynamic(
+  () =>
+    import('./SubscriptionConversationDialog').then(
+      module => module.SubscriptionConversationDialog
+    ),
+  { ssr: false }
+)
 
 interface SubscriptionTimelineProps {
   onCreateSubscription?: () => void
@@ -602,13 +610,15 @@ export function SubscriptionTimeline({
       )}
 
       {/* Conversation Dialog */}
-      <SubscriptionConversationDialog
-        taskId={dialogTaskId}
-        open={dialogTaskId !== null}
-        onOpenChange={open => {
-          if (!open) setDialogTaskId(null)
-        }}
-      />
+      {dialogTaskId !== null && (
+        <SubscriptionConversationDialog
+          taskId={dialogTaskId}
+          open={dialogTaskId !== null}
+          onOpenChange={open => {
+            if (!open) setDialogTaskId(null)
+          }}
+        />
+      )}
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog

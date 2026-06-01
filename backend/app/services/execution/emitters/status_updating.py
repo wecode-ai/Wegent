@@ -102,6 +102,7 @@ class StatusUpdatingEmitter(ResultEmitter):
             EventType.TOOL_ARGUMENT_DELTA.value,
             EventType.TOOL_ARGUMENT_DONE.value,
             EventType.TOOL_RESULT.value,
+            EventType.THINKING.value,
         ):
             await session_manager.touch_task_streaming_activity(self._task_id)
 
@@ -165,6 +166,13 @@ class StatusUpdatingEmitter(ResultEmitter):
             content = event.content or ""
             if content:
                 await session_manager.add_text_content(
+                    subtask_id=self._subtask_id,
+                    content=content,
+                )
+        elif event.type == EventType.THINKING.value:
+            content = event.content or ""
+            if content:
+                await session_manager.add_thinking_content(
                     subtask_id=self._subtask_id,
                     content=content,
                 )

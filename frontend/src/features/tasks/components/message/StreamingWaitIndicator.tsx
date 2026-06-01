@@ -118,13 +118,6 @@ export default function StreamingWaitIndicator({
       <span className="streaming-wait-runner-track" data-testid="streaming-wait-runner-track">
         <span className="streaming-wait-runner-text-wrap">
           <span className="streaming-wait-runner-text">{stageMessage}</span>
-          <span
-            className="streaming-wait-runner-text-mask"
-            aria-hidden="true"
-            data-testid="streaming-wait-runner-text-mask"
-          >
-            {stageMessage}
-          </span>
         </span>
         <span
           className="streaming-wait-runner-dot"

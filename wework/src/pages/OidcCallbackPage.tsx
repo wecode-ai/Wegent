@@ -1,15 +1,12 @@
 import { useEffect } from 'react'
-import { useTranslation } from 'react-i18next'
+import { getRuntimeConfig } from '@/config/runtime'
 import {
   POST_LOGIN_REDIRECT_KEY,
   sanitizeRedirectPath,
 } from '@/features/auth/redirect'
 import { useAuth } from '@/features/auth/useAuth'
-
-function navigateTo(path: string) {
-  window.history.pushState({}, '', path)
-  window.dispatchEvent(new PopStateEvent('popstate'))
-}
+import { useTranslation } from '@/hooks/useTranslation'
+import { navigateTo } from '@/lib/navigation'
 
 export function OidcCallbackPage() {
   const { t } = useTranslation('common')
@@ -51,7 +48,8 @@ export function OidcCallbackPage() {
       return
     }
 
-    window.location.href = `/api/auth/oidc/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`
+    const { apiBaseUrl } = getRuntimeConfig()
+    window.location.href = `${apiBaseUrl}/auth/oidc/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`
   }, [loginWithOidcToken])
 
   return (

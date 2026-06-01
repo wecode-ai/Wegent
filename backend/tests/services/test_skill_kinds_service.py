@@ -59,9 +59,33 @@ tags: ["debug", "test"]
         assert skill.spec.version == "1.0.0"
         assert skill.spec.author == "Test Author"
         assert skill.spec.tags == ["debug", "test"]
+        assert skill.spec.enabled is True
         assert skill.status.state == "Available"
         assert skill.status.fileSize == len(zip_content)
         assert len(skill.status.fileHash) == 64
+
+    def test_update_skill_enabled(self, test_db: Session, test_user: User):
+        """Test toggling a skill enabled state."""
+        service = SkillKindsService()
+        skill_md = "---\ndescription: Toggle skill\n---\n"
+        zip_content = self.create_test_zip(skill_md)
+        skill = service.create_skill(
+            db=test_db,
+            name="toggle-skill",
+            namespace="default",
+            file_content=zip_content,
+            file_name="test.zip",
+            user_id=test_user.id,
+        )
+
+        updated = service.update_skill_enabled(
+            db=test_db,
+            skill_id=int(skill.metadata.labels["id"]),
+            user_id=test_user.id,
+            enabled=False,
+        )
+
+        assert updated.spec.enabled is False
 
     def test_create_skill_duplicate_name(self, test_db: Session, test_user: User):
         """Test creating skill with duplicate name fails"""

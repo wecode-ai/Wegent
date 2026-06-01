@@ -5,6 +5,7 @@
 'use client'
 
 import { Suspense, useState } from 'react'
+import dynamic from 'next/dynamic'
 import { teamService } from '@/features/tasks/service/teamService'
 import TopNavigation from '@/features/layout/TopNavigation'
 import GreyTestButton from '@/features/layout/components/GreyTestButton'
@@ -23,7 +24,10 @@ import { TaskContextProvider } from '@/features/tasks/contexts/taskContext'
 import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext'
 import { SocketProvider } from '@/contexts/SocketContext'
 import { DeviceProvider } from '@/contexts/DeviceContext'
-import { ChatArea } from '@/features/tasks/components/chat'
+
+const ChatArea = dynamic(() => import('@/features/tasks/components/chat/ChatArea'), {
+  ssr: false,
+})
 
 function TasksPageContent() {
   // Team state from service

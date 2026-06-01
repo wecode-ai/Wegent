@@ -19,11 +19,35 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
 
     pwd_definition = resolve_local_device_command("pwd", settings.LOCAL_DEVICE_COMMANDS)
     ls_definition = resolve_local_device_command("ls_a", settings.LOCAL_DEVICE_COMMANDS)
+    home_dir_definition = resolve_local_device_command(
+        "home_dir", settings.LOCAL_DEVICE_COMMANDS
+    )
+    project_workspace_root_definition = resolve_local_device_command(
+        "project_workspace_root", settings.LOCAL_DEVICE_COMMANDS
+    )
     ls_dirs_definition = resolve_local_device_command(
         "ls_dirs", settings.LOCAL_DEVICE_COMMANDS
     )
     git_clone_definition = resolve_local_device_command(
         "git_clone", settings.LOCAL_DEVICE_COMMANDS
+    )
+    git_branch_definition = resolve_local_device_command(
+        "git_branch", settings.LOCAL_DEVICE_COMMANDS
+    )
+    git_diff_shortstat_definition = resolve_local_device_command(
+        "git_diff_shortstat", settings.LOCAL_DEVICE_COMMANDS
+    )
+    git_branch_diff_shortstat_definition = resolve_local_device_command(
+        "git_branch_diff_shortstat", settings.LOCAL_DEVICE_COMMANDS
+    )
+    git_remote_url_definition = resolve_local_device_command(
+        "git_remote_url", settings.LOCAL_DEVICE_COMMANDS
+    )
+    git_add_all_definition = resolve_local_device_command(
+        "git_add_all", settings.LOCAL_DEVICE_COMMANDS
+    )
+    git_commit_definition = resolve_local_device_command(
+        "git_commit", settings.LOCAL_DEVICE_COMMANDS
     )
 
     assert pwd_definition is not None
@@ -32,12 +56,41 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert ls_definition is not None
     assert ls_definition.command == "ls -a"
     assert ls_definition.post_processor == "file_list"
+    assert home_dir_definition is not None
+    assert home_dir_definition.command == "printenv HOME"
+    assert home_dir_definition.post_processor is None
+    assert project_workspace_root_definition is not None
+    assert "WEGENT_EXECUTOR_PROJECTS_DIR" in project_workspace_root_definition.command
+    assert "WECODE_HOME" in project_workspace_root_definition.command
+    assert project_workspace_root_definition.post_processor is None
     assert ls_dirs_definition is not None
     assert ls_dirs_definition.command == "ls -a -p"
     assert ls_dirs_definition.post_processor == "directory_list"
     assert git_clone_definition is not None
     assert git_clone_definition.command == "git clone"
     assert git_clone_definition.post_processor is None
+    assert git_branch_definition is not None
+    assert git_branch_definition.command == "git branch --show-current"
+    assert git_branch_definition.post_processor is None
+    assert git_diff_shortstat_definition is not None
+    assert git_diff_shortstat_definition.command == "git diff --shortstat"
+    assert git_diff_shortstat_definition.post_processor is None
+    assert git_branch_diff_shortstat_definition is not None
+    assert "git merge-base" in git_branch_diff_shortstat_definition.command
+    assert "git diff --shortstat" in git_branch_diff_shortstat_definition.command
+    assert (
+        "git diff --shortstat HEAD --" in git_branch_diff_shortstat_definition.command
+    )
+    assert git_branch_diff_shortstat_definition.post_processor is None
+    assert git_remote_url_definition is not None
+    assert git_remote_url_definition.command == "git remote get-url origin"
+    assert git_remote_url_definition.post_processor is None
+    assert git_add_all_definition is not None
+    assert git_add_all_definition.command == "git add --all"
+    assert git_add_all_definition.post_processor is None
+    assert git_commit_definition is not None
+    assert git_commit_definition.command == "git commit"
+    assert git_commit_definition.post_processor is None
 
 
 def test_local_device_command_registry_supports_inline_post_processor():

@@ -298,6 +298,7 @@ class SkillKindsService:
             "metadata": {"name": name, "namespace": namespace},
             "spec": {
                 "description": metadata["description"],
+                "enabled": True,
                 "displayName": metadata.get("displayName"),
                 "prompt": metadata.get("prompt"),
                 "version": metadata.get("version"),
@@ -679,9 +680,11 @@ class SkillKindsService:
 
         # Update skill_kind JSON
         skill_json = skill_kind.json
+        enabled = skill_json.get("spec", {}).get("enabled", True)
         skill_json["spec"].update(
             {
                 "description": metadata["description"],
+                "enabled": enabled,
                 "displayName": metadata.get("displayName"),
                 "prompt": metadata.get("prompt"),
                 "version": metadata.get("version"),
@@ -727,6 +730,33 @@ class SkillKindsService:
         result = self._kind_to_skill(skill_kind)
         db.commit()
 
+        return result
+
+    def update_skill_enabled(
+        self, db: Session, *, skill_id: int, user_id: int, enabled: bool
+    ) -> Skill:
+        """Update a Skill enabled state without changing its package."""
+        skill_kind = (
+            db.query(Kind)
+            .filter(
+                Kind.id == skill_id,
+                Kind.user_id == user_id,
+                Kind.kind == "Skill",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+        if not skill_kind:
+            raise HTTPException(status_code=404, detail="Skill not found")
+
+        skill_json = skill_kind.json
+        skill_json.setdefault("spec", {})["enabled"] = enabled
+        skill_kind.json = skill_json
+        flag_modified(skill_kind, "json")
+
+        result = self._kind_to_skill(skill_kind)
+        db.commit()
         return result
 
     def delete_skill(self, db: Session, *, skill_id: int, user_id: int) -> None:

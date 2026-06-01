@@ -13,7 +13,7 @@ import {
   ResizableSidebar,
   CollapsedSidebarButtons,
 } from '@/features/tasks/components/sidebar'
-import { SubscriptionInvitations } from '@/features/feed/components'
+import { SubscriptionInvitations } from '@/features/feed/components/SubscriptionInvitations'
 import { Button } from '@/components/ui/button'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'

@@ -48,6 +48,7 @@ logs/
 
 # Start script runtime files
 .pids/
+executor/.pids/
 
 # Coverage reports
 .coverage

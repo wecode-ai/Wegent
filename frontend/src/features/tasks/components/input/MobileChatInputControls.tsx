@@ -95,6 +95,7 @@ export interface MobileChatInputControlsProps {
   isModelSelectionRequired: boolean
   isAttachmentReadyToSend: boolean
   taskInputMessage: string
+  hasAttachments?: boolean
   isSubtaskStreaming: boolean
   canQueueMessage?: boolean
   canSendGuidance?: boolean
@@ -169,6 +170,7 @@ export function MobileChatInputControls({
   isModelSelectionRequired,
   isAttachmentReadyToSend,
   taskInputMessage,
+  hasAttachments = false,
   isSubtaskStreaming,
   canQueueMessage = false,
   canSendGuidance = false,
@@ -239,6 +241,7 @@ export function MobileChatInputControls({
       hasNoTeams,
       shouldHideChatInput,
       taskInputMessage,
+      hasAttachments,
       selectedTaskStatus: selectedTaskDetail?.status,
       isSubtaskStreaming,
       isGroupChat: selectedTaskDetail?.is_group_chat,
@@ -414,20 +417,20 @@ export function MobileChatInputControls({
               )}
 
               {showGuidanceAction && onSendGuidance && (
-              <Button
-                type="button"
-                variant="ghost"
-                data-testid="send-guidance-button"
-                onClick={onSendGuidance}
-                disabled={!canSendGuidance || !taskInputMessage.trim()}
-                className="flex h-11 w-full items-center justify-start gap-3 px-3 text-sm"
-              >
-                <Hand className="h-4 w-4 text-primary" />
-                <span>{t('guidance.send')}</span>
-              </Button>
-            )}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  data-testid="send-guidance-button"
+                  onClick={onSendGuidance}
+                  disabled={!canSendGuidance || !taskInputMessage.trim()}
+                  className="flex h-11 w-full items-center justify-start gap-3 px-3 text-sm"
+                >
+                  <Hand className="h-4 w-4 text-primary" />
+                  <span>{t('guidance.send')}</span>
+                </Button>
+              )}
 
-            {/* Repository Selector - full row clickable, only show if team requires workspace */}
+              {/* Repository Selector - full row clickable, only show if team requires workspace */}
               {showRepositoryAction && (
                 <MobileRepositorySelector
                   selectedRepo={selectedRepo}

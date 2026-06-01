@@ -14,11 +14,14 @@ export function MessageList({ messages }: MessageListProps) {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 py-8">
+    <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-6 overflow-x-hidden px-6 py-8">
       {messages.map(message => (
         <article
           key={message.id}
-          className={message.role === 'user' ? 'flex justify-end' : ''}
+          className={[
+            'min-w-0 overflow-x-hidden',
+            message.role === 'user' ? 'flex justify-end' : '',
+          ].join(' ')}
           data-testid={`message-${message.role}`}
         >
           {message.role === 'user' ? (
@@ -34,7 +37,7 @@ export function MessageList({ messages }: MessageListProps) {
 
 function UserMessage({ content }: { content: string }) {
   return (
-    <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl bg-[#f4f4f4] px-4 py-3 text-sm leading-6 text-[#1a1a1a]">
+    <div className="max-w-[80%] overflow-hidden break-words whitespace-pre-wrap rounded-2xl bg-[#f4f4f4] px-4 py-3 text-sm leading-6 text-[#1a1a1a]">
       {content}
     </div>
   )
@@ -47,7 +50,7 @@ function AssistantMessage({ message }: { message: WorkbenchMessage }) {
   const isThinking = isStreaming && !hasContent && !hasBlocks
 
   return (
-    <div className="text-sm leading-7 text-[#1a1a1a]">
+    <div className="min-w-0 overflow-x-hidden text-sm leading-7 text-[#1a1a1a]">
       {hasBlocks && (
         <ToolBlocksDisplay
           blocks={message.blocks!}
@@ -55,17 +58,17 @@ function AssistantMessage({ message }: { message: WorkbenchMessage }) {
         />
       )}
       {hasContent && (
-        <div className="assistant-markdown">
+        <div className="assistant-markdown min-w-0 overflow-x-hidden break-words">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
               h1: ({ children }) => <h1 className="mb-4 mt-6 text-xl font-semibold">{children}</h1>,
               h2: ({ children }) => <h2 className="mb-3 mt-5 text-lg font-semibold">{children}</h2>,
               h3: ({ children }) => <h3 className="mb-2 mt-4 text-base font-semibold">{children}</h3>,
-              p: ({ children }) => <p className="mb-3 leading-7">{children}</p>,
+              p: ({ children }) => <p className="mb-3 min-w-0 break-words leading-7">{children}</p>,
               ul: ({ children }) => <ul className="mb-3 list-disc space-y-1.5 pl-5">{children}</ul>,
               ol: ({ children }) => <ol className="mb-3 list-decimal space-y-1.5 pl-5">{children}</ol>,
-              li: ({ children }) => <li className="leading-7">{children}</li>,
+              li: ({ children }) => <li className="min-w-0 break-words leading-7">{children}</li>,
               strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
               code: ({ className, children }) => {
                 const isBlock = className?.includes('language-')
@@ -74,20 +77,20 @@ function AssistantMessage({ message }: { message: WorkbenchMessage }) {
                   return <CodeBlock lang={lang}>{children}</CodeBlock>
                 }
                 return (
-                  <code className="rounded bg-[#f0f0f0] px-1.5 py-0.5 text-xs font-medium text-[#1a1a1a]">
+                  <code className="break-words rounded bg-[#f0f0f0] px-1.5 py-0.5 text-xs font-medium text-[#1a1a1a]">
                     {children}
                   </code>
                 )
               },
-              pre: ({ children }) => <pre className="mb-3 mt-2">{children}</pre>,
+              pre: ({ children }) => <pre className="mb-3 mt-2 max-w-full overflow-hidden">{children}</pre>,
               blockquote: ({ children }) => (
                 <blockquote className="mb-3 border-l-3 border-[#e0e0e0] pl-4 text-[#666]">
                   {children}
                 </blockquote>
               ),
               table: ({ children }) => (
-                <div className="mb-3 overflow-x-auto">
-                  <table className="w-full border-collapse text-sm">{children}</table>
+                <div className="mb-3 max-w-full overflow-x-auto">
+                  <table className="w-full min-w-max border-collapse text-sm">{children}</table>
                 </div>
               ),
               th: ({ children }) => (
@@ -97,7 +100,7 @@ function AssistantMessage({ message }: { message: WorkbenchMessage }) {
                 <td className="border-b border-[#e0e0e0] px-3 py-2">{children}</td>
               ),
               a: ({ href, children }) => (
-                <a href={href} className="text-primary underline" target="_blank" rel="noopener noreferrer">{children}</a>
+                <a href={href} className="break-words text-primary underline" target="_blank" rel="noopener noreferrer">{children}</a>
               ),
             }}
           >
@@ -129,7 +132,7 @@ function CodeBlock({ lang, children }: { lang: string; children: React.ReactNode
   }
 
   return (
-    <code className="block overflow-hidden rounded-lg border border-[#e0e0e0]">
+    <code className="block max-w-full overflow-hidden rounded-lg border border-[#e0e0e0]">
       <span className="flex items-center justify-between border-b border-[#e0e0e0] bg-white px-3 py-1.5">
         <span className="text-xs text-[#999]">{lang || 'text'}</span>
         <span className="flex items-center gap-1">
@@ -150,7 +153,7 @@ function CodeBlock({ lang, children }: { lang: string; children: React.ReactNode
           </button>
         </span>
       </span>
-      <span className="block overflow-x-auto bg-white px-4 py-3 font-mono text-xs leading-5 text-[#1a1a1a]">
+      <span className="block max-w-full overflow-x-auto bg-white px-4 py-3 font-mono text-xs leading-5 text-[#1a1a1a]">
         {children}
       </span>
     </code>
