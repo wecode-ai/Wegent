@@ -630,6 +630,7 @@ export default function TeamList({
                   <Card
                     key={team.id}
                     className="p-3 sm:p-4 bg-base hover:bg-hover transition-colors overflow-hidden"
+                    data-testid={`team-card-${team.id}`}
                   >
                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-0 min-w-0">
                       <ResourceListItem
@@ -851,7 +852,7 @@ export default function TeamList({
                   </Card>
                 ))
               ) : (
-                <div className="text-center text-text-muted py-8">
+                <div className="text-center text-text-muted py-8" data-testid="team-empty-state">
                   <p className="text-sm">{t('teams.no_teams')}</p>
                 </div>
               )}
