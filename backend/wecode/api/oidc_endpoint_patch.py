@@ -21,6 +21,7 @@ import logging
 import time
 import uuid
 from typing import Any, Dict
+from urllib.parse import quote
 
 import jwt
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -57,6 +58,35 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _normalize_frontend_base_path(value: str | None) -> str:
+    if not value or value == "/":
+        return ""
+
+    trimmed = value.strip()
+    if not trimmed.startswith("/") or trimmed.startswith("//"):
+        return ""
+    if "\\" in trimmed or "?" in trimmed or "#" in trimmed:
+        return ""
+
+    parts: list[str] = []
+    for part in trimmed.split("/"):
+        if not part or part == ".":
+            continue
+        if part == "..":
+            parts.pop() if parts else None
+            continue
+        parts.append(part)
+
+    return f"/{'/'.join(parts)}" if parts else ""
+
+
+def _build_frontend_url(path: str, frontend_base_path: str | None = None) -> str:
+    base_url = settings.FRONTEND_URL.rstrip("/")
+    app_base_path = _normalize_frontend_base_path(frontend_base_path)
+    normalized_path = path if path.startswith("/") else f"/{path}"
+    return f"{base_url}{app_base_path}{normalized_path}"
+
+
 async def _patched_oidc_callback(
     background_tasks: BackgroundTasks,
     code: str = Query(..., description="Authorization code"),
@@ -72,23 +102,34 @@ async def _patched_oidc_callback(
     """
     if error:
         logger.error(f"OIDC callback error: {error}")
-        error_url = f"{settings.FRONTEND_URL}/login?error=oidc_error&message={error}"
+        error_url = _build_frontend_url(
+            f"/login?error=oidc_error&message={error}",
+        )
         return RedirectResponse(url=error_url, status_code=302)
 
     # Verify state parameter (JWT)
+    redirect_after_login = None
+    frontend_base_path = None
     try:
         payload = jwt.decode(
             state, settings.OIDC_STATE_SECRET_KEY, algorithms=["HS256"]
         )
         nonce = payload["nonce"]
+        redirect_after_login = payload.get("redirect")
+        frontend_base_path = payload.get("frontend_base_path")
         now = int(time.time())
         if now > payload["exp"]:
             logger.error(f"State parameter expired: {state}")
-            error_url = f"{settings.FRONTEND_URL}/login?error=expired_state&message=State parameter expired"
+            error_url = _build_frontend_url(
+                "/login?error=expired_state&message=State parameter expired",
+                frontend_base_path,
+            )
             return RedirectResponse(url=error_url, status_code=302)
     except Exception as e:
         logger.error(f"Invalid state parameter: {state}, error: {e}")
-        error_url = f"{settings.FRONTEND_URL}/login?error=invalid_state&message=Invalid state parameter"
+        error_url = _build_frontend_url(
+            "/login?error=invalid_state&message=Invalid state parameter",
+        )
         return RedirectResponse(url=error_url, status_code=302)
 
     try:
@@ -227,7 +268,12 @@ async def _patched_oidc_callback(
             f"OIDC login success: user_id={user.id}, user_name={user.user_name}"
         )
 
-        redirect_url = f"{settings.FRONTEND_URL}/login/oidc?access_token={jwt_token}&token_type=bearer&login_success=true"
+        redirect_url = _build_frontend_url(
+            f"/login/oidc?access_token={jwt_token}&token_type=bearer&login_success=true",
+            frontend_base_path,
+        )
+        if redirect_after_login:
+            redirect_url += f"&redirect={quote(redirect_after_login)}"
 
         return RedirectResponse(url=redirect_url, status_code=302)
 
@@ -235,7 +281,10 @@ async def _patched_oidc_callback(
         raise
     except Exception as e:
         logger.error(f"OIDC callback processing failed: {e}")
-        error_url = f"{settings.FRONTEND_URL}/login?error=authentication_failed&message={str(e)}"
+        error_url = _build_frontend_url(
+            f"/login?error=authentication_failed&message={str(e)}",
+            frontend_base_path,
+        )
         return RedirectResponse(url=error_url, status_code=302)
 
 
