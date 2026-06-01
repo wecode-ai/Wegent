@@ -13,7 +13,7 @@ RUN npm ci
 COPY wework .
 
 ENV VITE_LOGIN_MODE=oidc
-ENV VITE_OIDC_LOGIN_TEXT=使用 CAS 登录
+ENV VITE_OIDC_LOGIN_TEXT="使用 CAS 登录"
 
 RUN npm run build
 
