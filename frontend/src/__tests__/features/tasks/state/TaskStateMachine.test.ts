@@ -296,6 +296,73 @@ describe('TaskStateMachine', () => {
     consoleInfoSpy.mockRestore()
   })
 
+  it('syncs join subtasks when task detail marks the task terminal before join ack returns', async () => {
+    const consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
+    let resolveJoin: (value: {
+      subtasks: Array<Record<string, unknown>>
+      streaming?: undefined
+    }) => void = () => {}
+    const joinTask = jest.fn(
+      () =>
+        new Promise<{ subtasks: Array<Record<string, unknown>>; streaming?: undefined }>(
+          resolve => {
+            resolveJoin = resolve
+          }
+        )
+    )
+
+    const machine = new TaskStateMachine(100, {
+      joinTask,
+      isConnected: () => true,
+    })
+
+    const recoverPromise = machine.recover({ force: true, reason: 'task-selected' })
+
+    machine.syncTaskDetail({
+      id: 100,
+      status: 'COMPLETED',
+      updated_at: '2026-05-31T10:01:00.000Z',
+    })
+
+    resolveJoin({
+      subtasks: [
+        {
+          id: 42,
+          task_id: 100,
+          team_id: 1,
+          title: 'done',
+          bot_ids: [],
+          role: 'TEAM',
+          message_id: 7,
+          parent_id: 0,
+          prompt: '',
+          executor_namespace: '',
+          executor_name: '',
+          status: 'COMPLETED',
+          progress: 100,
+          batch: 0,
+          result: { value: 'done' },
+          error_message: '',
+          user_id: 1,
+          created_at: '2026-05-31T10:00:00.000Z',
+          updated_at: '2026-05-31T10:00:00.000Z',
+          completed_at: '2026-05-31T10:01:00.000Z',
+          bots: [],
+        },
+      ],
+    })
+
+    await recoverPromise
+
+    const state = machine.getState()
+    expect(state.status).toBe('ready')
+    expect(state.runtime.phase).toBe('terminal')
+    expect(state.runtime.joinedRoom).toBe(true)
+    expect(state.messages.get('ai-42')?.content).toBe('done')
+
+    consoleInfoSpy.mockRestore()
+  })
+
   it('ignores stale lifecycle updates after a newer terminal status', () => {
     const machine = new TaskStateMachine(100, {
       joinTask: jest.fn(),
@@ -858,6 +925,65 @@ describe('TaskStateMachine', () => {
     })
     expect(machine.getState().runtime.joinedRoom).toBe(true)
     expect(machine.getState().runtime.activeStreamSubtaskId).toBe(77)
+  })
+
+  it('checkHealth syncs messages when the task updatedAt has not been message-synced', async () => {
+    const consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
+    const actions = createRuntimeActions({
+      verifyRuntime: jest.fn().mockResolvedValue({
+        task_id: 42,
+        task_status: 'COMPLETED',
+        status_updated_at: '2026-06-01T10:00:10',
+        active_stream: null,
+      }),
+      joinTask: jest.fn().mockResolvedValue({
+        subtasks: [
+          {
+            id: 77,
+            task_id: 42,
+            team_id: 1,
+            title: 'done',
+            bot_ids: [],
+            role: 'TEAM',
+            message_id: 2,
+            parent_id: 1,
+            prompt: '',
+            executor_namespace: '',
+            executor_name: '',
+            status: 'COMPLETED',
+            progress: 100,
+            batch: 0,
+            result: { value: 'synced answer' },
+            error_message: '',
+            user_id: 1,
+            created_at: '2026-06-01T10:00:05.000Z',
+            updated_at: '2026-06-01T10:00:10.000Z',
+            completed_at: '2026-06-01T10:00:10.000Z',
+            bots: [],
+          },
+        ],
+      }),
+    })
+    const machine = new TaskStateMachine(42, actions)
+
+    machine.loadTask({
+      id: 42,
+      status: 'COMPLETED',
+      updated_at: '2026-06-01T10:00:10',
+    })
+    await machine.checkHealth('page-visible')
+
+    expect(actions.joinTask).toHaveBeenCalledWith(42, {
+      forceRefresh: true,
+      afterMessageId: undefined,
+    })
+    expect(machine.getState().messages.get('ai-77')?.content).toBe('synced answer')
+    expect(machine.getState().runtime.messagesSyncedUpdatedAt).toBe('2026-06-01T10:00:10')
+    ;(actions.joinTask as jest.Mock).mockClear()
+    await machine.checkHealth('page-visible')
+    expect(actions.joinTask).not.toHaveBeenCalled()
+
+    consoleInfoSpy.mockRestore()
   })
 
   it('uses chat chunk offsets to ignore content already covered by cached recovery', async () => {

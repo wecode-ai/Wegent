@@ -4,16 +4,8 @@
 
 'use client'
 
-import React, {
-  createContext,
-  useContext,
-  useState,
-  useEffect,
-  ReactNode,
-  useRef,
-  useCallback,
-} from 'react'
-import { Task, TaskDetail, TaskStatus } from '@/types/api'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { Task, TaskDetail, TaskRuntimeCheck, TaskStatus } from '@/types/api'
 import { taskApis } from '@/apis/tasks'
 import { ApiError } from '@/apis/client'
 import { notifyTaskCompletion } from '@/utils/notification'
@@ -31,22 +23,25 @@ import {
   TaskStatusPayload,
   TaskAppUpdatePayload,
 } from '@/types/socket'
-import { usePageVisibility } from '@/hooks/usePageVisibility'
-import { taskStateManager } from '../state'
-import type { TaskRecoveryReason } from '../state'
 
-type TaskContextType = {
+export type TaskPuller = {
   tasks: Task[]
   groupTasks: Task[]
   personalTasks: Task[]
   taskLoading: boolean
   selectedTask: Task | null
   selectedTaskDetail: TaskDetail | null
-  setSelectedTask: (task: Task | null) => void
+  taskRuntimeSnapshot: TaskRuntimeCheck | null
+  writeSelectedTask: (task: Task | null) => void
+  resetSelectedTaskState: () => void
+  prepareSelectedTaskState: (task: Task) => void
+  pullTaskDetail: (taskId: number) => Promise<TaskDetail | null>
+  pullRuntime: (taskId?: number) => Promise<TaskRuntimeCheck | null>
   refreshTasks: () => void
   refreshGroupTasks: () => void
   refreshPersonalTasks: () => void
   refreshSelectedTaskDetail: () => Promise<void>
+  verifyTaskRuntime: (taskId?: number) => Promise<TaskRuntimeCheck | null>
   loadMore: () => void
   loadAllGroupTasks: () => Promise<void>
   loadMoreGroupTasks: () => void
@@ -69,58 +64,37 @@ type TaskContextType = {
   // Access denied state for 403 errors when accessing shared tasks
   accessDenied: boolean
   clearAccessDenied: () => void
-  // Refreshing state for runtime health checks
+  // Refreshing state for runtime snapshot checks
   isRefreshing: boolean
 }
 
-const TaskContext = createContext<TaskContextType | undefined>(undefined)
-
-// Export the context so it can be used with useContext directly
-export { TaskContext }
-
-// Minimum hidden duration before runtime health check. Browser background throttling can drop stream events quickly.
-const MIN_HIDDEN_DURATION_MS = 3000
-const RUNTIME_HEALTH_TIMEOUT_MS = 5000
-const NETWORK_ONLINE_RECOVERY_DELAY_MS = 500
-
-const withTimeout = <T,>(promise: Promise<T>, timeoutMs: number): Promise<T | void> => {
-  return Promise.race([
-    promise,
-    new Promise<void>(resolve => {
-      globalThis.setTimeout(resolve, timeoutMs)
-    }),
-  ])
-}
-
-export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
+export function useTaskPuller(): TaskPuller {
   const [tasks, setTasks] = useState<Task[]>([])
   const [groupTasks, setGroupTasks] = useState<Task[]>([])
   const [personalTasks, setPersonalTasks] = useState<Task[]>([])
   const [taskLoading, setTaskLoading] = useState<boolean>(false)
-  const [selectedTask, setSelectedTask] = useState<Task | null>(null)
+  const [selectedTask, setSelectedTaskState] = useState<Task | null>(null)
   const [selectedTaskDetail, setSelectedTaskDetail] = useState<TaskDetail | null>(null)
+  const [taskRuntimeSnapshot, setTaskRuntimeSnapshot] = useState<TaskRuntimeCheck | null>(null)
   const [searchTerm, setSearchTerm] = useState<string>('')
   const [isSearching, setIsSearching] = useState<boolean>(false)
   const [isSearchResult, setIsSearchResult] = useState<boolean>(false)
   const [viewStatusVersion, setViewStatusVersion] = useState<number>(0)
   // Access denied state for 403 errors when accessing shared tasks
   const [accessDenied, setAccessDenied] = useState<boolean>(false)
-  // Refreshing state for runtime health checks (page visibility or WebSocket reconnect)
+  // Refreshing state for runtime snapshot checks.
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false)
 
   // Track task status for notification
   const taskStatusMapRef = useRef<Map<number, TaskStatus>>(new Map())
+  const selectedTaskRef = useRef<Task | null>(null)
+  const writeSelectedTask = useCallback((task: Task | null) => {
+    selectedTaskRef.current = task
+    setSelectedTaskState(task)
+  }, [])
 
   // WebSocket connection for real-time task updates
-  const { registerTaskHandlers, isConnected, leaveTask } = useSocket()
-
-  // Track previous task ID for leaving WebSocket room when switching tasks
-  const previousTaskIdRef = useRef<number | null>(null)
-
-  // Track if a runtime health check is in progress to prevent duplicate requests
-  const isRuntimeHealthCheckingRef = useRef<boolean>(false)
-  const hasSocketConnectedOnceRef = useRef<boolean>(false)
-  const wasSocketConnectedRef = useRef<boolean>(false)
+  const { registerTaskHandlers, isConnected } = useSocket()
 
   // Pagination related - combined task list
   const [hasMore, setHasMore] = useState(true)
@@ -154,7 +128,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         error: false,
       }
     } catch (err) {
-      console.error('[TaskContext] Failed to load pages:', err)
+      console.error('[taskPuller] Failed to load pages:', err)
       // Return error flag instead of empty data
       return { items: [], hasMore: true, pages: pagesArr, error: true }
     }
@@ -175,7 +149,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         error: false,
       }
     } catch (err) {
-      console.error('[TaskContext] Failed to load group pages:', err)
+      console.error('[taskPuller] Failed to load group pages:', err)
       return { items: [], hasMore: true, pages: pagesArr, error: true }
     }
   }
@@ -195,7 +169,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         error: false,
       }
     } catch (err) {
-      console.error('[TaskContext] Failed to load personal pages:', err)
+      console.error('[taskPuller] Failed to load personal pages:', err)
       return { items: [], hasMore: true, pages: pagesArr, error: true }
     }
   }
@@ -560,15 +534,10 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   // Handle task status update via WebSocket
   const handleTaskStatus = useCallback(
     (data: TaskStatusPayload) => {
-      const now = new Date().toISOString()
       const terminalStates = ['COMPLETED', 'FAILED', 'CANCELLED']
       const isTerminalState = terminalStates.includes(data.status)
-      const statusUpdatedAt = data.updated_at || (isTerminalState ? data.completed_at : undefined)
-      if (taskStateManager.isInitialized()) {
-        taskStateManager.handleTaskStatus(data.task_id, data.status as TaskStatus, statusUpdatedAt)
-      }
-      // Use completed_at from WebSocket payload for terminal states, or generate one
-      const completedAt = isTerminalState ? data.completed_at || now : undefined
+      const statusUpdatedAt = data.updated_at
+      const completedAt = isTerminalState ? data.completed_at || statusUpdatedAt : undefined
 
       // Helper function to update a task in a list
       const updateTaskInList = (prev: Task[], moveToTop = false) => {
@@ -580,7 +549,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
           ...existingTask,
           status: data.status as TaskStatus,
           progress: data.progress ?? existingTask.progress,
-          updated_at: now,
+          updated_at: statusUpdatedAt ?? completedAt ?? existingTask.updated_at,
           ...(completedAt && { completed_at: completedAt }),
         }
 
@@ -617,8 +586,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
           ...existingTask,
           status: data.status as TaskStatus,
           progress: data.progress ?? existingTask.progress,
-          updated_at: now,
-          // Update completed_at for terminal states
+          updated_at: statusUpdatedAt ?? completedAt ?? existingTask.updated_at,
           ...(completedAt && { completed_at: completedAt }),
         }
 
@@ -663,14 +631,23 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
 
       // Also update selected task detail if it's the same task
       if (selectedTask && selectedTask.id === data.task_id) {
+        setTaskRuntimeSnapshot(prev =>
+          prev && prev.task_id === data.task_id
+            ? {
+                ...prev,
+                task_status: data.status as TaskStatus,
+                status_updated_at: statusUpdatedAt || completedAt || prev.status_updated_at,
+                active_stream: isTerminalState ? null : prev.active_stream,
+              }
+            : prev
+        )
         setSelectedTaskDetail(prev => {
           if (!prev) return prev
           return {
             ...prev,
             status: data.status as TaskStatus,
             progress: data.progress ?? prev.progress,
-            updated_at: now,
-            // Update completed_at for terminal states
+            updated_at: statusUpdatedAt ?? completedAt ?? prev.updated_at,
             ...(completedAt && { completed_at: completedAt }),
           }
         })
@@ -724,155 +701,78 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
 
   // Task lists are updated by WebSocket events and refreshed after runtime health checks.
 
-  const refreshSelectedTaskDetail = async () => {
-    if (!selectedTask) return
-
+  const pullTaskDetail = useCallback(async (taskId: number): Promise<TaskDetail | null> => {
     try {
-      // Clear access denied state before fetching
       setAccessDenied(false)
-      // Fetch task metadata only (subtasks are now obtained via WebSocket task:join)
-      const updatedTaskDetail = await taskApis.getTaskDetail(selectedTask.id)
-
-      // Note: Workbench data extraction from subtasks is no longer needed here
-      // Subtasks are now managed by TaskStateMachine via WebSocket join response
-      // Workbench data should be obtained from the state machine or WebSocket events
-
+      const updatedTaskDetail = await taskApis.getTaskDetail(taskId)
       setSelectedTaskDetail(updatedTaskDetail)
-      if (taskStateManager.isInitialized()) {
-        taskStateManager.syncTaskDetail(updatedTaskDetail)
-      }
+      return updatedTaskDetail
     } catch (error) {
-      // Check if it's a 403 Forbidden or 404 Not Found error (access denied or task not found)
-      // Both cases should show the access denied UI to prevent information leakage
       if (error instanceof ApiError && (error.status === 403 || error.status === 404)) {
         setAccessDenied(true)
         setSelectedTaskDetail(null)
-        return
+        return null
       }
-      console.error('Failed to refresh selected task detail:', error)
+      console.error('[taskPuller] Failed to pull task detail:', error)
+      return null
     }
+  }, [])
+
+  const refreshSelectedTaskDetail = async () => {
+    if (!selectedTask) return
+
+    await pullTaskDetail(selectedTask.id)
   }
 
-  /**
-   * Runtime health check with duplicate request protection.
-   * Pull verifies runtime checkpoints; socket join/resume remains the only message recovery path.
-   */
-  const checkRuntimeHealth = useCallback(
-    async (reason: TaskRecoveryReason) => {
-      if (isRuntimeHealthCheckingRef.current) {
-        return
-      }
+  const pullRuntime = useCallback(async (taskId?: number): Promise<TaskRuntimeCheck | null> => {
+    const targetTaskId = taskId ?? selectedTaskRef.current?.id
+    if (!targetTaskId) return null
 
-      isRuntimeHealthCheckingRef.current = true
-      setIsRefreshing(true)
+    setIsRefreshing(true)
+    try {
+      const snapshot = await taskApis.getTaskRuntimeCheck(targetTaskId)
+      setTaskRuntimeSnapshot(snapshot)
 
-      try {
-        const healthPromise = taskStateManager.isInitialized()
-          ? withTimeout(taskStateManager.checkHealthAll(reason), RUNTIME_HEALTH_TIMEOUT_MS).catch(
-              error => {
-                console.error('[TaskContext] Runtime health check failed:', error)
-              }
-            )
-          : Promise.resolve()
-        const snapshotPromises: Promise<void>[] = []
-
-        if (taskStateManager.isInitialized()) {
-          snapshotPromises.push(healthPromise)
+      setSelectedTaskDetail(prev => {
+        if (!prev || prev.id !== snapshot.task_id) return prev
+        return {
+          ...prev,
+          status: snapshot.task_status,
+          updated_at: snapshot.status_updated_at || prev.updated_at,
+          ...(snapshot.active_stream ? {} : { progress: prev.progress }),
         }
+      })
 
-        if (selectedTask) {
-          snapshotPromises.push(refreshSelectedTaskDetail())
-        }
+      return snapshot
+    } catch (error) {
+      console.error('[taskPuller] Failed to verify task runtime:', error)
+      return null
+    } finally {
+      setIsRefreshing(false)
+    }
+  }, [])
 
-        if (reason === 'page-visible' || reason === 'websocket-reconnect') {
-          snapshotPromises.push(refreshTasks())
-        }
+  const verifyTaskRuntime = pullRuntime
 
-        await Promise.allSettled(snapshotPromises)
-      } catch (error) {
-        console.error('[TaskContext] Runtime health check failed:', error)
-      } finally {
-        isRuntimeHealthCheckingRef.current = false
-        setIsRefreshing(false)
-      }
+  const clearSelectedTaskArtifacts = useCallback(() => {
+    setTaskRuntimeSnapshot(null)
+    setSelectedTaskDetail(null)
+    setAccessDenied(false)
+    setIsRefreshing(false)
+  }, [])
+
+  const resetSelectedTaskState = useCallback(() => {
+    writeSelectedTask(null)
+    clearSelectedTaskArtifacts()
+  }, [clearSelectedTaskArtifacts, writeSelectedTask])
+
+  const prepareSelectedTaskState = useCallback(
+    (task: Task) => {
+      writeSelectedTask(task)
+      clearSelectedTaskArtifacts()
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selectedTask]
+    [clearSelectedTaskArtifacts, writeSelectedTask]
   )
-
-  // Page visibility health check: verify runtime state after the page was hidden long enough to miss events.
-  usePageVisibility({
-    minHiddenTime: MIN_HIDDEN_DURATION_MS,
-    onVisible: (wasHiddenFor: number) => {
-      if (wasHiddenFor >= MIN_HIDDEN_DURATION_MS) {
-        void checkRuntimeHealth('page-visible')
-      }
-    },
-  })
-
-  // WebSocket reconnect health check: verify runtime state and refresh server snapshots through one path.
-  useEffect(() => {
-    const wasConnected = wasSocketConnectedRef.current
-
-    if (isConnected) {
-      if (hasSocketConnectedOnceRef.current && !wasConnected) {
-        void checkRuntimeHealth('websocket-reconnect')
-      }
-      hasSocketConnectedOnceRef.current = true
-    }
-
-    wasSocketConnectedRef.current = isConnected
-  }, [isConnected, checkRuntimeHealth])
-
-  // Browser online is a network-recovery hint. Use the same runtime health path after
-  // giving Socket.IO a short window to reconnect its transport.
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-
-    let recoveryTimer: ReturnType<typeof globalThis.setTimeout> | null = null
-    const handleOnline = () => {
-      if (recoveryTimer) {
-        globalThis.clearTimeout(recoveryTimer)
-      }
-      recoveryTimer = globalThis.setTimeout(() => {
-        void checkRuntimeHealth('websocket-reconnect')
-      }, NETWORK_ONLINE_RECOVERY_DELAY_MS)
-    }
-
-    window.addEventListener('online', handleOnline)
-    return () => {
-      if (recoveryTimer) {
-        globalThis.clearTimeout(recoveryTimer)
-      }
-      window.removeEventListener('online', handleOnline)
-    }
-  }, [checkRuntimeHealth])
-
-  // Trigger task detail refresh when selectedTask changes.
-  // TaskStateMachine owns task:join so the join ack is always consumed into
-  // the single message state source instead of being discarded here.
-  useEffect(() => {
-    const currentTaskId = selectedTask?.id ?? null
-    const previousTaskId = previousTaskIdRef.current
-
-    // Leave previous task room if switching to a different task
-    if (previousTaskId !== null && previousTaskId !== currentTaskId) {
-      leaveTask(previousTaskId)
-    }
-
-    // Update the ref to track current task
-    previousTaskIdRef.current = currentTaskId
-
-    if (selectedTask) {
-      void refreshSelectedTaskDetail()
-      if (taskStateManager.isInitialized()) {
-        void taskStateManager.getOrCreate(selectedTask.id).checkHealth('task-selected')
-      }
-    } else {
-      setSelectedTaskDetail(null)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTask, leaveTask])
 
   const selectedTaskDetailId = selectedTaskDetail?.id
   const selectedTaskDetailStatus = selectedTaskDetail?.status
@@ -945,55 +845,45 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     setAccessDenied(false)
   }, [])
 
-  return (
-    <TaskContext.Provider
-      value={{
-        tasks,
-        groupTasks,
-        personalTasks,
-        taskLoading,
-        selectedTask,
-        selectedTaskDetail,
-        setSelectedTask,
-        refreshTasks,
-        refreshGroupTasks,
-        refreshPersonalTasks,
-        refreshSelectedTaskDetail,
-        loadMore,
-        loadAllGroupTasks,
-        loadMoreGroupTasks,
-        loadMorePersonalTasks,
-        hasMore,
-        hasMoreGroupTasks,
-        hasMorePersonalTasks,
-        loadingMore,
-        loadingMoreGroupTasks,
-        loadingMorePersonalTasks,
-        searchTerm,
-        setSearchTerm,
-        searchTasks,
-        isSearching,
-        isSearchResult,
-        markTaskAsViewed: handleMarkTaskAsViewed,
-        getUnreadCount,
-        markAllTasksAsViewed: handleMarkAllTasksAsViewed,
-        viewStatusVersion,
-        accessDenied,
-        clearAccessDenied,
-        isRefreshing,
-      }}
-    >
-      {children}
-    </TaskContext.Provider>
-  )
-}
-/**
- * useTaskContext must be used within a TaskContextProvider.
- */
-export const useTaskContext = () => {
-  const context = useContext(TaskContext)
-  if (!context) {
-    throw new Error('useTaskContext must be used within a TaskContextProvider')
+  return {
+    tasks,
+    groupTasks,
+    personalTasks,
+    taskLoading,
+    selectedTask,
+    selectedTaskDetail,
+    taskRuntimeSnapshot,
+    writeSelectedTask,
+    resetSelectedTaskState,
+    prepareSelectedTaskState,
+    pullTaskDetail,
+    pullRuntime,
+    refreshTasks,
+    refreshGroupTasks,
+    refreshPersonalTasks,
+    refreshSelectedTaskDetail,
+    verifyTaskRuntime,
+    loadMore,
+    loadAllGroupTasks,
+    loadMoreGroupTasks,
+    loadMorePersonalTasks,
+    hasMore,
+    hasMoreGroupTasks,
+    hasMorePersonalTasks,
+    loadingMore,
+    loadingMoreGroupTasks,
+    loadingMorePersonalTasks,
+    searchTerm,
+    setSearchTerm,
+    searchTasks,
+    isSearching,
+    isSearchResult,
+    markTaskAsViewed: handleMarkTaskAsViewed,
+    getUnreadCount,
+    markAllTasksAsViewed: handleMarkAllTasksAsViewed,
+    viewStatusVersion,
+    accessDenied,
+    clearAccessDenied,
+    isRefreshing,
   }
-  return context
 }

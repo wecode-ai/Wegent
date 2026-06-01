@@ -4,9 +4,8 @@
 
 import { useCallback, useRef, useMemo } from 'react'
 import { useRouter, useSearchParams, usePathname } from 'next/navigation'
-import { useTaskContext } from '../../contexts/taskContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import type { Task } from '@/types/api'
-import { useChatStreamContext } from '../../contexts/chatStreamContext'
 import { useSocket } from '@/contexts/SocketContext'
 import { useDevices } from '@/contexts/DeviceContext'
 import { useProjectContext } from '@/features/projects/contexts/projectContext'
@@ -19,8 +18,7 @@ import { taskApis } from '@/apis/tasks'
 import { isChatShell, teamRequiresWorkspace } from '../../service/messageService'
 import { Button } from '@/components/ui/button'
 import { DEFAULT_MODEL_NAME, unifiedToModel } from '../../hooks/useModelSelection'
-import { useTaskStateMachine } from '../../hooks/useTaskStateMachine'
-import { generateMessageId, taskStateManager } from '../../state'
+import { generateMessageId } from '../../state'
 import {
   useMessageSendQueue,
   type QueuedMessage,
@@ -246,18 +244,23 @@ export function useChatStreamHandlers({
 
   const {
     selectedTaskDetail,
-    setSelectedTask,
+    selectTask,
     refreshTasks,
     refreshSelectedTaskDetail,
     markTaskAsViewed,
-  } = useTaskContext()
+    sendMessage: contextSendMessage,
+    stopStream: contextStopStream,
+    clearVersion,
+    taskState: sessionTaskState,
+    recoverCurrentTask,
+  } = useTaskSession()
 
   // Navigate to a knowledge task without triggering Next.js re-renders.
-  // Uses setSelectedTask + replaceState to avoid the router.push cascade
+  // Uses selectTask + replaceState to avoid the router.push cascade
   // that causes selectedTaskDetail=null and hasMessages flip (UI flickering).
   const navigateToKnowledgeTask = useCallback(
     (taskId: number, kbId: number) => {
-      setSelectedTask({ id: taskId } as Task)
+      selectTask({ id: taskId } as Task)
       const params = new URLSearchParams(Array.from(searchParams.entries()))
       params.set('taskId', String(taskId))
       const currentPath = window.location.pathname || pathname || ''
@@ -266,14 +269,8 @@ export function useChatStreamHandlers({
       }
       window.history.replaceState({}, '', `?${params.toString()}`)
     },
-    [setSelectedTask, searchParams, pathname]
+    [selectTask, searchParams, pathname]
   )
-
-  const {
-    sendMessage: contextSendMessage,
-    stopStream: contextStopStream,
-    clearVersion,
-  } = useChatStreamContext()
 
   type ContextSendRequest = Parameters<typeof contextSendMessage>[0]
   type ContextSendOptions = NonNullable<Parameters<typeof contextSendMessage>[1]>
@@ -342,14 +339,12 @@ export function useChatStreamHandlers({
     setIsLoading,
   })
 
-  // Use useTaskStateMachine to properly subscribe to state changes
-  // This ensures isStreaming updates when chat:done is received
-  // IMPORTANT: All streaming state comes from the state machine - no local state variables
-  const {
-    state: taskState,
-    isStreaming: isMachineStreaming,
-    derived: runtimeDerived,
-  } = useTaskStateMachine(effectiveTaskIdForState)
+  const taskState =
+    sessionTaskState && sessionTaskState.taskId === effectiveTaskIdForState
+      ? sessionTaskState
+      : null
+  const isMachineStreaming = taskState?.status === 'streaming'
+  const runtimeDerived = taskState?.derived
 
   // Keep "stop" state aligned with backend task lifecycle:
   // a task can stay RUNNING even when no stream chunk is currently arriving.
@@ -417,10 +412,7 @@ export function useChatStreamHandlers({
   const handleSendError = useCallback(
     (error: Error, message: string) => {
       if (runtimeDerived?.blocksQueuedDispatch) {
-        const machine = effectiveTaskIdForState
-          ? taskStateManager.get(effectiveTaskIdForState)
-          : undefined
-        void machine?.checkHealth('manual-refresh')
+        void recoverCurrentTask('manual-refresh')
         return
       }
 
@@ -445,6 +437,7 @@ export function useChatStreamHandlers({
     },
     [
       effectiveTaskIdForState,
+      recoverCurrentTask,
       resetStreamingState,
       runtimeDerived?.blocksQueuedDispatch,
       toast,
@@ -854,6 +847,7 @@ export function useChatStreamHandlers({
     blocksQueuedDispatch: runtimeDerived?.blocksQueuedDispatch ?? false,
     isStreaming: isMachineStreaming,
     isAwaitingResponseStart,
+    recoverCurrentTask: () => recoverCurrentTask('queued-message-blocked'),
   })
 
   const cancelQueuedMessage = useCallback(

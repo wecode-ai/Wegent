@@ -21,8 +21,7 @@ import {
 } from '@/components/ui/drawer'
 import { saveLastTab } from '@/utils/userPreferences'
 import { useUser } from '@/features/common/UserContext'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
 import { useTranslation } from '@/hooks/useTranslation'
 import { ChatArea } from '@/features/tasks/components/chat'
@@ -86,15 +85,15 @@ export function KnowledgeBaseChatPageMobile({ knowledgeBaseId, initialDocPath }:
   const { user } = useUser()
 
   // Task context
-  const { refreshTasks, selectedTaskDetail, setSelectedTask, refreshSelectedTaskDetail } =
-    useTaskContext()
+  const { refreshTasks, selectedTaskDetail, selectTask, refreshSelectedTaskDetail } =
+    useTaskSession()
 
   // Get current task title
   const currentTaskTitle = selectedTaskDetail?.title
 
   // Handle task deletion
   const handleTaskDeleted = () => {
-    setSelectedTask(null)
+    selectTask(null)
     refreshTasks()
   }
 
@@ -105,7 +104,7 @@ export function KnowledgeBaseChatPageMobile({ knowledgeBaseId, initialDocPath }:
   }
 
   // Chat stream context
-  const { clearAllStreams: _clearAllStreams } = useChatStreamContext()
+  const { clearAllStreams: _clearAllStreams } = useTaskSession()
 
   // Check if a task is open
   const taskId =

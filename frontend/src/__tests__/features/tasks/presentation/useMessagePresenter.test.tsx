@@ -4,27 +4,27 @@
 
 import React from 'react'
 import { render } from '@testing-library/react'
-import { useUnifiedMessages } from '@/features/tasks/hooks/useUnifiedMessages'
-import type { DisplayMessage } from '@/features/tasks/hooks/useUnifiedMessages'
+import { useMessagePresenter } from '@/features/tasks/presentation/useMessagePresenter'
+import type { DisplayMessage } from '@/features/tasks/presentation/useMessagePresenter'
 
 let mockSelectedTask: { id: number } | null = null
 let mockSelectedTaskDetail: { id: number } | null = { id: 42 }
 let mockMessages = new Map()
+let mockIsStreaming = false
+const mockSetMessageSyncOptions = jest.fn()
 let latestMessages: {
   messages: DisplayMessage[]
   isStreaming: boolean
   streamingSubtaskIds: number[]
 } | null = null
 
-const useTaskStateMachineMock = jest.fn((_taskId?: unknown, _syncOptions?: unknown) => ({
-  messages: mockMessages,
-  isStreaming: false,
-}))
-
-jest.mock('@/features/tasks/contexts/taskContext', () => ({
-  useTaskContext: () => ({
+jest.mock('@/features/tasks/session/TaskSession', () => ({
+  useTaskSession: () => ({
     selectedTask: mockSelectedTask,
     selectedTaskDetail: mockSelectedTaskDetail,
+    messages: mockMessages,
+    isStreaming: mockIsStreaming,
+    setMessageSyncOptions: mockSetMessageSyncOptions,
   }),
 }))
 
@@ -34,13 +34,8 @@ jest.mock('@/features/common/UserContext', () => ({
   }),
 }))
 
-jest.mock('@/features/tasks/hooks/useTaskStateMachine', () => ({
-  useTaskStateMachine: (taskId: unknown, syncOptions: unknown) =>
-    useTaskStateMachineMock(taskId, syncOptions),
-}))
-
 function Probe() {
-  latestMessages = useUnifiedMessages({
+  latestMessages = useMessagePresenter({
     team: null,
     isGroupChat: false,
   })
@@ -48,20 +43,20 @@ function Probe() {
   return null
 }
 
-describe('useUnifiedMessages', () => {
+describe('useMessagePresenter', () => {
   beforeEach(() => {
     mockSelectedTask = null
     mockSelectedTaskDetail = { id: 42 }
     mockMessages = new Map()
+    mockIsStreaming = false
     latestMessages = null
-    useTaskStateMachineMock.mockClear()
+    mockSetMessageSyncOptions.mockClear()
   })
 
-  it('uses the selected task detail id for the state machine subscription', () => {
+  it('registers display sync options on the current session', () => {
     render(<Probe />)
 
-    expect(useTaskStateMachineMock).toHaveBeenCalledWith(
-      42,
+    expect(mockSetMessageSyncOptions).toHaveBeenCalledWith(
       expect.objectContaining({
         currentUserId: 1,
         currentUserName: 'tester',
@@ -72,13 +67,25 @@ describe('useUnifiedMessages', () => {
   it('uses selectedTask while task detail is still loading', () => {
     mockSelectedTask = { id: 99 }
     mockSelectedTaskDetail = null
+    mockMessages = new Map([
+      [
+        'user-1',
+        {
+          id: 'user-1',
+          type: 'user',
+          status: 'completed',
+          content: 'question',
+          timestamp: 1,
+        },
+      ],
+    ])
 
     render(<Probe />)
 
-    expect(useTaskStateMachineMock).toHaveBeenCalledWith(99, expect.any(Object))
+    expect(latestMessages?.messages.map(message => message.content)).toEqual(['question'])
   })
 
-  it('adapts state machine messages for display without owning recovery', () => {
+  it('adapts raw session messages for display without owning recovery', () => {
     mockMessages = new Map([
       [
         'user-1',
@@ -102,11 +109,6 @@ describe('useUnifiedMessages', () => {
         },
       ],
     ])
-    useTaskStateMachineMock.mockReturnValueOnce({
-      messages: mockMessages,
-      isStreaming: false,
-    })
-
     render(<Probe />)
 
     expect(latestMessages?.messages.map(message => message.content)).toEqual(['question', 'answer'])

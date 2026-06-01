@@ -105,11 +105,20 @@ jest.mock('@/features/tasks/components/chat/useChatStreamHandlers', () => ({
   useChatStreamHandlers: () => streamHandlersMock,
 }))
 
-jest.mock('@/features/tasks/contexts/taskContext', () => ({
-  useTaskContext: () => ({
+jest.mock('@/features/tasks/session/TaskSession', () => ({
+  useTaskSession: () => ({
     selectedTaskDetail: selectedTaskDetailMock,
-    setSelectedTask: jest.fn(),
+    selectedTask: selectedTaskDetailMock,
+    selectTask: jest.fn(),
     accessDenied: false,
+    taskState: {
+      taskId: selectedTaskDetailMock?.id,
+      messages: new Map(),
+      runtime: { taskStatus: selectedTaskDetailMock?.status },
+    },
+  }),
+  useOptionalTaskSession: () => ({
+    sendMessage: jest.fn(),
   }),
 }))
 
@@ -118,15 +127,6 @@ jest.mock('@/features/projects/contexts/projectContext', () => ({
     projects: [],
     projectTaskIds: new Set(),
     isWorkspaceEnabled: false,
-  }),
-}))
-
-jest.mock('@/features/tasks/hooks/useTaskStateMachine', () => ({
-  useTaskStateMachine: () => ({
-    state: {
-      messages: new Map(),
-      runtime: { taskStatus: undefined },
-    },
   }),
 }))
 

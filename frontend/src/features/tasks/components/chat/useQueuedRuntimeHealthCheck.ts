@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useRef } from 'react'
-import { taskStateManager } from '../../state'
 import type { QueuedMessageStatus } from './useMessageSendQueue'
 
 interface QueuedRuntimeMessage {
@@ -17,6 +16,7 @@ interface UseQueuedRuntimeHealthCheckOptions {
   blocksQueuedDispatch: boolean
   isStreaming: boolean
   isAwaitingResponseStart: boolean
+  recoverCurrentTask: () => Promise<void>
 }
 
 export function useQueuedRuntimeHealthCheck({
@@ -25,6 +25,7 @@ export function useQueuedRuntimeHealthCheck({
   blocksQueuedDispatch,
   isStreaming,
   isAwaitingResponseStart,
+  recoverCurrentTask,
 }: UseQueuedRuntimeHealthCheckOptions) {
   const refreshKeyRef = useRef<string | null>(null)
 
@@ -44,7 +45,13 @@ export function useQueuedRuntimeHealthCheck({
     if (refreshKeyRef.current === refreshKey) return
 
     refreshKeyRef.current = refreshKey
-    const machine = taskStateManager.get(taskId)
-    void machine?.checkHealth('queued-message-blocked')
-  }, [blocksQueuedDispatch, isAwaitingResponseStart, isStreaming, queuedMessages, taskId])
+    void recoverCurrentTask()
+  }, [
+    blocksQueuedDispatch,
+    isAwaitingResponseStart,
+    isStreaming,
+    queuedMessages,
+    recoverCurrentTask,
+    taskId,
+  ])
 }

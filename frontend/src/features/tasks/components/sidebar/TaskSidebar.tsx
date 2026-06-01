@@ -24,8 +24,7 @@ import {
   Library,
   LayoutGrid,
 } from 'lucide-react'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import TaskListSection from './TaskListSection'
 import TaskHistorySection from './TaskHistorySection'
 import FixedGroupChatsSection from './FixedGroupChatsSection'
@@ -71,7 +70,7 @@ export default function TaskSidebar({
 }: TaskSidebarProps) {
   const { t } = useTranslation()
   const router = useRouter()
-  const { clearAllStreams } = useChatStreamContext()
+  const { clearAllStreams } = useTaskSession()
   const {
     tasks,
     groupTasks,
@@ -92,9 +91,9 @@ export default function TaskSidebar({
     getUnreadCount,
     markAllTasksAsViewed,
     viewStatusVersion,
-    setSelectedTask,
+    selectTask,
     isRefreshing,
-  } = useTaskContext()
+  } = useTaskSession()
   const desktopScrollRef = useRef<HTMLDivElement>(null)
   const mobileScrollRef = useRef<HTMLDivElement>(null)
   const moreNavCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -223,7 +222,7 @@ export default function TaskSidebar({
   const handleNewAgentClick = () => {
     // IMPORTANT: Clear selected task FIRST to ensure UI state is reset immediately
     // This prevents the UI from being stuck showing the previous task's messages
-    setSelectedTask(null)
+    selectTask(null)
 
     // Clear all stream states to reset the chat area to initial state
     clearAllStreams()
@@ -240,7 +239,7 @@ export default function TaskSidebar({
   const handleNavigationClick = (path: string, isActive: boolean, buttonPageType?: string) => {
     if (isActive) {
       // IMPORTANT: Clear selected task FIRST to ensure UI state is reset immediately
-      setSelectedTask(null)
+      selectTask(null)
 
       // If already on this page, clear streams to create new task
       clearAllStreams()

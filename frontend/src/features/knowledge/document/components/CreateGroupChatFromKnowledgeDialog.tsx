@@ -26,8 +26,7 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { useToast } from '@/hooks/use-toast'
 import { useTeamContext } from '@/contexts/TeamContext'
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { DEFAULT_MODEL_NAME, ModelSelector, type Model } from '@/features/tasks/components/selector'
 import { useUser } from '@/features/common/UserContext'
 import { listGroupMembers } from '@/apis/groups'
@@ -77,8 +76,8 @@ export function CreateGroupChatFromKnowledgeDialog({
   const [isCreating, setIsCreating] = useState(false)
 
   const { teams, isTeamsLoading } = useTeamContext()
-  const { sendMessage } = useChatStreamContext()
-  const { refreshTasks, setSelectedTask } = useTaskContext()
+  const { sendMessage } = useTaskSession()
+  const { refreshTasks, selectTask } = useTaskSession()
 
   // Reset title when dialog opens or group/kb changes
   useEffect(() => {
@@ -267,7 +266,7 @@ export function CreateGroupChatFromKnowledgeDialog({
       refreshTasks()
 
       // Set selected task before navigation
-      setSelectedTask({
+      selectTask({
         id: realTaskId,
         title: title,
         team_id: selectedTeam?.id || 0,

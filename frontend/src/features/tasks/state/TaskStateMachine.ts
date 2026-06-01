@@ -42,6 +42,7 @@ import {
  */
 export type TaskStatus =
   | 'idle' // Not joined WebSocket room
+  | 'waiting_socket' // Recovery is pending until WebSocket connects
   | 'joining' // Joining WebSocket room
   | 'syncing' // Syncing messages from backend
   | 'ready' // Ready, no streaming
@@ -140,6 +141,7 @@ export interface TaskRuntimeState {
   lastVerifiedAt?: number
   lastSyncedAt?: number
   lastStatusUpdatedAt?: string
+  messagesSyncedUpdatedAt?: string
   lastTerminalStatusUpdatedAt?: string
   hasTerminalStatus?: boolean
   deferredTerminalStatus?: ApiTaskStatus
@@ -207,11 +209,17 @@ type Event =
       reason?: TaskRecoveryReason
       resumeFromCursor?: number
       activeStreamSubtaskId?: number
+      syncUpdatedAt?: string
     }
-  | { type: 'JOIN_SUCCESS'; streamingInfo?: StreamingInfo; subtasks?: TaskDetailSubtask[] }
+  | {
+      type: 'JOIN_SUCCESS'
+      streamingInfo?: StreamingInfo
+      subtasks?: TaskDetailSubtask[]
+      syncUpdatedAt?: string
+    }
   | { type: 'JOIN_FAILURE'; error: string }
-  | { type: 'SYNC_DONE' }
-  | { type: 'SYNC_DONE_STREAMING'; subtaskId: number }
+  | { type: 'SYNC_DONE'; syncUpdatedAt?: string }
+  | { type: 'SYNC_DONE_STREAMING'; subtaskId: number; syncUpdatedAt?: string }
   | { type: 'SYNC_ERROR'; error: string }
   | { type: 'CHAT_START'; subtaskId: number; shellType?: string; messageId?: number }
   | {
@@ -259,6 +267,10 @@ export type StateListener = (state: TaskStateData) => void
  * Dependencies injected from context
  */
 export interface TaskStateMachineDeps {
+  pullTaskDetail?: (
+    taskId: number
+  ) => Promise<Pick<TaskDetail, 'id' | 'status' | 'updated_at'> | null>
+  pullRuntime?: (taskId: number) => Promise<TaskRuntimeVerifyResult | null>
   joinTask: (
     taskId: number,
     options?: {
@@ -273,6 +285,7 @@ export interface TaskStateMachineDeps {
     subtasks?: Array<Record<string, unknown>>
     error?: string
   }>
+  leaveTask?: (taskId: number) => void
   verifyRuntime?: (taskId: number) => Promise<TaskRuntimeVerifyResult>
   isConnected: () => boolean
 }
@@ -353,6 +366,8 @@ export class TaskStateMachine {
   private recoveryDebounceMs: number = 1000
   private deps: TaskStateMachineDeps
   private syncOptions: SyncOptions = {}
+  private closed: boolean = false
+  private recoveryVersion: number = 0
   // Queue for chunk events received during syncing state
   // These will be applied after sync completes
   private pendingChunks: PendingChunkEvent[] = []
@@ -376,6 +391,10 @@ export class TaskStateMachine {
       runtime,
       derived: this.deriveRuntimeState(runtime),
     }
+    this.deps = deps
+  }
+
+  updateDeps(deps: TaskStateMachineDeps): void {
     this.deps = deps
   }
 
@@ -456,6 +475,7 @@ export class TaskStateMachine {
     reason?: TaskRecoveryReason
     resumeFromCursor?: number
     activeStreamSubtaskId?: number
+    syncUpdatedAt?: string
   }): Promise<void> {
     const event: Event = {
       type: 'RECOVER',
@@ -463,8 +483,36 @@ export class TaskStateMachine {
       reason: options?.reason,
       resumeFromCursor: options?.resumeFromCursor,
       activeStreamSubtaskId: options?.activeStreamSubtaskId,
+      syncUpdatedAt: options?.syncUpdatedAt,
     }
     await this.dispatch(event)
+  }
+
+  async openTask(): Promise<void> {
+    this.closed = false
+    const detailPromise = this.deps.pullTaskDetail
+      ? this.deps
+          .pullTaskDetail(this.state.taskId)
+          .then(taskDetail => {
+            if (taskDetail) {
+              this.loadTask(taskDetail)
+            }
+          })
+          .catch(error => {
+            console.error('[TaskStateMachine] pullTaskDetail failed:', error)
+          })
+      : Promise.resolve()
+
+    const joinPromise = this.recover({ force: true, reason: 'task-selected' })
+
+    await Promise.allSettled([detailPromise, joinPromise])
+  }
+
+  closeTask(): void {
+    this.closed = true
+    this.recoveryVersion += 1
+    this.deps.leaveTask?.(this.state.taskId)
+    this.leave()
   }
 
   loadTask(taskDetail: Pick<TaskDetail, 'id' | 'status' | 'updated_at'>): void {
@@ -475,11 +523,36 @@ export class TaskStateMachine {
 
   async checkHealth(reason: TaskRecoveryReason): Promise<void> {
     if (!this.deps.isConnected()) return
-    if (!this.deps.verifyRuntime) {
-      throw new Error('[TaskStateMachine] verifyRuntime action is required for checkHealth().')
+    const pullRuntime = this.deps.pullRuntime ?? this.deps.verifyRuntime
+    if (!pullRuntime) {
+      throw new Error('[TaskStateMachine] pullRuntime action is required for checkHealth().')
     }
 
-    const server = await this.deps.verifyRuntime(this.state.taskId)
+    const server = await pullRuntime(this.state.taskId)
+    if (!server) return
+    await this.reconcileRuntime(server, reason)
+  }
+
+  async handleSocketConnected(reason: TaskRecoveryReason): Promise<void> {
+    if (this.state.status === 'waiting_socket') {
+      const recoveryReason =
+        this.pendingRecoveryReason ?? this.state.runtime.recoveryReason ?? reason
+      const recoveryOptions = this.pendingRecoveryOptions
+      this.pendingRecovery = false
+      this.pendingRecoveryReason = undefined
+      this.pendingRecoveryOptions = undefined
+      await this.recover({ force: true, reason: recoveryReason, ...recoveryOptions })
+      return
+    }
+
+    await this.checkHealth(reason)
+  }
+
+  async reconcileRuntime(
+    server: TaskRuntimeVerifyResult,
+    reason: TaskRecoveryReason
+  ): Promise<void> {
+    if (!this.deps.isConnected()) return
     this.applyTaskLifecycleStatus(server.task_status, server.status_updated_at ?? undefined)
 
     const shouldJoinOrResume = this.shouldJoinOrResume(server)
@@ -645,6 +718,11 @@ export class TaskStateMachine {
   }
 
   private shouldJoinOrResume(server: TaskRuntimeVerifyResult): boolean {
+    const serverUpdatedAt = server.status_updated_at ?? undefined
+    if (serverUpdatedAt && this.state.runtime.messagesSyncedUpdatedAt !== serverUpdatedAt) {
+      return true
+    }
+
     if (!isActiveExecutionTaskStatus(server.task_status)) return false
     if (!server.active_stream) return !this.state.runtime.joinedRoom
     if (!this.state.runtime.joinedRoom) return true
@@ -663,12 +741,18 @@ export class TaskStateMachine {
     server: TaskRuntimeVerifyResult,
     reason: TaskRecoveryReason
   ): Promise<void> {
-    await this.recover({
+    const options: Parameters<TaskStateMachine['recover']>[0] = {
       force: true,
       reason,
-      resumeFromCursor: this.state.runtime.localStreamCursor,
-      activeStreamSubtaskId: server.active_stream?.subtask_id,
-    })
+      syncUpdatedAt: server.status_updated_at ?? undefined,
+    }
+
+    if (server.active_stream) {
+      options.resumeFromCursor = this.state.runtime.localStreamCursor
+      options.activeStreamSubtaskId = server.active_stream.subtask_id
+    }
+
+    await this.recover(options)
   }
 
   private clearLocalStream(): void {
@@ -844,7 +928,7 @@ export class TaskStateMachine {
         break
 
       case 'JOIN_SUCCESS':
-        if (prevStatus === 'joining') {
+        if (prevStatus !== 'idle') {
           const runtime: TaskRuntimeState = {
             ...this.state.runtime,
             joinedRoom: true,
@@ -858,7 +942,7 @@ export class TaskStateMachine {
             derived: this.deriveRuntimeState(runtime),
           }
           // Sync messages immediately using subtasks from joinTask response
-          await this.doSync(event.subtasks)
+          await this.doSync(event.subtasks, event.syncUpdatedAt)
         }
         break
 
@@ -886,6 +970,8 @@ export class TaskStateMachine {
             activeStreamSubtaskId: undefined,
             localStreamCursor: 0,
             lastSyncedAt: Date.now(),
+            messagesSyncedUpdatedAt:
+              event.syncUpdatedAt ?? this.state.runtime.messagesSyncedUpdatedAt,
           }
           this.state = {
             ...this.state,
@@ -907,6 +993,8 @@ export class TaskStateMachine {
             localStreamCursor: cachedContentLength,
             localLastChunkAt: Date.now(),
             lastSyncedAt: Date.now(),
+            messagesSyncedUpdatedAt:
+              event.syncUpdatedAt ?? this.state.runtime.messagesSyncedUpdatedAt,
           }
           this.state = {
             ...this.state,
@@ -1015,6 +1103,27 @@ export class TaskStateMachine {
     // A recovery scheduled during a connection-state race must be able to retry
     // immediately once the socket is actually available.
     if (!this.deps.isConnected()) {
+      this.pendingRecovery = true
+      this.pendingRecoveryReason = event.reason
+      this.pendingRecoveryOptions = {
+        resumeFromCursor: event.resumeFromCursor,
+        activeStreamSubtaskId: event.activeStreamSubtaskId,
+      }
+
+      const runtime: TaskRuntimeState = {
+        ...this.state.runtime,
+        phase: 'syncing',
+        recoveryReason: event.reason,
+        recoveryError: 'socket-disconnected',
+      }
+      this.state = {
+        ...this.state,
+        status: 'waiting_socket',
+        error: null,
+        runtime,
+        derived: this.deriveRuntimeState(runtime),
+      }
+      this.notifyListeners()
       return
     }
 
@@ -1024,6 +1133,10 @@ export class TaskStateMachine {
       return
     }
     this.lastRecoveryTime = now
+    this.pendingRecovery = false
+    this.pendingRecoveryReason = undefined
+    this.pendingRecoveryOptions = undefined
+    const recoveryVersion = ++this.recoveryVersion
 
     // Transition to joining
     const runtime: TaskRuntimeState = {
@@ -1073,6 +1186,10 @@ export class TaskStateMachine {
       }
 
       const response = await this.deps.joinTask(this.state.taskId, joinOptions)
+      if (this.closed || recoveryVersion !== this.recoveryVersion) {
+        this.deps.leaveTask?.(this.state.taskId)
+        return
+      }
 
       if (response.error) {
         await this.dispatch({ type: 'JOIN_FAILURE', error: response.error })
@@ -1102,6 +1219,7 @@ export class TaskStateMachine {
         type: 'JOIN_SUCCESS',
         streamingInfo: response.streaming,
         subtasks,
+        syncUpdatedAt: event.syncUpdatedAt ?? this.state.runtime.lastStatusUpdatedAt,
       })
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Unknown error'
@@ -1115,7 +1233,7 @@ export class TaskStateMachine {
   /**
    * Sync messages from backend subtasks
    */
-  private async doSync(subtasks?: TaskDetailSubtask[]): Promise<void> {
+  private async doSync(subtasks?: TaskDetailSubtask[], syncUpdatedAt?: string): Promise<void> {
     try {
       if (subtasks && subtasks.length > 0) {
         const messagesBefore = this.state.messages.size
@@ -1196,9 +1314,13 @@ export class TaskStateMachine {
       }
 
       if (streamingSubtaskId) {
-        await this.dispatch({ type: 'SYNC_DONE_STREAMING', subtaskId: streamingSubtaskId })
+        await this.dispatch({
+          type: 'SYNC_DONE_STREAMING',
+          subtaskId: streamingSubtaskId,
+          syncUpdatedAt,
+        })
       } else {
-        await this.dispatch({ type: 'SYNC_DONE' })
+        await this.dispatch({ type: 'SYNC_DONE', syncUpdatedAt })
       }
 
       // Apply pending chunks that were queued during sync

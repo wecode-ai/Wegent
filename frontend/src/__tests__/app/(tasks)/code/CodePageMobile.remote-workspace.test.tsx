@@ -50,17 +50,17 @@ jest.mock('@/contexts/TeamContext', () => ({
   }),
 }))
 
-jest.mock('@/features/tasks/contexts/taskContext', () => ({
-  useTaskContext: () => ({
+jest.mock('@/features/tasks/session/TaskSession', () => ({
+  useTaskSession: () => ({
     selectedTaskDetail: { id: 84, title: 'Task 84', status: 'RUNNING' },
-    setSelectedTask: jest.fn(),
+    selectTask: jest.fn(),
     refreshTasks: jest.fn(),
     refreshSelectedTaskDetail: jest.fn(),
   }),
 }))
 
-jest.mock('@/features/tasks/contexts/chatStreamContext', () => ({
-  useChatStreamContext: () => ({
+jest.mock('@/features/tasks/session/TaskSession', () => ({
+  useTaskSession: () => ({
     clearAllStreams: jest.fn(),
   }),
 }))

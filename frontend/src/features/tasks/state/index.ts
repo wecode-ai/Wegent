@@ -22,7 +22,6 @@ export type {
   TaskStateMachineDeps,
 } from './TaskStateMachine'
 
-export { taskStateManager } from './TaskStateManager'
 export {
   getRuntimePhaseForTaskStatus,
   isActiveExecutionTaskStatus,

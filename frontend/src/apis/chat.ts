@@ -5,7 +5,7 @@
 /**
  * Chat Shell API client.
  *
- * NOTE: Streaming chat now uses WebSocket via ChatStreamContext.
+ * NOTE: Streaming chat now uses WebSocket via TaskSessionContext.
  * This module provides utility functions for chat operations.
  */
 

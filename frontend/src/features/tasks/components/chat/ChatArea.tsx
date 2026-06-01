@@ -31,9 +31,8 @@ import type { Model } from '../../hooks/useModelSelection'
 import type { ContextItem, QueueMessageContext } from '@/types/context'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useRouter } from 'next/navigation'
-import { useTaskContext } from '../../contexts/taskContext'
-import { useTaskStateMachine } from '../../hooks/useTaskStateMachine'
-import { useOptionalChatStreamContext } from '../../contexts/chatStreamContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
+import { useOptionalTaskSession } from '@/features/tasks/session/TaskSession'
 import { Button } from '@/components/ui/button'
 import {
   AlertDialog,
@@ -162,7 +161,7 @@ function ChatAreaContent({
   const { t } = useTranslation()
   const { toast } = useToast()
   const router = useRouter()
-  const chatStreamContext = useOptionalChatStreamContext()
+  const chatStreamContext = useOptionalTaskSession()
 
   // Pipeline stage info state - shared between PipelineStageIndicator and MessagesArea
   const [pipelineStageInfo, setPipelineStageInfo] = useState<PipelineStageInfo | null>(null)
@@ -174,11 +173,17 @@ function ChatAreaContent({
   const { quote, clearQuote, formatQuoteForMessage } = useQuote()
 
   // Task context
-  const { selectedTask, selectedTaskDetail, setSelectedTask, accessDenied } = useTaskContext()
+  const {
+    selectedTask,
+    selectedTaskDetail,
+    selectTask,
+    accessDenied,
+    taskState: sessionTaskState,
+  } = useTaskSession()
   const effectiveTaskId = selectedTask?.id ?? selectedTaskDetail?.id
 
-  // Use useTaskStateMachine hook for reactive state updates (SINGLE SOURCE OF TRUTH per AGENTS.md)
-  const { state: taskState } = useTaskStateMachine(effectiveTaskId)
+  const taskState =
+    sessionTaskState && sessionTaskState.taskId === effectiveTaskId ? sessionTaskState : null
   const runtimeTaskStatus = taskState?.runtime.taskStatus
 
   // Video model selection state - only enabled for video mode
@@ -1148,7 +1153,7 @@ function ChatAreaContent({
   // Handle access denied state
   if (accessDenied) {
     const handleGoHome = () => {
-      setSelectedTask(null)
+      selectTask(null)
       router.push('/chat')
     }
 

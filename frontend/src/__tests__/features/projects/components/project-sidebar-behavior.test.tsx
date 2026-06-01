@@ -123,15 +123,15 @@ jest.mock('@/components/ui/dropdown', () => ({
   DropdownMenuTrigger: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }))
 
-jest.mock('@/features/tasks/contexts/chatStreamContext', () => ({
-  useChatStreamContext: () => ({
+jest.mock('@/features/tasks/session/TaskSession', () => ({
+  useTaskSession: () => ({
     clearAllStreams: clearAllStreamsMock,
   }),
 }))
 
-jest.mock('@/features/tasks/contexts/taskContext', () => ({
-  useTaskContext: () => ({
-    setSelectedTask: setSelectedTaskMock,
+jest.mock('@/features/tasks/session/TaskSession', () => ({
+  useTaskSession: () => ({
+    selectTask: setSelectedTaskMock,
     refreshTasks: jest.fn(),
   }),
 }))

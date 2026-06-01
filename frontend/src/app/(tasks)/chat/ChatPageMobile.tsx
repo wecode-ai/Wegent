@@ -15,8 +15,7 @@ import { ThemeToggle } from '@/features/theme/ThemeToggle'
 import { Team } from '@/types/api'
 import { saveLastTab } from '@/utils/userPreferences'
 import { useUser } from '@/features/common/UserContext'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { useDevices } from '@/contexts/DeviceContext'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -64,13 +63,8 @@ export function ChatPageMobile() {
   const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
 
   // Task context for refreshing task list
-  const {
-    refreshTasks,
-    selectedTask,
-    selectedTaskDetail,
-    setSelectedTask,
-    refreshSelectedTaskDetail,
-  } = useTaskContext()
+  const { refreshTasks, selectedTask, selectedTaskDetail, selectTask, refreshSelectedTaskDetail } =
+    useTaskSession()
 
   // Device context - when a device is selected, switch to 'task' mode
   const { selectedDeviceId, devices } = useDevices()
@@ -92,7 +86,7 @@ export function ChatPageMobile() {
 
   // Handle task deletion
   const handleTaskDeleted = () => {
-    setSelectedTask(null)
+    selectTask(null)
     refreshTasks()
   }
 
@@ -103,7 +97,7 @@ export function ChatPageMobile() {
   }
 
   // Chat stream context
-  const { clearAllStreams: _clearAllStreams } = useChatStreamContext()
+  const { clearAllStreams: _clearAllStreams } = useTaskSession()
 
   // User state for git token check
   const { user } = useUser()

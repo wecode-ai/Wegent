@@ -4,16 +4,18 @@
 
 'use client'
 
-import { useState, useEffect, useMemo, useContext } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Send, Code, FileText, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import type { ClarificationData, ClarificationAnswer } from '@/types/api'
 import ClarificationQuestion from './ClarificationQuestion'
 import { useTranslation } from '@/hooks/useTranslation'
-import { ChatStreamContext } from '../../contexts/chatStreamContext'
-import { useTaskStateMachine } from '../../hooks/useTaskStateMachine'
+import { useOptionalTaskSession } from '@/features/tasks/session/TaskSession'
 import { useToast } from '@/hooks/use-toast'
+import type { UnifiedMessage } from '../../state'
+
+const EMPTY_MESSAGES = new Map<string, UnifiedMessage>()
 
 interface ClarificationFormProps {
   data: ClarificationData
@@ -35,13 +37,10 @@ export default function ClarificationForm({
   const { t } = useTranslation()
   const { toast } = useToast()
 
-  // Get isTaskStreaming from ChatStreamContext to check if task is currently streaming
-  // Use useContext directly to avoid throwing error when outside ChatStreamProvider
-  const chatStreamContext = useContext(ChatStreamContext)
-  const isTaskStreaming = chatStreamContext?.isTaskStreaming ?? null
-
-  // Use reactive hook to get messages from TaskStateMachine (single source of truth)
-  const { messages: messagesMap } = useTaskStateMachine(taskId)
+  const taskSession = useOptionalTaskSession()
+  const isTaskStreaming = taskSession?.taskState?.taskId === taskId && taskSession.isStreaming
+  const messagesMap =
+    taskSession?.taskState?.taskId === taskId ? taskSession.messages : EMPTY_MESSAGES
 
   const [answers, setAnswers] = useState<
     Map<string, { answer_type: 'choice' | 'custom'; value: string | string[] }>
@@ -56,8 +55,7 @@ export default function ClarificationForm({
   // Toggle raw content view
   const [showRawContent, setShowRawContent] = useState(false)
 
-  // Convert messages Map to sorted array for checking submission status
-  // This is reactive via useTaskStateMachine hook
+  // Convert session messages to a sorted array for checking submission status.
   const messages = useMemo(() => {
     if (messagesMap.size === 0) return []
 
@@ -370,13 +368,10 @@ export default function ClarificationForm({
                 variant="secondary"
                 onClick={handleSubmit}
                 size="lg"
-                disabled={
-                  isCurrentMessageStreaming || Boolean(isTaskStreaming && isTaskStreaming(taskId))
-                }
+                disabled={isCurrentMessageStreaming || Boolean(isTaskStreaming)}
                 data-testid="clarification-submit"
               >
-                {isCurrentMessageStreaming ||
-                Boolean(isTaskStreaming && isTaskStreaming(taskId)) ? (
+                {isCurrentMessageStreaming || Boolean(isTaskStreaming) ? (
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                 ) : (
                   <Send className="w-4 h-4 mr-2" />

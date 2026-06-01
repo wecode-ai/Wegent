@@ -6,17 +6,15 @@ import '@testing-library/jest-dom'
 import { act, render, waitFor } from '@testing-library/react'
 
 import { taskApis } from '@/apis/tasks'
-import { TaskContextProvider, useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { TaskSessionProvider, useTaskSession } from '@/features/tasks/session/TaskSession'
 import type { Task, TaskDetail } from '@/types/api'
 import type { TaskStatusPayload } from '@/types/socket'
 
-const mockHandleTaskStatus = jest.fn()
-const mockSyncTaskDetail = jest.fn()
-const mockCheckHealthAll = jest.fn((_reason?: string) => Promise.resolve())
-const mockCheckHealth = jest.fn((_reason?: string) => Promise.resolve())
 let mockTaskHandlers: { onTaskStatus?: (payload: TaskStatusPayload) => void } | null = null
 let mockVisibleHandler: ((wasHiddenFor: number) => void) | null = null
 let mockIsConnected = true
+
+const mockJoinTask = jest.fn()
 
 const mockSocketContext = {
   registerTaskHandlers: jest.fn(handlers => {
@@ -26,21 +24,14 @@ const mockSocketContext = {
   get isConnected() {
     return mockIsConnected
   },
+  joinTask: mockJoinTask,
   leaveTask: jest.fn(),
+  sendChatMessage: jest.fn(),
+  cancelChatStream: jest.fn(),
+  registerChatHandlers: jest.fn(() => jest.fn()),
+  registerSkillHandlers: jest.fn(() => jest.fn()),
+  sendSkillResponse: jest.fn(),
 }
-
-jest.mock('@/features/tasks/state', () => ({
-  taskStateManager: {
-    handleTaskStatus: (taskId: number, taskStatus: string, updatedAt?: string) =>
-      mockHandleTaskStatus(taskId, taskStatus, updatedAt),
-    syncTaskDetail: (taskDetail: unknown) => mockSyncTaskDetail(taskDetail),
-    isInitialized: () => true,
-    checkHealthAll: (reason: string) => mockCheckHealthAll(reason),
-    getOrCreate: () => ({
-      checkHealth: (reason: string) => mockCheckHealth(reason),
-    }),
-  },
-}))
 
 jest.mock('@/contexts/SocketContext', () => ({
   useSocket: () => mockSocketContext,
@@ -53,6 +44,7 @@ jest.mock('@/apis/tasks', () => ({
     getPersonalTasksLite: jest.fn(),
     searchTasks: jest.fn(),
     getTaskDetail: jest.fn(),
+    getTaskRuntimeCheck: jest.fn(),
   },
 }))
 
@@ -139,40 +131,55 @@ const taskListResponse = (items: Task[]) => ({
 })
 
 const contextProbe: {
-  current: ReturnType<typeof useTaskContext> | null
+  current: ReturnType<typeof useTaskSession> | null
 } = {
   current: null,
 }
 
 function ContextProbe() {
-  contextProbe.current = useTaskContext()
+  contextProbe.current = useTaskSession()
   return null
 }
 
-describe('TaskContext runtime state machine sync', () => {
+describe('TaskSessionContext runtime state machine sync', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     contextProbe.current = null
     mockTaskHandlers = null
     mockVisibleHandler = null
     mockIsConnected = true
+    mockJoinTask.mockResolvedValue({ subtasks: [] })
 
     mockedTaskApis.getGroupTasksLite.mockResolvedValue(taskListResponse([]))
     mockedTaskApis.getPersonalTasksLite.mockResolvedValue(taskListResponse([createTask()]))
     mockedTaskApis.getTasksLite.mockResolvedValue(taskListResponse([]))
     mockedTaskApis.searchTasks.mockResolvedValue(taskListResponse([]))
     mockedTaskApis.getTaskDetail.mockResolvedValue(createTaskDetail())
+    mockedTaskApis.getTaskRuntimeCheck.mockResolvedValue({
+      task_id: 42,
+      task_status: 'RUNNING',
+      status_updated_at: '2026-05-31T10:00:00.000Z',
+      active_stream: null,
+    })
   })
 
-  it('dispatches task status websocket updates into the task state machine', async () => {
+  it('updates selected task runtime from task status websocket events', async () => {
     render(
-      <TaskContextProvider>
+      <TaskSessionProvider>
         <ContextProbe />
-      </TaskContextProvider>
+      </TaskSessionProvider>
     )
 
     await waitFor(() => {
       expect(mockTaskHandlers?.onTaskStatus).toBeDefined()
+    })
+
+    act(() => {
+      contextProbe.current?.selectTask(createTask())
+    })
+
+    await waitFor(() => {
+      expect(contextProbe.current?.taskState?.taskId).toBe(42)
     })
 
     act(() => {
@@ -184,18 +191,31 @@ describe('TaskContext runtime state machine sync', () => {
       })
     })
 
-    expect(mockHandleTaskStatus).toHaveBeenCalledWith(42, 'COMPLETED', '2026-05-31T10:00:00.000Z')
+    await waitFor(() => {
+      expect(contextProbe.current?.taskState?.runtime.taskStatus).toBe('COMPLETED')
+    })
+    expect(contextProbe.current?.taskState?.runtime.lastStatusUpdatedAt).toBe(
+      '2026-05-31T10:00:00.000Z'
+    )
   })
 
-  it('does not stamp active task status events with client time', async () => {
+  it('does not stamp active task runtime events with client time', async () => {
     render(
-      <TaskContextProvider>
+      <TaskSessionProvider>
         <ContextProbe />
-      </TaskContextProvider>
+      </TaskSessionProvider>
     )
 
     await waitFor(() => {
       expect(mockTaskHandlers?.onTaskStatus).toBeDefined()
+    })
+
+    act(() => {
+      contextProbe.current?.selectTask(createTask())
+    })
+
+    await waitFor(() => {
+      expect(contextProbe.current?.taskState?.taskId).toBe(42)
     })
 
     act(() => {
@@ -206,14 +226,19 @@ describe('TaskContext runtime state machine sync', () => {
       })
     })
 
-    expect(mockHandleTaskStatus).toHaveBeenCalledWith(42, 'RUNNING', undefined)
+    await waitFor(() => {
+      expect(contextProbe.current?.taskState?.runtime.taskStatus).toBe('RUNNING')
+    })
+    expect(contextProbe.current?.taskState?.runtime.lastStatusUpdatedAt).toBe(
+      '2026-05-31T09:00:00.000Z'
+    )
   })
 
-  it('syncs selected task detail snapshots into the task state machine', async () => {
+  it('syncs selected task detail snapshots into the current state machine', async () => {
     render(
-      <TaskContextProvider>
+      <TaskSessionProvider>
         <ContextProbe />
-      </TaskContextProvider>
+      </TaskSessionProvider>
     )
 
     await waitFor(() => {
@@ -221,26 +246,21 @@ describe('TaskContext runtime state machine sync', () => {
     })
 
     act(() => {
-      contextProbe.current?.setSelectedTask(createTask())
+      contextProbe.current?.selectTask(createTask())
     })
 
     await waitFor(() => {
       expect(mockedTaskApis.getTaskDetail).toHaveBeenCalledWith(42)
     })
 
-    expect(mockSyncTaskDetail).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: 42,
-        status: 'RUNNING',
-      })
-    )
+    expect(contextProbe.current?.taskState?.runtime.taskStatus).toBe('RUNNING')
   })
 
   it('checks runtime health and selected task detail when the socket reconnects', async () => {
     const renderTree = () => (
-      <TaskContextProvider>
+      <TaskSessionProvider>
         <ContextProbe />
-      </TaskContextProvider>
+      </TaskSessionProvider>
     )
     const { rerender } = render(renderTree())
 
@@ -249,14 +269,15 @@ describe('TaskContext runtime state machine sync', () => {
     })
 
     act(() => {
-      contextProbe.current?.setSelectedTask(createTask())
+      contextProbe.current?.selectTask(createTask())
     })
 
     await waitFor(() => {
       expect(mockedTaskApis.getTaskDetail).toHaveBeenCalledWith(42)
     })
 
-    mockCheckHealthAll.mockClear()
+    mockedTaskApis.getTaskRuntimeCheck.mockClear()
+    mockJoinTask.mockClear()
     mockedTaskApis.getPersonalTasksLite.mockClear()
     mockedTaskApis.getTaskDetail.mockClear()
 
@@ -271,17 +292,16 @@ describe('TaskContext runtime state machine sync', () => {
     })
 
     await waitFor(() => {
-      expect(mockCheckHealthAll).toHaveBeenCalledWith('websocket-reconnect')
+      expect(mockedTaskApis.getTaskRuntimeCheck).toHaveBeenCalledWith(42)
     })
     expect(mockedTaskApis.getPersonalTasksLite).toHaveBeenCalledWith({ page: 1, limit: 50 })
-    expect(mockedTaskApis.getTaskDetail).toHaveBeenCalledWith(42)
   })
 
   it('uses the same health-check path when the page becomes visible after the hidden threshold', async () => {
     render(
-      <TaskContextProvider>
+      <TaskSessionProvider>
         <ContextProbe />
-      </TaskContextProvider>
+      </TaskSessionProvider>
     )
 
     await waitFor(() => {
@@ -289,14 +309,15 @@ describe('TaskContext runtime state machine sync', () => {
     })
 
     act(() => {
-      contextProbe.current?.setSelectedTask(createTask())
+      contextProbe.current?.selectTask(createTask())
     })
 
     await waitFor(() => {
       expect(mockedTaskApis.getTaskDetail).toHaveBeenCalledWith(42)
     })
 
-    mockCheckHealthAll.mockClear()
+    mockedTaskApis.getTaskRuntimeCheck.mockClear()
+    mockJoinTask.mockClear()
     mockedTaskApis.getPersonalTasksLite.mockClear()
     mockedTaskApis.getTaskDetail.mockClear()
 
@@ -305,19 +326,18 @@ describe('TaskContext runtime state machine sync', () => {
     })
 
     await waitFor(() => {
-      expect(mockCheckHealthAll).toHaveBeenCalledWith('page-visible')
+      expect(mockedTaskApis.getTaskRuntimeCheck).toHaveBeenCalledWith(42)
     })
     expect(mockedTaskApis.getPersonalTasksLite).toHaveBeenCalledWith({ page: 1, limit: 50 })
-    expect(mockedTaskApis.getTaskDetail).toHaveBeenCalledWith(42)
   })
 
   it('refreshes server snapshots even if runtime health check is still pending', async () => {
-    mockCheckHealthAll.mockImplementationOnce(() => new Promise(() => {}))
+    mockedTaskApis.getTaskRuntimeCheck.mockImplementationOnce(() => new Promise(() => {}))
 
     render(
-      <TaskContextProvider>
+      <TaskSessionProvider>
         <ContextProbe />
-      </TaskContextProvider>
+      </TaskSessionProvider>
     )
 
     await waitFor(() => {
@@ -325,7 +345,7 @@ describe('TaskContext runtime state machine sync', () => {
     })
 
     act(() => {
-      contextProbe.current?.setSelectedTask(createTask())
+      contextProbe.current?.selectTask(createTask())
     })
 
     await waitFor(() => {
@@ -340,8 +360,8 @@ describe('TaskContext runtime state machine sync', () => {
     })
 
     await waitFor(() => {
-      expect(mockedTaskApis.getTaskDetail).toHaveBeenCalledWith(42)
+      expect(mockedTaskApis.getPersonalTasksLite).toHaveBeenCalledWith({ page: 1, limit: 50 })
     })
-    expect(mockedTaskApis.getPersonalTasksLite).toHaveBeenCalledWith({ page: 1, limit: 50 })
+    expect(mockedTaskApis.getTaskDetail).not.toHaveBeenCalled()
   })
 })

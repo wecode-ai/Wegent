@@ -84,8 +84,8 @@ jest.mock('@/contexts/DeviceContext', () => ({
   }),
 }))
 
-jest.mock('@/features/tasks/contexts/taskContext', () => ({
-  useTaskContext: () => ({
+jest.mock('@/features/tasks/session/TaskSession', () => ({
+  useTaskSession: () => ({
     refreshTasks: jest.fn(),
     selectedTaskDetail: {
       id: 42,
@@ -95,13 +95,13 @@ jest.mock('@/features/tasks/contexts/taskContext', () => ({
         bots: [],
       },
     },
-    setSelectedTask: jest.fn(),
+    selectTask: jest.fn(),
     refreshSelectedTaskDetail: jest.fn(),
   }),
 }))
 
-jest.mock('@/features/tasks/contexts/chatStreamContext', () => ({
-  useChatStreamContext: () => ({
+jest.mock('@/features/tasks/session/TaskSession', () => ({
+  useTaskSession: () => ({
     clearAllStreams: jest.fn(),
   }),
 }))

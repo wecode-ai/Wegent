@@ -37,8 +37,7 @@ import { GithubStarButton } from '@/features/layout/GithubStarButton'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
 import { saveLastTab } from '@/utils/userPreferences'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { paths } from '@/config/paths'
 import { Spinner } from '@/components/ui/spinner'
 import { useWikiProjects } from '@/features/knowledge/useWikiProjects'
@@ -67,8 +66,8 @@ function KnowledgeVirtualPageContent() {
   const params = useParams()
   const router = useRouter()
   const isMobile = useIsMobile()
-  const { clearAllStreams } = useChatStreamContext()
-  const { setSelectedTask } = useTaskContext()
+  const { clearAllStreams } = useTaskSession()
+  const { selectTask } = useTaskSession()
 
   // Decode URL params and resolve namespace/kbName
   // URL formats:
@@ -164,14 +163,14 @@ function KnowledgeVirtualPageContent() {
 
   // Handle new task from collapsed sidebar button
   const handleNewTask = () => {
-    setSelectedTask(null)
+    selectTask(null)
     clearAllStreams()
     router.replace(paths.chat.getHref())
   }
 
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
-      {/* TaskParamSync handles URL taskId parameter synchronization with TaskContext */}
+      {/* TaskParamSync handles URL taskId parameter synchronization with TaskSessionContext */}
       <Suspense>
         <TaskParamSync />
       </Suspense>

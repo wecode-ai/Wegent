@@ -11,8 +11,7 @@ import TopNavigation from '@/features/layout/TopNavigation'
 import { TaskSidebar, SearchDialog } from '@/features/tasks/components/sidebar'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
 import { Team } from '@/types/api'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
 import { ChatArea } from '@/features/tasks/components/chat'
 
@@ -65,8 +64,8 @@ export function GeneratePageMobile() {
   }, [teams, generateMode])
 
   // Task context for refreshing task list
-  const { refreshTasks, selectedTaskDetail, setSelectedTask, refreshSelectedTaskDetail } =
-    useTaskContext()
+  const { refreshTasks, selectedTaskDetail, selectTask, refreshSelectedTaskDetail } =
+    useTaskSession()
 
   // Sync generate mode from task detail when entering from history (taskId in URL)
   useEffect(() => {
@@ -81,7 +80,7 @@ export function GeneratePageMobile() {
 
   // Handle task deletion
   const handleTaskDeleted = () => {
-    setSelectedTask(null)
+    selectTask(null)
     refreshTasks()
   }
 
@@ -92,7 +91,7 @@ export function GeneratePageMobile() {
   }
 
   // Chat stream context
-  const { clearAllStreams: _clearAllStreams } = useChatStreamContext()
+  const { clearAllStreams: _clearAllStreams } = useTaskSession()
 
   // Router for navigation
   const _router = useRouter()

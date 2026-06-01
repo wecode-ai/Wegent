@@ -3,27 +3,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * useUnifiedMessages Hook
+ * UI adapter for task messages.
  *
- * This hook adapts TaskStateMachine messages for chat display.
- *
- * Key Design Principles:
- * 1. SINGLE SOURCE OF TRUTH: TaskStateMachine.messages is the ONLY source for rendering
- * 2. PROPER ORDERING: Messages are sorted by messageId (primary) and timestamp (secondary)
- * 3. STATE ISOLATION: Each message maintains its own state independently
- *
- * Message Flow:
- * 1. Select task -> TaskStateMachine.recover() syncs from backend
- * 2. User sends message -> ChatStreamContext adds to machine via sendMessage
- * 3. chat:start -> Add AI message with status='streaming'
- * 4. chat:chunk -> Update AI message content
- * 5. chat:done -> Update AI message status to 'completed'
+ * TaskSession owns raw runtime messages. This hook adapts those raw messages
+ * into DisplayMessage records for MessagesArea and keeps rendering concerns out
+ * of the runtime/session layer.
  */
 
-import { useMemo } from 'react'
-import { useTaskStateMachine } from './useTaskStateMachine'
+import { useEffect, useMemo } from 'react'
 import { useUser } from '@/features/common/UserContext'
-import { useTaskContext } from '../contexts/taskContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import type { Team, Attachment, SubtaskContextBrief } from '@/types/api'
 import type { SourceReference } from '@/types/socket'
 import type { MessageBlock } from '../components/message/thinking/types'
@@ -102,7 +91,7 @@ export interface DisplayMessage {
   isReasoningStreaming?: boolean
 }
 
-interface UseUnifiedMessagesOptions {
+interface UseMessagePresenterOptions {
   /** Selected team for display */
   team: Team | null
   /** Whether this is a group chat */
@@ -116,7 +105,7 @@ interface UseUnifiedMessagesOptions {
   pendingTaskId?: number | null
 }
 
-interface UseUnifiedMessagesResult {
+interface UseMessagePresenterResult {
   /** Unified message list for display, sorted by timestamp */
   messages: DisplayMessage[]
   /** Whether any message is currently streaming */
@@ -172,16 +161,21 @@ function toDisplayMessage(
 }
 
 /**
- * Hook to manage unified message list
- *
- * This hook uses TaskStateMachine.messages as the ONLY data source for rendering.
+ * Hook to present TaskSession raw messages.
  */
-export function useUnifiedMessages({
+export function useMessagePresenter({
   team,
   isGroupChat,
   pendingTaskId,
-}: UseUnifiedMessagesOptions): UseUnifiedMessagesResult {
-  const { selectedTask, selectedTaskDetail } = useTaskContext()
+}: UseMessagePresenterOptions): UseMessagePresenterResult {
+  const {
+    selectedTask,
+    selectedTaskDetail,
+    messages: rawMessages,
+    isStreaming,
+    streamingSubtaskIds: sessionStreamingSubtaskIds,
+    setMessageSyncOptions,
+  } = useTaskSession()
   const { user } = useUser()
 
   const taskId = selectedTask?.id ?? selectedTaskDetail?.id
@@ -202,31 +196,30 @@ export function useUnifiedMessages({
     [team?.name, isGroupChat, user?.id, user?.user_name]
   )
 
-  // Use the state machine hook
-  const { messages: stateMessages, isStreaming } = useTaskStateMachine(effectiveTaskId, syncOptions)
+  useEffect(() => {
+    setMessageSyncOptions(syncOptions)
+  }, [setMessageSyncOptions, syncOptions])
 
-  // Build unified message list from state machine messages
-  const result = useMemo<UseUnifiedMessagesResult>(() => {
-    if (!effectiveTaskId || stateMessages.size === 0) {
+  const result = useMemo<UseMessagePresenterResult>(() => {
+    if (!effectiveTaskId || rawMessages.size === 0) {
       return {
         messages: [],
-        isStreaming: false,
-        streamingSubtaskIds: [],
+        isStreaming,
+        streamingSubtaskIds: sessionStreamingSubtaskIds,
       }
     }
 
-    const streamingSubtaskIds: number[] = []
+    const streamingSubtaskIds = new Set(sessionStreamingSubtaskIds)
 
-    // Convert state messages to DisplayMessage array
     const messages: DisplayMessage[] = []
 
-    for (const [, msg] of stateMessages) {
+    for (const [, msg] of rawMessages) {
       const displayMsg = toDisplayMessage(msg, team, isGroupChat, user?.id)
       messages.push(displayMsg)
 
       // Track streaming AI messages
       if (msg.type === 'ai' && msg.status === 'streaming' && msg.subtaskId) {
-        streamingSubtaskIds.push(msg.subtaskId)
+        streamingSubtaskIds.add(msg.subtaskId)
       }
     }
 
@@ -249,12 +242,20 @@ export function useUnifiedMessages({
 
     return {
       messages: sortedMessages,
-      isStreaming: streamingSubtaskIds.length > 0 || isStreaming,
-      streamingSubtaskIds,
+      isStreaming: streamingSubtaskIds.size > 0 || isStreaming,
+      streamingSubtaskIds: Array.from(streamingSubtaskIds),
     }
-  }, [effectiveTaskId, stateMessages, team, isGroupChat, user?.id, isStreaming])
+  }, [
+    effectiveTaskId,
+    rawMessages,
+    sessionStreamingSubtaskIds,
+    team,
+    isGroupChat,
+    user?.id,
+    isStreaming,
+  ])
 
   return result
 }
 
-export default useUnifiedMessages
+export default useMessagePresenter

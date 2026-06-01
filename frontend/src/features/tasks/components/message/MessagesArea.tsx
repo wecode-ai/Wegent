@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
-import { useTaskContext } from '../../contexts/taskContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import type { TaskDetail, Team, GitRepoInfo, GitBranch } from '@/types/api'
 import {
   Share2,
@@ -44,8 +44,7 @@ import {
   ForwardMessageDialog,
   type ForwardableMessage,
 } from '@/features/inbox/components/ForwardMessageDialog'
-import { useUnifiedMessages, type DisplayMessage } from '../../hooks/useUnifiedMessages'
-import { useChatStreamContext } from '../../contexts/chatStreamContext'
+import { useMessagePresenter, type DisplayMessage } from '../../presentation/useMessagePresenter'
 import { useTraceAction } from '@/hooks/useTraceAction'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
@@ -63,6 +62,8 @@ import { useSocket } from '@/contexts/SocketContext'
 import type { CorrectionStage, CorrectionField } from '@/types/socket'
 import type { Model } from '../../hooks/useModelSelection'
 import type { UnifiedModel } from '@/apis/models'
+import { TaskRuntimeGlyph } from './TaskRuntimeGlyph'
+import { MessageLoadingStage } from './MessageLoadingStage'
 
 /**
  * Component to render a streaming message with typewriter effect.
@@ -234,8 +235,14 @@ function MessagesArea({
 }: MessagesAreaProps) {
   const { t } = useTranslation()
   const { toast } = useToast()
-  const { selectedTaskDetail, refreshSelectedTaskDetail, refreshTasks, setSelectedTask } =
-    useTaskContext()
+  const {
+    selectedTaskDetail,
+    refreshSelectedTaskDetail,
+    refreshTasks,
+    selectTask,
+    cleanupMessagesAfterEdit,
+    taskState,
+  } = useTaskSession()
   const { theme } = useTheme()
   const { user } = useUser()
   const { traceAction } = useTraceAction()
@@ -245,7 +252,7 @@ function MessagesArea({
   // Use unified messages hook - SINGLE SOURCE OF TRUTH
   // Pass pendingTaskId to query messages when selectedTaskDetail.id is not yet available
   // State machine handles recovery automatically (page refresh, reconnect, visibility)
-  const { messages, streamingSubtaskIds, isStreaming } = useUnifiedMessages({
+  const { messages, streamingSubtaskIds, isStreaming } = useMessagePresenter({
     team: selectedTeam || null,
     isGroupChat,
     pendingTaskId,
@@ -348,7 +355,7 @@ function MessagesArea({
 
   // Load persisted correction data from subtask.result when task detail changes
   // Load persisted correction data from messages when they change
-  // Note: Now using messages from useUnifiedMessages instead of selectedTaskDetail.subtasks
+  // Note: Now using presented TaskSession messages instead of selectedTaskDetail.subtasks
   useEffect(() => {
     if (messages.length === 0) return
 
@@ -599,7 +606,7 @@ function MessagesArea({
         return
       }
 
-      // Use the messages from useUnifiedMessages which includes WebSocket updates
+      // Use the messages from TaskSession which includes WebSocket updates
       // This is the SAME data that's displayed in the UI
       const exportableMessages: SelectableMessage[] = messages
         .filter(msg => msg.status === 'completed') // Only export completed messages
@@ -698,8 +705,8 @@ function MessagesArea({
 
   // Handle user leaving group chat
   const handleLeaveGroupChat = useCallback(() => {
-    setSelectedTask(null)
-  }, [setSelectedTask])
+    selectTask(null)
+  }, [selectTask])
 
   // Handle members changed in group chat panel
   const handleMembersChanged = useCallback(() => {
@@ -720,9 +727,6 @@ function MessagesArea({
   const handleEditCancel = useCallback(() => {
     setEditingMessageId(null)
   }, [])
-
-  // Get cleanupMessagesAfterEdit from chat stream context
-  const { cleanupMessagesAfterEdit } = useChatStreamContext()
 
   // Handle save edit - call API to edit message, then resend to trigger AI response
   const handleEditSave = useCallback(
@@ -1150,18 +1154,35 @@ function MessagesArea({
     return null
   }, [messages])
 
+  const isSyncingMessages =
+    messages.length === 0 &&
+    (taskState?.status === 'waiting_socket' ||
+      taskState?.status === 'joining' ||
+      taskState?.status === 'syncing')
+
+  const showRuntimeWatermark =
+    taskState !== null &&
+    !isSyncingMessages &&
+    (messages.length === 0 || taskState.status === 'error')
+
   return (
     <div
-      className="flex-1 w-full max-w-3xl mx-auto flex flex-col"
+      className="relative min-h-0 flex-1 w-full max-w-3xl mx-auto flex flex-col"
       data-chat-container="true"
       translate="no"
     >
+      <TaskRuntimeGlyph taskState={taskState} visible={showRuntimeWatermark} />
+
       {/* Messages Area */}
       {(messages.length > 0 ||
         streamingSubtaskIds.length > 0 ||
         selectedTaskDetail?.id ||
         hasMessagesFromParent) && (
-        <div className="flex-1 space-y-8 messages-container" data-testid="messages-container">
+        <div
+          className="relative z-10 flex-1 space-y-8 messages-container"
+          data-testid="messages-container"
+        >
+          {isSyncingMessages && <MessageLoadingStage />}
           {messages.map((msg, index) => {
             const messageKey = msg.subtaskId
               ? `${msg.type}-${msg.subtaskId}`

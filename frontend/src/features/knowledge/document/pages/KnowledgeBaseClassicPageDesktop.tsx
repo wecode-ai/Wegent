@@ -20,8 +20,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { saveLastTab } from '@/utils/userPreferences'
 import { useUser } from '@/features/common/UserContext'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useKnowledgeBaseDetail } from '@/features/knowledge/document/hooks'
@@ -78,10 +77,8 @@ export function KnowledgeBaseClassicPageDesktop({ knowledgeBaseId, initialDocPat
   const { user, isLoading: isUserLoading } = useUser()
 
   // Task context
-  const { setSelectedTask } = useTaskContext()
-
-  // Chat stream context
-  const { clearAllStreams, stopStream, getStreamingTaskIds } = useChatStreamContext()
+  const { selectedTaskDetail, selectTask, clearAllStreams, stopStream, isStreaming } =
+    useTaskSession()
 
   // Tab state for documents/permissions
   const [activeTab, setActiveTab] = useState<'documents' | 'permissions'>('documents')
@@ -132,16 +129,16 @@ export function KnowledgeBaseClassicPageDesktop({ knowledgeBaseId, initialDocPat
 
   // Handle new task from collapsed sidebar button
   const handleNewTask = () => {
+    if (isStreaming) {
+      void stopStream(selectedTaskDetail?.id).catch(error => {
+        console.error('Failed to stop stream:', error)
+      })
+    }
+
     // Clear state and navigate immediately for responsive UI
-    setSelectedTask(null)
+    selectTask(null)
     clearAllStreams()
     router.push('/chat')
-
-    // Stop streams in the background without blocking navigation
-    const streamingIds = getStreamingTaskIds()
-    Promise.all(streamingIds.map(id => stopStream(id))).catch(error => {
-      console.error('Failed to stop streams:', error)
-    })
   }
 
   // Check if user can manage this knowledge base

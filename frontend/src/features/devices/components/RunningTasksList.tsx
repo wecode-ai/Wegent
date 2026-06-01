@@ -23,8 +23,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
-import { TaskStatus } from '@/types/api'
 
 interface RunningTasksListProps {
   tasks: DeviceRunningTask[]
@@ -41,7 +39,6 @@ export function RunningTasksList({
 }: RunningTasksListProps) {
   const { t, i18n } = useTranslation('devices')
   const router = useRouter()
-  const { setSelectedTask } = useTaskContext()
   const [isExpanded, setIsExpanded] = useState(tasks.length > 0)
   const [cancellingTaskId, setCancellingTaskId] = useState<number | null>(null)
   const [taskToCancel, setTaskToCancel] = useState<DeviceRunningTask | null>(null)
@@ -52,30 +49,6 @@ export function RunningTasksList({
   }
 
   const handleTaskClick = (task: DeviceRunningTask) => {
-    // Convert DeviceRunningTask to Task format for setSelectedTask
-    setSelectedTask({
-      id: task.task_id,
-      title: task.title,
-      team_id: 0,
-      git_url: '',
-      git_repo: '',
-      git_repo_id: 0,
-      git_domain: '',
-      branch_name: '',
-      prompt: '',
-      status: task.status.toUpperCase() as TaskStatus,
-      task_type: 'chat',
-      progress: 0,
-      batch: 0,
-      result: {},
-      error_message: '',
-      user_id: 0,
-      user_name: '',
-      created_at: task.created_at || '',
-      updated_at: '',
-      completed_at: '',
-      is_group_chat: false,
-    })
     router.push(`/devices/chat?taskId=${task.task_id}`)
   }
 
