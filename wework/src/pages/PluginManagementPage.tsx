@@ -23,6 +23,7 @@ export function PluginManagementPage() {
     startStandaloneChat,
     startNewProjectChat,
     openTask,
+    refreshDevices,
     createProject,
     updateProjectName,
     removeProject,
@@ -108,6 +109,7 @@ export function PluginManagementPage() {
           onStartNewProjectChat={handleStartNewProjectChat}
           onOpenTask={handleOpenTask}
           onOpenPlugins={() => navigateTo('/plugins')}
+          onRefreshDevices={refreshDevices}
           onCreateProject={createProject}
           onUpdateProjectName={updateProjectName}
           onRemoveProject={removeProject}

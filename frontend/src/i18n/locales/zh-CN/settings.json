@@ -96,7 +96,87 @@
     "private_skill": "私有",
     "search_failed": "搜索失败",
     "request_permission": "申请权限",
-    "go_to_market": "去市场看看"
+    "go_to_market": "去市场看看",
+    "libraryTitle": "技能库",
+    "libraryDescription": "上传、管理技能。技能可以设为自动启用，跟随你进入对话；也可以在智能体里添加技能，强化智能体的能力。",
+    "defaultEnabled": {
+      "title": "自动启用技能",
+      "description": "这些技能会在你的所有对话中自动生效；也可以为模式或智能体设置例外。",
+      "add": "添加",
+      "settings": "管理",
+      "summaryCount": "{{count}} 个已启用",
+      "overflowCount": "+{{count}}",
+      "addDialogTitle": "添加自动启用技能",
+      "addDialogDescription": "从你可用的所有技能中选择要自动启用的技能。",
+      "emptyTitle": "还没有自动启用的技能",
+      "emptyDescription": "从技能库中把技能设为自动启用后，它会自动加入你的对话。",
+      "noAvailableToAdd": "没有可添加的技能。"
+    },
+    "availability": {
+      "inMyDefault": "自动启用",
+      "notInMyDefault": "未自动启用",
+      "addToMyDefault": "设为自动启用",
+      "removeFromMyDefault": "取消自动启用",
+      "addSuccess": "已设为自动启用",
+      "removeSuccess": "已取消自动启用",
+      "updateFailed": "更新自动启用技能失败",
+      "groupScopeHint": "只对你生效，不会影响团队其他成员。"
+    },
+    "autoSettings": {
+      "title": "自动启用设置",
+      "description": "按技能管理自动启用的例外场景。",
+      "back": "返回技能库",
+      "allConversations": "所有对话自动启用",
+      "exceptionCount": "有 {{count}} 个例外",
+      "noExceptions": "没有例外",
+      "skillColumn": "技能",
+      "modeColumn": "启用模式",
+      "agentColumn": "启用智能体",
+      "exceptionColumn": "例外",
+      "actionColumn": "操作",
+      "configure": "配置",
+      "configureSkill": "配置 {{name}}",
+      "allModesEnabled": "全部模式",
+      "enabledModeCount": "启用 {{enabled}}/{{total}} 个模式",
+      "allAgentsEnabled": "全部智能体",
+      "enabledAgentCount": "启用 {{enabled}}/{{total}} 个智能体",
+      "noAgentsAvailable": "没有可用智能体",
+      "modeExceptions": "启用的模式",
+      "agentExceptions": "启用的智能体",
+      "drawerDescription": "这些例外只影响你自己的自动启用设置。",
+      "defaultScopeTitle": "默认自动启用",
+      "defaultScopeDescription": "默认对所有模式和智能体启用；取消勾选的项目会成为例外。",
+      "forcePreload": "强制激活",
+      "forcePreloadDescription": "打开后，这个技能会直接进入上下文，不等待模型按需加载。",
+      "forcePreloadDisabled": "按需加载",
+      "modeEnableLabel": "启用{{mode}}模式",
+      "agentEnableLabel": "启用 {{name}}",
+      "agentGroupEnableLabel": "启用所有{{group}}",
+      "agentGroups": {
+        "personal": "我的智能体",
+        "group": "团队智能体",
+        "system": "系统智能体"
+      },
+      "emptyAgentGroup": "没有智能体",
+      "clearExceptions": "恢复全部启用",
+      "save": "保存设置",
+      "saveSuccess": "自动启用设置已保存",
+      "saveFailed": "保存自动启用设置失败",
+      "modes": {
+        "chat": "聊天",
+        "code": "代码",
+        "knowledge": "知识库",
+        "task": "任务",
+        "video": "视频",
+        "image": "图片"
+      }
+    },
+    "source": {
+      "personal": "我的技能",
+      "group": "团队技能",
+      "system": "系统技能",
+      "library": "资源库技能"
+    }
   },
   "bot": {
     "allowed_models": {

@@ -293,6 +293,18 @@ export interface SkillSource {
   imported_at?: string
 }
 
+export interface SkillAvailability {
+  inMyDefault: boolean
+  agentBuiltin?: boolean
+}
+
+interface ApiSkillAvailability {
+  in_my_default?: boolean
+  agent_builtin?: boolean
+  inMyDefault?: boolean
+  agentBuiltin?: boolean
+}
+
 /**
  * Unified skill response type
  */
@@ -312,10 +324,48 @@ export interface UnifiedSkill {
   is_active: boolean
   is_public: boolean
   user_id: number // ID of the user who uploaded this skill
+  availability?: SkillAvailability
   /** Source information for git-imported skills */
   source?: SkillSource
   created_at?: string
   updated_at?: string
+}
+
+interface ApiUnifiedSkill extends Omit<UnifiedSkill, 'availability'> {
+  availability?: ApiSkillAvailability
+}
+
+export type SkillBindingExceptionType = 'mode' | 'agent' | 'project'
+
+export interface SkillBindingException {
+  type: SkillBindingExceptionType
+  value: string
+}
+
+export interface SkillBinding {
+  id: number
+  target_type: 'user' | 'agent' | 'project' | 'message'
+  target_id: string
+  skill_ref: {
+    skill_id: number
+    name: string
+    namespace: string
+    is_public: boolean
+  }
+  exceptions?: SkillBindingException[]
+  force_preload?: boolean
+  created_at?: string
+  updated_at?: string
+}
+
+function normalizeSkillAvailability(skill: ApiUnifiedSkill): UnifiedSkill {
+  return {
+    ...skill,
+    availability: {
+      inMyDefault: skill.availability?.inMyDefault ?? skill.availability?.in_my_default ?? false,
+      agentBuiltin: skill.availability?.agentBuiltin ?? skill.availability?.agent_builtin ?? false,
+    },
+  }
 }
 
 /**
@@ -346,7 +396,8 @@ export async function fetchUnifiedSkillsList(params?: {
     throw new Error(error || 'Failed to fetch unified skills')
   }
 
-  return response.json()
+  const data: ApiUnifiedSkill[] = await response.json()
+  return data.map(normalizeSkillAvailability)
 }
 
 /**
@@ -373,7 +424,88 @@ export async function fetchPublicSkillsList(params?: {
     throw new Error(error || 'Failed to fetch public skills')
   }
 
+  const data: ApiUnifiedSkill[] = await response.json()
+  return data.map(normalizeSkillAvailability)
+}
+
+export async function fetchMyDefaultSkillBindings(): Promise<SkillBinding[]> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const url = `${getApiUrl()}/v1/kinds/skills/bindings/me`
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(error || 'Failed to fetch skill bindings')
+  }
+
   return response.json()
+}
+
+export async function addSkillToMyDefault(skillId: number): Promise<SkillBinding> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const url = `${getApiUrl()}/v1/kinds/skills/${skillId}/bindings/me`
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(error || 'Failed to enable skill by default')
+  }
+
+  return response.json()
+}
+
+export async function updateMyDefaultSkillBindingExceptions(
+  skillId: number,
+  exceptions: SkillBindingException[],
+  forcePreload?: boolean
+): Promise<SkillBinding> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const url = `${getApiUrl()}/v1/kinds/skills/${skillId}/bindings/me`
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      exceptions,
+      ...(forcePreload !== undefined ? { force_preload: forcePreload } : {}),
+    }),
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(error || 'Failed to update automatic skill settings')
+  }
+
+  return response.json()
+}
+
+export async function removeSkillFromMyDefault(skillId: number): Promise<void> {
+  const token = getToken()
+  if (!token) throw new Error('No authentication token')
+
+  const url = `${getApiUrl()}/v1/kinds/skills/${skillId}/bindings/me`
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(error || 'Failed to disable skill by default')
+  }
 }
 
 /**

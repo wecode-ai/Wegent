@@ -92,6 +92,7 @@ class CloudDeviceProvider(LocalDeviceProvider):
             "update_available": update_available,
             "client_ip": spec.get("clientIp"),
             "cloud_config": spec.get("cloudConfig"),
+            "bind_shell": spec.get("bindShell", "claudecode"),
         }
 
     async def list_devices(
@@ -191,6 +192,7 @@ class CloudDeviceProvider(LocalDeviceProvider):
                     "update_available": update_available,
                     "client_ip": spec.get("clientIp"),
                     "cloud_config": spec.get("cloudConfig"),
+                    "bind_shell": spec.get("bindShell", "claudecode"),
                 }
             )
 

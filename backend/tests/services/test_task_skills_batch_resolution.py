@@ -18,6 +18,14 @@ def _build_kind(user_id: int, payload: dict):
     return SimpleNamespace(user_id=user_id, json=payload, id=100, namespace="default")
 
 
+@pytest.fixture(autouse=True)
+def mock_user_default_skill_refs(mocker):
+    return mocker.patch(
+        "app.services.adapters.task_kinds.task_skills_resolver.skill_binding_service.list_user_default_skill_refs",
+        return_value=[],
+    )
+
+
 @pytest.mark.unit
 def test_resolve_task_skills_uses_batched_kind_loading_for_bots_and_ghosts():
     db = Mock(spec=Session)
@@ -258,7 +266,279 @@ def test_resolve_task_skills_returns_refs_for_ghost_task_and_subscription_source
     assert result["skill_refs"]["manual-skill"]["skill_id"] == 22
     assert result["preload_skill_refs"]["manual-skill"]["skill_id"] == 22
     assert result["skill_refs"]["subscription-skill"]["skill_id"] == 33
-    assert result["preload_skill_refs"]["subscription-skill"]["skill_id"] == 33
+
+
+@pytest.mark.unit
+def test_resolve_task_skills_includes_user_default_refs_without_preloading(
+    mock_user_default_skill_refs,
+):
+    db = Mock(spec=Session)
+
+    mock_task = Mock(spec=TaskResource)
+    mock_task.id = 123
+    mock_task.user_id = 7
+    mock_task.kind = "Task"
+    mock_task.is_active = TaskResource.STATE_ACTIVE
+    mock_task.json = {"kind": "Task"}
+
+    mock_task_query = Mock()
+    mock_task_query.filter.return_value = mock_task_query
+    mock_task_query.first.return_value = mock_task
+    db.query.return_value = mock_task_query
+
+    task_crd = SimpleNamespace(
+        spec=SimpleNamespace(
+            teamRef=SimpleNamespace(name="team-a", namespace="default")
+        ),
+        metadata=SimpleNamespace(labels={}),
+    )
+    team_crd = SimpleNamespace(
+        spec=SimpleNamespace(
+            members=[
+                SimpleNamespace(
+                    botRef=SimpleNamespace(name="bot-a", namespace="default")
+                )
+            ]
+        )
+    )
+    bot_a = _build_kind(7, {"kind": "Bot", "name": "bot-a"})
+    ghost_a = _build_kind(7, {"kind": "Ghost", "name": "ghost-a"})
+    bot_crd_a = SimpleNamespace(
+        spec=SimpleNamespace(
+            ghostRef=SimpleNamespace(name="ghost-a", namespace="default")
+        )
+    )
+    ghost_crd_a = SimpleNamespace(
+        spec=SimpleNamespace(skills=["ghost-skill"], preload_skills=[])
+    )
+    mock_user_default_skill_refs.return_value = [
+        {
+            "skill_id": 44,
+            "name": "default-skill",
+            "namespace": "default",
+            "is_public": False,
+        }
+    ]
+
+    with (
+        patch(
+            "app.services.task_member_service.task_member_service.is_member",
+            return_value=True,
+        ),
+        patch(
+            "app.services.readers.kinds.kindReader.get_by_name_and_namespace",
+            return_value=_build_kind(7, {"kind": "Team"}),
+        ),
+        patch(
+            "app.services.adapters.task_kinds.task_skills_resolver.Task.model_validate",
+            return_value=task_crd,
+        ),
+        patch(
+            "app.services.adapters.task_kinds.task_skills_resolver.Team.model_validate",
+            return_value=team_crd,
+        ),
+        patch(
+            "app.services.adapters.task_kinds.task_skills_resolver.Bot.model_validate",
+            return_value=bot_crd_a,
+        ),
+        patch(
+            "app.services.adapters.task_kinds.task_skills_resolver.Ghost.model_validate",
+            return_value=ghost_crd_a,
+        ),
+        patch(
+            "app.services.adapters.task_kinds.task_skills_resolver._batch_load_kinds_by_refs",
+            create=True,
+            side_effect=[
+                {("default", "bot-a"): bot_a},
+                {("default", "ghost-a"): ghost_a},
+            ],
+        ),
+    ):
+        result = resolve_task_skills(db, task_id=123, user_id=99)
+
+    assert "default-skill" in result["skills"]
+    assert "default-skill" not in result["preload_skills"]
+    assert result["skill_refs"]["default-skill"]["skill_id"] == 44
+    assert "default-skill" not in result["preload_skill_refs"]
+
+
+@pytest.mark.unit
+def test_resolve_task_skills_adds_force_preloaded_user_default_skills_to_preload(
+    mock_user_default_skill_refs,
+):
+    db = Mock(spec=Session)
+
+    mock_task = Mock(spec=TaskResource)
+    mock_task.id = 123
+    mock_task.user_id = 7
+    mock_task.kind = "Task"
+    mock_task.project_id = None
+    mock_task.is_active = TaskResource.STATE_ACTIVE
+    mock_task.json = {"kind": "Task"}
+
+    mock_task_query = Mock()
+    mock_task_query.filter.return_value = mock_task_query
+    mock_task_query.first.return_value = mock_task
+    db.query.return_value = mock_task_query
+
+    task_crd = SimpleNamespace(
+        spec=SimpleNamespace(
+            teamRef=SimpleNamespace(name="team-a", namespace="default")
+        ),
+        metadata=SimpleNamespace(labels={"taskType": "chat"}),
+    )
+    team_crd = SimpleNamespace(
+        spec=SimpleNamespace(
+            members=[
+                SimpleNamespace(
+                    botRef=SimpleNamespace(name="bot-a", namespace="default")
+                )
+            ]
+        )
+    )
+    bot_a = _build_kind(7, {"kind": "Bot", "name": "bot-a"})
+    ghost_a = _build_kind(7, {"kind": "Ghost", "name": "ghost-a"})
+    bot_crd_a = SimpleNamespace(
+        spec=SimpleNamespace(
+            ghostRef=SimpleNamespace(name="ghost-a", namespace="default")
+        )
+    )
+    ghost_crd_a = SimpleNamespace(spec=SimpleNamespace(skills=[], preload_skills=[]))
+    mock_user_default_skill_refs.return_value = [
+        {
+            "skill_id": 44,
+            "name": "default-skill",
+            "namespace": "default",
+            "is_public": False,
+            "force_preload": True,
+        }
+    ]
+
+    with (
+        patch(
+            "app.services.task_member_service.task_member_service.is_member",
+            return_value=True,
+        ),
+        patch(
+            "app.services.readers.kinds.kindReader.get_by_name_and_namespace",
+            return_value=_build_kind(7, {"kind": "Team"}),
+        ),
+        patch(
+            "app.services.adapters.task_kinds.task_skills_resolver.Task.model_validate",
+            return_value=task_crd,
+        ),
+        patch(
+            "app.services.adapters.task_kinds.task_skills_resolver.Team.model_validate",
+            return_value=team_crd,
+        ),
+        patch(
+            "app.services.adapters.task_kinds.task_skills_resolver.Bot.model_validate",
+            return_value=bot_crd_a,
+        ),
+        patch(
+            "app.services.adapters.task_kinds.task_skills_resolver.Ghost.model_validate",
+            return_value=ghost_crd_a,
+        ),
+        patch(
+            "app.services.adapters.task_kinds.task_skills_resolver._batch_load_kinds_by_refs",
+            create=True,
+            side_effect=[
+                {("default", "bot-a"): bot_a},
+                {("default", "ghost-a"): ghost_a},
+            ],
+        ),
+    ):
+        result = resolve_task_skills(db, task_id=123, user_id=99)
+
+    assert "default-skill" in result["skills"]
+    assert "default-skill" in result["preload_skills"]
+    assert result["skill_refs"]["default-skill"]["skill_id"] == 44
+    assert result["preload_skill_refs"]["default-skill"]["skill_id"] == 44
+
+
+@pytest.mark.unit
+def test_resolve_task_skills_passes_context_to_user_default_skill_refs(
+    mock_user_default_skill_refs,
+):
+    db = Mock(spec=Session)
+
+    mock_task = Mock(spec=TaskResource)
+    mock_task.id = 123
+    mock_task.user_id = 7
+    mock_task.kind = "Task"
+    mock_task.project_id = 55
+    mock_task.is_active = TaskResource.STATE_ACTIVE
+    mock_task.json = {"kind": "Task"}
+
+    mock_task_query = Mock()
+    mock_task_query.filter.return_value = mock_task_query
+    mock_task_query.first.return_value = mock_task
+    db.query.return_value = mock_task_query
+
+    task_crd = SimpleNamespace(
+        spec=SimpleNamespace(
+            teamRef=SimpleNamespace(name="team-a", namespace="default"),
+        ),
+        metadata=SimpleNamespace(labels={"taskType": "code"}),
+    )
+    team_crd = SimpleNamespace(
+        spec=SimpleNamespace(
+            members=[
+                SimpleNamespace(
+                    botRef=SimpleNamespace(name="bot-a", namespace="default")
+                )
+            ]
+        )
+    )
+    bot_a = _build_kind(7, {"kind": "Bot", "name": "bot-a"})
+    ghost_a = _build_kind(7, {"kind": "Ghost", "name": "ghost-a"})
+    bot_crd_a = SimpleNamespace(
+        spec=SimpleNamespace(
+            ghostRef=SimpleNamespace(name="ghost-a", namespace="default")
+        )
+    )
+    ghost_crd_a = SimpleNamespace(spec=SimpleNamespace(skills=[], preload_skills=[]))
+
+    with (
+        patch(
+            "app.services.task_member_service.task_member_service.is_member",
+            return_value=True,
+        ),
+        patch(
+            "app.services.readers.kinds.kindReader.get_by_name_and_namespace",
+            return_value=_build_kind(7, {"kind": "Team"}),
+        ),
+        patch(
+            "app.services.adapters.task_kinds.task_skills_resolver.Task.model_validate",
+            return_value=task_crd,
+        ),
+        patch(
+            "app.services.adapters.task_kinds.task_skills_resolver.Team.model_validate",
+            return_value=team_crd,
+        ),
+        patch(
+            "app.services.adapters.task_kinds.task_skills_resolver.Bot.model_validate",
+            return_value=bot_crd_a,
+        ),
+        patch(
+            "app.services.adapters.task_kinds.task_skills_resolver.Ghost.model_validate",
+            return_value=ghost_crd_a,
+        ),
+        patch(
+            "app.services.adapters.task_kinds.task_skills_resolver._batch_load_kinds_by_refs",
+            create=True,
+            side_effect=[
+                {("default", "bot-a"): bot_a},
+                {("default", "ghost-a"): ghost_a},
+            ],
+        ),
+    ):
+        resolve_task_skills(db, task_id=123, user_id=99)
+
+    context = mock_user_default_skill_refs.call_args.kwargs["context"]
+    assert context.mode == "code"
+    assert context.agent_id == 100
+    assert context.project_id == 55
 
 
 @pytest.mark.unit

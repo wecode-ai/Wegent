@@ -159,6 +159,49 @@ Each heartbeat contains currently running task IDs, used for:
 - Orphaned task detection
 - Automatic cleanup on disconnection
 
+### Global Capability Reporting
+
+Local devices also report Claude Code global capability state through heartbeats. A full report includes:
+
+- `capabilities.revision`: local Wegent-managed manifest revision
+- `capabilities.digest`: content digest for `skills`, `plugins`, and `mcps`
+- `capabilities.skills`: Skills available under `~/.claude/skills`
+- `capabilities.plugins`: Plugins installed in `~/.claude/plugins/installed_plugins.json`
+- `capabilities.mcps`: Wegent-managed global MCP configuration
+
+Plugin reports must include the Skills contained inside each plugin. The executor scans `SKILL.md` files under each plugin install directory and returns them in `plugins[].skills[]`:
+
+```json
+{
+  "name": "context7",
+  "marketplace": "claude-plugins-official",
+  "version": "1057d02c5307",
+  "source": "wegent",
+  "installed_plugin_id": 301,
+  "skills": [
+    {
+      "name": "context7",
+      "description": "Look up version-specific documentation.",
+      "path": "skills/context7"
+    }
+  ]
+}
+```
+
+Backend persists the complete capability state only when `capabilities.full = true`. Later heartbeats with the same `digest` refresh device liveness without rewriting the full capability lists.
+
+### Global Capability Sync
+
+Backend can send desired global capability state to an online local device through `device:sync_capabilities`. The sync payload currently includes:
+
+- `skills`: backend-resolved `InstalledSkill` / `Skill` entries, downloaded by the executor into `~/.claude/skills`
+- `plugins`: backend-resolved `InstalledPlugin` entries, written by the executor into `~/.claude/plugins/installed_plugins.json`
+- `mcps`: backend-resolved `InstalledMCP` entries, written into the Wegent-managed manifest
+
+In `replace` mode, the executor only removes capabilities marked as `managed` in the Wegent manifest and missing from the desired state. Plugins installed directly by the user on the local machine are not removed by a Wegent sync.
+
+When a project task runs through the local executor, its task-level `CLAUDE_CONFIG_DIR` exposes both global `skills` and `plugins` directories and inherits non-sensitive plugin settings such as `enabledPlugins` and `extraKnownMarketplaces` from the local `~/.claude/settings.json`. This lets Claude Code load global Skills and Skills provided by Plugins. Sensitive model and token configuration is still injected through runtime environment variables and is not copied from global settings into the task directory.
+
 ---
 
 ## 🔄 Task Execution Flow

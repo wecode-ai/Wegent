@@ -89,7 +89,7 @@ export const shellApis = {
    *
    * Each shell includes a 'type' field ('public', 'user', or 'group') to identify its source.
    * @param scope - Resource scope: 'personal', 'group', or 'all'
-   * @param groupName - Group name (required when scope is 'group')
+   * @param groupName - Optional group name. When omitted with group scope, all accessible groups are returned.
    */
   async getUnifiedShells(
     scope?: 'personal' | 'group' | 'all',

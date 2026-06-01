@@ -81,6 +81,16 @@ function ArchiveProbe() {
   )
 }
 
+function DeviceListProbe() {
+  const workbench = useWorkbench()
+
+  return (
+    <div data-testid="device-list">
+      {workbench.state.devices.map(device => device.name).join(',')}
+    </div>
+  )
+}
+
 function ProjectSelectionProbe() {
   const workbench = useWorkbench()
 
@@ -162,6 +172,115 @@ describe('WorkbenchProvider', () => {
     await waitFor(() =>
       expect(screen.getByTestId('probe')).toHaveTextContent('alice')
     )
+  })
+
+  test('refreshes devices when a device comes online after bootstrap', async () => {
+    let handlers: Record<string, (payload: unknown) => void> = {}
+    const listDevices = vi
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          id: 1,
+          device_id: 'linux-device',
+          name: 'Linux-Device-0b18648b2e82',
+          status: 'offline',
+          is_default: false,
+          device_type: 'local',
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: 1,
+          device_id: 'linux-device',
+          name: 'Linux-Device-0b18648b2e82',
+          status: 'offline',
+          is_default: false,
+          device_type: 'local',
+        },
+        {
+          id: 2,
+          device_id: 'c78d176b-3f32-4598-9758-cb8262d8f25a',
+          name: 'macOS-Device-cb8262d8f25a',
+          status: 'online',
+          is_default: false,
+          device_type: 'local',
+        },
+      ])
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: { listModels: vi.fn().mockResolvedValue({ data: [] }) },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({ items: [] }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail: vi.fn(),
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices,
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+          },
+          chatStream: {
+            joinTask: vi.fn(),
+            leaveTask: vi.fn(),
+            sendMessage: vi.fn(),
+            subscribe: vi.fn(nextHandlers => {
+              handlers = nextHandlers as Record<string, (payload: unknown) => void>
+              return vi.fn()
+            }),
+          },
+        }}
+      >
+        <DeviceListProbe />
+      </WorkbenchProvider>
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('device-list')).toHaveTextContent(
+        'Linux-Device-0b18648b2e82'
+      )
+    )
+
+    handlers.onDeviceOnline?.({
+      device_id: 'c78d176b-3f32-4598-9758-cb8262d8f25a',
+      name: 'macOS-Device-cb8262d8f25a',
+      status: 'online',
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('device-list')).toHaveTextContent(
+        'macOS-Device-cb8262d8f25a'
+      )
+    )
+    expect(listDevices).toHaveBeenCalledTimes(2)
   })
 
   test('restores the last concrete project for new chat and can clear project work', async () => {
