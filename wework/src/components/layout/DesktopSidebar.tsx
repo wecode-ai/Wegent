@@ -170,36 +170,44 @@ function ProjectTaskRow({
       >
         {title}
       </button>
-      {running ? (
-        <Loader2
-          data-testid={`project-chat-spinner-${task.task_id}`}
-          className="ml-2 h-3.5 w-3.5 shrink-0 animate-spin text-primary"
-        />
-      ) : (
-        <span className="ml-2 shrink-0 text-xs text-[#8a8a8a]">
-          {formatRelativeSidebarTime(getProjectTaskTime(task))}
-        </span>
-      )}
-      <div className="ml-1 opacity-0 transition-opacity group-hover/task:opacity-100 focus-within:opacity-100">
-        <ActionMenu
-          ariaLabel={t('workbench.chat_actions', '会话操作')}
-          testId={`project-chat-menu-${task.task_id}`}
-          variant="vertical"
-          items={[
-            {
-              label: t('workbench.archive_chat', '归档会话'),
-              icon: Archive,
-              testId: `archive-chat-${task.task_id}`,
-              onSelect: () => onArchiveTask(task.task_id),
-            },
-            {
-              label: t('workbench.rename_chat', '重命名会话'),
-              icon: Edit3,
-              testId: `rename-chat-${task.task_id}`,
-              onSelect: () => onRenameTask(task),
-            },
-          ]}
-        />
+      <div className="relative ml-2 flex h-7 w-7 shrink-0 items-center justify-center">
+        {running ? (
+          <Loader2
+            data-testid={`project-chat-spinner-${task.task_id}`}
+            className="h-3.5 w-3.5 animate-spin text-primary"
+          />
+        ) : (
+          <span
+            data-testid={`project-chat-time-${task.task_id}`}
+            className="text-xs text-[#8a8a8a] transition-opacity group-hover/task:opacity-0 focus-within:opacity-0"
+          >
+            {formatRelativeSidebarTime(getProjectTaskTime(task))}
+          </span>
+        )}
+        <div
+          data-testid={`project-chat-actions-${task.task_id}`}
+          className="absolute inset-0 opacity-0 transition-opacity group-hover/task:opacity-100 focus-within:opacity-100"
+        >
+          <ActionMenu
+            ariaLabel={t('workbench.chat_actions', '会话操作')}
+            testId={`project-chat-menu-${task.task_id}`}
+            variant="vertical"
+            items={[
+              {
+                label: t('workbench.archive_chat', '归档会话'),
+                icon: Archive,
+                testId: `archive-chat-${task.task_id}`,
+                onSelect: () => onArchiveTask(task.task_id),
+              },
+              {
+                label: t('workbench.rename_chat', '重命名会话'),
+                icon: Edit3,
+                testId: `rename-chat-${task.task_id}`,
+                onSelect: () => onRenameTask(task),
+              },
+            ]}
+          />
+        </div>
       </div>
     </div>
   )
@@ -375,36 +383,44 @@ function RecentTaskRow({
       >
         {task.title}
       </button>
-      {running ? (
-        <Loader2
-          data-testid={`history-task-spinner-${task.id}`}
-          className="h-3.5 w-3.5 shrink-0 animate-spin text-primary"
-        />
-      ) : (
-        <span className="shrink-0 text-xs text-[#8a8a8a]">
-          {formatRelativeSidebarTime(task.updated_at || task.created_at)}
-        </span>
-      )}
-      <div className="opacity-0 transition-opacity group-hover/task:opacity-100 focus-within:opacity-100">
-        <ActionMenu
-          ariaLabel={t('workbench.chat_actions', '会话操作')}
-          testId={`history-task-menu-${task.id}`}
-          variant="vertical"
-          items={[
-            {
-              label: t('workbench.archive_chat', '归档会话'),
-              icon: Archive,
-              testId: `archive-history-chat-${task.id}`,
-              onSelect: () => onArchiveTask(task.id),
-            },
-            {
-              label: t('workbench.rename_chat', '重命名会话'),
-              icon: Edit3,
-              testId: `rename-history-chat-${task.id}`,
-              onSelect: () => onRenameTask(task),
-            },
-          ]}
-        />
+      <div className="relative flex h-7 w-7 shrink-0 items-center justify-center">
+        {running ? (
+          <Loader2
+            data-testid={`history-task-spinner-${task.id}`}
+            className="h-3.5 w-3.5 animate-spin text-primary"
+          />
+        ) : (
+          <span
+            data-testid={`history-task-time-${task.id}`}
+            className="text-xs text-[#8a8a8a] transition-opacity group-hover/task:opacity-0 focus-within:opacity-0"
+          >
+            {formatRelativeSidebarTime(task.updated_at || task.created_at)}
+          </span>
+        )}
+        <div
+          data-testid={`history-task-actions-${task.id}`}
+          className="absolute inset-0 opacity-0 transition-opacity group-hover/task:opacity-100 focus-within:opacity-100"
+        >
+          <ActionMenu
+            ariaLabel={t('workbench.chat_actions', '会话操作')}
+            testId={`history-task-menu-${task.id}`}
+            variant="vertical"
+            items={[
+              {
+                label: t('workbench.archive_chat', '归档会话'),
+                icon: Archive,
+                testId: `archive-history-chat-${task.id}`,
+                onSelect: () => onArchiveTask(task.id),
+              },
+              {
+                label: t('workbench.rename_chat', '重命名会话'),
+                icon: Edit3,
+                testId: `rename-history-chat-${task.id}`,
+                onSelect: () => onRenameTask(task),
+              },
+            ]}
+          />
+        </div>
       </div>
     </div>
   )

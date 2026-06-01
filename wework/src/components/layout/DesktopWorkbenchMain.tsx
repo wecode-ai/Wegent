@@ -1,8 +1,11 @@
 import { Bot, ChevronRight } from 'lucide-react'
 import { useState } from 'react'
 import { ChatInput } from '@/components/chat/ChatInput'
-import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
-import { MessageList } from '@/components/chat/MessageList'
+import type {
+  ProjectChatControls,
+  ProjectWorkControls,
+} from '@/components/chat/ChatInput'
+import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ProjectWithTasks, Task } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
@@ -11,7 +14,8 @@ import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
 import { RightWorkspacePanel } from './workspace-panels/RightWorkspacePanel'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
 
-const DESKTOP_COMPOSER_FRAME_CLASS = 'mx-auto w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100vw-4rem)]'
+const DESKTOP_COMPOSER_FRAME_CLASS =
+  'mx-auto w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100vw-4rem)]'
 const DESKTOP_FLOATING_COMPOSER_CLASS =
   'pointer-events-none absolute bottom-4 left-1/2 z-50 w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100%_-_3rem)] -translate-x-1/2'
 
@@ -75,14 +79,21 @@ export function DesktopWorkbenchMain({
         )}
         {hasConversation ? (
           <div className="relative min-h-0 flex-1 overflow-hidden">
-            <div className="h-full overflow-y-auto pb-40" data-testid="desktop-chat-scroll">
-              <MessageList messages={messages} />
-            </div>
+            <ScrollableMessageArea
+              messages={messages}
+              conversationKey={currentTask?.id ?? null}
+              className="h-full"
+              scrollTestId="desktop-chat-scroll"
+              scrollerClassName="pb-40"
+            />
             <div
               className={DESKTOP_FLOATING_COMPOSER_CLASS}
               data-testid="desktop-floating-composer-layer"
             >
-              <div className="pointer-events-auto" data-testid="desktop-floating-composer-card">
+              <div
+                className="pointer-events-auto"
+                data-testid="desktop-floating-composer-card"
+              >
                 <ChatInput
                   value={input}
                   onChange={onInputChange}
@@ -99,7 +110,10 @@ export function DesktopWorkbenchMain({
           </div>
         ) : (
           <div className="flex flex-1 items-center justify-center px-10">
-            <div className={DESKTOP_COMPOSER_FRAME_CLASS} data-testid="desktop-empty-composer-frame">
+            <div
+              className={DESKTOP_COMPOSER_FRAME_CLASS}
+              data-testid="desktop-empty-composer-frame"
+            >
               <div className="mb-7 flex justify-center">
                 <Bot className="h-7 w-7 text-text-muted" />
               </div>
@@ -132,8 +146,8 @@ export function DesktopWorkbenchMain({
         onCommitEnvironmentChanges={onCommitEnvironmentChanges}
         rightPanelOpen={rightPanelOpen}
         bottomPanelOpen={bottomPanelOpen}
-        onToggleRightPanel={() => setRightPanelOpen(open => !open)}
-        onToggleBottomPanel={() => setBottomPanelOpen(open => !open)}
+        onToggleRightPanel={() => setRightPanelOpen((open) => !open)}
+        onToggleBottomPanel={() => setBottomPanelOpen((open) => !open)}
       />
       {rightPanelOpen && (
         <RightWorkspacePanel

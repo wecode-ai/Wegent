@@ -95,6 +95,7 @@ export interface MobileChatInputControlsProps {
   isModelSelectionRequired: boolean
   isAttachmentReadyToSend: boolean
   taskInputMessage: string
+  hasAttachments?: boolean
   isSubtaskStreaming: boolean
   canQueueMessage?: boolean
   canSendGuidance?: boolean
@@ -169,6 +170,7 @@ export function MobileChatInputControls({
   isModelSelectionRequired,
   isAttachmentReadyToSend,
   taskInputMessage,
+  hasAttachments = false,
   isSubtaskStreaming,
   canQueueMessage = false,
   canSendGuidance = false,
@@ -239,6 +241,7 @@ export function MobileChatInputControls({
       hasNoTeams,
       shouldHideChatInput,
       taskInputMessage,
+      hasAttachments,
       selectedTaskStatus: selectedTaskDetail?.status,
       isSubtaskStreaming,
       isGroupChat: selectedTaskDetail?.is_group_chat,

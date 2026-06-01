@@ -256,6 +256,12 @@ describe('DesktopWorkbenchLayout', () => {
     expect(localStorage.getItem('wework.desktop.sidebar.width')).toBe('360')
   })
 
+  test('uses the selected sidebar width as the default', () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(document.querySelector('aside')).toHaveStyle({ width: '320px' })
+  })
+
   test('collapses and expands the sidebar', async () => {
     render(
       <DesktopWorkbenchLayout
@@ -524,6 +530,14 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('project-item-button'))
     expect(screen.getByText('Implement archive')).toBeInTheDocument()
     expect(screen.getByText('2h')).toBeInTheDocument()
+    expect(screen.getByTestId('project-chat-time-11')).toHaveClass(
+      'group-hover/task:opacity-0',
+    )
+    expect(screen.getByTestId('project-chat-actions-11')).toHaveClass(
+      'absolute',
+      'opacity-0',
+      'group-hover/task:opacity-100',
+    )
     expect(screen.getByTestId('project-chat-row-11')).toHaveClass('bg-white')
     await userEvent.click(screen.getByTestId('project-chat-button'))
     expect(baseProps.onOpenTask).toHaveBeenCalledWith(11, 1)
@@ -578,6 +592,14 @@ describe('DesktopWorkbenchLayout', () => {
     expect(rows[1]).toHaveTextContent('Older session')
     expect(screen.queryByText('Project session')).not.toBeInTheDocument()
     expect(screen.getByText('1h')).toBeInTheDocument()
+    expect(screen.getByTestId('history-task-time-5')).toHaveClass(
+      'group-hover/task:opacity-0',
+    )
+    expect(screen.getByTestId('history-task-actions-5')).toHaveClass(
+      'absolute',
+      'opacity-0',
+      'group-hover/task:opacity-100',
+    )
     await userEvent.click(rows[0])
     expect(baseProps.onOpenTask).toHaveBeenCalledWith(5, undefined)
 

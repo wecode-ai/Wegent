@@ -112,5 +112,18 @@ export function ChatInput({
     )
   }
 
-  return <CompactChatComposer {...composerProps} />
+  return (
+    <CompactChatComposer
+      {...composerProps}
+      attachments={controls.attachments}
+      uploadingFiles={controls.uploadingFiles}
+      attachmentErrors={controls.errors}
+      onImageSelect={files => {
+        void controls.handleFileSelect(files)
+      }}
+      onRemoveAttachment={attachmentId => {
+        void controls.removeAttachment(attachmentId)
+      }}
+    />
+  )
 }

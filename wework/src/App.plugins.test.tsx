@@ -5,6 +5,10 @@ import type { WorkbenchContextValue } from '@/features/workbench/WorkbenchProvid
 import './i18n'
 import App from './App'
 
+const mockViewport = vi.hoisted(() => ({
+  isMobile: false,
+}))
+
 const workbenchValue: WorkbenchContextValue = {
   state: {
     user: { id: 1, user_name: 'alice', email: 'alice@example.com' },
@@ -148,7 +152,7 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
 }))
 
 vi.mock('@/hooks/useIsMobile', () => ({
-  useIsMobile: () => false,
+  useIsMobile: () => mockViewport.isMobile,
 }))
 
 function mockSystemSkillsFetch() {
@@ -411,6 +415,7 @@ function mockSystemSkillsFetch() {
 
 describe('App plugins route', () => {
   beforeEach(() => {
+    mockViewport.isMobile = false
     mockSystemSkillsFetch()
   })
 
@@ -443,6 +448,58 @@ describe('App plugins route', () => {
       '/api/system-skills?category=system&page=1&pageSize=20',
       expect.objectContaining({ method: 'GET' }),
     )
+  })
+
+  test('collapses and expands the desktop sidebar on plugin routes', async () => {
+    window.history.pushState({}, '', '/plugins')
+
+    render(<App />)
+
+    expect(await screen.findByText('wehot')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
+
+    expect(screen.queryByTestId('plugins-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('expand-sidebar-button')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('expand-sidebar-button'))
+    expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
+  })
+
+  test('collapses and expands the desktop sidebar on plugin management route', async () => {
+    window.history.pushState({}, '', '/plugins/manage')
+
+    render(<App />)
+
+    expect(await screen.findByText('Custom Docs MCP')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
+
+    expect(screen.queryByTestId('plugins-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('expand-sidebar-button')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('expand-sidebar-button'))
+    expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
+  })
+
+  test('uses the mobile shell for plugins route at the shared mobile breakpoint', async () => {
+    mockViewport.isMobile = true
+    window.history.pushState({}, '', '/plugins')
+
+    render(<App />)
+
+    expect(screen.getByTestId('open-mobile-drawer-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('collapse-sidebar-button')).not.toBeInTheDocument()
+    expect(await screen.findByText('wehot')).toBeInTheDocument()
+  })
+
+  test('uses the mobile shell for plugin management route at the shared mobile breakpoint', async () => {
+    mockViewport.isMobile = true
+    window.history.pushState({}, '', '/plugins/manage')
+
+    render(<App />)
+
+    expect(screen.getByTestId('open-mobile-drawer-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('collapse-sidebar-button')).not.toBeInTheDocument()
+    expect(await screen.findByText('Custom Docs MCP')).toBeInTheDocument()
   })
 
   test('switches to the MCP catalog from the plugins page', async () => {

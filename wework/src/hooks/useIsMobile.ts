@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react'
-
-const MOBILE_BREAKPOINT = 768
+import { isMobileViewport, mobileMediaQuery } from '@/lib/responsive'
 
 export function useIsMobile(): boolean {
   const [isMobile, setIsMobile] = useState(
-    () => window.innerWidth < MOBILE_BREAKPOINT
+    () => isMobileViewport(window.innerWidth)
   )
 
   useEffect(() => {
-    const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`)
+    if (typeof window.matchMedia !== 'function') return
+
+    const mql = window.matchMedia(mobileMediaQuery())
     const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches)
     mql.addEventListener('change', handler)
     return () => mql.removeEventListener('change', handler)

@@ -36,8 +36,8 @@ export function SettingsResourceGuide() {
             <h2 id="settings-resource-guide-title" className="text-sm font-semibold">
               {translateWithFallback(
                 'resourceGuide.title',
-                '资源管理已移到资源库',
-                'Resource management moved to Resource Library'
+                '智能体管理已移到资源库',
+                'Agent management moved to Resource Library'
               )}
             </h2>
             <p className="mt-1 text-sm text-text-secondary">

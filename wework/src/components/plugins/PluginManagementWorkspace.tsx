@@ -525,8 +525,8 @@ export function PluginManagementWorkspace() {
   }
 
   return (
-    <main className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-base px-7 py-4 text-text-primary">
-      <header className="flex items-start justify-between">
+    <main className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-base px-4 pb-5 pt-20 text-text-primary sm:px-7 sm:py-4">
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <nav
           className="flex h-10 items-center gap-3 text-sm font-semibold"
           aria-label="breadcrumb"
@@ -542,7 +542,7 @@ export function PluginManagementWorkspace() {
           <span>{t('workbench.plugins_manage', '管理')}</span>
         </nav>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 overflow-x-auto">
           <PluginCreateMenu
             isOpen={isCreateMenuOpen}
             buttonTestId="plugin-management-create-button"
@@ -566,9 +566,9 @@ export function PluginManagementWorkspace() {
         </div>
       </header>
 
-      <section className="mx-auto mt-16 flex w-full max-w-[940px] flex-col gap-9">
-        <div className="flex items-center justify-between gap-8">
-          <div className="flex items-center gap-4" role="tablist">
+      <section className="mx-auto mt-8 flex w-full max-w-[940px] flex-col gap-7 sm:mt-16 sm:gap-9">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-8">
+          <div className="flex items-center gap-2 overflow-x-auto sm:gap-4" role="tablist">
             {tabs.map((tab) => {
               const count =
                 tab.id === 'mcp'
@@ -592,7 +592,7 @@ export function PluginManagementWorkspace() {
             })}
           </div>
 
-          <label className="relative w-[340px] shrink-0">
+          <label className="relative w-full shrink-0 sm:w-[340px]">
             <span className="sr-only">
               {t('workbench.plugins_search_plugins', '搜索插件')}
             </span>
