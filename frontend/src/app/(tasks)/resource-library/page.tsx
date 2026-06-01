@@ -12,6 +12,7 @@ import '@/features/common/scrollbar.css'
 import { paths } from '@/config/paths'
 import ResourceLibraryPage from '@/features/resource-library/ResourceLibraryPage'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
+import { useTranslation } from '@/hooks/useTranslation'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
   CollapsedSidebarButtons,
@@ -24,6 +25,7 @@ import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 export default function Page() {
   const router = useRouter()
   const isMobile = useIsMobile()
+  const { t } = useTranslation('resource-library')
   const { clearAllStreams } = useChatStreamContext()
   const { setSelectedTask } = useTaskContext()
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
@@ -69,6 +71,7 @@ export default function Page() {
       <div className="flex min-w-0 flex-1 flex-col">
         <TopNavigation
           variant="with-sidebar"
+          title={t('title')}
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           isSidebarCollapsed={isCollapsed}
         />
