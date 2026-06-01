@@ -251,7 +251,7 @@ dependencies:
 CREATE TABLE skill_binaries (
     id INT PRIMARY KEY AUTO_INCREMENT,
     kind_id INT NOT NULL,              -- 引用 kinds.id
-    binary_data LONGBLOB NOT NULL,     -- ZIP 包内容
+    binary_data MEDIUMBLOB NOT NULL,   -- ZIP 包内容，支持 10MB 上传限制
     file_size INT NOT NULL,            -- 文件大小（字节）
     file_hash VARCHAR(64) NOT NULL,    -- SHA256 哈希
     created_at DATETIME,

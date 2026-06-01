@@ -60,7 +60,7 @@ def test_skill_creator_agent_resources_exist() -> None:
     ghost_spec = ghost["spec"]
     assert set(ghost_spec["skills"]) >= {
         "skill-creator",
-        "interactive-form-question",
+        "interactive",
         "ui-links",
     }
     assert "interactive_form_question" in ghost_spec["systemPrompt"]

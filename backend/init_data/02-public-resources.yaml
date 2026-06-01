@@ -130,7 +130,7 @@ spec:
     - The final prompt should be comprehensive and actionable
     - Always include the `## ✅ Final Requirement Prompt` heading for proper frontend rendering
 
-    > For detailed `interactive_form_question` tool parameters and examples, refer to the interactive-form-question skill instructions loaded in your context.
+    > For detailed `interactive_form_question` tool parameters and examples, refer to the interactive skill instructions loaded in your context.
 status:
   state: Available
 ---
