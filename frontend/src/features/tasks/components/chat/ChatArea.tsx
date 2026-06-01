@@ -636,18 +636,9 @@ function ChatAreaContent({
       return true
     }
 
-    // In inputAlwaysAtBottom mode (knowledge notebook), only consider actual messages
-    // not just the presence of selectedTaskDetail
-    if (inputAlwaysAtBottom) {
-      return Boolean(
-        streamHandlers.hasPendingUserMessage ||
-        streamHandlers.isStreaming ||
-        hasNewTaskStream ||
-        hasLocalPending ||
-        hasUnifiedMessages
-      )
-    }
-
+    // Fallback: consider task selected (hasSelectedTask) as having messages to avoid
+    // brief hasMessages=false gap between task creation and state machine message population,
+    // which would cause empty-state content (e.g. SummaryCard) to flash.
     return Boolean(
       hasSelectedTask ||
       streamHandlers.hasPendingUserMessage ||
@@ -663,7 +654,6 @@ function ChatAreaContent({
     streamHandlers.pendingTaskId,
     streamHandlers.localPendingMessage,
     taskState?.messages,
-    inputAlwaysAtBottom,
   ])
 
   const pipelineNextStepMessages = useMemo<PipelineNextStepMessage[]>(() => {
@@ -775,7 +765,8 @@ function ChatAreaContent({
   const sendOrConfirmPendingReplacement = useCallback(
     async (message: string) => {
       const trimmedMessage = message.trim()
-      if (!trimmedMessage && !chatState.shouldHideChatInput) return
+      const hasAttachments = chatState.attachmentState.attachments.length > 0
+      if (!trimmedMessage && !hasAttachments && !chatState.shouldHideChatInput) return
 
       if (shouldConfirmPendingReplacement) {
         setPendingReplacementMessage(trimmedMessage)
@@ -785,11 +776,16 @@ function ChatAreaContent({
 
       await streamHandlers.handleSendMessage(trimmedMessage)
     },
-    [chatState.shouldHideChatInput, shouldConfirmPendingReplacement, streamHandlers]
+    [
+      chatState.attachmentState.attachments.length,
+      chatState.shouldHideChatInput,
+      shouldConfirmPendingReplacement,
+      streamHandlers,
+    ]
   )
 
   const handleConfirmPendingReplacement = useCallback(async () => {
-    if (!pendingReplacementMessage || isPendingReplacementConfirming) return
+    if (pendingReplacementMessage === null || isPendingReplacementConfirming) return
 
     setIsPendingReplacementConfirming(true)
     try {

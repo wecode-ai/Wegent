@@ -214,7 +214,7 @@ export function ChatInputControls({
   onCorrectionModeToggle,
   selectedContexts,
   setSelectedContexts,
-  attachmentState: _attachmentState,
+  attachmentState,
   onFileSelect,
   onAttachmentRemove: _onAttachmentRemove,
   isLoading,
@@ -292,6 +292,7 @@ export function ChatInputControls({
       hasNoTeams,
       shouldHideChatInput,
       taskInputMessage,
+      hasAttachments: attachmentState.attachments.length > 0,
       canQueueMessage,
       canCancelTask,
     })
@@ -417,6 +418,7 @@ export function ChatInputControls({
         isModelSelectionRequired={isModelSelectionRequired}
         isAttachmentReadyToSend={isAttachmentReadyToSend}
         taskInputMessage={taskInputMessage}
+        hasAttachments={attachmentState.attachments.length > 0}
         canQueueMessage={canQueueMessage}
         canSendGuidance={canSendGuidance}
         canCancelTask={canCancelTask}

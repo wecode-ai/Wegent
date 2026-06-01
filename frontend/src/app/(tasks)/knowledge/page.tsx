@@ -13,6 +13,7 @@ import {
   ResizableSidebar,
   CollapsedSidebarButtons,
 } from '@/features/tasks/components/sidebar'
+import { TaskParamSync } from '@/features/tasks/components/params'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 import { GithubStarButton } from '@/features/layout/GithubStarButton'
@@ -221,6 +222,11 @@ function KnowledgePageContent() {
 
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
+      {/* TaskParamSync handles URL taskId parameter synchronization with TaskContext */}
+      <Suspense>
+        <TaskParamSync />
+      </Suspense>
+
       {/* Collapsed sidebar floating buttons */}
       {isCollapsed && !isMobile && (
         <CollapsedSidebarButtons onExpand={handleToggleCollapsed} onNewTask={handleNewTask} />

@@ -84,7 +84,7 @@ jest.mock('@/hooks/useTranslation', () => ({
         'navigation.apiKeys': 'API 密钥',
         'navigation.groupManager': '组管理',
         'pet:title': '我的宠物',
-        'resourceGuide.title': '资源管理已移到资源库',
+        'resourceGuide.title': '智能体管理已移到资源库',
         'resourceGuide.description': '智能体、模型、执行器、技能和检索器现在在资源库管理。',
         'resourceGuide.action': '前往资源库',
       }
@@ -98,7 +98,7 @@ describe('Settings resource guide', () => {
   it('guides users from the old settings page to resource library management', async () => {
     render(<Page />)
 
-    expect(await screen.findByText('资源管理已移到资源库')).toBeInTheDocument()
+    expect(await screen.findByText('智能体管理已移到资源库')).toBeInTheDocument()
     expect(
       screen.getByText('智能体、模型、执行器、技能和检索器现在在资源库管理。')
     ).toBeInTheDocument()

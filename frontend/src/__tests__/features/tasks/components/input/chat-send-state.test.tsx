@@ -261,6 +261,29 @@ describe('getChatSendState', () => {
     })
   })
 
+  it('allows normal send when the input only has ready attachments', () => {
+    expect(
+      getChatSendState({
+        isLoading: false,
+        isStreaming: false,
+        isAwaitingResponseStart: false,
+        isStopping: false,
+        isModelSelectionRequired: false,
+        isAttachmentReadyToSend: true,
+        hasNoTeams: false,
+        shouldHideChatInput: false,
+        taskInputMessage: '',
+        hasAttachments: true,
+        canQueueMessage: false,
+      })
+    ).toEqual({
+      primaryAction: 'send',
+      isPrimaryDisabled: false,
+      showStopAction: false,
+      showPendingAction: false,
+    })
+  })
+
   it('uses normal send when runtime cannot cancel the task', () => {
     expect(
       getChatSendState({

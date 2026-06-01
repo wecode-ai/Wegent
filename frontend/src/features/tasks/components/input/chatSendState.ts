@@ -14,6 +14,7 @@ interface ChatSendStateInput {
   hasNoTeams: boolean
   shouldHideChatInput: boolean
   taskInputMessage: string
+  hasAttachments?: boolean
   canQueueMessage?: boolean
   canCancelTask?: boolean
 }
@@ -27,13 +28,14 @@ export interface ChatSendState {
 
 export function getChatSendState(input: ChatSendStateInput): ChatSendState {
   const hasTextContent = input.taskInputMessage.trim().length > 0
-  const hasMessage = input.shouldHideChatInput || hasTextContent
+  const hasUserProvidedContent = hasTextContent || Boolean(input.hasAttachments)
+  const hasSendableContent = input.shouldHideChatInput || hasUserProvidedContent
   const baseDisabled =
     input.isLoading ||
     input.isModelSelectionRequired ||
     !input.isAttachmentReadyToSend ||
     input.hasNoTeams ||
-    !hasMessage
+    !hasSendableContent
   const isActiveStream = input.isStreaming || input.isAwaitingResponseStart || input.isStopping
 
   if (input.isStopping) {
@@ -45,7 +47,7 @@ export function getChatSendState(input: ChatSendStateInput): ChatSendState {
     }
   }
 
-  if (isActiveStream && input.canQueueMessage && hasTextContent && !baseDisabled) {
+  if (isActiveStream && input.canQueueMessage && hasUserProvidedContent && !baseDisabled) {
     return {
       primaryAction: 'queue',
       isPrimaryDisabled: false,

@@ -93,6 +93,7 @@ export interface MobileChatInputControlsProps {
   isModelSelectionRequired: boolean
   isAttachmentReadyToSend: boolean
   taskInputMessage: string
+  hasAttachments?: boolean
   canQueueMessage?: boolean
   canSendGuidance?: boolean
   canCancelTask?: boolean
@@ -160,6 +161,7 @@ export function MobileChatInputControls({
   isModelSelectionRequired,
   isAttachmentReadyToSend,
   taskInputMessage,
+  hasAttachments = false,
   canQueueMessage = false,
   canSendGuidance = false,
   canCancelTask,
@@ -220,6 +222,7 @@ export function MobileChatInputControls({
       hasNoTeams,
       shouldHideChatInput,
       taskInputMessage,
+      hasAttachments,
       canQueueMessage,
       canCancelTask,
     })

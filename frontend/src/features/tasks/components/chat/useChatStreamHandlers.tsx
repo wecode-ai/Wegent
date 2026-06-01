@@ -5,6 +5,7 @@
 import { useCallback, useRef, useMemo } from 'react'
 import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import { useTaskContext } from '../../contexts/taskContext'
+import type { Task } from '@/types/api'
 import { useChatStreamContext } from '../../contexts/chatStreamContext'
 import { useSocket } from '@/contexts/SocketContext'
 import { useDevices } from '@/contexts/DeviceContext'
@@ -42,6 +43,10 @@ import type {
 } from '@/types/api'
 import type { ContextItem } from '@/types/context'
 import type { SkillRef } from '../../hooks/useSkillSelector'
+
+function isVirtualKnowledgeBasePath(path: string): boolean {
+  return path.startsWith('/knowledge/') && !path.startsWith('/knowledge/document/')
+}
 
 export interface UseChatStreamHandlersOptions {
   // Team and model
@@ -239,8 +244,30 @@ export function useChatStreamHandlers({
   const searchParams = useSearchParams()
   const pathname = usePathname()
 
-  const { selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, markTaskAsViewed } =
-    useTaskContext()
+  const {
+    selectedTaskDetail,
+    setSelectedTask,
+    refreshTasks,
+    refreshSelectedTaskDetail,
+    markTaskAsViewed,
+  } = useTaskContext()
+
+  // Navigate to a knowledge task without triggering Next.js re-renders.
+  // Uses setSelectedTask + replaceState to avoid the router.push cascade
+  // that causes selectedTaskDetail=null and hasMessages flip (UI flickering).
+  const navigateToKnowledgeTask = useCallback(
+    (taskId: number, kbId: number) => {
+      setSelectedTask({ id: taskId } as Task)
+      const params = new URLSearchParams(Array.from(searchParams.entries()))
+      params.set('taskId', String(taskId))
+      const currentPath = window.location.pathname || pathname || ''
+      if (!isVirtualKnowledgeBasePath(currentPath)) {
+        params.set('kb', String(kbId))
+      }
+      window.history.replaceState({}, '', `?${params.toString()}`)
+    },
+    [setSelectedTask, searchParams, pathname]
+  )
 
   const {
     sendMessage: contextSendMessage,
@@ -628,8 +655,8 @@ export function useChatStreamHandlers({
           }
 
           if (completedTaskId && !selectedTaskDetail?.id) {
-            if (taskType === 'knowledge' && knowledgeBaseId && pathname === '/knowledge') {
-              router.push(`/knowledge/document/${knowledgeBaseId}?taskId=${completedTaskId}`)
+            if (taskType === 'knowledge' && knowledgeBaseId) {
+              navigateToKnowledgeTask(completedTaskId, knowledgeBaseId)
             } else if (taskType === 'task' && !pathname?.startsWith('/devices')) {
               const params = new URLSearchParams()
               params.set('taskId', String(completedTaskId))
@@ -692,6 +719,7 @@ export function useChatStreamHandlers({
       pathname,
       router,
       searchParams,
+      navigateToKnowledgeTask,
       refreshTasks,
       projectId,
       refreshProjects,
@@ -921,8 +949,10 @@ export function useChatStreamHandlers({
   // Core message sending logic
   const handleSendMessage = useCallback(
     async (overrideMessage?: string) => {
-      const message = overrideMessage?.trim() || taskInputMessage.trim()
-      if (!message && !shouldHideChatInput) return
+      const message =
+        overrideMessage !== undefined ? overrideMessage.trim() : taskInputMessage.trim()
+      const hasAttachments = attachments.length > 0
+      if (!message && !hasAttachments && !shouldHideChatInput) return
 
       if (!isAttachmentReadyToSend) {
         toast({
@@ -1010,6 +1040,7 @@ export function useChatStreamHandlers({
     },
     [
       taskInputMessage,
+      attachments.length,
       shouldHideChatInput,
       isAttachmentReadyToSend,
       toast,
@@ -1302,9 +1333,13 @@ export function useChatStreamHandlers({
               }
 
               if (completedTaskId && !selectedTaskDetail?.id) {
-                const params = new URLSearchParams(Array.from(searchParams.entries()))
-                params.set('taskId', String(completedTaskId))
-                router.push(`?${params.toString()}`)
+                if (taskType === 'knowledge' && knowledgeBaseId) {
+                  navigateToKnowledgeTask(completedTaskId, knowledgeBaseId)
+                } else {
+                  const params = new URLSearchParams(Array.from(searchParams.entries()))
+                  params.set('taskId', String(completedTaskId))
+                  router.push(`?${params.toString()}`)
+                }
                 refreshTasks()
                 if (projectId) {
                   refreshProjects()
@@ -1373,6 +1408,7 @@ export function useChatStreamHandlers({
       effectiveRequiresWorkspace,
       projectId,
       refreshProjects,
+      navigateToKnowledgeTask,
     ]
   )
 
