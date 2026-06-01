@@ -1,6 +1,7 @@
 {
   "title": "自动化",
   "subtitle": "AI 智能体的动态与执行记录",
+  "automation_hint": "在这里创建定时任务、事件触发任务或自动化订阅，让智能体按计划执行工作。",
   "tab_timeline": "动态",
   "notification_level": {
     "silent": "静默",
