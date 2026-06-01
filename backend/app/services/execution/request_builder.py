@@ -30,6 +30,10 @@ from app.services.mcp_provider_registry import (
     list_mcp_providers,
 )
 from app.services.readers import KindType, kindReader
+from app.services.skill_binding_service import (
+    SkillBindingContext,
+    skill_binding_service,
+)
 from app.services.skill_resolution import find_skill_by_name, find_skill_by_ref
 from app.services.user_mcp_service import user_mcp_service
 from shared.models import ExecutionRequest
@@ -214,6 +218,17 @@ class TaskRequestBuilder:
         extra_available_skills = self._inject_subscription_manager_skill(
             is_subscription=is_subscription,
         )
+        binding_context = self._build_skill_binding_context(task=task, team=team)
+        user_default_skill_refs = skill_binding_service.list_user_default_skill_refs(
+            self.db,
+            user.id,
+            context=binding_context,
+        )
+        for skill_ref in user_default_skill_refs:
+            if skill_ref.get("force_preload"):
+                effective_preload_skills.append(skill_ref)
+            else:
+                extra_available_skills.append(skill_ref)
 
         user_preload_skills = None
         if effective_preload_skills:
@@ -480,6 +495,25 @@ class TaskRequestBuilder:
         )
 
         return request
+
+    def _build_skill_binding_context(
+        self,
+        *,
+        task: TaskResource,
+        team: Kind,
+    ) -> SkillBindingContext:
+        """Build runtime context for filtering user automatic Skill bindings."""
+        return SkillBindingContext(
+            mode=self._derive_task_mode(task),
+            agent_id=team.id,
+            project_id=getattr(task, "project_id", None),
+        )
+
+    def _derive_task_mode(self, task: TaskResource) -> str:
+        payload = task.json if isinstance(task.json, dict) else {}
+        metadata = payload.get("metadata", {})
+        labels = metadata.get("labels", {}) if isinstance(metadata, dict) else {}
+        return str(labels.get("taskType") or labels.get("type") or "chat")
 
     # =========================================================================
     # Bot Resolution (from ChatConfigBuilder)

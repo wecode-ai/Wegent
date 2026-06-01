@@ -695,10 +695,6 @@ class SkillSpec(BaseModel):
     """Skill specification"""
 
     description: str  # Trigger condition description (from SKILL.md YAML frontmatter)
-    enabled: bool = Field(
-        True,
-        description="Whether this skill is globally enabled for the owning user.",
-    )
     displayName: Optional[str] = (
         None  # Friendly display name shown when tool is being used (e.g., "正在渲染图表")
     )
