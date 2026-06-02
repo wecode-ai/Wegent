@@ -83,6 +83,7 @@ MYSQL_PASSWORD=your_password
 
 # Redis 配置
 REDIS_PASSWORD=your_redis_password  # 可选
+REDIS_PROTOCOL=2  # 默认使用 RESP2，兼容不支持 HELLO 的 Redis 兼容服务
 
 # 后端配置
 PASSWORD_KEY=your-password-key-here

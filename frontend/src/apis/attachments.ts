@@ -861,7 +861,7 @@ function uploadWeiboChunk(
       filelength: String(params.fileLength),
       filecheck: params.fileCheck,
     })
-    const url = `https://i.fileplatform.api.weibo.com/2/multimedia/upload.json?${query.toString()}`
+    const url = `https://fileplatform.api.weibo.com/2/multimedia/upload.json?${query.toString()}`
 
     // Handle abort signal
     const handleAbort = () => {

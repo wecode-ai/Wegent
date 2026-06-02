@@ -228,6 +228,7 @@ services:
       - TASK_API_DOMAIN=${TASK_API_DOMAIN:-http://backend:8000}
       - EXECUTOR_MANAGER_EXTERNAL_URL=${EXECUTOR_MANAGER_EXTERNAL_URL:-http://executor_manager:8001}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - REDIS_PROTOCOL=${REDIS_PROTOCOL:-2}
       - MAX_CONCURRENT_TASKS=${EXECUTOR_MAX_CONCURRENT_TASKS:-30}
       - CALLBACK_HOST=${EXECUTOR_CALLBACK_HOST:-http://executor_manager:8001}
       - NETWORK=${EXECUTOR_NETWORK:-wegent-network}

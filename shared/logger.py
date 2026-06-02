@@ -73,6 +73,19 @@ class NonBlockingStreamHandler(logging.StreamHandler):
             pass
 
 
+def _stop_queue_listener_safely(listener: QueueListener) -> None:
+    """Stop a QueueListener once, ignoring duplicate shutdown calls."""
+    if getattr(listener, "_thread", None) is None:
+        return
+
+    try:
+        listener.stop()
+    except AttributeError as exc:
+        if getattr(listener, "_thread", None) is None:
+            return
+        raise
+
+
 def setup_logger(
     name,
     level=logging.INFO,
@@ -144,7 +157,7 @@ def setup_logger(
 
             listener = QueueListener(log_queue, listener_handler)
             listener.start()
-            atexit.register(listener.stop)
+            atexit.register(_stop_queue_listener_safely, listener)
 
             logger.addHandler(queue_handler)
             logger._queue_listener = listener
