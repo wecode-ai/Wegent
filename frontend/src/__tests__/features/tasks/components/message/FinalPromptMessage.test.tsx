@@ -57,8 +57,8 @@ jest.mock('@/components/common/SmartUrlRenderer', () => ({
   createSmartMarkdownComponents: () => ({}),
 }))
 
-jest.mock('@/features/tasks/contexts/chatStreamContext', () => ({
-  useOptionalChatStreamContext: () => null,
+jest.mock('@/features/tasks/session/TaskSession', () => ({
+  useOptionalTaskSession: () => null,
 }))
 
 describe('FinalPromptMessage', () => {

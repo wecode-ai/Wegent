@@ -19,15 +19,13 @@ import {
   ResizableSidebar,
   TaskSidebar,
 } from '@/features/tasks/components/sidebar'
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 
 export default function Page() {
   const router = useRouter()
   const isMobile = useIsMobile()
   const { t } = useTranslation('resource-library')
-  const { clearAllStreams } = useChatStreamContext()
-  const { setSelectedTask } = useTaskContext()
+  const { selectTask } = useTaskSession()
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
   const [isCollapsed, setIsCollapsed] = useState(false)
 
@@ -47,8 +45,7 @@ export default function Page() {
   }
 
   const handleNewTask = () => {
-    setSelectedTask(null)
-    clearAllStreams()
+    selectTask(null)
     router.replace(paths.chat.getHref())
   }
 

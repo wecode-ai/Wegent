@@ -7,9 +7,8 @@
 import { FolderOpen, ChevronDown } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useProjectContext } from '../contexts/projectContext'
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
-import type { ProjectWithTasks, Task } from '@/types/api'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
+import type { ProjectWithTasks } from '@/types/api'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,16 +24,14 @@ interface ProjectSelectorTabProps {
 export function ProjectSelectorTab({ projectId, disabled }: ProjectSelectorTabProps) {
   const router = useRouter()
   const { projects } = useProjectContext()
-  const { clearAllStreams } = useChatStreamContext()
-  const { setSelectedTask } = useTaskContext()
+  const { selectTask } = useTaskSession()
 
   const currentProject = projects.find(p => p.id === projectId)
   const workspaceProjects = projects.filter(p => p.config?.mode === 'workspace')
 
   const handleSwitchProject = (project: ProjectWithTasks) => {
     if (project.id === projectId) return
-    clearAllStreams()
-    setSelectedTask(null as unknown as Task)
+    selectTask(null)
     const params = new URLSearchParams()
     params.set('projectId', String(project.id))
     const deviceId = project.config?.execution?.deviceId
