@@ -85,9 +85,7 @@ describe('updateMyDefaultSkillBindingExceptions', () => {
     })
     global.fetch = fetchMock as typeof fetch
 
-    const result = await updateMyDefaultSkillBindingExceptions(7, [
-      { type: 'mode', value: 'code' },
-    ])
+    const result = await updateMyDefaultSkillBindingExceptions(7, [{ type: 'mode', value: 'code' }])
 
     expect(fetchMock).toHaveBeenCalledWith(
       'http://localhost:8000/api/v1/kinds/skills/7/bindings/me',

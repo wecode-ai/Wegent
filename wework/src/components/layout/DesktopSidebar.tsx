@@ -88,7 +88,7 @@ function SidebarButton({
       data-testid={testId}
       onClick={onClick}
       className={[
-        'flex h-8 w-full items-center gap-3 rounded-md px-3 text-left text-sm font-medium',
+        'flex h-8 w-full items-center gap-3 rounded-md px-3 text-left text-[13px] font-medium leading-[18px]',
         selected ? 'bg-[#cfd1d4] text-[#222]' : 'text-[#333] hover:bg-white/70',
       ].join(' ')}
     >
@@ -127,7 +127,9 @@ function SidebarSectionHeader({
         aria-expanded={expanded}
         className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md text-left"
       >
-        <span className="truncate text-sm font-semibold text-[#8a8a8a]">{title}</span>
+        <span className="truncate text-[13px] font-semibold leading-[18px] text-[#8a8a8a]">
+          {title}
+        </span>
         <ToggleIcon
           data-testid={iconTestId}
           className={`h-4 w-4 shrink-0 text-[#8a8a8a] transition-opacity ${iconVisibilityClass}`}
@@ -204,7 +206,7 @@ function ProjectTaskRow({
     <div
       data-testid={`project-chat-row-${task.task_id}`}
       className={[
-        'group/task ml-5 flex h-8 items-center rounded-md pl-3 pr-1 text-sm',
+        'group/task ml-5 flex h-8 items-center rounded-md pl-3 pr-1 text-[13px] leading-[18px]',
         selected ? 'bg-white text-text-primary' : 'text-text-secondary hover:bg-white/70',
       ].join(' ')}
     >
@@ -300,7 +302,7 @@ function ProjectItem({
     <div data-testid="project-item" className="space-y-0.5">
       <div
         data-testid={`project-row-${project.id}`}
-        className="group/project flex h-9 items-center gap-1 rounded-md pl-3 pr-1 text-sm text-text-secondary hover:bg-white/70"
+        className="group/project flex h-8 items-center gap-1 rounded-md pl-3 pr-1 text-[13px] leading-[18px] text-text-secondary hover:bg-white/70"
       >
         <button
           type="button"
@@ -416,7 +418,7 @@ function RecentTaskRow({
     <div
       data-testid={`history-task-row-${task.id}`}
       className={[
-        'group/task flex h-9 items-center gap-2 rounded-md pl-3 pr-1 text-sm',
+        'group/task flex h-8 items-center gap-2 rounded-md pl-3 pr-1 text-[13px] leading-[18px]',
         selected ? 'bg-white text-text-primary' : 'text-text-secondary hover:bg-white/70',
       ].join(' ')}
     >
@@ -579,10 +581,10 @@ export function DesktopSidebar({
 
   return (
     <aside
-      className="relative flex shrink-0 flex-col bg-[#d9dadd] px-4 py-4"
+      className="relative flex shrink-0 flex-col border-r border-white/45 bg-[#e5e5e7]/70 px-4 py-4 shadow-[inset_-1px_0_0_rgba(255,255,255,0.28)] backdrop-blur-xl backdrop-saturate-150"
       style={{ width: sidebarWidth }}
     >
-      <div className="mb-1 flex justify-end">
+      <div className="-mt-3 mb-1 flex justify-end">
         <button
           type="button"
           data-testid="collapse-sidebar-button"
@@ -625,7 +627,7 @@ export function DesktopSidebar({
 
       <div
         data-testid="sidebar-worklists-scroll"
-        className="mt-8 min-h-0 flex-1 overflow-y-auto pr-1"
+        className="scrollbar-none mt-8 min-h-0 flex-1 overflow-y-auto"
       >
         <section>
           <SidebarSectionHeader
@@ -688,7 +690,7 @@ export function DesktopSidebar({
                   onOpenTask={onOpenTask}
                   onArchiveTask={onArchiveTask}
                   onRenameTask={task =>
-                    setRenamingTask({ id: task.task_id, title: getProjectTaskTitle(task) })
+                  setRenamingTask({ id: task.task_id, title: getProjectTaskTitle(task) })
                   }
                 />
               ))}
@@ -751,7 +753,7 @@ export function DesktopSidebar({
           type="button"
           data-testid="settings-button"
           onClick={() => setSettingsMenuOpen(open => !open)}
-          className="flex h-10 shrink-0 items-center gap-3 rounded-md px-3 text-sm font-medium text-[#333] hover:bg-white/70"
+          className="flex h-9 shrink-0 items-center gap-3 rounded-md px-3 text-[13px] font-medium leading-[18px] text-[#333] hover:bg-white/70"
           aria-expanded={settingsMenuOpen}
         >
           <Settings className="h-4 w-4" />

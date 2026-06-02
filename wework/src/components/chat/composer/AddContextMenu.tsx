@@ -45,15 +45,15 @@ export function AddContextMenu({ disabled, onFileSelect }: AddContextMenuProps) 
       {open && (
         <div
           data-testid="add-context-menu"
-          className="absolute bottom-[52px] left-0 z-40 w-80 overflow-hidden rounded-2xl border border-border bg-base p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
+          className="absolute bottom-[44px] left-0 z-40 w-60 overflow-hidden rounded-xl border border-border bg-base p-1.5 shadow-[0_12px_32px_rgba(0,0,0,0.12)]"
         >
           <button
             type="button"
             data-testid="attach-files-button"
             onClick={() => fileInputRef.current?.click()}
-            className="flex h-12 w-full items-center gap-3 rounded-xl px-4 text-left text-base font-semibold text-text-primary hover:bg-muted"
+            className="flex h-9 w-full items-center gap-2.5 rounded-lg px-3 text-left text-[13px] font-medium leading-[18px] text-text-primary hover:bg-muted"
           >
-            <Paperclip className="h-5 w-5 shrink-0 text-text-secondary" />
+            <Paperclip className="h-[18px] w-[18px] shrink-0 text-text-secondary" />
             <span>{t('workbench.add_photos_files', '添加照片和文件')}</span>
           </button>
         </div>
@@ -63,11 +63,11 @@ export function AddContextMenu({ disabled, onFileSelect }: AddContextMenuProps) 
         data-testid="add-context-button"
         onClick={() => !disabled && setOpen(current => !current)}
         disabled={disabled}
-        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full p-0 text-text-secondary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full p-0 text-text-secondary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
         aria-expanded={open}
         aria-label={t('workbench.add_context', '添加上下文')}
       >
-        <Plus className="h-6 w-6" />
+        <Plus className="h-5 w-5" />
       </button>
     </div>
   )

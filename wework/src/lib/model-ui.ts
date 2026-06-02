@@ -179,7 +179,7 @@ function inferRegion(model: UnifiedModel): string | undefined {
   const explicit = getConfigUi(model).region
   if (typeof explicit === 'string' && explicit.trim()) return explicit.trim()
 
-  const text = [model.displayName, model.name].filter(Boolean).join(' ')
+  const text = [model.displayName, model.name, model.modelId].filter(Boolean).join(' ')
   if (text.includes('海外') || /overseas/i.test(text)) return 'overseas'
   if (text.includes('公网') || /public/i.test(text)) return 'public'
   if (text.includes('内网') || /intranet|internal/i.test(text)) return 'intranet'
@@ -332,6 +332,31 @@ export function normalizeModelOptions(
   )
 }
 
+function regionPriority(region?: string): number {
+  if (region === 'intranet') return 0
+  if (region === 'public') return 1
+  if (region === 'overseas') return 2
+  return 3
+}
+
+function extractVersionParts(label: string): number[] {
+  return [...label.matchAll(/\d+/g)].map(match => Number.parseInt(match[0], 10))
+}
+
+function compareVersionDesc(leftLabel: string, rightLabel: string): number {
+  const leftParts = extractVersionParts(leftLabel)
+  const rightParts = extractVersionParts(rightLabel)
+  const maxLength = Math.max(leftParts.length, rightParts.length)
+
+  for (let index = 0; index < maxLength; index += 1) {
+    const leftPart = leftParts[index] ?? 0
+    const rightPart = rightParts[index] ?? 0
+    if (leftPart !== rightPart) return rightPart - leftPart
+  }
+
+  return 0
+}
+
 export function groupModelsByFamily(models: UnifiedModel[]) {
   const groups = new Map<string, UnifiedModel[]>()
   for (const model of models) {
@@ -345,7 +370,12 @@ export function groupModelsByFamily(models: UnifiedModel[]) {
       models: [...familyModels].sort((a, b) => {
         const left = getModelUiMetadata(a)
         const right = getModelUiMetadata(b)
-        return left.sortOrder - right.sortOrder || left.modelLabel.localeCompare(right.modelLabel)
+        return (
+          regionPriority(left.region) - regionPriority(right.region) ||
+          compareVersionDesc(left.modelLabel, right.modelLabel) ||
+          left.sortOrder - right.sortOrder ||
+          left.modelLabel.localeCompare(right.modelLabel)
+        )
       }),
     }))
     .sort((a, b) => {

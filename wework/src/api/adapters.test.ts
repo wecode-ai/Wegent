@@ -49,19 +49,20 @@ describe('REST adapters', () => {
     expect(client.get).toHaveBeenCalledWith('/tasks/8?client_origin=wework')
   })
 
-  test('picks default team for code first and then chat', async () => {
+  test('picks default team for wework first, then code and chat', async () => {
     const client = mockClient()
     vi.mocked(client.get).mockResolvedValueOnce({
-      total: 2,
+      total: 3,
       items: [
         { id: 1, name: 'general', default_for_modes: ['chat'], is_active: true },
         { id: 2, name: 'coder', default_for_modes: ['code'], is_active: true },
+        { id: 3, name: 'wework', default_for_modes: ['wework'], is_active: true },
       ],
     })
 
     const team = await createTeamApi(client).getDefaultWorkbenchTeam()
 
-    expect(team.id).toBe(2)
+    expect(team.id).toBe(3)
   })
 
   test('loads system skills with search params', async () => {

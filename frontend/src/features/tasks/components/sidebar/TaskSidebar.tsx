@@ -7,7 +7,6 @@
 import './task-list-scrollbar.css'
 import React, { useRef, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import { paths } from '@/config/paths'
 import {
@@ -23,6 +22,8 @@ import {
   Inbox,
   Library,
   LayoutGrid,
+  Search,
+  SquarePen,
 } from 'lucide-react'
 import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import TaskListSection from './TaskListSection'
@@ -291,16 +292,10 @@ export default function TaskSidebar({
   }, [])
 
   const fixedNavigationButtons = navigationButtons.filter(
-    btn =>
-      btn.buttonPageType === 'flow' ||
-      btn.buttonPageType === 'code' ||
-      btn.buttonPageType === 'knowledge'
+    btn => btn.buttonPageType === 'resource-library' || btn.buttonPageType === 'flow'
   )
   const moreNavigationButtons = navigationButtons.filter(
-    btn =>
-      btn.buttonPageType !== 'flow' &&
-      btn.buttonPageType !== 'code' &&
-      btn.buttonPageType !== 'knowledge'
+    btn => btn.buttonPageType !== 'resource-library' && btn.buttonPageType !== 'flow'
   )
   const fixedSecondaryNavigationButtons = SIDEBAR_NAV_CONFIG.keepSecondaryNavFixed
     ? moreNavigationButtons
@@ -320,19 +315,19 @@ export default function TaskSidebar({
               variant="ghost"
               onClick={() => handleNavigationClick(btn.path, btn.isActive, btn.buttonPageType)}
               data-testid={btn.testId ?? `task-sidebar-nav-${btn.buttonPageType}-button`}
-              className={`w-full justify-between px-3 h-11 min-w-[44px] text-sm rounded-md transition-all duration-200 lg:h-8 ${
+              className={`w-full justify-start px-3 h-11 min-w-[44px] text-sm rounded-md transition-all duration-200 lg:h-8 ${
                 btn.isActive
                   ? 'bg-primary/10 text-primary font-medium hover:bg-primary/15'
                   : 'text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10'
               }`}
               size="sm"
             >
-              <span className="flex items-center">
+              <span className="flex min-w-0 flex-1 items-center justify-start gap-2.5 text-left">
                 <btn.icon
                   className={`h-4 w-4 flex-shrink-0 ${btn.isActive ? 'text-primary' : ''}`}
                 />
                 <span
-                  className={`ml-1.5 text-[14px] leading-5 font-medium ${
+                  className={`min-w-0 truncate text-[14px] leading-5 font-medium ${
                     btn.isActive ? 'text-primary' : 'text-text-primary'
                   }`}
                 >
@@ -340,7 +335,7 @@ export default function TaskSidebar({
                 </span>
               </span>
               {btn.unreadCount !== undefined && btn.unreadCount > 0 && (
-                <span className="flex items-center justify-center min-w-[18px] h-[18px] px-1.5 text-[11px] font-medium bg-red-500 text-white rounded-full">
+                <span className="ml-auto flex items-center justify-center min-w-[18px] h-[18px] px-1.5 text-[11px] font-medium bg-red-500 text-white rounded-full">
                   {btn.unreadCount > 99 ? '99+' : btn.unreadCount}
                 </span>
               )}
@@ -400,27 +395,27 @@ export default function TaskSidebar({
               variant="ghost"
               data-testid="task-sidebar-more-button"
               onFocus={() => openMoreNavigation(menuId)}
-              className={`w-full justify-between px-3 h-11 min-w-[44px] text-sm rounded-md transition-all duration-200 lg:h-8 ${
+              className={`w-full justify-start px-3 h-11 min-w-[44px] text-sm rounded-md transition-all duration-200 lg:h-8 ${
                 hasActiveItem
                   ? 'bg-primary/10 text-primary font-medium hover:bg-primary/15'
                   : 'text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10'
               }`}
               size="sm"
             >
-              <span className="flex items-center">
+              <span className="flex min-w-0 flex-1 items-center justify-start gap-2.5 text-left">
                 <LayoutGrid
                   aria-label="More navigation"
                   className={`h-4 w-4 flex-shrink-0 ${hasActiveItem ? 'text-primary' : ''}`}
                 />
                 <span
-                  className={`ml-1.5 text-[14px] leading-5 font-medium ${
+                  className={`min-w-0 truncate text-[14px] leading-5 font-medium ${
                     hasActiveItem ? 'text-primary' : 'text-text-primary'
                   }`}
                 >
                   {t('common:navigation.more')}
                 </span>
               </span>
-              <span className="flex items-center gap-1">
+              <span className="ml-auto flex items-center gap-1">
                 {unreadCount > 0 && (
                   <span className="flex items-center justify-center min-w-[18px] h-[18px] px-1.5 text-[11px] font-medium bg-red-500 text-white rounded-full">
                     {unreadCount > 99 ? '99+' : unreadCount}
@@ -499,7 +494,7 @@ export default function TaskSidebar({
           >
             {/* Logo and Mode Indicator - matches Figma: left-[20px] top-[12px] */}
             <div
-              className={`${isCollapsed ? 'px-2' : 'px-5'} pt-2 pb-1.5`}
+              className={`${isCollapsed ? 'px-2 pt-2 pb-1.5' : 'px-3 pt-2 pb-0'}`}
               data-testid="task-sidebar-logo-section"
             >
               {isCollapsed ? (
@@ -532,18 +527,7 @@ export default function TaskSidebar({
                   </Tooltip>
                 </TooltipProvider>
               ) : (
-                /* Expanded mode: Logo and collapse button */
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <Image
-                      src="/weibo-logo.png"
-                      alt="Weibo Logo"
-                      width={36}
-                      height={35}
-                      className="object-contain"
-                    />
-                    <span className="text-base font-semibold text-text-primary">Wegent</span>
-                  </div>
+                <div className="flex h-8 items-center justify-end">
                   {onToggleCollapsed && (
                     <TooltipProvider>
                       <Tooltip delayDuration={300}>
@@ -570,24 +554,38 @@ export default function TaskSidebar({
             </div>
 
             {/* New Conversation Button and Fixed Navigation Buttons */}
-            <div data-tour="mode-toggle" className="px-2.5">
+            <div data-tour="mode-toggle" className="px-3">
               {!isCollapsed && (
-                <div className="mb-0.5">
+                <div className="mb-0.5 space-y-0.5">
                   <Button
                     variant="ghost"
                     onClick={handleNewAgentClick}
                     data-testid="new-agent-button"
-                    className="w-full justify-between px-3 h-11 min-w-[44px] text-sm text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 rounded-md group transition-all duration-200 lg:h-8"
+                    className="w-full justify-start px-3 h-11 min-w-[44px] text-sm text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 rounded-md group transition-all duration-200 lg:h-8"
                     size="sm"
                   >
-                    <span className="flex items-center">
-                      <Plus className="h-4 w-4 flex-shrink-0" />
-                      <span className="ml-1.5 text-[14px] leading-5 font-medium text-text-primary">
+                    <span className="flex min-w-0 flex-1 items-center justify-start gap-2.5 text-left">
+                      <SquarePen className="h-4 w-4 flex-shrink-0" />
+                      <span className="min-w-0 truncate text-[14px] leading-5 font-medium text-text-primary">
                         {t('common:tasks.new_conversation')}
                       </span>
                     </span>
-                    <span className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity">
+                    <span className="ml-auto text-text-muted opacity-0 group-hover:opacity-100 transition-opacity">
                       ›
+                    </span>
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={handleOpenSearchDialog}
+                    data-testid="task-sidebar-search-button"
+                    className="w-full justify-start px-3 h-11 min-w-[44px] text-sm text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 rounded-md transition-all duration-200 lg:h-8"
+                    size="sm"
+                  >
+                    <span className="flex min-w-0 flex-1 items-center justify-start gap-2.5 text-left">
+                      <Search className="h-4 w-4 flex-shrink-0" />
+                      <span className="min-w-0 truncate text-[14px] leading-5 font-medium text-text-primary">
+                        {t('common:actions.search')}
+                      </span>
                     </span>
                   </Button>
                 </div>
@@ -606,9 +604,7 @@ export default function TaskSidebar({
             )}
 
             {/* Tasks Section - matches Figma: left-[20px] top-[198px] with border */}
-            <div
-              className={`${isCollapsed ? 'px-0' : 'px-2.5'} pt-1.5 border-t border-border-light mt-1`}
-            >
+            <div className={`${isCollapsed ? 'px-0' : 'px-3'} pt-5 mt-2`}>
               {/* Auto-refresh indicator - shows when refreshing after page visibility or reconnect */}
               {isRefreshing && !isCollapsed && (
                 <div className="px-1 pb-2">
@@ -769,7 +765,7 @@ export default function TaskSidebar({
       </TaskDndProvider>
 
       {/* User Menu */}
-      <div className="px-2.5 py-3 border-t border-border-light shrink-0" data-tour="settings-link">
+      <div className="px-3 py-3 shrink-0" data-tour="settings-link">
         <UserFloatingMenu />
       </div>
     </>
@@ -779,7 +775,7 @@ export default function TaskSidebar({
     <>
       {/* Desktop Sidebar - Hidden on mobile, width controlled by parent ResizableSidebar */}
       <div
-        className="hidden lg:flex lg:flex-col w-full h-full bg-base rounded-3xl shadow-sidebar my-3"
+        className="hidden lg:flex lg:flex-col w-full h-full bg-base rounded-3xl shadow-sidebar my-2"
         style={{ height: 'calc(100% - 24px)' }}
         data-tour="task-sidebar"
       >

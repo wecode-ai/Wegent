@@ -37,8 +37,8 @@ export function ComposerToolbar({
   const { t } = useTranslation('common')
 
   return (
-    <div className="mt-auto flex min-h-11 items-center justify-between gap-4">
-      <div className="-ml-3 flex min-w-0 items-center gap-2">
+    <div className="mt-auto flex min-h-9 items-center justify-between gap-4">
+      <div className="-ml-2 flex min-w-0 items-center gap-2">
         <AddContextMenu disabled={false} onFileSelect={onFileSelect} />
         <SkillSelector
           skills={skills}
@@ -66,19 +66,19 @@ export function ComposerToolbar({
         <button
           type="button"
           data-testid="voice-input-button"
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full p-0 text-text-secondary hover:bg-muted"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full p-0 text-text-secondary hover:bg-muted"
           aria-label={t('workbench.voice_input', '语音输入')}
         >
-          <Mic className="h-5 w-5" />
+          <Mic className="h-4 w-4" />
         </button>
         <button
           type="submit"
           data-testid="send-message-button"
           disabled={!canSend}
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#1a1a1a] p-0 text-white disabled:cursor-not-allowed disabled:bg-[#d9d9d9]"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#1a1a1a] p-0 text-white disabled:cursor-not-allowed disabled:bg-[#d9d9d9]"
           aria-label={t('workbench.send_message', '发送消息')}
         >
-          <ArrowUp className="h-5 w-5" />
+          <ArrowUp className="h-4 w-4" />
         </button>
       </div>
     </div>

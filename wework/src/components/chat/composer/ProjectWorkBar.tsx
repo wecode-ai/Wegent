@@ -107,11 +107,11 @@ export function ProjectWorkBar({
               menuClassName,
             )}
           >
-            <div className="px-4 pb-2 pt-1 text-sm font-semibold text-text-muted">
+            <div className="px-4 pb-2 pt-1 text-[13px] font-semibold leading-[18px] text-text-muted">
               {t('workbench.projects', '项目')}
             </div>
             {projects.length === 0 ? (
-              <div className="px-4 py-3 text-sm text-text-muted">
+              <div className="px-4 py-3 text-[13px] leading-[18px] text-text-muted">
                 {t('workbench.no_projects', '暂无项目')}
               </div>
             ) : (
@@ -149,7 +149,7 @@ export function ProjectWorkBar({
                             isUnavailable ? 'text-text-muted' : 'text-text-secondary'
                           }`}
                         />
-                        <span className="min-w-0 flex-1 truncate text-sm font-medium">{project.name}</span>
+                        <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-[18px]">{project.name}</span>
                         {selected && (
                           <Check
                             data-testid={`project-selected-icon-${project.id}`}
@@ -174,7 +174,7 @@ export function ProjectWorkBar({
               type="button"
               data-testid="no-project-option"
               onClick={handleUseNoProject}
-              className="flex min-h-10 w-full items-center gap-3 rounded-xl px-4 py-2 text-left text-sm font-medium text-text-secondary hover:bg-muted"
+              className="flex min-h-9 w-full items-center gap-3 rounded-xl px-4 py-2 text-left text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted"
             >
               <FolderX className="h-4 w-4 shrink-0" />
               <span>{t('workbench.no_project', '不使用项目')}</span>
@@ -229,7 +229,7 @@ export function ProjectWorkBar({
           data-testid="project-work-button"
           onClick={() => setOpen(current => !current)}
           className={cn(
-            'flex h-11 min-w-[44px] items-center gap-2 rounded-full px-1 text-sm font-medium text-text-secondary hover:bg-muted',
+            'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-1 text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted',
             buttonClassName,
           )}
           aria-expanded={open}

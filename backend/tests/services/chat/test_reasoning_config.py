@@ -99,3 +99,30 @@ class TestExecutionRequestReasoningConfig:
         }
         request = ExecutionRequest.from_dict(data)
         assert request.reasoning_config == {"effort": "low", "summary": "concise"}
+
+
+class TestModelOptionsReasoningConfig:
+    """Tests for UI model options reasoning normalization."""
+
+    def test_model_options_reasoning_object_preserves_summary(self):
+        """Test object-shaped UI reasoning does not become effort text."""
+        from app.services.chat.trigger.unified import _reasoning_from_model_options
+
+        payload = MagicMock()
+        payload.model_options = {"reasoning": {"summary": "detailed"}}
+
+        assert _reasoning_from_model_options(payload) == {"summary": "detailed"}
+
+    def test_model_options_reasoning_object_maps_effort_and_summary(self):
+        """Test object-shaped UI reasoning maps supported fields separately."""
+        from app.services.chat.trigger.unified import _reasoning_from_model_options
+
+        payload = MagicMock()
+        payload.model_options = {
+            "reasoning": {"effort": "high", "summary": "concise"},
+        }
+
+        assert _reasoning_from_model_options(payload) == {
+            "effort": "high",
+            "summary": "concise",
+        }

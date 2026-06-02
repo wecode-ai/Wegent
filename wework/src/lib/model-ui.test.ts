@@ -76,4 +76,56 @@ describe('model-ui', () => {
     expect(minimaxGroup?.models.map(model => model.name)).toEqual(['minimax-m1'])
     expect(isSupportedModelFamily(deepseekModel)).toBe(true)
   })
+
+  test('sorts model options by intranet first and newer versions first', () => {
+    const models: UnifiedModel[] = [
+      {
+        name: 'glm-public-5',
+        type: 'public',
+        displayName: '公网:GLM-5',
+        modelId: 'glm-5',
+      },
+      {
+        name: 'glm-public-5.1',
+        type: 'public',
+        displayName: '公网:GLM-5.1',
+        modelId: 'glm-5.1',
+      },
+      {
+        name: 'glm-public-5v',
+        type: 'public',
+        displayName: '公网:GLM-5v',
+        modelId: 'glm-5v',
+      },
+      {
+        name: 'glm-public-4.7',
+        type: 'public',
+        displayName: '公网:GLM4.7',
+        modelId: 'glm-4.7',
+      },
+      {
+        name: 'glm-intranet-5',
+        type: 'user',
+        displayName: '内网:GLM5',
+        modelId: 'glm-5',
+      },
+      {
+        name: 'glm-intranet-5.1',
+        type: 'user',
+        displayName: '内网:GLM5.1',
+        modelId: 'glm-5.1',
+      },
+    ]
+
+    const glmGroup = groupModelsByFamily(models).find(group => group.config.id === 'glm')
+
+    expect(glmGroup?.models.map(model => model.displayName)).toEqual([
+      '内网:GLM5.1',
+      '内网:GLM5',
+      '公网:GLM-5.1',
+      '公网:GLM-5',
+      '公网:GLM-5v',
+      '公网:GLM4.7',
+    ])
+  })
 })

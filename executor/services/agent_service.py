@@ -15,7 +15,6 @@ from typing import Any, ClassVar, Dict, List, Optional, Tuple, Union
 
 from executor.agents import Agent, AgentFactory
 from executor.agents.agno.agno_agent import AgnoAgent
-from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
 from executor.config import config
 from shared.logger import setup_logger
 from shared.models import EmitterBuilder, TransportFactory
@@ -130,7 +129,10 @@ class AgentService:
                 .build()
             )
 
-            agent = AgentFactory.get_agent(shell_type, task_data, emitter)
+            if shell_type.lower() == "claudecode":
+                agent = AgentFactory.get_code_agent(task_data, emitter)
+            else:
+                agent = AgentFactory.get_agent(shell_type, task_data, emitter)
 
             if not agent:
                 logger.error(
@@ -484,13 +486,13 @@ class AgentService:
             for task_id, session in self._agent_sessions.items()
         ]
 
-    async def _close_claude_sessions(self) -> Tuple[TaskStatus, Optional[str]]:
+    async def _close_code_agent_sessions(self) -> Tuple[TaskStatus, Optional[str]]:
         try:
-            await ClaudeCodeAgent.close_all_clients()
-            logger.info("Closed all Claude client connections")
+            await AgentFactory.close_all_clients()
+            logger.info("Closed all code-agent client connections")
             return TaskStatus.SUCCESS, None
         except Exception as e:
-            logger.exception("Error closing Claude client connections")
+            logger.exception("Error closing code-agent client connections")
             return TaskStatus.FAILED, str(e)
 
     async def _close_agno_sessions(self) -> Tuple[TaskStatus, Optional[str]]:
@@ -508,13 +510,13 @@ class AgentService:
         error_detail: Dict[str, str] = {}
         agent_types = {s.agent.get_name() for s in self._agent_sessions.values()}
 
-        if "ClaudeCode" in agent_types:
-            status, msg = await self._close_claude_sessions()
+        if {"ClaudeCode", "CodeX"} & agent_types:
+            status, msg = await self._close_code_agent_sessions()
             if status == TaskStatus.SUCCESS:
-                results.append("Claude")
+                results.append("Code")
             else:
-                errors.append("Claude")
-                error_detail["ClaudeCode"] = msg or "Unknown error"
+                errors.append("Code")
+                error_detail["CodeAgent"] = msg or "Unknown error"
 
         if "Agno" in agent_types:
             status, msg = await self._close_agno_sessions()

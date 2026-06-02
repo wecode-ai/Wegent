@@ -80,26 +80,26 @@ export function DesktopSettingsMenu({
       data-testid="settings-menu"
       className="absolute bottom-[68px] left-4 right-4 z-30 overflow-hidden rounded-xl border border-border bg-base py-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
     >
-      <div className="flex min-h-11 items-center gap-3 px-4 text-sm text-text-secondary">
-        <UserCircle className="h-5 w-5 shrink-0" />
+      <div className="flex min-h-10 items-center gap-3 px-4 text-[13px] leading-[18px] text-text-secondary">
+        <UserCircle className="h-4 w-4 shrink-0" />
         <span className="truncate">{accountLabel}</span>
       </div>
       <div className="mx-4 border-t border-border" />
       <button
         type="button"
         data-testid="account-menu-button"
-        className="flex h-11 w-full items-center gap-3 px-4 text-left text-sm font-medium text-[#333] hover:bg-muted"
+        className="flex h-10 w-full items-center gap-3 px-4 text-left text-[13px] font-medium leading-[18px] text-[#333] hover:bg-muted"
       >
-        <User className="h-5 w-5 shrink-0 text-[#555]" />
+        <User className="h-4 w-4 shrink-0 text-[#555]" />
         <span>{t('workbench.personal_account', '个人账户')}</span>
       </button>
       <button
         type="button"
         data-testid="settings-menu-button"
         onClick={onOpenSettings}
-        className="flex h-11 w-full items-center gap-3 px-4 text-left text-sm font-medium text-[#333] hover:bg-muted"
+        className="flex h-10 w-full items-center gap-3 px-4 text-left text-[13px] font-medium leading-[18px] text-[#333] hover:bg-muted"
       >
-        <Settings className="h-5 w-5 shrink-0 text-[#555]" />
+        <Settings className="h-4 w-4 shrink-0 text-[#555]" />
         <span>{t('workbench.settings', '设置')}</span>
       </button>
       <div className="mx-4 border-t border-border" />
@@ -109,14 +109,14 @@ export function DesktopSettingsMenu({
         aria-expanded={isUsageExpanded}
         aria-controls="remaining-usage-panel"
         onClick={handleUsageClick}
-        className="flex h-11 w-full items-center gap-3 px-4 text-left text-sm font-medium text-[#333] hover:bg-muted"
+        className="flex h-10 w-full items-center gap-3 px-4 text-left text-[13px] font-medium leading-[18px] text-[#333] hover:bg-muted"
       >
-        <Clock className="h-5 w-5 shrink-0 text-[#555]" />
+        <Clock className="h-4 w-4 shrink-0 text-[#555]" />
         <span className="flex-1">
           {t('workbench.remaining_usage', '剩余用量')}
         </span>
         <ChevronDown
-          className={`h-5 w-5 shrink-0 text-text-muted transition-transform ${
+          className={`h-4 w-4 shrink-0 text-text-muted transition-transform ${
             isUsageExpanded ? 'rotate-180' : ''
           }`}
         />
@@ -128,12 +128,12 @@ export function DesktopSettingsMenu({
           className="px-4 pb-2 pl-12"
         >
           {isQuotaLoading ? (
-            <div className="py-1 text-sm text-text-secondary">
+            <div className="py-1 text-[13px] leading-[18px] text-text-secondary">
               {t('common.loading', '加载中...')}
             </div>
           ) : null}
           {quotaError ? (
-            <div className="py-1 text-sm text-text-secondary">{quotaError}</div>
+            <div className="py-1 text-[13px] leading-[18px] text-text-secondary">{quotaError}</div>
           ) : null}
           {quota ? (
             <div className="space-y-1.5 rounded-md bg-muted/60 px-3 py-2 text-xs leading-5 text-text-secondary">
@@ -165,9 +165,9 @@ export function DesktopSettingsMenu({
         type="button"
         data-testid="logout-menu-button"
         onClick={onLogout}
-        className="flex h-11 w-full items-center gap-3 px-4 text-left text-sm font-medium text-[#333] hover:bg-muted"
+        className="flex h-10 w-full items-center gap-3 px-4 text-left text-[13px] font-medium leading-[18px] text-[#333] hover:bg-muted"
       >
-        <LogOut className="h-5 w-5 shrink-0 text-[#555]" />
+        <LogOut className="h-4 w-4 shrink-0 text-[#555]" />
         <span>{t('workbench.logout', '退出登录')}</span>
       </button>
     </div>
