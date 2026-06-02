@@ -55,6 +55,7 @@ class RedisClientFactory:
             decode_responses=config.decode_responses,
             socket_timeout=config.socket_timeout,
             socket_connect_timeout=config.connect_timeout,
+            protocol=config.protocol,
         )
 
     @classmethod
@@ -64,6 +65,7 @@ class RedisClientFactory:
             config.url,
             encoding=config.encoding,
             decode_responses=config.decode_responses,
+            protocol=config.protocol,
         )
 
     @classmethod

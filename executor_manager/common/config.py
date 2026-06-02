@@ -18,6 +18,20 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 
+def _get_redis_protocol() -> int:
+    """Read and validate Redis wire protocol version."""
+    value = os.getenv("REDIS_PROTOCOL", "2")
+    try:
+        protocol = int(value)
+    except ValueError as exc:
+        raise ValueError("REDIS_PROTOCOL must be 2 or 3") from exc
+
+    if protocol not in (2, 3):
+        raise ValueError("REDIS_PROTOCOL must be 2 or 3")
+
+    return protocol
+
+
 @dataclass(frozen=True)
 class RedisConfig:
     """Redis connection configuration."""
@@ -32,6 +46,9 @@ class RedisConfig:
     connect_timeout: float = 5.0
     encoding: str = "utf-8"
     decode_responses: bool = True
+    # RESP2 avoids the HELLO handshake and remains compatible with older
+    # Redis-compatible servers.
+    protocol: int = field(default_factory=_get_redis_protocol)
     # Retry configuration for connection failures
     max_retries: int = field(
         default_factory=lambda: int(os.getenv("REDIS_MAX_RETRIES", "3"))
