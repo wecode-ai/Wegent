@@ -51,7 +51,7 @@ export function AddContextMenu({ disabled, onFileSelect }: AddContextMenuProps) 
             type="button"
             data-testid="attach-files-button"
             onClick={() => fileInputRef.current?.click()}
-            className="flex h-10 w-full items-center gap-2.5 rounded-lg px-3 text-left text-sm font-medium text-text-primary hover:bg-muted"
+            className="flex h-9 w-full items-center gap-2.5 rounded-lg px-3 text-left text-[13px] font-medium leading-[18px] text-text-primary hover:bg-muted"
           >
             <Paperclip className="h-[18px] w-[18px] shrink-0 text-text-secondary" />
             <span>{t('workbench.add_photos_files', '添加照片和文件')}</span>
@@ -63,7 +63,7 @@ export function AddContextMenu({ disabled, onFileSelect }: AddContextMenuProps) 
         data-testid="add-context-button"
         onClick={() => !disabled && setOpen(current => !current)}
         disabled={disabled}
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full p-0 text-text-secondary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full p-0 text-text-secondary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
         aria-expanded={open}
         aria-label={t('workbench.add_context', '添加上下文')}
       >

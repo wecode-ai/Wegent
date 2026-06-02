@@ -237,8 +237,8 @@ function ProjectCreateDialogContent({
       >
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-xl font-semibold text-[#202124]">{title}</h2>
-            <p className="mt-2 text-sm leading-5 text-[#6b6f76]">
+            <h2 className="text-base font-semibold text-[#202124]">{title}</h2>
+            <p className="mt-2 text-[13px] leading-[18px] text-[#6b6f76]">
               {t(
                 'workbench.project_create_description',
                 '创建一个项目工作区，用于在同一项目下发起多次对话',
@@ -256,14 +256,14 @@ function ProjectCreateDialogContent({
           </button>
         </div>
 
-        <label className="mt-6 block text-sm font-semibold text-[#202124]">
+        <label className="mt-6 block text-[13px] font-semibold text-[#202124]">
           {t('workbench.project_device', '设备')}
         </label>
         <select
           data-testid="project-device-select"
           value={deviceId}
           onChange={event => handleDeviceChange(event.target.value)}
-          className="mt-2 h-11 w-full rounded-lg border border-[#d8d8d8] bg-white px-3 text-sm outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20"
+          className="mt-2 h-10 w-full rounded-lg border border-[#d8d8d8] bg-white px-3 text-[13px] outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20"
         >
           {sortedDevices.length === 0 && (
             <option value="">{t('workbench.project_no_available_devices', '暂无可用设备')}</option>
@@ -284,7 +284,7 @@ function ProjectCreateDialogContent({
 
         {mode === 'scratch' ? (
           <>
-            <label className="mt-5 block text-sm font-semibold text-[#202124]">
+            <label className="mt-5 block text-[13px] font-semibold text-[#202124]">
               {t('workbench.project_name', '项目名称')}
             </label>
             <input
@@ -292,10 +292,10 @@ function ProjectCreateDialogContent({
               value={projectName}
               onChange={event => setProjectName(event.target.value)}
               placeholder={t('workbench.project_name_placeholder', '输入项目名称')}
-              className="mt-2 h-11 w-full rounded-lg border border-[#d8d8d8] px-3 text-sm outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20"
+              className="mt-2 h-10 w-full rounded-lg border border-[#d8d8d8] px-3 text-[13px] outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20"
             />
             <div className="mt-5 rounded-lg border border-[#e3e5e8] bg-[#f7f8f9] px-3 py-2">
-              <div className="flex items-center gap-2 text-sm text-[#3c4043]">
+              <div className="flex items-center gap-2 text-[13px] text-[#3c4043]">
                 <FolderPlus className="h-4 w-4 shrink-0" />
                 <span className="min-w-0 truncate font-mono">{scratchPath}</span>
               </div>
@@ -304,7 +304,7 @@ function ProjectCreateDialogContent({
         ) : (
           <>
             <div className="mt-5 flex items-center justify-between gap-3">
-              <label className="block text-sm font-semibold text-[#202124]">
+              <label className="block text-[13px] font-semibold text-[#202124]">
                 {t('workbench.project_directory_path', '目录地址')}
               </label>
               <label className="flex items-center gap-2 text-xs font-medium text-[#606368]">
@@ -320,7 +320,7 @@ function ProjectCreateDialogContent({
             </div>
             <div className="mt-2 rounded-lg border border-[#d8d8d8]">
               <div className="flex h-10 items-center border-b border-[#e5e5e5] px-3">
-                <span className="min-w-0 truncate font-mono text-sm text-[#3c4043]">
+                <span className="min-w-0 truncate font-mono text-[13px] text-[#3c4043]">
                   {currentPath || t('workbench.project_directory_loading', '正在加载目录...')}
                 </span>
               </div>
@@ -330,19 +330,19 @@ function ProjectCreateDialogContent({
                     type="button"
                     data-testid="directory-parent-button"
                     onClick={() => setCurrentPath(getParentPath(currentPath))}
-                    className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm text-[#3c4043] hover:bg-[#f1f3f4]"
+                    className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] text-[#3c4043] hover:bg-[#f1f3f4]"
                   >
                     <ChevronLeft className="h-4 w-4" />
                     ..
                   </button>
                 )}
                 {loadingDirectories && (
-                  <p className="px-2 py-3 text-sm text-[#8a8f98]">
+                  <p className="px-2 py-3 text-[13px] text-[#8a8f98]">
                     {t('workbench.project_directory_loading', '正在加载目录...')}
                   </p>
                 )}
                 {!loadingDirectories && directoryError && (
-                  <p className="px-2 py-3 text-sm text-[#c44]">{directoryError}</p>
+                  <p className="px-2 py-3 text-[13px] text-[#c44]">{directoryError}</p>
                 )}
                 {!loadingDirectories &&
                   !directoryError &&
@@ -357,7 +357,7 @@ function ProjectCreateDialogContent({
                         onClick={() => setSelectedPath(childPath)}
                         onDoubleClick={() => handleOpenDirectory(childPath)}
                         className={[
-                          'flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm',
+                          'flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px]',
                           selected
                             ? 'bg-[#e5f6f4] text-[#0f766e]'
                             : 'text-[#3c4043] hover:bg-[#f1f3f4]',
@@ -370,7 +370,7 @@ function ProjectCreateDialogContent({
                     )
                   })}
                 {!loadingDirectories && !directoryError && visibleDirectories.length === 0 && (
-                  <p className="px-2 py-8 text-center text-sm text-[#8a8f98]">
+                  <p className="px-2 py-8 text-center text-[13px] text-[#8a8f98]">
                     {t('workbench.project_directory_empty', '当前目录下没有子目录')}
                   </p>
                 )}
@@ -384,7 +384,7 @@ function ProjectCreateDialogContent({
             type="button"
             data-testid="cancel-project-create-button"
             onClick={onClose}
-            className="h-10 rounded-md border border-[#d8d8d8] px-4 text-sm font-medium text-[#3c4043] hover:bg-[#f7f7f8]"
+            className="h-10 rounded-md border border-[#d8d8d8] px-4 text-[13px] font-medium text-[#3c4043] hover:bg-[#f7f7f8]"
           >
             {t('workbench.cancel', '取消')}
           </button>
@@ -415,7 +415,7 @@ function ProjectCreateDialogContent({
                 setSubmitting(false)
               }
             }}
-            className="h-10 rounded-md bg-[#14b8a6] px-4 text-sm font-medium text-white hover:bg-[#0f9f93] disabled:opacity-50"
+            className="h-10 rounded-md bg-[#14b8a6] px-4 text-[13px] font-medium text-white hover:bg-[#0f9f93] disabled:opacity-50"
           >
             {t('workbench.create_project', '创建项目')}
           </button>

@@ -43,12 +43,12 @@ export function ModelSelector({
             menuClassName,
           ].join(' ')}
         >
-          <div className="px-4 pb-2 pt-1 text-sm font-semibold text-text-muted">
+          <div className="px-4 pb-2 pt-1 text-[13px] font-semibold leading-[18px] text-text-muted">
             {t('workbench.select_model', '选择模型')}
           </div>
           <div className="space-y-1">
             {models.length === 0 ? (
-              <div className="px-4 py-3 text-sm text-text-muted">
+              <div className="px-4 py-3 text-[13px] leading-[18px] text-text-muted">
                 {t('workbench.no_models', '暂无可用模型')}
               </div>
             ) : (
@@ -63,7 +63,7 @@ export function ModelSelector({
                       onSelectModel(model)
                       setOpen(false)
                     }}
-                    className="flex min-h-11 w-full items-center gap-3 rounded-xl px-4 py-2 text-left text-sm font-medium text-text-primary hover:bg-muted"
+                    className="flex min-h-10 w-full items-center gap-3 rounded-xl px-4 py-2 text-left text-[13px] font-medium leading-[18px] text-text-primary hover:bg-muted"
                   >
                     <span className="min-w-0 flex-1 truncate">{model.displayName || model.name}</span>
                     {selected && <Check className="h-4 w-4 shrink-0 text-text-secondary" />}
@@ -80,7 +80,7 @@ export function ModelSelector({
         onClick={() => !disabled && setOpen(current => !current)}
         disabled={disabled}
         className={[
-          'flex h-9 min-w-9 items-center gap-1 rounded-full px-2 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50',
+          'flex h-8 min-w-8 items-center gap-1 rounded-full px-2 text-[13px] font-medium leading-[18px] text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50',
           buttonClassName,
         ].join(' ')}
         aria-expanded={open}

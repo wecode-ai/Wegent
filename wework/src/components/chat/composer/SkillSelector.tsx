@@ -52,11 +52,11 @@ export function SkillSelector({
           data-testid="skill-selector-menu"
           className="absolute bottom-[52px] left-0 z-40 max-h-80 w-80 overflow-y-auto rounded-2xl border border-border bg-base p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
         >
-          <div className="px-4 pb-2 pt-1 text-sm font-semibold text-text-muted">
+          <div className="px-4 pb-2 pt-1 text-[13px] font-semibold leading-[18px] text-text-muted">
             {t('workbench.select_skills', '选择技能')}
           </div>
           {skills.length === 0 ? (
-            <div className="px-4 py-3 text-sm text-text-muted">
+            <div className="px-4 py-3 text-[13px] leading-[18px] text-text-muted">
               {t('workbench.no_skills', '暂无可用技能')}
             </div>
           ) : (
@@ -69,7 +69,7 @@ export function SkillSelector({
                     type="button"
                     data-testid={`skill-option-${skill.name}`}
                     onClick={() => onToggleSkill(toSkillRef(skill))}
-                    className="flex min-h-11 w-full items-center gap-3 rounded-xl px-4 py-2 text-left text-sm font-medium text-text-primary hover:bg-muted"
+                    className="flex min-h-10 w-full items-center gap-3 rounded-xl px-4 py-2 text-left text-[13px] font-medium leading-[18px] text-text-primary hover:bg-muted"
                   >
                     <Sparkles className="h-4 w-4 shrink-0 text-text-secondary" />
                     <span className="min-w-0 flex-1">
@@ -93,7 +93,7 @@ export function SkillSelector({
         data-testid="skill-selector-button"
         onClick={() => !disabled && setOpen(current => !current)}
         disabled={disabled}
-        className="flex h-9 min-w-9 items-center gap-2 rounded-full px-2 text-sm font-medium text-text-secondary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex h-8 min-w-8 items-center gap-2 rounded-full px-2 text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
         aria-expanded={open}
         aria-label={t('workbench.select_skills', '选择技能')}
       >

@@ -75,7 +75,7 @@ export function ProjectChatComposer({
           canSend={canSend}
           placeholder={placeholder}
           rows={2}
-          className="max-h-[128px] min-h-10 w-full resize-none overflow-y-auto bg-transparent p-0 text-base leading-6 text-text-primary outline-none placeholder:text-text-muted"
+          className="max-h-[128px] min-h-9 w-full resize-none overflow-y-auto bg-transparent p-0 text-sm leading-5 text-text-primary outline-none placeholder:text-text-muted"
         />
         <ComposerToolbar
           canSend={canSend}
@@ -97,7 +97,7 @@ export function ProjectChatComposer({
           currentStandaloneDeviceId={projectWork.currentStandaloneDeviceId}
           onSelectProject={projectWork.onSelectProject}
           onSelectStandaloneDevice={projectWork.onSelectStandaloneDevice}
-          className="min-h-12 px-4"
+          className="min-h-11 px-4"
         />
       )}
     </div>

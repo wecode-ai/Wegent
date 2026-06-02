@@ -117,7 +117,7 @@ export function DesktopWorkbenchMain({
               <div className="mb-7 flex justify-center">
                 <Bot className="h-7 w-7 text-text-muted" />
               </div>
-              <h1 className="mb-10 text-center text-[34px] font-medium tracking-normal">
+              <h1 className="mb-9 text-center text-[28px] font-medium leading-9 tracking-normal">
                 {emptyTitle}
               </h1>
               <ChatInput

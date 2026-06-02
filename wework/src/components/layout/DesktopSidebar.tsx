@@ -82,7 +82,7 @@ function SidebarButton({
       data-testid={testId}
       onClick={onClick}
       className={[
-        'flex h-8 w-full items-center gap-3 rounded-md px-3 text-left text-sm font-medium',
+        'flex h-8 w-full items-center gap-3 rounded-md px-3 text-left text-[13px] font-medium leading-[18px]',
         selected ? 'bg-[#cfd1d4] text-[#222]' : 'text-[#333] hover:bg-white/70',
       ].join(' ')}
     >
@@ -158,7 +158,7 @@ function ProjectTaskRow({
     <div
       data-testid={`project-chat-row-${task.task_id}`}
       className={[
-        'group/task ml-5 flex h-8 items-center rounded-md pl-3 pr-1 text-sm',
+        'group/task ml-5 flex h-8 items-center rounded-md pl-3 pr-1 text-[13px] leading-[18px]',
         selected ? 'bg-white text-text-primary' : 'text-text-secondary hover:bg-white/70',
       ].join(' ')}
     >
@@ -254,7 +254,7 @@ function ProjectItem({
     <div data-testid="project-item" className="space-y-0.5">
       <div
         data-testid={`project-row-${project.id}`}
-        className="group/project flex h-9 items-center gap-1 rounded-md pl-3 pr-1 text-sm text-text-secondary hover:bg-white/70"
+        className="group/project flex h-8 items-center gap-1 rounded-md pl-3 pr-1 text-[13px] leading-[18px] text-text-secondary hover:bg-white/70"
       >
         <button
           type="button"
@@ -370,7 +370,7 @@ function RecentTaskRow({
     <div
       data-testid={`history-task-row-${task.id}`}
       className={[
-        'group/task flex h-9 items-center gap-2 rounded-md pl-3 pr-1 text-sm',
+        'group/task flex h-8 items-center gap-2 rounded-md pl-3 pr-1 text-[13px] leading-[18px]',
         selected ? 'bg-white text-text-primary' : 'text-text-secondary hover:bg-white/70',
       ].join(' ')}
     >
@@ -570,7 +570,7 @@ export function DesktopSidebar({
       >
         <section>
           <div className="group/projects mb-3 flex h-8 items-center justify-between px-3">
-            <h2 className="text-sm font-semibold text-[#8a8a8a]">
+            <h2 className="text-[13px] font-semibold leading-[18px] text-[#8a8a8a]">
               {t('workbench.projects', '项目')}
             </h2>
             <div className="flex items-center opacity-0 transition-opacity group-hover/projects:opacity-100 focus-within:opacity-100">
@@ -634,7 +634,7 @@ export function DesktopSidebar({
 
         <section className="mt-8">
           <div className="group/chats mb-3 flex h-8 items-center justify-between px-3">
-            <h2 className="text-sm font-semibold text-[#8a8a8a]">
+            <h2 className="text-[13px] font-semibold leading-[18px] text-[#8a8a8a]">
               {t('workbench.history', '对话')}
             </h2>
             <div className="flex items-center opacity-0 transition-opacity group-hover/chats:opacity-100 focus-within:opacity-100">
@@ -682,7 +682,7 @@ export function DesktopSidebar({
           type="button"
           data-testid="settings-button"
           onClick={() => setSettingsMenuOpen(open => !open)}
-          className="flex h-10 shrink-0 items-center gap-3 rounded-md px-3 text-sm font-medium text-[#333] hover:bg-white/70"
+          className="flex h-9 shrink-0 items-center gap-3 rounded-md px-3 text-[13px] font-medium leading-[18px] text-[#333] hover:bg-white/70"
           aria-expanded={settingsMenuOpen}
         >
           <Settings className="h-4 w-4" />

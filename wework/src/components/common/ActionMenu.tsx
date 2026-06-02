@@ -92,7 +92,7 @@ export function ActionMenu({
                 void handleItemSelect(item)
               }}
               className={[
-                'flex h-9 w-full items-center gap-2 px-3 text-left text-sm',
+                'flex h-8 w-full items-center gap-2 px-3 text-left text-[13px] leading-[18px]',
                 item.danger
                   ? 'text-[#ff7b7b] hover:bg-white/10'
                   : 'text-white hover:bg-white/10',
