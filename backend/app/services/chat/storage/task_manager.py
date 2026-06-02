@@ -56,6 +56,8 @@ class TaskCreationParams:
     force_override_bot_model_type: Optional[str] = (
         None  # Model type: 'public', 'user', 'group'
     )
+    # Model selection options, such as reasoning or speed.
+    model_options: Optional[Dict[str, str]] = None
     is_group_chat: bool = False
     git_url: Optional[str] = None
     git_repo: Optional[str] = None
@@ -366,6 +368,11 @@ def create_new_task(
                 **(
                     {"forceOverrideBotModelType": params.force_override_bot_model_type}
                     if params.force_override_bot_model_type
+                    else {}
+                ),
+                **(
+                    {"modelOptions": json_lib.dumps(params.model_options)}
+                    if params.model_options
                     else {}
                 ),
                 **(

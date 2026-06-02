@@ -118,6 +118,21 @@ class ProjectGitConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ProjectModelSelection(BaseModel):
+    """Default model selection for new project conversations."""
+
+    modelName: str = Field(..., min_length=1, description="Selected model name")
+    modelType: Optional[Literal["public", "user", "group"]] = Field(
+        None, description="Selected model type"
+    )
+    options: dict[str, str] = Field(
+        default_factory=dict,
+        description="Model option values, such as reasoning effort.",
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class ProjectConfig(BaseModel):
     """Validated project configuration.
 
@@ -131,6 +146,7 @@ class ProjectConfig(BaseModel):
     team: Optional[ProjectTeamConfig] = None
     workspace: Optional[ProjectWorkspaceConfig] = None
     git: Optional[ProjectGitConfig] = None
+    modelSelection: Optional[ProjectModelSelection] = None
 
     model_config = ConfigDict(extra="forbid")
 

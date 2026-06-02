@@ -166,6 +166,10 @@ class ChatSendPayload(BaseModel):
     force_override_bot_model_type: Optional[str] = Field(
         None, description="Override model type"
     )
+    model_options: Optional[Dict[str, str]] = Field(
+        None,
+        description="Model selection options, such as reasoning or speed.",
+    )
     is_group_chat: bool = Field(
         False, description="Whether this is a group chat (for new tasks)"
     )

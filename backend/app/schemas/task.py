@@ -91,6 +91,7 @@ class TaskCreate(BaseModel):
     force_override_bot_model_type: Optional[str] = (
         None  # Model type: 'public', 'user', 'group'
     )
+    model_options: Optional[dict[str, str]] = None
     # API key name field
     api_key_name: Optional[str] = None  # API key name used for this request
 
@@ -183,6 +184,8 @@ class TaskDetail(BaseModel):
     team: Optional[TeamInDB] = None
     subtasks: Any = None
     model_id: Optional[str] = None
+    force_override_bot_model_type: Optional[str] = None
+    model_options: Optional[dict[str, str]] = None
     is_group_chat: bool = False  # Whether this is a group chat task
     is_group_owner: bool = False  # Whether current user is the owner (for group chats)
     member_count: Optional[int] = None  # Number of members (for group chats)

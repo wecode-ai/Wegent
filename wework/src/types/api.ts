@@ -15,6 +15,7 @@ export interface UserPreferences {
     teams?: number[]
   } | null
   default_execution_target?: string | null
+  wework_new_chat_model_selection?: ModelSelectionConfig | null
 }
 
 export interface Team {
@@ -38,12 +39,21 @@ export interface ProjectWorkspaceConfig {
   checkoutPath?: string
 }
 
+export type ModelType = 'public' | 'user' | 'group'
+
+export interface ModelSelectionConfig {
+  modelName: string
+  modelType?: ModelType | null
+  options?: Record<string, string>
+}
+
 export interface ProjectConfig {
   mode?: 'workspace' | string
   path?: string
   device_id?: string
   execution?: ProjectExecutionConfig | null
   workspace?: ProjectWorkspaceConfig | null
+  modelSelection?: ModelSelectionConfig | null
 }
 
 export interface DeviceInfo {
@@ -111,6 +121,8 @@ export interface Task {
   updated_at?: string
   is_group_chat?: boolean
   model_id?: string | null
+  force_override_bot_model_type?: ModelType | null
+  model_options?: Record<string, string> | null
   requested_skills?: SkillRef[]
 }
 
@@ -228,7 +240,8 @@ export interface ChatSendPayload {
   device_id?: string
   model_id?: string
   force_override_bot_model?: string
-  force_override_bot_model_type?: string
+  force_override_bot_model_type?: ModelType
+  model_options?: ModelOptions
   attachment_ids?: number[]
   additional_skills?: SkillRef[]
 }
@@ -568,7 +581,7 @@ export interface ChatBlockUpdatedPayload {
   status?: ChatBlock['status'] | 'running'
 }
 
-export type ModelType = 'public' | 'user' | 'group'
+export type ModelOptions = Record<string, string>
 
 export interface UnifiedModel {
   name: string

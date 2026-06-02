@@ -182,7 +182,17 @@ describe('WorkbenchProvider', () => {
               .fn()
               .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
           },
-          modelApi: { listModels: vi.fn().mockResolvedValue({ data: [] }) },
+          modelApi: {
+            listModels: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  name: 'gpt-5.5-medium',
+                  type: 'user',
+                  displayName: 'GPT 5.5 Medium',
+                },
+              ],
+            }),
+          },
           skillApi: {
             listSkills: vi.fn().mockResolvedValue([]),
             getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
@@ -352,7 +362,17 @@ describe('WorkbenchProvider', () => {
               .fn()
               .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
           },
-          modelApi: { listModels: vi.fn().mockResolvedValue({ data: [] }) },
+          modelApi: {
+            listModels: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  name: 'gpt-5.5-medium',
+                  type: 'user',
+                  displayName: 'GPT 5.5 Medium',
+                },
+              ],
+            }),
+          },
           skillApi: {
             listSkills: vi.fn().mockResolvedValue([]),
             getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
@@ -432,7 +452,17 @@ describe('WorkbenchProvider', () => {
               .fn()
               .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
           },
-          modelApi: { listModels: vi.fn().mockResolvedValue({ data: [] }) },
+          modelApi: {
+            listModels: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  name: 'gpt-5.5-medium',
+                  type: 'user',
+                  displayName: 'GPT 5.5 Medium',
+                },
+              ],
+            }),
+          },
           skillApi: {
             listSkills: vi.fn().mockResolvedValue([]),
             getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
@@ -532,7 +562,17 @@ describe('WorkbenchProvider', () => {
               .fn()
               .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
           },
-          modelApi: { listModels: vi.fn().mockResolvedValue({ data: [] }) },
+          modelApi: {
+            listModels: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  name: 'gpt-5.5-medium',
+                  type: 'user',
+                  displayName: 'GPT 5.5 Medium',
+                },
+              ],
+            }),
+          },
           skillApi: {
             listSkills: vi.fn().mockResolvedValue([]),
             getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
@@ -735,6 +775,35 @@ describe('WorkbenchProvider', () => {
 
   test('sends project chat options for a new project conversation', async () => {
     const sendMessage = vi.fn().mockResolvedValue({ success: true, task_id: 99 })
+    const updateCurrentUser = vi.fn().mockResolvedValue({
+      id: 1,
+      user_name: 'alice',
+      email: 'a@b.c',
+      preferences: {
+        wework_new_chat_model_selection: {
+          modelName: 'gpt-5.5-medium',
+          modelType: 'user',
+          options: { reasoning: 'high' },
+        },
+      },
+    })
+    const updateProject = vi.fn().mockResolvedValue({
+      id: 7,
+      name: 'Wegent',
+      tasks: [],
+      config: {
+        mode: 'workspace',
+        execution: {
+          targetType: 'local',
+          deviceId: 'device-1',
+        },
+        modelSelection: {
+          modelName: 'gpt-5.5-medium',
+          modelType: 'user',
+          options: { reasoning: 'high' },
+        },
+      },
+    })
     const listProjects = vi.fn().mockResolvedValue({
       items: [
         {
@@ -761,7 +830,17 @@ describe('WorkbenchProvider', () => {
               .fn()
               .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
           },
-          modelApi: { listModels: vi.fn().mockResolvedValue({ data: [] }) },
+          modelApi: {
+            listModels: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  name: 'gpt-5.5-medium',
+                  type: 'user',
+                  displayName: 'GPT 5.5 Medium',
+                },
+              ],
+            }),
+          },
           skillApi: {
             listSkills: vi.fn().mockResolvedValue([]),
             getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
@@ -770,7 +849,7 @@ describe('WorkbenchProvider', () => {
             listProjects,
             getProject: vi.fn(),
             createProject: vi.fn(),
-            updateProject: vi.fn(),
+            updateProject,
             deleteProject: vi.fn(),
             archiveProjectChats: vi.fn(),
             archiveAllProjectChats: vi.fn(),
@@ -792,6 +871,9 @@ describe('WorkbenchProvider', () => {
             getHomeDirectory: vi.fn(),
             getProjectWorkspaceRoot: vi.fn(),
             listDirectories: vi.fn(),
+          },
+          userApi: {
+            updateCurrentUser,
           },
           chatStream: {
             joinTask: vi.fn(),
@@ -825,6 +907,9 @@ describe('WorkbenchProvider', () => {
           message: 'build it',
           force_override_bot_model: 'gpt-5.5-medium',
           force_override_bot_model_type: 'user',
+          model_options: {
+            reasoning: 'high',
+          },
           attachment_ids: [42],
           additional_skills: [
             {
@@ -836,6 +921,18 @@ describe('WorkbenchProvider', () => {
         })
       )
     )
+    expect(updateCurrentUser).toHaveBeenCalledWith({
+      preferences: {
+        wework_new_chat_model_selection: {
+          modelName: 'gpt-5.5-medium',
+          modelType: 'user',
+          options: {
+            reasoning: 'high',
+          },
+        },
+      },
+    })
+    expect(updateProject).not.toHaveBeenCalled()
     expect(listProjects).toHaveBeenCalledTimes(2)
   })
 

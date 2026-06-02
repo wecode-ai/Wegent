@@ -19,6 +19,8 @@ import type {
   ChatSendPayload,
   CreateProjectRequest,
   DeviceInfo,
+  ModelOptions,
+  ModelSelectionConfig,
   ProjectWithTasks,
   SkillRef,
   Subtask,
@@ -59,6 +61,8 @@ export interface WorkbenchContextValue {
     models: UnifiedModel[]
     skills: UnifiedSkill[]
     selectedModel: UnifiedModel | null
+    selectedModelOptions: ModelOptions
+    isModelSelectionReady: boolean
     selectedSkills: SkillRef[]
     attachments: Attachment[]
     uploadingFiles: Map<string, { file: File; progress: number }>
@@ -66,6 +70,7 @@ export interface WorkbenchContextValue {
     isOptionsLocked: boolean
     isAttachmentReadyToSend: boolean
     setSelectedModel: (model: UnifiedModel | null) => void
+    setSelectedModelOption: (optionId: string, value: string) => void
     setSelectedSkills: (skills: SkillRef[]) => void
     toggleSkill: (skill: SkillRef) => void
     handleFileSelect: (files: File | File[]) => Promise<void>
@@ -228,6 +233,19 @@ function writeLastProjectId(userId: number, projectId: number) {
   }
 }
 
+function getTaskModelSelection(task: Task | null): ModelSelectionConfig | null {
+  if (!task?.model_id) return null
+  return {
+    modelName: task.model_id,
+    modelType: task.force_override_bot_model_type ?? null,
+    options: task.model_options ?? {},
+  }
+}
+
+function getNewChatModelSelection(user: User | null): ModelSelectionConfig | null {
+  return user?.preferences?.wework_new_chat_model_selection ?? null
+}
+
 function isRunningTaskStatus(status?: string) {
   return ['PENDING', 'RUNNING', 'STARTED', 'PROCESSING', 'IN_PROGRESS'].includes(
     String(status ?? '').toUpperCase()
@@ -271,9 +289,36 @@ export function WorkbenchProvider({
   )
   const [messages, dispatchMessages] = useReducer(messageReducer, [])
   const isOptionsLocked = Boolean(state.currentTask)
+  const currentUser = state.user ?? user
+  const modelSelectionConfig = useMemo(
+    () =>
+      getTaskModelSelection(state.currentTask) ??
+      getNewChatModelSelection(currentUser) ??
+      null,
+    [currentUser, state.currentTask]
+  )
+  const persistNewChatModelSelection = useCallback(
+    (selection: ModelSelectionConfig) => {
+      if (state.currentTask) return
+      const preferences = {
+        ...(currentUser.preferences ?? {}),
+        wework_new_chat_model_selection: selection,
+      }
+      dispatch({ type: 'user_preferences_updated', preferences })
+      void resolvedServices.userApi
+        ?.updateCurrentUser({ preferences })
+        .catch(() => {
+          dispatch({ type: 'error_set', error: '模型配置保存失败' })
+        })
+    },
+    [currentUser.preferences, resolvedServices.userApi, state.currentTask]
+  )
   const modelSelection = useWorkbenchModels({
     api: resolvedServices.modelApi,
     locked: isOptionsLocked,
+    selectionConfig: modelSelectionConfig,
+    selectionReady: !state.isBootstrapping,
+    onSelectionChange: persistNewChatModelSelection,
   })
   const skillSelection = useWorkbenchSkills({
     api: resolvedServices.skillApi,
@@ -774,6 +819,9 @@ export function WorkbenchProvider({
     if (!isOptionsLocked && modelSelection.selectedModel) {
       payload.force_override_bot_model = modelSelection.selectedModel.name
       payload.force_override_bot_model_type = modelSelection.selectedModel.type
+      if (Object.keys(modelSelection.selectedModelOptions).length > 0) {
+        payload.model_options = modelSelection.selectedModelOptions
+      }
     }
 
     if (!isOptionsLocked && skillSelection.selectedSkills.length > 0) {
@@ -805,6 +853,9 @@ export function WorkbenchProvider({
         project_id: projectId,
         client_origin: WEWORK_CLIENT_ORIGIN,
         device_id: activeDeviceId,
+        model_id: payload.force_override_bot_model,
+        force_override_bot_model_type: payload.force_override_bot_model_type,
+        model_options: payload.model_options,
         created_at: new Date().toISOString(),
       }
       dispatch({
@@ -824,6 +875,7 @@ export function WorkbenchProvider({
     refreshWorkLists,
     isOptionsLocked,
     modelSelection.selectedModel,
+    modelSelection.selectedModelOptions,
     resolvedServices,
     skillSelection.selectedSkills,
     state.currentProject,
@@ -858,6 +910,8 @@ export function WorkbenchProvider({
       models: modelSelection.models,
       skills: skillSelection.skills,
       selectedModel: modelSelection.selectedModel,
+      selectedModelOptions: modelSelection.selectedModelOptions,
+      isModelSelectionReady: modelSelection.isSelectionReady,
       selectedSkills: skillSelection.selectedSkills,
       attachments: attachmentSelection.attachments,
       uploadingFiles: attachmentSelection.uploadingFiles,
@@ -865,6 +919,7 @@ export function WorkbenchProvider({
       isOptionsLocked,
       isAttachmentReadyToSend: attachmentSelection.isAttachmentReadyToSend,
       setSelectedModel: modelSelection.setSelectedModel,
+      setSelectedModelOption: modelSelection.setSelectedModelOption,
       setSelectedSkills: skillSelection.setSelectedSkills,
       toggleSkill: skillSelection.toggleSkill,
       handleFileSelect: attachmentSelection.handleFileSelect,
