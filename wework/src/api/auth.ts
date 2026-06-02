@@ -11,6 +11,19 @@ export interface LoginResponse {
   token_type: string
 }
 
+export interface WeiboQrcodeChallenge {
+  sid: string
+  qr_data: string
+  qr_code_image: string
+  expires_in: number
+}
+
+export interface WeiboQrcodeStatusResponse {
+  status: 'pending' | 'success'
+  access_token?: string
+  token_type: string
+}
+
 const TOKEN_KEY = 'auth_token'
 const TOKEN_EXPIRE_KEY = 'auth_token_expire'
 const TOKEN_COOKIE_NAME = 'auth_token'
@@ -81,6 +94,27 @@ export function createAuthApi(client: HttpClient) {
     },
     async loginWithOidcToken(accessToken: string): Promise<void> {
       setToken(accessToken)
+    },
+    createWeiboQrcodeChallenge(): Promise<WeiboQrcodeChallenge> {
+      return client.post('/internal/auth/weibo-qrcode')
+    },
+    async loginWithWeiboQrcode(
+      sid: string,
+      qrData: string,
+    ): Promise<User | null> {
+      const res = await client.post<WeiboQrcodeStatusResponse>(
+        '/internal/auth/weibo-qrcode/status',
+        {
+          sid,
+          qr_data: qrData,
+        },
+      )
+      if (res.status !== 'success' || !res.access_token) {
+        return null
+      }
+
+      setToken(res.access_token)
+      return client.get('/users/me')
     },
   }
 }

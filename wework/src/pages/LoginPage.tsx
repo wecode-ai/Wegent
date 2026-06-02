@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
+import { isTauri } from '@tauri-apps/api/core'
 import { Eye, EyeOff } from 'lucide-react'
 import { getRuntimeConfig } from '@/config/runtime'
 import { POST_LOGIN_REDIRECT_KEY, sanitizeRedirectPath } from '@/features/auth/redirect'
 import { useAuth } from '@/features/auth/useAuth'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
+import { QrcodeLoginPage } from './QrcodeLoginPage'
 
 function getRedirectTarget(): string {
   const search = new URLSearchParams(window.location.search)
@@ -30,6 +33,7 @@ export function LoginPage() {
   const { t } = useTranslation('common')
   const { login, user, isLoading: authLoading } = useAuth()
   const config = useMemo(() => getRuntimeConfig(), [])
+  const isMobile = useIsMobile()
   const [formData, setFormData] = useState({
     user_name: 'admin',
     password: 'Wegent2025!',
@@ -40,6 +44,7 @@ export function LoginPage() {
   const redirectTarget = getRedirectTarget()
   const showPasswordLogin = config.loginMode === 'password' || config.loginMode === 'all'
   const showOidcLogin = config.loginMode === 'oidc' || config.loginMode === 'all'
+  const showQrcodeOnlyLogin = isMobile || isTauri()
 
   useEffect(() => {
     if (!authLoading && user) {
@@ -81,6 +86,10 @@ export function LoginPage() {
       redirect,
       config.appBasePath,
     )
+  }
+
+  if (showQrcodeOnlyLogin) {
+    return <QrcodeLoginPage redirectTarget={redirectTarget} />
   }
 
   if (config.loginMode === 'oidc') {
