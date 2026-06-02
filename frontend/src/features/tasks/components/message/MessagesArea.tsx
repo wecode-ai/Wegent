@@ -1156,14 +1156,14 @@ function MessagesArea({
 
   const isSyncingMessages =
     messages.length === 0 &&
-    (taskState?.status === 'waiting_socket' ||
-      taskState?.status === 'joining' ||
-      taskState?.status === 'syncing')
+    (taskState?.phase === 'waiting_socket' ||
+      taskState?.phase === 'joining' ||
+      taskState?.phase === 'syncing')
 
   const showRuntimeWatermark =
     taskState !== null &&
     !isSyncingMessages &&
-    (messages.length === 0 || taskState.status === 'error')
+    (messages.length === 0 || taskState.phase === 'error')
 
   return (
     <div

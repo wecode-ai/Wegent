@@ -36,7 +36,6 @@ from executor.modes.local.session_handler import LocalSessionHandler
 from executor.modes.local.websocket_client import WebSocketClient
 from executor.services.updater.process_manager import ProcessManager
 from executor.version import get_version
-
 from shared.logger import setup_logger
 from shared.models import ResponsesAPIEmitter
 from shared.models.execution import ExecutionRequest

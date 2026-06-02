@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Optional
 
 from executor.config import config
-
 from shared.logger import setup_logger
 
 logger = setup_logger("codex_session_store")

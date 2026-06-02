@@ -6,24 +6,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 interface UseChatTransientStateOptions {
   selectedTaskId?: number | null
-  setIsLoading: (value: boolean) => void
 }
 
-export function useChatTransientState({
-  selectedTaskId,
-  setIsLoading,
-}: UseChatTransientStateOptions) {
+export function useChatTransientState({ selectedTaskId }: UseChatTransientStateOptions) {
   const [pendingTaskId, setPendingTaskId] = useState<number | null>(null)
-  const [localPendingMessage, setLocalPendingMessage] = useState<string | null>(null)
-  const [isAwaitingResponseStart, setIsAwaitingResponseStart] = useState(false)
-  const [isCancelling, setIsCancelling] = useState(false)
 
   const previousTaskIdRef = useRef<number | null | undefined>(undefined)
 
   const resetStreamingState = useCallback(() => {
-    setLocalPendingMessage(null)
     setPendingTaskId(null)
-    setIsAwaitingResponseStart(false)
   }, [])
 
   const effectiveTaskIdForState = useMemo(
@@ -40,8 +31,6 @@ export function useChatTransientState({
 
     if (!currentTaskId && !pendingTaskId) {
       resetStreamingState()
-      setIsLoading(false)
-      setIsCancelling(false)
     }
 
     const previousTaskId = previousTaskIdRef.current
@@ -51,33 +40,15 @@ export function useChatTransientState({
       previousTaskId !== null
     ) {
       resetStreamingState()
-      setIsCancelling(false)
     }
 
     previousTaskIdRef.current = currentTaskId
-  }, [pendingTaskId, resetStreamingState, selectedTaskId, setIsLoading])
+  }, [pendingTaskId, resetStreamingState, selectedTaskId])
 
   return {
     pendingTaskId,
     setPendingTaskId,
-    localPendingMessage,
-    setLocalPendingMessage,
-    isAwaitingResponseStart,
-    setIsAwaitingResponseStart,
-    isCancelling,
-    setIsCancelling,
     resetStreamingState,
     effectiveTaskIdForState,
   }
-}
-
-export function useClearAwaitingResponseOnActivity(
-  isResponseActive: boolean,
-  setIsAwaitingResponseStart: (value: boolean) => void
-) {
-  useEffect(() => {
-    if (isResponseActive) {
-      setIsAwaitingResponseStart(false)
-    }
-  }, [isResponseActive, setIsAwaitingResponseStart])
 }
