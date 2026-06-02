@@ -301,6 +301,70 @@ describe('ChatInput', () => {
     expect(setSelectedModel).toHaveBeenCalledWith(model)
   })
 
+  test('shows incompatible model options as disabled', async () => {
+    const selectedModel: UnifiedModel = {
+      name: 'overseas-gpt-5.5',
+      type: 'user',
+      displayName: '海外:gpt-5.5',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.5',
+          sortOrder: 10,
+        },
+      },
+    }
+    const incompatibleModel: UnifiedModel = {
+      name: 'overseas-gpt-5.4',
+      type: 'user',
+      displayName: '海外:gpt-5.4',
+      compatibilityDisabled: true,
+      compatibilityDisabledReason: 'runtime_family_mismatch',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.4',
+          sortOrder: 20,
+        },
+      },
+    }
+    const setSelectedModel = vi.fn()
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [selectedModel, incompatibleModel],
+          selectedModel,
+          selectedModelOptions: {},
+          setSelectedModel,
+        })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+
+    const disabledOption = screen.getByTestId('model-option-overseas-gpt-5.4')
+    expect(disabledOption).toBeDisabled()
+    expect(disabledOption).toHaveAttribute('aria-disabled', 'true')
+    expect(disabledOption).toHaveAttribute(
+      'title',
+      'Incompatible with the current model protocol',
+    )
+    expect(disabledOption).toHaveTextContent(
+      'Incompatible with the current model protocol',
+    )
+
+    await userEvent.click(disabledOption)
+
+    expect(setSelectedModel).not.toHaveBeenCalled()
+  })
+
   test('closes the model menu after selecting a reasoning option', async () => {
     const model: UnifiedModel = {
       name: 'overseas-gpt-5.5',
@@ -1069,7 +1133,7 @@ describe('ChatInput', () => {
     expect(onSelectProject).not.toHaveBeenCalledWith(8)
   })
 
-  test('disables model and skill selectors when options are locked', () => {
+  test('keeps model selector enabled and skill selector disabled when options are locked', () => {
     const selectedSkill: SkillRef = {
       name: 'project-summary',
       namespace: 'default',
@@ -1090,7 +1154,7 @@ describe('ChatInput', () => {
       />,
     )
 
-    expect(screen.getByTestId('model-selector-button')).toBeDisabled()
+    expect(screen.getByTestId('model-selector-button')).not.toBeDisabled()
     expect(screen.getByTestId('skill-selector-button')).toBeDisabled()
   })
 

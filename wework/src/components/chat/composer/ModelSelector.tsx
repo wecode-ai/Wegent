@@ -18,7 +18,11 @@ import {
   groupModelsByFamily,
   inferModelFamily,
 } from '@/lib/model-ui'
-import type { ModelOptions, UnifiedModel } from '@/types/api'
+import type {
+  ModelCompatibilityDisabledReason,
+  ModelOptions,
+  UnifiedModel,
+} from '@/types/api'
 import { useOutsideClick } from './useOutsideClick'
 
 const MAIN_MENU_WIDTH = 256
@@ -438,25 +442,43 @@ export function ModelSelector({
                   {mobileModels.map(model => {
                     const selected =
                       model.name === selectedModel?.name && model.type === selectedModel?.type
+                    const modelDisabled = Boolean(model.compatibilityDisabled)
+                    const disabledMessage = modelDisabled
+                      ? getCompatibilityDisabledMessage(model.compatibilityDisabledReason)
+                      : undefined
                     return (
                       <button
                         key={`${model.type}:${model.name}`}
                         type="button"
                         data-testid={`model-option-${model.name}`}
-                        onClick={() => handleSelectModel(model)}
+                        disabled={modelDisabled}
+                        aria-disabled={modelDisabled}
+                        title={disabledMessage}
+                        onClick={() => {
+                          if (modelDisabled) return
+                          handleSelectModel(model)
+                        }}
                         className={[
-                          'flex min-h-14 w-full items-center gap-3 rounded-2xl border px-4 py-3 text-left',
+                          'flex min-h-14 w-full items-center gap-3 rounded-2xl border px-4 py-3 text-left disabled:cursor-not-allowed disabled:opacity-70',
                           selected
                             ? 'border-[#b9d1ca] bg-[#e8f2ef]'
-                            : 'border-transparent bg-surface',
+                            : 'border-transparent bg-surface disabled:bg-surface',
                         ].join(' ')}
                       >
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-semibold text-text-primary">
+                          <span
+                            className={[
+                              'block truncate text-sm font-semibold',
+                              modelDisabled ? 'text-text-muted' : 'text-text-primary',
+                            ].join(' ')}
+                          >
                             {getModelDisplayLabel(model, selectedModelOptions)}
                           </span>
                           <span className="mt-0.5 block truncate text-xs text-text-muted">
-                            {model.displayName || model.modelId || model.name}
+                            {disabledMessage ||
+                              model.displayName ||
+                              model.modelId ||
+                              model.name}
                           </span>
                         </span>
                         {selected && (
@@ -500,6 +522,27 @@ export function ModelSelector({
           </div>
         </div>
       </div>
+    )
+  }
+
+  function getCompatibilityDisabledMessage(
+    reason?: ModelCompatibilityDisabledReason,
+  ): string {
+    if (reason === 'missing_current_runtime_family') {
+      return t(
+        'workbench.model_disabled_missing_current_runtime_family',
+        'Current model is missing runtime.family',
+      )
+    }
+    if (reason === 'missing_target_runtime_family') {
+      return t(
+        'workbench.model_disabled_missing_target_runtime_family',
+        'This model is missing runtime.family',
+      )
+    }
+    return t(
+      'workbench.model_disabled_runtime_family_mismatch',
+      'Incompatible with the current model protocol',
     )
   }
 
@@ -581,16 +624,37 @@ export function ModelSelector({
                 {activeGroup.models.map(model => {
                   const selected =
                     model.name === selectedModel?.name && model.type === selectedModel?.type
+                  const modelDisabled = Boolean(model.compatibilityDisabled)
+                  const disabledMessage = modelDisabled
+                    ? getCompatibilityDisabledMessage(model.compatibilityDisabledReason)
+                    : undefined
                   return (
                     <button
                       key={`${model.type}:${model.name}`}
                       type="button"
                       data-testid={`model-option-${model.name}`}
-                      onClick={() => handleSelectModel(model)}
-                      className="flex h-9 w-full items-center gap-3 rounded-lg px-3 text-left text-[13px] leading-[18px] text-text-primary hover:bg-muted"
+                      disabled={modelDisabled}
+                      aria-disabled={modelDisabled}
+                      title={disabledMessage}
+                      onClick={() => {
+                        if (modelDisabled) return
+                        handleSelectModel(model)
+                      }}
+                      className="flex min-h-9 w-full items-center gap-3 rounded-lg px-3 py-1.5 text-left text-[13px] leading-[18px] text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:text-text-muted disabled:hover:bg-transparent"
                     >
                       <span className="min-w-0 flex-1 truncate font-medium">
-                        {getModelDisplayLabel(model, selectedModelOptions)}
+                        {disabledMessage ? (
+                          <>
+                            <span className="block truncate">
+                              {getModelDisplayLabel(model, selectedModelOptions)}
+                            </span>
+                            <span className="mt-0.5 block truncate text-xs font-normal text-text-muted">
+                              {disabledMessage}
+                            </span>
+                          </>
+                        ) : (
+                          getModelDisplayLabel(model, selectedModelOptions)
+                        )}
                       </span>
                       {selected && <Check className="h-4 w-4 shrink-0 text-text-secondary" />}
                     </button>
