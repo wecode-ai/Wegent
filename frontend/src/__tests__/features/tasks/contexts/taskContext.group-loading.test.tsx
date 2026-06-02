@@ -6,12 +6,16 @@ import '@testing-library/jest-dom'
 import { act, render, screen, waitFor } from '@testing-library/react'
 
 import { taskApis } from '@/apis/tasks'
-import { TaskContextProvider, useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { TaskSessionProvider, useTaskSession } from '@/features/tasks/session/TaskSession'
 import type { Task } from '@/types/api'
 
 const mockSocketContext = {
   registerTaskHandlers: jest.fn(() => jest.fn()),
+  registerChatHandlers: jest.fn(() => jest.fn()),
+  registerSkillHandlers: jest.fn(() => jest.fn()),
   isConnected: false,
+  joinTask: jest.fn().mockResolvedValue({ subtasks: [] }),
+  sendChatMessage: jest.fn(),
   leaveTask: jest.fn(),
   onReconnect: jest.fn(() => jest.fn()),
 }
@@ -91,19 +95,19 @@ const taskListResponse = (items: Task[]) => ({
 })
 
 const contextProbe: {
-  current: ReturnType<typeof useTaskContext> | null
+  current: ReturnType<typeof useTaskSession> | null
 } = {
   current: null,
 }
 
 function ContextProbe() {
-  const context = useTaskContext()
+  const context = useTaskSession()
   contextProbe.current = context
 
   return <div data-testid="group-count">{context.groupTasks.length}</div>
 }
 
-describe('TaskContext group task loading', () => {
+describe('TaskSessionContext group task loading', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     contextProbe.current = null
@@ -127,9 +131,9 @@ describe('TaskContext group task loading', () => {
 
   it('defers group task loading until all group tasks are requested', async () => {
     render(
-      <TaskContextProvider>
+      <TaskSessionProvider>
         <ContextProbe />
-      </TaskContextProvider>
+      </TaskSessionProvider>
     )
 
     await waitFor(() => {
@@ -158,9 +162,9 @@ describe('TaskContext group task loading', () => {
     mockedTaskApis.getPersonalTasksLite.mockResolvedValueOnce(taskListResponse([personalTask]))
 
     render(
-      <TaskContextProvider>
+      <TaskSessionProvider>
         <ContextProbe />
-      </TaskContextProvider>
+      </TaskSessionProvider>
     )
 
     await waitFor(() => {
@@ -188,9 +192,9 @@ describe('TaskContext group task loading', () => {
       .mockResolvedValueOnce(taskListResponse([secondPageTask]))
 
     render(
-      <TaskContextProvider>
+      <TaskSessionProvider>
         <ContextProbe />
-      </TaskContextProvider>
+      </TaskSessionProvider>
     )
 
     await waitFor(() => {
@@ -220,9 +224,9 @@ describe('TaskContext group task loading', () => {
       .mockResolvedValueOnce(taskListResponse([thirdPageTask]))
 
     render(
-      <TaskContextProvider>
+      <TaskSessionProvider>
         <ContextProbe />
-      </TaskContextProvider>
+      </TaskSessionProvider>
     )
 
     await waitFor(() => {

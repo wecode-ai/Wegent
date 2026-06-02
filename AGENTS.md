@@ -26,6 +26,8 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 - When adding new features, put detailed docs in `docs/en/` and `docs/zh/`, reference from AGENTS.md
 
 **Recent design docs:**
+- Task runtime state machine and frontend consistency recovery: [`docs/zh/developer-guide/task-runtime-state-machine.md`](docs/zh/developer-guide/task-runtime-state-machine.md)
+- English version: [`docs/en/developer-guide/task-runtime-state-machine.md`](docs/en/developer-guide/task-runtime-state-machine.md)
 - Prompt caching optimization via dynamic context injection: [`docs/zh/developer-guide/dynamic-context.md`](docs/zh/developer-guide/dynamic-context.md)
 - English version: [`docs/en/developer-guide/dynamic-context.md`](docs/en/developer-guide/dynamic-context.md)
 - Exposing capabilities guide (how to make features available to AI agents): [`docs/zh/developer-guide/exposing-capabilities.md`](docs/zh/developer-guide/exposing-capabilities.md)

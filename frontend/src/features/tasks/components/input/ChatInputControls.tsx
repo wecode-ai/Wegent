@@ -65,6 +65,8 @@ export interface ChatInputControlsProps {
   taskId?: number | null
   /** Task's model_id from backend - used as fallback when no session preference exists */
   taskModelId?: string | null
+  /** Whether uploaded attachments require a video-input-capable chat model */
+  requireVideoInputModel?: boolean
   /** Knowledge base ID to exclude from context selector (used in notebook mode) */
   knowledgeBaseId?: number
 
@@ -112,9 +114,9 @@ export interface ChatInputControlsProps {
   isModelSelectionRequired: boolean
   isAttachmentReadyToSend: boolean
   taskInputMessage: string
-  isSubtaskStreaming: boolean
   canQueueMessage?: boolean
   canSendGuidance?: boolean
+  canCancelTask?: boolean
 
   // Actions
   onStopStream: () => void
@@ -205,6 +207,7 @@ export function ChatInputControls({
   teamId,
   taskId,
   taskModelId,
+  requireVideoInputModel = false,
   knowledgeBaseId,
   showRepositorySelector,
   selectedRepo,
@@ -235,9 +238,9 @@ export function ChatInputControls({
   isModelSelectionRequired,
   isAttachmentReadyToSend,
   taskInputMessage,
-  isSubtaskStreaming,
   canQueueMessage = false,
   canSendGuidance = false,
+  canCancelTask,
   onStopStream,
   onCancelTask,
   isCancelling = false,
@@ -301,10 +304,8 @@ export function ChatInputControls({
       shouldHideChatInput,
       taskInputMessage,
       hasAttachments: attachmentState.attachments.length > 0,
-      selectedTaskStatus: selectedTaskDetail?.status,
-      isSubtaskStreaming,
-      isGroupChat: selectedTaskDetail?.is_group_chat,
       canQueueMessage,
+      canCancelTask,
     })
 
     const renderStopAction = () => (
@@ -402,6 +403,7 @@ export function ChatInputControls({
         teamId={teamId}
         taskId={taskId}
         taskModelId={taskModelId}
+        requireVideoInputModel={requireVideoInputModel}
         knowledgeBaseId={knowledgeBaseId}
         showRepositorySelector={showRepositorySelector}
         selectedRepo={selectedRepo}
@@ -429,9 +431,9 @@ export function ChatInputControls({
         isAttachmentReadyToSend={isAttachmentReadyToSend}
         taskInputMessage={taskInputMessage}
         hasAttachments={attachmentState.attachments.length > 0}
-        isSubtaskStreaming={isSubtaskStreaming}
         canQueueMessage={canQueueMessage}
         canSendGuidance={canSendGuidance}
+        canCancelTask={canCancelTask}
         onStopStream={onStopStream}
         onCancelTask={onCancelTask}
         isCancelling={isCancelling}
@@ -657,6 +659,7 @@ export function ChatInputControls({
                 teamId={teamId}
                 taskId={taskId}
                 taskModelId={taskModelId}
+                requireVideoInput={requireVideoInputModel}
               />
             )}
           </div>

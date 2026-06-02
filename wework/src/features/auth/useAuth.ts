@@ -1,11 +1,13 @@
 import { createContext, useContext } from 'react'
-import type { LoginRequest } from '@/api/auth'
+import type { LoginRequest, WeiboQrcodeChallenge } from '@/api/auth'
 import type { User } from '@/types/api'
 
 export interface AuthContextValue {
   user: User | null
   isLoading: boolean
   login: (data: LoginRequest) => Promise<User>
+  createWeiboQrcodeChallenge: () => Promise<WeiboQrcodeChallenge>
+  loginWithWeiboQrcode: (sid: string, qrData: string) => Promise<User | null>
   logout: () => void
   refresh: () => Promise<void>
   loginWithOidcToken: (accessToken: string) => Promise<void>

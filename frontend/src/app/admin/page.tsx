@@ -16,8 +16,7 @@ import type { AdminTabId } from '@/features/admin/components/AdminTabNav'
 import { ShieldExclamationIcon } from '@heroicons/react/24/outline'
 import AdminPublishedAppsPage from '@wecode/components/settings/AdminPublishedAppsPage'
 import { UserProvider, useUser } from '@/features/common/UserContext'
-import { TaskContextProvider } from '@/features/tasks/contexts/taskContext'
-import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext'
+import { TaskSessionProvider } from '@/features/tasks/session/TaskSession'
 import { SocketProvider } from '@/contexts/SocketContext'
 import { DeviceProvider } from '@/contexts/DeviceContext'
 import { ProjectProvider } from '@/features/projects/contexts/projectContext'
@@ -291,13 +290,11 @@ export default function AdminPage() {
       <SocketProvider>
         <DeviceProvider>
           <ProjectProvider>
-            <TaskContextProvider>
-              <ChatStreamProvider>
-                <Suspense fallback={<div>Loading...</div>}>
-                  <AdminContent />
-                </Suspense>
-              </ChatStreamProvider>
-            </TaskContextProvider>
+            <TaskSessionProvider>
+              <Suspense fallback={<div>Loading...</div>}>
+                <AdminContent />
+              </Suspense>
+            </TaskSessionProvider>
           </ProjectProvider>
         </DeviceProvider>
       </SocketProvider>

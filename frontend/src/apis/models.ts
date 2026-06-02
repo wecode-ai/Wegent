@@ -32,6 +32,10 @@ export interface RerankConfig {
   return_documents?: boolean
 }
 
+export interface ModelCapabilities {
+  supportsVideo?: boolean
+}
+
 export interface AspectRatioOption {
   label: string
   value: string
@@ -105,6 +109,7 @@ export interface ModelCRD {
     sttConfig?: STTConfig
     embeddingConfig?: EmbeddingConfig
     rerankConfig?: RerankConfig
+    modelCapabilities?: ModelCapabilities
     videoConfig?: VideoGenerationConfig
     imageConfig?: ImageGenerationConfig
   }

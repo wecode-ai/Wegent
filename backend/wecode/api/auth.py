@@ -26,8 +26,74 @@ from wecode.service.aidesk_auth_service import aidesk_auth_service
 from wecode.service.erp_entity_resolver import ErpEntityResolver
 from wecode.service.erp_user_service import ErpUserService
 from wecode.service.get_user_gitinfo import get_user_gitinfo
+from wecode.service.weibo_qrcode_auth_service import (
+    WeiboQrcodeAuthError,
+    weibo_qrcode_auth_service,
+)
 
 router = APIRouter()
+
+
+class WeiboQrcodeChallengeResponse(BaseModel):
+    sid: str
+    qr_data: str
+    qr_code_image: str
+    expires_in: int
+
+
+class WeiboQrcodeStatusRequest(BaseModel):
+    sid: str
+    qr_data: str
+
+
+class WeiboQrcodeStatusResponse(BaseModel):
+    status: str
+    access_token: str | None = None
+    token_type: str = "bearer"
+
+
+@router.post("/weibo-qrcode", response_model=WeiboQrcodeChallengeResponse)
+async def create_weibo_qrcode_challenge() -> WeiboQrcodeChallengeResponse:
+    """Create a Weibo QR code login challenge for mobile clients."""
+    try:
+        challenge = await weibo_qrcode_auth_service.create_challenge()
+    except (httpx.HTTPError, WeiboQrcodeAuthError) as exc:
+        logging.getLogger("weibo_qrcode_login").error(
+            "Failed to create Weibo QR code challenge: %s", exc
+        )
+        raise HTTPException(status_code=502, detail="Failed to create QR code")
+
+    return WeiboQrcodeChallengeResponse(
+        sid=challenge.sid,
+        qr_data=challenge.qr_data,
+        qr_code_image=challenge.qr_code_image,
+        expires_in=challenge.expires_in,
+    )
+
+
+@router.post("/weibo-qrcode/status", response_model=WeiboQrcodeStatusResponse)
+async def poll_weibo_qrcode_status(
+    request: WeiboQrcodeStatusRequest,
+    db: Session = Depends(get_db),
+) -> WeiboQrcodeStatusResponse:
+    """Poll a Weibo QR code challenge and return a token after scan success."""
+    try:
+        result = await weibo_qrcode_auth_service.complete_login(
+            db=db,
+            sid=request.sid,
+            qr_data=request.qr_data,
+        )
+    except (httpx.HTTPError, WeiboQrcodeAuthError) as exc:
+        logging.getLogger("weibo_qrcode_login").error(
+            "Failed to poll Weibo QR code challenge: %s", exc
+        )
+        raise HTTPException(status_code=502, detail="Failed to check QR code status")
+
+    return WeiboQrcodeStatusResponse(
+        status=result.status,
+        access_token=result.access_token,
+        token_type=result.token_type,
+    )
 
 
 @router.post("/login")

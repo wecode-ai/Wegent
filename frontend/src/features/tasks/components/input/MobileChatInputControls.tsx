@@ -54,6 +54,7 @@ export interface MobileChatInputControlsProps {
   teamId?: number | null
   taskId?: number | null
   taskModelId?: string | null
+  requireVideoInputModel?: boolean
   /** Knowledge base ID to exclude from context selector (used in notebook mode) */
   knowledgeBaseId?: number
 
@@ -96,9 +97,9 @@ export interface MobileChatInputControlsProps {
   isAttachmentReadyToSend: boolean
   taskInputMessage: string
   hasAttachments?: boolean
-  isSubtaskStreaming: boolean
   canQueueMessage?: boolean
   canSendGuidance?: boolean
+  canCancelTask?: boolean
 
   // Actions
   onStopStream: () => void
@@ -144,6 +145,7 @@ export function MobileChatInputControls({
   teamId,
   taskId,
   taskModelId,
+  requireVideoInputModel = false,
   knowledgeBaseId,
   showRepositorySelector,
   selectedRepo,
@@ -171,9 +173,9 @@ export function MobileChatInputControls({
   isAttachmentReadyToSend,
   taskInputMessage,
   hasAttachments = false,
-  isSubtaskStreaming,
   canQueueMessage = false,
   canSendGuidance = false,
+  canCancelTask,
   onStopStream,
   onCancelTask,
   isCancelling = false,
@@ -242,10 +244,8 @@ export function MobileChatInputControls({
       shouldHideChatInput,
       taskInputMessage,
       hasAttachments,
-      selectedTaskStatus: selectedTaskDetail?.status,
-      isSubtaskStreaming,
-      isGroupChat: selectedTaskDetail?.is_group_chat,
       canQueueMessage,
+      canCancelTask,
     })
 
     const renderStopAction = () => (
@@ -491,6 +491,7 @@ export function MobileChatInputControls({
               teamId={teamId}
               taskId={taskId}
               taskModelId={taskModelId}
+              requireVideoInput={requireVideoInputModel}
             />
           </div>
         )}

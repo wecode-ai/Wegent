@@ -135,7 +135,6 @@ const buildProps = (): ChatInputCardProps => ({
   shouldHideChatInput: false,
   isModelSelectionRequired: false,
   isAttachmentReadyToSend: true,
-  isSubtaskStreaming: false,
   onStopStream: jest.fn(),
   onSendMessage: jest.fn(),
   availableSkills: [],

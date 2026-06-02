@@ -238,6 +238,7 @@ async def get_chat_history(
     is_group_chat: bool,
     exclude_after_message_id: int | None = None,
     limit: int | None = None,
+    supports_video: bool = False,
 ) -> list[dict[str, Any]]:
     """Get chat history for a task.
 
@@ -251,6 +252,9 @@ async def get_chat_history(
         exclude_after_message_id: If provided, exclude messages with message_id >= this value.
         limit: If provided, limit the number of messages returned (most recent N messages).
             Used by subscription tasks to control history context size.
+        supports_video: Whether the model supports video input.
+            If True, video attachments will include video_url blocks.
+            If False (default), video attachments cannot be resolved as model input.
 
     Returns:
         List of message dictionaries with 'role' and 'content' keys
@@ -258,11 +262,12 @@ async def get_chat_history(
     is_http = _is_http_mode()
     logger.debug(
         "[history] get_chat_history: task_id=%d, is_group_chat=%s, "
-        "exclude_after=%s, limit=%s, is_http_mode=%s",
+        "exclude_after=%s, limit=%s, supports_video=%s, is_http_mode=%s",
         task_id,
         is_group_chat,
         exclude_after_message_id,
         limit,
+        supports_video,
         is_http,
     )
 
@@ -276,11 +281,11 @@ async def get_chat_history(
 
     if is_http:
         history = await _load_history_from_remote(
-            task_id, is_group_chat, exclude_after_message_id, limit
+            task_id, is_group_chat, exclude_after_message_id, limit, supports_video
         )
     else:
         history = await _load_history_from_db(
-            task_id, is_group_chat, exclude_after_message_id, limit
+            task_id, is_group_chat, exclude_after_message_id, limit, supports_video
         )
 
     logger.debug(
@@ -300,6 +305,7 @@ async def _load_history_from_remote(
     is_group_chat: bool,
     exclude_after_message_id: int | None = None,
     limit: int | None = None,
+    supports_video: bool = False,
 ) -> list[dict[str, Any]]:
     """Load chat history from Backend via RemoteHistoryStore.
 
@@ -310,14 +316,18 @@ async def _load_history_from_remote(
         is_group_chat: Whether to include username prefix in user messages
         exclude_after_message_id: If provided, exclude messages with message_id >= this value.
         limit: If provided, limit the number of messages returned (most recent N messages).
+        supports_video: Whether the model supports video input.
+            If True, video attachments will include video_url blocks.
+            If False (default), video attachments cannot be resolved as model input.
     """
     logger.info(
         "[history] _load_history_from_remote: START task_id=%d, is_group_chat=%s, "
-        "exclude_after=%s, limit=%s",
+        "exclude_after=%s, limit=%s, supports_video=%s",
         task_id,
         is_group_chat,
         exclude_after_message_id,
         limit,
+        supports_video,
     )
 
     store = _get_remote_history_store()
@@ -329,11 +339,12 @@ async def _load_history_from_remote(
         before_id = str(exclude_after_message_id) if exclude_after_message_id else None
         logger.debug(
             "[history] Calling remote store.get_history: session_id=%s, "
-            "before_id=%s, is_group_chat=%s, limit=%s",
+            "before_id=%s, is_group_chat=%s, limit=%s, supports_video=%s",
             session_id,
             before_id,
             is_group_chat,
             limit,
+            supports_video,
         )
 
         messages = await store.get_history(
@@ -341,6 +352,7 @@ async def _load_history_from_remote(
             before_message_id=before_id,
             is_group_chat=is_group_chat,
             limit=limit,
+            supports_video=supports_video,
         )
 
         logger.debug(
@@ -403,6 +415,7 @@ async def _load_history_from_db(
     is_group_chat: bool,
     exclude_after_message_id: int | None = None,
     limit: int | None = None,
+    supports_video: bool = False,
 ) -> list[dict[str, Any]]:
     """Load chat history from database (Package mode).
 
@@ -420,6 +433,7 @@ async def _load_history_from_db(
         is_group_chat,
         exclude_after_message_id,
         limit,
+        supports_video,
     )
 
 
@@ -428,6 +442,7 @@ def _load_history_from_db_sync(
     is_group_chat: bool,
     exclude_after_message_id: int | None = None,
     limit: int | None = None,
+    supports_video: bool = False,
 ) -> list[dict[str, Any]]:
     """Synchronous implementation of chat history retrieval.
 
@@ -473,7 +488,9 @@ def _load_history_from_db_sync(
             subtasks = query.order_by(Subtask.message_id.asc()).all()
 
         for subtask, sender_username in subtasks:
-            msgs = _build_history_messages(db, subtask, sender_username, is_group_chat)
+            msgs = _build_history_messages(
+                db, subtask, sender_username, is_group_chat, supports_video
+            )
             history.extend(msgs)
     finally:
         db.close()
@@ -486,6 +503,7 @@ def _build_history_messages(
     subtask,
     sender_username: str | None,
     is_group_chat: bool = False,
+    supports_video: bool = False,
 ) -> list[dict[str, Any]]:
     """Build history messages from a subtask.
 
@@ -499,8 +517,21 @@ def _build_history_messages(
     3. Processes knowledge_base contexts with remaining token space
     4. Follows MAX_EXTRACTED_TEXT_LENGTH limit with attachments having priority
     """
-    from app.models.subtask import SubtaskRole, SubtaskStatus
-    from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
+    try:
+        from app.models.subtask import SubtaskRole, SubtaskStatus
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+    except ModuleNotFoundError:
+        from shared.models.db import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+            SubtaskRole,
+            SubtaskStatus,
+        )
 
     if subtask.role == SubtaskRole.USER:
         # Parse multi-block prompt format (JSON array with system-reminder blocks).
@@ -568,6 +599,7 @@ def _build_history_messages(
 
         # Process attachments first (they have priority)
         vision_parts: list[dict[str, Any]] = []
+        video_parts: list[dict[str, Any]] = []
         attachment_text_parts: list[str] = []
         image_metadata_headers: list[str] = []
         total_attachment_text_length = 0
@@ -588,6 +620,29 @@ def _build_history_messages(
                 logger.info(
                     f"[history] Loaded image attachment: id={attachment.id}, "
                     f"name={attachment.name}, mime_type={attachment.mime_type}"
+                )
+            elif _is_video_context(attachment):
+                if not supports_video:
+                    raise ValueError(
+                        f"Video attachment {attachment.id} requires a video-capable model"
+                    )
+                payload = _build_video_attachment_payload(attachment)
+                if payload is None:
+                    continue
+                video_parts.append(
+                    {
+                        "type": "video_url",
+                        "video_url": {"url": payload.video_url},
+                    }
+                )
+                video_text = f"{payload.metadata_text}\n"
+                attachment_text_parts.append(video_text)
+                total_attachment_text_length += len(video_text)
+                logger.info(
+                    "[history] Loaded video attachment: id=%s, name=%s, mime_type=%s",
+                    attachment.id,
+                    attachment.name,
+                    attachment.mime_type,
                 )
             else:
                 doc_prefix = _build_document_text_prefix(
@@ -671,7 +726,7 @@ def _build_history_messages(
                 }
             )
 
-        if vision_parts:
+        if vision_parts or video_parts:
             # Add image metadata headers as attachment context
             if image_metadata_headers:
                 img_text = "".join(image_metadata_headers)
@@ -702,6 +757,7 @@ def _build_history_messages(
             multimodal_blocks: list[dict[str, Any]] = [
                 {"type": "text", "text": text_content},
                 *vision_parts,
+                *video_parts,
                 *context_blocks,
             ]
             return [{"role": "user", "content": multimodal_blocks}]
@@ -785,6 +841,27 @@ def _build_vision_content_block(context) -> dict[str, Any] | None:
             "url": f"data:{context.mime_type};base64,{encoded_data}",
         },
     }
+
+
+def _is_video_context(context) -> bool:
+    """Check whether a context is a video attachment."""
+    mime_type = str(getattr(context, "mime_type", "") or "").lower()
+    if mime_type.startswith("video/"):
+        return True
+
+    file_extension = str(getattr(context, "file_extension", "") or "").lower()
+    if not file_extension:
+        type_data = getattr(context, "type_data", None) or {}
+        file_extension = str(type_data.get("file_extension") or "").lower()
+
+    return file_extension in {".mp4", ".avi", ".mkv", ".mov", ".flv", ".wmv"}
+
+
+def _build_video_attachment_payload(context):
+    """Build video payload through backend's context service in package mode."""
+    from app.services.context import context_service
+
+    return context_service.build_video_content_from_attachment(context)
 
 
 def _format_file_size(size_bytes: int) -> str:

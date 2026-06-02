@@ -6,6 +6,8 @@
  * Attachment API client for file upload and management.
  */
 
+import SparkMD5 from 'spark-md5'
+
 import { getToken } from './user'
 import type { TruncationInfo } from '@/types/api'
 
@@ -146,6 +148,13 @@ export const SUPPORTED_EXTENSIONS = [
   '.gif',
   '.bmp',
   '.webp',
+  // Video formats
+  '.mp4',
+  '.avi',
+  '.mkv',
+  '.mov',
+  '.flv',
+  '.wmv',
 ]
 
 /**
@@ -226,9 +235,19 @@ export const SUPPORTED_MIME_TYPES = [
 ]
 
 /**
- * Maximum file size (100 MB)
+ * Maximum file size (100 MB for general files)
  */
 export const MAX_FILE_SIZE = 100 * 1024 * 1024
+
+/**
+ * Maximum video file size (1 GB)
+ */
+export const MAX_VIDEO_FILE_SIZE = 1024 * 1024 * 1024
+
+/**
+ * Video file extensions supported for media-analysis Skill
+ */
+export const VIDEO_EXTENSIONS = ['.mp4', '.avi', '.mkv', '.mov', '.flv', '.wmv']
 
 /**
  * Check if a file extension is supported
@@ -242,9 +261,29 @@ export function isSupportedExtension(_filename: string): boolean {
 
 /**
  * Check if file size is within limits
+ * @param size - File size in bytes
+ * @param isVideo - Whether the file is a video (uses 1GB limit)
  */
-export function isValidFileSize(size: number): boolean {
-  return size <= MAX_FILE_SIZE
+export function isValidFileSize(size: number, isVideo: boolean = false): boolean {
+  const limit = isVideo ? MAX_VIDEO_FILE_SIZE : MAX_FILE_SIZE
+  return size <= limit
+}
+
+/**
+ * Check if a file extension is a video type
+ */
+export function isVideoExtension(extension: string): boolean {
+  const ext = extension.startsWith('.') ? extension.toLowerCase() : `.${extension.toLowerCase()}`
+  return VIDEO_EXTENSIONS.includes(ext)
+}
+
+/**
+ * Check if a filename is a supported video file.
+ */
+export function isVideoFileName(filename: string): boolean {
+  const dotIndex = filename.lastIndexOf('.')
+  if (dotIndex < 0) return false
+  return isVideoExtension(filename.slice(dotIndex))
 }
 
 /**
@@ -296,6 +335,13 @@ export function getFileIcon(extension: string): string {
     case '.bmp':
     case '.webp':
       return '🖼️'
+    case '.mp4':
+    case '.avi':
+    case '.mkv':
+    case '.mov':
+    case '.flv':
+    case '.wmv':
+      return '🎬'
     case '.html':
     case '.htm':
     case '.html5':
@@ -674,6 +720,455 @@ export async function createAttachmentShareLink(
   return response.json()
 }
 
+// ==================== Video Upload APIs ====================
+
+/**
+ * Weibo file service upload response
+ */
+interface WeiboUploadResponse {
+  fid: number
+  request_id: string
+  url: string
+}
+
+/**
+ * Weibo init response for chunked upload (from backend API)
+ */
+interface WeiboInitResponse {
+  file_token: string
+  chunk_size: number // in bytes
+  auth: string // X-Up-Auth header value for chunk upload
+  request_id: string
+  file_check: string // MD5 hash of the file (calculated during init)
+}
+
+/**
+ * Weibo chunk upload response
+ */
+export interface WeiboChunkUploadResponse {
+  succ?: boolean
+  fid?: string // only in last chunk response
+  fmid?: string
+  url?: string
+  request_id: string
+  error?: string
+  msg?: string
+  errmsg?: string
+  message?: string
+}
+
+/**
+ * Calculate MD5 hash of a file using chunked reading
+ * to avoid memory issues with large files (e.g., 1GB videos)
+ *
+ * @param file - File to calculate MD5 for
+ * @returns MD5 hash string
+ */
+async function calculateMD5Chunked(file: File): Promise<string> {
+  const chunkSize = 10 * 1024 * 1024 // 10MB chunks
+  const spark = new SparkMD5.ArrayBuffer()
+
+  for (let offset = 0; offset < file.size; offset += chunkSize) {
+    const chunk = file.slice(offset, Math.min(offset + chunkSize, file.size))
+    const arrayBuffer = await chunk.arrayBuffer()
+    spark.append(arrayBuffer)
+  }
+
+  return spark.end()
+}
+
+/**
+ * Calculate MD5 hash of a blob chunk
+ */
+async function calculateChunkMD5(blob: Blob): Promise<string> {
+  const arrayBuffer = await blob.arrayBuffer()
+  const spark = new SparkMD5.ArrayBuffer()
+  spark.append(arrayBuffer)
+  return spark.end()
+}
+
+/**
+ * Initialize Weibo chunked upload via backend API
+ * @param file - File to upload
+ * @returns Init response including file_check (MD5) for reuse
+ */
+async function initWeiboUpload(file: File): Promise<WeiboInitResponse> {
+  const token = getToken()
+  const md5Hex = await calculateMD5Chunked(file)
+
+  const response = await fetch(`${API_BASE_URL}/api/attachments/weibo-init`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token && { Authorization: `Bearer ${token}` }),
+    },
+    body: JSON.stringify({
+      filename: file.name,
+      file_size: file.size,
+      file_check: md5Hex,
+    }),
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}))
+    throw new Error(error.detail || `Weibo init failed: ${response.status}`)
+  }
+
+  const data = await response.json()
+  if (!data.file_token) {
+    throw new Error('Weibo init failed: no file_token returned')
+  }
+
+  // Return init response with file_check for reuse
+  return {
+    file_token: data.file_token,
+    chunk_size: data.chunk_size,
+    auth: data.auth,
+    request_id: data.request_id,
+    file_check: md5Hex, // Include calculated MD5 for reuse
+  }
+}
+
+/**
+ * Upload a single chunk to Weibo
+ */
+function uploadWeiboChunk(
+  chunk: Blob,
+  params: {
+    auth: string // X-Up-Auth header value
+    fileToken: string
+    startLoc: number
+    sectionCheck: string
+    chunkCount: number
+    chunkIndex: number
+    chunkSize: number
+    fileLength: number
+    fileCheck: string
+  },
+  onChunkProgress?: (progress: number) => void,
+  abortSignal?: AbortSignal
+): Promise<WeiboChunkUploadResponse> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+
+    const query = new URLSearchParams({
+      filetoken: params.fileToken,
+      startloc: String(params.startLoc),
+      sectioncheck: params.sectionCheck,
+      chunkcount: String(params.chunkCount),
+      chunkindex: String(params.chunkIndex),
+      chunksize: String(params.chunkSize),
+      filelength: String(params.fileLength),
+      filecheck: params.fileCheck,
+    })
+    const url = `https://i.fileplatform.api.weibo.com/2/multimedia/upload.json?${query.toString()}`
+
+    // Handle abort signal
+    const handleAbort = () => {
+      xhr.abort()
+      reject(new Error('Upload cancelled'))
+    }
+
+    if (abortSignal) {
+      if (abortSignal.aborted) {
+        reject(new Error('Upload cancelled'))
+        return
+      }
+      abortSignal.addEventListener('abort', handleAbort)
+    }
+
+    xhr.upload.addEventListener('progress', event => {
+      if (event.lengthComputable && onChunkProgress) {
+        onChunkProgress(Math.round((event.loaded / event.total) * 100))
+      }
+    })
+
+    xhr.addEventListener('load', () => {
+      if (abortSignal) {
+        abortSignal.removeEventListener('abort', handleAbort)
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const response: WeiboChunkUploadResponse = JSON.parse(xhr.responseText)
+          const businessError = getWeiboChunkUploadError(response)
+          if (businessError) {
+            reject(new Error(businessError))
+            return
+          }
+          resolve(response)
+        } catch {
+          reject(new Error('Failed to parse Weibo chunk response'))
+        }
+      } else {
+        reject(new Error(`Weibo chunk upload failed: ${xhr.status}`))
+      }
+    })
+
+    xhr.addEventListener('error', () => {
+      if (abortSignal) {
+        abortSignal.removeEventListener('abort', handleAbort)
+      }
+      reject(new Error('Network error during chunk upload'))
+    })
+
+    xhr.addEventListener('abort', () => {
+      if (abortSignal) {
+        abortSignal.removeEventListener('abort', handleAbort)
+      }
+      reject(new Error('Upload cancelled'))
+    })
+
+    xhr.open('POST', url)
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream')
+    xhr.setRequestHeader('X-Up-Auth', params.auth)
+    chunk.arrayBuffer().then(buffer => xhr.send(buffer))
+  })
+}
+
+export function getWeiboChunkUploadError(response: WeiboChunkUploadResponse): string | null {
+  if (response.succ !== false) {
+    return null
+  }
+  return (
+    response.error ||
+    response.errmsg ||
+    response.msg ||
+    response.message ||
+    'Weibo chunk upload failed'
+  )
+}
+
+/**
+ * Upload video to Weibo file service platform using chunked upload
+ *
+ * @param file - Video file to upload
+ * @param onProgress - Optional progress callback (0-100)
+ * @param abortSignal - Optional AbortSignal to cancel the upload
+ * @returns Upload result with fid
+ */
+export async function uploadVideoToWeibo(
+  file: File,
+  onProgress?: (progress: number) => void,
+  abortSignal?: AbortSignal
+): Promise<WeiboUploadResponse> {
+  // Step 1: Initialize upload via backend to get file_token, chunk size, auth and file_check (MD5)
+  const initResult = await initWeiboUpload(file)
+  const { file_token: fileToken, chunk_size: chunkSize, auth, file_check: fileCheck } = initResult
+
+  // Step 2: Calculate total chunks (MD5 already calculated in initWeiboUpload)
+  const totalChunks = Math.ceil(file.size / chunkSize)
+
+  // Step 3: Upload each chunk
+  let lastResponse: WeiboChunkUploadResponse | null = null
+
+  for (let i = 0; i < totalChunks; i++) {
+    // Check for abort
+    if (abortSignal?.aborted) {
+      throw new Error('Upload cancelled')
+    }
+
+    const startLoc = i * chunkSize
+    const endLoc = Math.min(startLoc + chunkSize, file.size)
+    const chunk = file.slice(startLoc, endLoc)
+    const chunkIndex = i + 1 // Weibo uses 1-based index
+    const actualChunkSize = endLoc - startLoc
+
+    // Calculate chunk MD5
+    const sectionCheck = await calculateChunkMD5(chunk)
+
+    // Upload chunk with retry
+    let retryCount = 0
+    const maxRetries = 3
+
+    while (retryCount < maxRetries) {
+      try {
+        lastResponse = await uploadWeiboChunk(
+          chunk,
+          {
+            auth,
+            fileToken,
+            startLoc,
+            sectionCheck,
+            chunkCount: totalChunks,
+            chunkIndex,
+            chunkSize: actualChunkSize,
+            fileLength: file.size,
+            fileCheck,
+          },
+          chunkProgress => {
+            // Update overall progress
+            if (onProgress) {
+              const baseProgress = (i / totalChunks) * 100
+              const chunkContribution = (chunkProgress / 100) * (100 / totalChunks)
+              onProgress(Math.round(baseProgress + chunkContribution))
+            }
+          },
+          abortSignal // Pass abort signal to chunk upload
+        )
+        break // Success, exit retry loop
+      } catch (error) {
+        // Don't retry on cancel
+        if ((error as Error).message === 'Upload cancelled') {
+          throw error
+        }
+        retryCount++
+        if (retryCount >= maxRetries) {
+          throw error
+        }
+        // Wait before retry
+        await new Promise(resolve => setTimeout(resolve, 1000 * retryCount))
+      }
+    }
+
+    // Update progress after chunk completion
+    if (onProgress) {
+      onProgress(Math.round(((i + 1) / totalChunks) * 100))
+    }
+  }
+
+  // Step 5: Return result from last chunk (contains fid)
+  if (!lastResponse?.fid) {
+    throw new Error('Upload completed but no fid returned')
+  }
+
+  return {
+    fid: parseInt(lastResponse.fid, 10),
+    request_id: lastResponse.request_id,
+    url: lastResponse.url || '',
+  }
+}
+
+/**
+ * Upload video file (complete flow: Weibo upload + backend metadata save)
+ *
+ * This is a unified entry point for video uploads, used by all hooks.
+ *
+ * @param file - Video file to upload
+ * @param onProgress - Optional progress callback (0-100)
+ * @param abortSignal - Optional AbortSignal to cancel the upload
+ * @returns Attachment response
+ */
+export async function uploadVideo(
+  file: File,
+  onProgress?: (progress: number) => void,
+  abortSignal?: AbortSignal
+): Promise<AttachmentResponse> {
+  const extension = getFileExtension(file.name)
+
+  // Step 1: Upload to Weibo platform (auth handled via backend init API)
+  const weiboResult = await uploadVideoToWeibo(file, onProgress, abortSignal)
+
+  // Step 2: Save video metadata to backend
+  return saveVideoMetadata(file.name, file.size, extension, weiboResult.fid)
+}
+
+/**
+ * Save video metadata to backend after Weibo upload
+ *
+ * @param filename - Original filename
+ * @param fileSize - File size in bytes
+ * @param fileExtension - File extension (e.g., ".mp4")
+ * @param fid - File ID returned by Weibo platform
+ * @returns Attachment response
+ */
+export async function saveVideoMetadata(
+  filename: string,
+  fileSize: number,
+  fileExtension: string,
+  fid: number
+): Promise<AttachmentResponse> {
+  const token = getToken()
+
+  const response = await fetch(`${API_BASE_URL}/api/attachments/upload-video-metadata`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token && { Authorization: `Bearer ${token}` }),
+    },
+    body: JSON.stringify({
+      filename,
+      file_size: fileSize,
+      file_extension: fileExtension,
+      fid,
+    }),
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}))
+    throw new Error(error.detail || 'Failed to save video metadata')
+  }
+
+  return response.json()
+}
+
+/**
+ * Unified file upload function that automatically routes to the appropriate
+ * upload method based on file type (video vs regular file).
+ *
+ * @param file - File to upload
+ * @param onProgress - Optional progress callback (0-100)
+ * @param abortSignal - Optional AbortSignal to cancel the upload (video only, at chunk boundaries)
+ * @returns Attachment response
+ */
+export async function uploadFile(
+  file: File,
+  onProgress?: (progress: number) => void,
+  abortSignal?: AbortSignal
+): Promise<AttachmentResponse> {
+  const extension = getFileExtension(file.name)
+  const isVideo = isVideoExtension(extension)
+
+  if (isVideo) {
+    return uploadVideo(file, onProgress, abortSignal)
+  } else {
+    return uploadAttachment(file, onProgress)
+  }
+}
+
+/**
+ * Validate file before upload and get error message if invalid.
+ *
+ * @param file - File to validate
+ * @param t - i18n translation function
+ * @returns Error message if validation fails, null if valid
+ */
+export function validateFile(
+  file: File,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  t: (key: string, params?: Record<string, any>) => string
+): string | null {
+  // Check file type
+  if (!isSupportedExtension(file.name)) {
+    return `${t('common:attachment.errors.unsupported_type')}: ${t('common:attachment.errors.unsupported_type_hint', { types: t('common:attachment.supported_types') })}`
+  }
+
+  // Check file size
+  const extension = getFileExtension(file.name)
+  const isVideo = isVideoExtension(extension)
+  if (!isValidFileSize(file.size, isVideo)) {
+    const limitMB = isVideo
+      ? Math.round(MAX_VIDEO_FILE_SIZE / (1024 * 1024))
+      : Math.round(MAX_FILE_SIZE / (1024 * 1024))
+    return `${t('common:attachment.errors.file_too_large')}: ${t('common:attachment.errors.file_too_large_hint', { size: limitMB })}`
+  }
+
+  return null
+}
+
+/**
+ * Get file size limit in MB based on file type.
+ *
+ * @param filename - File name to check
+ * @returns Size limit in MB
+ */
+export function getFileSizeLimitMB(filename: string): number {
+  const extension = getFileExtension(filename)
+  const isVideo = isVideoExtension(extension)
+  return isVideo
+    ? Math.round(MAX_VIDEO_FILE_SIZE / (1024 * 1024))
+    : Math.round(MAX_FILE_SIZE / (1024 * 1024))
+}
+
 /**
  * Attachment API exports
  */
@@ -686,4 +1181,10 @@ export const attachmentApis = {
   deleteAttachment,
   getAttachmentBySubtask,
   createAttachmentShareLink,
+  uploadVideoToWeibo,
+  saveVideoMetadata,
+  uploadVideo,
+  uploadFile,
+  validateFile,
+  getFileSizeLimitMB,
 }

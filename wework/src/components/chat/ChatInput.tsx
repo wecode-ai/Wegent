@@ -2,6 +2,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import type {
   Attachment,
   DeviceInfo,
+  ModelOptions,
   ProjectWithTasks,
   SkillRef,
   UnifiedModel,
@@ -14,12 +15,15 @@ export interface ProjectChatControls {
   models: UnifiedModel[]
   skills: UnifiedSkill[]
   selectedModel: UnifiedModel | null
+  selectedModelOptions: ModelOptions
+  isModelSelectionReady?: boolean
   selectedSkills: SkillRef[]
   attachments: Attachment[]
   uploadingFiles: Map<string, { file: File; progress: number }>
   errors: Map<string, string>
   isOptionsLocked: boolean
   setSelectedModel: (model: UnifiedModel | null) => void
+  setSelectedModelOption: (optionId: string, value: string) => void
   toggleSkill: (skill: SkillRef) => void
   handleFileSelect: (files: File | File[]) => Promise<void>
   removeAttachment: (attachmentId: number) => Promise<void>
@@ -64,12 +68,15 @@ export function ChatInput({
       models: [],
       skills: [],
       selectedModel: null,
+      selectedModelOptions: {},
+      isModelSelectionReady: true,
       selectedSkills: [],
       attachments: [],
       uploadingFiles: new Map(),
       errors: new Map(),
       isOptionsLocked: false,
       setSelectedModel: () => {},
+      setSelectedModelOption: () => {},
       toggleSkill: () => {},
       handleFileSelect: async () => {},
       removeAttachment: async () => {},
@@ -84,12 +91,15 @@ export function ChatInput({
         models={controls.models}
         skills={controls.skills}
         selectedModel={controls.selectedModel}
+        selectedModelOptions={controls.selectedModelOptions}
+        isModelSelectionReady={controls.isModelSelectionReady ?? true}
         selectedSkills={controls.selectedSkills}
         attachments={controls.attachments}
         uploadingFiles={controls.uploadingFiles}
         attachmentErrors={controls.errors}
         optionsLocked={controls.isOptionsLocked}
         onSelectModel={controls.setSelectedModel}
+        onSelectModelOption={controls.setSelectedModelOption}
         onToggleSkill={controls.toggleSkill}
         onFileSelect={files => {
           void controls.handleFileSelect(files)

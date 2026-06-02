@@ -13,7 +13,7 @@
 
 import React, { useMemo } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { CheckCircle2, Clock, MessageSquare, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -34,7 +34,7 @@ export function PetNotificationPanel({
   canGeneratePromptDraft = true,
 }: PetNotificationPanelProps) {
   const { t } = useTranslation('pet')
-  const { tasks, getUnreadCount, viewStatusVersion } = useTaskContext()
+  const { tasks, getUnreadCount, viewStatusVersion } = useTaskSession()
 
   // Calculate task statistics - show running tasks (exclude FAILED, CANCELLED, COMPLETED)
   const taskStats = useMemo(() => {

@@ -167,6 +167,7 @@ export function ChatInputCard({
   setForceOverride,
   teamId,
   taskId,
+  requireVideoInputModel,
   showRepositorySelector,
   selectedRepo,
   setSelectedRepo,
@@ -197,8 +198,8 @@ export function ChatInputCard({
   shouldHideChatInput,
   isModelSelectionRequired,
   isAttachmentReadyToSend,
-  isSubtaskStreaming,
   canSendGuidance,
+  canCancelTask,
   onStopStream,
   onCancelTask,
   isCancelling,
@@ -575,6 +576,7 @@ export function ChatInputCard({
             teamId={teamId}
             taskId={taskId}
             taskModelId={selectedTaskDetail?.model_id}
+            requireVideoInputModel={requireVideoInputModel}
             showRepositorySelector={showRepositorySelector}
             selectedRepo={selectedRepo}
             setSelectedRepo={setSelectedRepo}
@@ -607,9 +609,9 @@ export function ChatInputCard({
             isAttachmentReadyToSend={isAttachmentReadyToSend}
             taskInputMessage={taskInputMessage}
             setTaskInputMessage={setTaskInputMessage}
-            isSubtaskStreaming={isSubtaskStreaming}
             canQueueMessage={canQueueMessage}
             canSendGuidance={canSendGuidance}
+            canCancelTask={canCancelTask}
             onStopStream={onStopStream}
             onCancelTask={onCancelTask}
             isCancelling={isCancelling}

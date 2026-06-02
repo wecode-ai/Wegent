@@ -99,7 +99,7 @@ def _count_tokens_for_messages(model_id: str, messages: list[dict[str, Any]]) ->
         if isinstance(content, str):
             total_tokens += len(encoding.encode(content))
         elif isinstance(content, list):
-            # Multimodal content (text + images)
+            # Multimodal content (text + images + videos)
             for item in content:
                 if isinstance(item, dict):
                     if item.get("type") == "text":
@@ -109,6 +109,10 @@ def _count_tokens_for_messages(model_id: str, messages: list[dict[str, Any]]) ->
                         # Approximate image tokens (varies by resolution)
                         # OpenAI uses ~85 tokens for low-res, ~170 for high-res
                         total_tokens += 170
+                    elif item.get("type") == "video_url":
+                        # Approximate video tokens (varies by duration/resolution)
+                        # Use a conservative estimate: 1-minute video ≈ 3600 tokens
+                        total_tokens += 3600
                 elif isinstance(item, str):
                     total_tokens += len(encoding.encode(item))
 

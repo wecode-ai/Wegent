@@ -762,6 +762,11 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
 
     # Video generation config (when modelType='video')
     video_config = model_spec.get("videoConfig")
+    model_capabilities = model_spec.get("modelCapabilities") or None
+    if model_capabilities:
+        logger.info(
+            f"[model_resolver] _extract_model_config: modelCapabilities={model_capabilities}"
+        )
 
     # Thinking/reasoning config (provider-native passthrough)
     # Only read from env - this is the single source of truth
@@ -778,7 +783,7 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
             f"[model_resolver] _extract_model_config: temperature={temperature}"
         )
 
-    return {
+    result = {
         "api_key": api_key,
         "base_url": base_url,
         "model_id": model_id,
@@ -799,6 +804,9 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
         # User-configured temperature override
         "temperature": temperature,
     }
+    if model_capabilities:
+        result["modelCapabilities"] = model_capabilities
+    return result
 
 
 def get_bot_system_prompt(

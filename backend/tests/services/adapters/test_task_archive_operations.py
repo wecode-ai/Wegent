@@ -6,11 +6,15 @@ from datetime import datetime, timedelta
 from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.project import Project
 from app.models.task import TaskResource
 from app.models.user import User
+from app.schemas.task import TaskCreate
+from app.services import project_service
 from app.services.adapters.task_kinds import task_kinds_service
 from app.services.chat.standalone_workspace import (
     WORKSPACE_PATH_LABEL,
@@ -68,6 +72,7 @@ def _create_task(
     task_type: str = "code",
     type_value: str = "offline",
     updated_at: datetime | None = None,
+    client_origin: str = "frontend",
 ) -> TaskResource:
     timestamp = updated_at or datetime(2026, 5, 28, 10, 0, 0)
     task = TaskResource(
@@ -84,6 +89,7 @@ def _create_task(
         ),
         is_active=state,
         project_id=project_id,
+        client_origin=client_origin,
         created_at=timestamp - timedelta(hours=1),
         updated_at=timestamp,
     )
@@ -93,13 +99,21 @@ def _create_task(
     return task
 
 
-def _create_project(db: Session, user_id: int, project_id: int, name: str) -> Project:
+def _create_project(
+    db: Session,
+    user_id: int,
+    project_id: int,
+    name: str,
+    *,
+    client_origin: str = "frontend",
+) -> Project:
     project = Project(
         id=project_id,
         user_id=user_id,
         name=name,
         description="",
         color="",
+        client_origin=client_origin,
         sort_order=1,
         is_active=True,
     )
@@ -237,6 +251,128 @@ def test_archive_standalone_chats_leaves_project_chats(
     assert standalone_chat.is_active == TaskResource.STATE_ARCHIVED
 
 
+def test_personal_task_list_filters_by_client_origin(
+    test_db: Session,
+    test_user: User,
+):
+    frontend_task = _create_task(
+        test_db,
+        test_user.id,
+        7020,
+        "Frontend standalone chat",
+        client_origin="frontend",
+    )
+    wework_task = _create_task(
+        test_db,
+        test_user.id,
+        7021,
+        "Wework standalone chat",
+        client_origin="wework",
+    )
+
+    items, total = task_kinds_service.get_user_personal_tasks_lite(
+        test_db,
+        user_id=test_user.id,
+        types=["online", "offline"],
+        client_origin="wework",
+    )
+
+    assert total == 1
+    assert [item["id"] for item in items] == [wework_task.id]
+    assert frontend_task.id not in [item["id"] for item in items]
+
+
+def test_archive_standalone_chats_filters_by_client_origin(
+    test_db: Session,
+    test_user: User,
+):
+    frontend_task = _create_task(
+        test_db,
+        test_user.id,
+        7022,
+        "Frontend standalone chat",
+        client_origin="frontend",
+    )
+    wework_task = _create_task(
+        test_db,
+        test_user.id,
+        7023,
+        "Wework standalone chat",
+        client_origin="wework",
+    )
+
+    count = task_kinds_service.archive_standalone_chats(
+        test_db,
+        user_id=test_user.id,
+        client_origin="wework",
+    )
+    test_db.refresh(frontend_task)
+    test_db.refresh(wework_task)
+
+    assert count == 1
+    assert frontend_task.is_active == TaskResource.STATE_ACTIVE
+    assert wework_task.is_active == TaskResource.STATE_ARCHIVED
+
+
+def test_task_detail_filters_by_client_origin(
+    test_db: Session,
+    test_user: User,
+):
+    wework_task = _create_task(
+        test_db,
+        test_user.id,
+        7024,
+        "Wework standalone chat",
+        client_origin="wework",
+    )
+
+    detail = task_kinds_service.get_task_detail(
+        test_db,
+        task_id=wework_task.id,
+        user_id=test_user.id,
+        client_origin="wework",
+    )
+
+    assert detail["id"] == wework_task.id
+    assert detail["client_origin"] == "wework"
+
+    with pytest.raises(HTTPException) as exc_info:
+        task_kinds_service.get_task_detail(
+            test_db,
+            task_id=wework_task.id,
+            user_id=test_user.id,
+            client_origin="frontend",
+        )
+
+    assert exc_info.value.status_code == 404
+
+
+def test_append_existing_task_filters_by_client_origin(
+    test_db: Session,
+    test_user: User,
+):
+    wework_task = _create_task(
+        test_db,
+        test_user.id,
+        7026,
+        "Wework completed chat",
+        client_origin="wework",
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        task_kinds_service.create_task_or_append(
+            test_db,
+            obj_in=TaskCreate(
+                prompt="append from frontend",
+                client_origin="frontend",
+            ),
+            user=test_user,
+            task_id=wework_task.id,
+        )
+
+    assert exc_info.value.status_code == 404
+
+
 def test_archive_all_project_chats_leaves_standalone_chats(
     test_db: Session,
     test_user: User,
@@ -266,6 +402,46 @@ def test_archive_all_project_chats_leaves_standalone_chats(
     assert count == 1
     assert project_task.is_active == TaskResource.STATE_ARCHIVED
     assert standalone_chat.is_active == TaskResource.STATE_ACTIVE
+
+
+def test_project_list_filters_by_client_origin(
+    test_db: Session,
+    test_user: User,
+):
+    _create_project(
+        test_db,
+        test_user.id,
+        705,
+        "frontend-project",
+        client_origin="frontend",
+    )
+    wework_project = _create_project(
+        test_db,
+        test_user.id,
+        706,
+        "wework-project",
+        client_origin="wework",
+    )
+    _create_task(
+        test_db,
+        test_user.id,
+        7025,
+        "Wework project chat",
+        project_id=wework_project.id,
+        client_origin="wework",
+    )
+
+    result = project_service.list_projects(
+        test_db,
+        user_id=test_user.id,
+        include_tasks=True,
+        client_origin="wework",
+    )
+
+    assert result.total == 1
+    assert result.items[0].id == wework_project.id
+    assert result.items[0].client_origin == "wework"
+    assert [task.task_id for task in result.items[0].tasks] == [7025]
 
 
 def test_persist_standalone_workspace_path_updates_task_labels(

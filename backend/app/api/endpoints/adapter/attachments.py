@@ -23,6 +23,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import RedirectResponse, Response
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -41,6 +42,7 @@ from app.services.attachment.parser import DocumentParseError, DocumentParser
 from app.services.auth.task_token import extract_token_from_header, verify_task_token
 from app.services.context import context_service
 from app.services.context.context_service import NotFoundException
+from app.services.media.weibo_media_service import weibo_media_service
 from app.services.shared_task import shared_task_service
 
 logger = logging.getLogger(__name__)
@@ -253,6 +255,22 @@ def _build_attachment_response(
     return AttachmentResponse.from_context(context, response_truncation_info)
 
 
+def _raise_if_weibo_video_download_unsupported(context) -> None:
+    """Reject normal attachment downloads for Weibo-backed uploaded videos."""
+    type_data = context.type_data if isinstance(context.type_data, dict) else {}
+    if (
+        context_service.is_video_context(context)
+        and type_data.get("storage_backend") == "weibo"
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Video attachments are stored externally and cannot be downloaded "
+                "through this endpoint"
+            ),
+        )
+
+
 def _validate_share_token_access(
     db: Session, attachment_id: int, share_token: str
 ) -> bool:
@@ -428,6 +446,121 @@ async def upload_attachment(
         logger.error(f"Error uploading attachment: {e}", exc_info=True)
         raise HTTPException(
             status_code=500, detail="Failed to upload attachment"
+        ) from e
+
+
+class WeiboInitRequest(BaseModel):
+    """Request body for Weibo init."""
+
+    filename: str
+    file_size: int
+    file_check: str  # MD5 hash
+
+
+class WeiboInitResponse(BaseModel):
+    """Response model for Weibo init."""
+
+    file_token: str
+    chunk_size: int  # in bytes
+    auth: str  # X-Up-Auth header value for chunk upload
+    request_id: str
+
+
+class VideoMetadataUpload(BaseModel):
+    """Request body for video metadata upload."""
+
+    filename: str
+    file_size: int
+    file_extension: str
+    fid: int
+
+
+@router.post("/weibo-init", response_model=WeiboInitResponse)
+async def init_weibo_upload(
+    request: WeiboInitRequest,
+    _current_user: User = Depends(security.get_current_user),
+) -> WeiboInitResponse:
+    """
+    Initialize Weibo chunked upload.
+
+    This endpoint calls Weibo's init.json API to get fileToken and chunk size.
+    Frontend should call this before starting chunked upload.
+
+    Returns:
+        file_token and chunk_size for chunked upload.
+    """
+    try:
+        init_result = await weibo_media_service.init_upload(
+            filename=request.filename,
+            file_size=request.file_size,
+            file_check=request.file_check,
+        )
+
+        return WeiboInitResponse(
+            file_token=init_result.file_token,
+            chunk_size=init_result.chunk_size,
+            auth=init_result.auth,
+            request_id=init_result.request_id,
+        )
+    except ValueError as e:
+        logger.error("Weibo init failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    except Exception as e:
+        logger.error("Weibo init failed: %s", e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Weibo init failed: {str(e)}",
+        ) from e
+
+
+@router.post("/upload-video-metadata", response_model=AttachmentResponse)
+async def upload_video_metadata(
+    request: VideoMetadataUpload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> AttachmentResponse:
+    """
+    Upload video metadata after frontend has uploaded to Weibo platform.
+
+    This endpoint is called AFTER the frontend has successfully uploaded
+    the video file to Weibo's file service platform and obtained a fid.
+
+    Supported video formats: MP4, AVI, MKV, MOV, FLV, WMV
+    Maximum video file size: 1 GB
+
+    Returns:
+        Attachment details including ID and processing status.
+    """
+    logger.info(
+        f"upload_video_metadata: user_id={current_user.id}, "
+        f"filename={request.filename}, fid={request.fid}"
+    )
+
+    try:
+        from app.services.context import context_service
+
+        context = context_service.upload_video_metadata(
+            db=db,
+            user_id=current_user.id,
+            filename=request.filename,
+            file_size=request.file_size,
+            extension=request.file_extension,
+            fid=request.fid,
+            subtask_id=0,  # Unlinked attachment
+        )
+
+        logger.info(
+            f"Video metadata uploaded: id={context.id}, user_id={current_user.id}, fid={request.fid}"
+        )
+
+        return AttachmentResponse.from_context(context, None)
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.error(f"Error uploading video metadata: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail="Failed to upload video metadata"
         ) from e
 
 
@@ -609,6 +742,8 @@ async def download_attachment(
     if not has_access:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
+    _raise_if_weibo_video_download_unsupported(context)
+
     # Check if attachment has an external URL (e.g., generated video)
     # For such attachments, redirect to the external URL instead of serving binary data
     if context.type_data and isinstance(context.type_data, dict):
@@ -679,6 +814,8 @@ async def executor_download_attachment(
     # Verify it's an attachment type
     if context.context_type != ContextType.ATTACHMENT.value:
         raise HTTPException(status_code=404, detail="Attachment not found")
+
+    _raise_if_weibo_video_download_unsupported(context)
 
     # Get binary data from the appropriate storage backend
     binary_data = context_service.get_attachment_binary_data(
@@ -1019,6 +1156,8 @@ async def public_download_attachment(
 
     if context is None or context.context_type != ContextType.ATTACHMENT.value:
         raise HTTPException(status_code=404, detail="Attachment not found")
+
+    _raise_if_weibo_video_download_unsupported(context)
 
     # Get binary data
     binary_data = context_service.get_attachment_binary_data(db=db, context=context)

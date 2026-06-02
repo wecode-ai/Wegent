@@ -15,6 +15,7 @@ This module provides unified context processing based on user_subtask_id,
 eliminating the need to pass separate attachment_ids and knowledge_base_ids.
 """
 
+import json
 import logging
 from typing import Any, List, Optional, Tuple
 
@@ -27,6 +28,7 @@ from app.models.knowledge import KnowledgeDocument
 from app.models.subtask import Subtask
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.services.context import context_service
+from app.services.context.context_service import VideoAttachmentResolutionError
 from shared.models.db import ContextStatus as DBContextStatus
 from shared.models.knowledge import (
     ChatContextsResult,
@@ -170,16 +172,18 @@ async def process_contexts(
 def _build_vision_structure(
     text_contents: List[str],
     image_contents: List[dict],
+    video_contents: List[dict],  # New parameter for video attachments
     message: str,
 ) -> list[dict[str, Any]]:
     """
-    Build OpenAI Responses API format vision content for image contexts.
+    Build OpenAI Responses API format vision content for image and video contexts.
 
     The returned block order is:
-      1. [optional] <attachment> text block — metadata headers for images and
-         extracted text from any accompanying document attachments.
+      1. [optional] <attachment> text block — metadata headers for images, videos
+         and extracted text from any accompanying document attachments.
       2. One ``input_image`` block per image.
-      3. The user's own message as a standalone ``input_text`` block.
+      3. One ``input_video`` block per video.
+      4. The user's own message as a standalone ``input_text`` block.
 
     Separating the user message into its own block keeps it stable across turns
     (good for prefix caching) and makes the intent unambiguous to the model.
@@ -187,6 +191,7 @@ def _build_vision_structure(
     Args:
         text_contents: List of text content strings (attachment contents without XML tags)
         image_contents: List of image content dictionaries
+        video_contents: List of video content dictionaries
         message: User message
 
     Returns:
@@ -194,10 +199,10 @@ def _build_vision_structure(
     """
     content: list[dict[str, Any]] = []
 
-    # Collect all attachment content parts (text documents and image headers)
+    # Collect all attachment content parts (text documents, image/video headers)
     all_attachment_parts: list[str] = []
 
-    # Add text attachment contents
+    # Add text attachment contents (includes video metadata_text with fid)
     if text_contents:
         all_attachment_parts.extend(text_contents)
 
@@ -205,6 +210,9 @@ def _build_vision_structure(
     for img in image_contents:
         if "image_header" in img:
             all_attachment_parts.append(img["image_header"])
+
+    # Note: video_header is NOT added separately because complete metadata_text
+    # (including header + fid) is already in text_contents for video attachments.
 
     # 1. Attachment metadata block (only when there is something to show)
     if all_attachment_parts:
@@ -225,7 +233,20 @@ def _build_vision_structure(
                 }
             )
 
-    # 3. User message as its own text block — keeps it isolated from attachment
+    # 3. Video blocks
+    for vid in video_contents:
+        video_url = vid.get("video_url", "")
+        mime_type = vid.get("mime_type", "video/mp4")
+        if video_url:
+            content.append(
+                {
+                    "type": "input_video",
+                    "video_url": video_url,
+                    "mime_type": mime_type,
+                }
+            )
+
+    # 4. User message as its own text block — keeps it isolated from attachment
     #    metadata so the model sees the question without extra noise, and so the
     #    exact user text is preserved for prefix-cache stability.
     content.append({"type": "input_text", "text": message})
@@ -262,8 +283,12 @@ def _process_attachment_context(
     idx: int,
     text_contents: List[str],
     image_contents: List[dict],
+    video_contents: List[dict],  # New parameter for video attachments
     task_id: Optional[int] = None,
     subtask_id: Optional[int] = None,
+    model_config: Optional[
+        dict[str, Any]
+    ] = None,  # New parameter for model capabilities
 ) -> None:
     """
     Process an attachment context and add to appropriate list.
@@ -273,8 +298,10 @@ def _process_attachment_context(
         idx: Attachment index (for labeling)
         text_contents: List to append text content to
         image_contents: List to append image content to
+        video_contents: List to append video content to
         task_id: Optional task ID for building sandbox path
         subtask_id: Optional subtask ID for building sandbox path
+        model_config: Optional model config for capability check
     """
     # Check if it's an image attachment
     if context_service.is_image_context(context) and context.image_base64:
@@ -312,6 +339,39 @@ def _process_attachment_context(
                 "image_header": image_header,
             }
         )
+    elif context_service.is_video_context(context):
+        # Video attachment - use shared helper for video processing
+        # Check model capabilities first
+        model_capabilities = (model_config or {}).get("modelCapabilities") or {}
+        supports_video = model_capabilities.get("supportsVideo", False)
+        logger.info(
+            f"[VIDEO DEBUG] Processing video context: id={context.id}, "
+            f"model_config_keys={list(model_config.keys()) if model_config else None}, "
+            f"model_capabilities={model_capabilities}, supports_video={supports_video}"
+        )
+
+        if not supports_video:
+            raise VideoAttachmentResolutionError(
+                f"Video attachment {context.id} requires a video-capable model"
+            )
+
+        payload = context_service.build_video_content_from_attachment(context)
+        if payload is None:
+            logger.warning(f"[VIDEO DEBUG] payload is None for context id={context.id}")
+            return
+
+        logger.info(
+            f"[VIDEO DEBUG] Adding video_url to video_contents: id={context.id}, "
+            f"video_url={payload.video_url[:80]}..."
+        )
+        video_contents.append(
+            {
+                "video_url": payload.video_url,
+                "mime_type": payload.mime_type,
+                "video_header": payload.metadata_header,
+            }
+        )
+        text_contents.append(f"[Attachment {idx}]\n{payload.metadata_text}")
     else:
         # Text document - get formatted content with attachment index
         # The content is wrapped in <attachment> XML tags by context_service
@@ -1018,6 +1078,7 @@ async def prepare_contexts_for_chat(
         message,
         task_id=task_id,
         subtask_id=user_subtask_id,
+        model_config=model_config,  # Pass model config for video capability check
     )
 
     # 2. Process knowledge base contexts - create tools
@@ -1139,6 +1200,9 @@ async def _process_attachment_contexts_for_message(
     message: str,
     task_id: Optional[int] = None,
     subtask_id: Optional[int] = None,
+    model_config: Optional[
+        dict[str, Any]
+    ] = None,  # New parameter for model capabilities
 ) -> str | list[dict[str, Any]]:
     """
     Process attachment contexts and build message with content.
@@ -1148,15 +1212,17 @@ async def _process_attachment_contexts_for_message(
         message: Original user message
         task_id: Optional task ID for building sandbox path
         subtask_id: Optional subtask ID for building sandbox path
+        model_config: Optional model config for capability check
     Returns:
         Message with attachment contents prepended, or OpenAI Responses API
-        format vision content list for images
+        format vision content list for images/videos
     """
     if not attachment_contexts:
         return message
 
     text_contents = []
     image_contents = []
+    video_contents = []  # New container for video attachments
 
     for idx, context in enumerate(attachment_contexts, start=1):
         try:
@@ -1165,16 +1231,25 @@ async def _process_attachment_contexts_for_message(
                 idx,
                 text_contents,
                 image_contents,
+                video_contents,  # Pass new container
                 task_id=task_id,
                 subtask_id=subtask_id,
+                model_config=model_config,  # Pass model config
             )
         except Exception as e:
+            if isinstance(e, VideoAttachmentResolutionError):
+                logger.exception(
+                    f"Failed to resolve video attachment context {context.id}: {e}"
+                )
+                raise
             logger.exception(f"Error processing attachment context {context.id}: {e}")
             continue
 
-    # If we have images, return a multi-vision structure with image metadata headers
-    if image_contents:
-        return _build_vision_structure(text_contents, image_contents, message)
+    # If we have images or videos, return a multi-vision structure
+    if image_contents or video_contents:
+        return _build_vision_structure(
+            text_contents, image_contents, video_contents, message
+        )
 
     # If only text contents, combine them as list format
     if text_contents:

@@ -97,7 +97,7 @@
     "publish_note_description": "发布后，专题将对有权限的答题人可见。您可以随时更新专题并发布新版本。",
     "video_upload": "介绍视频（可选）",
     "video_drop_or_click": "点击或拖拽视频到此处",
-    "video_hint": "支持 MP4、MOV、AVI 格式",
+    "video_hint": "支持 MP4、AVI、MKV、MOV、FLV、WMV 格式",
     "video_uploading": "正在上传视频...",
     "video_uploaded": "视频上传成功",
     "video_invalid_type": "请选择有效的视频文件",

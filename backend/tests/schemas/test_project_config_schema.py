@@ -51,3 +51,18 @@ def test_workspace_project_local_path_requires_local_target():
                 "workspace": {"source": "local_path", "localPath": "/Users/me/repo"},
             }
         )
+
+
+def test_project_config_accepts_model_selection_without_workspace_mode():
+    config = ProjectConfig.model_validate(
+        {
+            "modelSelection": {
+                "modelName": "overseas-gpt-5.4",
+                "modelType": "user",
+                "options": {"reasoning": "medium"},
+            }
+        }
+    )
+
+    assert config.modelSelection.modelName == "overseas-gpt-5.4"
+    assert config.modelSelection.options == {"reasoning": "medium"}

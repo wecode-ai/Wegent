@@ -4,13 +4,13 @@
 
 'use client'
 
-import { Fragment, useContext, useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { Eye, EyeOff, Loader2 } from 'lucide-react'
 
 import { deviceApis, type DeviceInfo } from '@/apis/devices'
 import { taskApis } from '@/apis/tasks'
 import { userApis } from '@/apis/user'
-import { TaskContext } from '@/features/tasks/contexts/taskContext'
+import { useOptionalTaskSession } from '@/features/tasks/session/TaskSession'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -117,8 +117,8 @@ function formatCurrentDeviceLabel(device: DeviceInfo) {
 export function MailConfigDialog({ open, onOpenChange, params }: RegisteredModalProps) {
   const { t } = useTranslation('devices')
   const { toast } = useToast()
-  // Get task context if available (may be null if used outside TaskContextProvider)
-  const taskContext = useContext(TaskContext)
+  // Get task session if available (may be null if used outside TaskSessionProvider)
+  const taskContext = useOptionalTaskSession()
   const [loadingIdentity, setLoadingIdentity] = useState(false)
   const [loadingDevices, setLoadingDevices] = useState(false)
   const [saving, setSaving] = useState(false)

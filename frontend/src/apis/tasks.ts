@@ -4,7 +4,14 @@
 
 import { apiClient } from './client'
 import { getToken } from './user'
-import { Task, PaginationParams, TaskStatus, SuccessMessage, TaskDetail } from '../types/api'
+import {
+  Task,
+  PaginationParams,
+  TaskStatus,
+  SuccessMessage,
+  TaskDetail,
+  TaskRuntimeCheck,
+} from '../types/api'
 import { getApiBaseUrl } from '@/lib/runtime-config'
 
 // Task Request/Response Types
@@ -313,6 +320,10 @@ export const taskApis = {
 
   getTaskDetail: async (id: number): Promise<TaskDetail> => {
     return apiClient.get(`/tasks/${id}`)
+  },
+
+  getTaskRuntimeCheck: async (id: number): Promise<TaskRuntimeCheck> => {
+    return apiClient.get(`/tasks/${id}/runtime-check`)
   },
 
   // Send a message. If task_id not provided, create task first, then send.

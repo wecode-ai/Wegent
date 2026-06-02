@@ -17,6 +17,72 @@ def test_slugify_response_uses_alphanumeric_words():
     )
 
 
+def test_prompt_text_for_workspace_extracts_text_blocks():
+    prompt = [
+        {"type": "input_text", "text": "hello-new-wework"},
+        {"type": "input_image", "image_url": "data:image/png;base64,abc"},
+        {"type": "message", "content": "run pwd"},
+    ]
+
+    assert workspace.prompt_text_for_workspace(prompt) == "hello-new-wework\nrun pwd"
+
+
+def test_prepare_standalone_chat_workspace_uses_request_text_before_execution(
+    tmp_path,
+    monkeypatch,
+):
+    workspace_root = tmp_path / "workspace"
+    source = workspace_root / "122"
+    source.mkdir(parents=True)
+    (source / "keep.txt").write_text("content", encoding="utf-8")
+    (source / ".claude").mkdir()
+    (source / ".claude" / "claude.json").write_text("{}", encoding="utf-8")
+    chats_root = tmp_path / "chats"
+    task_data = SimpleNamespace(
+        task_id=122,
+        project_id=None,
+        project_workspace_path=None,
+        git_url=None,
+    )
+
+    monkeypatch.setenv("WEGENT_EXECUTOR_CHATS_DIR", str(chats_root))
+    monkeypatch.setattr(
+        workspace.config, "get_workspace_root", lambda: str(workspace_root)
+    )
+
+    result = workspace.prepare_standalone_chat_workspace(
+        task_data,
+        "hello-new-wework",
+    )
+
+    target = chats_root / datetime.now().strftime("%Y-%m-%d") / "hello-new-wework"
+    assert result == str(target)
+    assert (source / ".claude").exists()
+    assert (target / "keep.txt").read_text(encoding="utf-8") == "content"
+    assert not (target / ".claude").exists()
+
+
+def test_finalize_returns_prepared_standalone_workspace_path(tmp_path, monkeypatch):
+    workspace_path = tmp_path / "chats" / "2026-05-29" / "hello"
+    workspace_path.mkdir(parents=True)
+    executor_home = tmp_path / ".wegent-executor"
+    task_data = SimpleNamespace(
+        task_id=121,
+        project_id=None,
+        project_workspace_path=str(workspace_path),
+        git_url=None,
+    )
+
+    monkeypatch.setattr(workspace.config, "WEGENT_EXECUTOR_HOME", str(executor_home))
+
+    result = workspace.finalize_standalone_chat_workspace(
+        task_data,
+        "response text should not rename",
+    )
+
+    assert result == str(workspace_path)
+
+
 def test_finalize_standalone_chat_workspace_moves_initial_task_workspace(
     tmp_path,
     monkeypatch,
@@ -48,7 +114,6 @@ def test_finalize_standalone_chat_workspace_moves_initial_task_workspace(
 
     target = chats_root / datetime.now().strftime("%Y-%m-%d") / "hello-codex-2026"
     assert result == str(target)
-    assert not source.exists()
     assert (target / "keep.txt").read_text(encoding="utf-8") == "content"
     assert (executor_home / "sessions" / "123" / ".claude_session_id").read_text(
         encoding="utf-8"

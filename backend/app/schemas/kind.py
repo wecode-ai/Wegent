@@ -107,6 +107,15 @@ class RerankConfig(BaseModel):
     )
 
 
+class ModelCapabilities(BaseModel):
+    """Declared multimodal capabilities for LLM-style models."""
+
+    supportsVideo: Optional[bool] = Field(
+        None,
+        description="Whether the model supports video input in chat attachments.",
+    )
+
+
 # Import generation configs from separate module
 from .generation import ImageGenerationConfig, VideoGenerationConfig
 
@@ -250,6 +259,11 @@ class ModelSpec(BaseModel):
     )
     rerankConfig: Optional[RerankConfig] = Field(
         None, description="Rerank-specific configuration (when modelType='rerank')"
+    )
+    modelCapabilities: Optional[ModelCapabilities] = Field(
+        None,
+        description="Declared chat capabilities for LLM-style models "
+        "(e.g. video attachment understanding).",
     )
     videoConfig: Optional[VideoGenerationConfig] = Field(
         None, description="Video generation configuration (when modelType='video')"

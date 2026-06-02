@@ -248,6 +248,19 @@ class DocumentParser:
         ".zip": "application/zip",
     }
 
+    # Video MIME types (NOT in SUPPORTED_EXTENSIONS - video requires dedicated upload path)
+    VIDEO_MIME_TYPES = {
+        ".mp4": "video/mp4",
+        ".avi": "video/x-msvideo",
+        ".mkv": "video/x-matroska",
+        ".mov": "video/quicktime",
+        ".flv": "video/x-flv",
+        ".wmv": "video/x-ms-wmv",
+    }
+
+    # Video file extensions — require dedicated Weibo upload path, not supported by regular attachment upload
+    VIDEO_EXTENSIONS = frozenset(VIDEO_MIME_TYPES.keys())
+
     # Formats supported by all major vision APIs (intersection of Anthropic, OpenAI, Gemini).
     # Images with these extensions are stored as-is without re-encoding.
     VISION_SUPPORTED_EXTENSIONS: frozenset = frozenset(
@@ -289,9 +302,20 @@ class DocumentParser:
         self.truncation_manager = SmartTruncationManager(truncation_config)
 
     @classmethod
-    def get_max_file_size(cls) -> int:
-        """Get maximum file size from configuration (in bytes)."""
+    def get_max_file_size(cls, extension: str | None = None) -> int:
+        """Get maximum file size from configuration (in bytes).
+
+        Video files use a larger limit (MAX_UPLOAD_VIDEO_FILE_SIZE_MB)
+        when the extension is known; all other files use the default.
+        """
+        if extension and extension.lower() in cls.VIDEO_EXTENSIONS:
+            return settings.MAX_UPLOAD_VIDEO_FILE_SIZE_MB * 1024 * 1024
         return settings.MAX_UPLOAD_FILE_SIZE_MB * 1024 * 1024
+
+    @classmethod
+    def get_max_video_file_size(cls) -> int:
+        """Get maximum video file size from configuration (in bytes)."""
+        return settings.MAX_UPLOAD_VIDEO_FILE_SIZE_MB * 1024 * 1024
 
     @classmethod
     def get_max_text_length(cls) -> int:
@@ -300,20 +324,29 @@ class DocumentParser:
 
     @classmethod
     def is_supported_extension(cls, extension: str) -> bool:
-        """Check if the file extension is supported."""
+        """Check if the file extension is supported for regular attachment upload.
+
+        Note: Video extensions are NOT supported here - they require the dedicated
+        Weibo upload path (/weibo-init + /upload-video-metadata).
+        """
         return extension.lower() in cls.SUPPORTED_EXTENSIONS
 
     @classmethod
     def get_mime_type(cls, extension: str) -> str:
-        """Get MIME type for a file extension."""
-        return cls.SUPPORTED_EXTENSIONS.get(
-            extension.lower(), "application/octet-stream"
-        )
+        """Get MIME type for a file extension.
+
+        Handles both regular extensions and video extensions.
+        """
+        ext = extension.lower()
+        # Check video MIME types first
+        if ext in cls.VIDEO_MIME_TYPES:
+            return cls.VIDEO_MIME_TYPES[ext]
+        return cls.SUPPORTED_EXTENSIONS.get(ext, "application/octet-stream")
 
     @classmethod
-    def validate_file_size(cls, size: int) -> bool:
+    def validate_file_size(cls, size: int, extension: str | None = None) -> bool:
         """Check if file size is within limits."""
-        return size <= cls.get_max_file_size()
+        return size <= cls.get_max_file_size(extension)
 
     @classmethod
     def validate_text_length(cls, text: str) -> bool:

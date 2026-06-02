@@ -22,8 +22,8 @@ export interface AdminDeviceMonitorVncExtension {
 function isVncDeviceAvailable(device: AdminDeviceInfo): boolean {
   return (
     device.device_type === 'cloud' &&
-    device.bind_shell === 'claudecode' &&
-    device.status !== 'offline'
+    device.bind_shell === 'claudecode'
+    // Note: Admin page shows VNC button even for offline devices
   )
 }
 

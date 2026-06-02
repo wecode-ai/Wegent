@@ -99,3 +99,38 @@ class TestDownloadAttachments:
             "Do not assume a workspace/<task_id>/attachments/ directory."
             not in result.prompt
         )
+
+    def test_video_skip_does_not_count_as_download_failure(self):
+        task_data = ExecutionRequest(
+            auth_token="test-token",  # noqa: S106
+            attachments=[{"id": 274, "original_filename": "clip.mp4"}],
+        )
+        prompt = "describe this video"
+
+        download_result = MagicMock()
+        download_result.success = []
+        download_result.failed = [
+            {
+                "id": 274,
+                "original_filename": "clip.mp4",
+                "skipped": True,
+                "skip_reason": "video_attachment",
+                "error": "Video attachment does not require executor download",
+            }
+        ]
+
+        with patch("executor.config.config.get_workspace_root", return_value="/tmp"):
+            with patch(
+                "executor.services.attachment_downloader.AttachmentDownloader.download_all",
+                return_value=download_result,
+            ):
+                result = download_attachments(
+                    task_data=task_data,
+                    task_id=1233,
+                    subtask_id=1642,
+                    prompt=prompt,
+                )
+
+        assert result.prompt == prompt
+        assert result.success_count == 0
+        assert result.failed_count == 0

@@ -47,6 +47,12 @@ class ModelCategoryType(str, Enum):
     RERANK = "rerank"
 
 
+class ModelCapabilities(BaseModel):
+    """Declared multimodal capabilities for chat models."""
+
+    supportsVideo: Optional[bool] = None
+
+
 class ObjectMeta(BaseModel):
     """Standard Kubernetes object metadata"""
 
@@ -111,6 +117,7 @@ class ModelSpec(BaseModel):
     contextWindow: Optional[int] = None
     maxOutputTokens: Optional[int] = None
     modelType: Optional[ModelCategoryType] = ModelCategoryType.LLM
+    modelCapabilities: Optional[ModelCapabilities] = None
 
 
 class ModelStatus(Status):

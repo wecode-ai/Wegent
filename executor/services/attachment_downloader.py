@@ -21,6 +21,11 @@ from executor.platform_compat import get_safe_path_name
 
 logger = logging.getLogger(__name__)
 
+VIDEO_MIME_PREFIX = "video/"
+VIDEO_EXTENSIONS = {".mp4", ".avi", ".mkv", ".mov", ".flv", ".wmv"}
+ATTACHMENT_SKIP_REASON_VIDEO = "video_attachment"
+VIDEO_SKIP_ERROR = "Video attachment does not require executor download"
+
 
 # Re-export get_api_base_url for backward compatibility
 from executor.services.api_client import get_api_base_url  # noqa: E402
@@ -204,6 +209,17 @@ class AttachmentDownloader:
             logger.warning(f"Attachment missing required fields: {att}")
             return {**att, "error": "Missing required fields (id or original_filename)"}
 
+        if self._is_video_attachment(att):
+            logger.info(
+                f"Skipping executor download for video attachment: {filename} (id={att_id})"
+            )
+            return {
+                **att,
+                "error": VIDEO_SKIP_ERROR,
+                "skipped": True,
+                "skip_reason": ATTACHMENT_SKIP_REASON_VIDEO,
+            }
+
         # Build download URL using TASK_API_DOMAIN, similar to skill downloads
         download_url = self._build_download_url(att_id)
         logger.info(
@@ -249,3 +265,18 @@ class AttachmentDownloader:
             error_msg = str(e)
             logger.error(f"Error downloading attachment '{filename}': {e}")
             return {**att, "error": error_msg}
+
+    @staticmethod
+    def _is_video_attachment(att: Dict[str, Any]) -> bool:
+        """Check whether an attachment should be treated as a video."""
+        mime_type = str(att.get("mime_type") or "").lower()
+        if mime_type.startswith(VIDEO_MIME_PREFIX):
+            return True
+
+        file_extension = str(att.get("file_extension") or "").lower()
+        if file_extension in VIDEO_EXTENSIONS:
+            return True
+
+        filename = str(att.get("original_filename") or "").lower()
+        _, inferred_extension = os.path.splitext(filename)
+        return inferred_extension in VIDEO_EXTENSIONS

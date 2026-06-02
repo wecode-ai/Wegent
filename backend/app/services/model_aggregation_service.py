@@ -157,6 +157,14 @@ class ModelAggregationService:
 
             config = model_crd.spec.modelConfig
 
+            if model_crd.spec.modelCapabilities:
+                config = {
+                    **config,
+                    "modelCapabilities": model_crd.spec.modelCapabilities.model_dump(
+                        exclude_none=True
+                    ),
+                }
+
             # Include type-specific config for non-LLM models
             if model_category_type == "video":
                 if model_crd.spec.videoConfig:

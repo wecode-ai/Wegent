@@ -28,12 +28,14 @@ function projectChatControls(overrides: Partial<ProjectChatControls> = {}): Proj
     models: [],
     skills: [],
     selectedModel: null,
+    selectedModelOptions: {},
     selectedSkills: [],
     attachments: [],
     uploadingFiles: new Map(),
     errors: new Map(),
     isOptionsLocked: false,
     setSelectedModel: vi.fn(),
+    setSelectedModelOption: vi.fn(),
     toggleSkill: vi.fn(),
     handleFileSelect: vi.fn().mockResolvedValue(undefined),
     removeAttachment: vi.fn().mockResolvedValue(undefined),
@@ -244,9 +246,18 @@ describe('ChatInput', () => {
 
   test('opens the desktop model menu with real model options', async () => {
     const model: UnifiedModel = {
-      name: 'gpt-5.5-medium',
+      name: 'overseas-gpt-5.5',
       type: 'user',
-      displayName: 'GPT 5.5 Medium',
+      displayName: '海外:gpt-5.5',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.5',
+          sortOrder: 10,
+          controls: ['speed'],
+        },
+      },
     }
     const setSelectedModel = vi.fn()
     render(
@@ -258,6 +269,8 @@ describe('ChatInput', () => {
         variant="desktop"
         projectChat={projectChatControls({
           models: [model],
+          selectedModel: model,
+          selectedModelOptions: { reasoning: 'high', speed: 'standard' },
           setSelectedModel,
         })}
       />,
@@ -266,13 +279,166 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('model-selector-button'))
 
     expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
-    expect(screen.getByText('选择模型')).toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-submenu')).toBeInTheDocument()
+    expect(screen.getByTestId('model-family-gpt')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-reasoning-high')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-speed-fast')).toBeInTheDocument()
     expect(screen.queryByTestId('model-option-default')).not.toBeInTheDocument()
-    expect(screen.getByText('GPT 5.5 Medium')).toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('海外:gpt-5.5 High')
+    const modelOption = screen.getByTestId('model-option-overseas-gpt-5.5')
+    expect(modelOption).toHaveTextContent('海外:gpt-5.5')
+    expect(modelOption).not.toHaveTextContent('High')
+    expect(modelOption.querySelectorAll('span')).toHaveLength(1)
+    expect(
+      screen
+        .getByTestId('model-control-reasoning-high')
+        .compareDocumentPosition(screen.getByTestId('model-family-gpt')) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
 
-    await userEvent.click(screen.getByTestId('model-option-gpt-5.5-medium'))
+    await userEvent.click(screen.getByTestId('model-option-overseas-gpt-5.5'))
 
     expect(setSelectedModel).toHaveBeenCalledWith(model)
+  })
+
+  test('closes the model menu after selecting a reasoning option', async () => {
+    const model: UnifiedModel = {
+      name: 'overseas-gpt-5.5',
+      type: 'user',
+      displayName: '海外:gpt-5.5',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.5',
+          sortOrder: 10,
+        },
+      },
+    }
+    const setSelectedModelOption = vi.fn()
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [model],
+          selectedModel: model,
+          selectedModelOptions: { reasoning: 'high' },
+          setSelectedModelOption,
+        })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.click(screen.getByTestId('model-control-reasoning-medium'))
+
+    expect(setSelectedModelOption).toHaveBeenCalledWith('reasoning', 'medium')
+    await waitFor(() => {
+      expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
+    })
+  })
+
+  test('keeps reasoning controls for the selected GPT model while hovering another family', async () => {
+    const gptModel: UnifiedModel = {
+      name: 'overseas-gpt-5.5',
+      type: 'user',
+      displayName: '海外:gpt-5.5',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.5',
+          sortOrder: 10,
+        },
+      },
+    }
+    const claudeModel: UnifiedModel = {
+      name: 'claude-opus',
+      type: 'user',
+      displayName: 'Claude Opus',
+      config: {
+        ui: {
+          family: 'claude',
+          modelLabel: 'claude-opus',
+          sortOrder: 10,
+        },
+      },
+    }
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [claudeModel, gptModel],
+          selectedModel: gptModel,
+          selectedModelOptions: { reasoning: 'high' },
+        })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.hover(screen.getByTestId('model-family-claude'))
+
+    expect(screen.getByTestId('model-control-reasoning-high')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-control-reasoning-auto')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-option-claude-opus')).toBeInTheDocument()
+  })
+
+  test('hides speed controls when the selected model version does not support speed', async () => {
+    const selectedModel: UnifiedModel = {
+      name: 'overseas-gpt-5.2',
+      type: 'user',
+      displayName: '海外:gpt-5.2',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.2',
+          sortOrder: 10,
+        },
+      },
+    }
+    const speedModel: UnifiedModel = {
+      name: 'overseas-gpt-5.5',
+      type: 'user',
+      displayName: '海外:gpt-5.5',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.5',
+          sortOrder: 20,
+          controls: ['speed'],
+        },
+      },
+    }
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [selectedModel, speedModel],
+          selectedModel,
+          selectedModelOptions: { reasoning: 'high' },
+        })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+
+    expect(screen.getByTestId('model-control-reasoning-high')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-control-speed-fast')).not.toBeInTheDocument()
   })
 
   test('opens the desktop skill menu and toggles a skill', async () => {
@@ -574,7 +740,7 @@ describe('ChatInput', () => {
     expect(onSelectProject).toHaveBeenCalledWith(8)
   })
 
-  test('shows no-project transition only when a concrete project is selected', async () => {
+  test('shows no-project transition from the standalone entry', async () => {
     const onSelectStandaloneDevice = vi.fn()
 
     render(
@@ -593,6 +759,33 @@ describe('ChatInput', () => {
     )
 
     await userEvent.click(screen.getByTestId('project-work-button'))
+    await userEvent.click(screen.getByTestId('no-project-option'))
+
+    expect(onSelectStandaloneDevice).toHaveBeenCalledWith(null)
+  })
+
+  test('shows no-project option before selecting a concrete project', async () => {
+    const onSelectStandaloneDevice = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects: [{ id: 7, name: 'Wegent', tasks: [] }],
+          currentProjectId: undefined,
+          onSelectStandaloneDevice,
+        })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    expect(screen.getByTestId('no-project-option')).toHaveTextContent('不使用项目')
+
     await userEvent.click(screen.getByTestId('no-project-option'))
 
     expect(onSelectStandaloneDevice).toHaveBeenCalledWith(null)
@@ -658,6 +851,88 @@ describe('ChatInput', () => {
     expect(onSelectStandaloneDevice).toHaveBeenLastCalledWith('local-online')
   })
 
+  test('marks the current project instead of a remembered standalone device', async () => {
+    const devices: DeviceInfo[] = [
+      {
+        id: 1,
+        device_id: 'cloud-online',
+        name: 'Cloud Online',
+        status: 'online',
+        is_default: false,
+        device_type: 'cloud',
+      },
+    ]
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects: [{ id: 7, name: 'hello', tasks: [] }],
+          devices,
+          currentProjectId: 7,
+          currentStandaloneDeviceId: 'cloud-online',
+        })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    expect(screen.getByTestId('project-selected-icon-7')).toBeInTheDocument()
+    expect(
+      screen.queryByTestId('standalone-device-selected-icon-cloud-online')
+    ).not.toBeInTheDocument()
+  })
+
+  test('marks the current standalone device when no project is selected', async () => {
+    const devices: DeviceInfo[] = [
+      {
+        id: 1,
+        device_id: 'local-online',
+        name: 'Local Online',
+        status: 'online',
+        is_default: false,
+        device_type: 'local',
+      },
+      {
+        id: 2,
+        device_id: 'cloud-online',
+        name: 'Cloud Online',
+        status: 'online',
+        is_default: false,
+        device_type: 'cloud',
+      },
+    ]
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects: [{ id: 7, name: 'hello', tasks: [] }],
+          devices,
+          currentProjectId: undefined,
+          currentStandaloneDeviceId: 'local-online',
+        })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    expect(
+      screen.getByTestId('standalone-device-selected-icon-local-online')
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByTestId('standalone-device-selected-icon-cloud-online')
+    ).not.toBeInTheDocument()
+  })
+
   test('does not include enter-project work as a menu item', async () => {
     render(
       <ChatInput
@@ -677,7 +952,7 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('project-work-button'))
 
-    expect(screen.queryByTestId('no-project-option')).not.toBeInTheDocument()
+    expect(screen.getByTestId('no-project-option')).toHaveTextContent('不使用项目')
     expect(screen.getByTestId('project-work-menu')).not.toHaveTextContent('进入项目工作')
   })
 
@@ -728,9 +1003,11 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('project-work-button'))
 
-    expect(screen.getByText('online-executor')).toHaveClass('text-text-secondary')
-    expect(screen.getByText('online-executor')).not.toHaveClass('text-primary')
-    expect(screen.getByText('offline-executor')).toHaveClass('text-text-muted')
+    const projectDeviceLabel = screen.getAllByText('online-executor')[0]
+    const offlineProjectDeviceLabel = screen.getAllByText('offline-executor')[0]
+    expect(projectDeviceLabel).toHaveClass('text-text-secondary')
+    expect(projectDeviceLabel).not.toHaveClass('text-primary')
+    expect(offlineProjectDeviceLabel).toHaveClass('text-text-muted')
   })
 
   test('marks projects with offline devices as unavailable and prevents selection', async () => {

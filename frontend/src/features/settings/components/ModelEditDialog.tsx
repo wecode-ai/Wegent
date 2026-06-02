@@ -37,6 +37,7 @@ import {
   STTConfig,
   EmbeddingConfig,
   RerankConfig,
+  ModelCapabilities,
   VideoGenerationConfig,
   AvailableModel,
 } from '@/apis/models'
@@ -76,6 +77,7 @@ export interface ModelFormData {
   embeddingSupportsImageInput?: boolean
   rerankTopN?: number
   rerankReturnDocuments?: boolean
+  supportsVideoInput?: boolean
   // Video-specific configs
   videoResolution?: '480p' | '720p' | '1080p'
   videoRatio?: '16:9' | '4:3' | '1:1' | '3:4' | '9:16' | '21:9' | 'adaptive'
@@ -105,6 +107,7 @@ export interface ModelInitialData {
   sttConfig?: STTConfig
   embeddingConfig?: EmbeddingConfig
   rerankConfig?: RerankConfig
+  modelCapabilities?: ModelCapabilities
   videoConfig?: VideoGenerationConfig
   imageConfig?: import('@/apis/models').ImageGenerationConfig
   thinkingConfig?: Record<string, unknown>
@@ -297,6 +300,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             sttConfig: model.spec.sttConfig,
             embeddingConfig: model.spec.embeddingConfig,
             rerankConfig: model.spec.rerankConfig,
+            modelCapabilities: model.spec.modelCapabilities,
+            videoConfig: model.spec.videoConfig,
+            imageConfig: model.spec.imageConfig,
             thinkingConfig: extractThinkingConfig(model),
           }
         : null)
@@ -346,6 +352,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   // Rerank
   const [rerankTopN, setRerankTopN] = useState<number | undefined>(undefined)
   const [rerankReturnDocuments, setRerankReturnDocuments] = useState(true)
+  const [supportsVideoInput, setSupportsVideoInput] = useState(false)
   // Video
   const [videoGenerateAudio, setVideoGenerateAudio] = useState<boolean>(true)
   const [videoDraft, setVideoDraft] = useState<boolean>(false)
@@ -448,6 +455,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           setRerankTopN(effectiveInitialData.rerankConfig.top_n)
           setRerankReturnDocuments(effectiveInitialData.rerankConfig.return_documents ?? true)
         }
+        setSupportsVideoInput(effectiveInitialData.modelCapabilities?.supportsVideo ?? false)
         // Load video-specific configs
         if (effectiveInitialData.videoConfig) {
           setVideoGenerateAudio(effectiveInitialData.videoConfig.generate_audio ?? true)
@@ -506,6 +514,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setEmbeddingSupportsImageInput(false)
         setRerankTopN(undefined)
         setRerankReturnDocuments(true)
+        setSupportsVideoInput(false)
         // Reset video-specific configs
         setVideoGenerateAudio(true)
         setVideoDraft(false)
@@ -535,22 +544,32 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   // For embedding/rerank/image, only show "Custom..." option since they don't use preset LLM models
   // For openai-responses, use the same model options as openai
   // For video models, use provider-specific options
-  const baseModelOptions =
-    modelCategoryType === 'embedding' ||
-    modelCategoryType === 'rerank' ||
-    modelCategoryType === 'image'
-      ? [{ value: 'custom', label: 'Custom...' }]
-      : modelCategoryType === 'video'
-        ? providerType === 'seedance'
-          ? SEEDANCE_MODEL_OPTIONS
-          : [{ value: 'custom', label: 'Custom...' }]
-        : providerType === 'openai' || providerType === 'openai-responses'
-          ? OPENAI_MODEL_OPTIONS
-          : providerType === 'gemini'
-            ? GEMINI_MODEL_OPTIONS
-            : providerType === 'gemini-deep-research'
-              ? GEMINI_DEEP_RESEARCH_MODEL_OPTIONS
-              : ANTHROPIC_MODEL_OPTIONS
+  const baseModelOptions = React.useMemo(() => {
+    if (
+      modelCategoryType === 'embedding' ||
+      modelCategoryType === 'rerank' ||
+      modelCategoryType === 'image'
+    ) {
+      return [{ value: 'custom', label: 'Custom...' }]
+    }
+
+    if (modelCategoryType === 'video') {
+      return providerType === 'seedance'
+        ? SEEDANCE_MODEL_OPTIONS
+        : [{ value: 'custom', label: 'Custom...' }]
+    }
+
+    if (providerType === 'openai' || providerType === 'openai-responses') {
+      return OPENAI_MODEL_OPTIONS
+    }
+    if (providerType === 'gemini') {
+      return GEMINI_MODEL_OPTIONS
+    }
+    if (providerType === 'gemini-deep-research') {
+      return GEMINI_DEEP_RESEARCH_MODEL_OPTIONS
+    }
+    return ANTHROPIC_MODEL_OPTIONS
+  }, [modelCategoryType, providerType])
 
   // Merge fetched models with base options
   const modelOptions = React.useMemo(() => {
@@ -1011,6 +1030,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             }
           : undefined
 
+      const modelCapabilities: ModelCapabilities | undefined =
+        modelCategoryType === 'llm' && supportsVideoInput ? { supportsVideo: true } : undefined
+
       // Build video capabilities if any are configured
       const hasCapabilities =
         capRatios.length > 0 || capResolutions.length > 0 || capDurations.length > 0
@@ -1104,6 +1126,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           // LLM-specific fields
           ...(modelCategoryType === 'llm' && contextWindow && { contextWindow }),
           ...(modelCategoryType === 'llm' && maxOutputTokens && { maxOutputTokens }),
+          ...(modelCapabilities && { modelCapabilities }),
           ...(ttsConfig && { ttsConfig }),
           ...(sttConfig && { sttConfig }),
           ...(embeddingConfig && { embeddingConfig }),
@@ -1139,6 +1162,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         embeddingSupportsImageInput,
         rerankTopN,
         rerankReturnDocuments,
+        supportsVideoInput,
         // Video-specific configs (derive defaults from capabilities)
         videoResolution: (capResolutions[0] || '720p') as '480p' | '720p' | '1080p',
         videoRatio: (capRatios[0] || '16:9') as
@@ -1522,6 +1546,28 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
               />
               {thinkingConfigError && <p className="text-xs text-error">{thinkingConfigError}</p>}
               <p className="text-xs text-text-muted">{t('common:models.thinking_config_hint')}</p>
+            </div>
+          )}
+
+          {modelCategoryType === 'llm' && (
+            <div className="flex items-start space-x-3 rounded-lg bg-muted p-4">
+              <Checkbox
+                id="supports_video_input"
+                data-testid="supports-video-input-checkbox"
+                checked={supportsVideoInput}
+                onCheckedChange={checked => setSupportsVideoInput(Boolean(checked))}
+              />
+              <div className="space-y-1">
+                <Label
+                  htmlFor="supports_video_input"
+                  className="cursor-pointer text-sm font-medium"
+                >
+                  {t('common:models.supports_video_input')}
+                </Label>
+                <p className="text-xs text-text-muted">
+                  {t('common:models.supports_video_input_hint')}
+                </p>
+              </div>
             </div>
           )}
 

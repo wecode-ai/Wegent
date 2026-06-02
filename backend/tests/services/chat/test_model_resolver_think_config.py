@@ -83,6 +83,21 @@ class TestExtractThinkingConfig:
         result = _extract_model_config(spec)
         assert result["think_config"] is None
 
+    @_DECRYPT_PATCH
+    def test_model_capabilities_extracted(self, _decrypt):
+        """spec.modelCapabilities is forwarded to runtime model_config."""
+        spec = _make_spec()
+        spec["modelCapabilities"] = {"supportsVideo": True}
+        result = _extract_model_config(spec)
+        assert result["modelCapabilities"] == {"supportsVideo": True}
+
+    @_DECRYPT_PATCH
+    def test_model_capabilities_omitted_when_absent(self, _decrypt):
+        """Absent modelCapabilities should not produce a None-valued runtime key."""
+        spec = _make_spec()
+        result = _extract_model_config(spec)
+        assert "modelCapabilities" not in result
+
 
 class TestExtractTemperature:
     """Tests for temperature extraction from env."""

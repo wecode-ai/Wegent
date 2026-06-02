@@ -89,11 +89,10 @@ export function useMessageSendQueue<TSnapshot>({
   useEffect(() => {
     if (isDispatchBlocked) {
       hasDispatchedInUnblockedWindowRef.current = false
+      return
     }
-  }, [isDispatchBlocked])
 
-  useEffect(() => {
-    if (!taskId || isDispatchBlocked || isDispatchingRef.current) return
+    if (!taskId || isDispatchingRef.current) return
     if (dispatchMode === 'one-per-unblock' && hasDispatchedInUnblockedWindowRef.current) return
     if (activeTaskQueue.some(message => message.status === 'failed')) return
 
