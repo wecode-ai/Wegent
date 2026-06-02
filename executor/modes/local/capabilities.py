@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+# SPDX-FileCopyrightText: 2026 Weibo, Inc.
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -45,6 +45,11 @@ def default_global_skills_dir() -> Path:
     return Path.home() / ".claude" / "skills"
 
 
+def default_global_plugins_dir() -> Path:
+    """Return the Claude Code global Plugins directory."""
+    return Path.home() / ".claude" / "plugins"
+
+
 def is_project_task(task_data: ExecutionRequest) -> bool:
     """Return whether an execution request should use project-global capabilities."""
     project_id = getattr(task_data, "project_id", None)
@@ -59,10 +64,9 @@ def is_project_task(task_data: ExecutionRequest) -> bool:
             return True
 
     task_data_payload = getattr(task_data, "task_data", None)
-    if isinstance(task_data_payload, dict) and task_data_payload.get("project_id"):
-        return True
-
-    return False
+    return bool(
+        isinstance(task_data_payload, dict) and task_data_payload.get("project_id")
+    )
 
 
 def _read_json_file(path: Path, default: dict[str, Any]) -> dict[str, Any]:
@@ -113,8 +117,7 @@ def _atomic_write_json(
         os.replace(temp_path, path)
         _set_owner_only(path, is_directory=False)
     finally:
-        if temp_path.exists():
-            temp_path.unlink(missing_ok=True)
+        temp_path.unlink(missing_ok=True)
 
 
 @contextmanager
@@ -152,19 +155,23 @@ class ManagedCapabilityManifest:
                 "version": MANIFEST_VERSION,
                 "revision": 0,
                 "skills": {},
+                "plugins": {},
+                "mcps": {},
             },
         )
         data.setdefault("version", MANIFEST_VERSION)
         data.setdefault("revision", 0)
         data.setdefault("skills", {})
-        data.pop("mcps", None)
+        data.setdefault("plugins", {})
+        data.setdefault("mcps", {})
         return data
 
     def save(self, data: dict[str, Any]) -> None:
         data["version"] = MANIFEST_VERSION
         data.setdefault("revision", 0)
         data.setdefault("skills", {})
-        data.pop("mcps", None)
+        data.setdefault("plugins", {})
+        data.setdefault("mcps", {})
         _atomic_write_json(self.path, data)
 
     def bump_revision(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -177,21 +184,126 @@ class GlobalCapabilityStore:
 
     def __init__(
         self,
+        *,
         manifest: ManagedCapabilityManifest | None = None,
+        manifest_path: Path | None = None,
+        skills_dir: Path | None = None,
+        plugins_dir: Path | None = None,
     ):
-        self.manifest = manifest or ManagedCapabilityManifest()
+        self.manifest = manifest or ManagedCapabilityManifest(
+            path=manifest_path or default_manifest_path()
+        )
+        self.skills_dir = skills_dir or default_global_skills_dir()
+        self.plugins_dir = plugins_dir or default_global_plugins_dir()
         self._lock_path = self.manifest.path.with_suffix(".lock")
 
     def record_skill(self, skill: dict[str, Any]) -> None:
         with _file_lock(self._lock_path):
             manifest = self.manifest.load()
             skills = manifest.setdefault("skills", {})
-            skills[skill["name"]] = {
-                "skill_id": skill.get("id"),
-                "namespace": skill.get("namespace", "default"),
-                "updated_at": utc_now_iso(),
-            }
+            skills[skill["name"]] = self._skill_record(skill)
             self.manifest.save(self.manifest.bump_revision(manifest))
+
+    def replace_records(
+        self,
+        *,
+        skills: dict[str, dict[str, Any]],
+        plugins: dict[str, dict[str, Any]] | None = None,
+        mcps: dict[str, dict[str, Any]],
+    ) -> None:
+        with _file_lock(self._lock_path):
+            manifest = self.manifest.load()
+            manifest["skills"] = skills
+            if plugins is not None:
+                manifest["plugins"] = plugins
+            manifest["mcps"] = mcps
+            self.manifest.save(self.manifest.bump_revision(manifest))
+
+    def merge_records(
+        self,
+        *,
+        skills: dict[str, dict[str, Any]],
+        plugins: dict[str, dict[str, Any]] | None = None,
+        mcps: dict[str, dict[str, Any]],
+    ) -> None:
+        with _file_lock(self._lock_path):
+            manifest = self.manifest.load()
+            manifest.setdefault("skills", {}).update(skills)
+            if plugins is not None:
+                manifest.setdefault("plugins", {}).update(plugins)
+            manifest.setdefault("mcps", {}).update(mcps)
+            self.manifest.save(self.manifest.bump_revision(manifest))
+
+    def remove_stale_managed_skills(self, desired_names: set[str]) -> list[str]:
+        with _file_lock(self._lock_path):
+            manifest = self.manifest.load()
+            removed = []
+            for name, record in list(manifest.get("skills", {}).items()):
+                managed = (
+                    record.get("managed", True) if isinstance(record, dict) else False
+                )
+                if name in desired_names or not managed:
+                    continue
+                skill_path = self.skills_dir / name
+                if skill_path.exists() and self._is_child(skill_path, self.skills_dir):
+                    shutil.rmtree(skill_path)
+                    removed.append(name)
+                manifest["skills"].pop(name, None)
+            if removed:
+                self.manifest.save(self.manifest.bump_revision(manifest))
+            return removed
+
+    def remove_stale_managed_plugins(self, desired_keys: set[str]) -> list[str]:
+        with _file_lock(self._lock_path):
+            manifest = self.manifest.load()
+            installed_plugins = self._load_installed_plugins()
+            installed_map = installed_plugins.setdefault("plugins", {})
+            removed = []
+            changed = False
+            for key, record in list((manifest.get("plugins") or {}).items()):
+                managed = (
+                    record.get("managed", True) if isinstance(record, dict) else False
+                )
+                if key in desired_keys or not managed:
+                    continue
+                if key in installed_map:
+                    installed_map.pop(key, None)
+                    removed.append(key)
+                    changed = True
+                manifest.setdefault("plugins", {}).pop(key, None)
+                changed = True
+            if changed:
+                self._save_installed_plugins(installed_plugins)
+                self.manifest.save(self.manifest.bump_revision(manifest))
+            return removed
+
+    def _skill_record(self, skill: dict[str, Any]) -> dict[str, Any]:
+        record = {
+            "skill_id": skill.get("id") or skill.get("skill_id"),
+            "namespace": skill.get("namespace", "default"),
+            "updated_at": utc_now_iso(),
+        }
+        if skill.get("installed_skill_id") is not None:
+            record["installed_skill_id"] = skill.get("installed_skill_id")
+        return record
+
+    def _load_installed_plugins(self) -> dict[str, Any]:
+        return _read_json_file(
+            self.plugins_dir / "installed_plugins.json",
+            {"version": 2, "plugins": {}},
+        )
+
+    def _save_installed_plugins(self, data: dict[str, Any]) -> None:
+        data.setdefault("version", 2)
+        data.setdefault("plugins", {})
+        _atomic_write_json(self.plugins_dir / "installed_plugins.json", data)
+
+    def _is_child(self, path: Path, parent: Path) -> bool:
+        try:
+            path.resolve().relative_to(parent.resolve())
+            return True
+        except ValueError:
+            return False
 
 
 class GlobalCapabilityReporter:
@@ -200,10 +312,12 @@ class GlobalCapabilityReporter:
     def __init__(
         self,
         skills_dir: Path | None = None,
+        plugins_dir: Path | None = None,
         manifest: ManagedCapabilityManifest | None = None,
         full_report_interval_seconds: int = DEFAULT_FULL_REPORT_INTERVAL_SECONDS,
     ):
         self.skills_dir = skills_dir or default_global_skills_dir()
+        self.plugins_dir = plugins_dir or default_global_plugins_dir()
         self.manifest = manifest or ManagedCapabilityManifest()
         self.full_report_interval_seconds = full_report_interval_seconds
         self._last_digest: str | None = None
@@ -218,7 +332,9 @@ class GlobalCapabilityReporter:
 
         manifest_data = self.manifest.load()
         skills = self._scan_skills(manifest_data)
-        digest = _canonical_digest({"skills": skills})
+        plugins = self._scan_plugins(manifest_data)
+        mcps = self._scan_mcps(manifest_data)
+        digest = _canonical_digest({"skills": skills, "plugins": plugins, "mcps": mcps})
         now = time.time()
         should_full = (
             force_full
@@ -236,6 +352,8 @@ class GlobalCapabilityReporter:
             report.update(
                 {
                     "skills": skills,
+                    "plugins": plugins,
+                    "mcps": mcps,
                     "last_sync_at": manifest_data.get("last_sync_at"),
                 }
             )
@@ -267,36 +385,195 @@ class GlobalCapabilityReporter:
                 results.append({"name": child.name, "source": "local_user"})
         return results
 
+    def _scan_plugins(self, manifest_data: dict[str, Any]) -> list[dict[str, Any]]:
+        installed_plugins_path = self.plugins_dir / "installed_plugins.json"
+        data = _read_json_file(installed_plugins_path, {"plugins": {}})
+        plugins = data.get("plugins") or {}
+        if not isinstance(plugins, dict):
+            return []
+
+        manifest_plugins = manifest_data.get("plugins") or {}
+        results: list[dict[str, Any]] = []
+        for plugin_key, installs in sorted(plugins.items()):
+            if not isinstance(installs, list):
+                continue
+            plugin_name, marketplace = self._split_plugin_key(plugin_key)
+            managed = manifest_plugins.get(plugin_key)
+            for install in installs:
+                if not isinstance(install, dict):
+                    continue
+                record = {
+                    "name": plugin_name,
+                    "marketplace": marketplace,
+                    "scope": install.get("scope", "user"),
+                    "version": install.get("version"),
+                    "source": "wegent" if managed else "local_user",
+                    "installed_at": install.get("installedAt"),
+                    "last_updated": install.get("lastUpdated"),
+                    "skills": self._scan_plugin_skills(install.get("installPath")),
+                }
+                if managed:
+                    record["installed_plugin_id"] = managed.get("installed_plugin_id")
+                results.append(record)
+        return results
+
+    def _scan_plugin_skills(self, install_path: Any) -> list[dict[str, Any]]:
+        if not install_path:
+            return []
+        root = Path(str(install_path)).expanduser()
+        if not root.exists() or not root.is_dir():
+            return []
+
+        skills: list[dict[str, Any]] = []
+        seen_paths: set[str] = set()
+        for skill_file in sorted(root.rglob("SKILL.md")):
+            if not skill_file.is_file():
+                continue
+            relative_parent = str(skill_file.parent.relative_to(root))
+            if relative_parent == "." or relative_parent in seen_paths:
+                continue
+            metadata = self._read_skill_metadata(skill_file)
+            skill_name = metadata.get("name") or skill_file.parent.name
+            skills.append(
+                {
+                    "name": skill_name,
+                    "description": metadata.get("description", ""),
+                    "path": relative_parent,
+                }
+            )
+            seen_paths.add(relative_parent)
+        return skills
+
+    def _read_skill_metadata(self, skill_file: Path) -> dict[str, str]:
+        try:
+            lines = skill_file.read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            logger.debug("Failed to read plugin Skill metadata %s: %s", skill_file, exc)
+            return {}
+        if not lines or lines[0].strip() != "---":
+            return {}
+        metadata: dict[str, str] = {}
+        for line in lines[1:]:
+            if line.strip() == "---":
+                break
+            key, separator, value = line.partition(":")
+            if not separator:
+                continue
+            normalized_key = key.strip()
+            if normalized_key in {"name", "description"}:
+                metadata[normalized_key] = value.strip().strip("\"'")
+        return metadata
+
+    def _split_plugin_key(self, plugin_key: str) -> tuple[str, str | None]:
+        if "@" not in plugin_key:
+            return plugin_key, None
+        plugin_name, marketplace = plugin_key.split("@", 1)
+        return plugin_name, marketplace or None
+
+    def _scan_mcps(self, manifest_data: dict[str, Any]) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": name,
+                "installed_mcp_id": record.get("installed_mcp_id"),
+                "server": record.get("server") or {},
+                "source": "wegent",
+            }
+            for name, record in sorted((manifest_data.get("mcps") or {}).items())
+            if isinstance(record, dict)
+        ]
+
 
 class CapabilitySyncHandler:
     """Handle Backend device:sync_capabilities RPCs."""
 
     def __init__(
         self,
-        auth_token: str,
+        auth_token: str | None = None,
         store: GlobalCapabilityStore | None = None,
         reporter: GlobalCapabilityReporter | None = None,
         skills_dir: Path | None = None,
+        plugins_dir: Path | None = None,
     ):
-        self.auth_token = auth_token
-        self.store = store or GlobalCapabilityStore()
-        self.reporter = reporter
+        self.auth_token = auth_token or os.getenv("WEGENT_AUTH_TOKEN", "")
         self.skills_dir = skills_dir or default_global_skills_dir()
+        self.plugins_dir = plugins_dir or default_global_plugins_dir()
+        self.store = store or GlobalCapabilityStore(
+            skills_dir=self.skills_dir,
+            plugins_dir=self.plugins_dir,
+        )
+        self.reporter = reporter
 
     async def handle_sync_capabilities(self, data: dict[str, Any]) -> dict[str, Any]:
+        return self.apply_sync(data)
+
+    def apply_sync(self, data: dict[str, Any]) -> dict[str, Any]:
         mode = data.get("mode") or "merge"
         if mode not in {"merge", "replace"}:
             return {"success": False, "errors": [{"error": "Invalid sync mode"}]}
-        if data.get("mcps"):
-            return {
-                "success": False,
-                "skills": [],
-                "errors": [{"error": "MCP capability sync is temporarily disabled"}],
-            }
 
-        skill_results = self._sync_skills(data.get("skills") or [])
-        success = not any(item.get("status") == "failed" for item in skill_results)
-        errors = [item for item in skill_results if item.get("status") == "failed"]
+        skills = data.get("skills") or []
+        plugins = data.get("plugins") or []
+        mcps = data.get("mcps") or []
+        logger.info(
+            "Received capability sync: mode=%s skills=%s plugins=%s mcps=%s skill_names=%s plugin_names=%s mcp_names=%s manifest=%s skills_dir=%s plugins_dir=%s",
+            mode,
+            len(skills),
+            len(plugins),
+            len(mcps),
+            [item.get("name") for item in skills if isinstance(item, dict)],
+            [item.get("name") for item in plugins if isinstance(item, dict)],
+            [item.get("name") for item in mcps if isinstance(item, dict)],
+            self.store.manifest.path,
+            self.skills_dir,
+            self.plugins_dir,
+        )
+        desired_skill_names = {
+            item.get("name")
+            for item in skills
+            if isinstance(item, dict) and item.get("name")
+        }
+        desired_plugin_keys = {
+            self._plugin_key(item.get("name"), self._plugin_marketplace(item))
+            for item in plugins
+            if isinstance(item, dict) and item.get("name")
+        }
+        removed_skills = (
+            self.store.remove_stale_managed_skills(desired_skill_names)
+            if mode == "replace"
+            else []
+        )
+        removed_plugins = (
+            self.store.remove_stale_managed_plugins(desired_plugin_keys)
+            if mode == "replace"
+            else []
+        )
+        skill_results, skill_records = self._sync_skills(skills)
+        plugin_results, plugin_records = self._sync_plugins(plugins)
+        mcp_results, mcp_records = self._sync_mcps(mcps)
+
+        before_manifest = self.store.manifest.load()
+        logger.info(
+            "Persisting capability manifest: mode=%s old_skills=%s new_skills=%s old_plugins=%s new_plugins=%s old_mcps=%s new_mcps=%s",
+            mode,
+            sorted((before_manifest.get("skills") or {}).keys()),
+            sorted(skill_records.keys()),
+            sorted((before_manifest.get("plugins") or {}).keys()),
+            sorted(plugin_records.keys()),
+            sorted((before_manifest.get("mcps") or {}).keys()),
+            sorted(mcp_records.keys()),
+        )
+        if mode == "replace":
+            self.store.replace_records(
+                skills=skill_records,
+                plugins=plugin_records,
+                mcps=mcp_records,
+            )
+        else:
+            self.store.merge_records(
+                skills=skill_records,
+                plugins=plugin_records,
+                mcps=mcp_records,
+            )
 
         manifest = self.store.manifest.load()
         manifest["last_sync_at"] = utc_now_iso()
@@ -304,30 +581,71 @@ class CapabilitySyncHandler:
         if self.reporter:
             self.reporter.force_next_full_report()
 
+        results = skill_results + plugin_results + mcp_results
+        errors = [item for item in results if item.get("status") == "failed"]
+        logger.info(
+            "Capability sync applied: success=%s mode=%s installed_skills=%s installed_plugins=%s configured_mcps=%s removed_skills=%s removed_plugins=%s errors=%s",
+            not errors,
+            mode,
+            sorted(skill_records.keys()),
+            sorted(plugin_records.keys()),
+            sorted(mcp_records.keys()),
+            removed_skills,
+            removed_plugins,
+            errors,
+        )
         return {
-            "success": success,
+            "success": not errors,
             "mode": mode,
             "skills": skill_results,
+            "plugins": plugin_results,
+            "mcps": mcp_results,
             "errors": errors,
+            "installed_skills": sorted(skill_records.keys()),
+            "configured_plugins": sorted(plugin_records.keys()),
+            "configured_mcps": sorted(mcp_records.keys()),
+            "removed_skills": removed_skills,
+            "removed_plugins": removed_plugins,
         }
 
-    def _sync_skills(self, skills: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _sync_skills(
+        self, skills: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
         results: list[dict[str, Any]] = []
+        records: dict[str, dict[str, Any]] = {}
         if not skills:
-            return results
+            logger.info("No skills requested in capability sync")
+            return results, records
+        if not self.auth_token:
+            logger.warning(
+                "Cannot sync skills because no auth token is available: skill_names=%s",
+                [item.get("name") for item in skills if isinstance(item, dict)],
+            )
+            return [
+                {
+                    "id": item.get("id") or item.get("skill_id"),
+                    "name": item.get("name"),
+                    "status": "failed",
+                    "error": "No auth token available",
+                }
+                for item in skills
+                if isinstance(item, dict)
+            ], records
+
         self.skills_dir.mkdir(parents=True, exist_ok=True)
         _set_owner_only(self.skills_dir, is_directory=True)
-
         downloader = SkillDownloader(
             auth_token=self.auth_token,
             team_namespace="default",
             skills_dir=str(self.skills_dir),
         )
+
         for skill in skills:
             name = skill.get("name")
-            skill_id = skill.get("id")
+            skill_id = skill.get("id") or skill.get("skill_id")
             namespace = skill.get("namespace", "default")
             if not name or not skill_id:
+                logger.warning("Invalid Skill entry in capability sync: %s", skill)
                 results.append(
                     {
                         "id": skill_id,
@@ -338,6 +656,18 @@ class CapabilitySyncHandler:
                 )
                 continue
             before_digest = self._skill_digest(name)
+            if (self.skills_dir / name).is_dir():
+                record = dict(skill)
+                record["id"] = skill_id
+                records[name] = self.store._skill_record(record)
+                logger.info(
+                    "Global skill already present: name=%s skill_id=%s namespace=%s",
+                    name,
+                    skill_id,
+                    namespace,
+                )
+                results.append({"id": skill_id, "name": name, "status": "skipped"})
+                continue
             ok = downloader._download_single_skill(
                 name,
                 {
@@ -348,14 +678,29 @@ class CapabilitySyncHandler:
             )
             if ok:
                 after_digest = self._skill_digest(name)
-                self.store.record_skill(skill)
+                record = dict(skill)
+                record["id"] = skill_id
+                records[name] = self.store._skill_record(record)
                 status = (
                     "skipped"
                     if before_digest and before_digest == after_digest
                     else "synced"
                 )
+                logger.info(
+                    "Installed global skill: name=%s skill_id=%s namespace=%s status=%s",
+                    name,
+                    skill_id,
+                    namespace,
+                    status,
+                )
                 results.append({"id": skill_id, "name": name, "status": status})
             else:
+                logger.warning(
+                    "Failed to install global skill: name=%s skill_id=%s namespace=%s",
+                    name,
+                    skill_id,
+                    namespace,
+                )
                 results.append(
                     {
                         "id": skill_id,
@@ -364,7 +709,183 @@ class CapabilitySyncHandler:
                         "error": "Failed to download Skill package",
                     }
                 )
-        return results
+        return results, records
+
+    def _sync_plugins(
+        self, plugins: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+        results: list[dict[str, Any]] = []
+        records: dict[str, dict[str, Any]] = {}
+        if not plugins:
+            logger.info("No plugins requested in capability sync")
+            return results, records
+
+        installed_plugins = self.store._load_installed_plugins()
+        installed_map = installed_plugins.setdefault("plugins", {})
+        self.plugins_dir.mkdir(parents=True, exist_ok=True)
+        _set_owner_only(self.plugins_dir, is_directory=True)
+
+        for item in plugins:
+            if not isinstance(item, dict):
+                logger.warning(
+                    "Ignoring invalid Plugin entry in capability sync: %s", item
+                )
+                continue
+            name = item.get("name")
+            marketplace = self._plugin_marketplace(item)
+            if not name:
+                results.append(
+                    {"name": None, "status": "failed", "error": "Invalid Plugin entry"}
+                )
+                continue
+            key = self._plugin_key(name, marketplace)
+            install_path = self._plugin_install_path(item, name, marketplace)
+            if not install_path.exists() or not install_path.is_dir():
+                logger.warning(
+                    "Plugin package not found in local cache: name=%s marketplace=%s path=%s",
+                    name,
+                    marketplace,
+                    install_path,
+                )
+                results.append(
+                    {
+                        "id": item.get("installed_plugin_id"),
+                        "name": name,
+                        "status": "failed",
+                        "error": "Plugin package not found in local cache",
+                    }
+                )
+                continue
+
+            scope = item.get("scope", "user")
+            existing_installs = [
+                install
+                for install in installed_map.get(key, [])
+                if isinstance(install, dict) and install.get("scope", "user") != scope
+            ]
+            existing_installs.append(
+                {
+                    "scope": scope,
+                    "installPath": str(install_path),
+                    "version": item.get("version"),
+                    "installedAt": item.get("installed_at") or utc_now_iso(),
+                    "lastUpdated": utc_now_iso(),
+                }
+            )
+            installed_map[key] = existing_installs
+            records[key] = self._plugin_record(item, key, marketplace, install_path)
+            logger.info(
+                "Configured global plugin: key=%s installed_plugin_id=%s path=%s",
+                key,
+                item.get("installed_plugin_id"),
+                install_path,
+            )
+            results.append(
+                {
+                    "id": item.get("installed_plugin_id"),
+                    "name": name,
+                    "status": "synced",
+                }
+            )
+
+        if records:
+            self.store._save_installed_plugins(installed_plugins)
+        return results, records
+
+    def _plugin_marketplace(self, item: dict[str, Any]) -> str | None:
+        source = item.get("source") or {}
+        return item.get("marketplace") or source.get("marketplace")
+
+    def _plugin_key(self, name: str, marketplace: str | None) -> str:
+        return f"{name}@{marketplace}" if marketplace else name
+
+    def _plugin_install_path(
+        self,
+        item: dict[str, Any],
+        name: str,
+        marketplace: str | None,
+    ) -> Path:
+        raw_path = item.get("installPath") or item.get("install_path")
+        if raw_path:
+            return Path(str(raw_path)).expanduser()
+        return (
+            self.plugins_dir
+            / "cache"
+            / (marketplace or "local")
+            / name
+            / str(item.get("version") or "latest")
+        )
+
+    def _plugin_record(
+        self,
+        item: dict[str, Any],
+        key: str,
+        marketplace: str | None,
+        install_path: Path,
+    ) -> dict[str, Any]:
+        return {
+            "name": item.get("name"),
+            "key": key,
+            "installed_plugin_id": item.get("installed_plugin_id"),
+            "display_name": item.get("display_name") or item.get("displayName"),
+            "description": item.get("description", ""),
+            "marketplace": marketplace,
+            "version": item.get("version"),
+            "source": item.get("source") or {},
+            "install_path": str(install_path),
+            "managed": True,
+            "updated_at": utc_now_iso(),
+        }
+
+    def _sync_mcps(
+        self, mcps: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+        results: list[dict[str, Any]] = []
+        records: dict[str, dict[str, Any]] = {}
+        for item in mcps:
+            if not isinstance(item, dict):
+                logger.warning(
+                    "Ignoring invalid MCP entry in capability sync: %s", item
+                )
+                continue
+            name = item.get("name")
+            if not name:
+                results.append(
+                    {"name": None, "status": "failed", "error": "Invalid MCP entry"}
+                )
+                continue
+            server = item.get("server") or {}
+            records[name] = {
+                "name": name,
+                "installed_mcp_id": item.get("installed_mcp_id"),
+                "display_name": item.get("display_name") or item.get("displayName"),
+                "description": item.get("description", ""),
+                "source": item.get("source") or {},
+                "server": server,
+                "managed": True,
+                "updated_at": utc_now_iso(),
+            }
+            logger.info(
+                "Configured global MCP: name=%s installed_mcp_id=%s server=%s",
+                name,
+                item.get("installed_mcp_id"),
+                self._server_summary(server),
+            )
+            results.append(
+                {
+                    "id": item.get("installed_mcp_id"),
+                    "name": name,
+                    "status": "synced",
+                }
+            )
+        return results, records
+
+    def _server_summary(self, server: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: server.get(key)
+            for key in ("type", "url", "command")
+            if server.get(key) is not None
+        }
 
     def _skill_digest(self, name: str) -> str | None:
         path = self.skills_dir / name

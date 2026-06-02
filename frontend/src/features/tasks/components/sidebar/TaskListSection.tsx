@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Task, TaskType } from '@/types/api'
 import TaskMenu from './TaskMenu'
 import { TaskInlineRename } from '@/components/common/TaskInlineRename'
@@ -23,8 +23,7 @@ import {
   ChevronUp,
 } from 'lucide-react'
 
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { useTranslation } from '@/hooks/useTranslation'
 import { taskApis } from '@/apis/tasks'
 import { isTaskUnread } from '@/utils/taskViewStatus'
@@ -115,12 +114,11 @@ export default function TaskListSection({
   const {
     selectedTask,
     selectedTaskDetail,
-    setSelectedTask,
+    selectTask,
     refreshTasks,
     viewStatusVersion,
     markTaskAsViewed,
-  } = useTaskContext()
-  const { clearAllStreams } = useChatStreamContext()
+  } = useTaskSession()
   const { t } = useTranslation()
   const { setSelectedProjectTaskId } = useProjectContext()
   // Use viewStatusVersion to trigger re-render when task view status changes
@@ -132,9 +130,6 @@ export default function TaskListSection({
   const [isExpanded, setIsExpanded] = useState(false)
   // Local task titles for optimistic update during rename
   const [localTitles, setLocalTitles] = useState<Record<number, string>>({})
-  // Click timer ref for distinguishing single-click from double-click
-  const clickTimerRef = useRef<NodeJS.Timeout | null>(null)
-  const clickedTaskRef = useRef<Task | null>(null)
   // Delete confirmation dialog state
   const [deleteConfirmTask, setDeleteConfirmTask] = useState<Task | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -156,12 +151,7 @@ export default function TaskListSection({
     longPressTimer: null,
   })
 
-  // Select task
-  const handleTaskClick = (task: Task) => {
-    // Clear all stream states when switching tasks to prevent auto-switching back
-    // when the previous streaming task completes
-    clearAllStreams()
-
+  const selectTaskForDisplay = (task: Task) => {
     // Immediately mark task as viewed to clear the unread dot
     // Use current time as viewedAt to ensure it's always >= task's completed_at/updated_at
     // This is simpler and more reliable than using task timestamps which may vary
@@ -171,10 +161,10 @@ export default function TaskListSection({
     // Clear project section selection to remove highlight from project area
     setSelectedProjectTaskId(null)
 
-    // IMPORTANT: Set selected task immediately to prevent visual flicker
-    // This ensures the task is highlighted before navigation completes
-    setSelectedTask(task)
+    selectTask(task)
+  }
 
+  const navigateToTask = (task: Task) => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams()
       params.set('taskId', String(task.id))
@@ -214,6 +204,12 @@ export default function TaskListSection({
         onTaskClick()
       }
     }
+  }
+
+  // Select task
+  const handleTaskClick = (task: Task) => {
+    selectTaskForDisplay(task)
+    navigateToTask(task)
   }
 
   // Touch interaction handlers
@@ -286,15 +282,6 @@ export default function TaskListSection({
     }
   }, [touchState.longPressTimer])
 
-  // Cleanup effect for click timer
-  useEffect(() => {
-    return () => {
-      if (clickTimerRef.current) {
-        clearTimeout(clickTimerRef.current)
-      }
-    }
-  }, [])
-
   // Handle clicks outside to close long press menu
   useEffect(() => {
     const handleClickOutside = () => {
@@ -361,7 +348,7 @@ export default function TaskListSection({
       }
       // If the deleted task is the currently selected task, clear selection
       if (selectedTask?.id === deleteConfirmTask.id) {
-        setSelectedTask(null)
+        selectTask(null)
         if (typeof window !== 'undefined') {
           const url = new URL(window.location.href)
           url.searchParams.delete('taskId')
@@ -628,6 +615,10 @@ export default function TaskListSection({
             }
             return taskType === 'code' ? t('common:navigation.code') : t('common:navigation.chat')
           })()
+          const showTrailingStatus =
+            (shouldShowStatusIcon(task) || isTaskUnread(task)) &&
+            editingTaskId !== task.id &&
+            !showMenu
 
           return (
             <DraggableTaskItem key={task.id} task={task} enableDrag={enableDrag}>
@@ -635,35 +626,19 @@ export default function TaskListSection({
                 <Tooltip delayDuration={500}>
                   <TooltipTrigger asChild>
                     <div
-                      className={`flex items-center gap-2 py-1.5 px-3 rounded-xl cursor-pointer ${
-                        editingTaskId === task.id ? 'h-12' : 'h-8'
-                      } ${
+                      className={cn(
+                        'relative flex items-center gap-2 rounded-xl cursor-pointer py-1.5 pl-3 transition-[padding] duration-150',
+                        editingTaskId === task.id ? 'h-12' : 'h-8',
+                        'pr-3',
                         selectedTask?.id === task.id || selectedTaskDetail?.id === task.id
                           ? 'bg-primary/10'
                           : 'hover:bg-hover'
-                      }`}
+                      )}
                       onClick={() => {
                         // Don't trigger task click when editing
                         if (editingTaskId === task.id) return
 
-                        // Use delayed single-click to distinguish from double-click
-                        // If a click timer already exists, this is a double-click
-                        if (clickTimerRef.current && clickedTaskRef.current?.id === task.id) {
-                          // Double-click detected - cancel the single click and start rename
-                          clearTimeout(clickTimerRef.current)
-                          clickTimerRef.current = null
-                          clickedTaskRef.current = null
-                          handleStartRename(task.id)
-                        } else {
-                          // First click - set timer for delayed navigation
-                          // If no second click within 250ms, execute single-click action
-                          clickedTaskRef.current = task
-                          clickTimerRef.current = setTimeout(() => {
-                            clickTimerRef.current = null
-                            clickedTaskRef.current = null
-                            handleTaskClick(task)
-                          }, 250)
-                        }
+                        handleTaskClick(task)
                       }}
                       onTouchStart={handleTouchStart(task)}
                       onTouchMove={handleTouchMove}
@@ -691,44 +666,46 @@ export default function TaskListSection({
                           }}
                         />
                       ) : (
-                        <span className="flex-1 min-w-0 text-sm font-medium text-[#444746] leading-5 truncate">
+                        <span
+                          className={cn(
+                            'flex-1 min-w-0 text-sm font-medium text-text-primary leading-5 truncate transition-[padding] duration-150',
+                            showMenu ? 'pr-8' : 'pr-0'
+                          )}
+                        >
                           {localTitles[task.id] ?? task.title}
                         </span>
                       )}
 
                       {/* Status icon on the right - only render container when needed */}
-                      {(shouldShowStatusIcon(task) || isTaskUnread(task)) &&
-                        editingTaskId !== task.id && (
-                          <div className="flex-shrink-0 relative">
-                            <div className="w-4 h-4 flex items-center justify-center">
-                              {shouldShowStatusIcon(task) && getStatusIcon(task.status)}
-                            </div>
-                            {isTaskUnread(task) && (
-                              <span
-                                className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${getUnreadDotColor(task)} animate-pulse-dot`}
-                              />
-                            )}
+                      {showTrailingStatus && (
+                        <div className="flex-shrink-0 relative">
+                          <div className="w-4 h-4 flex items-center justify-center">
+                            {shouldShowStatusIcon(task) && getStatusIcon(task.status)}
                           </div>
-                        )}
+                          {isTaskUnread(task) && (
+                            <span
+                              className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${getUnreadDotColor(task)} animate-pulse-dot`}
+                            />
+                          )}
+                        </div>
+                      )}
 
                       {editingTaskId !== task.id && (
-                        <div className="flex-shrink-0">
-                          <div
-                            className={`transition-opacity duration-150 [@media(hover:none)]:opacity-100 [@media(hover:none)]:pointer-events-auto ${
-                              showMenu ? 'opacity-100' : 'opacity-0 pointer-events-none'
-                            }`}
-                            onTouchStart={e => e.stopPropagation()}
-                            onTouchEnd={e => e.stopPropagation()}
-                            onClick={e => e.stopPropagation()}
-                          >
-                            <TaskMenu
-                              taskId={task.id}
-                              handleCopyTaskId={handleCopyTaskId}
-                              handleDeleteTask={handleDeleteTask}
-                              onRename={() => handleStartRename(task.id)}
-                              isGroupChat={task.is_group_chat}
-                            />
-                          </div>
+                        <div
+                          className={`absolute right-2 top-1/2 -translate-y-1/2 transition-opacity duration-150 [@media(hover:none)]:static [@media(hover:none)]:translate-y-0 [@media(hover:none)]:flex-shrink-0 [@media(hover:none)]:opacity-100 [@media(hover:none)]:pointer-events-auto ${
+                            showMenu ? 'opacity-100' : 'opacity-0 pointer-events-none'
+                          }`}
+                          onTouchStart={e => e.stopPropagation()}
+                          onTouchEnd={e => e.stopPropagation()}
+                          onClick={e => e.stopPropagation()}
+                        >
+                          <TaskMenu
+                            taskId={task.id}
+                            handleCopyTaskId={handleCopyTaskId}
+                            handleDeleteTask={handleDeleteTask}
+                            onRename={() => handleStartRename(task.id)}
+                            isGroupChat={task.is_group_chat}
+                          />
                         </div>
                       )}
                     </div>

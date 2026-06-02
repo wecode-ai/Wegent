@@ -53,6 +53,7 @@ from app.schemas.device import (
 from app.services.chat.access import get_token_expiry, verify_jwt_token
 from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.chat.webpage_ws_chat_emitter import get_extended_emitter
+from app.services.device.capability_sync_service import device_capability_sync_service
 from app.services.device_service import device_service
 from app.services.execution.dispatcher import ResponsesAPIEventParser
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
@@ -404,6 +405,8 @@ async def _store_device_capabilities_state(
                 "revision": revision,
                 "digest": digest,
                 "skills": capabilities.get("skills", []),
+                "plugins": capabilities.get("plugins", []),
+                "mcps": capabilities.get("mcps", []),
                 "last_sync_at": capabilities.get("last_sync_at"),
             },
         )
@@ -828,12 +831,46 @@ class DeviceNamespace(socketio.AsyncNamespace):
         await self._broadcast_device_online(
             user_id, payload.device_id, effective_device_name
         )
+        await self._sync_global_capabilities_to_registered_device(
+            user_id=user_id,
+            device_id=payload.device_id,
+        )
 
         logger.info(
             f"[Device WS] Device registered: user={user_id}, device={payload.device_id}"
         )
 
         return {"success": True, "device_id": payload.device_id}
+
+    async def _sync_global_capabilities_to_registered_device(
+        self,
+        *,
+        user_id: int,
+        device_id: str,
+    ) -> None:
+        """Best-effort desired-state sync when a device comes online."""
+        try:
+            with _db_session() as db:
+                payload = device_capability_sync_service.build_desired_capabilities(
+                    db,
+                    user_id=user_id,
+                )
+            result = await device_capability_sync_service.sync_device_payload(
+                user_id=user_id,
+                device_id=device_id,
+                payload=payload,
+            )
+            if not result.success:
+                logger.warning(
+                    "[Device WS] Capability sync after register failed: user=%s, device=%s, error=%s",
+                    user_id,
+                    device_id,
+                    result.error,
+                )
+        except Exception:
+            logger.exception(
+                "[Device WS] Error syncing global capabilities after registration"
+            )
 
     async def on_device_heartbeat(self, sid: str, data: dict) -> dict:
         """

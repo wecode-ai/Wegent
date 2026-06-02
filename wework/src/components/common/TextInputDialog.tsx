@@ -1,0 +1,99 @@
+import { X } from 'lucide-react'
+import { useState } from 'react'
+import { useEscapeKey } from '@/hooks/useEscapeKey'
+
+interface TextInputDialogProps {
+  open: boolean
+  title: string
+  label: string
+  initialValue: string
+  confirmLabel: string
+  cancelLabel: string
+  inputTestId: string
+  confirmTestId: string
+  onClose: () => void
+  onSubmit: (value: string) => Promise<void> | void
+}
+
+export function TextInputDialog({
+  open,
+  ...props
+}: TextInputDialogProps) {
+  if (!open) return null
+
+  return <TextInputDialogContent key={props.initialValue} {...props} />
+}
+
+function TextInputDialogContent({
+  title,
+  label,
+  initialValue,
+  confirmLabel,
+  cancelLabel,
+  inputTestId,
+  confirmTestId,
+  onClose,
+  onSubmit,
+}: Omit<TextInputDialogProps, 'open'>) {
+  const [value, setValue] = useState(initialValue)
+  const [submitting, setSubmitting] = useState(false)
+
+  const trimmedValue = value.trim()
+
+  useEscapeKey(onClose)
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/35 px-4">
+      <div className="w-full max-w-[420px] rounded-lg border border-[#d8d8d8] bg-white p-5 shadow-2xl">
+        <div className="flex items-center justify-between gap-4">
+          <h2 className="text-lg font-semibold text-[#202124]">{title}</h2>
+          <button
+            type="button"
+            data-testid={`${inputTestId}-close-button`}
+            onClick={onClose}
+            className="flex h-8 w-8 items-center justify-center rounded-md text-[#606368] hover:bg-[#f1f3f4]"
+            aria-label={cancelLabel}
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <label className="mt-5 block text-sm font-medium text-[#3c4043]">
+          {label}
+        </label>
+        <input
+          data-testid={inputTestId}
+          value={value}
+          onChange={event => setValue(event.target.value)}
+          className="mt-2 h-10 w-full rounded-md border border-[#d8d8d8] px-3 text-sm outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20"
+        />
+        <div className="mt-6 flex justify-end gap-2">
+          <button
+            type="button"
+            data-testid={`${inputTestId}-cancel-button`}
+            onClick={onClose}
+            className="h-9 rounded-md border border-[#d8d8d8] px-4 text-sm font-medium text-[#3c4043] hover:bg-[#f7f7f8]"
+          >
+            {cancelLabel}
+          </button>
+          <button
+            type="button"
+            data-testid={confirmTestId}
+            disabled={!trimmedValue || submitting}
+            onClick={async () => {
+              setSubmitting(true)
+              try {
+                await onSubmit(trimmedValue)
+                onClose()
+              } finally {
+                setSubmitting(false)
+              }
+            }}
+            className="h-9 rounded-md bg-[#14b8a6] px-4 text-sm font-medium text-white hover:bg-[#0f9f93] disabled:opacity-50"
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}

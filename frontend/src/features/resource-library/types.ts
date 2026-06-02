@@ -10,6 +10,8 @@ export type ResourceLibraryTypeFilter = 'all' | VisibleResourceLibraryResourceTy
 
 export type ManagedResourceType = 'agent' | 'model' | 'shell' | 'skill' | 'retriever'
 
+export type ManagedResourceSourceFilter = 'all' | 'personal' | 'group' | 'system'
+
 export interface ResourceLibraryPublishSource {
   resourceType: VisibleResourceLibraryResourceType
   sourceId: number

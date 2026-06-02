@@ -49,7 +49,11 @@ def create_project(
     # Get the max sort_order for this user's projects
     max_sort_order = (
         db.query(func.max(Project.sort_order))
-        .filter(Project.user_id == user_id, Project.is_active == True)
+        .filter(
+            Project.user_id == user_id,
+            Project.client_origin == project_data.client_origin,
+            Project.is_active == True,
+        )
         .scalar()
     )
     next_sort_order = (max_sort_order or 0) + 1
@@ -61,6 +65,7 @@ def create_project(
         name=project_data.name,
         description=project_data.description,
         color=project_data.color or "",
+        client_origin=project_data.client_origin,
         config=config,
         sort_order=next_sort_order,
         is_expanded=True,
@@ -77,7 +82,7 @@ def create_project(
 
 
 def get_project(
-    db: Session, project_id: int, user_id: int
+    db: Session, project_id: int, user_id: int, client_origin: Optional[str] = None
 ) -> Optional[ProjectWithTasksResponse]:
     """
     Get a project by ID with its tasks.
@@ -90,21 +95,20 @@ def get_project(
     Returns:
         Project with tasks or None if not found
     """
-    project = (
-        db.query(Project)
-        .filter(
-            Project.id == project_id,
-            Project.user_id == user_id,
-            Project.is_active == True,
-        )
-        .first()
+    query = db.query(Project).filter(
+        Project.id == project_id,
+        Project.user_id == user_id,
+        Project.is_active == True,
     )
+    if client_origin:
+        query = query.filter(Project.client_origin == client_origin)
+    project = query.first()
 
     if not project:
         return None
 
     # Get tasks in this project
-    tasks = _get_project_tasks(db, project_id)
+    tasks = _get_project_tasks(db, project_id, client_origin=client_origin)
 
     # Build response manually to avoid auto-validation of tasks relationship
     return ProjectWithTasksResponse(
@@ -113,6 +117,7 @@ def get_project(
         name=project.name,
         description=project.description or "",
         color=project.color,
+        client_origin=project.client_origin,
         config=project.config,
         sort_order=project.sort_order,
         is_expanded=project.is_expanded,
@@ -124,7 +129,10 @@ def get_project(
 
 
 def list_projects(
-    db: Session, user_id: int, include_tasks: bool = True
+    db: Session,
+    user_id: int,
+    include_tasks: bool = True,
+    client_origin: Optional[str] = None,
 ) -> ProjectListResponse:
     """
     List all projects for a user.
@@ -137,20 +145,18 @@ def list_projects(
     Returns:
         List of projects with optional tasks
     """
-    projects = (
-        db.query(Project)
-        .filter(
-            Project.user_id == user_id,
-            Project.is_active == True,
-        )
-        .order_by(Project.sort_order.asc())
-        .all()
+    query = db.query(Project).filter(
+        Project.user_id == user_id,
+        Project.is_active == True,
     )
+    if client_origin:
+        query = query.filter(Project.client_origin == client_origin)
+    projects = query.order_by(Project.sort_order.asc()).all()
 
     items = []
     for project in projects:
         if include_tasks:
-            tasks = _get_project_tasks(db, project.id)
+            tasks = _get_project_tasks(db, project.id, client_origin=client_origin)
         else:
             tasks = []
 
@@ -162,6 +168,11 @@ def list_projects(
                 .filter(
                     TaskResource.project_id == project.id,
                     TaskResource.is_active == TaskResource.STATE_ACTIVE,
+                    *(
+                        [TaskResource.client_origin == client_origin]
+                        if client_origin
+                        else []
+                    ),
                 )
                 .count()
             )
@@ -174,6 +185,7 @@ def list_projects(
             name=project.name,
             description=project.description or "",
             color=project.color,
+            client_origin=project.client_origin,
             config=project.config,
             sort_order=project.sort_order,
             is_expanded=project.is_expanded,
@@ -188,7 +200,11 @@ def list_projects(
 
 
 def update_project(
-    db: Session, project_id: int, update_data: ProjectUpdate, user_id: int
+    db: Session,
+    project_id: int,
+    update_data: ProjectUpdate,
+    user_id: int,
+    client_origin: Optional[str] = None,
 ) -> ProjectResponse:
     """
     Update a project.
@@ -205,15 +221,14 @@ def update_project(
     Raises:
         HTTPException: If project not found
     """
-    project = (
-        db.query(Project)
-        .filter(
-            Project.id == project_id,
-            Project.user_id == user_id,
-            Project.is_active == True,
-        )
-        .first()
+    query = db.query(Project).filter(
+        Project.id == project_id,
+        Project.user_id == user_id,
+        Project.is_active == True,
     )
+    if client_origin:
+        query = query.filter(Project.client_origin == client_origin)
+    project = query.first()
 
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -237,6 +252,7 @@ def update_project(
         .filter(
             TaskResource.project_id == project_id,
             TaskResource.is_active == TaskResource.STATE_ACTIVE,
+            *([TaskResource.client_origin == client_origin] if client_origin else []),
         )
         .count()
     )
@@ -248,10 +264,11 @@ def create_project_conversation(
     project_id: int,
     conversation_data: ProjectConversationCreate,
     user,
+    client_origin: Optional[str] = None,
 ) -> ProjectConversationResponse:
     """Create a new Task conversation under a workspace project."""
 
-    project = _get_active_project(db, project_id, user.id)
+    project = _get_active_project(db, project_id, user.id, client_origin=client_origin)
     config = ProjectConfig.model_validate(project.config or {})
     if not config.is_workspace:
         raise HTTPException(
@@ -279,7 +296,9 @@ def create_project_conversation(
     )
 
 
-def delete_project(db: Session, project_id: int, user_id: int) -> None:
+def delete_project(
+    db: Session, project_id: int, user_id: int, client_origin: Optional[str] = None
+) -> None:
     """
     Delete a project (soft delete).
 
@@ -293,31 +312,57 @@ def delete_project(db: Session, project_id: int, user_id: int) -> None:
     Raises:
         HTTPException: If project not found
     """
-    project = (
-        db.query(Project)
-        .filter(
-            Project.id == project_id,
-            Project.user_id == user_id,
-            Project.is_active == True,
-        )
-        .first()
+    query = db.query(Project).filter(
+        Project.id == project_id,
+        Project.user_id == user_id,
+        Project.is_active == True,
     )
+    if client_origin:
+        query = query.filter(Project.client_origin == client_origin)
+    project = query.first()
 
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
     # Clear project_id for all tasks in this project (set to 0, not NULL)
-    db.query(TaskResource).filter(TaskResource.project_id == project_id).update(
-        {TaskResource.project_id: 0}
-    )
+    db.query(TaskResource).filter(
+        TaskResource.project_id == project_id,
+        TaskResource.user_id == user_id,
+        *([TaskResource.client_origin == client_origin] if client_origin else []),
+    ).update({TaskResource.project_id: 0})
 
     # Soft delete the project
     project.is_active = False
     db.commit()
 
 
+def archive_project_chats(
+    db: Session, project_id: int, user_id: int, client_origin: Optional[str] = None
+) -> int:
+    """Archive all active chats belonging to a project."""
+
+    _get_active_project(db, project_id, user_id, client_origin=client_origin)
+    return task_kinds_service.archive_project_chats(
+        db=db, project_id=project_id, user_id=user_id, client_origin=client_origin
+    )
+
+
+def archive_all_project_chats(
+    db: Session, user_id: int, client_origin: Optional[str] = None
+) -> int:
+    """Archive all active chats belonging to any project owned by the user."""
+
+    return task_kinds_service.archive_all_project_chats(
+        db=db, user_id=user_id, client_origin=client_origin
+    )
+
+
 def add_task_to_project(
-    db: Session, project_id: int, task_id: int, user_id: int
+    db: Session,
+    project_id: int,
+    task_id: int,
+    user_id: int,
+    client_origin: Optional[str] = None,
 ) -> ProjectTaskResponse:
     """
     Add a task to a project.
@@ -334,7 +379,7 @@ def add_task_to_project(
     Raises:
         HTTPException: If project or task not found, or task already in a project
     """
-    _get_active_project(db, project_id, user_id)
+    project = _get_active_project(db, project_id, user_id, client_origin=client_origin)
 
     # Verify task exists and belongs to user
     task = (
@@ -344,6 +389,7 @@ def add_task_to_project(
             TaskResource.user_id == user_id,
             TaskResource.kind == "Task",
             TaskResource.is_active == TaskResource.STATE_ACTIVE,
+            *([TaskResource.client_origin == client_origin] if client_origin else []),
         )
         .first()
     )
@@ -353,6 +399,7 @@ def add_task_to_project(
 
     # Update task's project_id
     task.project_id = project_id
+    task.client_origin = project.client_origin
     _set_task_project_label(task, project_id)
     db.commit()
     db.refresh(task)
@@ -376,7 +423,11 @@ def add_task_to_project(
 
 
 def remove_task_from_project(
-    db: Session, project_id: int, task_id: int, user_id: int
+    db: Session,
+    project_id: int,
+    task_id: int,
+    user_id: int,
+    client_origin: Optional[str] = None,
 ) -> None:
     """
     Remove a task from a project.
@@ -390,7 +441,7 @@ def remove_task_from_project(
     Raises:
         HTTPException: If project or task not found
     """
-    _get_active_project(db, project_id, user_id)
+    _get_active_project(db, project_id, user_id, client_origin=client_origin)
 
     # Find task and verify it belongs to this project
     task = (
@@ -399,6 +450,7 @@ def remove_task_from_project(
             TaskResource.id == task_id,
             TaskResource.project_id == project_id,
             TaskResource.is_active == TaskResource.STATE_ACTIVE,
+            *([TaskResource.client_origin == client_origin] if client_origin else []),
         )
         .first()
     )
@@ -412,7 +464,9 @@ def remove_task_from_project(
     db.commit()
 
 
-def _get_project_tasks(db: Session, project_id: int) -> list[ProjectTaskResponse]:
+def _get_project_tasks(
+    db: Session, project_id: int, client_origin: Optional[str] = None
+) -> list[ProjectTaskResponse]:
     """
     Get all tasks in a project with their details.
 
@@ -423,16 +477,14 @@ def _get_project_tasks(db: Session, project_id: int) -> list[ProjectTaskResponse
     Returns:
         List of project tasks with details
     """
-    tasks = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.project_id == project_id,
-            TaskResource.kind == "Task",
-            TaskResource.is_active == TaskResource.STATE_ACTIVE,
-        )
-        .order_by(TaskResource.updated_at.desc())
-        .all()
+    query = db.query(TaskResource).filter(
+        TaskResource.project_id == project_id,
+        TaskResource.kind == "Task",
+        TaskResource.is_active == TaskResource.STATE_ACTIVE,
     )
+    if client_origin:
+        query = query.filter(TaskResource.client_origin == client_origin)
+    tasks = query.order_by(TaskResource.updated_at.desc()).all()
 
     result = []
     for task in tasks:
@@ -457,18 +509,19 @@ def _get_project_tasks(db: Session, project_id: int) -> list[ProjectTaskResponse
     return result
 
 
-def _get_active_project(db: Session, project_id: int, user_id: int) -> Project:
+def _get_active_project(
+    db: Session, project_id: int, user_id: int, client_origin: Optional[str] = None
+) -> Project:
     """Return an active project owned by a user."""
 
-    project = (
-        db.query(Project)
-        .filter(
-            Project.id == project_id,
-            Project.user_id == user_id,
-            Project.is_active == True,
-        )
-        .first()
+    query = db.query(Project).filter(
+        Project.id == project_id,
+        Project.user_id == user_id,
+        Project.is_active == True,
     )
+    if client_origin:
+        query = query.filter(Project.client_origin == client_origin)
+    project = query.first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     return project
@@ -529,5 +582,6 @@ def _build_project_task_create(
         task_type="code",
         auto_delete_executor="false",
         source="project",
+        client_origin=project.client_origin,
         project_id=project.id,
     )

@@ -30,6 +30,10 @@ from app.services.mcp_provider_registry import (
     list_mcp_providers,
 )
 from app.services.readers import KindType, kindReader
+from app.services.skill_binding_service import (
+    SkillBindingContext,
+    skill_binding_service,
+)
 from app.services.skill_resolution import find_skill_by_name, find_skill_by_ref
 from app.services.user_mcp_service import user_mcp_service
 from shared.models import ExecutionRequest
@@ -214,6 +218,17 @@ class TaskRequestBuilder:
         extra_available_skills = self._inject_subscription_manager_skill(
             is_subscription=is_subscription,
         )
+        binding_context = self._build_skill_binding_context(task=task, team=team)
+        user_default_skill_refs = skill_binding_service.list_user_default_skill_refs(
+            self.db,
+            user.id,
+            context=binding_context,
+        )
+        for skill_ref in user_default_skill_refs:
+            if skill_ref.get("force_preload"):
+                effective_preload_skills.append(skill_ref)
+            else:
+                extra_available_skills.append(skill_ref)
 
         user_preload_skills = None
         if effective_preload_skills:
@@ -480,6 +495,25 @@ class TaskRequestBuilder:
         )
 
         return request
+
+    def _build_skill_binding_context(
+        self,
+        *,
+        task: TaskResource,
+        team: Kind,
+    ) -> SkillBindingContext:
+        """Build runtime context for filtering user automatic Skill bindings."""
+        return SkillBindingContext(
+            mode=self._derive_task_mode(task),
+            agent_id=team.id,
+            project_id=getattr(task, "project_id", None),
+        )
+
+    def _derive_task_mode(self, task: TaskResource) -> str:
+        payload = task.json if isinstance(task.json, dict) else {}
+        metadata = payload.get("metadata", {})
+        labels = metadata.get("labels", {}) if isinstance(metadata, dict) else {}
+        return str(labels.get("taskType") or labels.get("type") or "chat")
 
     # =========================================================================
     # Bot Resolution (from ChatConfigBuilder)
@@ -2216,7 +2250,7 @@ Response template:
 
             workspace_ref = task_crd.spec.workspaceRef
             if not workspace_ref:
-                self._merge_project_workspace(task, workspace_data)
+                self._merge_task_execution_workspace(task, workspace_data)
                 return workspace_data
 
             # Query the actual Workspace resource to get repository info
@@ -2257,8 +2291,17 @@ Response template:
         except Exception as e:
             logger.warning("[TaskRequestBuilder] Failed to build workspace: %s", str(e))
 
-        self._merge_project_workspace(task, workspace_data)
+        self._merge_task_execution_workspace(task, workspace_data)
         return workspace_data
+
+    def _merge_task_execution_workspace(
+        self, task: TaskResource, workspace_data: dict
+    ) -> None:
+        """Merge project or standalone chat workspace metadata for execution."""
+
+        self._merge_project_workspace(task, workspace_data)
+        if not workspace_data.get("project"):
+            self._merge_standalone_chat_workspace(task, workspace_data)
 
     def _merge_project_workspace(
         self, task: TaskResource, workspace_data: dict
@@ -2334,6 +2377,35 @@ Response template:
                 "checkout_path": None,
                 "local_path": default_path,
             }
+
+    def _merge_standalone_chat_workspace(
+        self, task: TaskResource, workspace_data: dict
+    ) -> None:
+        """Merge persisted standalone chat workspace metadata."""
+
+        from app.services.chat.standalone_workspace import (
+            WORKSPACE_PATH_LABEL,
+            WORKSPACE_SOURCE_LABEL,
+        )
+
+        labels = (task.json or {}).get("metadata", {}).get("labels", {})
+        workspace_path = labels.get(WORKSPACE_PATH_LABEL)
+        if not isinstance(workspace_path, str) or not workspace_path.strip():
+            return
+
+        workspace_source = labels.get(WORKSPACE_SOURCE_LABEL)
+        if not isinstance(workspace_source, str) or not workspace_source.strip():
+            workspace_source = "local_path"
+
+        workspace_data["project"] = {
+            "project_id": None,
+            "workspace_source": workspace_source,
+            "project_workspace_path": workspace_path.strip(),
+            "execution_target_type": "local",
+            "device_id": None,
+            "checkout_path": None,
+            "local_path": workspace_path.strip(),
+        }
 
     def _is_group_chat(self, task: TaskResource) -> bool:
         """Determine if task is a group chat.

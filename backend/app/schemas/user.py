@@ -30,6 +30,14 @@ class QuickAccessPreference(BaseModel):
     teams: List[int] = Field(default_factory=list)
 
 
+class UserModelSelectionPreference(BaseModel):
+    """User-level model selection preference."""
+
+    modelName: str
+    modelType: Optional[Literal["public", "user", "group"]] = None
+    options: dict[str, str] = Field(default_factory=dict)
+
+
 class UserPreferences(BaseModel):
     """User preferences model"""
 
@@ -40,6 +48,7 @@ class UserPreferences(BaseModel):
     quick_access: Optional[QuickAccessPreference] = None
     # Default execution target: 'cloud' for cloud mode, or device_id for a specific device
     default_execution_target: Optional[str] = None
+    wework_new_chat_model_selection: Optional[UserModelSelectionPreference] = None
 
 
 class Token(BaseModel):

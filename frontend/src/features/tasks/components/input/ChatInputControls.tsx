@@ -24,7 +24,11 @@ import type {
 } from '@/types/api'
 import type { ContextItem } from '@/types/context'
 import type { UnifiedSkill } from '@/apis/skills'
-import { canUseChatContexts, isChatShell } from '../../service/messageService'
+import {
+  canSwitchModelAfterMessages,
+  canUseChatContexts,
+  isChatShell,
+} from '../../service/messageService'
 import { supportsAttachments } from '../../service/attachmentService'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { MobileChatInputControls } from './MobileChatInputControls'
@@ -108,9 +112,9 @@ export interface ChatInputControlsProps {
   isModelSelectionRequired: boolean
   isAttachmentReadyToSend: boolean
   taskInputMessage: string
-  isSubtaskStreaming: boolean
   canQueueMessage?: boolean
   canSendGuidance?: boolean
+  canCancelTask?: boolean
 
   // Actions
   onStopStream: () => void
@@ -210,7 +214,7 @@ export function ChatInputControls({
   onCorrectionModeToggle,
   selectedContexts,
   setSelectedContexts,
-  attachmentState: _attachmentState,
+  attachmentState,
   onFileSelect,
   onAttachmentRemove: _onAttachmentRemove,
   isLoading,
@@ -224,9 +228,9 @@ export function ChatInputControls({
   isModelSelectionRequired,
   isAttachmentReadyToSend,
   taskInputMessage,
-  isSubtaskStreaming,
   canQueueMessage = false,
   canSendGuidance = false,
+  canCancelTask,
   onStopStream,
   onCancelTask,
   isCancelling = false,
@@ -288,10 +292,9 @@ export function ChatInputControls({
       hasNoTeams,
       shouldHideChatInput,
       taskInputMessage,
-      selectedTaskStatus: selectedTaskDetail?.status,
-      isSubtaskStreaming,
-      isGroupChat: selectedTaskDetail?.is_group_chat,
+      hasAttachments: attachmentState.attachments.length > 0,
       canQueueMessage,
+      canCancelTask,
     })
 
     const renderStopAction = () => (
@@ -415,9 +418,10 @@ export function ChatInputControls({
         isModelSelectionRequired={isModelSelectionRequired}
         isAttachmentReadyToSend={isAttachmentReadyToSend}
         taskInputMessage={taskInputMessage}
-        isSubtaskStreaming={isSubtaskStreaming}
+        hasAttachments={attachmentState.attachments.length > 0}
         canQueueMessage={canQueueMessage}
         canSendGuidance={canSendGuidance}
+        canCancelTask={canCancelTask}
         onStopStream={onStopStream}
         onCancelTask={onCancelTask}
         isCancelling={isCancelling}
@@ -628,7 +632,11 @@ export function ChatInputControls({
                 forceOverride={forceOverride}
                 setForceOverride={setForceOverride}
                 selectedTeam={selectedTeam}
-                disabled={isLoading || isStreaming || (hasMessages && !isChatShell(selectedTeam))}
+                disabled={
+                  isLoading ||
+                  isStreaming ||
+                  (hasMessages && !canSwitchModelAfterMessages(selectedTeam))
+                }
                 compact={shouldCollapseSelectors}
                 teamId={teamId}
                 taskId={taskId}

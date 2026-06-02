@@ -1,4 +1,4 @@
-import type { Attachment, SkillRef, UnifiedModel, UnifiedSkill } from '@/types/api'
+import type { Attachment, ModelOptions, SkillRef, UnifiedModel, UnifiedSkill } from '@/types/api'
 import type { ProjectWorkControls } from '../ChatInput'
 import { AttachmentBadges } from './AttachmentBadges'
 import { ComposerToolbar } from './ComposerToolbar'
@@ -15,16 +15,20 @@ interface ProjectChatComposerProps {
   models: UnifiedModel[]
   skills: UnifiedSkill[]
   selectedModel: UnifiedModel | null
+  selectedModelOptions: ModelOptions
+  isModelSelectionReady: boolean
   selectedSkills: SkillRef[]
   attachments: Attachment[]
   uploadingFiles: Map<string, { file: File; progress: number }>
   attachmentErrors: Map<string, string>
   optionsLocked: boolean
   onSelectModel: (model: UnifiedModel | null) => void
+  onSelectModelOption: (optionId: string, value: string) => void
   onToggleSkill: (skill: SkillRef) => void
   onFileSelect: (files: File | File[]) => void
   onRemoveAttachment: (attachmentId: number) => void
   projectWork: ProjectWorkControls
+  showProjectWorkBar?: boolean
 }
 
 export function ProjectChatComposer({
@@ -36,16 +40,20 @@ export function ProjectChatComposer({
   models,
   skills,
   selectedModel,
+  selectedModelOptions,
+  isModelSelectionReady,
   selectedSkills,
   attachments,
   uploadingFiles,
   attachmentErrors,
   optionsLocked,
   onSelectModel,
+  onSelectModelOption,
   onToggleSkill,
   onFileSelect,
   onRemoveAttachment,
   projectWork,
+  showProjectWorkBar = true,
 }: ProjectChatComposerProps) {
   const textareaRef = useAutoResizeTextarea(value, 168)
   const canSend = (value.trim().length > 0 || attachments.length > 0) && !disabled
@@ -53,7 +61,7 @@ export function ProjectChatComposer({
   return (
     <div className="w-full rounded-[28px] bg-surface shadow-[0_16px_44px_rgba(0,0,0,0.08)]">
       <form
-        className="flex min-h-[112px] w-full flex-col rounded-[28px] border border-border bg-base px-6 pb-4 pt-5"
+        className="flex min-h-[88px] w-full flex-col rounded-[28px] border border-border bg-base px-6 pb-3 pt-4"
         onSubmit={event => {
           event.preventDefault()
           if (canSend) onSubmit()
@@ -73,26 +81,33 @@ export function ProjectChatComposer({
           canSend={canSend}
           placeholder={placeholder}
           rows={2}
-          className="max-h-[144px] min-h-12 w-full resize-none overflow-y-auto bg-transparent text-base leading-6 text-text-primary outline-none placeholder:text-text-muted"
+          className="max-h-[128px] min-h-8 w-full resize-none overflow-y-auto bg-transparent text-base leading-6 text-text-primary outline-none placeholder:text-text-muted"
         />
         <ComposerToolbar
           canSend={canSend}
           models={models}
           skills={skills}
           selectedModel={selectedModel}
+          selectedModelOptions={selectedModelOptions}
+          isModelSelectionReady={isModelSelectionReady}
           selectedSkills={selectedSkills}
           optionsLocked={optionsLocked}
           onSelectModel={onSelectModel}
+          onSelectModelOption={onSelectModelOption}
           onToggleSkill={onToggleSkill}
           onFileSelect={onFileSelect}
         />
       </form>
-      <ProjectWorkBar
-        projects={projectWork.projects}
-        devices={projectWork.devices}
-        currentProjectId={projectWork.currentProjectId}
-        onSelectProject={projectWork.onSelectProject}
-      />
+      {showProjectWorkBar && (
+        <ProjectWorkBar
+          projects={projectWork.projects}
+          devices={projectWork.devices}
+          currentProjectId={projectWork.currentProjectId}
+          currentStandaloneDeviceId={projectWork.currentStandaloneDeviceId}
+          onSelectProject={projectWork.onSelectProject}
+          onSelectStandaloneDevice={projectWork.onSelectStandaloneDevice}
+        />
+      )}
     </div>
   )
 }

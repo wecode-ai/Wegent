@@ -26,6 +26,8 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 - When adding new features, put detailed docs in `docs/en/` and `docs/zh/`, reference from AGENTS.md
 
 **Recent design docs:**
+- Task runtime state machine and frontend consistency recovery: [`docs/zh/developer-guide/task-runtime-state-machine.md`](docs/zh/developer-guide/task-runtime-state-machine.md)
+- English version: [`docs/en/developer-guide/task-runtime-state-machine.md`](docs/en/developer-guide/task-runtime-state-machine.md)
 - Prompt caching optimization via dynamic context injection: [`docs/zh/developer-guide/dynamic-context.md`](docs/zh/developer-guide/dynamic-context.md)
 - English version: [`docs/en/developer-guide/dynamic-context.md`](docs/en/developer-guide/dynamic-context.md)
 - Exposing capabilities guide (how to make features available to AI agents): [`docs/zh/developer-guide/exposing-capabilities.md`](docs/zh/developer-guide/exposing-capabilities.md)
@@ -494,26 +496,63 @@ const { messages } = useUnifiedMessages({ team, isGroupChat });
 
 **i18n Rules:**
 
-1. **Always import from `@/hooks/useTranslation`**, not from `react-i18next`
-2. **Use single namespace** matching your feature (e.g., `useTranslation('groups')` for groups feature)
-3. **Translation key format:**
-   - Within current namespace: `t('key.subkey')` (e.g., `t('title')`, `t('actions.save')`)
-   - From other namespace: `t('namespace:key.subkey')` (e.g., `t('common:actions.save')`, `t('chat:export.title')`)
-4. **Never use array with `common` first** - `useTranslation(['common', 'groups'])` will break feature-specific keys
-5. **Add new translation keys** to the appropriate namespace file in `src/i18n/locales/{lang}/`
-6. **Do NOT use common namespace unless this key is very universal
+⚠️ **Feature/page text belongs in the feature namespace. Never choose a shared namespace just because it already exists.**
+
+**Actual project setup:**
+- Translation files live in `frontend/src/i18n/locales/{en,zh-CN}/{namespace}.json`
+- Registered namespaces are listed in `frontend/src/i18n/setup.ts`
+- The project wrapper is `frontend/src/hooks/useTranslation.ts`
+- Feature code should pass its owning namespace explicitly instead of relying on the implicit default namespace
+
+1. **Import rule**
+   - Application code MUST import from `@/hooks/useTranslation`, not from `react-i18next`
+   - Only i18n infrastructure files should import from `react-i18next` directly (`i18n/setup.ts`, `hooks/useTranslation.ts`, provider wiring)
+   - If touching legacy direct imports, convert them to the project wrapper
+
+2. **Namespace ownership**
+   - Use the namespace that owns the feature/page: `admin`, `chat`, `devices`, `feed`, `groups`, `inbox`, `knowledge`, `pet`, `projects`, `promptOptimization`, `promptTune`, `prompts`, `resource-library`, `settings`, `shared-knowledge`, `shared-task`, `subscription`, `tasks`, `wizard`
+   - Add every new key to BOTH `frontend/src/i18n/locales/en/` and `frontend/src/i18n/locales/zh-CN/`
+   - If creating a new namespace, add both locale JSON files and register it in both namespace lists in `frontend/src/i18n/setup.ts`
+   - Only reuse existing shared keys for copy that is genuinely shared across unrelated features; one-off labels, dialog titles, form fields, empty states, and feature-specific errors stay in the feature namespace
+
+3. **Hook and key usage**
+   - Feature component: `const { t } = useTranslation('devices')`, then `t('title')`, `t('forms.alias')`
+   - Shared low-level component: `useTranslation()` is acceptable only when all keys are global shared keys and no feature copy is introduced
+   - Cross-namespace access: `t('chat:export.no_messages')`, `t('knowledge:document_count')`
+   - Prefer one primary namespace per component. If a component genuinely needs multiple feature namespaces, either use separate aliases (`const { t: tKnowledge } = useTranslation('knowledge')`) or prefix non-primary keys explicitly
+   - Do not rely on namespace-array fallback for feature keys. `useTranslation(['settings', 'wizard']); t('title')` is ambiguous and can resolve from the wrong namespace
+
+4. **Missing keys**
+   - Do not add fallback literals to hide missing translations in new code
+   - Add the key to the correct namespace in both languages instead
 
 **Examples:**
 ```typescript
-// ✅ CORRECT
-const { t } = useTranslation('groups');
-t('title')                    // Access current namespace key
-t('common:actions.save')      // Access common namespace key
-t('chat:export.no_messages')  // Access chat namespace key
+// ✅ CORRECT - feature-owned copy stays in the feature namespace
+import { useTranslation } from '@/hooks/useTranslation'
 
-// ❌ WRONG
-const { t } = useTranslation(['common', 'groups']); // Breaks feature keys
-t('actions.save')             // Ambiguous - which namespace?
+const { t } = useTranslation('resource-library')
+t('tabs.discover')
+t('actions.publish')
+
+// ✅ CORRECT - multiple namespaces with explicit ownership
+const { t } = useTranslation('feed')
+const { t: tKnowledge } = useTranslation('knowledge')
+t('my_subscriptions')
+tKnowledge('documents')
+
+// ✅ ACCEPTABLE - mixed namespaces only when non-primary keys are prefixed
+const { t } = useTranslation(['wizard', 'settings'])
+t('step3_title')
+t('settings:sections.general')
+
+// ❌ WRONG - feature copy added to a shared namespace
+const { t } = useTranslation()
+t('resource_library.tabs.discover')
+
+// ❌ WRONG - array fallback makes the owner unclear
+const { t } = useTranslation(['settings', 'groups'])
+t('title')
 ```
 
 ### Executor

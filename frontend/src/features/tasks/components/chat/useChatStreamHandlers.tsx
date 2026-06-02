@@ -2,10 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import { useCallback, useRef, useMemo } from 'react'
 import { useRouter, useSearchParams, usePathname } from 'next/navigation'
-import { useTaskContext } from '../../contexts/taskContext'
-import { useChatStreamContext } from '../../contexts/chatStreamContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
+import type { Task } from '@/types/api'
 import { useSocket } from '@/contexts/SocketContext'
 import { useDevices } from '@/contexts/DeviceContext'
 import { useProjectContext } from '@/features/projects/contexts/projectContext'
@@ -18,15 +18,17 @@ import { taskApis } from '@/apis/tasks'
 import { isChatShell, teamRequiresWorkspace } from '../../service/messageService'
 import { Button } from '@/components/ui/button'
 import { DEFAULT_MODEL_NAME, unifiedToModel } from '../../hooks/useModelSelection'
-import { useTaskStateMachine } from '../../hooks/useTaskStateMachine'
 import { generateMessageId } from '../../state'
-import { getStreamingJoinWarningKey } from './streamingJoinWarning'
 import {
   useMessageSendQueue,
   type QueuedMessage,
   type QueuedMessageStatus,
 } from './useMessageSendQueue'
 import { useGuidanceQueue, type GuidanceQueueItem } from './useGuidanceQueue'
+import { useChatTransientState, useClearAwaitingResponseOnActivity } from './useChatTransientState'
+import { useGuidanceSocketHandlers } from './useGuidanceSocketHandlers'
+import { useQueuedRuntimeHealthCheck } from './useQueuedRuntimeHealthCheck'
+import { useStreamingJoinWarning } from './useStreamingJoinWarning'
 import type { Model } from '../selector/ModelSelector'
 import type { UnifiedModel } from '@/apis/models'
 import type {
@@ -39,6 +41,10 @@ import type {
 } from '@/types/api'
 import type { ContextItem } from '@/types/context'
 import type { SkillRef } from '../../hooks/useSkillSelector'
+
+function isVirtualKnowledgeBasePath(path: string): boolean {
+  return path.startsWith('/knowledge/') && !path.startsWith('/knowledge/document/')
+}
 
 export interface UseChatStreamHandlersOptions {
   // Team and model
@@ -128,11 +134,11 @@ export interface ChatStreamHandlers {
   pendingTaskId: number | null
   isStreaming: boolean
   isAwaitingResponseStart: boolean
-  isSubtaskStreaming: boolean
   isStopping: boolean
   hasPendingUserMessage: boolean
   localPendingMessage: string | null
   canQueueMessage: boolean
+  canCancelTask?: boolean
   queuedMessageCount: number
   queuedMessages: QueuedChatMessagePreview[]
   cancelQueuedMessage: (id: string) => void
@@ -168,10 +174,6 @@ export interface ChatStreamHandlers {
   stopStream: () => Promise<void>
   resetStreamingState: () => void
 
-  // Group chat handlers
-  handleNewMessages: (messages: unknown[]) => void
-  handleStreamComplete: (subtaskId: number, result?: Record<string, unknown>) => void
-
   // State
   isCancelling: boolean
 }
@@ -199,7 +201,6 @@ export interface GuidanceMessagePreview {
  * - Retrying failed messages
  * - Cancelling tasks
  * - Tracking streaming state
- * - Group chat message handling
  *
  * This hook extracts all the complex streaming logic from ChatArea
  * to reduce the component size and improve maintainability.
@@ -207,7 +208,6 @@ export interface GuidanceMessagePreview {
 export function useChatStreamHandlers({
   selectedTeam,
   selectedModel,
-  forceOverride,
   setSelectedModel,
   setForceOverride,
   selectedRepo,
@@ -242,14 +242,34 @@ export function useChatStreamHandlers({
   const searchParams = useSearchParams()
   const pathname = usePathname()
 
-  const { selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, markTaskAsViewed } =
-    useTaskContext()
-
   const {
+    selectedTaskDetail,
+    selectTask,
+    refreshTasks,
+    refreshSelectedTaskDetail,
+    markTaskAsViewed,
     sendMessage: contextSendMessage,
     stopStream: contextStopStream,
-    clearVersion,
-  } = useChatStreamContext()
+    taskState: sessionTaskState,
+    recoverCurrentTask,
+  } = useTaskSession()
+
+  // Navigate to a knowledge task without triggering Next.js re-renders.
+  // Uses selectTask + replaceState to avoid the router.push cascade
+  // that causes selectedTaskDetail=null and hasMessages flip (UI flickering).
+  const navigateToKnowledgeTask = useCallback(
+    (taskId: number, kbId: number) => {
+      selectTask({ id: taskId } as Task)
+      const params = new URLSearchParams(Array.from(searchParams.entries()))
+      params.set('taskId', String(taskId))
+      const currentPath = window.location.pathname || pathname || ''
+      if (!isVirtualKnowledgeBasePath(currentPath)) {
+        params.set('kb', String(kbId))
+      }
+      window.history.replaceState({}, '', `?${params.toString()}`)
+    },
+    [selectTask, searchParams, pathname]
+  )
 
   type ContextSendRequest = Parameters<typeof contextSendMessage>[0]
   type ContextSendOptions = NonNullable<Parameters<typeof contextSendMessage>[1]>
@@ -293,57 +313,51 @@ export function useChatStreamHandlers({
       ? projectDeviceId || selectedDeviceId || undefined
       : undefined
 
-  // Local state
-  const [pendingTaskId, setPendingTaskId] = useState<number | null>(null)
-  const [localPendingMessage, setLocalPendingMessage] = useState<string | null>(null)
-  const [isAwaitingResponseStart, setIsAwaitingResponseStart] = useState(false)
-  const [isCancelling, setIsCancelling] = useState(false)
-
   // Refs
   const lastFailedMessageRef = useRef<string | null>(null)
   const handleSendMessageRef = useRef<((message?: string) => Promise<void>) | null>(null)
-  const previousTaskIdRef = useRef<number | null | undefined>(undefined)
-  const prevTaskIdForModelRef = useRef<number | null | undefined>(undefined)
-  const prevClearVersionRef = useRef(clearVersion)
-  const lastJoinWarningRef = useRef<string | null>(null)
   const retryQueuedMessageRef = useRef<((id: string) => void) | null>(null)
-
-  // Unified function to reset streaming-related state
-  const resetStreamingState = useCallback(() => {
-    setLocalPendingMessage(null)
-    setPendingTaskId(null)
-    setIsAwaitingResponseStart(false)
-  }, [])
 
   // Get current display task ID
   const currentDisplayTaskId = selectedTaskDetail?.id
 
-  // Determine effective task ID for state machine subscription
-  // Use currentDisplayTaskId if available, otherwise use pendingTaskId
-  const effectiveTaskIdForState = useMemo(() => {
-    return currentDisplayTaskId || pendingTaskId || undefined
-  }, [currentDisplayTaskId, pendingTaskId])
+  const {
+    pendingTaskId,
+    setPendingTaskId,
+    localPendingMessage,
+    setLocalPendingMessage,
+    isAwaitingResponseStart,
+    setIsAwaitingResponseStart,
+    isCancelling,
+    setIsCancelling,
+    resetStreamingState,
+    effectiveTaskIdForState,
+  } = useChatTransientState({
+    selectedTaskId: currentDisplayTaskId,
+    setIsLoading,
+  })
 
-  // Use useTaskStateMachine to properly subscribe to state changes
-  // This ensures isStreaming updates when chat:done is received
-  // IMPORTANT: All streaming state comes from the state machine - no local state variables
-  const { state: taskState, isStreaming: isMachineStreaming } =
-    useTaskStateMachine(effectiveTaskIdForState)
+  const taskState =
+    sessionTaskState && sessionTaskState.taskId === effectiveTaskIdForState
+      ? sessionTaskState
+      : null
+  const isMachineStreaming = taskState?.status === 'streaming'
+  const runtimeDerived = taskState?.derived
 
   // Keep "stop" state aligned with backend task lifecycle:
   // a task can stay RUNNING even when no stream chunk is currently arriving.
   // In that window, UI should still block sending and show stop action.
-  const isStreaming = isMachineStreaming || selectedTaskDetail?.status === 'RUNNING'
+  const runtimeTaskStatus = taskState?.runtime.taskStatus
+  const isRunningLifecycle = runtimeTaskStatus === 'RUNNING'
+  const isStreaming = isMachineStreaming || isRunningLifecycle
 
-  // Alias for backward compatibility - both refer to the same state machine value
-  const isSubtaskStreaming = isStreaming
   const isStopping = taskState?.isStopping || false
 
-  useEffect(() => {
-    if (isMachineStreaming || selectedTaskDetail?.status === 'RUNNING') {
-      setIsAwaitingResponseStart(false)
-    }
-  }, [isMachineStreaming, selectedTaskDetail?.status])
+  useClearAwaitingResponseOnActivity(
+    isMachineStreaming || isRunningLifecycle,
+    setIsAwaitingResponseStart
+  )
+
   // Check for pending user messages
   const hasPendingUserMessage = useMemo(() => {
     if (localPendingMessage) return true
@@ -367,115 +381,20 @@ export function useChatStreamHandlers({
     }
   }, [currentDisplayTaskId, pendingTaskId, contextStopStream, selectedTaskDetail?.team])
 
-  // Group chat handlers
-  const handleNewMessages = useCallback(
-    (messages: unknown[]) => {
-      if (Array.isArray(messages) && messages.length > 0) {
-        refreshSelectedTaskDetail()
-      }
-    },
-    [refreshSelectedTaskDetail]
+  const notifyStreamingJoinWarning = useCallback(
+    (title: string) => toast({ title, variant: 'warning' }),
+    [toast]
   )
 
-  const handleStreamComplete = useCallback(
-    (_subtaskId: number, _result?: Record<string, unknown>) => {
-      refreshSelectedTaskDetail()
-    },
-    [refreshSelectedTaskDetail]
-  )
+  useStreamingJoinWarning({
+    taskId: currentDisplayTaskId || pendingTaskId,
+    status: taskState?.status,
+    streamingInfo: taskState?.streamingInfo,
+    translate: t,
+    notify: notifyStreamingJoinWarning,
+  })
 
-  // Reset state when clearVersion changes (e.g., "New Chat")
-  useEffect(() => {
-    if (clearVersion !== prevClearVersionRef.current) {
-      prevClearVersionRef.current = clearVersion
-
-      setIsLoading(false)
-      setLocalPendingMessage(null)
-      setPendingTaskId(null)
-      previousTaskIdRef.current = undefined
-      prevTaskIdForModelRef.current = undefined
-      setIsCancelling(false)
-    }
-  }, [clearVersion, setIsLoading])
-
-  // Clear pendingTaskId when switching to a different task
-  useEffect(() => {
-    if (pendingTaskId && selectedTaskDetail?.id && selectedTaskDetail.id !== pendingTaskId) {
-      setPendingTaskId(null)
-    }
-  }, [selectedTaskDetail?.id, pendingTaskId])
-
-  // Reset when navigating to fresh new task state
-  useEffect(() => {
-    if (!selectedTaskDetail?.id && !pendingTaskId) {
-      resetStreamingState()
-      setIsLoading(false)
-    }
-  }, [selectedTaskDetail?.id, pendingTaskId, resetStreamingState, setIsLoading])
-
-  // Reset when switching to a DIFFERENT task
-  useEffect(() => {
-    const currentTaskId = selectedTaskDetail?.id
-    const previousTaskId = previousTaskIdRef.current
-
-    if (
-      previousTaskId !== undefined &&
-      currentTaskId !== previousTaskId &&
-      previousTaskId !== null
-    ) {
-      resetStreamingState()
-    }
-
-    previousTaskIdRef.current = currentTaskId
-  }, [selectedTaskDetail?.id, resetStreamingState])
-
-  // Show join-time warning for long-running streaming tasks recovered from WebSocket join
-  useEffect(() => {
-    const streamingInfo = taskState?.streamingInfo
-    if (!streamingInfo || taskState?.status !== 'streaming') {
-      lastJoinWarningRef.current = null
-      return
-    }
-
-    const warningKey = getStreamingJoinWarningKey({
-      started_at: streamingInfo.started_at,
-      last_activity_at: streamingInfo.last_activity_at,
-    })
-
-    const nowMs = Date.now()
-    const startedAtMs = streamingInfo.started_at ? Date.parse(streamingInfo.started_at) : NaN
-    const lastActivityAtMs = streamingInfo.last_activity_at
-      ? Date.parse(streamingInfo.last_activity_at)
-      : NaN
-    console.info('[StreamingJoinDebug] warning evaluation', {
-      taskId: selectedTaskDetail?.id || pendingTaskId || 0,
-      status: taskState?.status,
-      subtaskId: streamingInfo.subtask_id,
-      startedAt: streamingInfo.started_at,
-      lastActivityAt: streamingInfo.last_activity_at,
-      startedAgeMs: Number.isNaN(startedAtMs) ? null : nowMs - startedAtMs,
-      lastActivityAgeMs: Number.isNaN(lastActivityAtMs) ? null : nowMs - lastActivityAtMs,
-      warningKey,
-    })
-
-    if (!warningKey) return
-
-    const taskId = selectedTaskDetail?.id || pendingTaskId || 0
-    const dedupeKey = `${taskId}:${warningKey}`
-    if (lastJoinWarningRef.current === dedupeKey) return
-
-    lastJoinWarningRef.current = dedupeKey
-    toast({
-      title: t(warningKey),
-      variant: 'warning',
-    })
-  }, [pendingTaskId, selectedTaskDetail?.id, t, taskState?.status, taskState?.streamingInfo, toast])
-
-  // Note: Stream recovery is now handled by TaskStateMachine via useUnifiedMessages
-  // The state machine automatically recovers streaming state when:
-  // - Task is selected (via recover() in useUnifiedMessages)
-  // - Page becomes visible (via usePageVisibility in chatStreamContext)
-  // - WebSocket reconnects (via TaskStateManager.recoverAll())
+  // Runtime consistency checks are owned by TaskStateMachine.checkHealth().
 
   // Helper: create retry button
   const createRetryButton = useCallback(
@@ -490,8 +409,8 @@ export function useChatStreamHandlers({
   // Helper: handle send errors
   const handleSendError = useCallback(
     (error: Error, message: string) => {
-      if (selectedTaskDetail?.status === 'PENDING') {
-        refreshSelectedTaskDetail(false)
+      if (runtimeDerived?.blocksQueuedDispatch) {
+        void recoverCurrentTask('manual-refresh')
         return
       }
 
@@ -515,9 +434,10 @@ export function useChatStreamHandlers({
       })
     },
     [
-      selectedTaskDetail?.status,
-      refreshSelectedTaskDetail,
+      effectiveTaskIdForState,
+      recoverCurrentTask,
       resetStreamingState,
+      runtimeDerived?.blocksQueuedDispatch,
       toast,
       t,
       createRetryButton,
@@ -684,7 +604,7 @@ export function useChatStreamHandlers({
         team_id: selectedTeam?.id ?? 0,
         task_id: selectedTaskDetail?.id,
         model_id: modelId,
-        force_override_bot_model: forceOverride,
+        force_override_bot_model: Boolean(modelId),
         force_override_bot_model_type: selectedModel?.type,
         attachment_ids: [...snapshotAttachments.map(a => a.id), ...queueAttachmentIds],
         enable_deep_thinking: enableDeepThinking,
@@ -726,8 +646,8 @@ export function useChatStreamHandlers({
           }
 
           if (completedTaskId && !selectedTaskDetail?.id) {
-            if (taskType === 'knowledge' && knowledgeBaseId && pathname === '/knowledge') {
-              router.push(`/knowledge/document/${knowledgeBaseId}?taskId=${completedTaskId}`)
+            if (taskType === 'knowledge' && knowledgeBaseId) {
+              navigateToKnowledgeTask(completedTaskId, knowledgeBaseId)
             } else if (taskType === 'task' && !pathname?.startsWith('/devices')) {
               const params = new URLSearchParams()
               params.set('taskId', String(completedTaskId))
@@ -779,7 +699,6 @@ export function useChatStreamHandlers({
       t,
       selectedTeam?.id,
       selectedTaskDetail,
-      forceOverride,
       enableDeepThinking,
       enableClarification,
       showRepositorySelector,
@@ -791,11 +710,13 @@ export function useChatStreamHandlers({
       pathname,
       router,
       searchParams,
+      navigateToKnowledgeTask,
       refreshTasks,
       projectId,
       refreshProjects,
       markTaskAsViewed,
       handleSendError,
+      setPendingTaskId,
     ]
   )
 
@@ -813,41 +734,34 @@ export function useChatStreamHandlers({
       }
 
       if (selectedTaskDetail?.id) {
-        refreshSelectedTaskDetail(false)
+        void refreshSelectedTaskDetail()
       }
 
       setTimeout(() => scrollToBottom(true), 0)
     },
-    [contextSendMessage, refreshSelectedTaskDetail, scrollToBottom, selectedTaskDetail?.id]
+    [
+      contextSendMessage,
+      refreshSelectedTaskDetail,
+      scrollToBottom,
+      selectedTaskDetail?.id,
+      setPendingTaskId,
+    ]
   )
 
   const activeTaskId =
     selectedTaskDetail?.id && selectedTaskDetail.id > 0 ? selectedTaskDetail.id : null
+  const isRuntimeBlockingQueue = runtimeDerived?.blocksQueuedDispatch ?? false
   const isActiveTaskBlocked =
-    isStreaming ||
-    isAwaitingResponseStart ||
-    selectedTaskDetail?.status === 'RUNNING' ||
-    selectedTaskDetail?.status === 'PENDING'
+    isMachineStreaming || isAwaitingResponseStart || isRuntimeBlockingQueue
   const canQueueMessage = Boolean(
-    activeTaskId &&
-    (isStreaming || isAwaitingResponseStart || selectedTaskDetail?.status === 'RUNNING')
+    activeTaskId && (isStreaming || isAwaitingResponseStart || runtimeDerived?.canQueueMessage)
   )
   const canSendGuidance = Boolean(activeTaskId && isChatShell(selectedTeam) && isStreaming)
 
   const getActiveSubtaskId = useCallback(() => {
     const streamingSubtaskId = taskState?.streamingInfo?.subtask_id
-    if (typeof streamingSubtaskId === 'number') return streamingSubtaskId
-
-    const taskWithSubtasks = selectedTaskDetail as
-      | (typeof selectedTaskDetail & { subtasks?: unknown[] })
-      | null
-    const subtasks = taskWithSubtasks?.subtasks
-    if (!Array.isArray(subtasks) || subtasks.length === 0) return null
-
-    const lastSubtask = subtasks[subtasks.length - 1] as { id?: unknown; subtask_id?: unknown }
-    const rawId = lastSubtask.subtask_id ?? lastSubtask.id
-    return typeof rawId === 'number' ? rawId : null
-  }, [selectedTaskDetail, taskState?.streamingInfo?.subtask_id])
+    return typeof streamingSubtaskId === 'number' ? streamingSubtaskId : null
+  }, [taskState?.streamingInfo?.subtask_id])
 
   const {
     activeGuidanceQueue,
@@ -860,36 +774,19 @@ export function useChatStreamHandlers({
     markGuidanceExpired,
     cancelGuidance,
     removeExpiredGuidance,
-  } = useGuidanceQueue({ taskId: activeTaskId })
+  } = useGuidanceQueue({
+    taskId: activeTaskId,
+    isGuidanceAllowed: canSendGuidance,
+    expirationMessage: t('chat:guidance.expired'),
+  })
 
-  useEffect(() => {
-    if (canSendGuidance) return
-
-    activeGuidanceQueue.forEach(item => {
-      if (item.status === 'queued' || item.status === 'sending') {
-        markGuidanceExpired(item.guidanceId, t('chat:guidance.expired'))
-      }
-    })
-  }, [activeGuidanceQueue, canSendGuidance, markGuidanceExpired, t])
-
-  // Register WebSocket handlers for guidance lifecycle events
-  useEffect(() => {
-    if (!activeTaskId) return
-    return registerChatHandlers({
-      onGuidanceApplied: payload => {
-        console.log('[guidance] WS guidance_applied received:', payload)
-        if (payload.task_id === activeTaskId) {
-          markGuidanceApplied(payload.guidance_id)
-        }
-      },
-      onGuidanceExpired: payload => {
-        console.log('[guidance] WS guidance_expired received:', payload)
-        if (payload.task_id === activeTaskId) {
-          payload.guidance_ids.forEach(id => markGuidanceExpired(id, t('chat:guidance.expired')))
-        }
-      },
-    })
-  }, [activeTaskId, markGuidanceApplied, markGuidanceExpired, registerChatHandlers, t])
+  useGuidanceSocketHandlers({
+    taskId: activeTaskId,
+    registerChatHandlers,
+    markGuidanceApplied,
+    markGuidanceExpired,
+    expiredMessage: t('chat:guidance.expired'),
+  })
 
   const dispatchQueuedMessage = useCallback(
     async (queuedMessage: QueuedMessage<PreparedChatSend>) => {
@@ -903,7 +800,7 @@ export function useChatStreamHandlers({
         setIsLoading(false)
       }
     },
-    [sendPreparedChatMessage, setIsLoading]
+    [sendPreparedChatMessage, setIsAwaitingResponseStart, setIsLoading]
   )
 
   const handleQueuedDispatchError = useCallback(
@@ -924,7 +821,7 @@ export function useChatStreamHandlers({
         ),
       })
     },
-    [setIsLoading, t, toast]
+    [setIsAwaitingResponseStart, setIsLoading, t, toast]
   )
 
   const {
@@ -941,6 +838,15 @@ export function useChatStreamHandlers({
     dispatchMode: 'one-per-unblock',
   })
   retryQueuedMessageRef.current = retryQueuedMessage
+
+  useQueuedRuntimeHealthCheck({
+    taskId: activeTaskId,
+    queuedMessages: activeTaskQueue,
+    blocksQueuedDispatch: runtimeDerived?.blocksQueuedDispatch ?? false,
+    isStreaming: isMachineStreaming,
+    isAwaitingResponseStart,
+    recoverCurrentTask: () => recoverCurrentTask('queued-message-blocked'),
+  })
 
   const cancelQueuedMessage = useCallback(
     (id: string) => {
@@ -1035,8 +941,10 @@ export function useChatStreamHandlers({
   // Core message sending logic
   const handleSendMessage = useCallback(
     async (overrideMessage?: string) => {
-      const message = overrideMessage?.trim() || taskInputMessage.trim()
-      if (!message && !shouldHideChatInput) return
+      const message =
+        overrideMessage !== undefined ? overrideMessage.trim() : taskInputMessage.trim()
+      const hasAttachments = attachments.length > 0
+      if (!message && !hasAttachments && !shouldHideChatInput) return
 
       if (!isAttachmentReadyToSend) {
         toast({
@@ -1124,6 +1032,7 @@ export function useChatStreamHandlers({
     },
     [
       taskInputMessage,
+      attachments.length,
       shouldHideChatInput,
       isAttachmentReadyToSend,
       toast,
@@ -1145,6 +1054,9 @@ export function useChatStreamHandlers({
       resetContexts,
       scrollToBottom,
       setIsLoading,
+      setIsAwaitingResponseStart,
+      setLocalPendingMessage,
+      setPendingTaskId,
       sendPreparedChatMessage,
       handleSendError,
     ]
@@ -1165,13 +1077,6 @@ export function useChatStreamHandlers({
       }
 
       const guidanceId = `guidance-${activeTaskId}-${Date.now()}`
-      console.log('[guidance] sending:', {
-        guidanceId,
-        activeTaskId,
-        subtaskId,
-        teamId: selectedTeam.id,
-        message,
-      })
       enqueueGuidance({
         taskId: activeTaskId,
         guidanceId,
@@ -1191,16 +1096,13 @@ export function useChatStreamHandlers({
         })
 
         if (response.error || response.success === false) {
-          console.log('[guidance] ACK error:', response)
           markGuidanceFailed(guidanceId, response.error || t('chat:guidance.send_failed'))
           return
         }
 
-        console.log('[guidance] ACK ok, queued:', { guidanceId, response })
         markGuidanceQueued(guidanceId)
         return
       } catch (error) {
-        console.log('[guidance] send exception:', error)
         const normalizedError = error instanceof Error ? error : new Error(String(error))
         markGuidanceFailed(guidanceId, normalizedError.message)
       }
@@ -1423,9 +1325,13 @@ export function useChatStreamHandlers({
               }
 
               if (completedTaskId && !selectedTaskDetail?.id) {
-                const params = new URLSearchParams(Array.from(searchParams.entries()))
-                params.set('taskId', String(completedTaskId))
-                router.push(`?${params.toString()}`)
+                if (taskType === 'knowledge' && knowledgeBaseId) {
+                  navigateToKnowledgeTask(completedTaskId, knowledgeBaseId)
+                } else {
+                  const params = new URLSearchParams(Array.from(searchParams.entries()))
+                  params.set('taskId', String(completedTaskId))
+                  router.push(`?${params.toString()}`)
+                }
                 refreshTasks()
                 if (projectId) {
                   refreshProjects()
@@ -1451,7 +1357,7 @@ export function useChatStreamHandlers({
         }
 
         if (selectedTaskDetail?.id) {
-          refreshSelectedTaskDetail(false)
+          void refreshSelectedTaskDetail()
         }
 
         setTimeout(() => scrollToBottom(true), 0)
@@ -1484,6 +1390,9 @@ export function useChatStreamHandlers({
       handleSendError,
       scrollToBottom,
       setIsLoading,
+      setIsAwaitingResponseStart,
+      setLocalPendingMessage,
+      setPendingTaskId,
       setTaskInputMessage,
       externalApiParams,
       onTaskCreated,
@@ -1491,13 +1400,11 @@ export function useChatStreamHandlers({
       effectiveRequiresWorkspace,
       projectId,
       refreshProjects,
+      navigateToKnowledgeTask,
     ]
   )
 
-  // Update ref when handleSendMessage changes
-  useEffect(() => {
-    handleSendMessageRef.current = handleSendMessage
-  }, [handleSendMessage])
+  handleSendMessageRef.current = handleSendMessage
 
   // Handle retry for failed messages
   const handleRetry = useCallback(
@@ -1539,7 +1446,7 @@ export function useChatStreamHandlers({
               message.subtaskId!,
               modelId,
               modelType,
-              forceOverride
+              Boolean(modelId)
             )
 
             if (result.error) {
@@ -1568,7 +1475,7 @@ export function useChatStreamHandlers({
         }
       )
     },
-    [retryMessage, selectedTaskDetail?.id, selectedModel, forceOverride, t, toast, traceAction]
+    [retryMessage, selectedTaskDetail?.id, selectedModel, t, toast, traceAction]
   )
 
   // Handle retry with a specific model (from error card recommendation)
@@ -1599,7 +1506,7 @@ export function useChatStreamHandlers({
           setForceOverride(true)
 
           // Refresh task detail to pick up the new model configuration from backend
-          refreshSelectedTaskDetail(false)
+          void refreshSelectedTaskDetail()
           return true
         }
       } catch (error) {
@@ -1641,7 +1548,7 @@ export function useChatStreamHandlers({
       })
 
       refreshTasks()
-      refreshSelectedTaskDetail(false)
+      void refreshSelectedTaskDetail()
       return true
     } catch (err: unknown) {
       const errorMessage =
@@ -1670,24 +1577,31 @@ export function useChatStreamHandlers({
 
       if (err instanceof Error && err.message === 'Cancel operation timed out') {
         refreshTasks()
-        refreshSelectedTaskDetail(false)
+        void refreshSelectedTaskDetail()
       }
       return false
     } finally {
       setIsCancelling(false)
     }
-  }, [selectedTaskDetail?.id, isCancelling, toast, refreshTasks, refreshSelectedTaskDetail])
+  }, [
+    selectedTaskDetail?.id,
+    isCancelling,
+    toast,
+    refreshTasks,
+    refreshSelectedTaskDetail,
+    setIsCancelling,
+  ])
 
   return {
     // Stream state
     pendingTaskId,
     isStreaming,
     isAwaitingResponseStart,
-    isSubtaskStreaming,
     isStopping,
     hasPendingUserMessage,
     localPendingMessage,
     canQueueMessage,
+    canCancelTask: runtimeDerived?.canCancelTask,
     queuedMessageCount: activeTaskQueue.length,
     queuedMessages,
     cancelQueuedMessage,
@@ -1707,10 +1621,6 @@ export function useChatStreamHandlers({
     handleCancelTask,
     stopStream,
     resetStreamingState,
-
-    // Group chat handlers
-    handleNewMessages,
-    handleStreamComplete,
 
     // State
     isCancelling,

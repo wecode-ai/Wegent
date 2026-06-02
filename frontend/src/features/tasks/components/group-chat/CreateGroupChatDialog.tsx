@@ -27,9 +27,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useTeamContext } from '@/contexts/TeamContext'
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
-import { ModelSelector, type Model } from '@/features/tasks/components/selector'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
+import { DEFAULT_MODEL_NAME, ModelSelector, type Model } from '@/features/tasks/components/selector'
 import { useUser } from '@/features/common/UserContext'
 
 interface CreateGroupChatDialogProps {
@@ -45,11 +44,9 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
   const [selectedTeamId, setSelectedTeamId] = useState<string>('')
   const [isCreating, setIsCreating] = useState(false)
   const [selectedModel, setSelectedModel] = useState<Model | null>(null)
-  const [forceOverride, setForceOverride] = useState(false)
 
   const { teams, isTeamsLoading } = useTeamContext()
-  const { sendMessage } = useChatStreamContext()
-  const { refreshTasks, setSelectedTask } = useTaskContext()
+  const { sendMessage, refreshTasks, selectTask } = useTaskSession()
   const { user } = useUser()
 
   // Filter teams to only show chat-type teams (agent_type === 'chat')
@@ -92,7 +89,7 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
         throw new Error('Selected team not found')
       }
 
-      // Use ChatStreamContext to send the message
+      // Use TaskSessionContext to send the message
       // This ensures the stream is registered globally and the task page can display it
       void sendMessage(
         {
@@ -101,8 +98,12 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
           task_id: undefined, // Let streaming API create the task
           title: title, // Pass custom title for the group chat
           model_id:
-            selectedModel?.name === '__default__' ? undefined : selectedModel?.name || undefined,
-          force_override_bot_model: forceOverride,
+            selectedModel?.name === DEFAULT_MODEL_NAME
+              ? undefined
+              : selectedModel?.name || undefined,
+          force_override_bot_model: Boolean(
+            selectedModel && selectedModel.name !== DEFAULT_MODEL_NAME
+          ),
           is_group_chat: true, // Mark this as a group chat
         },
         {
@@ -121,7 +122,6 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
             setTitle('')
             setSelectedTeamId('')
             setSelectedModel(null)
-            setForceOverride(false)
             setIsCreating(false)
 
             // Refresh task list to show the new group chat
@@ -129,7 +129,7 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
 
             // Set selected task with is_group_chat flag BEFORE navigation
             // This ensures ChatArea receives the correct isGroupChat prop immediately
-            setSelectedTask({
+            selectTask({
               id: realTaskId,
               title: title,
               team_id: selectedTeam?.id || 0,
@@ -219,8 +219,6 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
               <ModelSelector
                 selectedModel={selectedModel}
                 setSelectedModel={setSelectedModel}
-                forceOverride={forceOverride}
-                setForceOverride={setForceOverride}
                 selectedTeam={selectedTeam}
                 disabled={isCreating}
                 isLoading={false}

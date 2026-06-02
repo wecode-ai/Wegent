@@ -21,6 +21,7 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 
+from app.core.constants import CLIENT_ORIGIN_FRONTEND
 from app.db.base import Base
 
 
@@ -35,6 +36,7 @@ class TaskResource(Base):
         STATE_DELETED: Task is soft-deleted (is_active=0)
         STATE_ACTIVE: Regular active task (is_active=1)
         STATE_SUBSCRIPTION: Subscription task (is_active=2)
+        STATE_ARCHIVED: User-archived task hidden from normal chat lists (is_active=3)
     """
 
     __tablename__ = "tasks"
@@ -43,6 +45,7 @@ class TaskResource(Base):
     STATE_DELETED = 0
     STATE_ACTIVE = 1
     STATE_SUBSCRIPTION = 2
+    STATE_ARCHIVED = 3
 
     id = Column(Integer, primary_key=True, index=True, comment="Primary key")
     user_id = Column(
@@ -68,7 +71,7 @@ class TaskResource(Base):
         Integer,
         nullable=False,
         default=STATE_ACTIVE,
-        comment="Task state: 0=deleted, 1=active, 2=subscription",
+        comment="Task state: 0=deleted, 1=active, 2=subscription, 3=archived",
     )
     created_at = Column(
         DateTime,
@@ -90,6 +93,13 @@ class TaskResource(Base):
         default=0,
         index=True,
         comment="Project ID for task grouping",
+    )
+    client_origin = Column(
+        String(32),
+        nullable=False,
+        default=CLIENT_ORIGIN_FRONTEND,
+        server_default=CLIENT_ORIGIN_FRONTEND,
+        comment="Client surface that owns this task, e.g. frontend or wework",
     )
     is_group_chat = Column(
         Boolean,

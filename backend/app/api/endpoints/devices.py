@@ -438,3 +438,100 @@ async def execute_device_command(
         result.get("duration"),
     )
     return DeviceCommandResponse(**result)
+
+
+# ==================== Device Session Endpoints ====================
+
+DEFAULT_DEVICE_SESSION_PATH = "/home/ubuntu/.wegent-executor/workspace"
+
+
+class DeviceSessionResponse(BaseModel):
+    """Response model for device session creation."""
+
+    session_id: str = Field(..., description="Unique session identifier")
+    device_id: str = Field(..., description="Target device ID")
+    type: str = Field(..., description="Session type (terminal or code_server)")
+    path: str = Field(..., description="Working directory path")
+    url: str = Field(default="", description="Browser-accessible session URL")
+
+
+@router.post("/{device_id}/terminal", response_model=DeviceSessionResponse)
+async def start_device_terminal(
+    device_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Start a terminal session on a device.
+
+    Sends a Socket.IO RPC to the online device executor to start a ttyd
+    terminal session. Requires the device to be online.
+    """
+    from app.services.device.session_service import (
+        DeviceSessionError,
+        local_device_session_service,
+    )
+
+    try:
+        result = await local_device_session_service.start_session(
+            db=db,
+            user_id=current_user.id,
+            device_id=device_id,
+            project_id=0,
+            session_type="terminal",
+            path=DEFAULT_DEVICE_SESSION_PATH,
+            create_if_missing=True,
+        )
+    except DeviceSessionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+
+    return DeviceSessionResponse(
+        session_id=result.get("session_id", ""),
+        device_id=result.get("device_id", device_id),
+        type="terminal",
+        path=result.get("path", DEFAULT_DEVICE_SESSION_PATH),
+        url=result.get("url", ""),
+    )
+
+
+@router.post("/{device_id}/code-server", response_model=DeviceSessionResponse)
+async def start_device_code_server(
+    device_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Start a code-server (IDE) session on a device.
+
+    Sends a Socket.IO RPC to the online device executor to start a
+    code-server session. Requires the device to be online.
+    """
+    from app.services.device.session_service import (
+        DeviceSessionError,
+        local_device_session_service,
+    )
+
+    try:
+        result = await local_device_session_service.start_session(
+            db=db,
+            user_id=current_user.id,
+            device_id=device_id,
+            project_id=0,
+            session_type="code_server",
+            path=DEFAULT_DEVICE_SESSION_PATH,
+            create_if_missing=True,
+        )
+    except DeviceSessionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+
+    return DeviceSessionResponse(
+        session_id=result.get("session_id", ""),
+        device_id=result.get("device_id", device_id),
+        type="code_server",
+        path=result.get("path", DEFAULT_DEVICE_SESSION_PATH),
+        url=result.get("url", ""),
+    )

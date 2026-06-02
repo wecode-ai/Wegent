@@ -22,6 +22,7 @@
  */
 
 import { Suspense, useState, useCallback, useEffect } from 'react'
+import dynamic from 'next/dynamic'
 import { useParams, useRouter } from 'next/navigation'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
@@ -36,17 +37,27 @@ import { GithubStarButton } from '@/features/layout/GithubStarButton'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
 import { saveLastTab } from '@/utils/userPreferences'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { paths } from '@/config/paths'
 import { Spinner } from '@/components/ui/spinner'
-import {
-  AddRepoModal,
-  useWikiProjects,
-  CancelConfirmDialog,
-  KnowledgeTabs,
-  KnowledgeDocumentPage,
-} from '@/features/knowledge'
+import { useWikiProjects } from '@/features/knowledge/useWikiProjects'
+import { KnowledgeTabs } from '@/features/knowledge/KnowledgeTabs'
+
+const AddRepoModal = dynamic(() => import('@/features/knowledge/AddRepoModal'), {
+  ssr: false,
+})
+
+const CancelConfirmDialog = dynamic(() => import('@/features/knowledge/CancelConfirmDialog'), {
+  ssr: false,
+})
+
+const KnowledgeDocumentPage = dynamic(
+  () =>
+    import('@/features/knowledge/document/components/KnowledgeDocumentPage').then(mod => ({
+      default: mod.KnowledgeDocumentPage,
+    })),
+  { ssr: false }
+)
 
 // Storage key for knowledge sidebar collapsed state
 const KNOWLEDGE_SIDEBAR_COLLAPSED_KEY = 'knowledge-sidebar-collapsed'
@@ -55,8 +66,7 @@ function KnowledgeVirtualPageContent() {
   const params = useParams()
   const router = useRouter()
   const isMobile = useIsMobile()
-  const { clearAllStreams } = useChatStreamContext()
-  const { setSelectedTask } = useTaskContext()
+  const { selectTask } = useTaskSession()
 
   // Decode URL params and resolve namespace/kbName
   // URL formats:
@@ -152,14 +162,13 @@ function KnowledgeVirtualPageContent() {
 
   // Handle new task from collapsed sidebar button
   const handleNewTask = () => {
-    setSelectedTask(null)
-    clearAllStreams()
+    selectTask(null)
     router.replace(paths.chat.getHref())
   }
 
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
-      {/* TaskParamSync handles URL taskId parameter synchronization with TaskContext */}
+      {/* TaskParamSync handles URL taskId parameter synchronization with TaskSessionContext */}
       <Suspense>
         <TaskParamSync />
       </Suspense>
@@ -215,25 +224,29 @@ function KnowledgeVirtualPageContent() {
       </div>
 
       {/* Add repository modal */}
-      <AddRepoModal
-        isOpen={isModalOpen}
-        onClose={handleCloseModal}
-        formErrors={formErrors}
-        isSubmitting={isSubmitting}
-        onRepoChange={handleRepoChange}
-        onSubmit={handleSubmit}
-        selectedRepo={selectedRepo}
-        wikiConfig={wikiConfig}
-      />
+      {isModalOpen && (
+        <AddRepoModal
+          isOpen={isModalOpen}
+          onClose={handleCloseModal}
+          formErrors={formErrors}
+          isSubmitting={isSubmitting}
+          onRepoChange={handleRepoChange}
+          onSubmit={handleSubmit}
+          selectedRepo={selectedRepo}
+          wikiConfig={wikiConfig}
+        />
+      )}
       {/* Cancel confirm dialog */}
-      <CancelConfirmDialog
-        isOpen={confirmDialogOpen}
-        onClose={() => {
-          setConfirmDialogOpen(false)
-          setPendingCancelProjectId(null)
-        }}
-        onConfirm={confirmCancelGeneration}
-      />
+      {confirmDialogOpen && (
+        <CancelConfirmDialog
+          isOpen={confirmDialogOpen}
+          onClose={() => {
+            setConfirmDialogOpen(false)
+            setPendingCancelProjectId(null)
+          }}
+          onConfirm={confirmCancelGeneration}
+        />
+      )}
     </div>
   )
 }

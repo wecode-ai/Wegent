@@ -50,4 +50,41 @@ title: Test
     expect(screen.getByText('1')).toBeInTheDocument()
     expect(screen.getByText('# Body')).toBeInTheDocument()
   })
+
+  it('renders artifact HTML in a sandboxed iframe without exposing chat send APIs', () => {
+    const { container } = render(
+      <EnhancedMarkdown
+        theme="light"
+        source={`Before
+
+<artifact title="午餐选择卡片">
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <style>
+    body { background: red; }
+  </style>
+</head>
+<body>
+  <button onclick="sendToChat('我选择火锅')">火锅</button>
+</body>
+</html>
+</artifact>
+
+After`}
+      />
+    )
+
+    expect(screen.getByText('Before')).toBeInTheDocument()
+    expect(screen.getByText('After')).toBeInTheDocument()
+    expect(screen.getByText('午餐选择卡片')).toBeInTheDocument()
+    expect(screen.queryByText(/background: red/)).not.toBeInTheDocument()
+
+    const iframe = container.querySelector('iframe')
+    expect(iframe).toBeInTheDocument()
+    expect(iframe).toHaveAttribute('sandbox', 'allow-scripts')
+    expect(iframe).toHaveAttribute('srcdoc', expect.stringContaining('body { background: red; }'))
+    expect(iframe).not.toHaveAttribute('srcdoc', expect.stringContaining('window.sendToChat'))
+    expect(iframe).not.toHaveAttribute('srcdoc', expect.stringContaining('send-to-chat'))
+  })
 })

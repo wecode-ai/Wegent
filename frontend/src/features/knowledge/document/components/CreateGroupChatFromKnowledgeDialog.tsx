@@ -26,9 +26,8 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { useToast } from '@/hooks/use-toast'
 import { useTeamContext } from '@/contexts/TeamContext'
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
-import { ModelSelector, type Model } from '@/features/tasks/components/selector'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
+import { DEFAULT_MODEL_NAME, ModelSelector, type Model } from '@/features/tasks/components/selector'
 import { useUser } from '@/features/common/UserContext'
 import { listGroupMembers } from '@/apis/groups'
 import { taskMemberApi } from '@/apis/task-member'
@@ -74,12 +73,10 @@ export function CreateGroupChatFromKnowledgeDialog({
   const [title, setTitle] = useState(defaultTitle)
   const [selectedTeamId, setSelectedTeamId] = useState<string>('')
   const [selectedModel, setSelectedModel] = useState<Model | null>(null)
-  const [forceOverride, setForceOverride] = useState(false)
   const [isCreating, setIsCreating] = useState(false)
 
   const { teams, isTeamsLoading } = useTeamContext()
-  const { sendMessage } = useChatStreamContext()
-  const { refreshTasks, setSelectedTask } = useTaskContext()
+  const { sendMessage, refreshTasks, selectTask } = useTaskSession()
 
   // Reset title when dialog opens or group/kb changes
   useEffect(() => {
@@ -154,7 +151,6 @@ export function CreateGroupChatFromKnowledgeDialog({
     setTitle(defaultTitle)
     setSelectedTeamId('')
     setSelectedModel(null)
-    setForceOverride(false)
     setIsCreating(false)
   }
 
@@ -178,8 +174,12 @@ export function CreateGroupChatFromKnowledgeDialog({
           task_id: undefined,
           title: title,
           model_id:
-            selectedModel?.name === '__default__' ? undefined : selectedModel?.name || undefined,
-          force_override_bot_model: forceOverride,
+            selectedModel?.name === DEFAULT_MODEL_NAME
+              ? undefined
+              : selectedModel?.name || undefined,
+          force_override_bot_model: Boolean(
+            selectedModel && selectedModel.name !== DEFAULT_MODEL_NAME
+          ),
           is_group_chat: true,
         },
         {
@@ -265,7 +265,7 @@ export function CreateGroupChatFromKnowledgeDialog({
       refreshTasks()
 
       // Set selected task before navigation
-      setSelectedTask({
+      selectTask({
         id: realTaskId,
         title: title,
         team_id: selectedTeam?.id || 0,
@@ -352,8 +352,6 @@ export function CreateGroupChatFromKnowledgeDialog({
               <ModelSelector
                 selectedModel={selectedModel}
                 setSelectedModel={setSelectedModel}
-                forceOverride={forceOverride}
-                setForceOverride={setForceOverride}
                 selectedTeam={selectedTeam}
                 disabled={isCreating}
                 isLoading={false}

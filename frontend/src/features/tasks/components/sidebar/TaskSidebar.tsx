@@ -24,8 +24,7 @@ import {
   Library,
   LayoutGrid,
 } from 'lucide-react'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import TaskListSection from './TaskListSection'
 import TaskHistorySection from './TaskHistorySection'
 import FixedGroupChatsSection from './FixedGroupChatsSection'
@@ -71,7 +70,6 @@ export default function TaskSidebar({
 }: TaskSidebarProps) {
   const { t } = useTranslation()
   const router = useRouter()
-  const { clearAllStreams } = useChatStreamContext()
   const {
     tasks,
     groupTasks,
@@ -92,9 +90,9 @@ export default function TaskSidebar({
     getUnreadCount,
     markAllTasksAsViewed,
     viewStatusVersion,
-    setSelectedTask,
+    selectTask,
     isRefreshing,
-  } = useTaskContext()
+  } = useTaskSession()
   const desktopScrollRef = useRef<HTMLDivElement>(null)
   const mobileScrollRef = useRef<HTMLDivElement>(null)
   const moreNavCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -223,10 +221,7 @@ export default function TaskSidebar({
   const handleNewAgentClick = () => {
     // IMPORTANT: Clear selected task FIRST to ensure UI state is reset immediately
     // This prevents the UI from being stuck showing the previous task's messages
-    setSelectedTask(null)
-
-    // Clear all stream states to reset the chat area to initial state
-    clearAllStreams()
+    selectTask(null)
 
     if (typeof window !== 'undefined') {
       // Always navigate to chat page for new conversation
@@ -236,14 +231,11 @@ export default function TaskSidebar({
     setIsMobileSidebarOpen(false)
   }
 
-  // Handle navigation button click - for code mode, clear streams to create new task
+  // Handle navigation button click - reset the current task session when re-entering a page
   const handleNavigationClick = (path: string, isActive: boolean, buttonPageType?: string) => {
     if (isActive) {
       // IMPORTANT: Clear selected task FIRST to ensure UI state is reset immediately
-      setSelectedTask(null)
-
-      // If already on this page, clear streams to create new task
-      clearAllStreams()
+      selectTask(null)
 
       // For knowledge page, dispatch event to clear selected KB and return to homepage
       if (buttonPageType === 'knowledge' && typeof window !== 'undefined') {
@@ -328,7 +320,7 @@ export default function TaskSidebar({
               variant="ghost"
               onClick={() => handleNavigationClick(btn.path, btn.isActive, btn.buttonPageType)}
               data-testid={btn.testId ?? `task-sidebar-nav-${btn.buttonPageType}-button`}
-              className={`w-full justify-between px-3 h-11 min-w-[44px] text-sm rounded-md transition-all duration-200 ${
+              className={`w-full justify-between px-3 h-11 min-w-[44px] text-sm rounded-md transition-all duration-200 lg:h-10 ${
                 btn.isActive
                   ? 'bg-primary/10 text-primary font-medium hover:bg-primary/15'
                   : 'text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 hover:scale-[1.02]'
@@ -341,7 +333,7 @@ export default function TaskSidebar({
                 />
                 <span
                   className={`ml-1.5 text-[14px] leading-5 font-medium ${
-                    btn.isActive ? 'text-primary' : 'text-[#444746]'
+                    btn.isActive ? 'text-primary' : 'text-text-primary'
                   }`}
                 >
                   {btn.label}
@@ -365,7 +357,7 @@ export default function TaskSidebar({
                           e.stopPropagation()
                           handleNavigationClick(btn.path, btn.isActive, btn.buttonPageType)
                         }}
-                        className="flex h-11 min-w-[44px] items-center gap-1 px-2 text-xs bg-primary text-white rounded-md hover:bg-primary/90 transition-colors"
+                        className="flex h-11 min-w-[44px] items-center gap-1 px-2 text-xs bg-primary text-white rounded-md hover:bg-primary/90 transition-colors lg:h-10"
                       >
                         <Plus className="h-3 w-3" />
                         <span>{t('common:tasks.new_task')}</span>
@@ -408,7 +400,7 @@ export default function TaskSidebar({
               variant="ghost"
               data-testid="task-sidebar-more-button"
               onFocus={() => openMoreNavigation(menuId)}
-              className={`w-full justify-between px-3 h-11 min-w-[44px] text-sm rounded-md transition-all duration-200 ${
+              className={`w-full justify-between px-3 h-11 min-w-[44px] text-sm rounded-md transition-all duration-200 lg:h-10 ${
                 hasActiveItem
                   ? 'bg-primary/10 text-primary font-medium hover:bg-primary/15'
                   : 'text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 hover:scale-[1.02]'
@@ -422,7 +414,7 @@ export default function TaskSidebar({
                 />
                 <span
                   className={`ml-1.5 text-[14px] leading-5 font-medium ${
-                    hasActiveItem ? 'text-primary' : 'text-[#444746]'
+                    hasActiveItem ? 'text-primary' : 'text-text-primary'
                   }`}
                 >
                   {t('common:navigation.more')}
@@ -455,7 +447,7 @@ export default function TaskSidebar({
             <DropdownMenuItem
               key={btn.path}
               data-testid={`task-sidebar-more-${btn.buttonPageType}-button`}
-              className={`h-11 min-w-[44px] gap-2 px-2 text-sm ${
+              className={`h-11 min-w-[44px] gap-2 px-2 text-sm lg:h-10 ${
                 btn.isActive
                   ? 'bg-primary/10 text-primary font-medium focus:bg-primary/15'
                   : 'text-text-primary focus:bg-[rgb(238,238,238)] dark:focus:bg-white/10'
@@ -507,7 +499,7 @@ export default function TaskSidebar({
           >
             {/* Logo and Mode Indicator - matches Figma: left-[20px] top-[12px] */}
             <div
-              className={`${isCollapsed ? 'px-2' : 'px-5'} pt-2 pb-3`}
+              className={`${isCollapsed ? 'px-2' : 'px-5'} pt-2 pb-1.5`}
               data-testid="task-sidebar-logo-section"
             >
               {isCollapsed ? (
@@ -561,7 +553,7 @@ export default function TaskSidebar({
                             size="icon"
                             onClick={onToggleCollapsed}
                             data-testid="collapse-sidebar-button"
-                            className="h-11 min-w-[44px] w-11 p-0 text-text-muted hover:text-text-primary hover:bg-hover rounded-lg"
+                            className="h-11 min-w-[44px] w-11 p-0 text-text-muted hover:text-text-primary hover:bg-hover rounded-lg lg:h-10 lg:w-10 lg:min-w-10"
                             aria-label={t('common:sidebar.collapse')}
                           >
                             <PanelLeftClose className="h-4 w-4" />
@@ -585,12 +577,12 @@ export default function TaskSidebar({
                     variant="ghost"
                     onClick={handleNewAgentClick}
                     data-testid="new-agent-button"
-                    className="w-full justify-between px-3 h-11 min-w-[44px] text-sm text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 rounded-md group transition-all duration-200 hover:scale-[1.02]"
+                    className="w-full justify-between px-3 h-11 min-w-[44px] text-sm text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 rounded-md group transition-all duration-200 hover:scale-[1.02] lg:h-10"
                     size="sm"
                   >
                     <span className="flex items-center">
                       <Plus className="h-4 w-4 flex-shrink-0" />
-                      <span className="ml-1.5 text-[14px] leading-5 font-medium text-[#444746]">
+                      <span className="ml-1.5 text-[14px] leading-5 font-medium text-text-primary">
                         {t('common:tasks.new_conversation')}
                       </span>
                     </span>

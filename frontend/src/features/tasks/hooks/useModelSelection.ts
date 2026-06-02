@@ -51,6 +51,8 @@ export interface Model {
   region?: ModelRegion
   isAdvanced?: boolean
   namespace?: string
+  modelGroup?: string | null
+  modelSubGroup?: string | null
   config?: Record<string, unknown>
 }
 
@@ -131,6 +133,9 @@ export function unifiedToModel(unified: UnifiedModel): Model {
     displayName: unified.displayName,
     type: unified.type,
     isAdvanced: unified.isAdvanced ?? false,
+    namespace: unified.namespace,
+    modelGroup: unified.modelGroup,
+    modelSubGroup: unified.modelSubGroup,
     config: unified.config,
   }
 }
@@ -162,9 +167,7 @@ export function useModelSelection({
   teamId,
   taskId,
   taskModelId,
-  initialForceOverride,
   selectedTeam,
-  disabled = false,
   modelCategoryType = 'llm',
 }: UseModelSelectionOptions): UseModelSelectionReturn {
   const { t } = useTranslation()
@@ -297,15 +300,6 @@ export function useModelSelection({
   }, [fetchModels])
 
   // -------------------------------------------------------------------------
-  // Auto-enable force override when team has predefined models
-  // -------------------------------------------------------------------------
-  useEffect(() => {
-    if (showDefaultOption && !disabled) {
-      setForceOverrideState(true)
-    }
-  }, [showDefaultOption, disabled])
-
-  // -------------------------------------------------------------------------
   // Model Selection Logic (Simplified)
   // Priority: 1. taskModelId (from API) -> 2. team's bind_model -> 3. global preference
   // -------------------------------------------------------------------------
@@ -337,7 +331,7 @@ export function useModelSelection({
         const foundModel = models.find(m => m.name === taskModelId || m.displayName === taskModelId)
         if (foundModel) {
           restoredModel = foundModel
-          restoredForceOverride = initialForceOverride
+          restoredForceOverride = true
         }
       }
 
@@ -355,7 +349,7 @@ export function useModelSelection({
           })
           if (foundModel) {
             restoredModel = foundModel
-            restoredForceOverride = preference.forceOverride
+            restoredForceOverride = true
           }
         }
       }
@@ -418,7 +412,6 @@ export function useModelSelection({
     teamId,
     taskId,
     taskModelId,
-    initialForceOverride,
     compatibleProvider,
   ])
 
@@ -458,6 +451,7 @@ export function useModelSelection({
   /** Select a model directly */
   const selectModel = useCallback((model: Model | null) => {
     setSelectedModel(model)
+    setForceOverrideState(Boolean(model && model.name !== DEFAULT_MODEL_NAME))
   }, [])
 
   /** Select model by key (format: "modelName:modelType") */
@@ -466,6 +460,7 @@ export function useModelSelection({
       if (key === DEFAULT_MODEL_NAME) {
         const defaultModel = { name: DEFAULT_MODEL_NAME, provider: '', modelId: '' }
         setSelectedModel(defaultModel)
+        setForceOverrideState(false)
         return
       }
 
@@ -473,6 +468,7 @@ export function useModelSelection({
       const model = filteredModels.find(m => m.name === modelName && m.type === modelType)
       if (model) {
         setSelectedModel(model)
+        setForceOverrideState(true)
       }
     },
     [filteredModels]
@@ -482,6 +478,7 @@ export function useModelSelection({
   const selectDefaultModel = useCallback(() => {
     const defaultModel = { name: DEFAULT_MODEL_NAME, provider: '', modelId: '' }
     setSelectedModel(defaultModel)
+    setForceOverrideState(false)
   }, [])
 
   /** Set force override flag */
@@ -546,20 +543,8 @@ export function useModelSelection({
       }
       return t('common:task_submit.default_model', '默认')
     }
-    const displayText = getModelDisplayTextHelper(selectedModel)
-    if (forceOverride && !isMixedTeam) {
-      return `${displayText}(${t('common:task_submit.override_short', '覆盖')})`
-    }
-    return displayText
-  }, [
-    selectedModel,
-    isLoading,
-    isModelRequired,
-    forceOverride,
-    isMixedTeam,
-    getBoundModelDisplayNames,
-    t,
-  ])
+    return getModelDisplayTextHelper(selectedModel)
+  }, [selectedModel, isLoading, isModelRequired, getBoundModelDisplayNames, t])
 
   // -------------------------------------------------------------------------
   // Return

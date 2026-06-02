@@ -6,8 +6,8 @@
 
 import { useEffect, useRef } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
-import { Task } from '@/types/api'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
+import type { Task } from '@/types/api'
 import { useToast } from '@/hooks/use-toast'
 
 /**
@@ -20,12 +20,14 @@ import { useToast } from '@/hooks/use-toast'
 export default function TaskParamSync() {
   const { toast } = useToast()
   const searchParams = useSearchParams()
-  const { selectedTaskDetail, setSelectedTask } = useTaskContext()
+  const { selectedTask, selectedTaskDetail, selectTask } = useTaskSession()
 
   const router = useRouter()
 
-  // Use ref to track selectedTaskDetail without triggering effect re-runs
+  // Use refs to track selected task state without triggering effect re-runs
   // This prevents race conditions when user clicks "New Task" button
+  const selectedTaskRef = useRef(selectedTask)
+  selectedTaskRef.current = selectedTask
   const selectedTaskDetailRef = useRef(selectedTaskDetail)
   selectedTaskDetailRef.current = selectedTaskDetail
 
@@ -37,14 +39,15 @@ export default function TaskParamSync() {
     // If no taskId in URL, clear selection
     // Use ref to check current state without adding to dependencies
     if (!taskId) {
-      if (selectedTaskDetailRef.current) {
-        setSelectedTask(null)
+      if (selectedTaskRef.current || selectedTaskDetailRef.current) {
+        selectTask(null)
       }
       return
     }
 
     // If taskId in URL already matches selected task, do nothing
-    if (String(selectedTaskDetailRef.current?.id) === taskId) {
+    const currentTaskId = selectedTaskRef.current?.id ?? selectedTaskDetailRef.current?.id
+    if (String(currentTaskId) === taskId) {
       return
     }
 
@@ -53,7 +56,7 @@ export default function TaskParamSync() {
       try {
         // Allow completed tasks to be selected, users should be able to view details of any task
         // If it exists, set it. The context will handle fetching the full detail.
-        setSelectedTask({ id: Number(taskId) } as Task)
+        selectTask({ id: Number(taskId) } as Task)
       } catch {
         toast({
           variant: 'destructive',
@@ -69,7 +72,7 @@ export default function TaskParamSync() {
     // IMPORTANT: selectedTaskDetail is intentionally NOT in the dependency array
     // This effect should only run when URL changes, not when task detail changes
     // Using ref to access current value without triggering re-runs
-  }, [searchParams, router, setSelectedTask, toast])
+  }, [searchParams, router, selectTask, toast])
 
   return null // Only responsible for synchronization, does not render any content
 }

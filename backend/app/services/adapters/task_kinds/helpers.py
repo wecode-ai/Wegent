@@ -665,6 +665,8 @@ def build_lite_task_list(
                 "team_namespace": team_namespace,
                 "team_display_name": team_display_name,
                 "team_icon": team_icon,
+                "project_id": task.project_id or 0,
+                "client_origin": task.client_origin,
                 "device_id": device_id,
                 "device_name": device_name,
                 "git_repo": git_repo,

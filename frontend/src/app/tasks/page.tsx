@@ -5,6 +5,7 @@
 'use client'
 
 import { Suspense, useState } from 'react'
+import dynamic from 'next/dynamic'
 import { teamService } from '@/features/tasks/service/teamService'
 import TopNavigation from '@/features/layout/TopNavigation'
 import { TaskSidebar } from '@/features/tasks/components/sidebar'
@@ -18,11 +19,13 @@ import { ThemeToggle } from '@/features/theme/ThemeToggle'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { Team } from '@/types/api'
 import { UserProvider } from '@/features/common/UserContext'
-import { TaskContextProvider } from '@/features/tasks/contexts/taskContext'
-import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext'
+import { TaskSessionProvider } from '@/features/tasks/session/TaskSession'
 import { SocketProvider } from '@/contexts/SocketContext'
 import { DeviceProvider } from '@/contexts/DeviceContext'
-import { ChatArea } from '@/features/tasks/components/chat'
+
+const ChatArea = dynamic(() => import('@/features/tasks/components/chat/ChatArea'), {
+  ssr: false,
+})
 
 function TasksPageContent() {
   // Team state from service
@@ -84,11 +87,9 @@ export default function TasksPage() {
     <UserProvider>
       <SocketProvider>
         <DeviceProvider>
-          <TaskContextProvider>
-            <ChatStreamProvider>
-              <TasksPageContent />
-            </ChatStreamProvider>
-          </TaskContextProvider>
+          <TaskSessionProvider>
+            <TasksPageContent />
+          </TaskSessionProvider>
         </DeviceProvider>
       </SocketProvider>
     </UserProvider>

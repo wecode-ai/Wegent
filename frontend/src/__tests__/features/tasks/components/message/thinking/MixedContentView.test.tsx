@@ -22,6 +22,21 @@ jest.mock('@/features/tasks/components/message/thinking/components/GuidanceBlock
   ),
 }))
 
+jest.mock('@/features/tasks/components/message/thinking/ReasoningDisplay', () => ({
+  __esModule: true,
+  default: ({
+    reasoningContent,
+    isStreaming,
+  }: {
+    reasoningContent: string
+    isStreaming?: boolean
+  }) => (
+    <div data-testid="inline-thinking-block" data-streaming={isStreaming ? 'true' : 'false'}>
+      {reasoningContent}
+    </div>
+  ),
+}))
+
 jest.mock('@/components/common/EnhancedMarkdown', () => ({
   __esModule: true,
   default: ({ source }: { source: string }) => <div>{source}</div>,
@@ -57,6 +72,65 @@ jest.mock('@/features/tasks/components/message/block-registry', () => ({
 jest.mock('@/features/prompt-optimization/block-renderer', () => ({}))
 
 describe('MixedContentView', () => {
+  it('renders thinking blocks in chronological order as standalone collapsible items', () => {
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        theme="light"
+        blocks={[
+          {
+            id: 'thinking-1',
+            type: 'thinking',
+            status: 'done',
+            content: 'First thought.',
+          },
+          {
+            id: 'text-1',
+            type: 'text',
+            status: 'done',
+            content: 'First answer.',
+          },
+          {
+            id: 'tool-1',
+            type: 'tool',
+            status: 'done',
+            tool_name: 'Read',
+            tool_use_id: 'tool-1',
+            tool_input: { file_path: 'README.md' },
+          },
+          {
+            id: 'thinking-2',
+            type: 'thinking',
+            status: 'streaming',
+            content: 'Second thought.',
+          },
+          {
+            id: 'text-2',
+            type: 'text',
+            status: 'streaming',
+            content: 'Final answer.',
+          },
+        ]}
+      />
+    )
+
+    const firstThought = screen.getByText('First thought.')
+    const firstAnswer = screen.getByText('First answer.')
+    const toolBlock = screen.getByTestId('tool-block')
+    const secondThought = screen.getByText('Second thought.')
+    const finalAnswer = screen.getByText('Final answer.')
+
+    expect(firstThought.compareDocumentPosition(firstAnswer)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(firstAnswer.compareDocumentPosition(toolBlock)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(toolBlock.compareDocumentPosition(secondThought)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(secondThought.compareDocumentPosition(finalAnswer)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(screen.getAllByTestId('inline-thinking-block')).toHaveLength(2)
+    expect(screen.getByText('Second thought.')).toHaveAttribute('data-streaming', 'true')
+  })
+
   it('renders only the interactive form block that contains questions', () => {
     render(
       <MixedContentView
@@ -190,7 +264,7 @@ describe('MixedContentView', () => {
     expect(screen.getByText('雨后的清晨')).toBeInTheDocument()
     const indicator = screen.getByTestId('streaming-wait-indicator')
 
-    expect(screen.getAllByText('thinking.processing')).toHaveLength(2)
+    expect(screen.getAllByText('thinking.processing')).toHaveLength(1)
     expect(screen.getByTestId('streaming-wait-runner-dot')).toBeInTheDocument()
     expect(indicator.querySelectorAll('.animate-pulse')).toHaveLength(0)
   })

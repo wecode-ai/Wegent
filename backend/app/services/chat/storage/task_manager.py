@@ -17,7 +17,9 @@ from typing import Any, Dict, List, Optional
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.constants import CLIENT_ORIGIN_FRONTEND
 from app.models.kind import Kind
+from app.models.project import Project
 from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
@@ -54,6 +56,8 @@ class TaskCreationParams:
     force_override_bot_model_type: Optional[str] = (
         None  # Model type: 'public', 'user', 'group'
     )
+    # Model selection options, such as reasoning or speed.
+    model_options: Optional[Dict[str, str]] = None
     is_group_chat: bool = False
     git_url: Optional[str] = None
     git_repo: Optional[str] = None
@@ -81,15 +85,24 @@ class TaskCreationParams:
     device_id: Optional[str] = None
     # Project ID to associate task with
     project_id: Optional[int] = None
+    # Client surface that owns the task
+    client_origin: str = CLIENT_ORIGIN_FRONTEND
     # Task source label (e.g. chat_shell, responses_api)
     source: str = "chat_shell"
     # Whether the task originates from API-compatible surfaces
     is_api_call: bool = False
     # Optional API key name for tracing/audit
     api_key_name: Optional[str] = None
+    # Whether executor runtime should be deleted immediately after completion
+    auto_delete_executor: Optional[str] = None
     # Video generation parameters (user-selected at generation time)
     # Used to save video_config to user subtask.result for display
     generate_params: Optional[Dict[str, Any]] = None
+
+    def __post_init__(self) -> None:
+        """Treat an explicit model_id as an override selection."""
+        if self.model_id:
+            self.force_override_bot_model = True
 
 
 def get_bot_ids_from_team(db: Session, team: Kind) -> List[int]:
@@ -240,6 +253,20 @@ def create_new_task(
     if not task_kinds_service.validate_task_id(db, new_task_id):
         raise HTTPException(status_code=500, detail="Failed to create task ID")
 
+    if params.project_id:
+        project_exists = (
+            db.query(Project.id)
+            .filter(
+                Project.id == params.project_id,
+                Project.user_id == user.id,
+                Project.client_origin == params.client_origin,
+                Project.is_active == True,
+            )
+            .first()
+        )
+        if not project_exists:
+            raise HTTPException(status_code=404, detail="Project not found")
+
     # Create workspace
     workspace_name = f"workspace-{new_task_id}"
     workspace_json = {
@@ -265,6 +292,7 @@ def create_new_task(
         namespace="default",
         json=workspace_json,
         is_active=True,
+        client_origin=params.client_origin,
     )
     db.add(workspace)
 
@@ -328,7 +356,7 @@ def create_new_task(
             "labels": {
                 "type": "online",
                 "taskType": task_type,
-                "autoDeleteExecutor": "false",
+                "autoDeleteExecutor": params.auto_delete_executor or "false",
                 "source": params.source,
                 **({"is_api_call": "true"} if params.is_api_call else {}),
                 **({"modelId": params.model_id} if params.model_id else {}),
@@ -340,6 +368,11 @@ def create_new_task(
                 **(
                     {"forceOverrideBotModelType": params.force_override_bot_model_type}
                     if params.force_override_bot_model_type
+                    else {}
+                ),
+                **(
+                    {"modelOptions": json_lib.dumps(params.model_options)}
+                    if params.model_options
                     else {}
                 ),
                 **(
@@ -371,6 +404,7 @@ def create_new_task(
         existing_placeholder.json = task_json
         existing_placeholder.is_active = True
         existing_placeholder.updated_at = datetime.now()
+        existing_placeholder.client_origin = params.client_origin
         existing_placeholder.is_group_chat = (
             params.is_group_chat
         )  # Sync to physical column
@@ -388,6 +422,7 @@ def create_new_task(
             json=task_json,
             is_active=True,
             is_group_chat=params.is_group_chat,  # Sync to physical column
+            client_origin=params.client_origin,
             **({"project_id": params.project_id} if params.project_id else {}),
         )
         db.add(task)

@@ -1,14 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Eye, EyeOff } from 'lucide-react'
-import { useTranslation } from 'react-i18next'
 import { getRuntimeConfig } from '@/config/runtime'
 import { POST_LOGIN_REDIRECT_KEY, sanitizeRedirectPath } from '@/features/auth/redirect'
 import { useAuth } from '@/features/auth/useAuth'
-
-function navigateTo(path: string) {
-  window.history.pushState({}, '', path)
-  window.dispatchEvent(new PopStateEvent('popstate'))
-}
+import { useTranslation } from '@/hooks/useTranslation'
+import { navigateTo } from '@/lib/navigation'
 
 function getRedirectTarget(): string {
   const search = new URLSearchParams(window.location.search)
@@ -18,6 +14,16 @@ function getRedirectTarget(): string {
     ['/login', '/login/oidc'],
   )
   return queryRedirect || storedRedirect || '/'
+}
+
+function buildOidcLoginUrl(apiBaseUrl: string, redirect: string, appBasePath: string): string {
+  const params = new URLSearchParams()
+  params.set('redirect', redirect)
+  if (appBasePath) {
+    params.set('frontend_base_path', appBasePath)
+  }
+
+  return `${apiBaseUrl}/auth/oidc/login?${params.toString()}`
 }
 
 export function LoginPage() {
@@ -42,6 +48,17 @@ export function LoginPage() {
     }
   }, [authLoading, redirectTarget, user])
 
+  useEffect(() => {
+    if (config.loginMode === 'oidc') {
+      sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, redirectTarget)
+      window.location.href = buildOidcLoginUrl(
+        config.apiBaseUrl,
+        redirectTarget,
+        config.appBasePath,
+      )
+    }
+  }, [config.apiBaseUrl, config.appBasePath, config.loginMode, redirectTarget])
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError(null)
@@ -58,11 +75,16 @@ export function LoginPage() {
   }
 
   function handleOidcLogin() {
-    const redirect = sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY)
-    const oidcUrl = redirect
-      ? `/api/auth/oidc/login?redirect=${encodeURIComponent(redirect)}`
-      : '/api/auth/oidc/login'
-    window.location.href = oidcUrl
+    const redirect = sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY) || redirectTarget
+    window.location.href = buildOidcLoginUrl(
+      config.apiBaseUrl,
+      redirect,
+      config.appBasePath,
+    )
+  }
+
+  if (config.loginMode === 'oidc') {
+    return null
   }
 
   return (

@@ -31,7 +31,7 @@ const createTask = (overrides: Partial<Task>): Task => ({
   ...overrides,
 })
 
-const mockTaskContext = {
+const mockTaskSessionContext = {
   tasks: [] as Task[],
   groupTasks: [] as Task[],
   personalTasks: [] as Task[],
@@ -52,7 +52,7 @@ const mockTaskContext = {
   getUnreadCount: () => 0,
   markAllTasksAsViewed: jest.fn(),
   viewStatusVersion: 0,
-  setSelectedTask: jest.fn(),
+  selectTask: jest.fn(),
   isRefreshing: false,
 }
 
@@ -84,14 +84,8 @@ jest.mock('@/config/paths', () => ({
   },
 }))
 
-jest.mock('@/features/tasks/contexts/taskContext', () => ({
-  useTaskContext: () => mockTaskContext,
-}))
-
-jest.mock('@/features/tasks/contexts/chatStreamContext', () => ({
-  useChatStreamContext: () => ({
-    clearAllStreams: jest.fn(),
-  }),
+jest.mock('@/features/tasks/session/TaskSession', () => ({
+  useTaskSession: () => mockTaskSessionContext,
 }))
 
 jest.mock('@/features/inbox', () => ({
@@ -173,7 +167,7 @@ jest.mock('@/features/projects', () => ({
 
 describe('TaskSidebar scroll structure', () => {
   beforeEach(() => {
-    Object.assign(mockTaskContext, {
+    Object.assign(mockTaskSessionContext, {
       tasks: [],
       groupTasks: [],
       personalTasks: [],
@@ -194,7 +188,7 @@ describe('TaskSidebar scroll structure', () => {
       getUnreadCount: () => 0,
       markAllTasksAsViewed: jest.fn(),
       viewStatusVersion: 0,
-      setSelectedTask: jest.fn(),
+      selectTask: jest.fn(),
       isRefreshing: false,
     })
   })
@@ -322,11 +316,28 @@ describe('TaskSidebar scroll structure', () => {
     const automationButton = screen.getAllByTestId('task-sidebar-nav-flow-button')[0]
     const moreButton = screen.getAllByTestId('task-sidebar-more-button')[0]
 
-    expect(logoSection).toHaveClass('pt-2', 'pb-3')
-    expect(newConversationButton).toHaveClass('h-11', 'min-w-[44px]')
-    expect(automationButton).toHaveClass('h-11', 'min-w-[44px]')
-    expect(moreButton).toHaveClass('h-11', 'min-w-[44px]')
+    expect(logoSection).toHaveClass('pt-2', 'pb-1.5')
+    expect(newConversationButton).toHaveClass('h-11', 'lg:h-10', 'min-w-[44px]')
+    expect(automationButton).toHaveClass('h-11', 'lg:h-10', 'min-w-[44px]')
+    expect(moreButton).toHaveClass('h-11', 'lg:h-10', 'min-w-[44px]')
     expect(newConversationButton).toHaveAttribute('data-testid', 'new-agent-button')
+  })
+
+  it('uses theme-aware text color for inactive sidebar labels', () => {
+    render(
+      <TaskSidebar isMobileSidebarOpen={false} setIsMobileSidebarOpen={jest.fn()} pageType="chat" />
+    )
+
+    const newConversationLabel = screen.getAllByText('common:tasks.new_conversation')[0]
+    const automationLabel = screen.getAllByText('common:navigation.flow')[0]
+    const moreLabel = screen.getAllByText('common:navigation.more')[0]
+
+    expect(newConversationLabel).toHaveClass('text-text-primary')
+    expect(automationLabel).toHaveClass('text-text-primary')
+    expect(moreLabel).toHaveClass('text-text-primary')
+    expect(newConversationLabel).not.toHaveClass('text-[#444746]')
+    expect(automationLabel).not.toHaveClass('text-[#444746]')
+    expect(moreLabel).not.toHaveClass('text-[#444746]')
   })
 
   it('keeps the user menu outside of the scroll container', () => {
@@ -344,12 +355,12 @@ describe('TaskSidebar scroll structure', () => {
   })
 
   it('keeps group chats fixed above the user menu and collapsed into one dropdown row by default', () => {
-    mockTaskContext.personalTasks = [createTask({ id: 1, title: 'Personal message' })]
-    mockTaskContext.groupTasks = [
+    mockTaskSessionContext.personalTasks = [createTask({ id: 1, title: 'Personal message' })]
+    mockTaskSessionContext.groupTasks = [
       createTask({ id: 2, title: 'Group chat message', is_group_chat: true }),
       createTask({ id: 3, title: 'Second group chat', is_group_chat: true }),
     ]
-    mockTaskContext.hasMoreGroupTasks = true
+    mockTaskSessionContext.hasMoreGroupTasks = true
 
     render(
       <TaskSidebar isMobileSidebarOpen={false} setIsMobileSidebarOpen={jest.fn()} pageType="chat" />
@@ -388,15 +399,74 @@ describe('TaskSidebar scroll structure', () => {
 
     fireEvent.click(groupToggle)
 
-    expect(mockTaskContext.loadAllGroupTasks).toHaveBeenCalledTimes(1)
-    expect(mockTaskContext.loadMoreGroupTasks).not.toHaveBeenCalled()
+    expect(mockTaskSessionContext.loadAllGroupTasks).toHaveBeenCalledTimes(1)
+    expect(mockTaskSessionContext.loadMoreGroupTasks).not.toHaveBeenCalled()
     expect(within(groupDock).getByText('Group chat message')).toBeInTheDocument()
+  })
+
+  it('keeps the group chat toggle visible after loading an empty group chat list', () => {
+    const loadAllGroupTasks = jest.fn().mockResolvedValue(undefined)
+    Object.assign(mockTaskSessionContext, {
+      groupTasks: [],
+      personalTasks: [],
+      hasMoreGroupTasks: true,
+      loadAllGroupTasks,
+    })
+
+    const sidebarProps = {
+      isMobileSidebarOpen: false,
+      setIsMobileSidebarOpen: jest.fn(),
+      pageType: 'chat' as const,
+    }
+    const { rerender } = render(<TaskSidebar {...sidebarProps} />)
+
+    const groupDock = screen.getAllByTestId('task-sidebar-group-chat-dock')[0]
+    fireEvent.click(within(groupDock).getByTestId('task-sidebar-group-chat-toggle'))
+
+    expect(loadAllGroupTasks).toHaveBeenCalledTimes(1)
+
+    Object.assign(mockTaskSessionContext, {
+      groupTasks: [],
+      hasMoreGroupTasks: false,
+    })
+    rerender(<TaskSidebar {...sidebarProps} />)
+
+    const updatedGroupDock = screen.getAllByTestId('task-sidebar-group-chat-dock')[0]
+    expect(
+      within(updatedGroupDock).getByTestId('task-sidebar-group-chat-toggle')
+    ).toBeInTheDocument()
+    expect(within(updatedGroupDock).getByText('common:tasks.no_group_chats')).toBeInTheDocument()
+
+    fireEvent.click(within(updatedGroupDock).getByTestId('task-sidebar-group-chat-toggle'))
+
+    const collapsedGroupDock = screen.getAllByTestId('task-sidebar-group-chat-dock')[0]
+    expect(within(collapsedGroupDock).getByText('common:tasks.group_chats')).toBeInTheDocument()
+    expect(
+      within(collapsedGroupDock).queryByText('common:tasks.no_group_chats')
+    ).not.toBeInTheDocument()
+  })
+
+  it('keeps the group chat dock visible after empty group chat loading has settled', () => {
+    Object.assign(mockTaskSessionContext, {
+      groupTasks: [],
+      personalTasks: [],
+      hasMoreGroupTasks: false,
+    })
+
+    render(
+      <TaskSidebar isMobileSidebarOpen={false} setIsMobileSidebarOpen={jest.fn()} pageType="chat" />
+    )
+
+    const groupDock = screen.getAllByTestId('task-sidebar-group-chat-dock')[0]
+
+    expect(within(groupDock).getByText('common:tasks.group_chats')).toBeInTheDocument()
+    expect(within(groupDock).queryByText('common:tasks.no_group_chats')).not.toBeInTheDocument()
   })
 
   it('renders personal history as a flat list', () => {
     const agentTask = createTask({ id: 1, title: 'Agent conversation' })
     const deviceTask = createTask({ id: 2, title: 'Device conversation' })
-    mockTaskContext.personalTasks = [agentTask, deviceTask]
+    mockTaskSessionContext.personalTasks = [agentTask, deviceTask]
 
     render(
       <TaskSidebar isMobileSidebarOpen={false} setIsMobileSidebarOpen={jest.fn()} pageType="chat" />
@@ -415,7 +485,7 @@ describe('TaskSidebar scroll structure', () => {
     const deviceTasks = Array.from({ length: 6 }, (_, index) =>
       createTask({ id: index + 101, title: `Device conversation ${index + 1}` })
     )
-    mockTaskContext.personalTasks = [...agentTasks, ...deviceTasks]
+    mockTaskSessionContext.personalTasks = [...agentTasks, ...deviceTasks]
 
     render(
       <TaskSidebar isMobileSidebarOpen={false} setIsMobileSidebarOpen={jest.fn()} pageType="chat" />
@@ -432,9 +502,9 @@ describe('TaskSidebar scroll structure', () => {
   it('loads more personal history from the global load more button', () => {
     const agentTask = createTask({ id: 1, title: 'Agent conversation' })
     const loadMorePersonalTasks = jest.fn()
-    mockTaskContext.personalTasks = [agentTask]
-    mockTaskContext.hasMorePersonalTasks = true
-    mockTaskContext.loadMorePersonalTasks = loadMorePersonalTasks
+    mockTaskSessionContext.personalTasks = [agentTask]
+    mockTaskSessionContext.hasMorePersonalTasks = true
+    mockTaskSessionContext.loadMorePersonalTasks = loadMorePersonalTasks
 
     render(
       <TaskSidebar isMobileSidebarOpen={false} setIsMobileSidebarOpen={jest.fn()} pageType="chat" />

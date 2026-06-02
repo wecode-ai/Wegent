@@ -34,6 +34,8 @@ from shared.logger import setup_logger
 
 logger = setup_logger("local_mode_strategy")
 
+GLOBAL_PLUGIN_SETTINGS_KEYS = ("enabledPlugins", "extraKnownMarketplaces")
+
 
 class LocalModeStrategy(ExecutionModeStrategy):
     """Strategy for local (non-Docker) execution mode.
@@ -50,7 +52,7 @@ class LocalModeStrategy(ExecutionModeStrategy):
         self._use_global_capabilities = False
 
     def use_global_capabilities(self, enabled: bool) -> None:
-        """Enable global Skill reuse for project task execution."""
+        """Enable global Claude capability reuse for project task execution."""
         self._use_global_capabilities = enabled
 
     def get_config_directory(self, task_id: int) -> str:
@@ -160,9 +162,10 @@ class LocalModeStrategy(ExecutionModeStrategy):
         sanitize_ld_library_path(env)
 
         # Set CLAUDE_CONFIG_DIR to redirect all config reads/writes
-        # This affects settings.json, claude.json, and skills locations
+        # This affects settings.json, claude.json, skills, and plugins locations.
         if self._use_global_capabilities:
-            self._expose_global_skills_directory(config_dir)
+            self._expose_global_claude_capability_directories(config_dir)
+            self._merge_global_plugin_settings(config_dir)
         env["CLAUDE_CONFIG_DIR"] = config_dir
         env["SKILLS_DIR"] = self.get_skills_directory(config_dir)
 
@@ -178,46 +181,126 @@ class LocalModeStrategy(ExecutionModeStrategy):
         logger.debug(f"Local mode: Configured CLAUDE_CONFIG_DIR={config_dir}")
         return updated_options
 
-    def _expose_global_skills_directory(self, config_dir: str) -> None:
-        """Expose global Skills through the task Claude config directory."""
-        global_skills_dir = Path(os.path.expanduser("~/.claude/skills"))
-        task_skills_dir = Path(config_dir) / "skills"
+    def _expose_global_claude_capability_directories(self, config_dir: str) -> None:
+        """Expose global Claude capability directories in the task config dir."""
+        for directory_name in ("skills", "plugins"):
+            self._expose_global_claude_capability_directory(config_dir, directory_name)
+
+    def _expose_global_claude_capability_directory(
+        self, config_dir: str, directory_name: str
+    ) -> None:
+        """Expose one global Claude capability directory in the task config dir."""
+        global_capability_dir = Path(os.path.expanduser("~/.claude")) / directory_name
+        task_capability_dir = Path(config_dir) / directory_name
         permissions_manager = get_permissions_manager()
 
-        global_skills_dir.mkdir(parents=True, exist_ok=True)
-        permissions_manager.set_owner_only(str(global_skills_dir), is_directory=True)
-        task_skills_dir.parent.mkdir(parents=True, exist_ok=True)
+        global_capability_dir.mkdir(parents=True, exist_ok=True)
+        permissions_manager.set_owner_only(
+            str(global_capability_dir), is_directory=True
+        )
+        task_capability_dir.parent.mkdir(parents=True, exist_ok=True)
 
         try:
-            if task_skills_dir.is_symlink():
-                if task_skills_dir.resolve() == global_skills_dir.resolve():
+            if task_capability_dir.is_symlink():
+                if task_capability_dir.resolve() == global_capability_dir.resolve():
                     return
-                task_skills_dir.unlink()
-            elif task_skills_dir.exists():
-                if task_skills_dir.samefile(global_skills_dir):
+                task_capability_dir.unlink()
+            elif task_capability_dir.exists():
+                if task_capability_dir.samefile(global_capability_dir):
                     return
-                shutil.rmtree(task_skills_dir)
+                shutil.rmtree(task_capability_dir)
 
-            os.symlink(global_skills_dir, task_skills_dir, target_is_directory=True)
+            os.symlink(
+                global_capability_dir,
+                task_capability_dir,
+                target_is_directory=True,
+            )
             logger.info(
-                "Local mode: exposed global Skills directory %s at %s",
-                global_skills_dir,
-                task_skills_dir,
+                "Local mode: exposed global Claude %s directory %s at %s",
+                directory_name,
+                global_capability_dir,
+                task_capability_dir,
             )
         except Exception as exc:
             logger.warning(
-                "Failed to symlink global Skills directory %s to %s: %s. "
+                "Failed to symlink global Claude %s directory %s to %s: %s. "
                 "Falling back to a directory copy.",
-                global_skills_dir,
-                task_skills_dir,
+                directory_name,
+                global_capability_dir,
+                task_capability_dir,
                 exc,
             )
-            if task_skills_dir.exists() or task_skills_dir.is_symlink():
-                if task_skills_dir.is_symlink():
-                    task_skills_dir.unlink()
+            if task_capability_dir.exists() or task_capability_dir.is_symlink():
+                if task_capability_dir.is_symlink():
+                    task_capability_dir.unlink()
                 else:
-                    shutil.rmtree(task_skills_dir)
-            shutil.copytree(global_skills_dir, task_skills_dir, dirs_exist_ok=True)
+                    shutil.rmtree(task_capability_dir)
+            shutil.copytree(
+                global_capability_dir, task_capability_dir, dirs_exist_ok=True
+            )
+
+    def _merge_global_plugin_settings(self, config_dir: str) -> None:
+        """Copy non-sensitive global plugin settings into task settings."""
+        global_settings_path = Path(os.path.expanduser("~/.claude/settings.json"))
+        if not global_settings_path.is_file():
+            return
+
+        try:
+            global_settings = self._read_json_object(global_settings_path)
+        except Exception as exc:
+            logger.warning(
+                "Failed to read global Claude settings from %s: %s",
+                global_settings_path,
+                exc,
+            )
+            return
+
+        plugin_settings = {
+            key: value
+            for key, value in global_settings.items()
+            if key in GLOBAL_PLUGIN_SETTINGS_KEYS and isinstance(value, dict) and value
+        }
+        if not plugin_settings:
+            return
+
+        task_settings_path = Path(config_dir) / "settings.json"
+        try:
+            task_settings = self._read_json_object(task_settings_path)
+        except FileNotFoundError:
+            task_settings = {}
+        except Exception as exc:
+            logger.warning(
+                "Failed to read task Claude settings from %s: %s",
+                task_settings_path,
+                exc,
+            )
+            task_settings = {}
+
+        for key, global_value in plugin_settings.items():
+            task_value = task_settings.get(key)
+            if isinstance(task_value, dict):
+                task_settings[key] = {**global_value, **task_value}
+            else:
+                task_settings[key] = global_value
+
+        task_settings_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(task_settings_path, "w") as f:
+            json.dump(task_settings, f, indent=2)
+        get_permissions_manager().set_owner_only(
+            str(task_settings_path), is_directory=False
+        )
+        logger.info(
+            "Local mode: merged global Claude plugin settings into %s",
+            task_settings_path,
+        )
+
+    def _read_json_object(self, path: Path) -> Dict[str, Any]:
+        """Read a JSON object from disk."""
+        with open(path, "r") as f:
+            value = json.load(f)
+        if not isinstance(value, dict):
+            raise ValueError(f"Expected JSON object in {path}")
+        return value
 
     def get_skills_directory(self, config_dir: str = None) -> str:
         """Get task-specific skills directory.
@@ -234,9 +317,40 @@ class LocalModeStrategy(ExecutionModeStrategy):
         if self._use_global_capabilities:
             return os.path.expanduser("~/.claude/skills")
         if config_dir:
-            return os.path.join(config_dir, "skills")
+            skills_dir = os.path.join(config_dir, "skills")
+            self._copy_global_managed_skills(skills_dir)
+            return skills_dir
         # Fallback to default location if config_dir not provided
         return os.path.expanduser("~/.claude/skills")
+
+    def _copy_global_managed_skills(self, target_skills_dir: str) -> None:
+        """Copy globally synced managed skills into the task skills directory."""
+        try:
+            from executor.modes.local.capabilities import GlobalCapabilityStore
+
+            store = GlobalCapabilityStore()
+            manifest = store.load()
+            os.makedirs(target_skills_dir, exist_ok=True)
+            copied = []
+            skipped = []
+            for name, record in manifest.get("skills", {}).items():
+                if not isinstance(record, dict) or not record.get("managed", True):
+                    continue
+                source = store.skills_dir / name
+                target = os.path.join(target_skills_dir, name)
+                if not source.is_dir() or os.path.exists(target):
+                    skipped.append(name)
+                    continue
+                shutil.copytree(source, target)
+                copied.append(name)
+            logger.info(
+                "Copied global managed skills: copied=%s skipped=%s target=%s",
+                copied,
+                skipped,
+                target_skills_dir,
+            )
+        except Exception as exc:
+            logger.warning("Failed to copy global managed skills: %s", exc)
 
     def get_skills_deployment_options(self) -> Dict[str, bool]:
         """Get deployment options optimized for local mode.

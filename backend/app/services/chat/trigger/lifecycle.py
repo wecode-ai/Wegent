@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
@@ -162,11 +163,20 @@ def prepare_execution_session(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Task {task_id} not found",
             )
+        if task.client_origin != resolved_task_params.client_origin:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Task {task_id} not found",
+            )
         if not resolved_task_params.skip_status_check:
             check_task_status(db, task)
         if should_trigger_ai:
             mark_task_pending(task)
-        if resolved_task_params.model_id:
+        if (
+            resolved_task_params.model_id
+            or resolved_task_params.model_options
+            or resolved_task_params.auto_delete_executor is not None
+        ):
             from sqlalchemy.orm.attributes import flag_modified
 
             from app.schemas.kind import Task
@@ -174,19 +184,29 @@ def prepare_execution_session(
             task_crd = Task.model_validate(task.json)
             if not task_crd.metadata.labels:
                 task_crd.metadata.labels = {}
-            task_crd.metadata.labels["modelId"] = resolved_task_params.model_id
+            if resolved_task_params.model_id:
+                task_crd.metadata.labels["modelId"] = resolved_task_params.model_id
             if resolved_task_params.force_override_bot_model:
                 task_crd.metadata.labels["forceOverrideBotModel"] = "true"
             if resolved_task_params.force_override_bot_model_type:
                 task_crd.metadata.labels["forceOverrideBotModelType"] = (
                     resolved_task_params.force_override_bot_model_type
                 )
+            if resolved_task_params.model_options:
+                task_crd.metadata.labels["modelOptions"] = json.dumps(
+                    resolved_task_params.model_options
+                )
+            if resolved_task_params.auto_delete_executor is not None:
+                task_crd.metadata.labels["autoDeleteExecutor"] = (
+                    resolved_task_params.auto_delete_executor
+                )
             task.json = task_crd.model_dump(mode="json")
             flag_modified(task, "json")
             logger.info(
-                "[prepare_execution_session] Updated model override metadata for existing task %s to modelId=%s",
+                "[prepare_execution_session] Updated metadata for existing task %s to modelId=%s autoDeleteExecutor=%s",
                 task.id,
                 resolved_task_params.model_id,
+                resolved_task_params.auto_delete_executor,
             )
 
     if not task:
@@ -378,6 +398,8 @@ async def persist_completed_result(
         executor_name=executor_name,
         executor_namespace=executor_namespace,
     )
+    if normalized_status == "COMPLETED":
+        await _persist_standalone_workspace_path(task_id, result)
     try:
         await chat_storage.session_manager.cleanup_streaming_state(
             subtask_id,
@@ -390,6 +412,40 @@ async def persist_completed_result(
             exc,
             exc_info=True,
         )
+
+
+async def _persist_standalone_workspace_path(
+    task_id: int,
+    result: Optional[Dict[str, Any]],
+) -> None:
+    """Persist standalone chat workspace path returned by local executors."""
+
+    from app.db.session import SessionLocal
+    from app.services.chat.standalone_workspace import (
+        extract_workspace_path,
+        persist_standalone_workspace_path,
+    )
+
+    workspace_path = extract_workspace_path(result)
+    if not workspace_path:
+        return
+
+    db = SessionLocal()
+    try:
+        persist_standalone_workspace_path(
+            db,
+            task_id=task_id,
+            workspace_path=workspace_path,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[CompletedResult] Failed to persist standalone workspace path for task %s: %s",
+            task_id,
+            exc,
+            exc_info=True,
+        )
+    finally:
+        db.close()
 
 
 __all__ = [

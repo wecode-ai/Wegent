@@ -184,6 +184,73 @@ class DeviceCommandResponse(BaseModel):
     stderr_truncated: bool = False
 
 
+class DeviceCapabilitySyncRequest(BaseModel):
+    """Request model for syncing global local executor capabilities."""
+
+    skill_ids: List[int] = Field(
+        default_factory=list,
+        description="Executable Skill Kind IDs to sync.",
+    )
+    installed_skill_ids: List[int] = Field(
+        default_factory=list,
+        description="InstalledSkill Kind IDs to resolve and sync.",
+    )
+    installed_mcp_ids: List[int] = Field(
+        default_factory=list,
+        description="InstalledMCP Kind IDs to resolve and sync.",
+    )
+    installed_plugin_ids: List[int] = Field(
+        default_factory=list,
+        description="InstalledPlugin Kind IDs to resolve and sync.",
+    )
+    mcp_ids: List[str] = Field(
+        default_factory=list,
+        description="Deprecated server-key based MCP IDs; use installed_mcp_ids.",
+    )
+    mode: Literal["merge", "replace"] = Field(
+        "merge",
+        description="How the device should apply the capability set.",
+    )
+
+
+class DeviceCapabilityItemResult(BaseModel):
+    """Per-item capability sync result."""
+
+    id: Optional[Union[int, str]] = None
+    name: Optional[str] = None
+    server_name: Optional[str] = None
+    status: str = "ok"
+    error: Optional[str] = None
+
+
+class DeviceCapabilitySyncResult(BaseModel):
+    """Per-device capability sync result."""
+
+    device_id: str
+    success: bool
+    error: Optional[str] = None
+    skills: List[DeviceCapabilityItemResult] = Field(default_factory=list)
+    plugins: List[DeviceCapabilityItemResult] = Field(default_factory=list)
+    mcps: List[DeviceCapabilityItemResult] = Field(default_factory=list)
+    errors: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class DeviceCapabilitySyncResponse(BaseModel):
+    """Response model for capability sync requests."""
+
+    success: bool = True
+    device_id: str = ""
+    mode: Literal["merge", "replace"] = "merge"
+    skills: List[DeviceCapabilityItemResult] = Field(default_factory=list)
+    plugins: List[DeviceCapabilityItemResult] = Field(default_factory=list)
+    mcps: List[DeviceCapabilityItemResult] = Field(default_factory=list)
+    errors: List[Dict[str, Any]] = Field(default_factory=list)
+    synced: int = 0
+    failed: int = 0
+    skipped: int = 0
+    results: List[DeviceCapabilitySyncResult] = Field(default_factory=list)
+
+
 class DeviceRegisterPayload(BaseModel):
     """Payload for device registration via WebSocket."""
 
@@ -239,37 +306,6 @@ class DeviceHeartbeatPayload(BaseModel):
         None,
         description="Sanitized local global capability state reported by executor",
     )
-
-
-class DeviceCapabilitySyncRequest(BaseModel):
-    """Request model for syncing selected global local executor capabilities."""
-
-    skill_ids: List[int] = Field(default_factory=list, description="Skill Kind IDs")
-    mcp_ids: List[str] = Field(
-        default_factory=list,
-        description="Deprecated. MCP capability sync is temporarily disabled.",
-    )
-    mode: Literal["merge", "replace"] = Field(default="merge", description="Sync mode")
-
-
-class DeviceCapabilityItemResult(BaseModel):
-    """Per-item capability sync result."""
-
-    id: Optional[Union[int, str]] = None
-    name: Optional[str] = None
-    server_name: Optional[str] = None
-    status: str
-    error: Optional[str] = None
-
-
-class DeviceCapabilitySyncResponse(BaseModel):
-    """Response model for device capability sync."""
-
-    success: bool
-    device_id: str
-    mode: Literal["merge", "replace"]
-    skills: List[DeviceCapabilityItemResult] = Field(default_factory=list)
-    errors: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class DeviceStatusPayload(BaseModel):

@@ -381,17 +381,17 @@ Thanks to the following developers for their contributions and efforts to make t
         </a>
     </td>
     <td align="center">
-        <a href="https://github.com/flyhope">
-            <img src="https://avatars.githubusercontent.com/u/5442948?v=4" width="80;" alt="flyhope"/>
-            <br />
-            <sub><b>李枨煊</b></sub>
-        </a>
-    </td>
-    <td align="center">
         <a href="https://github.com/DavidLeeUX">
             <img src="https://avatars.githubusercontent.com/u/16267902?v=4" width="80;" alt="DavidLeeUX"/>
             <br />
             <sub><b>Kva</b></sub>
+        </a>
+    </td>
+    <td align="center">
+        <a href="https://github.com/flyhope">
+            <img src="https://avatars.githubusercontent.com/u/5442948?v=4" width="80;" alt="flyhope"/>
+            <br />
+            <sub><b>李枨煊</b></sub>
         </a>
     </td>
     <td align="center">

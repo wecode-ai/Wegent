@@ -62,15 +62,9 @@ jest.mock('@/features/tasks/components/sidebar', () => ({
   ),
 }))
 
-jest.mock('@/features/tasks/contexts/chatStreamContext', () => ({
-  useChatStreamContext: () => ({
-    clearAllStreams: jest.fn(),
-  }),
-}))
-
-jest.mock('@/features/tasks/contexts/taskContext', () => ({
-  useTaskContext: () => ({
-    setSelectedTask: jest.fn(),
+jest.mock('@/features/tasks/session/TaskSession', () => ({
+  useTaskSession: () => ({
+    selectTask: jest.fn(),
   }),
 }))
 

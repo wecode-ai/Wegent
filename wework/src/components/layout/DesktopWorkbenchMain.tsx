@@ -1,19 +1,27 @@
 import { Bot, ChevronRight } from 'lucide-react'
 import { useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import { ChatInput } from '@/components/chat/ChatInput'
-import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
-import { MessageList } from '@/components/chat/MessageList'
+import type {
+  ProjectChatControls,
+  ProjectWorkControls,
+} from '@/components/chat/ChatInput'
+import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
+import { useTranslation } from '@/hooks/useTranslation'
 import type { ProjectWithTasks, Task } from '@/types/api'
+import type { EnvironmentInfo } from '@/types/environment'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
 import { RightWorkspacePanel } from './workspace-panels/RightWorkspacePanel'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
 
-const DESKTOP_COMPOSER_FRAME_CLASS = 'mx-auto w-[min(90%,62rem)] max-w-full'
+const DESKTOP_COMPOSER_FRAME_CLASS =
+  'mx-auto w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100vw-4rem)]'
+const DESKTOP_FLOATING_COMPOSER_CLASS =
+  'pointer-events-none absolute bottom-4 left-1/2 z-50 w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100%_-_3rem)] -translate-x-1/2'
 
 interface DesktopWorkbenchMainProps {
   sidebarCollapsed: boolean
+  isBootstrapping: boolean
   currentTask: Task | null
   currentProject: ProjectWithTasks | null
   messages: WorkbenchMessage[]
@@ -21,6 +29,9 @@ interface DesktopWorkbenchMainProps {
   projectWork: ProjectWorkControls
   input: string
   isSending: boolean
+  environmentInfo: EnvironmentInfo
+  onRefreshEnvironmentInfo: () => Promise<void>
+  onCommitEnvironmentChanges: (message: string) => Promise<void>
   onExpandSidebar: () => void
   onInputChange: (value: string) => void
   onSend: () => void
@@ -28,6 +39,7 @@ interface DesktopWorkbenchMainProps {
 
 export function DesktopWorkbenchMain({
   sidebarCollapsed,
+  isBootstrapping,
   currentTask,
   currentProject,
   messages,
@@ -35,6 +47,9 @@ export function DesktopWorkbenchMain({
   projectWork,
   input,
   isSending,
+  environmentInfo,
+  onRefreshEnvironmentInfo,
+  onCommitEnvironmentChanges,
   onExpandSidebar,
   onInputChange,
   onSend,
@@ -64,13 +79,28 @@ export function DesktopWorkbenchMain({
             <ChevronRight className="h-4 w-4" />
           </button>
         )}
-        {hasConversation ? (
-          <>
-            <div className="flex-1 overflow-auto">
-              <MessageList messages={messages} />
-            </div>
-            <div className="px-6 pb-8">
-              <div className={DESKTOP_COMPOSER_FRAME_CLASS}>
+        {isBootstrapping ? (
+          <div
+            className="flex flex-1"
+            data-testid="desktop-workbench-loading"
+          />
+        ) : hasConversation ? (
+          <div className="relative min-h-0 flex-1 overflow-hidden">
+            <ScrollableMessageArea
+              messages={messages}
+              conversationKey={currentTask?.id ?? null}
+              className="h-full"
+              scrollTestId="desktop-chat-scroll"
+              scrollerClassName="pb-40"
+            />
+            <div
+              className={DESKTOP_FLOATING_COMPOSER_CLASS}
+              data-testid="desktop-floating-composer-layer"
+            >
+              <div
+                className="pointer-events-auto"
+                data-testid="desktop-floating-composer-card"
+              >
                 <ChatInput
                   value={input}
                   onChange={onInputChange}
@@ -80,15 +110,19 @@ export function DesktopWorkbenchMain({
                   variant="desktop"
                   projectChat={projectChat}
                   projectWork={projectWork}
+                  showProjectWorkBar={false}
                 />
               </div>
             </div>
-          </>
+          </div>
         ) : (
           <div className="flex flex-1 items-center justify-center px-10">
-            <div className={DESKTOP_COMPOSER_FRAME_CLASS} data-testid="desktop-empty-composer-frame">
-              <div className="mb-8 flex justify-center">
-                <Bot className="h-8 w-8 text-text-muted" />
+            <div
+              className={DESKTOP_COMPOSER_FRAME_CLASS}
+              data-testid="desktop-empty-composer-frame"
+            >
+              <div className="mb-7 flex justify-center">
+                <Bot className="h-7 w-7 text-text-muted" />
               </div>
               <h1 className="mb-10 text-center text-[34px] font-medium tracking-normal">
                 {emptyTitle}
@@ -106,15 +140,28 @@ export function DesktopWorkbenchMain({
             </div>
           </div>
         )}
-        {bottomPanelOpen && <BottomWorkspacePanel />}
+        {bottomPanelOpen && (
+          <BottomWorkspacePanel
+            currentProject={currentProject}
+            onRequestClose={() => setBottomPanelOpen(false)}
+          />
+        )}
       </div>
       <WorkspacePanelActions
+        environmentInfo={environmentInfo}
+        onRefreshEnvironmentInfo={onRefreshEnvironmentInfo}
+        onCommitEnvironmentChanges={onCommitEnvironmentChanges}
         rightPanelOpen={rightPanelOpen}
         bottomPanelOpen={bottomPanelOpen}
-        onToggleRightPanel={() => setRightPanelOpen(open => !open)}
-        onToggleBottomPanel={() => setBottomPanelOpen(open => !open)}
+        onToggleRightPanel={() => setRightPanelOpen((open) => !open)}
+        onToggleBottomPanel={() => setBottomPanelOpen((open) => !open)}
       />
-      {rightPanelOpen && <RightWorkspacePanel />}
+      {rightPanelOpen && (
+        <RightWorkspacePanel
+          currentProject={currentProject}
+          onRequestClose={() => setRightPanelOpen(false)}
+        />
+      )}
     </main>
   )
 }

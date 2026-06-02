@@ -13,7 +13,10 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Checkbox } from '@/components/ui/checkbox'
 import type { AskUserFormData, AskUserQuestion, AskUserOption } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useTaskStateMachine } from '../../hooks/useTaskStateMachine'
+import { useOptionalTaskSession } from '../../session/TaskSession'
+import type { UnifiedMessage } from '../../state'
+
+const EMPTY_MESSAGES = new Map<string, UnifiedMessage>()
 
 interface AskUserFormProps {
   data: AskUserFormData
@@ -168,8 +171,9 @@ export default function AskUserForm({
 }: AskUserFormProps) {
   const { t } = useTranslation('chat')
 
-  // Use reactive hook to get messages from TaskStateMachine (same as ClarificationForm)
-  const { messages: messagesMap } = useTaskStateMachine(taskId)
+  const taskSession = useOptionalTaskSession()
+  const messagesMap =
+    taskSession?.taskState?.taskId === taskId ? taskSession.messages : EMPTY_MESSAGES
 
   const normalizedQuestions: AskUserQuestion[] = useMemo(() => data.questions, [data.questions])
   const isMultiQuestion = normalizedQuestions.length > 1

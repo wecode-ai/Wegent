@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 export type GuidanceStatus = 'pending' | 'queued' | 'sending' | 'failed' | 'applied' | 'expired'
 
@@ -19,9 +19,15 @@ export interface EnqueueGuidanceInput {
 
 interface UseGuidanceQueueOptions {
   taskId?: number | null
+  isGuidanceAllowed?: boolean
+  expirationMessage?: string
 }
 
-export function useGuidanceQueue({ taskId }: UseGuidanceQueueOptions) {
+export function useGuidanceQueue({
+  taskId,
+  isGuidanceAllowed,
+  expirationMessage,
+}: UseGuidanceQueueOptions) {
   const [guidanceQueue, setGuidanceQueue] = useState<GuidanceQueueItem[]>([])
 
   const enqueueGuidance = useCallback((input: EnqueueGuidanceInput) => {
@@ -100,6 +106,18 @@ export function useGuidanceQueue({ taskId }: UseGuidanceQueueOptions) {
     () => activeGuidanceQueue.filter(item => item.status === 'expired'),
     [activeGuidanceQueue]
   )
+
+  useEffect(() => {
+    if (!taskId || isGuidanceAllowed !== false) return
+
+    setGuidanceQueue(current =>
+      current.map(item => {
+        if (item.taskId !== taskId) return item
+        if (item.status !== 'queued' && item.status !== 'sending') return item
+        return { ...item, status: 'expired', error: expirationMessage }
+      })
+    )
+  }, [expirationMessage, isGuidanceAllowed, taskId])
 
   return {
     guidanceQueue,

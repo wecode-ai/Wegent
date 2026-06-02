@@ -6,7 +6,7 @@ import '@testing-library/jest-dom'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-import { fetchUnifiedSkillsList } from '@/apis/skills'
+import { fetchMyDefaultSkillBindings, fetchUnifiedSkillsList } from '@/apis/skills'
 import { SkillListWithScope } from '@/features/settings/components/SkillListWithScope'
 
 jest.mock('@/hooks/useTranslation', () => ({
@@ -45,10 +45,13 @@ jest.mock('@/features/common/UserContext', () => ({
 }))
 
 jest.mock('@/apis/skills', () => ({
+  addSkillToMyDefault: jest.fn(),
   fetchUnifiedSkillsList: jest.fn(),
+  fetchMyDefaultSkillBindings: jest.fn(),
   deleteSkill: jest.fn(),
   downloadSkill: jest.fn(),
   fetchSkillReferences: jest.fn(),
+  removeSkillFromMyDefault: jest.fn(),
   removeSkillReferences: jest.fn(),
   removeSingleSkillReference: jest.fn(),
   parseSkillReferenceError: jest.fn(),
@@ -95,6 +98,7 @@ describe('SkillListWithScope publishing', () => {
         user_id: 1,
       },
     ])
+    ;(fetchMyDefaultSkillBindings as jest.Mock).mockResolvedValue([])
   })
 
   it('publishes a selected personal skill through the callback', async () => {

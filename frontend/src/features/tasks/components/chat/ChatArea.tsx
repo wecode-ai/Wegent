@@ -31,9 +31,8 @@ import type { Model } from '../../hooks/useModelSelection'
 import type { ContextItem, QueueMessageContext } from '@/types/context'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useRouter } from 'next/navigation'
-import { useTaskContext } from '../../contexts/taskContext'
-import { useTaskStateMachine } from '../../hooks/useTaskStateMachine'
-import { useOptionalChatStreamContext } from '../../contexts/chatStreamContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
+import { useOptionalTaskSession } from '@/features/tasks/session/TaskSession'
 import { Button } from '@/components/ui/button'
 import {
   AlertDialog,
@@ -162,7 +161,7 @@ function ChatAreaContent({
   const { t } = useTranslation()
   const { toast } = useToast()
   const router = useRouter()
-  const chatStreamContext = useOptionalChatStreamContext()
+  const chatStreamContext = useOptionalTaskSession()
 
   // Pipeline stage info state - shared between PipelineStageIndicator and MessagesArea
   const [pipelineStageInfo, setPipelineStageInfo] = useState<PipelineStageInfo | null>(null)
@@ -174,11 +173,18 @@ function ChatAreaContent({
   const { quote, clearQuote, formatQuoteForMessage } = useQuote()
 
   // Task context
-  const { selectedTask, selectedTaskDetail, setSelectedTask, accessDenied } = useTaskContext()
+  const {
+    selectedTask,
+    selectedTaskDetail,
+    selectTask,
+    accessDenied,
+    taskState: sessionTaskState,
+  } = useTaskSession()
   const effectiveTaskId = selectedTask?.id ?? selectedTaskDetail?.id
 
-  // Use useTaskStateMachine hook for reactive state updates (SINGLE SOURCE OF TRUTH per AGENTS.md)
-  const { state: taskState } = useTaskStateMachine(effectiveTaskId)
+  const taskState =
+    sessionTaskState && sessionTaskState.taskId === effectiveTaskId ? sessionTaskState : null
+  const runtimeTaskStatus = taskState?.runtime.taskStatus
 
   // Video model selection state - only enabled for video mode
   // Uses unified useModelSelection hook with modelCategoryType='video'
@@ -635,18 +641,9 @@ function ChatAreaContent({
       return true
     }
 
-    // In inputAlwaysAtBottom mode (knowledge notebook), only consider actual messages
-    // not just the presence of selectedTaskDetail
-    if (inputAlwaysAtBottom) {
-      return Boolean(
-        streamHandlers.hasPendingUserMessage ||
-        streamHandlers.isStreaming ||
-        hasNewTaskStream ||
-        hasLocalPending ||
-        hasUnifiedMessages
-      )
-    }
-
+    // Fallback: consider task selected (hasSelectedTask) as having messages to avoid
+    // brief hasMessages=false gap between task creation and state machine message population,
+    // which would cause empty-state content (e.g. SummaryCard) to flash.
     return Boolean(
       hasSelectedTask ||
       streamHandlers.hasPendingUserMessage ||
@@ -662,7 +659,6 @@ function ChatAreaContent({
     streamHandlers.pendingTaskId,
     streamHandlers.localPendingMessage,
     taskState?.messages,
-    inputAlwaysAtBottom,
   ])
 
   const pipelineNextStepMessages = useMemo<PipelineNextStepMessage[]>(() => {
@@ -769,12 +765,13 @@ function ChatAreaContent({
   selectedContextsRef.current = chatState.selectedContexts
 
   const shouldConfirmPendingReplacement =
-    selectedTaskDetail?.status === 'PENDING' && !selectedTaskDetail?.is_group_chat
+    runtimeTaskStatus === 'PENDING' && !selectedTaskDetail?.is_group_chat
 
   const sendOrConfirmPendingReplacement = useCallback(
     async (message: string) => {
       const trimmedMessage = message.trim()
-      if (!trimmedMessage && !chatState.shouldHideChatInput) return
+      const hasAttachments = chatState.attachmentState.attachments.length > 0
+      if (!trimmedMessage && !hasAttachments && !chatState.shouldHideChatInput) return
 
       if (shouldConfirmPendingReplacement) {
         setPendingReplacementMessage(trimmedMessage)
@@ -784,11 +781,16 @@ function ChatAreaContent({
 
       await streamHandlers.handleSendMessage(trimmedMessage)
     },
-    [chatState.shouldHideChatInput, shouldConfirmPendingReplacement, streamHandlers]
+    [
+      chatState.attachmentState.attachments.length,
+      chatState.shouldHideChatInput,
+      shouldConfirmPendingReplacement,
+      streamHandlers,
+    ]
   )
 
   const handleConfirmPendingReplacement = useCallback(async () => {
-    if (!pendingReplacementMessage || isPendingReplacementConfirming) return
+    if (pendingReplacementMessage === null || isPendingReplacementConfirming) return
 
     setIsPendingReplacementConfirming(true)
     try {
@@ -1151,7 +1153,7 @@ function ChatAreaContent({
   // Handle access denied state
   if (accessDenied) {
     const handleGoHome = () => {
-      setSelectedTask(null)
+      selectTask(null)
       router.push('/chat')
     }
 
@@ -1218,6 +1220,7 @@ function ChatAreaContent({
     onDrop: handleDrop,
     canSubmit,
     canQueueMessage: streamHandlers.canQueueMessage,
+    canCancelTask: streamHandlers.canCancelTask,
     queuedMessages: streamHandlers.queuedMessages,
     onCancelQueuedMessage: streamHandlers.cancelQueuedMessage,
     onSendQueuedAsGuidance: streamHandlers.sendQueuedAsGuidance,
@@ -1283,7 +1286,6 @@ function ChatAreaContent({
     shouldHideChatInput: chatState.shouldHideChatInput,
     isModelSelectionRequired,
     isAttachmentReadyToSend: chatState.isAttachmentReadyToSend,
-    isSubtaskStreaming: streamHandlers.isSubtaskStreaming,
     onStopStream: streamHandlers.stopStream,
     onCancelTask: streamHandlers.handleCancelTask,
     isCancelling: streamHandlers.isCancelling,

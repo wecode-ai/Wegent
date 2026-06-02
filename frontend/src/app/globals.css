@@ -52,9 +52,9 @@
   --color-border: 42 45 45;
   --color-border-strong: 52 53 53;
   --color-border-light: 42 45 45;
-  --color-text-primary: 236 236 236;
-  --color-text-secondary: 212 212 212;
-  --color-text-muted: 160 160 160;
+  --color-text-primary: 212 212 212;
+  --color-text-secondary: 176 176 176;
+  --color-text-muted: 136 136 136;
   --color-text-inverted: 14 15 15;
   --color-primary: 118 119 218;
   --color-primary-contrast: 255 255 255;
@@ -66,7 +66,7 @@
   --color-link: 118 119 218;
   --color-code-bg: 13 17 23;
   --color-popover: 26 28 28;
-  --color-popover-foreground: 236 236 236;
+  --color-popover-foreground: 212 212 212;
   --color-tooltip: 236 236 236;
   --color-tooltip-foreground: 14 15 15;
   --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.5);
@@ -573,7 +573,6 @@ button:focus-visible {
 /* Single runner dot used while an AI message is waiting or still processing */
 .streaming-wait-runner-track {
   --runner-dot-size: 0.75rem;
-  --runner-text-spot-size: 1.15rem;
   --runner-y-offset: 1px;
 
   position: relative;
@@ -591,33 +590,10 @@ button:focus-visible {
   display: inline-block;
 }
 
-.streaming-wait-runner-text,
-.streaming-wait-runner-text-mask {
+.streaming-wait-runner-text {
   font-size: 0.875rem;
   line-height: 1.25rem;
   white-space: nowrap;
-}
-
-.streaming-wait-runner-text-mask {
-  position: absolute;
-  inset: 0;
-  z-index: 3;
-  color: transparent;
-  background-image: radial-gradient(
-    circle,
-    rgb(var(--color-primary)) 0 38%,
-    rgb(var(--color-primary) / 0.9) 48%,
-    transparent 70%
-  );
-  background-repeat: no-repeat;
-  background-size: var(--runner-text-spot-size) var(--runner-text-spot-size);
-  background-position: calc(var(--runner-text-spot-size) * -1) calc(50% + var(--runner-y-offset));
-  background-clip: text;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  pointer-events: none;
-  will-change: background-position, opacity;
-  animation: streaming-wait-runner-text-mask 5.4s linear infinite;
 }
 
 .streaming-wait-runner-dot {
@@ -716,51 +692,8 @@ button:focus-visible {
   }
 }
 
-@keyframes streaming-wait-runner-text-mask {
-  0%,
-  10% {
-    opacity: 0;
-    background-position: calc(var(--runner-text-spot-size) * -1) calc(50% + var(--runner-y-offset));
-  }
-
-  13% {
-    opacity: 1;
-  }
-
-  26% {
-    opacity: 1;
-    background-position: calc(100% + var(--runner-text-spot-size))
-      calc(50% + var(--runner-y-offset));
-  }
-
-  30%,
-  50% {
-    opacity: 0;
-    background-position: calc(100% + var(--runner-text-spot-size))
-      calc(50% + var(--runner-y-offset));
-  }
-
-  52% {
-    opacity: 1;
-    background-position: calc(100% + var(--runner-text-spot-size))
-      calc(50% + var(--runner-y-offset));
-  }
-
-  72% {
-    opacity: 1;
-    background-position: calc(var(--runner-text-spot-size) * -1) calc(50% + var(--runner-y-offset));
-  }
-
-  76%,
-  100% {
-    opacity: 0;
-    background-position: calc(var(--runner-text-spot-size) * -1) calc(50% + var(--runner-y-offset));
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .streaming-wait-runner-dot,
-  .streaming-wait-runner-text-mask {
+  .streaming-wait-runner-dot {
     animation: none;
   }
 }

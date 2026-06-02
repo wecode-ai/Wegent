@@ -19,6 +19,31 @@ from app.services.model_aggregation_service import model_aggregation_service
 class TestModelAggregationService:
     """Tests for model_aggregation_service methods."""
 
+    def test_extract_model_info_includes_custom_group_fields(self):
+        """Test Model.spec grouping fields are exposed by aggregation metadata."""
+        model_crd = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": "generic-model", "namespace": "default"},
+            "spec": {
+                "modelConfig": {
+                    "env": {
+                        "model": "openai",
+                        "model_id": "generic-model-id",
+                        "api_key": "secret",
+                    }
+                },
+                "modelGroup": "Primary Group",
+                "modelSubGroup": "Secondary Group",
+            },
+            "status": {"state": "Available"},
+        }
+
+        info = model_aggregation_service._extract_model_info_from_crd(model_crd)
+
+        assert info["model_group"] == "Primary Group"
+        assert info["model_sub_group"] == "Secondary Group"
+
     def _create_public_shell(
         self,
         db: Session,

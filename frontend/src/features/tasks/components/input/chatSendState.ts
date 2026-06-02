@@ -14,10 +14,9 @@ interface ChatSendStateInput {
   hasNoTeams: boolean
   shouldHideChatInput: boolean
   taskInputMessage: string
-  selectedTaskStatus?: string | null
-  isSubtaskStreaming: boolean
-  isGroupChat?: boolean
+  hasAttachments?: boolean
   canQueueMessage?: boolean
+  canCancelTask?: boolean
 }
 
 export interface ChatSendState {
@@ -29,13 +28,14 @@ export interface ChatSendState {
 
 export function getChatSendState(input: ChatSendStateInput): ChatSendState {
   const hasTextContent = input.taskInputMessage.trim().length > 0
-  const hasMessage = input.shouldHideChatInput || hasTextContent
+  const hasUserProvidedContent = hasTextContent || Boolean(input.hasAttachments)
+  const hasSendableContent = input.shouldHideChatInput || hasUserProvidedContent
   const baseDisabled =
     input.isLoading ||
     input.isModelSelectionRequired ||
     !input.isAttachmentReadyToSend ||
     input.hasNoTeams ||
-    !hasMessage
+    !hasSendableContent
   const isActiveStream = input.isStreaming || input.isAwaitingResponseStart || input.isStopping
 
   if (input.isStopping) {
@@ -47,7 +47,7 @@ export function getChatSendState(input: ChatSendStateInput): ChatSendState {
     }
   }
 
-  if (isActiveStream && input.canQueueMessage && hasTextContent && !baseDisabled) {
+  if (isActiveStream && input.canQueueMessage && hasUserProvidedContent && !baseDisabled) {
     return {
       primaryAction: 'queue',
       isPrimaryDisabled: false,
@@ -65,29 +65,11 @@ export function getChatSendState(input: ChatSendStateInput): ChatSendState {
     }
   }
 
-  if (input.selectedTaskStatus === 'PENDING' && !input.isSubtaskStreaming && input.isGroupChat) {
-    return {
-      primaryAction: 'send',
-      isPrimaryDisabled: baseDisabled,
-      showStopAction: false,
-      showPendingAction: false,
-    }
-  }
-
-  if (input.selectedTaskStatus === 'PENDING') {
+  if (input.canCancelTask) {
     return {
       primaryAction: 'cancel',
       isPrimaryDisabled: false,
       showStopAction: false,
-      showPendingAction: false,
-    }
-  }
-
-  if (input.selectedTaskStatus === 'CANCELLING') {
-    return {
-      primaryAction: 'loading',
-      isPrimaryDisabled: true,
-      showStopAction: true,
       showPendingAction: false,
     }
   }

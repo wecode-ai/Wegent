@@ -14,7 +14,8 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.user import User
-from app.services.adapters.skill_kinds import SkillKindsService, skill_kinds_service
+from app.services.adapters.skill_kinds import SkillKindsService
+from app.services.skill_binding_service import skill_binding_service
 
 
 @pytest.mark.integration
@@ -62,6 +63,32 @@ tags: ["debug", "test"]
         assert skill.status.state == "Available"
         assert skill.status.fileSize == len(zip_content)
         assert len(skill.status.fileHash) == 64
+
+        skill_id = int(skill.metadata.labels["id"])
+        assert skill_binding_service.list_user_default_skill_ids(
+            test_db, test_user.id
+        ) == {skill_id}
+
+    def test_create_public_skill_does_not_bind_to_default(
+        self, test_db: Session, test_user: User
+    ):
+        """Test creating a public skill does not create a user default binding."""
+        service = SkillKindsService()
+        skill_md = "---\ndescription: Public skill\n---\n"
+        zip_content = self.create_test_zip(skill_md)
+        service.create_skill(
+            db=test_db,
+            name="public-skill",
+            namespace="default",
+            file_content=zip_content,
+            file_name="test.zip",
+            user_id=0,
+        )
+
+        assert (
+            skill_binding_service.list_user_default_skill_ids(test_db, test_user.id)
+            == set()
+        )
 
     def test_create_skill_duplicate_name(self, test_db: Session, test_user: User):
         """Test creating skill with duplicate name fails"""

@@ -4,19 +4,36 @@
 
 'use client'
 
+import dynamic from 'next/dynamic'
 import { UserProvider } from '@/features/common/UserContext'
-import { TaskContextProvider } from '@/features/tasks/contexts/taskContext'
-import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext'
+import { TaskSessionProvider } from '@/features/tasks/session/TaskSession'
 import { SocketProvider } from '@/contexts/SocketContext'
 import { DeviceProvider } from '@/contexts/DeviceContext'
 import { TeamProvider } from '@/contexts/TeamContext'
 import { ProjectProvider } from '@/features/projects/contexts/projectContext'
-import { PetProvider, PetWidget, PetStreamingBridge } from '@/features/pet'
+import { PetProvider } from '@/features/pet/contexts/PetContext'
 import { SetupWizardProvider } from '@/features/admin/contexts/SetupWizardContext'
-import GlobalAdminSetupWizard from '@/features/admin/components/GlobalAdminSetupWizard'
+
+const PetWidget = dynamic(
+  () => import('@/features/pet/components/PetWidget').then(mod => ({ default: mod.PetWidget })),
+  { ssr: false }
+)
+
+const PetStreamingBridge = dynamic(
+  () =>
+    import('@/features/pet/components/PetStreamingBridge').then(mod => ({
+      default: mod.PetStreamingBridge,
+    })),
+  { ssr: false }
+)
+
+const GlobalAdminSetupWizard = dynamic(
+  () => import('@/features/admin/components/GlobalAdminSetupWizard'),
+  { ssr: false }
+)
 
 /**
- * Shared layout for chat and code pages to reuse TaskContextProvider and ChatStreamProvider
+ * Shared layout for chat and code pages to reuse TaskSessionProvider.
  * This prevents task list from being reloaded when switching between pages
  * and allows chat streams to continue running in the background
  *
@@ -37,14 +54,12 @@ export default function TasksLayout({ children }: { children: React.ReactNode })
             <ProjectProvider>
               <PetProvider>
                 <SetupWizardProvider>
-                  <TaskContextProvider>
-                    <ChatStreamProvider>
-                      {children}
-                      <PetStreamingBridge />
-                      <PetWidget />
-                      <GlobalAdminSetupWizard />
-                    </ChatStreamProvider>
-                  </TaskContextProvider>
+                  <TaskSessionProvider>
+                    {children}
+                    <PetStreamingBridge />
+                    <PetWidget />
+                    <GlobalAdminSetupWizard />
+                  </TaskSessionProvider>
                 </SetupWizardProvider>
               </PetProvider>
             </ProjectProvider>

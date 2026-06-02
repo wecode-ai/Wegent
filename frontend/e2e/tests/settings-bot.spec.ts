@@ -1,171 +1,99 @@
 import { test, expect, TestData } from '../fixtures/test-fixtures'
 import type { Page } from '@playwright/test'
 
-// Detect current language environment and return appropriate text
-async function detectLanguage(page: Page): Promise<'en' | 'zh'> {
-  // Check if Chinese text is visible on the page
-  const zhTitle = page.locator('h2:has-text("智能体列表")')
-  const isZh = await zhTitle.isVisible({ timeout: 1000 }).catch(() => false)
-  return isZh ? 'zh' : 'en'
+const AGENT_RESOURCES_URL = '/resource-library?tab=mine&type=agent&scope=personal'
+const TEAM_LIST_TITLE = 'h2:has-text("Team List"), h2:has-text("智能体列表")'
+
+async function expectAgentResourcePage(page: Page) {
+  await expect(page).toHaveURL(/\/resource-library/)
+  await expect(page.locator('[data-testid="my-resources"]')).toBeVisible({ timeout: 15000 })
+  await expect(page.locator('[data-testid="managed-resource-agent-tab"]')).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+  await expect(page.locator(TEAM_LIST_TITLE)).toBeVisible({ timeout: 15000 })
 }
 
-// Get localized text based on language
-function getLocalizedText(lang: 'en' | 'zh') {
-  return {
-    teamListTitle: lang === 'zh' ? '智能体列表' : 'Team List',
-    manageBots: lang === 'zh' ? '管理机器人' : 'Manage Bots',
-    newBot: lang === 'zh' ? '新建机器人' : 'New Bot',
-    save: lang === 'zh' ? '保存' : 'Save',
-    noBots: lang === 'zh' ? '暂无' : 'No bots',
-  }
+async function expectTeamListHasContentOrEmptyState(page: Page) {
+  await expect(page.locator('[data-testid="team-list-items"]')).toBeVisible({ timeout: 15000 })
+  await expect
+    .poll(
+      async () => {
+        const teamCount = await page.locator('[data-testid^="team-card-"]').count()
+        const emptyVisible = await page
+          .locator('[data-testid="team-empty-state"]')
+          .isVisible()
+          .catch(() => false)
+
+        return teamCount > 0 || emptyVisible
+      },
+      { timeout: 10000 }
+    )
+    .toBe(true)
 }
 
-test.describe('Settings - Bot Management', () => {
-  let lang: 'en' | 'zh' = 'en'
+async function openCreateAgentDialog(page: Page) {
+  const createButton = page.locator('[data-testid="create-team-button"]')
+  await expect(createButton).toBeVisible({ timeout: 20000 })
+  await createButton.click()
 
+  const dialog = page.locator('[role="dialog"]')
+  await expect(dialog).toBeVisible({ timeout: 10000 })
+  await expect(dialog.locator('input#teamName')).toBeVisible({ timeout: 10000 })
+  return dialog
+}
+
+test.describe('Resource Library - Bot-backed Agent Management', () => {
   test.beforeEach(async ({ page }) => {
-    // Bot management is accessed through "Manage Bots" button in team tab
-    await page.goto('/settings?tab=team')
+    await page.goto(AGENT_RESOURCES_URL)
     await page.waitForLoadState('domcontentloaded')
-    // Wait for team page content to fully load - the title is "Team List" or "智能体列表"
-    await expect(page.locator('h2:has-text("Team List"), h2:has-text("智能体列表")')).toBeVisible({
-      timeout: 15000,
+    await expectAgentResourcePage(page)
+  })
+
+  test('should access bot-backed agent management in resource library', async ({ page }) => {
+    await expect(page.locator('[data-testid="create-team-button"]')).toBeVisible({
+      timeout: 20000,
     })
-
-    // Detect language after page loads
-    lang = await detectLanguage(page)
+    await expect(page.locator('[data-testid="create-team-wizard-button"]')).toBeVisible()
+    await expect(page.locator('[data-testid="team-mode-filter"]')).toBeVisible()
   })
 
-  test('should access bot management via manage bots button', async ({ page }) => {
-    await expect(page).toHaveURL(/\/settings/)
-    const texts = getLocalizedText(lang)
-
-    // Click "Manage Bots" button to open bot list dialog
-    const manageBots = page.locator(`button:has-text("${texts.manageBots}")`)
-    await expect(manageBots).toBeVisible({ timeout: 20000 })
-    await manageBots.click()
-
-    // Bot list dialog should open
-    await expect(page.locator('[role="dialog"]')).toBeVisible({ timeout: 5000 })
-
-    // Should see "New Bot" button inside the dialog
-    await expect(page.locator(`[role="dialog"] button:has-text("${texts.newBot}")`)).toBeVisible({
-      timeout: 5000,
-    })
+  test('should display agent list or empty state', async ({ page }) => {
+    await expectTeamListHasContentOrEmptyState(page)
   })
 
-  test('should display bot list or empty state in dialog', async ({ page }) => {
-    const texts = getLocalizedText(lang)
+  test('should open create agent form', async ({ page }) => {
+    const dialog = await openCreateAgentDialog(page)
 
-    // Open Manage Bots dialog
-    const manageBots = page.locator(`button:has-text("${texts.manageBots}")`)
-    await expect(manageBots).toBeVisible({ timeout: 20000 })
-    await manageBots.click()
-
-    // Wait for dialog
-    await expect(page.locator('[role="dialog"]')).toBeVisible({ timeout: 5000 })
-
-    // Either bots exist or empty state is shown
-    const hasBots = await page
-      .locator('[role="dialog"] .bg-base')
-      .first()
-      .isVisible({ timeout: 3000 })
-      .catch(() => false)
-    const hasEmptyState = await page
-      .locator(`[role="dialog"] text=${texts.noBots}`)
-      .isVisible({ timeout: 1000 })
-      .catch(() => false)
-
-    // Page loaded successfully
-    expect(hasBots || hasEmptyState || true).toBeTruthy()
+    await expect(dialog.locator('[data-testid="team-display-name-input"]')).toBeVisible()
+    await expect(dialog.locator('[data-testid="simple-model-select"]')).toBeVisible()
+    await expect(dialog.locator('[data-testid="simple-section-basic-trigger"]')).toBeVisible()
+    await expect(dialog.locator('[data-testid="simple-section-execution-trigger"]')).toBeVisible()
+    await expect(dialog.locator('[data-testid="simple-section-prompt-trigger"]')).toBeVisible()
+    await expect(dialog.locator('[data-testid="simple-section-capability-trigger"]')).toBeVisible()
   })
 
-  test('should open create bot form', async ({ page }) => {
-    const texts = getLocalizedText(lang)
+  test('should expose embedded bot configuration fields', async ({ page }) => {
+    const dialog = await openCreateAgentDialog(page)
 
-    // Open Manage Bots dialog
-    const manageBots = page.locator(`button:has-text("${texts.manageBots}")`)
-    await expect(manageBots).toBeVisible({ timeout: 20000 })
-    await manageBots.click()
-
-    // Wait for dialog
-    await expect(page.locator('[role="dialog"]')).toBeVisible({ timeout: 5000 })
-
-    // Click "New Bot" button inside the dialog
-    const createButton = page.locator(`[role="dialog"] button:has-text("${texts.newBot}")`)
-
-    // Button should be visible
-    await expect(createButton).toBeVisible({ timeout: 20000 })
-    await createButton.click()
-
-    // BotEdit component replaces the list content (not a new dialog)
-    // Bot name input has placeholder "Code Assistant" or "输入机器人名称"
-    await expect(
-      page
-        .locator(
-          '[role="dialog"] input[placeholder*="Code"], [role="dialog"] input[placeholder*="机器人"]'
-        )
-        .first()
-    ).toBeVisible({ timeout: 5000 })
+    await expect(dialog.locator('[data-testid="simple-bind-mode-chat-card"]')).toBeVisible()
+    await expect(dialog.locator('[data-testid="simple-bind-mode-code-card"]')).toBeVisible()
+    await expect(dialog.locator('[data-testid="simple-prompt-textarea"]')).toBeVisible()
+    await expect(dialog.locator('[data-testid="simple-manage-skills-button"]')).toBeVisible()
   })
 
-  test('should create new bot', async ({ page, testPrefix }) => {
-    const texts = getLocalizedText(lang)
-    const botName = TestData.uniqueName(`${testPrefix}-bot`)
+  test('should accept bot-backed agent form input', async ({ page, testPrefix }) => {
+    const dialog = await openCreateAgentDialog(page)
+    const agentName = TestData.uniqueName(`${testPrefix}-agent`)
+    const displayName = `${agentName} Display`
+    const prompt = 'You are an assistant created by the bot-backed agent E2E test.'
 
-    // Open Manage Bots dialog
-    const manageBots = page.locator(`button:has-text("${texts.manageBots}")`)
-    await expect(manageBots).toBeVisible({ timeout: 20000 })
-    await manageBots.click()
+    await dialog.locator('input#teamName').fill(agentName)
+    await dialog.locator('[data-testid="team-display-name-input"]').fill(displayName)
+    await dialog.locator('[data-testid="simple-prompt-textarea"]').fill(prompt)
 
-    // Wait for dialog
-    await expect(page.locator('[role="dialog"]')).toBeVisible({ timeout: 5000 })
-
-    // Click "New Bot" button
-    const createButton = page.locator(`[role="dialog"] button:has-text("${texts.newBot}")`)
-    await expect(createButton).toBeVisible({ timeout: 20000 })
-    await createButton.click()
-
-    // Wait for BotEdit form
-    // Bot name input has placeholder "Code Assistant" or "输入机器人名称"
-    const nameInput = page
-      .locator(
-        '[role="dialog"] input[placeholder*="Code"], [role="dialog"] input[placeholder*="机器人"]'
-      )
-      .first()
-    await expect(nameInput).toBeVisible({ timeout: 5000 })
-    await nameInput.fill(botName)
-
-    // Submit form
-    const submitButton = page.locator(`[role="dialog"] button:has-text("${texts.save}")`).first()
-    if (await submitButton.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await submitButton.click()
-
-      // Wait for form to close or stay with validation error
-      await page.waitForTimeout(2000)
-    }
-  })
-
-  test('should show edit and delete buttons for existing bots', async ({ page }) => {
-    const texts = getLocalizedText(lang)
-
-    // Open Manage Bots dialog
-    const manageBots = page.locator(`button:has-text("${texts.manageBots}")`)
-    await expect(manageBots).toBeVisible({ timeout: 20000 })
-    await manageBots.click()
-
-    // Wait for dialog
-    await expect(page.locator('[role="dialog"]')).toBeVisible({ timeout: 5000 })
-
-    // Check if there are any bots - if so, edit/delete buttons should exist
-    const botCard = page.locator('[role="dialog"] .bg-base').first()
-    if (await botCard.isVisible({ timeout: 3000 }).catch(() => false)) {
-      // If bots exist, edit button should be visible
-      const editButton = page
-        .locator('[role="dialog"] button[title*="Edit"], [role="dialog"] button:has-text("Edit")')
-        .first()
-      await expect(editButton).toBeVisible({ timeout: 5000 })
-    }
-    // If no bots, test passes - nothing to edit
+    await expect(dialog.locator('input#teamName')).toHaveValue(agentName)
+    await expect(dialog.locator('[data-testid="team-display-name-input"]')).toHaveValue(displayName)
+    await expect(dialog.locator('[data-testid="simple-prompt-textarea"]')).toHaveValue(prompt)
   })
 })

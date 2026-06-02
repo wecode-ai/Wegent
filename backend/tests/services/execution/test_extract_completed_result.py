@@ -58,6 +58,14 @@ class TestExtractCompletedResult:
         result = extract_completed_result({"loaded_skills": ["skill1"]})
         assert result["loaded_skills"] == ["skill1"]
 
+    def test_preserves_standalone_chat_workspace_path(self):
+        result = extract_completed_result(
+            {"standalone_chat_workspace_path": "/tmp/chats/2026-05-29/new-chat"}
+        )
+        assert (
+            result["standalone_chat_workspace_path"] == "/tmp/chats/2026-05-29/new-chat"
+        )
+
     def test_preserves_silent_exit_fields(self):
         result = extract_completed_result(
             {
@@ -100,3 +108,24 @@ class TestExtractCompletedResult:
         }
         result = extract_completed_result(response_data)
         assert result["value"] == "hello"
+
+    def test_reasoning_output_is_not_merged_into_value(self):
+        response_data = {
+            "output": [
+                {
+                    "content": [
+                        {"type": "reasoning", "text": "Before tool."},
+                    ]
+                },
+                {
+                    "content": [
+                        {"type": "output_text", "text": "Final answer."},
+                    ]
+                },
+            ]
+        }
+
+        result = extract_completed_result(response_data)
+
+        assert result["value"] == "Final answer."
+        assert result["reasoning_content"] == "Before tool."

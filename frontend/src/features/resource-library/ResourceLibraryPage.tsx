@@ -6,6 +6,7 @@
 
 import { useCallback, useState } from 'react'
 
+import { useTranslation } from '@/hooks/useTranslation'
 import { DiscoverResources } from './components/DiscoverResources'
 import { MyResources } from './components/MyResources'
 import { ResourceLibraryTabs, type ResourceLibraryTab } from './components/ResourceLibraryTabs'
@@ -31,6 +32,7 @@ function updateTabQueryParam(tab: ResourceLibraryTab) {
 }
 
 export function ResourceLibraryPage() {
+  const { t } = useTranslation('resource-library')
   const [activeTab, setActiveTab] = useState<ResourceLibraryTab>(getInitialTab)
   const [resourceType, setResourceType] = useState<ResourceLibraryTypeFilter>('all')
 
@@ -41,7 +43,7 @@ export function ResourceLibraryPage() {
 
   return (
     <main className="h-full overflow-y-auto bg-base text-text-primary">
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 pb-6 pt-3 sm:px-6 lg:px-8">
         <section className="flex flex-col gap-4">
           <ResourceLibraryTabs value={activeTab} onValueChange={handleTabChange} />
 
@@ -54,7 +56,7 @@ export function ResourceLibraryPage() {
                 }
               />
             ) : (
-              <MyResources />
+              <MyResources title={t('title')} />
             )}
           </div>
         </section>

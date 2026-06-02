@@ -340,13 +340,37 @@ def _collect_mcp_servers_for_claude(
                 continue
             mcp_servers = bot.get("mcp_servers") or bot.get("mcpServers")
             _append_mcp_servers(collected, mcp_servers, f"bot[{index}]")
+        _append_global_mcp_servers(collected)
         return collected
 
     mcp_servers = primary_bot_config.get("mcp_servers") or primary_bot_config.get(
         "mcpServers"
     )
     _append_mcp_servers(collected, mcp_servers, "bot[0]")
+    _append_global_mcp_servers(collected)
     return collected
+
+
+def _append_global_mcp_servers(target: list[dict[str, Any]]) -> None:
+    """Append MCP servers synced to this local device."""
+    try:
+        from executor.modes.local.capabilities import GlobalCapabilityStore
+
+        manifest = GlobalCapabilityStore().load()
+    except Exception as exc:
+        logger.warning("[MCP] Failed to load global MCP manifest: %s", exc)
+        return
+
+    appended: list[str] = []
+    for name, record in manifest.get("mcps", {}).items():
+        if not isinstance(record, dict):
+            continue
+        server = record.get("server") or {}
+        if not isinstance(server, dict):
+            continue
+        target.append({"name": name, **server})
+        appended.append(name)
+    logger.info("[MCP] Appended global MCP servers: names=%s", appended)
 
 
 def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:

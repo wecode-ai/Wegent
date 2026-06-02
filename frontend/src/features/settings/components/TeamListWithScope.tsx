@@ -4,18 +4,23 @@
 
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type ReactNode } from 'react'
 import TeamList from './TeamList'
 import { GroupSelector } from './groups/GroupSelector'
 import { listGroups } from '@/apis/groups'
 import type { ResourceLibraryPublishSource } from '@/features/resource-library/types'
 import type { BaseRole } from '@/types/base-role'
+import type { Group } from '@/types/group'
+import type { ManagedResourceSourceFilter } from '@/features/resource-library/types'
 
 interface TeamListWithScopeProps {
   scope: 'personal' | 'group' | 'all'
   selectedGroup?: string | null
   onGroupChange?: (groupName: string | null) => void
   onPublishResource?: (source: ResourceLibraryPublishSource) => void
+  sourceControls?: ReactNode
+  sourceFilter?: ManagedResourceSourceFilter
+  groups?: Group[]
 }
 
 export function TeamListWithScope({
@@ -23,10 +28,15 @@ export function TeamListWithScope({
   selectedGroup: externalSelectedGroup,
   onGroupChange,
   onPublishResource,
+  sourceControls,
+  sourceFilter,
+  groups: externalGroups,
 }: TeamListWithScopeProps) {
   // Use external state if provided, otherwise use internal state
   const [internalSelectedGroup, setInternalSelectedGroup] = useState<string | null>(null)
   const [groupRoleMap, setGroupRoleMap] = useState<Map<string, BaseRole>>(new Map())
+  const [internalGroups, setInternalGroups] = useState<Group[]>([])
+  const groups = externalGroups ?? internalGroups
 
   const selectedGroup =
     externalSelectedGroup !== undefined ? externalSelectedGroup : internalSelectedGroup
@@ -49,6 +59,7 @@ export function TeamListWithScope({
             roleMap.set(group.name, group.my_role)
           }
         })
+        setInternalGroups(response.items || [])
         setGroupRoleMap(roleMap)
       })
       .catch(error => {
@@ -64,7 +75,28 @@ export function TeamListWithScope({
   }
 
   if (scope === 'personal') {
-    return <TeamList scope="personal" onPublishResource={onPublishResource} />
+    return (
+      <TeamList
+        scope="personal"
+        onPublishResource={onPublishResource}
+        sourceControls={sourceControls}
+        sourceFilter={sourceFilter}
+        groups={groups}
+      />
+    )
+  }
+
+  if (scope === 'all') {
+    return (
+      <TeamList
+        scope="all"
+        groupRoleMap={groupRoleMap}
+        onPublishResource={onPublishResource}
+        sourceControls={sourceControls}
+        sourceFilter={sourceFilter}
+        groups={groups}
+      />
+    )
   }
 
   // When selectedGroup is provided externally (from nav), don't show GroupSelector
@@ -83,6 +115,9 @@ export function TeamListWithScope({
         groupRoleMap={groupRoleMap}
         onEditResource={handleEditResource}
         onPublishResource={onPublishResource}
+        sourceControls={sourceControls}
+        sourceFilter={sourceFilter}
+        groups={groups}
       />
     </div>
   )

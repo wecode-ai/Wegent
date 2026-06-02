@@ -58,8 +58,9 @@ class CloudDeviceProvider(LocalDeviceProvider):
         if spec.get("deviceType") != DeviceType.CLOUD.value:
             return None
 
-        online_info = await self._get_online_info(user_id, device_id)
-        slot_info = await self.get_slot_usage(db, user_id, device_id)
+        runtime_device_id = self._resolve_runtime_device_id(device_kind)
+        online_info = await self._get_online_info(user_id, runtime_device_id)
+        slot_info = await self.get_slot_usage(db, user_id, runtime_device_id)
 
         executor_version = online_info.get("executor_version") if online_info else None
         latest_version = (
@@ -71,6 +72,7 @@ class CloudDeviceProvider(LocalDeviceProvider):
         return {
             "id": device_kind.id,
             "device_id": device_id,
+            "socket_device_id": runtime_device_id,
             "name": spec.get("displayName") or device_id,
             "status": online_info.get("status", "online") if online_info else "offline",
             "is_default": spec.get("isDefault", False),
@@ -90,6 +92,7 @@ class CloudDeviceProvider(LocalDeviceProvider):
             "update_available": update_available,
             "client_ip": spec.get("clientIp"),
             "cloud_config": spec.get("cloudConfig"),
+            "bind_shell": spec.get("bindShell", "claudecode"),
         }
 
     async def list_devices(
@@ -126,7 +129,7 @@ class CloudDeviceProvider(LocalDeviceProvider):
             return []
 
         # Batch fetch online info from Redis using mget
-        device_ids = [d.name for d in cloud_devices]
+        device_ids = [self._resolve_runtime_device_id(d) for d in cloud_devices]
         redis_keys = [self.generate_online_key(user_id, did) for did in device_ids]
         online_info_map = await cache_manager.mget(redis_keys)
 
@@ -140,6 +143,7 @@ class CloudDeviceProvider(LocalDeviceProvider):
         for i, device_kind in enumerate(cloud_devices):
             spec = device_kind.json.get("spec", {})
             device_id = device_kind.name
+            runtime_device_id = device_ids[i]
             redis_key = redis_keys[i]
 
             online_info = online_info_map.get(redis_key)
@@ -164,6 +168,7 @@ class CloudDeviceProvider(LocalDeviceProvider):
                 {
                     "id": device_kind.id,
                     "device_id": device_id,
+                    "socket_device_id": runtime_device_id,
                     "name": spec.get("displayName") or device_id,
                     "status": (
                         online_info.get("status", "online")
@@ -187,7 +192,14 @@ class CloudDeviceProvider(LocalDeviceProvider):
                     "update_available": update_available,
                     "client_ip": spec.get("clientIp"),
                     "cloud_config": spec.get("cloudConfig"),
+                    "bind_shell": spec.get("bindShell", "claudecode"),
                 }
             )
 
         return result
+
+    def _resolve_runtime_device_id(self, device_kind: Kind) -> str:
+        """Return the WebSocket device ID used for Redis online tracking."""
+        spec = device_kind.json.get("spec", {})
+        cloud_config = spec.get("cloudConfig") or {}
+        return spec.get("deviceId") or cloud_config.get("deviceId") or device_kind.name

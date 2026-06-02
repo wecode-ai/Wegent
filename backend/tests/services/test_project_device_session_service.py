@@ -280,3 +280,102 @@ async def test_local_device_session_service_calls_device_start_session(monkeypat
     assert len(payload["access_token"]) >= 32
     assert mock_sio.call.await_args.args[0] == "device:start_terminal_session"
     mock_sio.call.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_local_device_session_service_adds_missing_url_token(monkeypatch):
+    """Returned session URLs must include the generated access token."""
+    from app.services.device import session_service
+
+    monkeypatch.setattr(session_service.secrets, "token_urlsafe", lambda size: "secret")
+    mock_sio = AsyncMock()
+    mock_sio.call.return_value = {
+        "success": True,
+        "session_id": "session-123",
+        "url": "http://localhost:17888/s/session-123/",
+        "path": "/repo",
+        "device_id": "device-abc",
+        "type": "terminal",
+    }
+    monkeypatch.setattr(
+        session_service.device_service,
+        "get_device_online_info",
+        AsyncMock(return_value={"socket_id": "socket-123"}),
+    )
+    monkeypatch.setattr(
+        session_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    monkeypatch.setattr(session_service, "get_sio", lambda: mock_sio)
+
+    result = await session_service.local_device_session_service.start_session(
+        db=object(),
+        user_id=7,
+        device_id="device-abc",
+        project_id=123,
+        session_type="terminal",
+        path="/repo",
+    )
+
+    assert result["url"] == "http://localhost:17888/s/session-123/?token=secret"
+
+
+@pytest.mark.asyncio
+async def test_cloud_device_session_service_rewrites_localhost_session_url(
+    monkeypatch,
+):
+    """Cloud device sessions should not return the device-local localhost URL."""
+    from app.services.device import session_service
+
+    monkeypatch.setattr(session_service.secrets, "token_urlsafe", lambda size: "short")
+    mock_sio = AsyncMock()
+    mock_sio.call.return_value = {
+        "success": True,
+        "session_id": "session-123",
+        "url": "http://localhost:17888/s/session-123/?token=short",
+        "path": "/repo",
+        "device_id": "device-abc",
+        "type": "terminal",
+    }
+    device_kind = SimpleNamespace(
+        json={
+            "spec": {
+                "deviceType": "cloud",
+                "cloudConfig": {"sandboxId": "sandbox-123"},
+            }
+        }
+    )
+    monkeypatch.setattr(
+        session_service.device_service,
+        "get_device_online_info",
+        AsyncMock(return_value={"socket_id": "socket-123"}),
+    )
+    monkeypatch.setattr(
+        session_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: device_kind,
+    )
+    monkeypatch.setattr(session_service, "get_sio", lambda: mock_sio)
+
+    class FakeCloudDeviceProvider:
+        async def get_vm_status(self, sandbox_id):
+            assert sandbox_id == "sandbox-123"
+            return {"ip_address": "10.1.2.3"}
+
+    monkeypatch.setattr(
+        session_service,
+        "_get_cloud_device_provider",
+        lambda: FakeCloudDeviceProvider(),
+    )
+
+    result = await session_service.local_device_session_service.start_session(
+        db=object(),
+        user_id=7,
+        device_id="device-abc",
+        project_id=123,
+        session_type="terminal",
+        path="/repo",
+    )
+
+    assert result["url"] == "http://10.1.2.3:17888/s/session-123/?token=short"
