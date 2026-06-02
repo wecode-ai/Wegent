@@ -16,12 +16,15 @@ const mockCheckHealth = jest.fn().mockResolvedValue(undefined)
 let isMachineStreamingMock = true
 let activeStreamSubtaskIdMock: number | undefined = 77
 let taskInputMessageMock = 'next question'
-let selectedTaskDetailMock = {
+let currentTaskIdMock: number | null = 42
+let selectedTaskDetailMock: TaskDetail | null = {
   id: 42,
   status: 'RUNNING',
   is_group_chat: false,
   subtasks: [],
 } as unknown as TaskDetail
+
+const getTaskStatusMock = () => selectedTaskDetailMock?.status ?? 'COMPLETED'
 
 jest.mock('next/navigation', () => ({
   useRouter: () => ({ push: jest.fn() }),
@@ -31,6 +34,7 @@ jest.mock('next/navigation', () => ({
 
 jest.mock('@/features/tasks/session/TaskSession', () => ({
   useTaskSession: () => ({
+    currentTaskId: currentTaskIdMock,
     selectedTaskDetail: selectedTaskDetailMock,
     refreshTasks: jest.fn(),
     refreshSelectedTaskDetail: mockRefreshSelectedTaskDetail,
@@ -39,32 +43,27 @@ jest.mock('@/features/tasks/session/TaskSession', () => ({
     stopStream: jest.fn(),
     recoverCurrentTask: mockCheckHealth,
     taskState: {
-      taskId: selectedTaskDetailMock.id,
+      taskId: currentTaskIdMock ?? 0,
       phase: isMachineStreamingMock ? 'streaming' : 'ready',
       messages: new Map(),
       isStopping: false,
       runtime: {
-        taskStatus: selectedTaskDetailMock.status,
+        taskStatus: getTaskStatusMock(),
         activeStreamSubtaskId: activeStreamSubtaskIdMock,
       },
       derived: {
-        isExecutionActive:
-          selectedTaskDetailMock.status === 'RUNNING' ||
-          selectedTaskDetailMock.status === 'PENDING',
+        isExecutionActive: getTaskStatusMock() === 'RUNNING' || getTaskStatusMock() === 'PENDING',
         isTerminal:
-          selectedTaskDetailMock.status === 'COMPLETED' ||
-          selectedTaskDetailMock.status === 'FAILED' ||
-          selectedTaskDetailMock.status === 'CANCELLED',
+          getTaskStatusMock() === 'COMPLETED' ||
+          getTaskStatusMock() === 'FAILED' ||
+          getTaskStatusMock() === 'CANCELLED',
         isStreaming: isMachineStreamingMock,
         shouldJoinRoom: false,
-        canSendMessage: selectedTaskDetailMock.status === 'COMPLETED',
+        canSendMessage: getTaskStatusMock() === 'COMPLETED',
         canQueueMessage: isMachineStreamingMock,
-        canCancelTask:
-          selectedTaskDetailMock.status === 'RUNNING' ||
-          selectedTaskDetailMock.status === 'PENDING',
+        canCancelTask: getTaskStatusMock() === 'RUNNING' || getTaskStatusMock() === 'PENDING',
         blocksQueuedDispatch:
-          selectedTaskDetailMock.status === 'RUNNING' ||
-          selectedTaskDetailMock.status === 'PENDING',
+          getTaskStatusMock() === 'RUNNING' || getTaskStatusMock() === 'PENDING',
       },
     },
   }),
@@ -155,6 +154,7 @@ describe('useChatStreamHandlers queue integration', () => {
     isMachineStreamingMock = true
     activeStreamSubtaskIdMock = 77
     taskInputMessageMock = 'next question'
+    currentTaskIdMock = 42
     selectedTaskDetailMock = {
       id: 42,
       status: 'RUNNING',
@@ -372,6 +372,29 @@ describe('useChatStreamHandlers queue integration', () => {
     expect(mockSetTaskInputMessage).toHaveBeenCalledWith('')
     expect(mockResetAttachment).toHaveBeenCalled()
     expect(mockResetContexts).toHaveBeenCalled()
+  })
+
+  it('uses the current task id for a follow-up while task detail is temporarily unavailable', async () => {
+    isMachineStreamingMock = false
+    activeStreamSubtaskIdMock = undefined
+    selectedTaskDetailMock = null
+    currentTaskIdMock = 42
+
+    const { result } = renderQueueableHook()
+
+    await act(async () => {
+      await result.current.handleSendMessage()
+    })
+
+    expect(mockContextSendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'next question',
+        task_id: 42,
+      }),
+      expect.objectContaining({
+        immediateTaskId: 42,
+      })
+    )
   })
 
   it('shows a retry action that resends a failed queued message', async () => {
