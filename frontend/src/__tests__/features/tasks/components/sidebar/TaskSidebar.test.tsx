@@ -319,13 +319,19 @@ describe('TaskSidebar scroll structure', () => {
     const newConversationButton = screen
       .getAllByText('common:tasks.new_conversation')[0]
       .closest('button')
+    const searchButton = screen.getAllByTestId('task-sidebar-search-button')[0]
     const automationButton = screen.getAllByTestId('task-sidebar-nav-flow-button')[0]
     const moreButton = screen.getAllByTestId('task-sidebar-more-button')[0]
 
     expect(logoSection).toHaveClass('pt-2', 'pb-0')
-    expect(newConversationButton).toHaveClass('h-11', 'lg:h-10', 'min-w-[44px]')
-    expect(automationButton).toHaveClass('h-11', 'lg:h-10', 'min-w-[44px]')
-    expect(moreButton).toHaveClass('h-11', 'lg:h-10', 'min-w-[44px]')
+    expect(newConversationButton).toHaveClass('h-11', 'lg:h-8', 'min-w-[44px]')
+    expect(searchButton).toHaveClass('h-11', 'lg:h-8', 'min-w-[44px]')
+    expect(automationButton).toHaveClass('h-11', 'lg:h-8', 'min-w-[44px]')
+    expect(moreButton).toHaveClass('h-11', 'lg:h-8', 'min-w-[44px]')
+    expect(newConversationButton).not.toHaveClass('lg:h-10')
+    expect(searchButton).not.toHaveClass('lg:h-10')
+    expect(automationButton).not.toHaveClass('lg:h-10')
+    expect(moreButton).not.toHaveClass('lg:h-10')
     expect(newConversationButton).toHaveAttribute('data-testid', 'new-agent-button')
   })
 

@@ -110,10 +110,6 @@ export interface ChatAreaState {
   taskInputMessage: string
   setTaskInputMessage: (message: string) => void
 
-  // Loading state
-  isLoading: boolean
-  setIsLoading: (value: boolean) => void
-
   // Deep thinking state
   enableDeepThinking: boolean
   setEnableDeepThinking: (value: boolean) => void
@@ -187,7 +183,7 @@ export interface ChatAreaState {
  * Manages all the state for the ChatArea component, including:
  * - Team, repository, branch, and model selection
  * - Input message and attachment state
- * - Loading and toggle states (deep thinking, clarification)
+ * - Toggle states (deep thinking, clarification)
  * - External API parameters (for Dify teams)
  * - Welcome config and random slogan/tip
  * - UI state (mobile, quota visibility)
@@ -231,7 +227,6 @@ export function useChatAreaState({
 
   // Input state
   const [taskInputMessage, setTaskInputMessage] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
 
   // Toggle states
   const [enableDeepThinking, setEnableDeepThinking] = useState(true)
@@ -593,10 +588,6 @@ export function useChatAreaState({
     // Input state
     taskInputMessage,
     setTaskInputMessage,
-
-    // Loading state
-    isLoading,
-    setIsLoading,
 
     // Deep thinking state
     enableDeepThinking,

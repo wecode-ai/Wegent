@@ -41,11 +41,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
 import socketio
+
 from executor.config import config
 from executor.modes.local.capabilities import GlobalCapabilityReporter
 from executor.platform_compat import get_permissions_manager
 from executor.version import get_version
-
 from shared.logger import setup_logger
 
 if TYPE_CHECKING:

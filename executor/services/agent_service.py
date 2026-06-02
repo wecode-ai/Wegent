@@ -16,7 +16,6 @@ from typing import Any, ClassVar, Dict, List, Optional, Tuple, Union
 from executor.agents import Agent, AgentFactory
 from executor.agents.agno.agno_agent import AgnoAgent
 from executor.config import config
-
 from shared.logger import setup_logger
 from shared.models import EmitterBuilder, TransportFactory
 from shared.models.execution import ExecutionRequest

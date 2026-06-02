@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useRef, useState, useCallback } from 'react'
-import { Upload, Sparkles, X, Hand } from 'lucide-react'
+import { Upload, Sparkles, X, Hand, Pencil } from 'lucide-react'
 import ChatInput from './ChatInput'
 import InputBadgeDisplay from './InputBadgeDisplay'
 import ExternalApiParamsInput from '../params/ExternalApiParamsInput'
@@ -82,10 +82,12 @@ export interface ChatInputCardProps extends Omit<
   canQueueMessage?: boolean
   queuedMessages?: QueuedInputMessage[]
   onCancelQueuedMessage?: (id: string) => void
+  onEditQueuedMessage?: (id: string) => void
   onSendQueuedAsGuidance?: (id: string) => void
   guidanceMessages?: GuidanceInputMessage[]
   expiredGuidanceMessages?: GuidanceInputMessage[]
   onCancelGuidance?: (id: string) => void
+  onEditGuidanceMessage?: (id: string) => void
   onSendExpiredGuidanceAsMessage?: (id: string) => void
   handleSendMessage: (message?: string) => Promise<void>
 
@@ -147,10 +149,12 @@ export function ChatInputCard({
   canQueueMessage = false,
   queuedMessages = [],
   onCancelQueuedMessage,
+  onEditQueuedMessage,
   onSendQueuedAsGuidance,
   guidanceMessages = [],
   expiredGuidanceMessages = [],
   onCancelGuidance,
+  onEditGuidanceMessage,
   onSendExpiredGuidanceAsMessage,
   handleSendMessage,
   onPasteFile,
@@ -187,9 +191,7 @@ export function ChatInputCard({
   attachmentState,
   onFileSelect,
   onAttachmentRemove,
-  isLoading,
   isStreaming,
-  isAwaitingResponseStart,
   isStopping,
   hasMessages,
   shouldCollapseSelectors,
@@ -201,7 +203,6 @@ export function ChatInputCard({
   canCancelTask,
   onStopStream,
   onCancelTask,
-  isCancelling,
   onSendMessage,
   onSendGuidance,
   // Skill selector props
@@ -341,6 +342,18 @@ export function ChatInputCard({
                           {t('guidance.send')}
                         </button>
                       )}
+                      {onEditQueuedMessage && (
+                        <button
+                          type="button"
+                          data-testid="edit-queued-message-button"
+                          title={t('actions.edit')}
+                          onClick={() => onEditQueuedMessage(message.id)}
+                          className="inline-flex h-7 items-center gap-1 rounded-lg px-2.5 text-xs font-medium text-text-secondary transition-colors hover:bg-base hover:text-text-primary"
+                        >
+                          <Pencil className="h-3 w-3" />
+                          {t('actions.edit')}
+                        </button>
+                      )}
                       {onCancelQueuedMessage && (
                         <button
                           type="button"
@@ -385,17 +398,33 @@ export function ChatInputCard({
                       {message.displayMessage}
                     </p>
                   </div>
-                  {message.status !== 'sending' && onCancelGuidance && (
-                    <button
-                      type="button"
-                      data-testid="cancel-guidance-button"
-                      aria-label={t('guidance.cancel')}
-                      title={t('guidance.cancel')}
-                      onClick={() => onCancelGuidance(message.id)}
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-base hover:text-text-primary"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
+                  {message.status !== 'sending' && (onCancelGuidance || onEditGuidanceMessage) && (
+                    <div className="flex shrink-0 items-center gap-1">
+                      {onEditGuidanceMessage && (
+                        <button
+                          type="button"
+                          data-testid="edit-guidance-message-button"
+                          title={t('actions.edit')}
+                          onClick={() => onEditGuidanceMessage(message.id)}
+                          className="inline-flex h-7 items-center gap-1 rounded-lg px-2.5 text-xs font-medium text-text-secondary transition-colors hover:bg-base hover:text-text-primary"
+                        >
+                          <Pencil className="h-3 w-3" />
+                          {t('actions.edit')}
+                        </button>
+                      )}
+                      {onCancelGuidance && (
+                        <button
+                          type="button"
+                          data-testid="cancel-guidance-button"
+                          aria-label={t('guidance.cancel')}
+                          title={t('guidance.cancel')}
+                          onClick={() => onCancelGuidance(message.id)}
+                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-base hover:text-text-primary"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
               ))}
@@ -463,7 +492,7 @@ export function ChatInputCard({
         {!shouldHideChatInput && (
           <div className="absolute -top-[29px] left-4 z-10">
             <DeviceSelectorTab
-              disabled={isLoading || isStreaming || !!projectId}
+              disabled={isStreaming || !!projectId}
               hasMessages={hasMessages}
               taskDeviceId={selectedTaskDetail?.device_id}
               className="rounded-t-lg"
@@ -492,7 +521,7 @@ export function ChatInputCard({
             setSelectedContexts(selectedContexts.filter(ctx => ctx.id !== contextId))
           }}
           onRemoveAttachment={onAttachmentRemove}
-          disabled={isLoading || isStreaming}
+          disabled={isStreaming}
         />
 
         {/* Quote Card - shows quoted text from text selection */}
@@ -508,7 +537,7 @@ export function ChatInputCard({
               message={taskInputMessage}
               setMessage={setTaskInputMessage}
               handleSendMessage={handleSendMessage}
-              isLoading={isLoading}
+              isLoading={false}
               taskType={taskType}
               autoFocus={autoFocus}
               canSubmit={canSubmit}
@@ -595,9 +624,7 @@ export function ChatInputCard({
             attachmentState={attachmentState}
             onFileSelect={onFileSelect}
             onAttachmentRemove={onAttachmentRemove}
-            isLoading={isLoading}
             isStreaming={isStreaming}
-            isAwaitingResponseStart={isAwaitingResponseStart}
             isStopping={isStopping}
             hasMessages={hasMessages}
             shouldCollapseSelectors={shouldCollapseSelectors}
@@ -611,7 +638,6 @@ export function ChatInputCard({
             canCancelTask={canCancelTask}
             onStopStream={onStopStream}
             onCancelTask={onCancelTask}
-            isCancelling={isCancelling}
             onSendMessage={onSendMessage}
             onSendGuidance={onSendGuidance}
             hasNoTeams={hasNoTeams}

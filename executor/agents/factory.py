@@ -14,7 +14,6 @@ from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
 from executor.agents.codex import CodeXAgent, is_codex_compatible_model
 from executor.agents.dify.dify_agent import DifyAgent
 from executor.agents.image_validator.image_validator_agent import ImageValidatorAgent
-
 from shared.logger import setup_logger
 from shared.models import ResponsesAPIEmitter
 from shared.models.execution import ExecutionRequest
