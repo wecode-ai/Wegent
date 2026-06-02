@@ -321,6 +321,11 @@ class TaskOperationsMixin:
                         else {}
                     ),
                     **(
+                        {"modelOptions": json_lib.dumps(obj_in.model_options)}
+                        if obj_in.model_options
+                        else {}
+                    ),
+                    **(
                         {"api_key_name": obj_in.api_key_name}
                         if obj_in.api_key_name
                         else {}

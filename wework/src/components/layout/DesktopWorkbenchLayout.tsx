@@ -200,6 +200,7 @@ export function DesktopWorkbenchLayout({
       ) : (
         <DesktopWorkbenchMain
           sidebarCollapsed={sidebarCollapsed}
+          isBootstrapping={state.isBootstrapping}
           currentTask={state.currentTask}
           currentProject={state.currentProject}
           messages={messages}

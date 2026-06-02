@@ -1,4 +1,12 @@
-import type { DeviceInfo, ProjectTask, ProjectWithTasks, Task, Team, User } from '@/types/api'
+import type {
+  DeviceInfo,
+  ProjectTask,
+  ProjectWithTasks,
+  Task,
+  Team,
+  User,
+  UserPreferences,
+} from '@/types/api'
 import type { WorkbenchState } from '@/types/workbench'
 
 export const initialWorkbenchState: WorkbenchState = {
@@ -41,7 +49,9 @@ export type WorkbenchAction =
     }
   | { type: 'bootstrap_failed'; error: string }
   | { type: 'project_selected'; project: ProjectWithTasks }
+  | { type: 'project_updated'; project: ProjectWithTasks }
   | { type: 'project_cleared'; standaloneDeviceId?: string | null }
+  | { type: 'user_preferences_updated'; preferences: UserPreferences }
   | { type: 'standalone_device_preference_changed'; standaloneDeviceId: string | null }
   | {
       type: 'task_opened'
@@ -183,6 +193,17 @@ export function workbenchReducer(
       return { ...state, isBootstrapping: false, error: action.error }
     case 'project_selected':
       return { ...state, currentProject: action.project, currentTask: null }
+    case 'project_updated':
+      return {
+        ...state,
+        currentProject:
+          state.currentProject?.id === action.project.id
+            ? action.project
+            : state.currentProject,
+        projects: state.projects.map(project =>
+          project.id === action.project.id ? action.project : project
+        ),
+      }
     case 'project_cleared':
       return {
         ...state,
@@ -192,6 +213,16 @@ export function workbenchReducer(
             ? state.standaloneDeviceId
             : action.standaloneDeviceId,
         currentTask: null,
+      }
+    case 'user_preferences_updated':
+      return {
+        ...state,
+        user: state.user
+          ? {
+              ...state.user,
+              preferences: action.preferences,
+            }
+          : state.user,
       }
     case 'standalone_device_preference_changed':
       return {

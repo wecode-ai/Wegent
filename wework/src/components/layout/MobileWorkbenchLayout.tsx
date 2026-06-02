@@ -84,8 +84,11 @@ export function MobileWorkbenchLayout({
   const effectiveProjectChat = projectChat ?? {
     models: [],
     selectedModel: null,
+    selectedModelOptions: {},
+    isModelSelectionReady: true,
     isOptionsLocked: false,
     setSelectedModel: () => {},
+    setSelectedModelOption: () => {},
   }
   const emptyTitle = state.currentProject
     ? t('workbench.project_empty_title', {
@@ -111,6 +114,17 @@ export function MobileWorkbenchLayout({
     )
   }
 
+  if (state.isBootstrapping) {
+    return (
+      <div className="flex h-dvh overflow-hidden bg-base text-text-primary">
+        <main
+          className="flex h-dvh min-h-0 w-full flex-col overflow-hidden"
+          data-testid="mobile-workbench-loading"
+        />
+      </div>
+    )
+  }
+
   return (
     <div className="flex h-dvh overflow-hidden bg-base text-text-primary">
       <main className="flex h-dvh min-h-0 w-full flex-col overflow-hidden">
@@ -130,15 +144,21 @@ export function MobileWorkbenchLayout({
                 <Menu className="h-5 w-5" />
               </button>
               <div className="pointer-events-auto flex min-w-0 flex-1 justify-start">
-                <ModelSelector
-                  models={effectiveProjectChat.models}
-                  selectedModel={effectiveProjectChat.selectedModel}
-                  disabled={effectiveProjectChat.isOptionsLocked}
-                  onSelectModel={effectiveProjectChat.setSelectedModel}
-                  menuPlacement="below"
-                  buttonClassName="max-w-[min(14rem,calc(100vw-6rem))] bg-surface px-3"
-                  menuClassName="left-0 right-auto w-[min(18rem,calc(100vw-2rem))]"
-                />
+                {(effectiveProjectChat.isModelSelectionReady ?? true) ? (
+                  <ModelSelector
+                    models={effectiveProjectChat.models}
+                    selectedModel={effectiveProjectChat.selectedModel}
+                    selectedModelOptions={effectiveProjectChat.selectedModelOptions}
+                    disabled={effectiveProjectChat.isOptionsLocked}
+                    onSelectModel={effectiveProjectChat.setSelectedModel}
+                    onSelectModelOption={effectiveProjectChat.setSelectedModelOption}
+                    menuPlacement="below"
+                    buttonClassName="max-w-[min(14rem,calc(100vw-6rem))] bg-surface px-3"
+                    menuClassName="left-0 right-auto w-[min(34rem,calc(100vw-2rem))]"
+                  />
+                ) : (
+                  <div className="h-10 w-32" data-testid="model-selector-loading" />
+                )}
               </div>
               <div className="h-10 min-w-[44px]" />
             </header>
@@ -184,15 +204,21 @@ export function MobileWorkbenchLayout({
                 <Menu className="h-5 w-5" />
               </button>
               <div className="flex min-w-0 flex-1 justify-start">
-                <ModelSelector
-                  models={effectiveProjectChat.models}
-                  selectedModel={effectiveProjectChat.selectedModel}
-                  disabled={effectiveProjectChat.isOptionsLocked}
-                  onSelectModel={effectiveProjectChat.setSelectedModel}
-                  menuPlacement="below"
-                  buttonClassName="max-w-[min(14rem,calc(100vw-6rem))] bg-surface px-3"
-                  menuClassName="left-0 right-auto w-[min(18rem,calc(100vw-2rem))]"
-                />
+                {(effectiveProjectChat.isModelSelectionReady ?? true) ? (
+                  <ModelSelector
+                    models={effectiveProjectChat.models}
+                    selectedModel={effectiveProjectChat.selectedModel}
+                    selectedModelOptions={effectiveProjectChat.selectedModelOptions}
+                    disabled={effectiveProjectChat.isOptionsLocked}
+                    onSelectModel={effectiveProjectChat.setSelectedModel}
+                    onSelectModelOption={effectiveProjectChat.setSelectedModelOption}
+                    menuPlacement="below"
+                    buttonClassName="max-w-[min(14rem,calc(100vw-6rem))] bg-surface px-3"
+                    menuClassName="left-0 right-auto w-[min(34rem,calc(100vw-2rem))]"
+                  />
+                ) : (
+                  <div className="h-10 w-32" data-testid="model-selector-loading" />
+                )}
               </div>
               <div className="h-10 min-w-[44px]" />
             </header>
