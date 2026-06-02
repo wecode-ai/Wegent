@@ -17,6 +17,7 @@ Wegent uses one `TaskStateMachine` per task as the unified source of truth for t
 - `ChatStreamContext` only routes `chat:*` WebSocket events to the corresponding task state machine.
 - External triggers such as page-visible, WebSocket reconnect, and queued-message-blocked adapt to `TaskStateMachine.checkHealth(reason)`.
 - Pull only verifies task/runtime checkpoints and must not return message bodies; message content recovery stays on socket join/resume.
+- Task detail snapshots only sync lifecycle fields; even if the response includes `subtasks`, messages must not be recovered or displayed from REST task detail.
 - UI controls read `runtime` and `derived` values from `useTaskStateMachine()`.
 
 ## Runtime Classification
@@ -73,6 +74,7 @@ When a task becomes terminal:
 - Finalize streaming messages as completed, error, or cancelled.
 - Clear running local state such as `isStopping`.
 - Unblock queued messages from task runtime state.
+- If the state machine is in `waiting_socket` for socket recovery, a terminal task detail snapshot may update runtime lifecycle state but must not move the machine to `ready`; messages still have to sync through socket `task:join`.
 
 ### Stream done
 

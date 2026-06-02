@@ -408,6 +408,104 @@ describe('TaskStateMachine', () => {
     consoleInfoSpy.mockRestore()
   })
 
+  it('keeps socket recovery pending when terminal task detail arrives before socket sync', async () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => false,
+    })
+
+    await machine.recover({ force: true, reason: 'task-selected' })
+    expect(machine.getState().phase).toBe('waiting_socket')
+
+    const terminalDetailWithSubtasks = {
+      id: 100,
+      status: 'COMPLETED' as const,
+      updated_at: '2026-05-31T10:01:00.000Z',
+      subtasks: [
+        {
+          id: 42,
+          task_id: 100,
+          team_id: 1,
+          title: 'done',
+          bot_ids: [],
+          role: 'TEAM',
+          message_id: 7,
+          parent_id: 0,
+          prompt: '',
+          executor_namespace: '',
+          executor_name: '',
+          status: 'COMPLETED',
+          progress: 100,
+          batch: 0,
+          result: { value: 'done' },
+          error_message: '',
+          user_id: 1,
+          created_at: '2026-05-31T10:00:00.000Z',
+          updated_at: '2026-05-31T10:00:00.000Z',
+          completed_at: '2026-05-31T10:01:00.000Z',
+          bots: [],
+        },
+      ],
+    }
+    machine.syncTaskDetail(terminalDetailWithSubtasks)
+
+    const state = machine.getState()
+    expect(state.phase).toBe('waiting_socket')
+    expect(state.runtime.phase).toBe('terminal')
+    expect(state.messages.size).toBe(0)
+    expect(state.derived.blocksQueuedDispatch).toBe(false)
+  })
+
+  it('does not let stale task detail subtasks finalize a newer active stream', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('RUNNING', '2026-05-31T10:02:00.000Z')
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.handleChatChunk(42, 'new partial')
+
+    const staleDetailWithSubtasks = {
+      id: 100,
+      status: 'COMPLETED' as const,
+      updated_at: '2026-05-31T10:01:00.000Z',
+      subtasks: [
+        {
+          id: 42,
+          task_id: 100,
+          team_id: 1,
+          title: 'old done',
+          bot_ids: [],
+          role: 'TEAM',
+          message_id: 7,
+          parent_id: 0,
+          prompt: '',
+          executor_namespace: '',
+          executor_name: '',
+          status: 'COMPLETED',
+          progress: 100,
+          batch: 0,
+          result: { value: 'old final answer' },
+          error_message: '',
+          user_id: 1,
+          created_at: '2026-05-31T10:00:00.000Z',
+          updated_at: '2026-05-31T10:01:00.000Z',
+          completed_at: '2026-05-31T10:01:00.000Z',
+          bots: [],
+        },
+      ],
+    }
+    machine.syncTaskDetail(staleDetailWithSubtasks)
+
+    const state = machine.getState()
+    const message = state.messages.get('ai-42')
+    expect(state.runtime.taskStatus).toBe('RUNNING')
+    expect(state.runtime.phase).toBe('streaming')
+    expect(message?.status).toBe('streaming')
+    expect(message?.content).toBe('new partial')
+  })
+
   it('ignores stale lifecycle updates after a newer terminal status', () => {
     const machine = new TaskStateMachine(100, {
       joinTask: jest.fn(),

@@ -855,6 +855,8 @@ export class TaskStateMachine {
     const isTerminal = isTerminalTaskStatus(taskStatus)
     const activeStreamSubtaskId = isTerminal ? undefined : this.state.runtime.activeStreamSubtaskId
     const phase = getRuntimePhaseForTaskStatus(taskStatus, Boolean(activeStreamSubtaskId))
+    const status =
+      isTerminal && this.state.status !== 'waiting_socket' ? 'ready' : this.state.status
     const runtime: TaskRuntimeState = {
       ...this.state.runtime,
       taskId: this.state.taskId,
@@ -888,7 +890,7 @@ export class TaskStateMachine {
 
     this.state = {
       ...this.state,
-      status: isTerminal ? 'ready' : this.state.status,
+      status,
       isStopping: isTerminal ? false : this.state.isStopping,
       messages,
       runtime,
