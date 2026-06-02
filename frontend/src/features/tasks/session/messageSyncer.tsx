@@ -5,26 +5,15 @@
 'use client'
 
 /**
- * Global Chat Stream Context
+ * Synchronizes task messages through the task socket room.
  *
- * This context manages WebSocket event routing to TaskStateMachine instances.
- * It handles:
- * - Sending chat messages
- * - Stopping streams
- * - Routing WebSocket events (chat:start, chat:chunk, etc.) to the correct TaskStateMachine
- * - Skill event handling (mermaid diagrams, etc.)
- *
- * Key Design: DELEGATE TO STATE MACHINE
- * All message state management is delegated to TaskStateMachine instances.
- * This context is only responsible for:
- * 1. WebSocket event routing
- * 2. Sending messages via WebSocket
- * 3. Managing temp-to-real task ID mapping
+ * This module owns room membership, join acknowledgements, chat push events,
+ * local message state, and stream controls. It does not pull task detail or
+ * perform runtime checks.
  */
 
-import React, { createContext, useContext, useCallback, useRef, useEffect, ReactNode } from 'react'
+import { useCallback, useRef, useEffect } from 'react'
 import { useSocket, ChatEventHandlers, SkillEventHandlers } from '@/contexts/SocketContext'
-import { usePageVisibility } from '@/hooks/usePageVisibility'
 import {
   ChatSendPayload,
   ChatStartPayload,
@@ -40,21 +29,9 @@ import {
 } from '@/types/socket'
 import type { InteractiveFormAnswerPayload, TaskDetailSubtask, Team, TaskType } from '@/types/api'
 import type { MessageBlock } from '../components/message/thinking/types'
-import { taskStateManager, generateMessageId, UnifiedMessage } from '../state'
+import { generateMessageId, TaskStateMachine } from '../state'
+import type { TaskStateMachineDeps, UnifiedMessage } from '../state'
 import DOMPurify from 'dompurify'
-
-/**
- * Message type enum (re-exported for backward compatibility)
- */
-export type MessageType = 'user' | 'ai'
-
-/**
- * Message status enum (re-exported for backward compatibility)
- */
-export type MessageStatus = 'pending' | 'streaming' | 'completed' | 'error'
-
-// Re-export UnifiedMessage for backward compatibility
-export type { UnifiedMessage }
 
 /**
  * Request parameters for sending a chat message
@@ -135,14 +112,10 @@ export interface ChatMessageRequest {
   interactive_form_answer?: InteractiveFormAnswerPayload
 }
 
-/**
- * Context type for chat stream management
- */
-interface ChatStreamContextType {
-  /** Check if a task is currently streaming */
-  isTaskStreaming: (taskId: number) => boolean
-  /** Get all currently streaming task IDs */
-  getStreamingTaskIds: () => number[]
+export interface MessageSyncer {
+  joinRoom: TaskStateMachineDeps['joinTask']
+  leaveRoom: (taskId: number) => void
+  isSocketConnected: () => boolean
   /** Send a chat message (returns task ID) */
   sendMessage: (
     request: ChatMessageRequest,
@@ -172,26 +145,23 @@ interface ChatStreamContextType {
    * @param team - Optional team info for fallback shell_type
    */
   stopStream: (taskId: number, backupSubtasks?: TaskDetailSubtask[], team?: Team) => Promise<void>
-  /** Reset stream state for a specific task */
-  resetStream: (taskId: number) => void
-  /** Clear all stream states */
-  clearAllStreams: () => void
+  /** Reset internal per-session transport bookkeeping */
+  resetSession: () => void
   /** Clean up messages after editing (remove edited message and all subsequent messages) */
   cleanupMessagesAfterEdit: (taskId: number, editedSubtaskId: number) => void
-  /** Version number that increments when clearAllStreams is called */
-  clearVersion: number
 }
 
-// Export the context for components that need optional access
-export const ChatStreamContext = createContext<ChatStreamContextType | undefined>(undefined)
+interface MessageSyncerOptions {
+  getMachine: () => TaskStateMachine | null
+  ensureMachine: (taskId: number) => TaskStateMachine
+  onTaskIdResolved: (realTaskId: number, previousTaskId: number) => void
+}
 
-/**
- * Provider component for chat stream context
- */
-export function ChatStreamProvider({ children }: { children: ReactNode }) {
-  // Version number that increments when clearAllStreams is called
-  const [clearVersion, setClearVersion] = React.useState(0)
-
+export function useMessageSyncer({
+  getMachine,
+  ensureMachine,
+  onTaskIdResolved,
+}: MessageSyncerOptions): MessageSyncer {
   // Get socket context
   const {
     isConnected,
@@ -201,6 +171,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     registerSkillHandlers,
     sendSkillResponse,
     joinTask,
+    leaveTask,
   } = useSocket()
 
   // Refs for callbacks (don't need to trigger re-renders)
@@ -217,282 +188,275 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
 
   // Ref to track temporary task ID to real task ID mapping
   const tempToRealTaskIdRef = useRef<Map<number, number>>(new Map())
-  // Ref read by TaskStateManager deps. Keep it current during render so
-  // child recovery effects in the same commit see the latest socket state.
+  // Ref read by TaskStateMachine deps. Keep it current during render so
+  // recovery effects in the same commit see the latest socket state.
   const isConnectedRef = useRef(isConnected)
   isConnectedRef.current = isConnected
 
-  // Initialize TaskStateManager with dependencies on mount
-  useEffect(() => {
-    if (!taskStateManager.isInitialized()) {
-      taskStateManager.initialize({
-        joinTask: joinTask,
-        isConnected: () => isConnectedRef.current,
-      })
-    }
-  }, [joinTask])
-
-  // Page visibility recovery: recover all tasks when page becomes visible after being hidden
-  // This handles the case where WebSocket events might have been missed while the page was in background
-  usePageVisibility({
-    minHiddenTime: 3000, // Recover if page was hidden for more than 3 seconds
-    onVisible: (_: number) => {
-      if (taskStateManager.isInitialized() && isConnected) {
-        taskStateManager.recoverAll().catch(err => {
-          console.error('[ChatStreamContext] Error recovering tasks after page visible:', err)
-        })
-      }
+  const getMachineForTask = useCallback(
+    (taskId: number): TaskStateMachine | null => {
+      const machine = getMachine()
+      if (!machine || machine.getState().taskId !== taskId) return null
+      return machine
     },
-  })
-
-  /**
-   * Check if a task is currently streaming
-   */
-  const isTaskStreaming = useCallback((taskId: number): boolean => {
-    const machine = taskStateManager.get(taskId)
-    if (!machine) return false
-    return machine.getState().status === 'streaming'
-  }, [])
-
-  /**
-   * Get all currently streaming task IDs
-   */
-  const getStreamingTaskIds = useCallback((): number[] => {
-    return taskStateManager.getStreamingTaskIds()
-  }, [])
+    [getMachine]
+  )
 
   /**
    * Handle chat:start event from WebSocket
    */
-  const handleChatStart = useCallback((data: ChatStartPayload) => {
-    const { task_id, subtask_id, shell_type, message_id } = data
+  const handleChatStart = useCallback(
+    (data: ChatStartPayload) => {
+      const { task_id, subtask_id, shell_type, message_id } = data
 
-    // Get or create state machine and dispatch event
-    const machine = taskStateManager.getOrCreate(task_id)
-    machine.handleChatStart(subtask_id, shell_type, message_id)
-  }, [])
+      const machine = getMachineForTask(task_id)
+      machine?.handleChatStart(subtask_id, shell_type, message_id)
+    },
+    [getMachineForTask]
+  )
 
   /**
    * Handle chat:chunk event from WebSocket
    * Uses task_id from event payload directly (no subtaskToTaskRef needed)
    */
-  const handleChatChunk = useCallback((data: ChatChunkPayload) => {
-    const { subtask_id, content, result, sources, block_id, task_id: taskId } = data
+  const handleChatChunk = useCallback(
+    (data: ChatChunkPayload) => {
+      const { subtask_id, content, offset, result, sources, block_id, task_id: taskId } = data
 
-    if (!taskId) {
-      console.warn('[ChatStreamContext] Received chunk without task_id:', subtask_id)
-      return
-    }
+      if (!taskId) {
+        console.warn('[messageSyncer] Received chunk without task_id:', subtask_id)
+        return
+      }
 
-    // Get or create state machine (handles page refresh recovery)
-    const machine = taskStateManager.getOrCreate(taskId)
-    machine.handleChatChunk(
-      subtask_id,
-      content,
-      result as UnifiedMessage['result'],
-      sources,
-      block_id
-    )
-  }, [])
+      const machine = getMachineForTask(taskId)
+      machine?.handleChatChunk(
+        subtask_id,
+        content,
+        result as UnifiedMessage['result'],
+        sources,
+        block_id,
+        offset
+      )
+    },
+    [getMachineForTask]
+  )
 
   /**
    * Handle chat:done event from WebSocket
    * Uses task_id from event payload directly
    */
-  const handleChatDone = useCallback((data: ChatDonePayload) => {
-    const { task_id: taskId, subtask_id, result, message_id, sources } = data
+  const handleChatDone = useCallback(
+    (data: ChatDonePayload) => {
+      const { task_id: taskId, subtask_id, result, message_id, sources } = data
 
-    if (!taskId) {
-      console.warn('[ChatStreamContext][chat:done] Missing task_id for subtask:', subtask_id)
-      return
-    }
+      if (!taskId) {
+        console.warn('[messageSyncer][chat:done] Missing task_id for subtask:', subtask_id)
+        return
+      }
 
-    const finalContent = (result?.value as string) || ''
-    const hasError = result?.error !== undefined
-    const errorMessage = hasError ? (result.error as string) : undefined
+      const finalContent = (result?.value as string) || ''
+      const hasError = result?.error !== undefined
+      const errorMessage = hasError ? (result.error as string) : undefined
 
-    const machine = taskStateManager.get(taskId)
-    if (machine) {
-      machine.handleChatDone(
-        subtask_id,
-        finalContent,
-        result as UnifiedMessage['result'],
-        message_id,
-        sources || (result?.sources as UnifiedMessage['sources']),
-        hasError,
-        errorMessage
-      )
-    }
-  }, [])
+      const machine = getMachineForTask(taskId)
+      if (machine) {
+        machine.handleChatDone(
+          subtask_id,
+          finalContent,
+          result as UnifiedMessage['result'],
+          message_id,
+          sources || (result?.sources as UnifiedMessage['sources']),
+          hasError,
+          errorMessage
+        )
+      }
+    },
+    [getMachineForTask]
+  )
 
   /**
    * Handle chat:error event from WebSocket
    * Uses task_id from event payload directly
    */
-  const handleChatError = useCallback((data: ChatErrorPayload) => {
-    const { subtask_id, error, message_id, task_id: taskId, type: errorType } = data
+  const handleChatError = useCallback(
+    (data: ChatErrorPayload) => {
+      const { subtask_id, error, message_id, task_id: taskId, type: errorType } = data
 
-    if (!taskId) {
-      console.warn('[ChatStreamContext] Received error without task_id:', subtask_id)
-      return
-    }
+      if (!taskId) {
+        console.warn('[messageSyncer] Received error without task_id:', subtask_id)
+        return
+      }
 
-    const machine = taskStateManager.get(taskId)
-    if (machine) {
-      machine.handleChatError(subtask_id, error, message_id, errorType)
-    }
+      const machine = getMachineForTask(taskId)
+      if (machine) {
+        machine.handleChatError(subtask_id, error, message_id, errorType)
+      }
 
-    // Call error callback
-    const callbacks = callbacksRef.current.get(taskId)
-    callbacks?.onError?.(new Error(error))
+      // Call error callback
+      const callbacks = callbacksRef.current.get(taskId)
+      callbacks?.onError?.(new Error(error))
 
-    console.error('[ChatStreamContext][chat:error]', {
-      task_id: taskId,
-      subtask_id,
-      error,
-      errorType,
-    })
-  }, [])
+      console.error('[messageSyncer][chat:error]', {
+        task_id: taskId,
+        subtask_id,
+        error,
+        errorType,
+      })
+    },
+    [getMachineForTask]
+  )
 
   /**
    * Handle chat:cancelled event from WebSocket
    * Uses task_id from event payload directly
    */
-  const handleChatCancelled = useCallback((data: ChatCancelledPayload) => {
-    const { task_id: taskId, subtask_id } = data
+  const handleChatCancelled = useCallback(
+    (data: ChatCancelledPayload) => {
+      const { task_id: taskId, subtask_id } = data
 
-    if (!taskId) {
-      console.warn('[ChatStreamContext] Received cancelled without task_id:', subtask_id)
-      return
-    }
+      if (!taskId) {
+        console.warn('[messageSyncer] Received cancelled without task_id:', subtask_id)
+        return
+      }
 
-    const machine = taskStateManager.get(taskId)
-    if (machine) {
-      machine.handleChatCancelled(subtask_id)
-    }
-  }, [])
+      const machine = getMachineForTask(taskId)
+      if (machine) {
+        machine.handleChatCancelled(subtask_id)
+      }
+    },
+    [getMachineForTask]
+  )
 
   /**
    * Handle chat:message event from WebSocket (group chat)
    * Uses task_id from event payload directly
    */
-  const handleChatMessage = useCallback((data: ChatMessagePayload) => {
-    const {
-      task_id: taskId,
-      subtask_id,
-      message_id,
-      role,
-      content,
-      sender,
-      created_at,
-      attachments,
-      contexts,
-    } = data
+  const handleChatMessage = useCallback(
+    (data: ChatMessagePayload) => {
+      const {
+        task_id: taskId,
+        subtask_id,
+        message_id,
+        role,
+        content,
+        sender,
+        created_at,
+        attachments,
+        contexts,
+      } = data
 
-    // Get or create state machine
-    const machine = taskStateManager.getOrCreate(taskId)
+      const machine = getMachineForTask(taskId)
+      if (!machine) return
 
-    // Generate message ID based on role
-    const isUserMessage = role === 'user' || role?.toUpperCase() === 'USER'
-    const msgId = isUserMessage ? `user-backend-${subtask_id}` : `ai-${subtask_id}`
+      // Generate message ID based on role
+      const isUserMessage = role === 'user' || role?.toUpperCase() === 'USER'
+      const msgId = isUserMessage ? `user-backend-${subtask_id}` : `ai-${subtask_id}`
 
-    // Check if message already exists
-    const existingState = machine.getState()
-    if (existingState.messages.has(msgId)) {
-      return
-    }
+      // Check if message already exists
+      const existingState = machine.getState()
+      if (existingState.messages.has(msgId)) {
+        return
+      }
 
-    // Add message directly to state machine
-    const newMessage: UnifiedMessage = {
-      id: msgId,
-      type: isUserMessage ? 'user' : 'ai',
-      status: 'completed',
-      content: content || '',
-      timestamp: created_at ? new Date(created_at).getTime() : Date.now(),
-      subtaskId: subtask_id,
-      messageId: message_id,
-      senderUserName: sender?.user_name,
-      senderUserId: sender?.user_id,
-      shouldShowSender: isUserMessage,
-      attachments: attachments,
-      contexts: contexts,
-    }
+      // Add message directly to state machine
+      const newMessage: UnifiedMessage = {
+        id: msgId,
+        type: isUserMessage ? 'user' : 'ai',
+        status: 'completed',
+        content: content || '',
+        timestamp: created_at ? new Date(created_at).getTime() : Date.now(),
+        subtaskId: subtask_id,
+        messageId: message_id,
+        senderUserName: sender?.user_name,
+        senderUserId: sender?.user_id,
+        shouldShowSender: isUserMessage,
+        attachments: attachments,
+        contexts: contexts,
+      }
 
-    machine.addUserMessage(newMessage)
-  }, [])
+      machine.addUserMessage(newMessage)
+    },
+    [getMachineForTask]
+  )
 
   /**
    * Handle chat:block_created event from WebSocket
    * Uses task_id from event payload directly
    */
-  const handleBlockCreated = useCallback((data: ChatBlockCreatedPayload) => {
-    const { task_id: taskId, subtask_id, block } = data
+  const handleBlockCreated = useCallback(
+    (data: ChatBlockCreatedPayload) => {
+      const { task_id: taskId, subtask_id, block } = data
 
-    if (!taskId) {
-      console.warn('[ChatStreamContext][block_created] Missing task_id for subtask:', subtask_id)
-      return
-    }
+      if (!taskId) {
+        console.warn('[messageSyncer][block_created] Missing task_id for subtask:', subtask_id)
+        return
+      }
 
-    const machine = taskStateManager.get(taskId)
-    if (machine) {
-      machine.handleChatChunk(
-        subtask_id,
-        '',
-        { blocks: [block as MessageBlock] },
-        undefined,
-        undefined
-      )
-    }
-  }, [])
+      const machine = getMachineForTask(taskId)
+      if (machine) {
+        machine.handleChatChunk(
+          subtask_id,
+          '',
+          { blocks: [block as MessageBlock] },
+          undefined,
+          undefined
+        )
+      }
+    },
+    [getMachineForTask]
+  )
 
   /**
    * Handle chat:block_updated event from WebSocket
    * Uses task_id from event payload directly
    */
-  const handleBlockUpdated = useCallback((data: ChatBlockUpdatedPayload) => {
-    const {
-      task_id: taskId,
-      subtask_id,
-      block_id,
-      content,
-      tool_output,
-      tool_input,
-      render_payload,
-      argument_status,
-      status,
-    } = data
-
-    if (!taskId) {
-      console.warn('[ChatStreamContext][block_updated] Missing task_id for subtask:', subtask_id)
-      return
-    }
-
-    // Map 'running' status to 'pending' since MessageBlock does not support 'running'
-    const mappedStatus =
-      status === 'running' ? 'pending' : (status as MessageBlock['status'] | undefined)
-
-    // Build partial block update
-    const blockUpdate: Partial<MessageBlock> = {
-      id: block_id,
-      ...(content !== undefined && { content }),
-      ...(tool_output !== undefined && { tool_output }),
-      ...(tool_input !== undefined && { tool_input }),
-      ...(render_payload !== undefined && { render_payload }),
-      ...(argument_status !== undefined && { argument_status }),
-      ...(mappedStatus !== undefined && { status: mappedStatus }),
-    }
-
-    const machine = taskStateManager.get(taskId)
-    if (machine) {
-      machine.handleChatChunk(
+  const handleBlockUpdated = useCallback(
+    (data: ChatBlockUpdatedPayload) => {
+      const {
+        task_id: taskId,
         subtask_id,
-        '',
-        { blocks: [blockUpdate as MessageBlock] },
-        undefined,
-        undefined
-      )
-    }
-  }, [])
+        block_id,
+        content,
+        tool_output,
+        tool_input,
+        render_payload,
+        argument_status,
+        status,
+      } = data
+
+      if (!taskId) {
+        console.warn('[messageSyncer][block_updated] Missing task_id for subtask:', subtask_id)
+        return
+      }
+
+      // Map 'running' status to 'pending' since MessageBlock does not support 'running'
+      const mappedStatus =
+        status === 'running' ? 'pending' : (status as MessageBlock['status'] | undefined)
+
+      // Build partial block update
+      const blockUpdate: Partial<MessageBlock> = {
+        id: block_id,
+        ...(content !== undefined && { content }),
+        ...(tool_output !== undefined && { tool_output }),
+        ...(tool_input !== undefined && { tool_input }),
+        ...(render_payload !== undefined && { render_payload }),
+        ...(argument_status !== undefined && { argument_status }),
+        ...(mappedStatus !== undefined && { status: mappedStatus }),
+      }
+
+      const machine = getMachineForTask(taskId)
+      if (machine) {
+        machine.handleChatChunk(
+          subtask_id,
+          '',
+          { blocks: [blockUpdate as MessageBlock] },
+          undefined,
+          undefined
+        )
+      }
+    },
+    [getMachineForTask]
+  )
 
   // Register WebSocket event handlers
   useEffect(() => {
@@ -641,7 +605,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           })
         }
       } else {
-        console.warn('[ChatStreamContext][skill:request] Unknown skill or action:', {
+        console.warn('[messageSyncer][skill:request] Unknown skill or action:', {
           skill_name,
           action,
         })
@@ -725,7 +689,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       }
 
       // Add to state machine immediately
-      const machine = taskStateManager.getOrCreate(immediateTaskId)
+      const machine = ensureMachine(immediateTaskId)
       machine.addUserMessage(userMessage)
 
       // Convert request to WebSocket payload
@@ -797,9 +761,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           }
           tempToRealTaskIdRef.current.set(immediateTaskId, realTaskId)
 
-          // Migrate state from temp machine to real machine
-          // This ensures user messages added to temp machine are not lost
-          taskStateManager.migrateState(immediateTaskId, realTaskId)
+          machine.renameTaskId(realTaskId)
+          onTaskIdResolved(realTaskId, immediateTaskId)
         }
 
         // Join the task room
@@ -822,7 +785,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         throw error
       }
     },
-    [isConnected, sendChatMessage, joinTask]
+    [ensureMachine, isConnected, joinTask, onTaskIdResolved, sendChatMessage]
   )
 
   /**
@@ -830,7 +793,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    */
   const stopStream = useCallback(
     async (taskId: number, backupSubtasks?: TaskDetailSubtask[], team?: Team): Promise<void> => {
-      const machine = taskStateManager.getOrCreate(taskId)
+      const machine = getMachineForTask(taskId)
       if (!machine) {
         return
       }
@@ -882,10 +845,10 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           try {
             const result = await cancelChatStream(subtaskId, partialContent, shellType)
             if (result.error) {
-              console.error('[ChatStreamContext] Failed to cancel stream:', result.error)
+              console.error('[messageSyncer] Failed to cancel stream:', result.error)
             }
           } catch (error) {
-            console.error('[ChatStreamContext] Exception during cancelChatStream:', error)
+            console.error('[messageSyncer] Exception during cancelChatStream:', error)
           }
         }
 
@@ -897,90 +860,34 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         machine.setStopping(false)
       }
     },
-    [cancelChatStream]
+    [cancelChatStream, getMachineForTask]
   )
 
-  /**
-   * Reset stream state for a specific task
-   */
-  const resetStream = useCallback((taskId: number): void => {
-    taskStateManager.cleanup(taskId)
-    callbacksRef.current.delete(taskId)
-
-    // Clean up temp to real mapping
-    tempToRealTaskIdRef.current.forEach((realId, tempId) => {
-      if (realId === taskId || tempId === taskId) {
-        tempToRealTaskIdRef.current.delete(tempId)
-      }
-    })
-  }, [])
-
-  /**
-   * Clear all stream states
-   */
-  const clearAllStreams = useCallback((): void => {
-    taskStateManager.cleanupAll()
+  const resetSession = useCallback((): void => {
     callbacksRef.current.clear()
     tempToRealTaskIdRef.current.clear()
-    setClearVersion(v => v + 1)
   }, [])
 
   /**
    * Clean up messages after editing
    */
-  const cleanupMessagesAfterEdit = useCallback((taskId: number, editedSubtaskId: number): void => {
-    const machine = taskStateManager.get(taskId)
-    if (machine) {
-      machine.cleanupMessagesAfterEdit(editedSubtaskId)
-    }
-  }, [])
-
-  return (
-    <ChatStreamContext.Provider
-      value={{
-        isTaskStreaming,
-        getStreamingTaskIds,
-        sendMessage,
-        stopStream,
-        resetStream,
-        clearAllStreams,
-        cleanupMessagesAfterEdit,
-        clearVersion,
-      }}
-    >
-      {children}
-    </ChatStreamContext.Provider>
+  const cleanupMessagesAfterEdit = useCallback(
+    (taskId: number, editedSubtaskId: number): void => {
+      const machine = getMachineForTask(taskId)
+      if (machine) {
+        machine.cleanupMessagesAfterEdit(editedSubtaskId)
+      }
+    },
+    [getMachineForTask]
   )
-}
 
-/**
- * Hook to use chat stream context
- */
-export function useChatStreamContext(): ChatStreamContextType {
-  const context = useContext(ChatStreamContext)
-  if (!context) {
-    throw new Error('useChatStreamContext must be used within a ChatStreamProvider')
+  return {
+    joinRoom: joinTask,
+    leaveRoom: leaveTask,
+    isSocketConnected: () => isConnectedRef.current,
+    sendMessage,
+    stopStream,
+    resetSession,
+    cleanupMessagesAfterEdit,
   }
-  return context
-}
-
-/**
- * Optional hook to use chat stream context without throwing.
- * Returns null when used outside of ChatStreamProvider (e.g., shared/public pages).
- */
-export function useOptionalChatStreamContext(): ChatStreamContextType | null {
-  return useContext(ChatStreamContext) ?? null
-}
-
-/**
- * Helper function to compute isStreaming from messages (for backward compatibility)
- */
-export function computeIsStreaming(messages: Map<string, UnifiedMessage> | undefined): boolean {
-  if (!messages) return false
-  for (const msg of messages.values()) {
-    if (msg.type === 'ai' && msg.status === 'streaming') {
-      return true
-    }
-  }
-  return false
 }

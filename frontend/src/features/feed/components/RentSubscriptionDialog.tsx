@@ -8,8 +8,8 @@
  * Dialog for renting a market subscription.
  * Allows users to configure trigger settings and optionally select a model.
  */
-import { useState, useCallback, useEffect } from 'react'
-import { ChevronDown, Store, Clock, Bot } from 'lucide-react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
+import { Store, Clock, Bot } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -29,15 +29,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command'
+  GroupedModelSelect,
+  type ModelCascadeLabels,
+  type SpecialModelOption,
+} from '@/components/model-select/ModelCascadeSelect'
 import { CronSchedulePicker } from './CronSchedulePicker'
 import { DateTimePicker } from '@/components/ui/date-time-picker'
 import { subscriptionApis } from '@/apis/subscription'
@@ -62,7 +58,6 @@ export function RentSubscriptionDialog({
   const [loading, setLoading] = useState(false)
   const [models, setModels] = useState<UnifiedModel[]>([])
   const [modelsLoading, setModelsLoading] = useState(false)
-  const [modelSelectorOpen, setModelSelectorOpen] = useState(false)
 
   // Form state
   const [name, setName] = useState('')
@@ -184,6 +179,28 @@ export function RentSubscriptionDialog({
   }, [])
 
   const selectedModelObj = models.find(m => m.name === selectedModel)
+  const cascadeLabels: ModelCascadeLabels = useMemo(
+    () => ({
+      ungrouped: t('common:models.ungrouped', 'Ungrouped'),
+      uncategorized: t('common:models.uncategorized', 'Uncategorized'),
+      searchPlaceholder: t('common:models.search_models', 'Search models or groups...'),
+      searchResults: t('common:models.search_results', 'Search results'),
+      noModels: t('common:models.no_models', 'No models available'),
+      noMatch: t('common:models.no_match', 'No matching models'),
+      primaryGroups: t('common:models.primary_groups', 'Primary groups'),
+      secondaryGroups: t('common:models.secondary_groups', 'Secondary groups'),
+    }),
+    [t]
+  )
+  const defaultModelOption: SpecialModelOption[] = useMemo(
+    () => [
+      {
+        key: '__default__',
+        label: t('use_default_model'),
+      },
+    ],
+    [t]
+  )
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -279,64 +296,24 @@ export function RentSubscriptionDialog({
           {/* Model selection (optional) */}
           <div className="space-y-2">
             <Label>{t('market.model_selection')}</Label>
-            <Popover open={modelSelectorOpen} onOpenChange={setModelSelectorOpen}>
-              <PopoverTrigger asChild>
-                <Button
-                  variant="outline"
-                  role="combobox"
-                  aria-expanded={modelSelectorOpen}
-                  className="w-full justify-between"
-                  disabled={modelsLoading}
-                >
-                  {selectedModelObj ? (
-                    <span className="truncate">
-                      {selectedModelObj.displayName || selectedModelObj.name}
-                    </span>
-                  ) : (
-                    <span className="text-muted-foreground">{t('select_model_placeholder')}</span>
-                  )}
-                  <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-[300px] p-0" align="start">
-                <Command>
-                  <CommandInput placeholder={t('search_model')} />
-                  <CommandList>
-                    <CommandEmpty>{t('no_model_found')}</CommandEmpty>
-                    <CommandGroup>
-                      <CommandItem
-                        value=""
-                        onSelect={() => {
-                          setSelectedModel('')
-                          setModelSelectorOpen(false)
-                        }}
-                      >
-                        <span className="text-muted-foreground">{t('use_default_model')}</span>
-                      </CommandItem>
-                      {models.map(model => (
-                        <CommandItem
-                          key={model.name}
-                          value={model.name}
-                          onSelect={() => {
-                            setSelectedModel(model.name)
-                            setModelSelectorOpen(false)
-                          }}
-                        >
-                          <div className="flex flex-col">
-                            <span>{model.displayName || model.name}</span>
-                            {model.provider && (
-                              <span className="text-xs text-muted-foreground">
-                                {model.provider}
-                              </span>
-                            )}
-                          </div>
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
+            <GroupedModelSelect
+              models={models}
+              selectedModel={selectedModelObj || null}
+              selectedSpecialKey={selectedModel ? null : '__default__'}
+              specialOptions={defaultModelOption}
+              labels={cascadeLabels}
+              onSelectModel={model => setSelectedModel(model.name)}
+              onSelectSpecialOption={() => setSelectedModel('')}
+              placeholder={modelsLoading ? t('common:loading') : t('select_model_placeholder')}
+              disabled={modelsLoading}
+              dataTestId="rent-subscription-model-select"
+              getModelKey={model => `${model.type}-${model.namespace}-${model.name}`}
+              renderModelMeta={model =>
+                model.provider ? (
+                  <span className="block truncate text-xs text-text-muted">{model.provider}</span>
+                ) : null
+              }
+            />
           </div>
 
           {/* Hidden info */}

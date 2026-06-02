@@ -9,6 +9,7 @@ This module contains functions for converting Task and related Kind objects
 to dictionary format for API responses.
 """
 
+import json
 import logging
 from typing import Any, Dict
 
@@ -21,6 +22,35 @@ from app.services.readers.kinds import KindType, kindReader
 from app.services.readers.users import userReader
 
 logger = logging.getLogger(__name__)
+
+
+def _get_model_selection_labels(task_crd: Task) -> Dict[str, Any]:
+    """Extract model selection labels from a task CRD."""
+    labels = task_crd.metadata.labels if task_crd.metadata else {}
+    model_options = None
+    raw_model_options = labels.get("modelOptions") if labels else None
+    if raw_model_options:
+        try:
+            parsed = json.loads(raw_model_options)
+            if isinstance(parsed, dict):
+                model_options = {
+                    str(key): str(value)
+                    for key, value in parsed.items()
+                    if value is not None
+                }
+        except (TypeError, ValueError):
+            logger.warning(
+                "Failed to parse task modelOptions label: %s",
+                raw_model_options,
+            )
+
+    return {
+        "model_id": labels.get("modelId") if labels else None,
+        "force_override_bot_model_type": (
+            labels.get("forceOverrideBotModelType") if labels else None
+        ),
+        "model_options": model_options,
+    }
 
 
 def convert_to_task_dict(task: Kind, db: Session, user_id: int) -> Dict[str, Any]:
@@ -108,7 +138,7 @@ def convert_to_task_dict(task: Kind, db: Session, user_id: int) -> Dict[str, Any
         task_crd.metadata.labels and task_crd.metadata.labels.get("taskType") or "chat"
     )
 
-    model_id = task_crd.metadata.labels and task_crd.metadata.labels.get("modelId")
+    model_selection = _get_model_selection_labels(task_crd)
 
     # Extract preserve_executor flag from task labels
     preserve_executor = (
@@ -153,6 +183,7 @@ def convert_to_task_dict(task: Kind, db: Session, user_id: int) -> Dict[str, Any
         "task_type": task_type,
         "user_id": task.user_id,
         "user_name": user_name,
+        "client_origin": task.client_origin,
         "title": task_crd.spec.title,
         "team_id": team_id,
         "git_url": git_url,
@@ -168,7 +199,7 @@ def convert_to_task_dict(task: Kind, db: Session, user_id: int) -> Dict[str, Any
         "created_at": created_at or task.created_at,
         "updated_at": updated_at or task.updated_at,
         "completed_at": completed_at,
-        "model_id": model_id,
+        **model_selection,
         "is_group_chat": is_group_chat,
         "app": app_data,
         "device_id": device_id,
@@ -208,6 +239,7 @@ def convert_to_task_dict_optimized(
         task_crd.metadata.labels
         and task_crd.metadata.labels.get("preserveExecutor") == "true"
     )
+    model_selection = _get_model_selection_labels(task_crd)
 
     return {
         "id": task.id,
@@ -215,6 +247,7 @@ def convert_to_task_dict_optimized(
         "task_type": task_type,
         "user_id": task.user_id,
         "user_name": related_data.get("user_name", ""),
+        "client_origin": task.client_origin,
         "title": task_crd.spec.title,
         "team_id": related_data.get("team_id"),
         "git_url": workspace_data.get("git_url", ""),
@@ -230,6 +263,7 @@ def convert_to_task_dict_optimized(
         "created_at": related_data.get("created_at", task.created_at),
         "updated_at": related_data.get("updated_at", task.updated_at),
         "completed_at": related_data.get("completed_at"),
+        **model_selection,
         "is_group_chat": related_data.get("is_group_chat", False),
         "app": (
             task_crd.status.app.model_dump()

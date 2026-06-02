@@ -12,7 +12,7 @@ import { taskApis, CreateTaskRequest } from '@/apis/tasks'
  * 2. team.bots[0].bot.shell_type === 'Chat' (fallback for task detail teams)
  *
  * NOTE: Chat Shell now uses WebSocket for streaming instead of SSE.
- * The streaming is handled by ChatStreamContext, not this service.
+ * The streaming is handled by TaskSessionContext, not this service.
  *
  * @param team - Team to check
  * @returns true if the team uses Chat Shell
@@ -111,7 +111,7 @@ export interface SendMessageResult {
 /**
  * Send message for non-Chat Shell teams.
  *
- * NOTE: For Chat Shell teams, use ChatStreamContext.startStream() instead.
+ * NOTE: For Chat Shell teams, use TaskSessionContext.startStream() instead.
  * This function is only for non-streaming task creation (e.g., code tasks, Dify, etc.)
  *
  * @param params - Message parameters

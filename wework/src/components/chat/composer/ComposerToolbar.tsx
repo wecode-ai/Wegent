@@ -1,6 +1,6 @@
 import { ArrowUp, Mic } from 'lucide-react'
-import { useTranslation } from 'react-i18next'
-import type { SkillRef, UnifiedModel, UnifiedSkill } from '@/types/api'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { ModelOptions, SkillRef, UnifiedModel, UnifiedSkill } from '@/types/api'
 import { AddContextMenu } from './AddContextMenu'
 import { ModelSelector } from './ModelSelector'
 import { SkillSelector } from './SkillSelector'
@@ -10,9 +10,12 @@ interface ComposerToolbarProps {
   models: UnifiedModel[]
   skills: UnifiedSkill[]
   selectedModel: UnifiedModel | null
+  selectedModelOptions: ModelOptions
+  isModelSelectionReady: boolean
   selectedSkills: SkillRef[]
   optionsLocked: boolean
   onSelectModel: (model: UnifiedModel | null) => void
+  onSelectModelOption: (optionId: string, value: string) => void
   onToggleSkill: (skill: SkillRef) => void
   onFileSelect: (files: File | File[]) => void
 }
@@ -22,9 +25,12 @@ export function ComposerToolbar({
   models,
   skills,
   selectedModel,
+  selectedModelOptions,
+  isModelSelectionReady,
   selectedSkills,
   optionsLocked,
   onSelectModel,
+  onSelectModelOption,
   onToggleSkill,
   onFileSelect,
 }: ComposerToolbarProps) {
@@ -42,12 +48,21 @@ export function ComposerToolbar({
         />
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        <ModelSelector
-          models={models}
-          selectedModel={selectedModel}
-          disabled={optionsLocked}
-          onSelectModel={onSelectModel}
-        />
+        {isModelSelectionReady ? (
+          <ModelSelector
+            models={models}
+            selectedModel={selectedModel}
+            selectedModelOptions={selectedModelOptions}
+            disabled={optionsLocked}
+            onSelectModel={onSelectModel}
+            onSelectModelOption={onSelectModelOption}
+          />
+        ) : (
+          <div
+            className="h-11 w-32 shrink-0"
+            data-testid="model-selector-loading"
+          />
+        )}
         <button
           type="button"
           data-testid="voice-input-button"

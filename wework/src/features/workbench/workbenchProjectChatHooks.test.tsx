@@ -21,6 +21,7 @@ describe('workbench project chat hooks', () => {
 
     act(() => result.current.setSelectedModel(model))
     expect(result.current.selectedModel).toEqual(model)
+    expect(result.current.selectedModelOptions).toEqual({})
 
     rerender({ locked: true })
     act(() => result.current.setSelectedModel(null))
@@ -28,16 +29,120 @@ describe('workbench project chat hooks', () => {
     expect(result.current.selectedModel).toEqual(model)
   })
 
-  test('keeps only models whose name includes claude', async () => {
+  test('keeps known and uncategorized coding model families', async () => {
     const claudeModel: UnifiedModel = { name: 'wecode-claude-sonnet-4-5', type: 'public' }
     const gptModel: UnifiedModel = { name: 'wecode-gpt-4.1', type: 'public' }
+    const unknownModel: UnifiedModel = { name: 'unknown-model', type: 'public' }
+    const api = {
+      listModels: vi.fn().mockResolvedValue({ data: [claudeModel, gptModel, unknownModel] }),
+    }
+
+    const { result } = renderHook(() => useWorkbenchModels({ api, locked: false }))
+
+    await waitFor(() =>
+      expect(result.current.models).toEqual([claudeModel, gptModel, unknownModel])
+    )
+  })
+
+  test('restores model selection config and emits user changes', async () => {
+    const claudeModel: UnifiedModel = { name: 'wecode-claude-sonnet-4-5', type: 'public' }
+    const gptModel: UnifiedModel = {
+      name: 'overseas-gpt-5.4',
+      type: 'user',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.4',
+          sortOrder: 10,
+        },
+      },
+    }
+    const onSelectionChange = vi.fn()
     const api = {
       listModels: vi.fn().mockResolvedValue({ data: [claudeModel, gptModel] }),
+    }
+
+    const { result } = renderHook(() =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        selectionConfig: {
+          modelName: 'overseas-gpt-5.4',
+          modelType: 'user',
+          options: { reasoning: 'medium' },
+        },
+        onSelectionChange,
+      })
+    )
+
+    await waitFor(() => expect(result.current.selectedModel).toEqual(gptModel))
+    expect(result.current.selectedModelOptions).toEqual({ reasoning: 'medium' })
+
+    act(() => result.current.setSelectedModelOption('reasoning', 'high'))
+
+    expect(onSelectionChange).toHaveBeenCalledWith({
+      modelName: 'overseas-gpt-5.4',
+      modelType: 'user',
+      options: { reasoning: 'high' },
+    })
+  })
+
+  test('waits for selection readiness before restoring configured model', async () => {
+    const claudeModel: UnifiedModel = { name: 'wecode-claude-sonnet-4-5', type: 'public' }
+    const gptModel: UnifiedModel = {
+      name: 'overseas-gpt-5.4',
+      type: 'user',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.4',
+          sortOrder: 10,
+        },
+      },
+    }
+    const api = {
+      listModels: vi.fn().mockResolvedValue({ data: [claudeModel, gptModel] }),
+    }
+    const selectionConfig = {
+      modelName: 'overseas-gpt-5.4',
+      modelType: 'user' as const,
+      options: { reasoning: 'high' },
+    }
+
+    const { result, rerender } = renderHook(
+      ({ selectionReady }: { selectionReady: boolean }) =>
+        useWorkbenchModels({
+          api,
+          locked: false,
+          selectionConfig,
+          selectionReady,
+        }),
+      { initialProps: { selectionReady: false } },
+    )
+
+    await waitFor(() => expect(result.current.models).toEqual([claudeModel, gptModel]))
+    expect(result.current.selectedModel).toBeNull()
+    expect(result.current.selectedModelOptions).toEqual({})
+
+    rerender({ selectionReady: true })
+
+    await waitFor(() => expect(result.current.selectedModel).toEqual(gptModel))
+    expect(result.current.selectedModelOptions).toEqual({ reasoning: 'high' })
+  })
+
+  test('does not auto-select the first model without saved selection config', async () => {
+    const claudeModel: UnifiedModel = { name: 'wecode-claude-sonnet-4-5', type: 'public' }
+    const api = {
+      listModels: vi.fn().mockResolvedValue({ data: [claudeModel] }),
     }
 
     const { result } = renderHook(() => useWorkbenchModels({ api, locked: false }))
 
     await waitFor(() => expect(result.current.models).toEqual([claudeModel]))
+    expect(result.current.selectedModel).toBeNull()
+    expect(result.current.selectedModelOptions).toEqual({})
   })
 
   test('loads skills and ignores skill changes when locked', async () => {

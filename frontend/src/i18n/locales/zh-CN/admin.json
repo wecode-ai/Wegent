@@ -148,6 +148,10 @@
       "name_placeholder": "请输入模型名称",
       "namespace": "命名空间",
       "namespace_placeholder": "default",
+      "model_group": "一级分组",
+      "model_group_placeholder": "填写一级分组",
+      "model_sub_group": "二级分组",
+      "model_sub_group_placeholder": "填写二级分组",
       "config": "模型配置",
       "config_placeholder": "请输入 JSON 格式的模型配置",
       "is_advanced": "高级模型"

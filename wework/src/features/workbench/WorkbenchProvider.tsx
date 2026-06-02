@@ -8,6 +8,7 @@ import { createProjectApi } from '@/api/projects'
 import { createSkillApi } from '@/api/skills'
 import { createTaskApi } from '@/api/tasks'
 import { createTeamApi } from '@/api/teams'
+import { createUserApi } from '@/api/users'
 import { getRuntimeConfig } from '@/config/runtime'
 import { createChatStream } from '@/stream/chatStream'
 import { createSocketClient } from '@/stream/socketClient'
@@ -17,6 +18,9 @@ import type {
   ArchivedTaskListResponse,
   ChatSendPayload,
   CreateProjectRequest,
+  DeviceInfo,
+  ModelOptions,
+  ModelSelectionConfig,
   ProjectWithTasks,
   SkillRef,
   Subtask,
@@ -37,6 +41,8 @@ import {
 } from './workbenchReducer'
 import { WorkbenchContext } from './useWorkbench'
 
+const WEWORK_CLIENT_ORIGIN = 'wework'
+
 export interface WorkbenchServices {
   teamApi: ReturnType<typeof createTeamApi>
   modelApi: ReturnType<typeof createModelApi>
@@ -44,6 +50,7 @@ export interface WorkbenchServices {
   projectApi: ReturnType<typeof createProjectApi>
   taskApi: ReturnType<typeof createTaskApi>
   deviceApi: ReturnType<typeof createDeviceApi>
+  userApi?: ReturnType<typeof createUserApi>
   chatStream: ReturnType<typeof createChatStream>
 }
 
@@ -54,6 +61,8 @@ export interface WorkbenchContextValue {
     models: UnifiedModel[]
     skills: UnifiedSkill[]
     selectedModel: UnifiedModel | null
+    selectedModelOptions: ModelOptions
+    isModelSelectionReady: boolean
     selectedSkills: SkillRef[]
     attachments: Attachment[]
     uploadingFiles: Map<string, { file: File; progress: number }>
@@ -61,6 +70,7 @@ export interface WorkbenchContextValue {
     isOptionsLocked: boolean
     isAttachmentReadyToSend: boolean
     setSelectedModel: (model: UnifiedModel | null) => void
+    setSelectedModelOption: (optionId: string, value: string) => void
     setSelectedSkills: (skills: SkillRef[]) => void
     toggleSkill: (skill: SkillRef) => void
     handleFileSelect: (files: File | File[]) => Promise<void>
@@ -75,6 +85,7 @@ export interface WorkbenchContextValue {
   startStandaloneChat: () => void
   startNewProjectChat: (projectId: number) => void
   openTask: (taskId: number, projectId?: number) => Promise<void>
+  rememberExecutionDevice: (deviceId: string) => void
   refreshWorkLists: () => Promise<void>
   refreshDevices: () => Promise<void>
   createProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
@@ -119,6 +130,7 @@ function createDefaultServices(): WorkbenchServices {
     projectApi: createProjectApi(client),
     taskApi: createTaskApi(client),
     deviceApi: createDeviceApi(client),
+    userApi: createUserApi(client),
     chatStream: createChatStream(socket),
   }
 }
@@ -221,9 +233,44 @@ function writeLastProjectId(userId: number, projectId: number) {
   }
 }
 
+function getTaskModelSelection(task: Task | null): ModelSelectionConfig | null {
+  if (!task?.model_id) return null
+  return {
+    modelName: task.model_id,
+    modelType: task.force_override_bot_model_type ?? null,
+    options: task.model_options ?? {},
+  }
+}
+
+function getNewChatModelSelection(user: User | null): ModelSelectionConfig | null {
+  return user?.preferences?.wework_new_chat_model_selection ?? null
+}
+
 function isRunningTaskStatus(status?: string) {
   return ['PENDING', 'RUNNING', 'STARTED', 'PROCESSING', 'IN_PROGRESS'].includes(
     String(status ?? '').toUpperCase()
+  )
+}
+
+function resolveOpenedTaskProjectId(
+  task: Task,
+  listTask: Task | undefined,
+  explicitProjectId?: number
+): number | undefined {
+  if (explicitProjectId !== undefined) return explicitProjectId
+  if (task.project_id !== undefined) return task.project_id
+  if (listTask && !listTask.project_id) return 0
+  return undefined
+}
+
+function getRememberedStandaloneDeviceId(
+  user: User,
+  devices: DeviceInfo[],
+  fallbackDeviceId?: string | null
+) {
+  return getPreferredStandaloneDeviceId(
+    devices,
+    user.preferences?.default_execution_target ?? fallbackDeviceId
   )
 }
 
@@ -242,9 +289,36 @@ export function WorkbenchProvider({
   )
   const [messages, dispatchMessages] = useReducer(messageReducer, [])
   const isOptionsLocked = Boolean(state.currentTask)
+  const currentUser = state.user ?? user
+  const modelSelectionConfig = useMemo(
+    () =>
+      getTaskModelSelection(state.currentTask) ??
+      getNewChatModelSelection(currentUser) ??
+      null,
+    [currentUser, state.currentTask]
+  )
+  const persistNewChatModelSelection = useCallback(
+    (selection: ModelSelectionConfig) => {
+      if (state.currentTask) return
+      const preferences = {
+        ...(currentUser.preferences ?? {}),
+        wework_new_chat_model_selection: selection,
+      }
+      dispatch({ type: 'user_preferences_updated', preferences })
+      void resolvedServices.userApi
+        ?.updateCurrentUser({ preferences })
+        .catch(() => {
+          dispatch({ type: 'error_set', error: '模型配置保存失败' })
+        })
+    },
+    [currentUser.preferences, resolvedServices.userApi, state.currentTask]
+  )
   const modelSelection = useWorkbenchModels({
     api: resolvedServices.modelApi,
     locked: isOptionsLocked,
+    selectionConfig: modelSelectionConfig,
+    selectionReady: !state.isBootstrapping,
+    onSelectionChange: persistNewChatModelSelection,
   })
   const skillSelection = useWorkbenchSkills({
     api: resolvedServices.skillApi,
@@ -284,7 +358,7 @@ export function WorkbenchProvider({
         recentTasks:
           recentTasksResult.status === 'fulfilled' ? recentTasksResult.value.items : [],
         currentProject,
-        standaloneDeviceId: getPreferredStandaloneDeviceId(devices),
+        standaloneDeviceId: getRememberedStandaloneDeviceId(user, devices),
       })
     }
 
@@ -413,12 +487,34 @@ export function WorkbenchProvider({
     })
   }, [refreshDevices, resolvedServices])
 
+  const rememberExecutionDevice = useCallback(
+    (deviceId: string) => {
+      dispatch({
+        type: 'standalone_device_preference_changed',
+        standaloneDeviceId:
+          getPreferredStandaloneDeviceId(state.devices, deviceId) ?? deviceId,
+      })
+      void resolvedServices.userApi
+        ?.updateCurrentUser({
+          preferences: {
+            ...(user.preferences ?? {}),
+            default_execution_target: deviceId,
+          },
+        })
+        .catch(() => {
+          // Keep the in-session selection even if preference persistence fails.
+        })
+    },
+    [resolvedServices.userApi, state.devices, user.preferences]
+  )
+
   const selectProject = useCallback(
     (projectId: number | null) => {
       if (projectId === null) {
         dispatch({
           type: 'project_cleared',
-          standaloneDeviceId: getPreferredStandaloneDeviceId(
+          standaloneDeviceId: getRememberedStandaloneDeviceId(
+            user,
             state.devices,
             state.standaloneDeviceId
           ),
@@ -433,21 +529,30 @@ export function WorkbenchProvider({
         dispatchMessages({ type: 'reset', messages: [] })
       }
     },
-    [state.devices, state.projects, state.standaloneDeviceId, user.id]
+    [state.devices, state.projects, state.standaloneDeviceId, user]
   )
 
   const selectStandaloneDevice = useCallback(
     (deviceId: string | null) => {
+      const standaloneDeviceId = getPreferredStandaloneDeviceId(
+        state.devices,
+        deviceId ?? user.preferences?.default_execution_target ?? state.standaloneDeviceId
+      )
+      if (standaloneDeviceId) {
+        rememberExecutionDevice(standaloneDeviceId)
+      }
       dispatch({
         type: 'project_cleared',
-        standaloneDeviceId: getPreferredStandaloneDeviceId(
-          state.devices,
-          deviceId ?? state.standaloneDeviceId
-        ),
+        standaloneDeviceId,
       })
       dispatchMessages({ type: 'reset', messages: [] })
     },
-    [state.devices, state.standaloneDeviceId]
+    [
+      rememberExecutionDevice,
+      state.devices,
+      state.standaloneDeviceId,
+      user.preferences?.default_execution_target,
+    ]
   )
 
   const startNewChat = useCallback(() => {
@@ -460,25 +565,27 @@ export function WorkbenchProvider({
     } else {
       dispatch({
         type: 'project_cleared',
-        standaloneDeviceId: getPreferredStandaloneDeviceId(
+        standaloneDeviceId: getRememberedStandaloneDeviceId(
+          user,
           state.devices,
           state.standaloneDeviceId
         ),
       })
     }
     dispatchMessages({ type: 'reset', messages: [] })
-  }, [state.devices, state.projects, state.standaloneDeviceId, user.id])
+  }, [state.devices, state.projects, state.standaloneDeviceId, user])
 
   const startStandaloneChat = useCallback(() => {
     dispatch({
       type: 'project_cleared',
-      standaloneDeviceId: getPreferredStandaloneDeviceId(
+      standaloneDeviceId: getRememberedStandaloneDeviceId(
+        user,
         state.devices,
         state.standaloneDeviceId
       ),
     })
     dispatchMessages({ type: 'reset', messages: [] })
-  }, [state.devices, state.standaloneDeviceId])
+  }, [state.devices, state.standaloneDeviceId, user])
 
   const startNewProjectChat = useCallback(
     (projectId: number) => {
@@ -491,11 +598,18 @@ export function WorkbenchProvider({
   const openTask = useCallback(
     async (taskId: number, projectId?: number) => {
       const detail = await resolvedServices.taskApi.getTaskDetail(taskId)
+      const detailTask = detail as Task
+      const listTask = state.recentTasks.find(item => item.id === taskId)
+      const resolvedProjectId = resolveOpenedTaskProjectId(
+        detailTask,
+        listTask,
+        projectId
+      )
       const project =
-        projectId === undefined
+        resolvedProjectId === undefined
           ? undefined
-          : projectId > 0
-            ? state.projects.find(item => item.id === projectId) ?? null
+          : resolvedProjectId > 0
+            ? state.projects.find(item => item.id === resolvedProjectId) ?? null
             : null
       if (project) {
         writeLastProjectId(user.id, project.id)
@@ -508,7 +622,7 @@ export function WorkbenchProvider({
           project === null
             ? getPreferredStandaloneDeviceId(
                 state.devices,
-                (detail as Task).device_id ?? state.standaloneDeviceId
+                detailTask.device_id ?? listTask?.device_id ?? state.standaloneDeviceId
               )
             : undefined,
       })
@@ -518,7 +632,14 @@ export function WorkbenchProvider({
       })
       await resolvedServices.chatStream.joinTask(taskId)
     },
-    [resolvedServices, state.devices, state.projects, state.standaloneDeviceId, user.id]
+    [
+      resolvedServices,
+      state.devices,
+      state.projects,
+      state.recentTasks,
+      state.standaloneDeviceId,
+      user.id,
+    ]
   )
 
   const setInput = useCallback((input: string) => {
@@ -528,13 +649,17 @@ export function WorkbenchProvider({
   const createProject = useCallback(
     async (data: CreateProjectRequest) => {
       const project = await resolvedServices.projectApi.createProject(data)
+      const projectDeviceId = data.config?.execution?.deviceId ?? data.config?.device_id
+      if (projectDeviceId) {
+        rememberExecutionDevice(projectDeviceId)
+      }
       await refreshWorkLists()
       writeLastProjectId(user.id, project.id)
       dispatch({ type: 'project_selected', project })
       dispatchMessages({ type: 'reset', messages: [] })
       return project
     },
-    [refreshWorkLists, resolvedServices, user.id]
+    [refreshWorkLists, rememberExecutionDevice, resolvedServices, user.id]
   )
 
   const updateProjectName = useCallback(
@@ -685,6 +810,7 @@ export function WorkbenchProvider({
       task_id: state.currentTask?.id,
       team_id: state.defaultTeam.id,
       project_id: state.currentTask ? undefined : state.currentProject?.id,
+      client_origin: WEWORK_CLIENT_ORIGIN,
       device_id: activeDeviceId,
       task_type: 'code',
       message,
@@ -693,6 +819,9 @@ export function WorkbenchProvider({
     if (!isOptionsLocked && modelSelection.selectedModel) {
       payload.force_override_bot_model = modelSelection.selectedModel.name
       payload.force_override_bot_model_type = modelSelection.selectedModel.type
+      if (Object.keys(modelSelection.selectedModelOptions).length > 0) {
+        payload.model_options = modelSelection.selectedModelOptions
+      }
     }
 
     if (!isOptionsLocked && skillSelection.selectedSkills.length > 0) {
@@ -722,7 +851,11 @@ export function WorkbenchProvider({
         task_type: 'code',
         team_id: state.defaultTeam.id,
         project_id: projectId,
+        client_origin: WEWORK_CLIENT_ORIGIN,
         device_id: activeDeviceId,
+        model_id: payload.force_override_bot_model,
+        force_override_bot_model_type: payload.force_override_bot_model_type,
+        model_options: payload.model_options,
         created_at: new Date().toISOString(),
       }
       dispatch({
@@ -742,6 +875,7 @@ export function WorkbenchProvider({
     refreshWorkLists,
     isOptionsLocked,
     modelSelection.selectedModel,
+    modelSelection.selectedModelOptions,
     resolvedServices,
     skillSelection.selectedSkills,
     state.currentProject,
@@ -776,6 +910,8 @@ export function WorkbenchProvider({
       models: modelSelection.models,
       skills: skillSelection.skills,
       selectedModel: modelSelection.selectedModel,
+      selectedModelOptions: modelSelection.selectedModelOptions,
+      isModelSelectionReady: modelSelection.isSelectionReady,
       selectedSkills: skillSelection.selectedSkills,
       attachments: attachmentSelection.attachments,
       uploadingFiles: attachmentSelection.uploadingFiles,
@@ -783,6 +919,7 @@ export function WorkbenchProvider({
       isOptionsLocked,
       isAttachmentReadyToSend: attachmentSelection.isAttachmentReadyToSend,
       setSelectedModel: modelSelection.setSelectedModel,
+      setSelectedModelOption: modelSelection.setSelectedModelOption,
       setSelectedSkills: skillSelection.setSelectedSkills,
       toggleSkill: skillSelection.toggleSkill,
       handleFileSelect: attachmentSelection.handleFileSelect,
@@ -796,6 +933,7 @@ export function WorkbenchProvider({
     startStandaloneChat,
     startNewProjectChat,
     openTask,
+    rememberExecutionDevice,
     refreshWorkLists,
     refreshDevices,
     createProject,

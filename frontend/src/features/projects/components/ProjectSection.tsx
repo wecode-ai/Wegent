@@ -26,7 +26,7 @@ import { ProjectDeleteDialog } from './ProjectDeleteDialog'
 import { DroppableProject } from './DroppableProject'
 import { DraggableProjectTask } from './DraggableProjectTask'
 import { ProjectTaskMenu } from './ProjectTaskMenu'
-import { ProjectWithTasks, ProjectTask, Task } from '@/types/api'
+import { ProjectWithTasks, ProjectTask } from '@/types/api'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -36,8 +36,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { paths } from '@/config/paths'
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { TaskInlineRename } from '@/components/common/TaskInlineRename'
 import { taskApis } from '@/apis/tasks'
 import {
@@ -64,17 +63,15 @@ export function ProjectSection({ onTaskSelect, variant = 'all' }: ProjectSection
     setSelectedProjectTaskId,
     refreshProjects,
   } = useProjectContext()
-  const { clearAllStreams } = useChatStreamContext()
-  const { setSelectedTask } = useTaskContext()
+  const { selectTask } = useTaskSession()
   const isWorkspaceSection = variant === 'workspace'
   const isGroupSection = variant === 'group'
   const isUnifiedSection = variant === 'all'
 
   const handleNewConversation = useCallback(
     (project: ProjectWithTasks) => {
-      clearAllStreams()
       setSelectedProjectTaskId(null)
-      setSelectedTask(null as unknown as Task)
+      selectTask(null)
 
       const params = new URLSearchParams()
       params.set('projectId', String(project.id))
@@ -85,7 +82,7 @@ export function ProjectSection({ onTaskSelect, variant = 'all' }: ProjectSection
       router.push(`/devices/chat?${params.toString()}`)
       onTaskSelect?.()
     },
-    [clearAllStreams, setSelectedProjectTaskId, setSelectedTask, router, onTaskSelect]
+    [setSelectedProjectTaskId, selectTask, router, onTaskSelect]
   )
   const visibleProjects = projects.filter(project => {
     if (isWorkspaceSection) {
@@ -121,19 +118,8 @@ export function ProjectSection({ onTaskSelect, variant = 'all' }: ProjectSection
 
   // Handle task click - navigate to the task
   const handleTaskClick = (projectTask: ProjectTask, project: ProjectWithTasks) => {
-    // Clear all stream states when switching tasks
-    clearAllStreams()
-
     // Set project task as selected (for project section highlight)
     setSelectedProjectTaskId(projectTask.task_id)
-
-    // IMPORTANT: Set selected task with minimal data to prevent "New Conversation" flash
-    setSelectedTask({
-      id: projectTask.task_id,
-      title: projectTask.task_title || '',
-      status: projectTask.task_status,
-      is_group_chat: projectTask.is_group_chat,
-    } as Task)
 
     const params = new URLSearchParams()
     params.set('taskId', String(projectTask.task_id))

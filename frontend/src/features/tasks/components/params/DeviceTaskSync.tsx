@@ -5,7 +5,7 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { useDevices } from '@/contexts/DeviceContext'
 
 /**
@@ -16,7 +16,7 @@ import { useDevices } from '@/contexts/DeviceContext'
  * on the same device.
  */
 export default function DeviceTaskSync() {
-  const { selectedTaskDetail } = useTaskContext()
+  const { selectedTaskDetail } = useTaskSession()
   const { devices, selectedDeviceId, setSelectedDeviceId } = useDevices()
 
   // Track the last task ID we processed to avoid redundant updates

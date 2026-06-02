@@ -28,6 +28,8 @@ export interface SubscriptionModel {
   provider?: string
   modelId?: string
   type?: string
+  modelGroup?: string | null
+  modelSubGroup?: string | null
 }
 
 // Props for Send Area Section (renamed to Task Settings)

@@ -199,8 +199,8 @@ export function ChatInputCard({
   shouldHideChatInput,
   isModelSelectionRequired,
   isAttachmentReadyToSend,
-  isSubtaskStreaming,
   canSendGuidance,
+  canCancelTask,
   onStopStream,
   onCancelTask,
   isCancelling,
@@ -609,9 +609,9 @@ export function ChatInputCard({
             isModelSelectionRequired={isModelSelectionRequired}
             isAttachmentReadyToSend={isAttachmentReadyToSend}
             taskInputMessage={taskInputMessage}
-            isSubtaskStreaming={isSubtaskStreaming}
             canQueueMessage={canQueueMessage}
             canSendGuidance={canSendGuidance}
+            canCancelTask={canCancelTask}
             onStopStream={onStopStream}
             onCancelTask={onCancelTask}
             isCancelling={isCancelling}

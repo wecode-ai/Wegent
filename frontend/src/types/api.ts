@@ -318,6 +318,19 @@ export interface TaskDetail {
   requested_skills?: SkillRef[] | null // User-selected skills for this task
 }
 
+export interface TaskRuntimeActiveStream {
+  subtask_id: number
+  cursor: number
+  last_activity_at?: string | null
+}
+
+export interface TaskRuntimeCheck {
+  task_id: number
+  task_status: TaskStatus
+  status_updated_at?: string | null
+  active_stream: TaskRuntimeActiveStream | null
+}
+
 /** Correction data stored in subtask.result.correction */
 export interface CorrectionData {
   model_id: string

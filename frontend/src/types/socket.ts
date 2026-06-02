@@ -446,6 +446,7 @@ export interface TaskStatusPayload {
   task_id: number
   status: string
   progress?: number
+  updated_at?: string
   completed_at?: string
 }
 

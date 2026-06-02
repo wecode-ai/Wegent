@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { Sparkles } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
@@ -16,9 +16,10 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { Button } from '@/components/ui/button'
+import {
+  ModelCascadeContent,
+  type ModelCascadeLabels,
+} from '@/components/model-select/ModelCascadeSelect'
 import { modelApis, UnifiedModel } from '@/apis/models'
 import { correctionApis, CorrectionModeState } from '@/apis/correction'
 
@@ -126,12 +127,19 @@ export default function MobileCorrectionModeToggle({
     setSearchQuery('')
   }
 
-  const filteredModels = models.filter(model => {
-    const searchLower = searchQuery.toLowerCase()
-    const nameMatch = model.name.toLowerCase().includes(searchLower)
-    const displayNameMatch = model.displayName?.toLowerCase().includes(searchLower)
-    return nameMatch || displayNameMatch
-  })
+  const cascadeLabels: ModelCascadeLabels = useMemo(
+    () => ({
+      ungrouped: t('common:models.ungrouped', 'Ungrouped'),
+      uncategorized: t('common:models.uncategorized', 'Uncategorized'),
+      searchPlaceholder: t('common:models.search_models', 'Search models or groups...'),
+      searchResults: t('common:models.search_results', 'Search results'),
+      noModels: t('chat:correction.no_models'),
+      noMatch: t('common:models.no_match', 'No matching models'),
+      primaryGroups: t('common:models.primary_groups', 'Primary groups'),
+      secondaryGroups: t('common:models.secondary_groups', 'Secondary groups'),
+    }),
+    [t]
+  )
 
   return (
     <>
@@ -174,55 +182,39 @@ export default function MobileCorrectionModeToggle({
 
       {/* Model Selection Dialog */}
       <Dialog open={showModelSelector} onOpenChange={handleDialogClose}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="max-w-[calc(100vw-16px)] overflow-x-auto sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle>{t('chat:correction.select_model')}</DialogTitle>
             <DialogDescription>{t('chat:correction.select_model_desc')}</DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4">
-            <Input
-              placeholder={t('chat:correction.search_model')}
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              className="w-full"
-            />
-
-            <ScrollArea className="h-[300px] pr-4">
-              {isLoading ? (
-                <div className="flex items-center justify-center h-full">
-                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
-                </div>
-              ) : filteredModels.length === 0 ? (
-                <div className="flex items-center justify-center h-full text-text-muted">
-                  {t('chat:correction.no_models')}
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {filteredModels.map(model => (
-                    <Button
-                      key={`${model.type}-${model.name}`}
-                      variant="ghost"
-                      className="w-full justify-start text-left h-auto py-3 px-4 hover:bg-hover"
-                      onClick={() => handleModelSelect(model)}
-                    >
-                      <div className="flex flex-col items-start gap-1">
-                        <span className="font-medium">{model.displayName || model.name}</span>
-                        {model.displayName && model.displayName !== model.name && (
-                          <span className="text-xs text-text-muted">{model.name}</span>
-                        )}
-                        <span className="text-xs text-text-muted capitalize">
-                          {model.type === 'public'
-                            ? t('chat:correction.public_model')
-                            : t('chat:correction.user_model')}
-                        </span>
-                      </div>
-                    </Button>
-                  ))}
-                </div>
+          {isLoading ? (
+            <div className="flex h-[320px] items-center justify-center">
+              <div className="h-6 w-6 animate-spin rounded-full border-b-2 border-primary" />
+            </div>
+          ) : (
+            <ModelCascadeContent
+              models={models}
+              labels={cascadeLabels}
+              searchValue={searchQuery}
+              onSearchValueChange={setSearchQuery}
+              onSelectModel={handleModelSelect}
+              getModelKey={model => `${model.type}-${model.name}`}
+              className="w-[min(720px,calc(100vw-48px))]"
+              renderModelBadges={model => (
+                <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-text-muted">
+                  {model.type === 'public'
+                    ? t('chat:correction.public_model')
+                    : t('chat:correction.user_model')}
+                </span>
               )}
-            </ScrollArea>
-          </div>
+              renderModelMeta={model =>
+                model.modelId ? (
+                  <span className="block truncate text-xs text-text-muted">{model.modelId}</span>
+                ) : null
+              }
+            />
+          )}
         </DialogContent>
       </Dialog>
     </>

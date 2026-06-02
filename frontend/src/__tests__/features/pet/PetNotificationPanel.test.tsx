@@ -17,8 +17,8 @@ jest.mock('@/hooks/useTranslation', () => ({
   }),
 }))
 
-jest.mock('@/features/tasks/contexts/taskContext', () => ({
-  useTaskContext: () => ({
+jest.mock('@/features/tasks/session/TaskSession', () => ({
+  useTaskSession: () => ({
     tasks: [{ id: 1, status: 'RUNNING' }],
     getUnreadCount: () => 2,
     viewStatusVersion: 1,

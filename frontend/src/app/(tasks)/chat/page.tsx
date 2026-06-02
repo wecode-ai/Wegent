@@ -17,7 +17,7 @@ import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useUser } from '@/features/common/UserContext'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 
 // Dynamic imports for mobile and desktop page components with code splitting
 const ChatPageDesktop = dynamic(
@@ -48,7 +48,7 @@ export default function ChatPage() {
   const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
 
   // Task context
-  const { refreshTasks, selectedTaskDetail } = useTaskContext()
+  const { refreshTasks, selectedTaskDetail } = useTaskSession()
 
   // User state for git token check
   const { user } = useUser()

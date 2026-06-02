@@ -12,8 +12,7 @@ import TopNavigation from '@/features/layout/TopNavigation'
 import { TaskSidebar } from '@/features/tasks/components/sidebar'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
 import { Team } from '@/types/api'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { saveLastTab } from '@/utils/userPreferences'
 import { useUser } from '@/features/common/UserContext'
 import { useSearchShortcut } from '@/features/tasks/hooks/useSearchShortcut'
@@ -46,31 +45,23 @@ export function CodePageMobile() {
   const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
 
   // Task context for workbench data
-  const {
-    selectedTask,
-    selectedTaskDetail,
-    setSelectedTask,
-    refreshTasks,
-    refreshSelectedTaskDetail,
-  } = useTaskContext()
+  const { selectedTask, selectedTaskDetail, selectTask, refreshTasks, refreshSelectedTaskDetail } =
+    useTaskSession()
 
   // Get current task title for top navigation
   const currentTaskTitle = selectedTaskDetail?.title
 
   // Handle task deletion
   const handleTaskDeleted = () => {
-    setSelectedTask(null)
+    selectTask(null)
     refreshTasks()
   }
 
   // Handle members changed (when converting to group chat or adding/removing members)
   const handleMembersChanged = () => {
     refreshTasks()
-    refreshSelectedTaskDetail(false)
+    void refreshSelectedTaskDetail()
   }
-
-  // Chat stream context
-  const _clearAllStreams = useChatStreamContext().clearAllStreams
 
   // Router for navigation
   const _router = useRouter()

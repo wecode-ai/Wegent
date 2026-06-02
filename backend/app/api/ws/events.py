@@ -13,6 +13,8 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from app.core.constants import CLIENT_ORIGIN_FRONTEND, SUPPORTED_CLIENT_ORIGINS
+
 # ============================================================
 # Event Names
 # ============================================================
@@ -199,6 +201,10 @@ class ChatSendPayload(BaseModel):
     force_override_bot_model_type: Optional[str] = Field(
         None, description="Override model type"
     )
+    model_options: Optional[Dict[str, str]] = Field(
+        None,
+        description="Model selection options, such as reasoning or speed.",
+    )
     is_group_chat: bool = Field(
         False, description="Whether this is a group chat (for new tasks)"
     )
@@ -232,6 +238,11 @@ class ChatSendPayload(BaseModel):
     project_id: Optional[int] = Field(
         None,
         description="Project ID to associate this task with",
+    )
+    client_origin: str = Field(
+        CLIENT_ORIGIN_FRONTEND,
+        description="Client surface that owns this task",
+        pattern=f"^({'|'.join(SUPPORTED_CLIENT_ORIGINS)})$",
     )
     # Video generation parameters (user-selected at generation time)
     generate_params: Optional[GenerateParams] = Field(

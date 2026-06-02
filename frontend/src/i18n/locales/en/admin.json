@@ -148,6 +148,10 @@
       "name_placeholder": "Enter model name",
       "namespace": "Namespace",
       "namespace_placeholder": "default",
+      "model_group": "Primary Group",
+      "model_group_placeholder": "Enter primary group",
+      "model_sub_group": "Secondary Group",
+      "model_sub_group_placeholder": "Enter secondary group",
       "config": "Model Configuration",
       "config_placeholder": "Enter model configuration as JSON",
       "is_advanced": "Advanced Model"

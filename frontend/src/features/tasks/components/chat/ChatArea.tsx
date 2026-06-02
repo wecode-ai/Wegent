@@ -31,9 +31,8 @@ import type { Model } from '../../hooks/useModelSelection'
 import type { ContextItem, QueueMessageContext } from '@/types/context'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useRouter } from 'next/navigation'
-import { useTaskContext } from '../../contexts/taskContext'
-import { useTaskStateMachine } from '../../hooks/useTaskStateMachine'
-import { useOptionalChatStreamContext } from '../../contexts/chatStreamContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
+import { useOptionalTaskSession } from '@/features/tasks/session/TaskSession'
 import { Button } from '@/components/ui/button'
 import {
   AlertDialog,
@@ -170,7 +169,7 @@ function ChatAreaContent({
   const { t } = useTranslation('chat')
   const { toast } = useToast()
   const router = useRouter()
-  const chatStreamContext = useOptionalChatStreamContext()
+  const chatStreamContext = useOptionalTaskSession()
 
   // Pipeline stage info state - shared between PipelineStageIndicator and MessagesArea
   const [pipelineStageInfo, setPipelineStageInfo] = useState<PipelineStageInfo | null>(null)
@@ -193,11 +192,18 @@ function ChatAreaContent({
   const { quote, clearQuote, formatQuoteForMessage } = useQuote()
 
   // Task context
-  const { selectedTask, selectedTaskDetail, setSelectedTask, accessDenied } = useTaskContext()
+  const {
+    selectedTask,
+    selectedTaskDetail,
+    selectTask,
+    accessDenied,
+    taskState: sessionTaskState,
+  } = useTaskSession()
   const effectiveTaskId = selectedTask?.id ?? selectedTaskDetail?.id
 
-  // Use useTaskStateMachine hook for reactive state updates (SINGLE SOURCE OF TRUTH per AGENTS.md)
-  const { state: taskState } = useTaskStateMachine(effectiveTaskId)
+  const taskState =
+    sessionTaskState && sessionTaskState.taskId === effectiveTaskId ? sessionTaskState : null
+  const runtimeTaskStatus = taskState?.runtime.taskStatus
   const pendingInteractiveForm = useMemo(
     () => findPendingInteractiveForm(taskState?.messages?.values()),
     [taskState?.messages]
@@ -782,7 +788,7 @@ function ChatAreaContent({
   selectedContextsRef.current = chatState.selectedContexts
 
   const shouldConfirmPendingReplacement =
-    selectedTaskDetail?.status === 'PENDING' && !selectedTaskDetail?.is_group_chat
+    runtimeTaskStatus === 'PENDING' && !selectedTaskDetail?.is_group_chat
 
   const applyQuickPhraseToInput = useCallback(
     (phrase: string) => {
@@ -1254,7 +1260,7 @@ function ChatAreaContent({
   // Handle access denied state
   if (accessDenied) {
     const handleGoHome = () => {
-      setSelectedTask(null)
+      selectTask(null)
       router.push('/chat')
     }
 
@@ -1322,6 +1328,7 @@ function ChatAreaContent({
     onDrop: handleDrop,
     canSubmit,
     canQueueMessage: streamHandlers.canQueueMessage,
+    canCancelTask: streamHandlers.canCancelTask,
     queuedMessages: streamHandlers.queuedMessages,
     onCancelQueuedMessage: streamHandlers.cancelQueuedMessage,
     onSendQueuedAsGuidance: streamHandlers.sendQueuedAsGuidance,
@@ -1387,7 +1394,6 @@ function ChatAreaContent({
     shouldHideChatInput: chatState.shouldHideChatInput,
     isModelSelectionRequired,
     isAttachmentReadyToSend: chatState.isAttachmentReadyToSend,
-    isSubtaskStreaming: streamHandlers.isSubtaskStreaming,
     onStopStream: streamHandlers.stopStream,
     onCancelTask: streamHandlers.handleCancelTask,
     isCancelling: streamHandlers.isCancelling,

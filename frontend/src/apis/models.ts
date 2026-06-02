@@ -101,6 +101,8 @@ export interface ModelCRD {
     maxOutputTokens?: number // Maximum output tokens the model can generate per response
     // New fields for multi-type model support
     modelType?: ModelCategoryType
+    modelGroup?: string
+    modelSubGroup?: string
     ttsConfig?: TTSConfig
     sttConfig?: STTConfig
     embeddingConfig?: EmbeddingConfig
@@ -165,6 +167,8 @@ export interface UnifiedModel {
   isActive?: boolean
   modelCategoryType?: ModelCategoryType // New: model category type (llm, tts, stt, embedding, rerank)
   isAdvanced?: boolean
+  modelGroup?: string | null
+  modelSubGroup?: string | null
 }
 
 export interface UnifiedModelListResponse {
