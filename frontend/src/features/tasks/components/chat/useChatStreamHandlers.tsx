@@ -46,10 +46,6 @@ function isVirtualKnowledgeBasePath(path: string): boolean {
   return path.startsWith('/knowledge/') && !path.startsWith('/knowledge/document/')
 }
 
-function toPositiveTaskId(taskId?: number | null): number | null {
-  return taskId && taskId > 0 ? taskId : null
-}
-
 export interface UseChatStreamHandlersOptions {
   // Team and model
   selectedTeam: Team | null
@@ -323,14 +319,10 @@ export function useChatStreamHandlers({
       selectedTaskId: currentDisplayTaskId,
     })
 
-  const stateTaskId =
-    toPositiveTaskId(selectedTaskDetail?.id) ??
-    toPositiveTaskId(pendingTaskId) ??
-    toPositiveTaskId(sessionTaskState?.taskId) ??
-    effectiveTaskIdForState
   const taskState =
-    sessionTaskState && sessionTaskState.taskId === stateTaskId ? sessionTaskState : null
-  const resolvedTaskId = toPositiveTaskId(stateTaskId)
+    sessionTaskState && sessionTaskState.taskId === effectiveTaskIdForState
+      ? sessionTaskState
+      : null
   const isMachineStreaming = taskState?.phase === 'streaming'
   const runtimeDerived = taskState?.derived
   const activeStreamSubtaskId = taskState?.runtime.activeStreamSubtaskId
@@ -586,7 +578,7 @@ export function useChatStreamHandlers({
       const request: ContextSendRequest = {
         message: messageWithQueueContent,
         team_id: selectedTeam?.id ?? 0,
-        task_id: resolvedTaskId ?? undefined,
+        task_id: selectedTaskDetail?.id,
         model_id: modelId,
         force_override_bot_model: Boolean(modelId),
         force_override_bot_model_type: selectedModel?.type,
@@ -606,7 +598,7 @@ export function useChatStreamHandlers({
         contexts: contextItems.length > 0 ? contextItems : undefined,
         device_id: effectiveDeviceId,
         // Project association for workspace project conversations
-        project_id: resolvedTaskId ? undefined : projectId,
+        project_id: selectedTaskDetail?.id ? undefined : projectId,
         additional_skills:
           snapshotAdditionalSkills && snapshotAdditionalSkills.length > 0
             ? snapshotAdditionalSkills
@@ -625,11 +617,11 @@ export function useChatStreamHandlers({
             setPendingTaskId(completedTaskId)
           }
 
-          if (completedTaskId && !resolvedTaskId && onTaskCreated) {
+          if (completedTaskId && !selectedTaskDetail?.id && onTaskCreated) {
             onTaskCreated(completedTaskId)
           }
 
-          if (completedTaskId && !resolvedTaskId) {
+          if (completedTaskId && !selectedTaskDetail?.id) {
             if (taskType === 'knowledge' && knowledgeBaseId) {
               navigateToKnowledgeTask(completedTaskId, knowledgeBaseId)
             } else if (taskType === 'task' && !pathname?.startsWith('/devices')) {
@@ -683,7 +675,6 @@ export function useChatStreamHandlers({
       t,
       selectedTeam?.id,
       selectedTaskDetail,
-      resolvedTaskId,
       enableDeepThinking,
       enableClarification,
       showRepositorySelector,
@@ -733,7 +724,8 @@ export function useChatStreamHandlers({
     ]
   )
 
-  const activeTaskId = resolvedTaskId
+  const activeTaskId =
+    selectedTaskDetail?.id && selectedTaskDetail.id > 0 ? selectedTaskDetail.id : null
   const isRuntimeBlockingQueue = runtimeDerived?.blocksQueuedDispatch ?? false
   const isActiveTaskBlocked = isMachineStreaming || hasPendingUserMessage || isRuntimeBlockingQueue
   const canQueueMessage = Boolean(
@@ -979,7 +971,7 @@ export function useChatStreamHandlers({
         return
       }
 
-      const immediateTaskId = resolvedTaskId || -Date.now()
+      const immediateTaskId = selectedTaskDetail?.id || -Date.now()
       const localMessageId = generateMessageId('user')
       const prepared = prepareChatSend(message, localMessageId, immediateTaskId, effectiveRepo)
 
@@ -1016,7 +1008,7 @@ export function useChatStreamHandlers({
       resetAttachment()
       resetContexts?.()
 
-      if (!resolvedTaskId) {
+      if (!selectedTaskDetail?.id) {
         setPendingTaskId(immediateTaskId)
       }
 
@@ -1034,7 +1026,6 @@ export function useChatStreamHandlers({
       toast,
       selectedRepo,
       selectedTaskDetail,
-      resolvedTaskId,
       taskType,
       showRepositorySelector,
       effectiveRequiresWorkspace,
@@ -1215,7 +1206,7 @@ export function useChatStreamHandlers({
       }
 
       try {
-        const immediateTaskId = resolvedTaskId || -Date.now()
+        const immediateTaskId = selectedTaskDetail?.id || -Date.now()
 
         // Extract attachment IDs from existing contexts (for regeneration)
         const attachmentIds =
@@ -1286,7 +1277,7 @@ export function useChatStreamHandlers({
           {
             message: finalMessage,
             team_id: selectedTeam?.id ?? 0,
-            task_id: resolvedTaskId ?? undefined,
+            task_id: selectedTaskDetail?.id,
             model_id: modelId,
             force_override_bot_model: true, // Always force override when using model override
             force_override_bot_model_type: modelOverride.type,
@@ -1321,11 +1312,11 @@ export function useChatStreamHandlers({
               }
 
               // Call onTaskCreated callback when a new task is created
-              if (completedTaskId && !resolvedTaskId && onTaskCreated) {
+              if (completedTaskId && !selectedTaskDetail?.id && onTaskCreated) {
                 onTaskCreated(completedTaskId)
               }
 
-              if (completedTaskId && !resolvedTaskId) {
+              if (completedTaskId && !selectedTaskDetail?.id) {
                 if (taskType === 'knowledge' && knowledgeBaseId) {
                   navigateToKnowledgeTask(completedTaskId, knowledgeBaseId)
                 } else {
@@ -1372,7 +1363,6 @@ export function useChatStreamHandlers({
       toast,
       selectedTeam,
       selectedTaskDetail,
-      resolvedTaskId,
       contextSendMessage,
       enableDeepThinking,
       enableClarification,
