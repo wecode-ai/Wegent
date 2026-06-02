@@ -459,6 +459,8 @@ export function SubscriptionForm({
           provider: m.provider || undefined,
           modelId: m.modelId || undefined,
           type: m.type,
+          modelGroup: m.modelGroup,
+          modelSubGroup: m.modelSubGroup,
         }))
         setModels(modelList)
       } catch (error) {

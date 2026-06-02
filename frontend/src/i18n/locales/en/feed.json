@@ -178,6 +178,7 @@
   "model_settings": "Model Settings",
   "select_model": "Select Model",
   "select_model_placeholder": "Use default model",
+  "select_model_required": "Please select a model",
   "search_model": "Search models...",
   "no_model_found": "No model found",
   "use_default_model": "Use default model",

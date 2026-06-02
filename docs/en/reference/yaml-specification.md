@@ -1,3 +1,7 @@
+---
+sidebar_position: 1
+---
+
 # YAML Configuration Formats
 
 English | [简体中文](../zh/reference/yaml-specification.md)
@@ -156,6 +160,8 @@ metadata:
   name: ClaudeSonnet4
   namespace: default
 spec:
+  modelGroup: "Primary"
+  modelSubGroup: "Fast"
   modelConfig:
     env:
       ANTHROPIC_MODEL: "openrouter,anthropic/claude-sonnet-4"
@@ -170,8 +176,14 @@ spec:
 |------|------|----------|-------------|
 | `metadata.name` | string | Yes | Unique identifier for the Model |
 | `metadata.namespace` | string | Yes | Namespace, typically `default` |
+| `spec.modelGroup` | string | No | First-level display group used by model selectors |
+| `spec.modelSubGroup` | string | No | Second-level display group under `spec.modelGroup` |
 | `spec.modelConfig` | object | Yes | Model configuration object |
 | `spec.modelConfig.env` | object | Yes | Environment variables configuration |
+
+### Model Selector Grouping
+
+Model selectors display models as `modelGroup` → `modelSubGroup` → model. These fields are stored in `spec`, not `metadata.labels`, so grouping is part of the Model resource definition. Models without these fields are shown under the default ungrouped/uncategorized buckets. Grouping only affects display and search behavior; it does not change model protocol, credentials, permissions, or runtime selection.
 
 ### Common Environment Variables for ClaudeCode
 

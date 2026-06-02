@@ -4,18 +4,15 @@
 
 'use client'
 
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+  GroupedModelSelect,
+  type ModelCascadeLabels,
+} from '@/components/model-select/ModelCascadeSelect'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -230,6 +227,24 @@ export default function PreviewAdjustStep({
     loadModels()
   }, [teams]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const selectedModelOption = useMemo(
+    () => availableModels.find(model => model.name === selectedModel?.model_name) ?? null,
+    [availableModels, selectedModel?.model_name]
+  )
+  const cascadeLabels: ModelCascadeLabels = useMemo(
+    () => ({
+      ungrouped: t('common:models.ungrouped', 'Ungrouped'),
+      uncategorized: t('common:models.uncategorized', 'Uncategorized'),
+      searchPlaceholder: t('common:models.search_models', 'Search models or groups...'),
+      searchResults: t('common:models.search_results', 'Search results'),
+      noModels: t('common:models.no_models', 'No models available'),
+      noMatch: t('common:models.no_match', 'No matching models'),
+      primaryGroups: t('common:models.primary_groups', 'Primary groups'),
+      secondaryGroups: t('common:models.secondary_groups', 'Secondary groups'),
+    }),
+    [t]
+  )
+
   if (isLoading) {
     return <GeneratingLoader />
   }
@@ -247,16 +262,13 @@ export default function PreviewAdjustStep({
     setFeedbackMessage('')
   }
 
-  const handleModelSelect = (modelName: string) => {
-    const model = availableModels.find(m => m.name === modelName)
-    if (model) {
-      onModelChange({
-        model_name: model.name,
-        model_id: model.modelId || undefined,
-        reason: '',
-        confidence: 1.0,
-      })
-    }
+  const handleModelSelect = (model: UnifiedModel) => {
+    onModelChange({
+      model_name: model.name,
+      model_id: model.modelId || undefined,
+      reason: '',
+      confidence: 1.0,
+    })
   }
 
   const latestConversation =
@@ -305,24 +317,17 @@ export default function PreviewAdjustStep({
         {/* Model Selector */}
         <div className="flex items-center gap-2">
           <Cpu className="w-4 h-4 text-text-secondary" />
-          <Select
-            value={selectedModel?.model_name || ''}
-            onValueChange={handleModelSelect}
+          <GroupedModelSelect
+            models={availableModels}
+            selectedModel={selectedModelOption}
+            labels={cascadeLabels}
+            onSelectModel={handleModelSelect}
+            placeholder={isLoadingModels ? t('models.loading') : t('wizard:select_model')}
             disabled={isLoadingModels}
-          >
-            <SelectTrigger className="w-[160px] h-9">
-              <SelectValue
-                placeholder={isLoadingModels ? t('models.loading') : t('wizard:select_model')}
-              />
-            </SelectTrigger>
-            <SelectContent>
-              {availableModels.map(model => (
-                <SelectItem key={model.name} value={model.name}>
-                  {model.displayName || model.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            dataTestId="wizard-preview-model-select"
+            triggerClassName="h-9 w-[180px]"
+            getModelKey={model => `${model.type}-${model.namespace}-${model.name}`}
+          />
         </div>
 
         <div className="h-5 w-px bg-border" />
