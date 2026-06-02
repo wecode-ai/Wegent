@@ -58,7 +58,10 @@ const mockTaskSessionContext = {
 
 jest.mock('next/image', () => ({
   __esModule: true,
-  default: (props: React.ImgHTMLAttributes<HTMLImageElement>) => {
+  default: ({
+    priority: _priority,
+    ...props
+  }: React.ImgHTMLAttributes<HTMLImageElement> & { priority?: boolean }) => {
     // Use a plain img in tests to avoid Next.js image runtime requirements.
     // eslint-disable-next-line @next/next/no-img-element
     return <img {...props} alt={props.alt} />
@@ -212,18 +215,18 @@ describe('TaskSidebar scroll structure', () => {
     expect(
       within(fixedSection).getByRole('button', { name: /common:tasks\.new_conversation/ })
     ).toBeInTheDocument()
-    expect(within(fixedSection).getByText('common:actions.search')).toBeInTheDocument()
     expect(within(fixedSection).getByText('common:navigation.flow')).toBeInTheDocument()
-    expect(within(fixedSection).getByText('resource-library:title')).toBeInTheDocument()
+    expect(within(fixedSection).getByText('common:navigation.code')).toBeInTheDocument()
+    expect(within(fixedSection).getByText('common:navigation.wiki')).toBeInTheDocument()
     expect(within(fixedSection).getByText('common:navigation.more')).toBeInTheDocument()
     expect(within(fixedSection).getByLabelText('More navigation')).toHaveClass('lucide-layout-grid')
-    expect(within(fixedSection).getByTestId('resource-library-sidebar-button')).toBeInTheDocument()
-    expect(within(fixedSection).queryByText('common:navigation.code')).not.toBeInTheDocument()
-    expect(within(fixedSection).queryByText('common:navigation.wiki')).not.toBeInTheDocument()
+    expect(
+      within(fixedSection).queryByTestId('resource-library-sidebar-button')
+    ).not.toBeInTheDocument()
     expect(within(fixedSection).queryByText('devices:my_devices')).not.toBeInTheDocument()
     expect(within(fixedSection).queryByText('common:navigation.inbox')).not.toBeInTheDocument()
+    expect(within(fixedSection).queryByText('resource-library:title')).not.toBeInTheDocument()
 
-    expect(within(scrollableSection).queryByText('common:navigation.code')).not.toBeInTheDocument()
     expect(within(scrollableSection).queryByText('common:navigation.wiki')).not.toBeInTheDocument()
     expect(within(scrollableSection).queryByText('devices:my_devices')).not.toBeInTheDocument()
     expect(within(scrollableSection).queryByText('common:navigation.inbox')).not.toBeInTheDocument()
@@ -241,11 +244,9 @@ describe('TaskSidebar scroll structure', () => {
     fireEvent.mouseEnter(within(fixedSection).getByTestId('task-sidebar-more-button'))
 
     const flyout = screen.getByTestId('task-sidebar-more-flyout')
-    expect(within(flyout).getByText('common:navigation.code')).toBeInTheDocument()
-    expect(within(flyout).getByText('common:navigation.wiki')).toBeInTheDocument()
+    expect(within(flyout).getByText('resource-library:title')).toBeInTheDocument()
     expect(within(flyout).getByText('devices:my_devices')).toBeInTheDocument()
     expect(within(flyout).getByText('common:navigation.inbox')).toBeInTheDocument()
-    expect(within(flyout).queryByText('resource-library:title')).not.toBeInTheDocument()
   })
 
   it('moves secondary navigation back into the scrollable area when the config is disabled', () => {
@@ -258,18 +259,14 @@ describe('TaskSidebar scroll structure', () => {
     const fixedSection = screen.getAllByTestId('task-sidebar-fixed-section')[0]
     const scrollableSection = screen.getAllByTestId('task-sidebar-scroll-content')[0]
 
-    expect(within(fixedSection).getByText('common:navigation.flow')).toBeInTheDocument()
-    expect(within(fixedSection).getByText('resource-library:title')).toBeInTheDocument()
-    expect(within(fixedSection).queryByText('common:navigation.code')).not.toBeInTheDocument()
-    expect(within(fixedSection).queryByText('common:navigation.wiki')).not.toBeInTheDocument()
+    expect(within(fixedSection).getByText('common:navigation.wiki')).toBeInTheDocument()
+    expect(within(fixedSection).queryByText('resource-library:title')).not.toBeInTheDocument()
     expect(within(fixedSection).queryByText('devices:my_devices')).not.toBeInTheDocument()
     expect(within(fixedSection).queryByText('common:navigation.inbox')).not.toBeInTheDocument()
 
-    expect(within(scrollableSection).getByText('common:navigation.code')).toBeInTheDocument()
-    expect(within(scrollableSection).getByText('common:navigation.wiki')).toBeInTheDocument()
+    expect(within(scrollableSection).getByText('resource-library:title')).toBeInTheDocument()
     expect(within(scrollableSection).getByText('devices:my_devices')).toBeInTheDocument()
     expect(within(scrollableSection).getByText('common:navigation.inbox')).toBeInTheDocument()
-    expect(within(scrollableSection).queryByText('resource-library:title')).not.toBeInTheDocument()
   })
 
   it('scrolls the sidebar when wheeling over the fixed section', () => {
@@ -310,6 +307,21 @@ describe('TaskSidebar scroll structure', () => {
     expect(scrollableNavWrapper).not.toHaveClass('pt-0.5')
   })
 
+  it('uses compact spacing before the task sections', () => {
+    render(
+      <TaskSidebar isMobileSidebarOpen={false} setIsMobileSidebarOpen={jest.fn()} pageType="chat" />
+    )
+
+    const scrollableSection = screen.getAllByTestId('task-sidebar-scroll-content')[0]
+    const taskSectionsWrapper = scrollableSection.querySelector(
+      '[data-testid="task-sidebar-task-sections"]'
+    )
+
+    expect(taskSectionsWrapper).toHaveClass('px-2.5', 'pt-1.5', 'mt-1')
+    expect(taskSectionsWrapper).toHaveClass('border-t', 'border-border-light')
+    expect(taskSectionsWrapper).not.toHaveClass('px-3', 'pt-5', 'mt-2')
+  })
+
   it('uses compact vertical spacing in the fixed navigation section', () => {
     render(
       <TaskSidebar isMobileSidebarOpen={false} setIsMobileSidebarOpen={jest.fn()} pageType="chat" />
@@ -319,20 +331,55 @@ describe('TaskSidebar scroll structure', () => {
     const newConversationButton = screen
       .getAllByText('common:tasks.new_conversation')[0]
       .closest('button')
-    const searchButton = screen.getAllByTestId('task-sidebar-search-button')[0]
     const automationButton = screen.getAllByTestId('task-sidebar-nav-flow-button')[0]
     const moreButton = screen.getAllByTestId('task-sidebar-more-button')[0]
 
-    expect(logoSection).toHaveClass('pt-2', 'pb-0')
+    expect(logoSection).toHaveClass('pt-2', 'pb-1.5')
     expect(newConversationButton).toHaveClass('h-11', 'lg:h-8', 'min-w-[44px]')
-    expect(searchButton).toHaveClass('h-11', 'lg:h-8', 'min-w-[44px]')
     expect(automationButton).toHaveClass('h-11', 'lg:h-8', 'min-w-[44px]')
     expect(moreButton).toHaveClass('h-11', 'lg:h-8', 'min-w-[44px]')
-    expect(newConversationButton).not.toHaveClass('lg:h-10')
-    expect(searchButton).not.toHaveClass('lg:h-10')
-    expect(automationButton).not.toHaveClass('lg:h-10')
-    expect(moreButton).not.toHaveClass('lg:h-10')
     expect(newConversationButton).toHaveAttribute('data-testid', 'new-agent-button')
+  })
+
+  it('shows the Wegent logo section when expanded', () => {
+    render(
+      <TaskSidebar
+        isMobileSidebarOpen={false}
+        setIsMobileSidebarOpen={jest.fn()}
+        pageType="chat"
+        onToggleCollapsed={jest.fn()}
+      />
+    )
+
+    const logoSection = screen.getAllByTestId('task-sidebar-logo-section')[0]
+    const logoImage = within(logoSection).getByRole('img', { name: 'Weibo Logo' })
+
+    expect(logoImage).toHaveAttribute('src', '/weibo-logo.png')
+    expect(logoImage).toHaveAttribute('width', '36')
+    expect(logoImage).toHaveAttribute('height', '35')
+    expect(logoImage).toHaveClass('object-contain')
+    expect(within(logoSection).getByText('Wegent')).toHaveClass('text-base')
+  })
+
+  it('uses restored expanded header spacing and collapse button sizing', () => {
+    render(
+      <TaskSidebar
+        isMobileSidebarOpen={false}
+        setIsMobileSidebarOpen={jest.fn()}
+        pageType="chat"
+        onToggleCollapsed={jest.fn()}
+      />
+    )
+
+    const logoSection = screen.getAllByTestId('task-sidebar-logo-section')[0]
+    const headerRow = logoSection.firstElementChild
+    const collapseButton = within(logoSection).getByTestId('collapse-sidebar-button')
+
+    expect(logoSection).toHaveClass('px-5', 'pt-2', 'pb-1.5')
+    expect(headerRow).toHaveClass('items-center', 'justify-between')
+    expect(headerRow).not.toHaveClass('h-8')
+    expect(collapseButton).toHaveClass('h-11', 'w-11', 'min-w-[44px]')
+    expect(collapseButton).toHaveClass('lg:h-10', 'lg:w-10', 'lg:min-w-10')
   })
 
   it('uses theme-aware text color for inactive sidebar labels', () => {
@@ -396,6 +443,8 @@ describe('TaskSidebar scroll structure', () => {
       .closest('[data-tour="settings-link"]') as HTMLElement | null
 
     expect(settingsLink).toBeInTheDocument()
+    expect(settingsLink).toHaveClass('px-2.5', 'py-3', 'border-t', 'border-border-light')
+    expect(settingsLink).toHaveClass('shrink-0')
     expect(scrollContainer).not.toContainElement(settingsLink)
   })
 
@@ -431,6 +480,7 @@ describe('TaskSidebar scroll structure', () => {
 
     const groupToggle = within(groupDock).getByTestId('task-sidebar-group-chat-toggle')
     expect(groupToggle).toHaveTextContent('common:tasks.group_chats')
+    expect(groupDock).toHaveClass('border-t', 'border-border/70')
     expect(groupToggle).toHaveClass('h-6', 'min-w-[44px]')
     expect(groupToggle).not.toHaveClass('h-11')
     expect(groupToggle).not.toHaveTextContent('(+2)')
