@@ -17,10 +17,10 @@ import string
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
+from executor.agents.env_value import resolve_env_value as _resolve_env_value
 from executor.config.config import get_wegent_mcp_url
 from shared.logger import setup_logger
 from shared.models.execution import ExecutionRequest
-from shared.utils.crypto import decrypt_sensitive_data, is_data_encrypted
 
 logger = setup_logger("claude_code_config_manager")
 
@@ -108,34 +108,7 @@ def resolve_env_value(value: str) -> str:
     Returns:
         The resolved value
     """
-    import re
-
-    if not value:
-        return value
-
-    # Check for ${VAR_NAME} pattern and replace with env var
-    env_var_pattern = r"^\$\{([^}]+)\}$"
-    match = re.match(env_var_pattern, value)
-    if match:
-        var_name = match.group(1)
-        resolved = os.environ.get(var_name, "")
-        if resolved:
-            logger.info(f"Resolved env var ${{{var_name}}} from environment")
-        else:
-            logger.warning(f"Environment variable {var_name} not found")
-        return resolved
-
-    # Check if encrypted and decrypt
-    if is_data_encrypted(value):
-        decrypted = decrypt_sensitive_data(value)
-        if decrypted:
-            logger.info("Decrypted sensitive data")
-            return decrypted
-        logger.warning("Failed to decrypt sensitive data")
-        return ""
-
-    # Return as-is
-    return value
+    return _resolve_env_value(value, logger_override=logger)
 
 
 def build_claude_json_config() -> Dict[str, Any]:

@@ -73,7 +73,7 @@ export function DesktopWorkbenchMain({
             type="button"
             data-testid="expand-sidebar-button"
             onClick={onExpandSidebar}
-            className="absolute left-4 top-4 z-10 flex h-9 w-9 items-center justify-center rounded-md bg-surface text-[#555] hover:bg-muted"
+            className="absolute left-4 top-1 z-10 flex h-9 w-9 items-center justify-center rounded-md bg-surface text-[#555] hover:bg-muted"
             aria-label={t('workbench.expand_sidebar', '展开侧边栏')}
           >
             <ChevronRight className="h-4 w-4" />
@@ -124,7 +124,7 @@ export function DesktopWorkbenchMain({
               <div className="mb-7 flex justify-center">
                 <Bot className="h-7 w-7 text-text-muted" />
               </div>
-              <h1 className="mb-10 text-center text-[34px] font-medium tracking-normal">
+              <h1 className="mb-9 text-center text-[28px] font-medium leading-9 tracking-normal">
                 {emptyTitle}
               </h1>
               <ChatInput

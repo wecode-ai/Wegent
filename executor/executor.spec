@@ -16,96 +16,112 @@ binaries = []
 hiddenimports = []
 
 # Add shared directory to Python path for proper module import
-shared_path = os.path.join(os.path.dirname(os.getcwd()), 'shared')
+shared_path = os.path.join(os.path.dirname(os.getcwd()), "shared")
 if os.path.exists(shared_path):
     sys.path.insert(0, shared_path)
 
 # Collect all submodules for critical dependencies
-hiddenimports += collect_submodules('fastapi')
-hiddenimports += collect_submodules('uvicorn')
-hiddenimports += collect_submodules('pydantic')
-hiddenimports += collect_submodules('anthropic')
-hiddenimports += collect_submodules('claude_agent_sdk')
-hiddenimports += collect_submodules('agno')
-hiddenimports += collect_submodules('openai')
-hiddenimports += collect_submodules('mcp')
-hiddenimports += collect_submodules('sqlalchemy')
-hiddenimports += collect_submodules('httpx')
-hiddenimports += collect_submodules('git')
-hiddenimports += collect_submodules('cryptography')
-hiddenimports += collect_submodules('requests')
-hiddenimports += collect_submodules('pymysql')
+hiddenimports += collect_submodules("fastapi")
+hiddenimports += collect_submodules("uvicorn")
+hiddenimports += collect_submodules("pydantic")
+hiddenimports += collect_submodules("anthropic")
+hiddenimports += collect_submodules("claude_agent_sdk")
+hiddenimports += collect_submodules("agno")
+hiddenimports += collect_submodules("openai")
+hiddenimports += collect_submodules("openai_codex")
+hiddenimports += collect_submodules("mcp")
+hiddenimports += collect_submodules("sqlalchemy")
+hiddenimports += collect_submodules("httpx")
+hiddenimports += collect_submodules("git")
+hiddenimports += collect_submodules("cryptography")
+hiddenimports += collect_submodules("requests")
+hiddenimports += collect_submodules("pymysql")
 
 # LiteLLM and tiktoken (required for OpenAI Responses API types)
-hiddenimports += collect_submodules('litellm')
-hiddenimports += collect_submodules('tiktoken')
-hiddenimports += collect_submodules('tiktoken_ext')
+hiddenimports += collect_submodules("litellm")
+hiddenimports += collect_submodules("tiktoken")
+hiddenimports += collect_submodules("tiktoken_ext")
 
 # MCP server dependencies (starlette is required by mcp.server.sse, mcp.server.websocket, mcp.server.auth)
-hiddenimports += collect_submodules('starlette')
-hiddenimports += collect_submodules('sse_starlette')
-hiddenimports += collect_submodules('anyio')
-hiddenimports += collect_submodules('sniffio')
-hiddenimports += collect_submodules('httpcore')
-hiddenimports += collect_submodules('h11')
+hiddenimports += collect_submodules("starlette")
+hiddenimports += collect_submodules("sse_starlette")
+hiddenimports += collect_submodules("anyio")
+hiddenimports += collect_submodules("sniffio")
+hiddenimports += collect_submodules("httpcore")
+hiddenimports += collect_submodules("h11")
 
 # OpenTelemetry packages
-hiddenimports += collect_submodules('opentelemetry')
-hiddenimports += collect_submodules('opentelemetry.sdk')
-hiddenimports += collect_submodules('opentelemetry.exporter')
-hiddenimports += collect_submodules('opentelemetry.instrumentation')
-hiddenimports += collect_submodules('opentelemetry.instrumentation.fastapi')
-hiddenimports += collect_submodules('opentelemetry.instrumentation.httpx')
-hiddenimports += collect_submodules('opentelemetry.instrumentation.requests')
-hiddenimports += collect_submodules('opentelemetry.instrumentation.system_metrics')
+hiddenimports += collect_submodules("opentelemetry")
+hiddenimports += collect_submodules("opentelemetry.sdk")
+hiddenimports += collect_submodules("opentelemetry.exporter")
+hiddenimports += collect_submodules("opentelemetry.instrumentation")
+hiddenimports += collect_submodules("opentelemetry.instrumentation.fastapi")
+hiddenimports += collect_submodules("opentelemetry.instrumentation.httpx")
+hiddenimports += collect_submodules("opentelemetry.instrumentation.requests")
+hiddenimports += collect_submodules("opentelemetry.instrumentation.system_metrics")
 
 # Collect shared module submodules
 if os.path.exists(shared_path):
-    hiddenimports += collect_submodules('shared')
+    hiddenimports += collect_submodules("shared")
 
 # Add jaraco namespace packages for pkg_resources compatibility
 hiddenimports += [
-    'jaraco',
-    'jaraco.classes',
-    'jaraco.context',
-    'jaraco.functools',
-    'jaraco.text',
-    'platformdirs',
+    "jaraco",
+    "jaraco.classes",
+    "jaraco.context",
+    "jaraco.functools",
+    "jaraco.text",
+    "platformdirs",
 ]
 
 # Collect Rich Unicode data modules (fix for Unicode character handling)
-hiddenimports += collect_submodules('rich._unicode_data')
+hiddenimports += collect_submodules("rich._unicode_data")
 
 # Collect executor.wecode submodules (WeCode-specific extensions)
-hiddenimports += collect_submodules('executor.wecode')
+hiddenimports += collect_submodules("executor.wecode")
 
 # Explicitly add executor.wecode modules for PyInstaller
 hiddenimports += [
-    'executor.wecode',
-    'executor.wecode.api',
-    'executor.wecode.api.claude_hooks',
-    'executor.wecode.config',
-    'executor.wecode.config.config',
+    "executor.wecode",
+    "executor.wecode.api",
+    "executor.wecode.api.claude_hooks",
+    "executor.wecode.config",
+    "executor.wecode.config.config",
 ]
 
 # Additional hidden imports
 hiddenimports += [
-    'uvicorn.logging',
-    'uvicorn.loops',
-    'uvicorn.loops.auto',
-    'uvicorn.protocols',
-    'uvicorn.protocols.http',
-    'uvicorn.protocols.http.auto',
-    'uvicorn.protocols.websockets',
-    'uvicorn.protocols.websockets.auto',
-    'uvicorn.lifespan',
-    'uvicorn.lifespan.on',
+    "uvicorn.logging",
+    "uvicorn.loops",
+    "uvicorn.loops.auto",
+    "uvicorn.protocols",
+    "uvicorn.protocols.http",
+    "uvicorn.protocols.http.auto",
+    "uvicorn.protocols.websockets",
+    "uvicorn.protocols.websockets.auto",
+    "uvicorn.lifespan",
+    "uvicorn.lifespan.on",
 ]
 
 # Collect package data
-for package in ['fastapi', 'uvicorn', 'pydantic', 'anthropic', 'claude_agent_sdk',
-                'agno', 'openai', 'mcp', 'sqlalchemy', 'httpx', 'starlette', 'sse_starlette', 'rich',
-                'litellm', 'tiktoken']:
+for package in [
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "anthropic",
+    "claude_agent_sdk",
+    "agno",
+    "openai",
+    "openai_codex",
+    "mcp",
+    "sqlalchemy",
+    "httpx",
+    "starlette",
+    "sse_starlette",
+    "rich",
+    "litellm",
+    "tiktoken",
+]:
     try:
         tmp_datas, tmp_binaries, tmp_hiddenimports = collect_all(package)
         datas += tmp_datas
@@ -115,7 +131,7 @@ for package in ['fastapi', 'uvicorn', 'pydantic', 'anthropic', 'claude_agent_sdk
         pass
 
 a = Analysis(
-    ['main.py'],
+    ["main.py"],
     pathex=[shared_path],
     binaries=binaries,
     datas=datas,
@@ -139,7 +155,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='executor',
+    name="executor",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

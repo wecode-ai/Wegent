@@ -391,6 +391,55 @@ class Agent:
 
         return os.path.join(config.get_workspace_root(), str(self.task_id), repo_name)
 
+    def resolve_project_workspace_path(self) -> Optional[str]:
+        """Resolve the workspace path configured for a project-backed task."""
+        project_id = getattr(self.task_data, "project_id", None)
+        workspace_source = getattr(self.task_data, "workspace_source", None)
+        project_path = getattr(self.task_data, "project_workspace_path", None)
+
+        if not workspace_source:
+            return None
+        if not project_id and not project_path:
+            return None
+
+        if project_path:
+            resolved_path = os.path.expanduser(str(project_path))
+            if not os.path.isabs(resolved_path):
+                resolved_path = os.path.join(config.get_workspace_root(), resolved_path)
+            return resolved_path
+
+        if project_id and workspace_source == "git" and self.task_data.git_url:
+            repo_name = git_util.get_repo_name_from_url(self.task_data.git_url)
+            safe_repo_name = repo_name.replace("/", "_").replace("\\", "_")
+            return os.path.join(
+                config.get_workspace_root(),
+                "projects",
+                str(project_id),
+                safe_repo_name,
+            )
+
+        return None
+
+    def prepare_project_workspace_path(self) -> Optional[str]:
+        """Set project_path from project workspace metadata and create directories."""
+        project_path = self.resolve_project_workspace_path()
+        if not project_path:
+            return None
+
+        workspace_source = getattr(self.task_data, "workspace_source", None)
+        if workspace_source == "local_path":
+            os.makedirs(project_path, exist_ok=True)
+        else:
+            parent_dir = os.path.dirname(project_path)
+            if parent_dir:
+                os.makedirs(parent_dir, exist_ok=True)
+
+        self.project_path = project_path
+        logger.info(
+            "Using project workspace path for task %s: %s", self.task_id, project_path
+        )
+        return project_path
+
     def initialize(self) -> TaskStatus:
         """
         Initialize the agent with configuration from task_data.

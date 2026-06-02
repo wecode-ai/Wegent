@@ -247,7 +247,7 @@ export function ModelSelector({
                     onFocus={event => activateFamily(group.config.id, event.currentTarget)}
                     onClick={event => activateFamily(group.config.id, event.currentTarget)}
                     className={[
-                      'flex h-9 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium',
+                      'flex h-9 w-full items-center gap-2 rounded-lg px-3 text-left text-[13px] font-medium leading-[18px]',
                       active
                         ? 'bg-muted text-text-primary'
                         : 'text-text-secondary hover:bg-muted hover:text-text-primary',
@@ -274,7 +274,7 @@ export function ModelSelector({
               style={{ top: submenuOffset, left: submenuLeft }}
               className="absolute max-h-[min(28rem,calc(100vh-8rem))] min-h-48 w-72 overflow-y-auto rounded-2xl border border-border bg-base p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
             >
-              <div className="px-3 pb-1.5 pt-0.5 text-sm font-semibold text-text-muted">
+              <div className="px-3 pb-1.5 pt-0.5 text-[13px] font-semibold leading-[18px] text-text-muted">
                 {t('workbench.model_version')}
               </div>
               <div className="space-y-0.5">
@@ -290,7 +290,7 @@ export function ModelSelector({
                         onSelectModel(model)
                         setOpen(false)
                       }}
-                      className="flex h-9 w-full items-center gap-3 rounded-lg px-3 text-left text-sm text-text-primary hover:bg-muted"
+                      className="flex h-9 w-full items-center gap-3 rounded-lg px-3 text-left text-[13px] leading-[18px] text-text-primary hover:bg-muted"
                     >
                       <span className="min-w-0 flex-1 truncate font-medium">
                         {getModelDisplayLabel(model, selectedModelOptions)}
@@ -305,7 +305,7 @@ export function ModelSelector({
             <div
               data-testid="model-selector-submenu"
               style={{ top: submenuOffset, left: submenuLeft }}
-              className="absolute w-72 rounded-2xl border border-border bg-base p-4 text-sm text-text-muted shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
+              className="absolute w-72 rounded-2xl border border-border bg-base p-4 text-[13px] leading-[18px] text-text-muted shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
             >
               {t('workbench.no_models')}
             </div>
@@ -327,7 +327,7 @@ export function ModelSelector({
         }}
         disabled={disabled}
         className={[
-          'flex h-11 min-w-[44px] max-w-64 items-center gap-1 rounded-full px-2 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50',
+          'flex h-8 min-w-8 items-center gap-1 rounded-full px-2 text-[13px] font-medium leading-[18px] text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50',
           buttonClassName,
         ].join(' ')}
         aria-expanded={open}
