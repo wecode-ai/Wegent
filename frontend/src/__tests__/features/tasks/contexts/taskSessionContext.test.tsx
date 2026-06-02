@@ -250,7 +250,7 @@ describe('TaskSessionProvider', () => {
     })
 
     await waitFor(() => {
-      expect(sessionProbe.current?.taskState?.status).toBe('waiting_socket')
+      expect(sessionProbe.current?.taskState?.phase).toBe('waiting_socket')
     })
     expect(mockJoinTask).not.toHaveBeenCalled()
 
@@ -350,6 +350,100 @@ describe('TaskSessionProvider', () => {
 
     act(() => {
       sessionProbe.current?.selectTask(null)
+    })
+
+    expect(sessionProbe.current?.selectedTask).toBeNull()
+    expect(sessionProbe.current?.selectedTaskDetail).toBeNull()
+    expect(sessionProbe.current?.taskRuntimeSnapshot).toBeNull()
+    expect(sessionProbe.current?.taskState).toBeNull()
+  })
+
+  it('ignores stale task detail when a task load finishes after starting a new conversation', async () => {
+    let resolveDetail: (detail: TaskDetail) => void = () => {}
+    mockedTaskApis.getTaskDetail.mockImplementation(
+      () =>
+        new Promise<TaskDetail>(resolve => {
+          resolveDetail = resolve
+        })
+    )
+
+    render(
+      <TaskSessionProvider>
+        <SessionProbe />
+      </TaskSessionProvider>
+    )
+
+    await waitFor(() => {
+      expect(sessionProbe.current).not.toBeNull()
+    })
+
+    act(() => {
+      sessionProbe.current?.selectTask(createTask())
+    })
+
+    await waitFor(() => {
+      expect(sessionProbe.current?.taskState?.taskId).toBe(713)
+    })
+
+    act(() => {
+      sessionProbe.current?.selectTask(null)
+    })
+
+    await act(async () => {
+      resolveDetail(createTaskDetail())
+    })
+
+    expect(sessionProbe.current?.selectedTask).toBeNull()
+    expect(sessionProbe.current?.selectedTaskDetail).toBeNull()
+    expect(sessionProbe.current?.taskState).toBeNull()
+  })
+
+  it('ignores stale runtime snapshots when runtime check finishes after starting a new conversation', async () => {
+    let resolveRuntime: (
+      snapshot: Awaited<ReturnType<typeof taskApis.getTaskRuntimeCheck>>
+    ) => void = () => {}
+    mockedTaskApis.getTaskRuntimeCheck.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          resolveRuntime = resolve
+        })
+    )
+
+    render(
+      <TaskSessionProvider>
+        <SessionProbe />
+      </TaskSessionProvider>
+    )
+
+    await waitFor(() => {
+      expect(sessionProbe.current).not.toBeNull()
+    })
+
+    act(() => {
+      sessionProbe.current?.selectTask(createTask())
+    })
+
+    await waitFor(() => {
+      expect(sessionProbe.current?.selectedTaskDetail?.id).toBe(713)
+    })
+
+    let recoveryPromise: Promise<void> | undefined
+    act(() => {
+      recoveryPromise = sessionProbe.current?.recoverCurrentTask('manual-refresh')
+    })
+
+    act(() => {
+      sessionProbe.current?.selectTask(null)
+    })
+
+    await act(async () => {
+      resolveRuntime({
+        task_id: 713,
+        task_status: 'COMPLETED',
+        status_updated_at: '2026-06-01T10:00:00.000Z',
+        active_stream: null,
+      })
+      await recoveryPromise
     })
 
     expect(sessionProbe.current?.selectedTask).toBeNull()
@@ -511,7 +605,7 @@ describe('TaskSessionProvider', () => {
     })
 
     await waitFor(() => {
-      expect(sessionProbe.current?.taskState?.status).toBe('ready')
+      expect(sessionProbe.current?.taskState?.phase).toBe('ready')
     })
     expect(mockJoinTask).toHaveBeenCalledTimes(1)
   })

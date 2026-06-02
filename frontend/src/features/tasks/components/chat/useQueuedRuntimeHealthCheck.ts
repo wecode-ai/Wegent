@@ -15,7 +15,7 @@ interface UseQueuedRuntimeHealthCheckOptions {
   queuedMessages: QueuedRuntimeMessage[]
   blocksQueuedDispatch: boolean
   isStreaming: boolean
-  isAwaitingResponseStart: boolean
+  hasPendingUserMessage: boolean
   recoverCurrentTask: () => Promise<void>
 }
 
@@ -24,7 +24,7 @@ export function useQueuedRuntimeHealthCheck({
   queuedMessages,
   blocksQueuedDispatch,
   isStreaming,
-  isAwaitingResponseStart,
+  hasPendingUserMessage,
   recoverCurrentTask,
 }: UseQueuedRuntimeHealthCheckOptions) {
   const refreshKeyRef = useRef<string | null>(null)
@@ -39,7 +39,7 @@ export function useQueuedRuntimeHealthCheck({
       return
     }
 
-    if (isStreaming || isAwaitingResponseStart) return
+    if (isStreaming || hasPendingUserMessage) return
 
     const refreshKey = `${taskId}:${blocksQueuedDispatch}:${queuedIds.join(',')}`
     if (refreshKeyRef.current === refreshKey) return
@@ -48,7 +48,7 @@ export function useQueuedRuntimeHealthCheck({
     void recoverCurrentTask()
   }, [
     blocksQueuedDispatch,
-    isAwaitingResponseStart,
+    hasPendingUserMessage,
     isStreaming,
     queuedMessages,
     recoverCurrentTask,

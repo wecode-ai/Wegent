@@ -5,7 +5,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import type { TaskStateData } from '@/features/tasks/state'
+import type { TaskStateSnapshot } from '@/features/tasks/state'
 
 const GLYPH_VISIBLE_DELAY_MS = 3000
 
@@ -43,12 +43,12 @@ type RuntimeGlyphState = {
 }
 
 interface TaskRuntimeGlyphProps {
-  taskState: TaskStateData | null
+  taskState: TaskStateSnapshot | null
   visible: boolean
 }
 
-function buildRuntimeGlyphState(taskState: TaskStateData): RuntimeGlyphState {
-  const statusCode = TASK_MACHINE_STATUS_CODES[taskState.status] ?? 0
+function buildRuntimeGlyphState(taskState: TaskStateSnapshot): RuntimeGlyphState {
+  const statusCode = TASK_MACHINE_STATUS_CODES[taskState.phase] ?? 0
   const phaseCode = TASK_RUNTIME_PHASE_CODES[taskState.runtime.phase] ?? 0
   const roomCode = taskState.runtime.joinedRoom ? 1 : 0
   const reasonCode = taskState.runtime.recoveryReason ? 1 : 0

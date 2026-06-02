@@ -5,7 +5,6 @@ import type React from 'react'
 
 const mockContextSendMessage = jest.fn()
 const mockSetTaskInputMessage = jest.fn()
-const mockSetIsLoading = jest.fn()
 const mockResetAttachment = jest.fn()
 const mockResetContexts = jest.fn()
 const mockScrollToBottom = jest.fn()
@@ -15,6 +14,7 @@ const mockRefreshSelectedTaskDetail = jest.fn()
 const mockCheckHealth = jest.fn().mockResolvedValue(undefined)
 
 let isMachineStreamingMock = true
+let activeStreamSubtaskIdMock: number | undefined = 77
 let taskInputMessageMock = 'next question'
 let selectedTaskDetailMock = {
   id: 42,
@@ -40,11 +40,13 @@ jest.mock('@/features/tasks/session/TaskSession', () => ({
     recoverCurrentTask: mockCheckHealth,
     taskState: {
       taskId: selectedTaskDetailMock.id,
-      status: isMachineStreamingMock ? 'streaming' : 'ready',
+      phase: isMachineStreamingMock ? 'streaming' : 'ready',
       messages: new Map(),
       isStopping: false,
-      streamingInfo: { subtask_id: 77 },
-      runtime: { taskStatus: selectedTaskDetailMock.status },
+      runtime: {
+        taskStatus: selectedTaskDetailMock.status,
+        activeStreamSubtaskId: activeStreamSubtaskIdMock,
+      },
       derived: {
         isExecutionActive:
           selectedTaskDetailMock.status === 'RUNNING' ||
@@ -125,7 +127,6 @@ function renderQueueableHook() {
       effectiveRequiresWorkspace: false,
       taskInputMessage: taskInputMessageMock,
       setTaskInputMessage: mockSetTaskInputMessage,
-      setIsLoading: mockSetIsLoading,
       enableDeepThinking: false,
       enableClarification: false,
       externalApiParams: {},
@@ -152,6 +153,7 @@ describe('useChatStreamHandlers queue integration', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     isMachineStreamingMock = true
+    activeStreamSubtaskIdMock = 77
     taskInputMessageMock = 'next question'
     selectedTaskDetailMock = {
       id: 42,
@@ -256,6 +258,24 @@ describe('useChatStreamHandlers queue integration', () => {
     })
   })
 
+  it('moves a queued follow-up back into the chat input for editing', async () => {
+    const { result } = renderQueueableHook()
+
+    await act(async () => {
+      await result.current.handleSendMessage()
+    })
+
+    mockSetTaskInputMessage.mockClear()
+
+    act(() => {
+      result.current.editQueuedMessage('42:local-user-1')
+    })
+
+    expect(result.current.queuedMessages).toEqual([])
+    expect(mockSetTaskInputMessage).toHaveBeenCalledWith('next question')
+    expect(mockContextSendMessage).not.toHaveBeenCalled()
+  })
+
   it('checks runtime health when stream ended but task status still blocks a queued message', async () => {
     const { result, rerender } = renderQueueableHook()
 
@@ -283,7 +303,7 @@ describe('useChatStreamHandlers queue integration', () => {
     expect(mockContextSendMessage).not.toHaveBeenCalled()
   })
 
-  it('does not expose queue availability for a pending task unless it is streaming or awaiting response', () => {
+  it('does not expose queue availability for a pending task unless runtime has an active stream', () => {
     isMachineStreamingMock = false
     selectedTaskDetailMock = {
       id: 42,
@@ -430,5 +450,81 @@ describe('useChatStreamHandlers queue integration', () => {
         status: 'queued',
       }),
     ])
+  })
+
+  it('moves queued guidance back into the chat input for editing', async () => {
+    taskInputMessageMock = 'steer the current answer'
+    const { result } = renderQueueableHook()
+
+    await act(async () => {
+      await result.current.handleSendGuidance()
+    })
+
+    const guidanceId = result.current.guidanceMessages[0].id
+    mockSetTaskInputMessage.mockClear()
+
+    act(() => {
+      result.current.editGuidanceMessage(guidanceId)
+    })
+
+    expect(result.current.guidanceMessages).toEqual([])
+    expect(mockSetTaskInputMessage).toHaveBeenCalledWith('steer the current answer')
+  })
+
+  it('sends expired guidance as a normal message instead of keeping an expired card', async () => {
+    taskInputMessageMock = 'continue as a follow-up'
+    const { result, rerender } = renderQueueableHook()
+
+    await act(async () => {
+      await result.current.handleSendGuidance()
+    })
+    expect(result.current.guidanceMessages).toHaveLength(1)
+    mockContextSendMessage.mockClear()
+
+    isMachineStreamingMock = false
+    activeStreamSubtaskIdMock = undefined
+    selectedTaskDetailMock = {
+      id: 42,
+      status: 'COMPLETED',
+      is_group_chat: false,
+      subtasks: [],
+    } as unknown as TaskDetail
+    rerender()
+
+    await waitFor(() => {
+      expect(mockContextSendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'continue as a follow-up',
+        }),
+        expect.objectContaining({
+          pendingUserMessage: 'continue as a follow-up',
+        })
+      )
+    })
+    expect(result.current.expiredGuidanceMessages).toEqual([])
+  })
+
+  it('sends Chat Shell guidance using the runtime active stream subtask', async () => {
+    taskInputMessageMock = 'continue'
+    activeStreamSubtaskIdMock = 88
+    const { result } = renderQueueableHook()
+
+    await act(async () => {
+      await result.current.handleSendGuidance()
+    })
+
+    expect(mockSendChatGuidance).toHaveBeenCalledWith(
+      expect.objectContaining({
+        task_id: 42,
+        subtask_id: 88,
+        message: 'continue',
+        guidance: 'continue',
+      })
+    )
+    expect(mockToast).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'chat:guidance.no_active_stream',
+      })
+    )
   })
 })

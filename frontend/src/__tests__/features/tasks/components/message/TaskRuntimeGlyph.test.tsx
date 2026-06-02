@@ -6,15 +6,13 @@ import '@testing-library/jest-dom'
 import { act, render, screen } from '@testing-library/react'
 
 import { TaskRuntimeGlyph } from '@/features/tasks/components/message/TaskRuntimeGlyph'
-import type { TaskStateData } from '@/features/tasks/state'
+import type { TaskStateSnapshot } from '@/features/tasks/state'
 
-function createTaskState(taskId: number): TaskStateData {
+function createTaskState(taskId: number): TaskStateSnapshot {
   return {
     taskId,
-    status: 'ready',
+    phase: 'ready',
     messages: new Map(),
-    streamingSubtaskId: null,
-    streamingInfo: null,
     error: null,
     isStopping: false,
     runtime: {
