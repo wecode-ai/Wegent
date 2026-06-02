@@ -4,6 +4,8 @@
 
 """Tests for Chat Shell API endpoints."""
 
+import asyncio
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -14,6 +16,16 @@ def client():
     from chat_shell.main import app
 
     return TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def reset_shutdown_manager():
+    """Reset shutdown tracking around API tests."""
+    from chat_shell.core.shutdown import shutdown_manager
+
+    shutdown_manager.reset()
+    yield
+    shutdown_manager.reset()
 
 
 class TestHealthEndpoints:
@@ -32,6 +44,81 @@ class TestHealthEndpoints:
         response = client.head("/health")
         assert response.status_code == 200
         assert response.content == b""
+
+
+class TestActiveStreamEndpoints:
+    """Tests for active stream count endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_active_count_endpoint_reports_runtime_streams(self, client):
+        """Test active stream count endpoint uses runtime stream tracking."""
+        from chat_shell.core.shutdown import shutdown_manager
+
+        await shutdown_manager.register_stream("stream-a")
+        await shutdown_manager.register_stream("stream-b")
+
+        response = client.get("/v1/streams/active-count")
+
+        assert response.status_code == 200
+        assert response.json() == {"active_streams": 2}
+
+    @pytest.mark.asyncio
+    async def test_v1_health_reports_runtime_streams(self, client):
+        """Test /v1/health reports the same runtime stream count."""
+        from chat_shell.core.shutdown import shutdown_manager
+
+        await shutdown_manager.register_stream("stream-a")
+
+        response = client.get("/v1/health")
+
+        assert response.status_code == 200
+        assert response.json()["active_streams"] == 1
+
+    @pytest.mark.asyncio
+    async def test_create_response_rejects_new_streams_during_shutdown(self, client):
+        """Test new response streams are rejected after shutdown starts."""
+        from chat_shell.core.shutdown import shutdown_manager
+
+        await shutdown_manager.initiate_shutdown()
+
+        response = client.post(
+            "/v1/responses",
+            json={"model": "gpt-4", "input": "hello", "stream": True},
+        )
+
+        assert response.status_code == 503
+        assert "shutting down" in response.json()["detail"]
+        assert shutdown_manager.get_active_stream_count() == 0
+
+
+class TestShutdownEndpoints:
+    """Tests for shutdown orchestration endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_shutdown_wait_timeout_cancels_registered_streams(
+        self, client, monkeypatch
+    ):
+        """Test /shutdown/wait cancels active streams after timeout."""
+        from chat_shell.core.shutdown import shutdown_manager
+
+        cancel_event = asyncio.Event()
+        await shutdown_manager.register_stream("stream-a", cancel_event=cancel_event)
+
+        async def wait_for_streams_timeout(timeout):
+            return False
+
+        monkeypatch.setattr(
+            shutdown_manager, "wait_for_streams", wait_for_streams_timeout
+        )
+
+        response = client.post("/shutdown/wait")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "timeout"
+        assert data["active_streams"] == 1
+        assert data["cancelled_streams"] == 1
+        assert cancel_event.is_set()
 
 
 class TestExecutionRequest:

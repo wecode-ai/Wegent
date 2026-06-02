@@ -147,6 +147,7 @@ class GuidanceConsumer:
         self.queue = queue
         self.emitter = emitter
         self.is_cancelled = is_cancelled or (lambda: False)
+        self._consume_attempted = False
         self._expire_attempted = False
 
     def create_pre_model_hook(self) -> Callable[[dict[str, Any]], Any]:
@@ -156,6 +157,10 @@ class GuidanceConsumer:
             messages = list(state.get("messages") or [])
             if self.is_cancelled():
                 return {"llm_input_messages": messages}
+            if self._consume_attempted:
+                return {"llm_input_messages": messages}
+
+            self._consume_attempted = True
 
             logger.info(
                 "[GuidanceConsumer] pre_model_hook consuming: task_id=%s subtask_id=%s",
