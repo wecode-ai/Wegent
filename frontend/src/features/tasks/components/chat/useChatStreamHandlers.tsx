@@ -236,6 +236,7 @@ export function useChatStreamHandlers({
   const pathname = usePathname()
 
   const {
+    currentTaskId,
     selectedTaskDetail,
     selectTask,
     refreshTasks,
@@ -311,12 +312,9 @@ export function useChatStreamHandlers({
   const handleSendMessageRef = useRef<((message?: string) => Promise<void>) | null>(null)
   const retryQueuedMessageRef = useRef<((id: string) => void) | null>(null)
 
-  // Get current display task ID
-  const currentDisplayTaskId = selectedTaskDetail?.id
-
   const { pendingTaskId, setPendingTaskId, resetStreamingState, effectiveTaskIdForState } =
     useChatTransientState({
-      selectedTaskId: currentDisplayTaskId,
+      selectedTaskId: currentTaskId,
     })
 
   const taskState =
@@ -349,14 +347,14 @@ export function useChatStreamHandlers({
   // Note: subtasks parameter is no longer passed to contextStopStream
   // The streaming subtask info is now obtained from TaskStateMachine state
   const stopStream = useCallback(async () => {
-    const taskIdToStop = currentDisplayTaskId || pendingTaskId
+    const taskIdToStop = currentTaskId || pendingTaskId
 
     if (taskIdToStop && taskIdToStop > 0) {
       const team =
         typeof selectedTaskDetail?.team === 'object' ? selectedTaskDetail.team : undefined
       await contextStopStream(taskIdToStop, undefined, team)
     }
-  }, [currentDisplayTaskId, pendingTaskId, contextStopStream, selectedTaskDetail?.team])
+  }, [currentTaskId, pendingTaskId, contextStopStream, selectedTaskDetail?.team])
 
   const notifyStreamingJoinWarning = useCallback(
     (title: string) => toast({ title, variant: 'warning' }),
@@ -364,7 +362,7 @@ export function useChatStreamHandlers({
   )
 
   useStreamingJoinWarning({
-    taskId: currentDisplayTaskId || pendingTaskId,
+    taskId: currentTaskId || pendingTaskId,
     phase: taskState?.phase,
     runtime: taskState?.runtime,
     translate: t,
@@ -578,7 +576,7 @@ export function useChatStreamHandlers({
       const request: ContextSendRequest = {
         message: messageWithQueueContent,
         team_id: selectedTeam?.id ?? 0,
-        task_id: selectedTaskDetail?.id,
+        task_id: currentTaskId ?? undefined,
         model_id: modelId,
         force_override_bot_model: Boolean(modelId),
         force_override_bot_model_type: selectedModel?.type,
@@ -598,7 +596,7 @@ export function useChatStreamHandlers({
         contexts: contextItems.length > 0 ? contextItems : undefined,
         device_id: effectiveDeviceId,
         // Project association for workspace project conversations
-        project_id: selectedTaskDetail?.id ? undefined : projectId,
+        project_id: currentTaskId ? undefined : projectId,
         additional_skills:
           snapshotAdditionalSkills && snapshotAdditionalSkills.length > 0
             ? snapshotAdditionalSkills
@@ -617,11 +615,11 @@ export function useChatStreamHandlers({
             setPendingTaskId(completedTaskId)
           }
 
-          if (completedTaskId && !selectedTaskDetail?.id && onTaskCreated) {
+          if (completedTaskId && !currentTaskId && onTaskCreated) {
             onTaskCreated(completedTaskId)
           }
 
-          if (completedTaskId && !selectedTaskDetail?.id) {
+          if (completedTaskId && !currentTaskId) {
             if (taskType === 'knowledge' && knowledgeBaseId) {
               navigateToKnowledgeTask(completedTaskId, knowledgeBaseId)
             } else if (taskType === 'task' && !pathname?.startsWith('/devices')) {
@@ -674,6 +672,7 @@ export function useChatStreamHandlers({
       knowledgeBaseId,
       t,
       selectedTeam?.id,
+      currentTaskId,
       selectedTaskDetail,
       enableDeepThinking,
       enableClarification,
@@ -709,23 +708,16 @@ export function useChatStreamHandlers({
         setPendingTaskId(tempTaskId)
       }
 
-      if (selectedTaskDetail?.id) {
+      if (currentTaskId) {
         void refreshSelectedTaskDetail()
       }
 
       setTimeout(() => scrollToBottom(true), 0)
     },
-    [
-      contextSendMessage,
-      refreshSelectedTaskDetail,
-      scrollToBottom,
-      selectedTaskDetail?.id,
-      setPendingTaskId,
-    ]
+    [contextSendMessage, refreshSelectedTaskDetail, scrollToBottom, currentTaskId, setPendingTaskId]
   )
 
-  const activeTaskId =
-    selectedTaskDetail?.id && selectedTaskDetail.id > 0 ? selectedTaskDetail.id : null
+  const activeTaskId = currentTaskId && currentTaskId > 0 ? currentTaskId : null
   const isRuntimeBlockingQueue = runtimeDerived?.blocksQueuedDispatch ?? false
   const isActiveTaskBlocked = isMachineStreaming || hasPendingUserMessage || isRuntimeBlockingQueue
   const canQueueMessage = Boolean(
@@ -971,7 +963,7 @@ export function useChatStreamHandlers({
         return
       }
 
-      const immediateTaskId = selectedTaskDetail?.id || -Date.now()
+      const immediateTaskId = currentTaskId || -Date.now()
       const localMessageId = generateMessageId('user')
       const prepared = prepareChatSend(message, localMessageId, immediateTaskId, effectiveRepo)
 
@@ -1008,7 +1000,7 @@ export function useChatStreamHandlers({
       resetAttachment()
       resetContexts?.()
 
-      if (!selectedTaskDetail?.id) {
+      if (!currentTaskId) {
         setPendingTaskId(immediateTaskId)
       }
 
@@ -1025,6 +1017,7 @@ export function useChatStreamHandlers({
       isAttachmentReadyToSend,
       toast,
       selectedRepo,
+      currentTaskId,
       selectedTaskDetail,
       taskType,
       showRepositorySelector,
@@ -1206,7 +1199,7 @@ export function useChatStreamHandlers({
       }
 
       try {
-        const immediateTaskId = selectedTaskDetail?.id || -Date.now()
+        const immediateTaskId = currentTaskId || -Date.now()
 
         // Extract attachment IDs from existing contexts (for regeneration)
         const attachmentIds =
@@ -1277,7 +1270,7 @@ export function useChatStreamHandlers({
           {
             message: finalMessage,
             team_id: selectedTeam?.id ?? 0,
-            task_id: selectedTaskDetail?.id,
+            task_id: currentTaskId ?? undefined,
             model_id: modelId,
             force_override_bot_model: true, // Always force override when using model override
             force_override_bot_model_type: modelOverride.type,
@@ -1312,11 +1305,11 @@ export function useChatStreamHandlers({
               }
 
               // Call onTaskCreated callback when a new task is created
-              if (completedTaskId && !selectedTaskDetail?.id && onTaskCreated) {
+              if (completedTaskId && !currentTaskId && onTaskCreated) {
                 onTaskCreated(completedTaskId)
               }
 
-              if (completedTaskId && !selectedTaskDetail?.id) {
+              if (completedTaskId && !currentTaskId) {
                 if (taskType === 'knowledge' && knowledgeBaseId) {
                   navigateToKnowledgeTask(completedTaskId, knowledgeBaseId)
                 } else {
@@ -1348,7 +1341,7 @@ export function useChatStreamHandlers({
           setPendingTaskId(tempTaskId)
         }
 
-        if (selectedTaskDetail?.id) {
+        if (currentTaskId) {
           void refreshSelectedTaskDetail()
         }
 
@@ -1362,6 +1355,7 @@ export function useChatStreamHandlers({
       isAttachmentReadyToSend,
       toast,
       selectedTeam,
+      currentTaskId,
       selectedTaskDetail,
       contextSendMessage,
       enableDeepThinking,
@@ -1405,7 +1399,7 @@ export function useChatStreamHandlers({
         return false
       }
 
-      if (!selectedTaskDetail?.id) {
+      if (!currentTaskId) {
         toast({
           variant: 'destructive',
           title: t('chat:errors.generic_error'),
@@ -1418,7 +1412,7 @@ export function useChatStreamHandlers({
         'chat-retry-message',
         {
           'action.type': 'retry',
-          'task.id': selectedTaskDetail.id.toString(),
+          'task.id': currentTaskId.toString(),
           'subtask.id': message.subtaskId.toString(),
           ...(selectedModel && { 'model.id': selectedModel.name }),
         },
@@ -1429,7 +1423,7 @@ export function useChatStreamHandlers({
             const modelType = modelId ? selectedModel?.type : undefined
 
             const result = await retryMessage(
-              selectedTaskDetail.id,
+              currentTaskId,
               message.subtaskId!,
               modelId,
               modelType,
@@ -1462,19 +1456,19 @@ export function useChatStreamHandlers({
         }
       )
     },
-    [retryMessage, selectedTaskDetail?.id, selectedModel, t, toast, traceAction]
+    [retryMessage, currentTaskId, selectedModel, t, toast, traceAction]
   )
 
   // Handle retry with a specific model (from error card recommendation)
   const handleRetryWithModel = useCallback(
     async (message: { subtaskId?: number }, model: UnifiedModel) => {
-      if (!message.subtaskId || !selectedTaskDetail?.id) {
+      if (!message.subtaskId || !currentTaskId) {
         return false
       }
 
       try {
         const result = await retryMessage(
-          selectedTaskDetail.id,
+          currentTaskId,
           message.subtaskId,
           model.name,
           model.type,
@@ -1507,7 +1501,7 @@ export function useChatStreamHandlers({
     },
     [
       retryMessage,
-      selectedTaskDetail?.id,
+      currentTaskId,
       setSelectedModel,
       setForceOverride,
       refreshSelectedTaskDetail,
@@ -1518,14 +1512,14 @@ export function useChatStreamHandlers({
 
   // Handle cancel task
   const handleCancelTask = useCallback(async () => {
-    if (!selectedTaskDetail?.id) return false
+    if (!currentTaskId) return false
 
     try {
       const timeoutPromise = new Promise((_, reject) => {
         setTimeout(() => reject(new Error('Cancel operation timed out')), 60000)
       })
 
-      await Promise.race([taskApis.cancelTask(selectedTaskDetail.id), timeoutPromise])
+      await Promise.race([taskApis.cancelTask(currentTaskId), timeoutPromise])
 
       toast({
         title: 'Task cancelled successfully',
@@ -1565,7 +1559,7 @@ export function useChatStreamHandlers({
       }
       return false
     }
-  }, [selectedTaskDetail?.id, toast, refreshTasks, refreshSelectedTaskDetail])
+  }, [currentTaskId, toast, refreshTasks, refreshSelectedTaskDetail])
 
   return {
     // Stream state
