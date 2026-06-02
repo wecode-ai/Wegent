@@ -4,17 +4,14 @@
 
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Spinner } from '@/components/ui/spinner'
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+  GroupedModelSelect,
+  type ModelCascadeLabels,
+} from '@/components/model-select/ModelCascadeSelect'
 import { useTranslation } from '@/hooks/useTranslation'
 import { MessageSquare, Send, Wand2, RefreshCw, Cpu } from 'lucide-react'
 import { modelApis, type UnifiedModel } from '@/apis/models'
@@ -120,6 +117,23 @@ export default function PromptTestPanel({
   }
 
   const messages = getMessages()
+  const selectedModelOption = useMemo(
+    () => availableModels.find(model => model.name === selectedModel) ?? null,
+    [availableModels, selectedModel]
+  )
+  const cascadeLabels: ModelCascadeLabels = useMemo(
+    () => ({
+      ungrouped: t('common:models.ungrouped', 'Ungrouped'),
+      uncategorized: t('common:models.uncategorized', 'Uncategorized'),
+      searchPlaceholder: t('common:models.search_models', 'Search models or groups...'),
+      searchResults: t('common:models.search_results', 'Search results'),
+      noModels: t('common:models.no_models', 'No models available'),
+      noMatch: t('common:models.no_match', 'No matching models'),
+      primaryGroups: t('common:models.primary_groups', 'Primary groups'),
+      secondaryGroups: t('common:models.secondary_groups', 'Secondary groups'),
+    }),
+    [t]
+  )
 
   return (
     <div className="h-full flex flex-col">
@@ -127,32 +141,24 @@ export default function PromptTestPanel({
       <div className="flex items-center gap-3 p-3 border-b border-border flex-shrink-0">
         <Cpu className="w-4 h-4 text-text-secondary" />
         <span className="text-sm font-medium text-text-primary">{t('wizard:select_model')}</span>
-        <Select value={selectedModel} onValueChange={onModelChange} disabled={isLoadingModels}>
-          <SelectTrigger className="w-[200px]">
-            <SelectValue
-              placeholder={isLoadingModels ? t('common:models.loading') : t('wizard:select_model')}
-            />
-          </SelectTrigger>
-          <SelectContent>
-            {availableModels.map(model => (
-              <SelectItem key={model.name} value={model.name}>
-                <div className="flex items-center gap-2">
-                  <span>{model.displayName || model.name}</span>
-                  {model.type === 'public' && (
-                    <span className="text-xs text-text-muted bg-muted px-1.5 py-0.5 rounded">
-                      {t('common:models.public')}
-                    </span>
-                  )}
-                </div>
-              </SelectItem>
-            ))}
-            {availableModels.length === 0 && !isLoadingModels && (
-              <div className="px-2 py-4 text-center text-sm text-text-muted">
-                {t('wizard:no_models_available')}
-              </div>
-            )}
-          </SelectContent>
-        </Select>
+        <GroupedModelSelect
+          models={availableModels}
+          selectedModel={selectedModelOption}
+          labels={cascadeLabels}
+          onSelectModel={model => onModelChange(model.name)}
+          placeholder={isLoadingModels ? t('common:models.loading') : t('wizard:select_model')}
+          disabled={isLoadingModels}
+          dataTestId="prompt-test-model-select"
+          triggerClassName="w-[220px]"
+          getModelKey={model => `${model.type}-${model.namespace}-${model.name}`}
+          renderModelBadges={model =>
+            model.type === 'public' ? (
+              <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-text-muted">
+                {t('common:models.public')}
+              </span>
+            ) : null
+          }
+        />
       </div>
 
       {/* Messages area */}
