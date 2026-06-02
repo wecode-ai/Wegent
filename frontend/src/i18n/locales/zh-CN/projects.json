@@ -14,14 +14,7 @@
   },
   "workspaceSection": {
     "title": "项目",
-    "empty": "暂无项目，点击 + 创建",
-    "showMore": "展开显示"
-  },
-  "relativeTime": {
-    "minute": "{{count}} 分钟",
-    "hour": "{{count}} 小时",
-    "day": "{{count}} 天",
-    "week": "{{count}} 周"
+    "empty": "暂无项目，点击 + 创建"
   },
   "actions": {
     "edit": "编辑",
