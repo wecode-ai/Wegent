@@ -1,5 +1,6 @@
 import { Check, ChevronLeft, Folder, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { CreateProjectRequest, DeviceInfo, ProjectWithTasks } from '@/types/api'
@@ -256,7 +257,7 @@ function ProjectCreateDialogContent({
       ? t('workbench.project_create_existing_title', '选择项目目录')
       : t('workbench.project_create_title', '新建项目')
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/35 px-4">
       <div
         data-testid="project-create-dialog"
@@ -442,6 +443,7 @@ function ProjectCreateDialogContent({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

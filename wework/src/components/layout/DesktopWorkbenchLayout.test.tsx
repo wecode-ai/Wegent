@@ -5,6 +5,30 @@ import { createDeviceApi } from '@/api/devices'
 import { createQuotaApi } from '@/api/quota'
 import { DesktopWorkbenchLayout } from './DesktopWorkbenchLayout'
 
+function createRect({
+  left,
+  top,
+  width,
+  height,
+}: {
+  left: number
+  top: number
+  width: number
+  height: number
+}): DOMRect {
+  return {
+    x: left,
+    y: top,
+    left,
+    top,
+    width,
+    height,
+    right: left + width,
+    bottom: top + height,
+    toJSON: () => ({}),
+  } as DOMRect
+}
+
 vi.mock('@/config/runtime', () => ({
   getRuntimeConfig: () => ({ apiBaseUrl: '/api' }),
 }))
@@ -442,6 +466,62 @@ describe('DesktopWorkbenchLayout', () => {
 
     fireEvent.pointerDown(document.body)
     expect(screen.queryByTestId('project-start-from-scratch-button')).not.toBeInTheDocument()
+  })
+
+  test('renders project create menu as a body-level flyout to the right of the trigger', async () => {
+    const getBoundingClientRectSpy = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function () {
+        const element = this as HTMLElement
+
+        if (element.querySelector('[data-testid="projects-create-button"]')) {
+          return createRect({ left: 104, top: 246, width: 28, height: 28 })
+        }
+
+        if (element.dataset.testid === 'projects-create-button-menu') {
+          return createRect({ left: 0, top: 0, width: 176, height: 76 })
+        }
+
+        return createRect({ left: 0, top: 0, width: 0, height: 0 })
+      })
+
+    try {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: 898,
+      })
+      Object.defineProperty(window, 'innerHeight', {
+        configurable: true,
+        value: 720,
+      })
+
+      render(<DesktopWorkbenchLayout {...baseProps} />)
+
+      const trigger = screen.getByTestId('projects-create-button')
+      await userEvent.click(trigger)
+
+      const menu = screen.getByTestId('projects-create-button-menu')
+      await waitFor(() => expect(menu).toHaveStyle({ left: '140px', top: '246px' }))
+      expect(document.body).toContainElement(menu)
+      expect(trigger.parentElement).not.toContainElement(menu)
+    } finally {
+      getBoundingClientRectSpy.mockRestore()
+    }
+  })
+
+  test('renders project create dialog as a page-level overlay', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-existing-folder-button'))
+
+    const dialog = screen.getByTestId('project-create-dialog')
+    const overlay = dialog.parentElement
+
+    expect(overlay).not.toBeNull()
+    expect(document.body).toContainElement(overlay)
+    expect(document.querySelector('aside')).not.toContainElement(overlay)
+    expect(overlay).toHaveClass('fixed', 'inset-0')
   })
 
   test('creates a project from an existing folder selected in the directory tree', async () => {
