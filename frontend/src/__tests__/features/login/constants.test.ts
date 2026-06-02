@@ -2,7 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { sanitizeRedirectPath } from '@/features/login/constants'
+import {
+  isPasswordLoginForced,
+  resolveLoginDisplayMode,
+  sanitizeRedirectPath,
+} from '@/features/login/constants'
 
 describe('sanitizeRedirectPath', () => {
   describe('Valid paths', () => {
@@ -191,6 +195,34 @@ describe('sanitizeRedirectPath', () => {
       attackVectors.forEach(vector => {
         expect(sanitizeRedirectPath(vector)).toBeNull()
       })
+    })
+  })
+})
+
+describe('password login URL override', () => {
+  it('should force password-only login when password_login parameter is present', () => {
+    const searchParams = new URLSearchParams('password_login')
+
+    expect(isPasswordLoginForced(searchParams)).toBe(true)
+    expect(resolveLoginDisplayMode(searchParams, 'oidc')).toEqual({
+      showPasswordLogin: true,
+      showOidcLogin: false,
+    })
+  })
+
+  it('should treat parameter presence as the override regardless of value', () => {
+    expect(isPasswordLoginForced(new URLSearchParams('password_login=0'))).toBe(true)
+    expect(isPasswordLoginForced(new URLSearchParams('password_login=false'))).toBe(true)
+  })
+
+  it('should use runtime login mode when password_login parameter is absent', () => {
+    expect(resolveLoginDisplayMode(new URLSearchParams(), 'oidc')).toEqual({
+      showPasswordLogin: false,
+      showOidcLogin: true,
+    })
+    expect(resolveLoginDisplayMode(new URLSearchParams(), 'all')).toEqual({
+      showPasswordLogin: true,
+      showOidcLogin: true,
     })
   })
 })
