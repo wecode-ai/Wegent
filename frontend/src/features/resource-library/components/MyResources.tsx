@@ -412,9 +412,7 @@ export function MyResources({ title }: MyResourcesProps = {}) {
         className="flex flex-col gap-3 border-b border-border pb-3 sm:flex-row sm:items-center sm:justify-between"
         data-testid="managed-resource-header"
       >
-        {title && (
-          <h1 className="shrink-0 text-xl font-semibold text-text-primary">{title}</h1>
-        )}
+        {title && <h1 className="shrink-0 text-xl font-semibold text-text-primary">{title}</h1>}
         <ManagedResourceTabs value={resourceType} onValueChange={setResourceType} />
       </div>
 

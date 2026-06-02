@@ -58,8 +58,8 @@ from executor.agents.claude_code.skill_deployer import (
     setup_coordinate_mode,
 )
 from executor.agents.claude_code.standalone_chat_workspace import (
-    prepared_standalone_chat_workspace_path,
     prepare_standalone_chat_workspace,
+    prepared_standalone_chat_workspace_path,
 )
 from executor.config import config
 from executor.hooks.pre_execute_hook import get_pre_execute_hook

@@ -37,7 +37,7 @@ export function MessageList({ messages }: MessageListProps) {
 
 function UserMessage({ content }: { content: string }) {
   return (
-    <div className="max-w-[80%] overflow-hidden break-words whitespace-pre-wrap rounded-2xl bg-[#f4f4f4] px-4 py-3 text-sm leading-6 text-[#1a1a1a]">
+    <div className="max-w-[80%] overflow-hidden break-words whitespace-pre-wrap rounded-2xl bg-[#f4f4f4] px-4 py-3 text-[13px] leading-5 text-[#1a1a1a]">
       {content}
     </div>
   )
@@ -50,7 +50,7 @@ function AssistantMessage({ message }: { message: WorkbenchMessage }) {
   const isThinking = isStreaming && !hasContent && !hasBlocks
 
   return (
-    <div className="min-w-0 overflow-x-hidden text-sm leading-7 text-[#1a1a1a]">
+    <div className="min-w-0 overflow-x-hidden text-[13px] leading-6 text-[#1a1a1a]">
       {hasBlocks && (
         <ToolBlocksDisplay
           blocks={message.blocks!}
@@ -62,13 +62,13 @@ function AssistantMessage({ message }: { message: WorkbenchMessage }) {
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
-              h1: ({ children }) => <h1 className="mb-4 mt-6 text-xl font-semibold">{children}</h1>,
-              h2: ({ children }) => <h2 className="mb-3 mt-5 text-lg font-semibold">{children}</h2>,
-              h3: ({ children }) => <h3 className="mb-2 mt-4 text-base font-semibold">{children}</h3>,
-              p: ({ children }) => <p className="mb-3 min-w-0 break-words leading-7">{children}</p>,
+              h1: ({ children }) => <h1 className="mb-4 mt-6 text-lg font-semibold">{children}</h1>,
+              h2: ({ children }) => <h2 className="mb-3 mt-5 text-base font-semibold">{children}</h2>,
+              h3: ({ children }) => <h3 className="mb-2 mt-4 text-sm font-semibold">{children}</h3>,
+              p: ({ children }) => <p className="mb-3 min-w-0 break-words leading-6">{children}</p>,
               ul: ({ children }) => <ul className="mb-3 list-disc space-y-1.5 pl-5">{children}</ul>,
               ol: ({ children }) => <ol className="mb-3 list-decimal space-y-1.5 pl-5">{children}</ol>,
-              li: ({ children }) => <li className="min-w-0 break-words leading-7">{children}</li>,
+              li: ({ children }) => <li className="min-w-0 break-words leading-6">{children}</li>,
               strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
               code: ({ className, children }) => {
                 const isBlock = className?.includes('language-')
@@ -90,7 +90,7 @@ function AssistantMessage({ message }: { message: WorkbenchMessage }) {
               ),
               table: ({ children }) => (
                 <div className="mb-3 max-w-full overflow-x-auto">
-                  <table className="w-full min-w-max border-collapse text-sm">{children}</table>
+                  <table className="w-full min-w-max border-collapse text-[13px]">{children}</table>
                 </div>
               ),
               th: ({ children }) => (
