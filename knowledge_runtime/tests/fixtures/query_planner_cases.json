@@ -1,0 +1,32 @@
+[
+  {
+    "query": "监狱来的妈妈 电影 国家电影局",
+    "expected_type": "keyword_bundle",
+    "expected_backend_query": "监狱来的妈妈 电影 国家电影局"
+  },
+  {
+    "query": "红包 520 发送 金额 规则",
+    "expected_type": "keyword_bundle",
+    "expected_backend_query": "红包 520 发送 金额 规则"
+  },
+  {
+    "query": "红包不让抢 红包使用问题",
+    "expected_type": "keyword_bundle",
+    "expected_backend_query": "红包不让抢 红包使用问题"
+  },
+  {
+    "query": "MCP 工具 添加 服务器 ghost spec mcpServers",
+    "expected_type": "keyword_bundle",
+    "expected_backend_query": "MCP 工具 添加 服务器 ghost spec mcpServers"
+  },
+  {
+    "query": "Milvus 混合检索为什么对长 query 效果差？",
+    "expected_type": "natural_sentence",
+    "expected_backend_query": "Milvus 混合检索为什么对长 query 效果差？"
+  },
+  {
+    "query": "ghost spec mcpServers",
+    "expected_type": "keyword_bundle",
+    "expected_backend_query": "ghost spec mcpServers"
+  }
+]

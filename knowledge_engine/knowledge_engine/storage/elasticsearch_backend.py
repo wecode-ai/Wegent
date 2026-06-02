@@ -252,10 +252,7 @@ class ElasticsearchBackend(BaseStorageBackend):
             # alpha: 0 = pure keyword, 1 = pure vector, default 0.7 (70% vector)
             query_mode = VectorStoreQueryMode.HYBRID
             query_embedding = embed_model.get_query_embedding(query)
-            # Convert vector_weight to alpha (they have the same meaning)
-            alpha = retrieval_setting.get(
-                "alpha", retrieval_setting.get("vector_weight", 0.7)
-            )
+            alpha = self._resolve_hybrid_alpha(retrieval_setting)
         else:
             # Default: Pure vector search
             query_mode = VectorStoreQueryMode.DEFAULT
@@ -272,11 +269,46 @@ class ElasticsearchBackend(BaseStorageBackend):
             alpha=alpha,
         )
 
+        logger.info(
+            "[Elasticsearch] retrieve: index=%s, mode=%s, query_mode=%s, top_k=%s, score_threshold=%s, alpha=%s",
+            index_name,
+            retrieval_mode,
+            query_mode,
+            top_k,
+            score_threshold,
+            alpha,
+        )
+
         # Execute query
         result = vector_store.query(vs_query)
 
+        logger.info(
+            "[Elasticsearch] query result: index=%s, nodes_count=%d, top_scores=%s",
+            index_name,
+            len(result.nodes) if result.nodes else 0,
+            result.similarities[:5] if result.similarities else None,
+        )
+
         # Process results
         return self._process_query_results(result, score_threshold)
+
+    def _resolve_hybrid_alpha(self, retrieval_setting: Dict[str, Any]) -> float:
+        """Resolve the hybrid alpha from the configured retrieval weights."""
+        vector_weight = retrieval_setting.get("vector_weight")
+        keyword_weight = retrieval_setting.get("keyword_weight")
+
+        if vector_weight is not None and keyword_weight is not None:
+            total = vector_weight + keyword_weight
+            if total > 0:
+                return vector_weight / total
+
+        if vector_weight is not None:
+            return float(vector_weight)
+
+        if keyword_weight is not None:
+            return max(0.0, 1.0 - float(keyword_weight))
+
+        return float(retrieval_setting.get("alpha", 0.7))
 
     def _build_metadata_filters(
         self, knowledge_id: str, metadata_condition: Optional[Dict[str, Any]] = None

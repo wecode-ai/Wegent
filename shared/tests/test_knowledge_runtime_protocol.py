@@ -213,19 +213,42 @@ def test_remote_query_request_rejects_missing_user_id() -> None:
         )
 
 
-def test_remote_query_request_rejects_extra_fields() -> None:
-    """Reference mode rejects legacy value-mode fields."""
+def test_remote_query_request_accepts_optional_runtime_configs() -> None:
     remote_query_request = _require_model("RemoteQueryRequest")
 
-    with pytest.raises(ValidationError):
-        remote_query_request.model_validate(
-            {
-                "knowledge_base_ids": [1001],
-                "user_id": 42,
-                "query": "release checklist",
-                "knowledge_base_configs": [],
-            }
-        )
+    request = remote_query_request.model_validate(
+        {
+            "knowledge_base_ids": [1001],
+            "user_id": 42,
+            "query": "release checklist",
+            "knowledge_base_configs": [
+                {
+                    "knowledge_base_id": 1001,
+                    "index_owner_user_id": 42,
+                    "retriever_config": {
+                        "name": "retriever-a",
+                        "namespace": "default",
+                        "storage_config": {"type": "elasticsearch"},
+                    },
+                    "embedding_model_config": {
+                        "model_name": "bge-m3",
+                        "model_namespace": "default",
+                        "resolved_config": {"protocol": "openai"},
+                    },
+                    "retrieval_config": {
+                        "top_k": 5,
+                        "score_threshold": 0.2,
+                        "retrieval_mode": "hybrid",
+                        "vector_weight": 0.8,
+                        "keyword_weight": 0.2,
+                    },
+                }
+            ],
+        }
+    )
+
+    assert request.knowledge_base_configs is not None
+    assert request.knowledge_base_configs[0].retrieval_config.retrieval_mode == "hybrid"
 
 
 def test_remote_delete_request_accepts_reference_mode() -> None:

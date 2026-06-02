@@ -138,6 +138,7 @@ class RemoteQueryRequest(KnowledgeRuntimeProtocolModel):
     user_id: int
     query: str
     max_results: int = Field(default=5, gt=0)
+    knowledge_base_configs: list[RemoteKnowledgeBaseQueryConfig] | None = None
     document_ids: list[int] | None = None
     metadata_condition: dict[str, Any] | None = None
     extensions: dict[str, Any] | None = None

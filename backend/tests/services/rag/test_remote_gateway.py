@@ -166,6 +166,79 @@ async def test_remote_gateway_query_posts_reference_mode_request(mocker) -> None
 
 
 @pytest.mark.asyncio
+async def test_remote_gateway_query_posts_runtime_overrides(mocker) -> None:
+    post_mock = mocker.patch(
+        "httpx.AsyncClient.post",
+        return_value=_build_response(
+            url="http://knowledge-runtime/internal/rag/query",
+            status_code=200,
+            json_body={
+                "records": [],
+                "total": 0,
+                "total_estimated_tokens": 0,
+            },
+        ),
+    )
+    gateway = RemoteRagGateway(base_url="http://knowledge-runtime")
+    spec = QueryRuntimeSpec(
+        knowledge_base_ids=[1],
+        query="release checklist",
+        user_id=8,
+        max_results=5,
+        knowledge_base_configs=[
+            {
+                "knowledge_base_id": 1,
+                "index_owner_user_id": 99,
+                "retriever_config": {
+                    "name": "retriever-a",
+                    "namespace": "default",
+                    "storage_config": {"type": "elasticsearch"},
+                },
+                "embedding_model_config": {
+                    "model_name": "bge-m3",
+                    "model_namespace": "default",
+                    "resolved_config": {"protocol": "openai"},
+                },
+                "retrieval_config": {
+                    "top_k": 5,
+                    "score_threshold": 0.2,
+                    "retrieval_mode": "hybrid",
+                    "vector_weight": 0.8,
+                    "keyword_weight": 0.2,
+                },
+            }
+        ],
+    )
+
+    await gateway.query(spec)
+
+    _, kwargs = post_mock.await_args
+    assert kwargs["json"]["knowledge_base_configs"] == [
+        {
+            "knowledge_base_id": 1,
+            "index_owner_user_id": 99,
+            "retriever_config": {
+                "name": "retriever-a",
+                "namespace": "default",
+                "storage_config": {"type": "elasticsearch"},
+            },
+            "embedding_model_config": {
+                "model_name": "bge-m3",
+                "model_namespace": "default",
+                "resolved_config": {"protocol": "openai"},
+            },
+            "retrieval_config": {
+                "top_k": 5,
+                "score_threshold": 0.2,
+                "retrieval_mode": "hybrid",
+                "vector_weight": 0.8,
+                "keyword_weight": 0.2,
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_remote_gateway_translates_structured_remote_errors(mocker) -> None:
     mocker.patch(
         "httpx.AsyncClient.post",

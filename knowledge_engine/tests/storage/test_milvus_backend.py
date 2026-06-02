@@ -158,6 +158,53 @@ class TestCreateVectorStore:
             hybrid_ranker="RRFRanker",
         )
 
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    def test_create_vector_store_defaults_to_rrf_ranker(self, mock_milvus_vs):
+        """Test that RRFRanker remains the safe default."""
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset"},
+            }
+        )
+
+        backend.create_vector_store("test_collection")
+
+        assert mock_milvus_vs.call_args.kwargs["hybrid_ranker"] == "RRFRanker"
+
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    def test_create_vector_store_can_opt_in_weighted_ranker(self, mock_milvus_vs):
+        """Test that an explicit opt-in can request WeightedRanker."""
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset"},
+                "ext": {"hybrid_ranker": "WeightedRanker"},
+            }
+        )
+
+        backend.create_vector_store("test_collection")
+
+        assert mock_milvus_vs.call_args.kwargs["hybrid_ranker"] == "WeightedRanker"
+
+    @patch("knowledge_engine.storage.milvus_backend.logger")
+    @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
+    def test_create_vector_store_warns_on_weighted_ranker_opt_in(
+        self, mock_milvus_vs, mock_logger
+    ):
+        """Test that WeightedRanker opt-in emits a rollout warning."""
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset"},
+                "ext": {"hybrid_ranker": "WeightedRanker"},
+            }
+        )
+
+        backend.create_vector_store("test_collection")
+
+        mock_logger.warning.assert_called_once()
+
 
 class TestRetrieve:
     """Tests for retrieve method."""

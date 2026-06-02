@@ -7,10 +7,11 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from knowledge_runtime.services.config_resolver import QueryConfig
 from knowledge_runtime.services.query_executor import QueryExecutor
+
 from shared.models import (
+    RemoteKnowledgeBaseQueryConfig,
     RemoteQueryRequest,
     RemoteQueryResponse,
     RuntimeEmbeddingModelConfig,
@@ -62,6 +63,45 @@ class TestQueryExecutor:
     """Tests for QueryExecutor."""
 
     @pytest.mark.asyncio
+    async def test_execute_uses_planned_backend_query(self, query_request) -> None:
+        mock_storage_backend = MagicMock()
+        mock_embed_model = MagicMock()
+        mock_kb_executor = MagicMock()
+        mock_kb_executor.execute = AsyncMock(return_value={"records": []})
+
+        with (
+            patch(
+                "knowledge_runtime.services.query_executor.create_storage_backend_from_runtime_config",
+                return_value=mock_storage_backend,
+            ),
+            patch(
+                "knowledge_runtime.services.query_executor.create_embedding_model_from_runtime_config",
+                return_value=mock_embed_model,
+            ),
+            patch(
+                "knowledge_runtime.services.query_executor.KnowledgeQueryExecutor",
+                return_value=mock_kb_executor,
+            ),
+        ):
+            query_request.query = "  红包   520 发送   金额 规则 "
+            query_request.knowledge_base_ids = [1]
+            executor = QueryExecutor(db=MagicMock())
+            config = _make_query_config(1)
+            executor._config_resolver.resolve_query_config = MagicMock(
+                return_value=config
+            )
+
+            await executor.execute(query_request)
+
+        mock_kb_executor.execute.assert_awaited_once_with(
+            knowledge_id="1",
+            query="红包 520 发送 金额 规则",
+            retrieval_config=config.retrieval_config,
+            metadata_condition=None,
+            user_id=7,
+        )
+
+    @pytest.mark.asyncio
     async def test_execute_returns_aggregated_results(self, query_request) -> None:
         """Test that execute returns aggregated results from all KBs."""
         mock_storage_backend = MagicMock()
@@ -110,6 +150,76 @@ class TestQueryExecutor:
         assert isinstance(result, RemoteQueryResponse)
         assert result.total == 2  # 1 from each KB
         assert len(result.records) == 2
+
+    @pytest.mark.asyncio
+    async def test_execute_prefers_request_runtime_config_over_db_resolution(
+        self, query_request
+    ) -> None:
+        mock_storage_backend = MagicMock()
+        mock_embed_model = MagicMock()
+        mock_kb_executor = MagicMock()
+        mock_kb_executor.execute = AsyncMock(return_value={"records": []})
+
+        with (
+            patch(
+                "knowledge_runtime.services.query_executor.create_storage_backend_from_runtime_config",
+                return_value=mock_storage_backend,
+            ),
+            patch(
+                "knowledge_runtime.services.query_executor.create_embedding_model_from_runtime_config",
+                return_value=mock_embed_model,
+            ),
+            patch(
+                "knowledge_runtime.services.query_executor.KnowledgeQueryExecutor",
+                return_value=mock_kb_executor,
+            ),
+        ):
+            executor = QueryExecutor(db=MagicMock())
+            executor._config_resolver.resolve_query_config = MagicMock(
+                side_effect=AssertionError(
+                    "DB config resolution should be skipped when runtime config is provided"
+                )
+            )
+            query_request.knowledge_base_ids = [1]
+            query_request.knowledge_base_configs = [
+                RemoteKnowledgeBaseQueryConfig(
+                    knowledge_base_id=1,
+                    index_owner_user_id=13,
+                    retriever_config=RuntimeRetrieverConfig(
+                        name="request-retriever",
+                        namespace="default",
+                        storage_config={"type": "elasticsearch"},
+                    ),
+                    embedding_model_config=RuntimeEmbeddingModelConfig(
+                        model_name="request-embedding",
+                        model_namespace="default",
+                        resolved_config={"protocol": "openai"},
+                    ),
+                    retrieval_config=RuntimeRetrievalConfig(
+                        top_k=9,
+                        score_threshold=0.2,
+                        retrieval_mode="hybrid",
+                        vector_weight=0.8,
+                        keyword_weight=0.2,
+                    ),
+                )
+            ]
+
+            await executor.execute(query_request)
+
+        mock_kb_executor.execute.assert_awaited_once_with(
+            knowledge_id="1",
+            query="test query",
+            retrieval_config=RuntimeRetrievalConfig(
+                top_k=9,
+                score_threshold=0.2,
+                retrieval_mode="hybrid",
+                vector_weight=0.8,
+                keyword_weight=0.2,
+            ),
+            metadata_condition=None,
+            user_id=13,
+        )
 
     @pytest.mark.asyncio
     async def test_execute_sorts_by_score_descending(self, query_request) -> None:

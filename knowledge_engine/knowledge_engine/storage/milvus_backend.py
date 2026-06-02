@@ -249,6 +249,25 @@ class MilvusBackend(BaseStorageBackend):
         """
         return MilvusClient(uri=self.base_url, token=self.token, db_name=self.db_name)
 
+    def _resolve_hybrid_ranker(self) -> str:
+        """
+        Resolve the hybrid ranker with a conservative default.
+
+        RRFRanker remains the default until an explicit opt-in is provided.
+        """
+        configured_ranker = self.ext.get("hybrid_ranker")
+        if configured_ranker == "WeightedRanker":
+            logger.warning(
+                "[Milvus] WeightedRanker requested, but phase-1 does not yet "
+                "thread explicit hybrid weights through retrieval. Verify the "
+                "current LlamaIndex + Milvus integration before enabling it "
+                "for production rollout."
+            )
+            return configured_ranker
+        if configured_ranker == "RRFRanker":
+            return configured_ranker
+        return "RRFRanker"
+
     def create_vector_store(
         self,
         collection_name: str,
@@ -286,7 +305,7 @@ class MilvusBackend(BaseStorageBackend):
             upsert_mode=True,
             overwrite=False,  # Do not overwrite existing collection
             enable_sparse=True,  # Enable sparse vector for keyword/hybrid search
-            hybrid_ranker="RRFRanker",  # Use RRF for hybrid search ranking
+            hybrid_ranker=self._resolve_hybrid_ranker(),
         )
 
     def index_with_metadata(
@@ -463,6 +482,16 @@ class MilvusBackend(BaseStorageBackend):
             filters=filters,
         )
 
+        logger.info(
+            "[Milvus] retrieve: collection=%s, mode=%s, query_mode=%s, top_k=%s, score_threshold=%s, effective_threshold=%s",
+            collection_name,
+            retrieval_mode,
+            query_mode,
+            top_k,
+            score_threshold,
+            0.0 if retrieval_mode == "hybrid" else score_threshold,
+        )
+
         # Debug logging for hybrid search troubleshooting
         logger.debug(
             f"[Milvus] retrieve: mode={retrieval_mode}, query_mode={query_mode}, "
@@ -472,6 +501,13 @@ class MilvusBackend(BaseStorageBackend):
 
         # Execute query
         result = vector_store.query(vs_query)
+
+        logger.info(
+            "[Milvus] query result: collection=%s, nodes_count=%d, top_scores=%s",
+            collection_name,
+            len(result.nodes) if result.nodes else 0,
+            result.similarities[:5] if result.similarities else None,
+        )
 
         # Debug logging for query results
         logger.debug(

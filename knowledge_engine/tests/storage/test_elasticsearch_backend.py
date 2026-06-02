@@ -9,6 +9,66 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
+class TestHybridAlphaResolution:
+    @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
+    def test_resolve_hybrid_alpha_prefers_normalized_pair(self, mock_client_class):
+        from knowledge_engine.storage.elasticsearch_backend import ElasticsearchBackend
+
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+
+        backend = ElasticsearchBackend(
+            {
+                "url": "http://localhost:9200",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+
+        assert backend._resolve_hybrid_alpha(
+            {"vector_weight": 2.0, "keyword_weight": 1.0}
+        ) == pytest.approx(2 / 3)
+
+    @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
+    def test_resolve_hybrid_alpha_uses_vector_weight_when_only_vector_is_present(
+        self, mock_client_class
+    ):
+        from knowledge_engine.storage.elasticsearch_backend import ElasticsearchBackend
+
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+
+        backend = ElasticsearchBackend(
+            {
+                "url": "http://localhost:9200",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+
+        assert backend._resolve_hybrid_alpha({"vector_weight": 0.8}) == pytest.approx(
+            0.8
+        )
+
+    @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
+    def test_resolve_hybrid_alpha_uses_keyword_weight_when_only_keyword_is_present(
+        self, mock_client_class
+    ):
+        from knowledge_engine.storage.elasticsearch_backend import ElasticsearchBackend
+
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+
+        backend = ElasticsearchBackend(
+            {
+                "url": "http://localhost:9200",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+
+        assert backend._resolve_hybrid_alpha({"keyword_weight": 0.2}) == pytest.approx(
+            0.8
+        )
+
+
 class TestGetAllChunks:
     """Tests for ElasticsearchBackend.get_all_chunks."""
 

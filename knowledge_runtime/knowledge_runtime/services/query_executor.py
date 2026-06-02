@@ -9,6 +9,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from knowledge_runtime.services.config_resolver import ConfigResolver
+from knowledge_runtime.services.query_planner import QueryPlan, QueryPlanner
 from sqlalchemy.orm import Session
 
 from knowledge_engine.embedding.factory import (
@@ -16,8 +18,8 @@ from knowledge_engine.embedding.factory import (
 )
 from knowledge_engine.query.executor import QueryExecutor as KnowledgeQueryExecutor
 from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
-from knowledge_runtime.services.config_resolver import ConfigResolver
 from shared.models import (
+    RemoteKnowledgeBaseQueryConfig,
     RemoteQueryRecord,
     RemoteQueryRequest,
     RemoteQueryResponse,
@@ -36,9 +38,10 @@ class QueryExecutor:
     4. Aggregates and sorts results by score
     """
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: Session, planner: QueryPlanner | None = None) -> None:
         self._db = db
         self._config_resolver = ConfigResolver()
+        self._planner = planner or QueryPlanner()
 
     async def execute(self, request: RemoteQueryRequest) -> RemoteQueryResponse:
         """Execute the query operation.
@@ -49,13 +52,19 @@ class QueryExecutor:
         Returns:
             Query response with ranked records.
         """
+        plan = self._planner.plan(request.query)
         all_records: list[RemoteQueryRecord] = []
+        runtime_config_by_kb_id = self._build_runtime_config_map(
+            request.knowledge_base_configs
+        )
 
         # Resolve configs for each knowledge base
         for knowledge_base_id in request.knowledge_base_ids:
             records = await self._query_knowledge_base(
                 request=request,
                 knowledge_base_id=knowledge_base_id,
+                plan=plan,
+                runtime_config=runtime_config_by_kb_id.get(knowledge_base_id),
             )
             all_records.extend(records)
 
@@ -69,8 +78,9 @@ class QueryExecutor:
         )
 
         logger.info(
-            "Query complete: query='%s...', total_results=%d, returned=%d",
-            request.query[:50],
+            "Query complete: query_type=%s, backend_query='%s...', total_results=%d, returned=%d",
+            plan.query_type,
+            plan.backend_query[:50],
             len(all_records),
             len(limited_records),
         )
@@ -85,6 +95,8 @@ class QueryExecutor:
         self,
         request: RemoteQueryRequest,
         knowledge_base_id: int,
+        plan: QueryPlan,
+        runtime_config: RemoteKnowledgeBaseQueryConfig | None = None,
     ) -> list[RemoteQueryRecord]:
         """Query a single knowledge base.
 
@@ -96,7 +108,7 @@ class QueryExecutor:
             List of records from this knowledge base.
         """
         # Resolve config from database
-        config = self._config_resolver.resolve_query_config(
+        config = runtime_config or self._config_resolver.resolve_query_config(
             db=self._db,
             knowledge_base_id=knowledge_base_id,
             user_id=request.user_id,
@@ -109,6 +121,19 @@ class QueryExecutor:
         embed_model = create_embedding_model_from_runtime_config(
             config.embedding_model_config
         )
+        storage_type = config.retriever_config.storage_config.get("type", "unknown")
+
+        logger.info(
+            "Query KB config: knowledge_base_id=%d, config_source=%s, storage_type=%s, retrieval_mode=%s, top_k=%s, score_threshold=%s, vector_weight=%s, keyword_weight=%s",
+            knowledge_base_id,
+            "request_override" if runtime_config is not None else "database",
+            storage_type,
+            config.retrieval_config.retrieval_mode,
+            config.retrieval_config.top_k,
+            config.retrieval_config.score_threshold,
+            config.retrieval_config.vector_weight,
+            config.retrieval_config.keyword_weight,
+        )
 
         # Create query executor
         executor = KnowledgeQueryExecutor(
@@ -120,7 +145,7 @@ class QueryExecutor:
         knowledge_id = str(knowledge_base_id)
         result = await executor.execute(
             knowledge_id=knowledge_id,
-            query=request.query,
+            query=plan.backend_query,
             retrieval_config=config.retrieval_config,
             metadata_condition=request.metadata_condition,
             user_id=config.index_owner_user_id,
@@ -147,6 +172,12 @@ class QueryExecutor:
         )
 
         return records
+
+    def _build_runtime_config_map(
+        self,
+        runtime_configs: list[RemoteKnowledgeBaseQueryConfig] | None,
+    ) -> dict[int, RemoteKnowledgeBaseQueryConfig]:
+        return {config.knowledge_base_id: config for config in runtime_configs or []}
 
     def _extract_document_id(self, record: dict[str, Any]) -> int | None:
         """Extract document ID from record metadata."""
