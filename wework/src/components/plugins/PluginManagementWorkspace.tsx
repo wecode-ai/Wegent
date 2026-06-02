@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { createHttpClient } from '@/api/http'
 import { createMcpApi } from '@/api/mcps'
+import { createPluginApi } from '@/api/plugins'
 import { createSystemSkillApi } from '@/api/systemSkills'
 import { getRuntimeConfig } from '@/config/runtime'
 import { navigateTo } from '@/lib/navigation'
@@ -24,14 +25,19 @@ import {
 import { parseOptionalStringRecordJson } from './mcp-json-import'
 import {
   InstalledMcpRow,
+  InstalledPluginRow,
   InstalledSkillRow,
   type InstalledMcpItem,
+  type InstalledPluginItem,
   type InstalledSkillItem,
 } from './PluginManagementRows'
 import { PluginCreateMenu } from './PluginCreateMenu'
+import { PluginDetailView } from './PluginDetailView'
+import { PluginUploadDialog } from './PluginUploadDialog'
 import { SkillUploadDialog } from './SkillUploadDialog'
 import type {
   InstalledMCP,
+  InstalledPlugin,
   InstalledMCPServerConfig,
   InstalledSkill,
   MCPProviderInfo,
@@ -39,7 +45,7 @@ import type {
   PersonalSkill,
 } from '@/types/api'
 
-type ManagementTab = 'mcp' | 'skills' | 'integrations'
+type ManagementTab = 'mcp' | 'skills' | 'plugins' | 'integrations'
 
 const tabs: Array<{
   id: ManagementTab
@@ -55,6 +61,11 @@ const tabs: Array<{
     id: 'skills',
     labelKey: 'plugin_management_tab_skills',
     fallback: '技能',
+  },
+  {
+    id: 'plugins',
+    labelKey: 'plugin_management_tab_plugins',
+    fallback: '插件',
   },
   {
     id: 'integrations',
@@ -134,6 +145,33 @@ function toInstalledMcpItem(item: InstalledMCP): InstalledMcpItem {
   }
 }
 
+function toInstalledPluginItem(item: InstalledPlugin): InstalledPluginItem {
+  const labels = item.metadata['labels']
+  const id =
+    labels && typeof labels === 'object'
+      ? (labels as Record<string, unknown>).id
+      : undefined
+  const components = item.spec.components
+  return {
+    id: Number(id ?? 0),
+    name: item.spec.displayName || item.spec.source.pluginKey,
+    description: item.spec.description,
+    enabled: item.spec.enabled,
+    version: item.spec.version,
+    componentCounts: {
+      skills: components.skills.length,
+      commands: components.commands.length,
+      agents: components.agents.length,
+      mcp: components.mcps.length,
+      hooks: components.hooks.length,
+      lsp: components.lsps.length,
+      monitors: components.monitors.length,
+      bin: components.bins.length,
+    },
+    raw: item,
+  }
+}
+
 const emptyCustomMcpForm: CustomMcpFormState = {
   name: '',
   displayName: '',
@@ -174,11 +212,18 @@ export function PluginManagementWorkspace() {
   const [activeTab, setActiveTab] = useState<ManagementTab>('mcp')
   const [query, setQuery] = useState('')
   const systemSkillApi = useMemo(() => createDefaultSystemSkillApi(), [])
+  const pluginApi = useMemo(() => {
+    const { apiBaseUrl } = getRuntimeConfig()
+    return createPluginApi(createHttpClient({ baseUrl: apiBaseUrl }))
+  }, [])
   const mcpApi = useMemo(() => {
     const { apiBaseUrl } = getRuntimeConfig()
     return createMcpApi(createHttpClient({ baseUrl: apiBaseUrl }))
   }, [])
   const [installedMcps, setInstalledMcps] = useState<InstalledMcpItem[]>([])
+  const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginItem[]>(
+    [],
+  )
   const [installedSkills, setInstalledSkills] = useState<InstalledSkillItem[]>(
     [],
   )
@@ -201,11 +246,15 @@ export function PluginManagementWorkspace() {
   const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false)
   const [showCustomMcpDialog, setShowCustomMcpDialog] = useState(false)
   const [showSkillUploadDialog, setShowSkillUploadDialog] = useState(false)
+  const [showPluginUploadDialog, setShowPluginUploadDialog] = useState(false)
+  const [selectedPluginId, setSelectedPluginId] = useState<number | null>(null)
   const [customMcpForm, setCustomMcpForm] =
     useState<CustomMcpFormState>(emptyCustomMcpForm)
   const [isCreatingCustomMcp, setIsCreatingCustomMcp] = useState(false)
   const [isUploadingSkill, setIsUploadingSkill] = useState(false)
+  const [isUploadingPlugin, setIsUploadingPlugin] = useState(false)
   const [isLoadingMcps, setIsLoadingMcps] = useState(true)
+  const [isLoadingPlugins, setIsLoadingPlugins] = useState(true)
   const [isLoadingSkills, setIsLoadingSkills] = useState(true)
   const normalizedQuery = query.trim().toLowerCase()
 
@@ -271,6 +320,19 @@ export function PluginManagementWorkspace() {
         setIsLoadingMcps(false)
       })
 
+    pluginApi
+      .listInstalledPlugins()
+      .then((response) => {
+        if (!isCurrent) return
+        setInstalledPlugins(response.items.map(toInstalledPluginItem))
+        setIsLoadingPlugins(false)
+      })
+      .catch(() => {
+        if (!isCurrent) return
+        setInstalledPlugins([])
+        setIsLoadingPlugins(false)
+      })
+
     mcpApi
       .listProviders()
       .then((response) => {
@@ -285,7 +347,7 @@ export function PluginManagementWorkspace() {
     return () => {
       isCurrent = false
     }
-  }, [mcpApi, systemSkillApi])
+  }, [mcpApi, pluginApi, systemSkillApi])
 
   const filteredInstalledSkills = useMemo(
     () =>
@@ -312,6 +374,30 @@ export function PluginManagementWorkspace() {
         )
       }),
     [installedMcps, normalizedQuery],
+  )
+
+  const filteredInstalledPlugins = useMemo(
+    () =>
+      installedPlugins.filter((plugin) => {
+        if (!normalizedQuery) return true
+
+        return (
+          plugin.name.toLowerCase().includes(normalizedQuery) ||
+          plugin.description.toLowerCase().includes(normalizedQuery) ||
+          Object.keys(plugin.componentCounts).some((key) =>
+            key.toLowerCase().includes(normalizedQuery),
+          )
+        )
+      }),
+    [installedPlugins, normalizedQuery],
+  )
+  const selectedPlugin = useMemo(
+    () =>
+      selectedPluginId === null
+        ? null
+        : installedPlugins.find((plugin) => plugin.id === selectedPluginId) ??
+          null,
+    [installedPlugins, selectedPluginId],
   )
 
   const filteredMcpProviders = useMemo(
@@ -391,6 +477,76 @@ export function PluginManagementWorkspace() {
     })
   }
 
+  const toggleInstalledPlugin = (id: number) => {
+    const plugin = installedPlugins.find((item) => item.id === id)
+    if (!plugin) return
+
+    setInstalledPlugins((previous) =>
+      previous.map((item) =>
+        item.id === id ? { ...item, enabled: !item.enabled } : item,
+      ),
+    )
+    pluginApi.updateInstalledPlugin(id, { enabled: !plugin.enabled }).catch(() => {
+      setInstalledPlugins((previous) =>
+        previous.map((item) =>
+          item.id === id ? { ...item, enabled: plugin.enabled } : item,
+        ),
+      )
+    })
+  }
+
+  const togglePluginComponent = (
+    id: number,
+    componentKey: string,
+    enabled: boolean,
+  ) => {
+    const plugin = installedPlugins.find((item) => item.id === id)
+    if (!plugin) return
+
+    const previousStates = plugin.raw.spec.componentStates || {}
+    const nextStates = { ...previousStates, [componentKey]: enabled }
+    setInstalledPlugins((previous) =>
+      previous.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              raw: {
+                ...item.raw,
+                spec: {
+                  ...item.raw.spec,
+                  componentStates: nextStates,
+                },
+              },
+            }
+          : item,
+      ),
+    )
+    pluginApi
+      .updateInstalledPlugin(id, { componentStates: { [componentKey]: enabled } })
+      .then((updated) => {
+        const nextItem = toInstalledPluginItem(updated)
+        setInstalledPlugins((previous) =>
+          previous.map((item) => (item.id === id ? nextItem : item)),
+        )
+      })
+      .catch(() => {
+        setInstalledPlugins((previous) =>
+          previous.map((item) => (item.id === id ? plugin : item)),
+        )
+      })
+  }
+
+  const uninstallInstalledPlugin = (id: number) => {
+    const plugin = installedPlugins.find((item) => item.id === id)
+    if (!plugin) return
+
+    setInstalledPlugins((previous) => previous.filter((item) => item.id !== id))
+    setSelectedPluginId((current) => (current === id ? null : current))
+    pluginApi.uninstallInstalledPlugin(id).catch(() => {
+      setInstalledPlugins((previous) => [...previous, plugin])
+    })
+  }
+
   const createCustomMcp = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const displayName = customMcpForm.displayName.trim()
@@ -427,6 +583,22 @@ export function PluginManagementWorkspace() {
       setShowSkillUploadDialog(false)
     } finally {
       setIsUploadingSkill(false)
+    }
+  }
+
+  const uploadPlugin = async (file: File) => {
+    setIsUploadingPlugin(true)
+    try {
+      const uploaded = await pluginApi.uploadPlugin(file)
+      const item = toInstalledPluginItem(uploaded)
+      setInstalledPlugins((previous) => [
+        item,
+        ...previous.filter((plugin) => plugin.id !== item.id),
+      ])
+      setActiveTab('plugins')
+      setShowPluginUploadDialog(false)
+    } finally {
+      setIsUploadingPlugin(false)
     }
   }
 
@@ -524,6 +696,20 @@ export function PluginManagementWorkspace() {
       })
   }
 
+  if (activeTab === 'plugins' && selectedPlugin) {
+    return (
+      <PluginDetailView
+        plugin={selectedPlugin}
+        onBack={() => setSelectedPluginId(null)}
+        onToggle={() => toggleInstalledPlugin(selectedPlugin.id)}
+        onComponentToggle={(componentKey, enabled) =>
+          togglePluginComponent(selectedPlugin.id, componentKey, enabled)
+        }
+        onUninstall={() => uninstallInstalledPlugin(selectedPlugin.id)}
+      />
+    )
+  }
+
   return (
     <main className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-base px-4 pb-5 pt-20 text-text-primary sm:px-7 sm:py-4">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -542,7 +728,7 @@ export function PluginManagementWorkspace() {
           <span>{t('workbench.plugins_manage', '管理')}</span>
         </nav>
 
-        <div className="flex items-center gap-2 overflow-x-auto">
+        <div className="flex items-center gap-2 overflow-visible">
           <PluginCreateMenu
             isOpen={isCreateMenuOpen}
             buttonTestId="plugin-management-create-button"
@@ -554,6 +740,10 @@ export function PluginManagementWorkspace() {
             onCreateMcp={() => {
               setIsCreateMenuOpen(false)
               setShowCustomMcpDialog(true)
+            }}
+            onCreatePlugin={() => {
+              setIsCreateMenuOpen(false)
+              setShowPluginUploadDialog(true)
             }}
           />
           <button
@@ -575,7 +765,9 @@ export function PluginManagementWorkspace() {
                   ? installedMcps.length
                   : tab.id === 'skills'
                     ? installedSkills.length
-                    : mcpProviders.length
+                    : tab.id === 'plugins'
+                      ? installedPlugins.length
+                      : mcpProviders.length
               return (
                 <button
                   key={tab.id}
@@ -583,7 +775,10 @@ export function PluginManagementWorkspace() {
                   role="tab"
                   aria-selected={activeTab === tab.id}
                   className={tabClassName(activeTab === tab.id)}
-                  onClick={() => setActiveTab(tab.id)}
+                  onClick={() => {
+                    setSelectedPluginId(null)
+                    setActiveTab(tab.id)
+                  }}
                 >
                   {t(`workbench.${tab.labelKey}`, tab.fallback)}{' '}
                   <span className="text-text-muted">{count}</span>
@@ -655,6 +850,41 @@ export function PluginManagementWorkspace() {
               ))
             )}
           </div>
+        ) : activeTab === 'plugins' ? (
+          <div className="space-y-9">
+            {isLoadingPlugins ? (
+              <div className="text-sm font-semibold text-text-secondary">
+                {t('workbench.plugins_loading_plugins', '正在加载插件')}
+              </div>
+            ) : filteredInstalledPlugins.length > 0 ? (
+              filteredInstalledPlugins.map((plugin) => (
+                <InstalledPluginRow
+                  key={plugin.id}
+                  plugin={plugin}
+                  onOpen={() => setSelectedPluginId(plugin.id)}
+                  onToggle={() => toggleInstalledPlugin(plugin.id)}
+                  onUninstall={() => uninstallInstalledPlugin(plugin.id)}
+                />
+              ))
+            ) : (
+              <div className="flex flex-col items-start gap-3 text-sm font-semibold text-text-secondary">
+                <div>
+                  {t('workbench.plugins_no_installed_plugins', '暂无已安装插件')}
+                </div>
+                <button
+                  type="button"
+                  data-testid="plugin-management-upload-plugin-button"
+                  className="rounded-xl bg-primary px-4 py-2 text-white hover:bg-primary/90"
+                  onClick={() => setShowPluginUploadDialog(true)}
+                >
+                  {t(
+                    'workbench.plugins_plugin_upload_title',
+                    '上传 Claude Code 插件',
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
         ) : (
           <section className="space-y-5">
             <SectionHeading
@@ -701,6 +931,13 @@ export function PluginManagementWorkspace() {
           isUploading={isUploadingSkill}
           onCancel={() => setShowSkillUploadDialog(false)}
           onUpload={uploadPersonalSkill}
+        />
+      )}
+      {showPluginUploadDialog && (
+        <PluginUploadDialog
+          isUploading={isUploadingPlugin}
+          onCancel={() => setShowPluginUploadDialog(false)}
+          onUpload={uploadPlugin}
         />
       )}
     </main>

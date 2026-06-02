@@ -7,17 +7,19 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import shutil
 import tempfile
+import zipfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
 from executor.platform_compat import get_permissions_manager
-from executor.services.api_client import SkillDownloader
+from executor.services.api_client import ApiClient, SkillDownloader
 from shared.logger import setup_logger
 from shared.models.execution import ExecutionRequest
 
@@ -410,14 +412,19 @@ class GlobalCapabilityReporter:
                     "source": "wegent" if managed else "local_user",
                     "installed_at": install.get("installedAt"),
                     "last_updated": install.get("lastUpdated"),
-                    "skills": self._scan_plugin_skills(install.get("installPath")),
+                    "skills": self._scan_plugin_skills(
+                        install.get("installPath"),
+                        install.get("componentStates") or {},
+                    ),
                 }
                 if managed:
                     record["installed_plugin_id"] = managed.get("installed_plugin_id")
                 results.append(record)
         return results
 
-    def _scan_plugin_skills(self, install_path: Any) -> list[dict[str, Any]]:
+    def _scan_plugin_skills(
+        self, install_path: Any, component_states: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
         if not install_path:
             return []
         root = Path(str(install_path)).expanduser()
@@ -434,6 +441,11 @@ class GlobalCapabilityReporter:
                 continue
             metadata = self._read_skill_metadata(skill_file)
             skill_name = metadata.get("name") or skill_file.parent.name
+            if (
+                component_states
+                and component_states.get(f"skill:{skill_name}") is False
+            ):
+                continue
             skills.append(
                 {
                     "name": skill_name,
@@ -724,6 +736,7 @@ class CapabilitySyncHandler:
         installed_map = installed_plugins.setdefault("plugins", {})
         self.plugins_dir.mkdir(parents=True, exist_ok=True)
         _set_owner_only(self.plugins_dir, is_directory=True)
+        client = ApiClient(self.auth_token) if self.auth_token else None
 
         for item in plugins:
             if not isinstance(item, dict):
@@ -740,6 +753,27 @@ class CapabilitySyncHandler:
                 continue
             key = self._plugin_key(name, marketplace)
             install_path = self._plugin_install_path(item, name, marketplace)
+            if not install_path.exists() and item.get("download_path"):
+                if not client:
+                    results.append(
+                        {
+                            "id": item.get("installed_plugin_id"),
+                            "name": name,
+                            "status": "failed",
+                            "error": "No auth token available",
+                        }
+                    )
+                    continue
+                if not self._download_plugin_package(client, item, install_path):
+                    results.append(
+                        {
+                            "id": item.get("installed_plugin_id"),
+                            "name": name,
+                            "status": "failed",
+                            "error": "Failed to download Plugin package",
+                        }
+                    )
+                    continue
             if not install_path.exists() or not install_path.is_dir():
                 logger.warning(
                     "Plugin package not found in local cache: name=%s marketplace=%s path=%s",
@@ -768,6 +802,7 @@ class CapabilitySyncHandler:
                     "scope": scope,
                     "installPath": str(install_path),
                     "version": item.get("version"),
+                    "componentStates": item.get("component_states") or {},
                     "installedAt": item.get("installed_at") or utc_now_iso(),
                     "lastUpdated": utc_now_iso(),
                 }
@@ -791,6 +826,88 @@ class CapabilitySyncHandler:
         if records:
             self.store._save_installed_plugins(installed_plugins)
         return results, records
+
+    def _download_plugin_package(
+        self,
+        client: ApiClient,
+        item: dict[str, Any],
+        install_path: Path,
+    ) -> bool:
+        download_path = item.get("download_path")
+        if not isinstance(download_path, str) or not download_path:
+            return False
+        response = client.get(download_path, timeout=60)
+        if not response:
+            return False
+
+        content = response.content
+        expected_checksum = item.get("checksum")
+        if isinstance(expected_checksum, str) and expected_checksum:
+            actual_checksum = "sha256:" + hashlib.sha256(content).hexdigest()
+            if actual_checksum != expected_checksum:
+                logger.warning(
+                    "Plugin checksum mismatch: name=%s expected=%s actual=%s",
+                    item.get("name"),
+                    expected_checksum,
+                    actual_checksum,
+                )
+                return False
+
+        try:
+            self._extract_plugin_zip(content, install_path)
+            logger.info(
+                "Downloaded plugin package: name=%s path=%s",
+                item.get("name"),
+                install_path,
+            )
+            return True
+        except Exception as exc:
+            logger.warning(
+                "Failed to extract plugin package: name=%s path=%s error=%s",
+                item.get("name"),
+                install_path,
+                exc,
+            )
+            return False
+
+    def _extract_plugin_zip(self, content: bytes, install_path: Path) -> None:
+        parent = install_path.parent
+        parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            for member in archive.infolist():
+                target = install_path / member.filename
+                if not self.store._is_child(target, install_path):
+                    raise ValueError(f"Unsafe path in plugin ZIP: {member.filename}")
+
+            if install_path.exists():
+                shutil.rmtree(install_path)
+            temp_path = parent / f".{install_path.name}.tmp-{os.getpid()}"
+            if temp_path.exists():
+                shutil.rmtree(temp_path)
+            temp_path.mkdir(parents=True)
+            try:
+                archive.extractall(temp_path)
+                root = self._normalized_plugin_root(temp_path)
+                if root != temp_path:
+                    shutil.move(str(root), str(install_path))
+                    shutil.rmtree(temp_path, ignore_errors=True)
+                else:
+                    os.replace(temp_path, install_path)
+            finally:
+                if temp_path.exists():
+                    shutil.rmtree(temp_path, ignore_errors=True)
+        _set_owner_only(install_path, is_directory=True)
+
+    def _normalized_plugin_root(self, path: Path) -> Path:
+        if (path / ".claude-plugin" / "plugin.json").exists():
+            return path
+        children = [child for child in path.iterdir() if child.is_dir()]
+        if (
+            len(children) == 1
+            and (children[0] / ".claude-plugin" / "plugin.json").exists()
+        ):
+            return children[0]
+        return path
 
     def _plugin_marketplace(self, item: dict[str, Any]) -> str | None:
         source = item.get("source") or {}
@@ -832,6 +949,8 @@ class CapabilitySyncHandler:
             "marketplace": marketplace,
             "version": item.get("version"),
             "source": item.get("source") or {},
+            "component_states": item.get("component_states") or {},
+            "components": item.get("components") or {},
             "install_path": str(install_path),
             "managed": True,
             "updated_at": utc_now_iso(),
