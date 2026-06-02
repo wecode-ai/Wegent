@@ -1073,6 +1073,7 @@
     "description": "管理您的 AI 模型配置",
     "public": "公共",
     "group": "组",
+    "advanced": "高级",
     "group_models": "组模型",
     "public_models": "公共模型",
     "my_models": "我的模型",
