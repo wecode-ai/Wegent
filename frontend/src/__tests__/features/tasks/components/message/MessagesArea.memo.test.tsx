@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import React from 'react'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import MessagesArea from '@/features/tasks/components/message/MessagesArea'
 import type { DisplayMessage } from '@/features/tasks/presentation/useMessagePresenter'
 
@@ -217,6 +217,7 @@ describe('MessagesArea memoization', () => {
   })
 
   it('shows runtime glyph only for an empty non-loading message area', () => {
+    jest.useFakeTimers()
     mockMessages = []
     mockTaskSession = {
       ...mockTaskSession,
@@ -244,6 +245,12 @@ describe('MessagesArea memoization', () => {
     )
 
     expect(screen.queryByTestId('messages-syncing-indicator')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('task-runtime-watermark')).not.toBeInTheDocument()
+
+    act(() => {
+      jest.advanceTimersByTime(3000)
+    })
+
     const watermark = screen.getByTestId('task-runtime-watermark')
     expect(watermark).toHaveTextContent('✅')
     expect(watermark).toHaveTextContent('🏁')
@@ -254,5 +261,6 @@ describe('MessagesArea memoization', () => {
     expect(watermark).toHaveAttribute('data-task-id', '707')
     expect(watermark).toHaveAttribute('data-runtime-code', 's4-p5-r0-q1-e0-m0')
     expect(watermark.querySelectorAll('[data-runtime-symbol]')).toHaveLength(6)
+    jest.useRealTimers()
   })
 })
