@@ -140,6 +140,12 @@ class HealthResponse(BaseModel):
     )
 
 
+class ActiveStreamCountResponse(BaseModel):
+    """Active stream count response schema."""
+
+    active_streams: int = Field(..., description="Active stream count")
+
+
 # ============================================================
 # Helper Functions
 # ============================================================
@@ -267,7 +273,11 @@ async def _stream_response(
     from chat_shell.services.storage.session import session_manager
 
     # Register stream with shutdown manager
-    await shutdown_manager.register_stream(request_id)
+    request_cancel_event = asyncio.Event()
+    await shutdown_manager.register_stream(
+        request_id,
+        cancel_event=request_cancel_event,
+    )
 
     # Extract metadata
     metadata = request.metadata or {}
@@ -367,7 +377,10 @@ async def _stream_response(
         # Loop continues while transport is not done
         while not transport.is_done():
             # Check for cancellation via session_manager
-            if session_manager.is_cancelled(subtask_id):
+            if (
+                session_manager.is_cancelled(subtask_id)
+                or request_cancel_event.is_set()
+            ):
                 chat_task.cancel()
                 event_type, data = await emitter.incomplete("cancelled")
                 yield _create_sse_event(event_type, data)
@@ -456,7 +469,11 @@ async def create_response(request: OpenAIResponsesRequest, req: Request):
 
     This endpoint is compatible with OpenAI Responses API.
     """
+    from chat_shell.core.shutdown import shutdown_manager
     from shared.telemetry.context import set_request_context
+
+    if shutdown_manager.is_shutting_down:
+        raise HTTPException(status_code=503, detail="Service is shutting down")
 
     request_id = req.headers.get("X-Request-ID")
     if not request_id:
@@ -472,6 +489,16 @@ async def create_response(request: OpenAIResponsesRequest, req: Request):
             "Connection": "keep-alive",
             "X-Request-ID": request_id,
         },
+    )
+
+
+@router.get("/streams/active-count", response_model=ActiveStreamCountResponse)
+async def get_active_stream_count():
+    """Get the current number of active response streams."""
+    from chat_shell.core.shutdown import shutdown_manager
+
+    return ActiveStreamCountResponse(
+        active_streams=shutdown_manager.get_active_stream_count()
     )
 
 
@@ -500,7 +527,7 @@ async def cancel_response(request: CancelRequest):
 async def health_check():
     """Health check endpoint."""
     from chat_shell import __version__ as version
-    from chat_shell.services.storage.session import session_manager
+    from chat_shell.core.shutdown import shutdown_manager
 
     uptime = int(time.time() - _start_time)
 
@@ -508,7 +535,7 @@ async def health_check():
         status="healthy",
         version=version,
         uptime_seconds=uptime,
-        active_streams=session_manager.get_active_stream_count(),
+        active_streams=shutdown_manager.get_active_stream_count(),
         storage=StorageHealth(type="memory", status="ok"),
         model_providers=None,
     )
