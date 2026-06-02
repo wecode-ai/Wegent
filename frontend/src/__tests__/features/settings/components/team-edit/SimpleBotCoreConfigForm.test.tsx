@@ -4,7 +4,6 @@
 
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen } from '@testing-library/react'
-import type { ReactNode } from 'react'
 
 import SimpleBotCoreConfigForm from '@/features/settings/components/team-edit/SimpleBotCoreConfigForm'
 import type { UnifiedModel } from '@/apis/models'
@@ -34,22 +33,22 @@ jest.mock('@/hooks/useTranslation', () => ({
   }),
 }))
 
-jest.mock('@/components/ui/select', () => ({
-  Select: ({
-    children,
-    onValueChange,
+jest.mock('@/components/model-select/ModelCascadeSelect', () => ({
+  GroupedModelSelect: ({
+    models,
+    onSelectModel,
+    dataTestId,
+    placeholder,
   }: {
-    children: ReactNode
-    onValueChange?: (value: string) => void
+    models: Array<{ name: string; type?: string; namespace?: string }>
+    onSelectModel: (model: { name: string; type?: string; namespace?: string }) => void
+    dataTestId?: string
+    placeholder?: string
   }) => (
-    <div data-testid="model-select" onClick={() => onValueChange?.('gpt-4.1:public:default')}>
-      {children}
-    </div>
+    <button type="button" data-testid={dataTestId} onClick={() => onSelectModel(models[0])}>
+      {placeholder}
+    </button>
   ),
-  SelectContent: ({ children }: { children: ReactNode }) => <>{children}</>,
-  SelectItem: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  SelectTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
-  SelectValue: ({ placeholder }: { placeholder?: string }) => <span>{placeholder}</span>,
 }))
 
 jest.mock('@/features/settings/components/skills/RichSkillSelector', () => ({
@@ -131,7 +130,7 @@ describe('SimpleBotCoreConfigForm', () => {
     expect(screen.getByText('Knowledge bases')).toBeInTheDocument()
     expect(screen.getByText('Prompt')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByTestId('model-select'))
+    fireEvent.click(screen.getByTestId('simple-model-select'))
     expect(onModelChange).toHaveBeenCalledWith({
       name: 'gpt-4.1',
       type: 'public',

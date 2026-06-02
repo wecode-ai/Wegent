@@ -78,11 +78,13 @@ export class BotsPage extends SettingsBasePage {
     // Select model if provided
     if (botData.model) {
       const modelSelector = this.page.locator(
-        '[data-testid="model-select"], [role="combobox"]:has-text("Model")'
+        '[data-testid="simple-model-select"], [data-testid="model-select"], [role="combobox"]:has-text("Model")'
       )
       if (await modelSelector.isVisible({ timeout: 2000 }).catch(() => false)) {
         await modelSelector.click()
-        await this.page.click(`[role="option"]:has-text("${botData.model}")`)
+        await this.page.click(
+          `[data-testid^="model-option-"]:has-text("${botData.model}"), [role="option"]:has-text("${botData.model}")`
+        )
       }
     }
   }
