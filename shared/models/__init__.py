@@ -102,6 +102,7 @@ from .runtime_config import (
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
 )
+from .search_hints import SearchHints
 from .splitter_config import (
     FlatChunkConfig,
     HierarchicalChunkConfig,
@@ -133,6 +134,7 @@ __all__ = [
     "RuntimeRetrieverConfig",
     "RuntimeEmbeddingModelConfig",
     "RuntimeRetrievalConfig",
+    "SearchHints",
     "RemoteKnowledgeBaseQueryConfig",
     "RemoteIndexRequest",
     "RemoteDeleteDocumentIndexRequest",

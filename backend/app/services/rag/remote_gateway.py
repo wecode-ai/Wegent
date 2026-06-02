@@ -168,6 +168,7 @@ class RemoteRagGateway:
             knowledge_base_ids=spec.knowledge_base_ids,
             user_id=spec.user_id or 0,
             query=spec.query,
+            search_hints=spec.search_hints,
             max_results=spec.max_results,
             knowledge_base_configs=spec.knowledge_base_configs or None,
             document_ids=spec.document_ids,

@@ -8,6 +8,7 @@ from typing import Dict, List, Optional
 from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.kind import EmbeddingModelRef, RetrieverRef
+from shared.models import SearchHints
 from shared.models.splitter_config import (  # noqa: F401
     FlatChunkConfig,
     HierarchicalChunkConfig,
@@ -63,6 +64,10 @@ class RetrieveRequest(BaseModel):
     """Document retrieval request."""
 
     query: str
+    search_hints: Optional[SearchHints] = Field(
+        None,
+        description="Optional retrieval hints for dense rewrite and sparse planning",
+    )
     knowledge_id: str = Field(..., description="Knowledge base ID")
     retriever_ref: RetrieverRef = Field(
         ..., description="Reference to Retriever configuration"

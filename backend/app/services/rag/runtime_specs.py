@@ -12,6 +12,7 @@ from shared.models import (
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
+    SearchHints,
 )
 
 RetrievalPolicy = Literal[
@@ -71,6 +72,7 @@ QueryKnowledgeBaseRuntimeConfig = RemoteKnowledgeBaseQueryConfig
 class QueryRuntimeSpec(RuntimeSpecModel):
     knowledge_base_ids: list[int]
     query: str
+    search_hints: SearchHints | None = None
     max_results: int = 5
     route_mode: Literal["auto", "direct_injection", "rag_retrieval"] = "auto"
     direct_injection_budget: Optional[DirectInjectionBudget] = None

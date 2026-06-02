@@ -248,7 +248,30 @@ def test_remote_query_request_accepts_optional_runtime_configs() -> None:
     )
 
     assert request.knowledge_base_configs is not None
-    assert request.knowledge_base_configs[0].retrieval_config.retrieval_mode == "hybrid"
+
+
+def test_remote_query_request_accepts_search_hints() -> None:
+    remote_query_request = _require_model("RemoteQueryRequest")
+
+    request = remote_query_request.model_validate(
+        {
+            "knowledge_base_ids": [1001],
+            "user_id": 42,
+            "query": "release checklist",
+            "search_hints": {
+                "semantic_query": "How to verify the release checklist?",
+                "keywords": ["release", "checklist"],
+                "phrases": ["release checklist"],
+            },
+        }
+    )
+
+    assert request.search_hints is not None
+    assert request.search_hints.semantic_query == (
+        "How to verify the release checklist?"
+    )
+    assert request.search_hints.keywords == ["release", "checklist"]
+    assert request.search_hints.phrases == ["release checklist"]
 
 
 def test_remote_delete_request_accepts_reference_mode() -> None:

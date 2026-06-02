@@ -16,6 +16,7 @@ from shared.models.runtime_config import (
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
 )
+from shared.models.search_hints import SearchHints
 
 
 class KnowledgeRuntimeProtocolModel(BaseModel):
@@ -137,6 +138,7 @@ class RemoteQueryRequest(KnowledgeRuntimeProtocolModel):
     knowledge_base_ids: list[int]
     user_id: int
     query: str
+    search_hints: SearchHints | None = None
     max_results: int = Field(default=5, gt=0)
     knowledge_base_configs: list[RemoteKnowledgeBaseQueryConfig] | None = None
     document_ids: list[int] | None = None

@@ -58,6 +58,22 @@ class QueryExecutor:
             request.knowledge_base_configs
         )
 
+        if request.search_hints is None:
+            search_hints: dict[str, Any] = {}
+        elif isinstance(request.search_hints, dict):
+            search_hints = dict(request.search_hints)
+        else:
+            search_hints = request.search_hints.model_dump(exclude_none=True)
+        logger.info(
+            "Query request: query_type=%s, backend_query='%s...', hints_present=%s, semantic_query=%s, keywords=%s, phrases=%s",
+            plan.query_type,
+            plan.backend_query[:50],
+            bool(search_hints),
+            bool(search_hints.get("semantic_query")),
+            len(search_hints.get("keywords") or []),
+            len(search_hints.get("phrases") or []),
+        )
+
         # Resolve configs for each knowledge base
         for knowledge_base_id in request.knowledge_base_ids:
             records = await self._query_knowledge_base(
@@ -146,6 +162,7 @@ class QueryExecutor:
         result = await executor.execute(
             knowledge_id=knowledge_id,
             query=plan.backend_query,
+            search_hints=request.search_hints,
             retrieval_config=config.retrieval_config,
             metadata_condition=request.metadata_condition,
             user_id=config.index_owner_user_id,

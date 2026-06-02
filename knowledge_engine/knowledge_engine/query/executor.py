@@ -5,13 +5,17 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 from knowledge_engine.retrieval.hierarchical import (
     collect_parent_node_ids,
     merge_parent_records,
 )
-from shared.models import RuntimeRetrievalConfig
+from knowledge_engine.retrieval.search_hints import resolve_search_queries
+from shared.models import RuntimeRetrievalConfig, SearchHints
+
+logger = logging.getLogger(__name__)
 
 
 class QueryExecutor:
@@ -26,11 +30,24 @@ class QueryExecutor:
         *,
         knowledge_id: str,
         query: str,
+        search_hints: SearchHints | dict[str, Any] | None = None,
         retrieval_config: RuntimeRetrievalConfig | dict[str, Any],
         metadata_condition: dict[str, Any] | None = None,
         user_id: int | None = None,
     ) -> dict[str, Any]:
-        retrieval_setting = self._normalize_retrieval_setting(retrieval_config)
+        retrieval_setting = self._normalize_retrieval_setting(
+            retrieval_config,
+            search_hints=search_hints,
+        )
+        resolved_queries = resolve_search_queries(query, retrieval_setting)
+        logger.info(
+            "[QueryExecutor] knowledge_id=%s, retrieval_mode=%s, hints_present=%s, dense_query=%s, sparse_query=%s",
+            knowledge_id,
+            retrieval_setting["retrieval_mode"],
+            "search_hints" in retrieval_setting,
+            resolved_queries.dense_query,
+            resolved_queries.sparse_query,
+        )
         kwargs: dict[str, Any] = {}
         if user_id is not None:
             kwargs["user_id"] = user_id
@@ -53,6 +70,8 @@ class QueryExecutor:
     @staticmethod
     def _normalize_retrieval_setting(
         retrieval_config: RuntimeRetrievalConfig | dict[str, Any],
+        *,
+        search_hints: SearchHints | dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if isinstance(retrieval_config, RuntimeRetrievalConfig):
             config = retrieval_config.model_dump(exclude_none=True)
@@ -72,6 +91,12 @@ class QueryExecutor:
             retrieval_setting["vector_weight"] = config["vector_weight"]
         if "keyword_weight" in config:
             retrieval_setting["keyword_weight"] = config["keyword_weight"]
+        if search_hints is not None:
+            retrieval_setting["search_hints"] = (
+                search_hints.model_dump(exclude_none=True)
+                if isinstance(search_hints, SearchHints)
+                else dict(search_hints)
+            )
         return retrieval_setting
 
     async def _merge_hierarchical_records(

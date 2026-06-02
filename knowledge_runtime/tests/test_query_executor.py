@@ -96,6 +96,53 @@ class TestQueryExecutor:
         mock_kb_executor.execute.assert_awaited_once_with(
             knowledge_id="1",
             query="红包 520 发送 金额 规则",
+            search_hints=None,
+            retrieval_config=config.retrieval_config,
+            metadata_condition=None,
+            user_id=7,
+        )
+
+    @pytest.mark.asyncio
+    async def test_execute_passes_search_hints_to_knowledge_engine(
+        self, query_request
+    ) -> None:
+        mock_storage_backend = MagicMock()
+        mock_embed_model = MagicMock()
+        mock_kb_executor = MagicMock()
+        mock_kb_executor.execute = AsyncMock(return_value={"records": []})
+
+        with (
+            patch(
+                "knowledge_runtime.services.query_executor.create_storage_backend_from_runtime_config",
+                return_value=mock_storage_backend,
+            ),
+            patch(
+                "knowledge_runtime.services.query_executor.create_embedding_model_from_runtime_config",
+                return_value=mock_embed_model,
+            ),
+            patch(
+                "knowledge_runtime.services.query_executor.KnowledgeQueryExecutor",
+                return_value=mock_kb_executor,
+            ),
+        ):
+            query_request.search_hints = {
+                "semantic_query": "How to verify the release checklist?",
+                "keywords": ["release", "checklist"],
+                "phrases": ["release checklist"],
+            }
+            query_request.knowledge_base_ids = [1]
+            executor = QueryExecutor(db=MagicMock())
+            config = _make_query_config(1)
+            executor._config_resolver.resolve_query_config = MagicMock(
+                return_value=config
+            )
+
+            await executor.execute(query_request)
+
+        mock_kb_executor.execute.assert_awaited_once_with(
+            knowledge_id="1",
+            query="test query",
+            search_hints=query_request.search_hints,
             retrieval_config=config.retrieval_config,
             metadata_condition=None,
             user_id=7,
@@ -210,6 +257,7 @@ class TestQueryExecutor:
         mock_kb_executor.execute.assert_awaited_once_with(
             knowledge_id="1",
             query="test query",
+            search_hints=None,
             retrieval_config=RuntimeRetrievalConfig(
                 top_k=9,
                 score_threshold=0.2,

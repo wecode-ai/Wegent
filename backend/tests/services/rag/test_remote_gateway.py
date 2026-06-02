@@ -125,6 +125,11 @@ async def test_remote_gateway_query_posts_reference_mode_request(mocker) -> None
     spec = QueryRuntimeSpec(
         knowledge_base_ids=[1],
         query="release checklist",
+        search_hints={
+            "semantic_query": "How to verify the release checklist?",
+            "keywords": ["release", "checklist"],
+            "phrases": ["release checklist"],
+        },
         user_id=8,
         max_results=5,
         document_ids=[10, 11],
@@ -155,6 +160,11 @@ async def test_remote_gateway_query_posts_reference_mode_request(mocker) -> None
         "knowledge_base_ids": [1],
         "user_id": 8,
         "query": "release checklist",
+        "search_hints": {
+            "semantic_query": "How to verify the release checklist?",
+            "keywords": ["release", "checklist"],
+            "phrases": ["release checklist"],
+        },
         "max_results": 5,
         "document_ids": [10, 11],
         "metadata_condition": {
@@ -183,6 +193,11 @@ async def test_remote_gateway_query_posts_runtime_overrides(mocker) -> None:
     spec = QueryRuntimeSpec(
         knowledge_base_ids=[1],
         query="release checklist",
+        search_hints={
+            "semantic_query": "How to verify the release checklist?",
+            "keywords": ["release", "checklist"],
+            "phrases": ["release checklist"],
+        },
         user_id=8,
         max_results=5,
         knowledge_base_configs=[
@@ -213,6 +228,11 @@ async def test_remote_gateway_query_posts_runtime_overrides(mocker) -> None:
     await gateway.query(spec)
 
     _, kwargs = post_mock.await_args
+    assert kwargs["json"]["search_hints"] == {
+        "semantic_query": "How to verify the release checklist?",
+        "keywords": ["release", "checklist"],
+        "phrases": ["release checklist"],
+    }
     assert kwargs["json"]["knowledge_base_configs"] == [
         {
             "knowledge_base_id": 1,
