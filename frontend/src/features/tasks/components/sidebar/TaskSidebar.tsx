@@ -70,7 +70,6 @@ export default function TaskSidebar({
 }: TaskSidebarProps) {
   const { t } = useTranslation()
   const router = useRouter()
-  const { clearAllStreams } = useTaskSession()
   const {
     tasks,
     groupTasks,
@@ -224,9 +223,6 @@ export default function TaskSidebar({
     // This prevents the UI from being stuck showing the previous task's messages
     selectTask(null)
 
-    // Clear all stream states to reset the chat area to initial state
-    clearAllStreams()
-
     if (typeof window !== 'undefined') {
       // Always navigate to chat page for new conversation
       router.replace(paths.chat.getHref())
@@ -235,14 +231,11 @@ export default function TaskSidebar({
     setIsMobileSidebarOpen(false)
   }
 
-  // Handle navigation button click - for code mode, clear streams to create new task
+  // Handle navigation button click - reset the current task session when re-entering a page
   const handleNavigationClick = (path: string, isActive: boolean, buttonPageType?: string) => {
     if (isActive) {
       // IMPORTANT: Clear selected task FIRST to ensure UI state is reset immediately
       selectTask(null)
-
-      // If already on this page, clear streams to create new task
-      clearAllStreams()
 
       // For knowledge page, dispatch event to clear selected KB and return to homepage
       if (buttonPageType === 'knowledge' && typeof window !== 'undefined') {

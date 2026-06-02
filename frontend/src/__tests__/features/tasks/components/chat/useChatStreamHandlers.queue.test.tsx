@@ -37,7 +37,6 @@ jest.mock('@/features/tasks/session/TaskSession', () => ({
     markTaskAsViewed: jest.fn(),
     sendMessage: mockContextSendMessage,
     stopStream: jest.fn(),
-    clearVersion: 0,
     recoverCurrentTask: mockCheckHealth,
     taskState: {
       taskId: selectedTaskDetailMock.id,

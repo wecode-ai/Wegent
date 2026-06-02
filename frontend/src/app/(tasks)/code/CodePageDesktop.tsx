@@ -63,7 +63,6 @@ export function CodePageDesktop() {
     selectTask,
     refreshTasks,
     refreshSelectedTaskDetail,
-    clearAllStreams,
     taskState: sessionTaskState,
   } = useTaskSession()
 
@@ -79,7 +78,7 @@ export function CodePageDesktop() {
   // Handle members changed (when converting to group chat or adding/removing members)
   const handleMembersChanged = () => {
     refreshTasks()
-    refreshSelectedTaskDetail()
+    void refreshSelectedTaskDetail()
   }
 
   // User state for git token check
@@ -203,7 +202,6 @@ export function CodePageDesktop() {
     // IMPORTANT: Clear selected task FIRST to ensure UI state is reset immediately
     // This prevents the UI from being stuck showing the previous task's messages
     selectTask(null)
-    clearAllStreams()
     // Force a hard reload to ensure a fresh start when already on /code
     window.location.href = paths.code.getHref()
   }

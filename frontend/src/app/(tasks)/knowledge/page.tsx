@@ -59,7 +59,6 @@ function KnowledgePageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { user } = useUser()
-  const { clearAllStreams } = useTaskSession()
   const { selectTask } = useTaskSession()
   const isMobile = useIsMobile()
 
@@ -215,7 +214,6 @@ function KnowledgePageContent() {
     // IMPORTANT: Clear selected task FIRST to ensure UI state is reset immediately
     // This prevents the UI from being stuck showing the previous task's messages
     selectTask(null)
-    clearAllStreams()
     router.replace(paths.chat.getHref())
   }
 

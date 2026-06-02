@@ -66,7 +66,6 @@ function KnowledgeVirtualPageContent() {
   const params = useParams()
   const router = useRouter()
   const isMobile = useIsMobile()
-  const { clearAllStreams } = useTaskSession()
   const { selectTask } = useTaskSession()
 
   // Decode URL params and resolve namespace/kbName
@@ -164,7 +163,6 @@ function KnowledgeVirtualPageContent() {
   // Handle new task from collapsed sidebar button
   const handleNewTask = () => {
     selectTask(null)
-    clearAllStreams()
     router.replace(paths.chat.getHref())
   }
 

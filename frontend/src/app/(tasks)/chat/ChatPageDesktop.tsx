@@ -99,11 +99,8 @@ export function ChatPageDesktop() {
   // Handle members changed (when converting to group chat or adding/removing members)
   const handleMembersChanged = () => {
     refreshTasks()
-    refreshSelectedTaskDetail()
+    void refreshSelectedTaskDetail()
   }
-
-  // Chat stream context
-  const { clearAllStreams } = useTaskSession()
 
   // User state for git token check
   const { user } = useUser()
@@ -229,7 +226,7 @@ export function ChatPageDesktop() {
     deps: teamEditDeps,
     onTeamUpdated: useCallback(() => {
       refreshTeams()
-      refreshSelectedTaskDetail()
+      void refreshSelectedTaskDetail()
     }, [refreshTeams, refreshSelectedTaskDetail]),
   })
 
@@ -280,7 +277,6 @@ export function ChatPageDesktop() {
     // IMPORTANT: Clear selected task FIRST to ensure UI state is reset immediately
     // This prevents the UI from being stuck showing the previous task's messages
     selectTask(null)
-    clearAllStreams()
     // Force a hard reload to ensure a fresh start when already on /chat
     window.location.href = paths.chat.getHref()
   }

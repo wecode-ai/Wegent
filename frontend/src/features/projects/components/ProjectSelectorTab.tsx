@@ -24,7 +24,6 @@ interface ProjectSelectorTabProps {
 export function ProjectSelectorTab({ projectId, disabled }: ProjectSelectorTabProps) {
   const router = useRouter()
   const { projects } = useProjectContext()
-  const { clearAllStreams } = useTaskSession()
   const { selectTask } = useTaskSession()
 
   const currentProject = projects.find(p => p.id === projectId)
@@ -32,7 +31,6 @@ export function ProjectSelectorTab({ projectId, disabled }: ProjectSelectorTabPr
 
   const handleSwitchProject = (project: ProjectWithTasks) => {
     if (project.id === projectId) return
-    clearAllStreams()
     selectTask(null)
     const params = new URLSearchParams()
     params.set('projectId', String(project.id))

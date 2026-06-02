@@ -77,8 +77,7 @@ export function KnowledgeBaseClassicPageDesktop({ knowledgeBaseId, initialDocPat
   const { user, isLoading: isUserLoading } = useUser()
 
   // Task context
-  const { selectedTaskDetail, selectTask, clearAllStreams, stopStream, isStreaming } =
-    useTaskSession()
+  const { selectedTaskDetail, selectTask, stopStream, isStreaming } = useTaskSession()
 
   // Tab state for documents/permissions
   const [activeTab, setActiveTab] = useState<'documents' | 'permissions'>('documents')
@@ -137,7 +136,6 @@ export function KnowledgeBaseClassicPageDesktop({ knowledgeBaseId, initialDocPat
 
     // Clear state and navigate immediately for responsive UI
     selectTask(null)
-    clearAllStreams()
     router.push('/chat')
   }
 

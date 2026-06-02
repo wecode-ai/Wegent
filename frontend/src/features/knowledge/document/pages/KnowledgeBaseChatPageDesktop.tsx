@@ -94,7 +94,6 @@ export function KnowledgeBaseChatPageDesktop({ knowledgeBaseId, initialDocPath }
     selectedTaskDetail,
     selectTask,
     refreshSelectedTaskDetail,
-    clearAllStreams,
     stopStream,
     isStreaming,
   } = useTaskSession()
@@ -111,7 +110,7 @@ export function KnowledgeBaseChatPageDesktop({ knowledgeBaseId, initialDocPath }
   // Handle members changed
   const handleMembersChanged = () => {
     refreshTasks()
-    refreshSelectedTaskDetail()
+    void refreshSelectedTaskDetail()
   }
 
   // Check if a task is currently open
@@ -191,7 +190,6 @@ export function KnowledgeBaseChatPageDesktop({ knowledgeBaseId, initialDocPath }
 
     // Clear state and navigate immediately for responsive UI
     selectTask(null)
-    clearAllStreams()
     // Navigate to new virtual URL if knowledgeBase is loaded, otherwise fallback to old URL
     window.location.href = knowledgeBase
       ? buildKbUrl(knowledgeBase.namespace, knowledgeBase.name, false)

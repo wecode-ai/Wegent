@@ -250,7 +250,6 @@ export function useChatStreamHandlers({
     markTaskAsViewed,
     sendMessage: contextSendMessage,
     stopStream: contextStopStream,
-    clearVersion,
     taskState: sessionTaskState,
     recoverCurrentTask,
   } = useTaskSession()
@@ -334,7 +333,6 @@ export function useChatStreamHandlers({
     resetStreamingState,
     effectiveTaskIdForState,
   } = useChatTransientState({
-    clearVersion,
     selectedTaskId: currentDisplayTaskId,
     setIsLoading,
   })
@@ -736,7 +734,7 @@ export function useChatStreamHandlers({
       }
 
       if (selectedTaskDetail?.id) {
-        refreshSelectedTaskDetail()
+        void refreshSelectedTaskDetail()
       }
 
       setTimeout(() => scrollToBottom(true), 0)
@@ -1359,7 +1357,7 @@ export function useChatStreamHandlers({
         }
 
         if (selectedTaskDetail?.id) {
-          refreshSelectedTaskDetail()
+          void refreshSelectedTaskDetail()
         }
 
         setTimeout(() => scrollToBottom(true), 0)
@@ -1508,7 +1506,7 @@ export function useChatStreamHandlers({
           setForceOverride(true)
 
           // Refresh task detail to pick up the new model configuration from backend
-          refreshSelectedTaskDetail()
+          void refreshSelectedTaskDetail()
           return true
         }
       } catch (error) {
@@ -1550,7 +1548,7 @@ export function useChatStreamHandlers({
       })
 
       refreshTasks()
-      refreshSelectedTaskDetail()
+      void refreshSelectedTaskDetail()
       return true
     } catch (err: unknown) {
       const errorMessage =
@@ -1579,7 +1577,7 @@ export function useChatStreamHandlers({
 
       if (err instanceof Error && err.message === 'Cancel operation timed out') {
         refreshTasks()
-        refreshSelectedTaskDetail()
+        void refreshSelectedTaskDetail()
       }
       return false
     } finally {

@@ -25,7 +25,6 @@ export default function Page() {
   const router = useRouter()
   const isMobile = useIsMobile()
   const { t } = useTranslation('resource-library')
-  const { clearAllStreams } = useTaskSession()
   const { selectTask } = useTaskSession()
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
   const [isCollapsed, setIsCollapsed] = useState(false)
@@ -47,7 +46,6 @@ export default function Page() {
 
   const handleNewTask = () => {
     selectTask(null)
-    clearAllStreams()
     router.replace(paths.chat.getHref())
   }
 

@@ -713,7 +713,7 @@ function MessagesArea({
     // Refresh both task list (to move task to correct category)
     // and task detail (to update is_group_chat flag and enable @ feature)
     refreshTasks()
-    refreshSelectedTaskDetail()
+    void refreshSelectedTaskDetail()
   }, [refreshTasks, refreshSelectedTaskDetail])
 
   // Handle edit button click - enter edit mode for a message

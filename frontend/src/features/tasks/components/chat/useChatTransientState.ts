@@ -5,13 +5,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 interface UseChatTransientStateOptions {
-  clearVersion: number
   selectedTaskId?: number | null
   setIsLoading: (value: boolean) => void
 }
 
 export function useChatTransientState({
-  clearVersion,
   selectedTaskId,
   setIsLoading,
 }: UseChatTransientStateOptions) {
@@ -21,7 +19,6 @@ export function useChatTransientState({
   const [isCancelling, setIsCancelling] = useState(false)
 
   const previousTaskIdRef = useRef<number | null | undefined>(undefined)
-  const previousClearVersionRef = useRef(clearVersion)
 
   const resetStreamingState = useCallback(() => {
     setLocalPendingMessage(null)
@@ -37,15 +34,6 @@ export function useChatTransientState({
   useEffect(() => {
     const currentTaskId = selectedTaskId ?? null
 
-    if (clearVersion !== previousClearVersionRef.current) {
-      previousClearVersionRef.current = clearVersion
-      resetStreamingState()
-      setIsLoading(false)
-      setIsCancelling(false)
-      previousTaskIdRef.current = currentTaskId
-      return
-    }
-
     if (pendingTaskId && currentTaskId && currentTaskId !== pendingTaskId) {
       setPendingTaskId(null)
     }
@@ -53,6 +41,7 @@ export function useChatTransientState({
     if (!currentTaskId && !pendingTaskId) {
       resetStreamingState()
       setIsLoading(false)
+      setIsCancelling(false)
     }
 
     const previousTaskId = previousTaskIdRef.current
@@ -62,10 +51,11 @@ export function useChatTransientState({
       previousTaskId !== null
     ) {
       resetStreamingState()
+      setIsCancelling(false)
     }
 
     previousTaskIdRef.current = currentTaskId
-  }, [clearVersion, pendingTaskId, resetStreamingState, selectedTaskId, setIsLoading])
+  }, [pendingTaskId, resetStreamingState, selectedTaskId, setIsLoading])
 
   return {
     pendingTaskId,

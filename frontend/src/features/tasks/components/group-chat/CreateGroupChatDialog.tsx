@@ -46,8 +46,7 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
   const [selectedModel, setSelectedModel] = useState<Model | null>(null)
 
   const { teams, isTeamsLoading } = useTeamContext()
-  const { sendMessage } = useTaskSession()
-  const { refreshTasks, selectTask } = useTaskSession()
+  const { sendMessage, refreshTasks, selectTask } = useTaskSession()
   const { user } = useUser()
 
   // Filter teams to only show chat-type teams (agent_type === 'chat')

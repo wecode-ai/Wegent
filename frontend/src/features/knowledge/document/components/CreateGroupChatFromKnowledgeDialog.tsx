@@ -76,8 +76,7 @@ export function CreateGroupChatFromKnowledgeDialog({
   const [isCreating, setIsCreating] = useState(false)
 
   const { teams, isTeamsLoading } = useTeamContext()
-  const { sendMessage } = useTaskSession()
-  const { refreshTasks, selectTask } = useTaskSession()
+  const { sendMessage, refreshTasks, selectTask } = useTaskSession()
 
   // Reset title when dialog opens or group/kb changes
   useEffect(() => {

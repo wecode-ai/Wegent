@@ -49,7 +49,6 @@ export interface DeviceHandlers {
 export function useDeviceHandlers(): DeviceHandlers {
   const { t } = useTranslation('devices')
   const router = useRouter()
-  const { clearAllStreams } = useTaskSession()
   const { selectTask } = useTaskSession()
   const { closeTaskSession } = useSocket()
   const { setSelectedDeviceId, setDefaultDevice, deleteDevice, refreshDevices } = useDevices()
@@ -64,10 +63,9 @@ export function useDeviceHandlers(): DeviceHandlers {
     (deviceId: string) => {
       setSelectedDeviceId(deviceId)
       selectTask(null)
-      clearAllStreams()
       router.push(`/devices/chat?deviceId=${deviceId}`)
     },
-    [setSelectedDeviceId, selectTask, clearAllStreams, router]
+    [setSelectedDeviceId, selectTask, router]
   )
 
   /**

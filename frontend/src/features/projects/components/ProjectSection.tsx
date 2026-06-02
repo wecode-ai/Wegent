@@ -63,14 +63,13 @@ export function ProjectSection({ onTaskSelect, variant = 'all' }: ProjectSection
     setSelectedProjectTaskId,
     refreshProjects,
   } = useProjectContext()
-  const { clearAllStreams, selectTask } = useTaskSession()
+  const { selectTask } = useTaskSession()
   const isWorkspaceSection = variant === 'workspace'
   const isGroupSection = variant === 'group'
   const isUnifiedSection = variant === 'all'
 
   const handleNewConversation = useCallback(
     (project: ProjectWithTasks) => {
-      clearAllStreams()
       setSelectedProjectTaskId(null)
       selectTask(null)
 
@@ -83,7 +82,7 @@ export function ProjectSection({ onTaskSelect, variant = 'all' }: ProjectSection
       router.push(`/devices/chat?${params.toString()}`)
       onTaskSelect?.()
     },
-    [clearAllStreams, setSelectedProjectTaskId, selectTask, router, onTaskSelect]
+    [setSelectedProjectTaskId, selectTask, router, onTaskSelect]
   )
   const visibleProjects = projects.filter(project => {
     if (isWorkspaceSection) {

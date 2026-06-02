@@ -41,7 +41,6 @@ export default function SearchDialog({
 }: SearchDialogProps) {
   const { t } = useTranslation()
   const router = useRouter()
-  const { clearAllStreams } = useTaskSession()
   const { tasks, selectTask } = useTaskSession()
 
   const searchInputRef = useRef<HTMLInputElement>(null)
@@ -136,7 +135,6 @@ export default function SearchDialog({
   const handleNewAgentClick = () => {
     handleCloseSearchDialog()
     selectTask(null)
-    clearAllStreams()
     // Navigate to appropriate page based on pageType
     const targetPath = pageType === 'code' ? paths.code.getHref() : paths.chat.getHref()
     router.replace(targetPath)

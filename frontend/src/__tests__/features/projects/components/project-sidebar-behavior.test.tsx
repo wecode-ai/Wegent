@@ -16,7 +16,6 @@ const removeTaskFromProjectMock = jest.fn()
 const refreshProjectsMock = jest.fn()
 const toggleProjectExpandedMock = jest.fn()
 const setSelectedProjectTaskIdMock = jest.fn()
-const clearAllStreamsMock = jest.fn()
 const setSelectedTaskMock = jest.fn()
 let isWorkspaceEnabledMock = true
 
@@ -125,7 +124,6 @@ jest.mock('@/components/ui/dropdown', () => ({
 
 jest.mock('@/features/tasks/session/TaskSession', () => ({
   useTaskSession: () => ({
-    clearAllStreams: clearAllStreamsMock,
     selectTask: setSelectedTaskMock,
     refreshTasks: jest.fn(),
   }),

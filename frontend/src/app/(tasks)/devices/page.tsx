@@ -55,7 +55,6 @@ function sortDevices(devices: DeviceInfo[]): DeviceInfo[] {
 export default function DevicesPage() {
   const { t } = useTranslation('devices')
   const router = useRouter()
-  const { clearAllStreams } = useTaskSession()
   const { selectTask } = useTaskSession()
   const isMobile = useIsMobile()
 
@@ -119,9 +118,8 @@ export default function DevicesPage() {
   // Handle new task from collapsed sidebar button
   const handleNewTask = useCallback(() => {
     selectTask(null)
-    clearAllStreams()
     router.replace(paths.chat.getHref())
-  }, [selectTask, clearAllStreams, router])
+  }, [selectTask, router])
 
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">

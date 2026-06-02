@@ -1022,6 +1022,34 @@ describe('TaskStateMachine', () => {
     consoleInfoSpy.mockRestore()
   })
 
+  it('uses chunk offset to replace conflicting local stream tails', async () => {
+    const consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
+    const actions = createRuntimeActions({
+      joinTask: jest.fn().mockResolvedValue({
+        streaming: {
+          subtask_id: 77,
+          offset: 11,
+          cached_content: 'hello world',
+        },
+        subtasks: [],
+      }),
+    })
+    const machine = new TaskStateMachine(42, actions)
+
+    machine.loadTask({
+      id: 42,
+      status: 'RUNNING',
+      updated_at: '2026-06-01T10:00:00',
+    })
+    await machine.recover({ force: true })
+
+    machine.handleChatChunk(77, 'wurld!', undefined, undefined, undefined, 6)
+
+    expect(machine.getState().messages.get('ai-77')?.content).toBe('hello wurld!')
+
+    consoleInfoSpy.mockRestore()
+  })
+
   it('checkHealth clears local streaming when server is terminal with no active stream', async () => {
     const actions = createRuntimeActions({
       verifyRuntime: jest.fn().mockResolvedValue({

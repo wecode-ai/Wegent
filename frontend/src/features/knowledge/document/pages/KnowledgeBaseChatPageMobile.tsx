@@ -100,11 +100,8 @@ export function KnowledgeBaseChatPageMobile({ knowledgeBaseId, initialDocPath }:
   // Handle members changed
   const handleMembersChanged = () => {
     refreshTasks()
-    refreshSelectedTaskDetail()
+    void refreshSelectedTaskDetail()
   }
-
-  // Chat stream context
-  const { clearAllStreams: _clearAllStreams } = useTaskSession()
 
   // Check if a task is open
   const taskId =

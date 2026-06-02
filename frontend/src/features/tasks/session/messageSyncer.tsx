@@ -12,7 +12,7 @@
  * perform runtime checks.
  */
 
-import { useCallback, useRef, useEffect, useState } from 'react'
+import { useCallback, useRef, useEffect } from 'react'
 import { useSocket, ChatEventHandlers, SkillEventHandlers } from '@/contexts/SocketContext'
 import {
   ChatSendPayload,
@@ -143,14 +143,10 @@ export interface MessageSyncer {
    * @param team - Optional team info for fallback shell_type
    */
   stopStream: (taskId: number, backupSubtasks?: TaskDetailSubtask[], team?: Team) => Promise<void>
-  /** Reset stream state for a specific task */
-  resetStream: (taskId: number) => void
-  /** Clear all stream states */
-  clearAllStreams: () => void
+  /** Reset internal per-session transport bookkeeping */
+  resetSession: () => void
   /** Clean up messages after editing (remove edited message and all subsequent messages) */
   cleanupMessagesAfterEdit: (taskId: number, editedSubtaskId: number) => void
-  /** Version number that increments when clearAllStreams is called */
-  clearVersion: number
 }
 
 interface MessageSyncerOptions {
@@ -164,9 +160,6 @@ export function useMessageSyncer({
   ensureMachine,
   onTaskIdResolved,
 }: MessageSyncerOptions): MessageSyncer {
-  // Version number that increments when clearAllStreams is called
-  const [clearVersion, setClearVersion] = useState(0)
-
   // Get socket context
   const {
     isConnected,
@@ -865,34 +858,10 @@ export function useMessageSyncer({
     [cancelChatStream, getMachineForTask]
   )
 
-  /**
-   * Reset stream state for a specific task
-   */
-  const resetStream = useCallback(
-    (taskId: number): void => {
-      const machine = getMachineForTask(taskId)
-      machine?.leave()
-      callbacksRef.current.delete(taskId)
-
-      // Clean up temp to real mapping
-      tempToRealTaskIdRef.current.forEach((realId, tempId) => {
-        if (realId === taskId || tempId === taskId) {
-          tempToRealTaskIdRef.current.delete(tempId)
-        }
-      })
-    },
-    [getMachineForTask]
-  )
-
-  /**
-   * Clear all stream states
-   */
-  const clearAllStreams = useCallback((): void => {
-    getMachine()?.leave()
+  const resetSession = useCallback((): void => {
     callbacksRef.current.clear()
     tempToRealTaskIdRef.current.clear()
-    setClearVersion(v => v + 1)
-  }, [getMachine])
+  }, [])
 
   /**
    * Clean up messages after editing
@@ -913,9 +882,7 @@ export function useMessageSyncer({
     isSocketConnected: () => isConnectedRef.current,
     sendMessage,
     stopStream,
-    resetStream,
-    clearAllStreams,
+    resetSession,
     cleanupMessagesAfterEdit,
-    clearVersion,
   }
 }

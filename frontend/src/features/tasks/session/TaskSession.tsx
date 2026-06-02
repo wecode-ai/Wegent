@@ -29,7 +29,7 @@ import { TaskPuller, useTaskPuller } from './taskPuller'
 
 type MessageSession = Omit<
   MessageSyncer,
-  'joinRoom' | 'leaveRoom' | 'isSocketConnected' | 'stopStream'
+  'joinRoom' | 'leaveRoom' | 'isSocketConnected' | 'stopStream' | 'resetSession'
 >
 
 export type TaskSession = Omit<
@@ -76,12 +76,14 @@ export function TaskSessionProvider({ children }: { children: ReactNode }) {
     leaveRoom?: MessageSyncer['leaveRoom']
     isSocketConnected?: MessageSyncer['isSocketConnected']
   }>({})
+  const resetMessageSessionRef = useRef<(() => void) | null>(null)
   const [taskState, setTaskState] = useState<TaskStateData | null>(null)
 
   const disposeMachine = useCallback(() => {
     unsubscribeMachineRef.current?.()
     unsubscribeMachineRef.current = null
     machineRef.current?.closeTask()
+    resetMessageSessionRef.current?.()
     machineRef.current = null
     setTaskState(null)
   }, [])
@@ -146,6 +148,7 @@ export function TaskSessionProvider({ children }: { children: ReactNode }) {
     leaveRoom: messageSyncer.leaveRoom,
     isSocketConnected: messageSyncer.isSocketConnected,
   }
+  resetMessageSessionRef.current = messageSyncer.resetSession
 
   useEffect(() => {
     machineRef.current?.updateDeps(createMachineDeps())
@@ -246,10 +249,7 @@ export function TaskSessionProvider({ children }: { children: ReactNode }) {
       selectTask,
       sendMessage: messageSyncer.sendMessage,
       stopStream,
-      resetStream: messageSyncer.resetStream,
-      clearAllStreams: messageSyncer.clearAllStreams,
       cleanupMessagesAfterEdit: messageSyncer.cleanupMessagesAfterEdit,
-      clearVersion: messageSyncer.clearVersion,
       taskState,
       messages: taskState?.messages ?? new Map<string, UnifiedMessage>(),
       isStreaming: taskState?.status === 'streaming' || streamingSubtaskIds.length > 0,

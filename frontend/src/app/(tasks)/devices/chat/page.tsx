@@ -37,7 +37,6 @@ const ChatArea = dynamic(() => import('@/features/tasks/components/chat/ChatArea
 export default function DeviceChatPage() {
   const { t } = useTranslation('devices')
   const router = useRouter()
-  const { clearAllStreams } = useTaskSession()
   const { selectTask, selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail } =
     useTaskSession()
   const isMobile = useIsMobile()
@@ -102,7 +101,6 @@ export default function DeviceChatPage() {
   // Handle new task from collapsed sidebar button
   const handleNewTask = () => {
     selectTask(null)
-    clearAllStreams()
     router.replace(paths.chat.getHref())
   }
 
@@ -115,7 +113,7 @@ export default function DeviceChatPage() {
   // Handle members changed
   const handleMembersChanged = () => {
     refreshTasks()
-    refreshSelectedTaskDetail()
+    void refreshSelectedTaskDetail()
   }
 
   // Handle refresh teams
@@ -128,7 +126,6 @@ export default function DeviceChatPage() {
     setSelectedDeviceId(deviceId)
     // Clear any existing task when selecting a new device
     selectTask(null)
-    clearAllStreams()
   }
 
   // Get current task title for top navigation

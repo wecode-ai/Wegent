@@ -87,11 +87,8 @@ export function GeneratePageMobile() {
   // Handle members changed (when converting to group chat or adding/removing members)
   const handleMembersChanged = () => {
     refreshTasks()
-    refreshSelectedTaskDetail()
+    void refreshSelectedTaskDetail()
   }
-
-  // Chat stream context
-  const { clearAllStreams: _clearAllStreams } = useTaskSession()
 
   // Router for navigation
   const _router = useRouter()

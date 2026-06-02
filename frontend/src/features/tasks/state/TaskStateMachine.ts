@@ -316,11 +316,17 @@ function mergeChunkContent(
     }
   }
 
-  if (offset > existingContent.length) {
+  const replaceTail = () => {
+    const content = existingContent.slice(0, offset) + incomingContent
     return {
-      content: existingContent + incomingContent,
-      appendedContent: incomingContent,
+      content,
+      appendedContent:
+        content.length > existingContent.length ? content.slice(existingContent.length) : '',
     }
+  }
+
+  if (offset > existingContent.length) {
+    return replaceTail()
   }
 
   const existingAtOffset = existingContent.slice(offset, offset + incomingContent.length)
@@ -341,7 +347,7 @@ function mergeChunkContent(
       }
     }
 
-    return { content: existingContent, appendedContent: '' }
+    return replaceTail()
   }
 
   return {

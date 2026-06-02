@@ -91,11 +91,8 @@ export function GeneratePageDesktop() {
   // Handle members changed (when converting to group chat or adding/removing members)
   const handleMembersChanged = () => {
     refreshTasks()
-    refreshSelectedTaskDetail()
+    void refreshSelectedTaskDetail()
   }
-
-  // Chat stream context
-  const { clearAllStreams } = useTaskSession()
 
   // Router for navigation
   const router = useRouter()
@@ -153,7 +150,6 @@ export function GeneratePageDesktop() {
     // IMPORTANT: Clear selected task FIRST to ensure UI state is reset immediately
     // This prevents the UI from being stuck showing the previous task's messages
     selectTask(null)
-    clearAllStreams()
     router.replace(paths.generate.getHref())
   }
 

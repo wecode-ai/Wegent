@@ -53,7 +53,6 @@ const mockTaskSessionContext = {
   markAllTasksAsViewed: jest.fn(),
   viewStatusVersion: 0,
   selectTask: jest.fn(),
-  clearAllStreams: jest.fn(),
   isRefreshing: false,
 }
 
@@ -190,7 +189,6 @@ describe('TaskSidebar scroll structure', () => {
       markAllTasksAsViewed: jest.fn(),
       viewStatusVersion: 0,
       selectTask: jest.fn(),
-      clearAllStreams: jest.fn(),
       isRefreshing: false,
     })
   })

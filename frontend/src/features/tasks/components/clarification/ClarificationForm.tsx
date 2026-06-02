@@ -89,6 +89,8 @@ export default function ClarificationForm({
     return hasUserMessageAfter
   }, [messages, currentMessageIndex])
 
+  const isReadOnly = isSubmitted || isCurrentMessageStreaming || Boolean(isTaskStreaming)
+
   // Initialize default answers for questions with recommended options
   useEffect(() => {
     // Only initialize if user hasn't interacted yet
@@ -126,7 +128,7 @@ export default function ClarificationForm({
     questionId: string,
     answer: { answer_type: 'choice' | 'custom'; value: string | string[] }
   ) => {
-    if (isSubmitted) return
+    if (isReadOnly) return
 
     // Mark that user has interacted with the form
     setHasUserInteracted(true)
@@ -332,7 +334,7 @@ export default function ClarificationForm({
                     question={question}
                     answer={answers.get(question.question_id) || null}
                     onChange={answer => handleAnswerChange(question.question_id, answer)}
-                    readonly={isSubmitted}
+                    readonly={isReadOnly}
                   />
                 </div>
               )
@@ -354,7 +356,7 @@ export default function ClarificationForm({
                     t('chat:clarification.additional_placeholder') ||
                     '在此输入其他想法、补充需求或特殊说明...'
                   }
-                  disabled={isSubmitted}
+                  disabled={isReadOnly}
                   rows={3}
                   className="w-full"
                 />
@@ -368,10 +370,10 @@ export default function ClarificationForm({
                 variant="secondary"
                 onClick={handleSubmit}
                 size="lg"
-                disabled={isCurrentMessageStreaming || Boolean(isTaskStreaming)}
+                disabled={isReadOnly}
                 data-testid="clarification-submit"
               >
-                {isCurrentMessageStreaming || Boolean(isTaskStreaming) ? (
+                {isReadOnly ? (
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                 ) : (
                   <Send className="w-4 h-4 mr-2" />

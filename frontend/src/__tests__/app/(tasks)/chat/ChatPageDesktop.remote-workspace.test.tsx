@@ -99,7 +99,6 @@ jest.mock('@/features/tasks/session/TaskSession', () => ({
     },
     taskState: null,
     selectTask: jest.fn(),
-    clearAllStreams: jest.fn(),
     refreshSelectedTaskDetail: jest.fn(),
   }),
 }))

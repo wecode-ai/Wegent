@@ -60,11 +60,8 @@ export function CodePageMobile() {
   // Handle members changed (when converting to group chat or adding/removing members)
   const handleMembersChanged = () => {
     refreshTasks()
-    refreshSelectedTaskDetail()
+    void refreshSelectedTaskDetail()
   }
-
-  // Chat stream context
-  const _clearAllStreams = useTaskSession().clearAllStreams
 
   // Router for navigation
   const _router = useRouter()
