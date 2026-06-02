@@ -4,8 +4,10 @@
 
 'use client'
 
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { TaskStateData } from '@/features/tasks/state'
+
+const GLYPH_VISIBLE_DELAY_MS = 3000
 
 const TASK_MACHINE_STATUS_CODES = {
   idle: 0,
@@ -72,8 +74,24 @@ export function TaskRuntimeGlyph({ taskState, visible }: TaskRuntimeGlyphProps) 
     if (!taskState) return null
     return buildRuntimeGlyphState(taskState)
   }, [taskState])
+  const glyphKey = visible && glyph ? `${glyph.taskId}:${glyph.code}` : null
+  const [visibleGlyphKey, setVisibleGlyphKey] = useState<string | null>(null)
 
-  if (!visible || !glyph) return null
+  useEffect(() => {
+    setVisibleGlyphKey(null)
+
+    if (!glyphKey) {
+      return
+    }
+
+    const timer = window.setTimeout(() => {
+      setVisibleGlyphKey(glyphKey)
+    }, GLYPH_VISIBLE_DELAY_MS)
+
+    return () => window.clearTimeout(timer)
+  }, [glyphKey])
+
+  if (!glyph || !glyphKey || visibleGlyphKey !== glyphKey) return null
 
   return (
     <div
