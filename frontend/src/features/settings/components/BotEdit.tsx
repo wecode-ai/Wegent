@@ -22,6 +22,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  GroupedModelSelect,
+  type ModelCascadeLabels,
+  type SpecialModelOption,
+} from '@/components/model-select/ModelCascadeSelect'
 import McpConfigSection from './McpConfigSection'
 import SkillManagementModal from './skills/SkillManagementModal'
 import { RichSkillSelector } from './skills/RichSkillSelector'
@@ -212,6 +217,42 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const mcpAgentType = useMemo(
     () => (isValidAgentType(agentName) ? agentName : undefined),
     [agentName]
+  )
+  const selectedModelObject = useMemo(
+    () =>
+      models.find(
+        model =>
+          model.name === selectedModel &&
+          model.type === selectedModelType &&
+          (model.namespace || 'default') === (selectedModelNamespace || 'default')
+      ) ?? null,
+    [models, selectedModel, selectedModelNamespace, selectedModelType]
+  )
+  const selectableAllowedModels = useMemo(
+    () => models.filter(model => !allowedModels.some(allowed => allowed.name === model.name)),
+    [allowedModels, models]
+  )
+  const modelCascadeLabels: ModelCascadeLabels = useMemo(
+    () => ({
+      ungrouped: t('common:models.ungrouped', 'Ungrouped'),
+      uncategorized: t('common:models.uncategorized', 'Uncategorized'),
+      searchPlaceholder: t('common:models.search_models', 'Search models or groups...'),
+      searchResults: t('common:models.search_results', 'Search results'),
+      noModels: t('common:bot.no_available_models'),
+      noMatch: t('common:models.no_match', 'No matching models'),
+      primaryGroups: t('common:models.primary_groups', 'Primary groups'),
+      secondaryGroups: t('common:models.secondary_groups', 'Secondary groups'),
+    }),
+    [t]
+  )
+  const noModelOption: SpecialModelOption[] = useMemo(
+    () => [
+      {
+        key: '__none__',
+        label: t('common:bot.no_model_binding'),
+      },
+    ],
+    [t]
   )
 
   const updateAgentName = useCallback(
@@ -1137,62 +1178,40 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                 {/* Model selector + Restrict Models switch on same row */}
                 <div className="flex items-center gap-2">
                   <div className="flex-1">
-                    <Select
-                      value={
-                        selectedModel
-                          ? `${selectedModel}:${selectedModelType || ''}:${selectedModelNamespace || 'default'}`
-                          : '__none__'
-                      }
-                      onValueChange={value => {
-                        if (value === '__none__') {
-                          setSelectedModel('')
-                          setSelectedModelType(undefined)
-                          setSelectedModelNamespace(undefined)
-                          return
-                        }
-                        const [modelName, modelType, modelNamespace] = value.split(':')
-                        setSelectedModel(modelName)
-                        setSelectedModelType((modelType as ModelTypeEnum) || undefined)
-                        setSelectedModelNamespace(modelNamespace || 'default')
+                    <GroupedModelSelect
+                      models={models}
+                      selectedModel={selectedModelObject}
+                      selectedSpecialKey={selectedModelObject ? null : '__none__'}
+                      specialOptions={noModelOption}
+                      labels={modelCascadeLabels}
+                      onSelectModel={model => {
+                        setSelectedModel(model.name)
+                        setSelectedModelType(model.type)
+                        setSelectedModelNamespace(model.namespace || 'default')
                       }}
+                      onSelectSpecialOption={() => {
+                        setSelectedModel('')
+                        setSelectedModelType(undefined)
+                        setSelectedModelNamespace(undefined)
+                      }}
+                      placeholder={
+                        !agentName
+                          ? t('common:bot.select_executor_first')
+                          : t('common:bot.model_select')
+                      }
                       disabled={loadingModels || !agentName || readOnly}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue
-                          placeholder={
-                            !agentName
-                              ? t('common:bot.select_executor_first')
-                              : t('common:bot.model_select')
-                          }
-                        />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none__">
-                          <span className="text-text-muted">
-                            {t('common:bot.no_model_binding')}
+                      dataTestId="bot-default-model-select"
+                      getModelKey={model =>
+                        `${model.name}:${model.type}:${model.namespace || 'default'}`
+                      }
+                      renderModelBadges={model =>
+                        model.type === 'public' ? (
+                          <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-text-muted">
+                            {t('common:bot.public_model', '公共')}
                           </span>
-                        </SelectItem>
-                        {models.length === 0 ? (
-                          <div className="py-2 px-3 text-sm text-text-muted text-center">
-                            {t('common:bot.no_available_models')}
-                          </div>
-                        ) : (
-                          models.map(model => (
-                            <SelectItem
-                              key={`${model.name}:${model.type}:${model.namespace || 'default'}`}
-                              value={`${model.name}:${model.type}:${model.namespace || 'default'}`}
-                            >
-                              {model.displayName || model.name}
-                              {model.type === 'public' && (
-                                <span className="ml-1 text-xs text-text-muted">
-                                  [{t('common:bot.public_model', '公共')}]
-                                </span>
-                              )}
-                            </SelectItem>
-                          ))
-                        )}
-                      </SelectContent>
-                    </Select>
+                        ) : null
+                      }
+                    />
                   </div>
                   {/* Restrict Models Switch */}
                   <div className="flex items-center gap-1.5 flex-shrink-0">
@@ -1229,49 +1248,34 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                     <p className="text-xs text-text-muted mb-2">
                       {t('settings:bot.allowed_models.description')}
                     </p>
-                    <Select
-                      value=""
-                      onValueChange={value => {
-                        if (!value || value === '__none__') return
-                        const [modelName, modelType, modelNamespace] = value.split(':')
-                        const alreadyAdded = allowedModels.some(m => m.name === modelName)
-                        if (!alreadyAdded) {
-                          setAllowedModels([
-                            ...allowedModels,
-                            {
-                              name: modelName,
-                              type: (modelType as AllowedModelRef['type']) || 'public',
-                              namespace: modelNamespace || 'default',
-                            },
-                          ])
-                        }
+                    <GroupedModelSelect
+                      models={selectableAllowedModels}
+                      selectedModel={null}
+                      labels={modelCascadeLabels}
+                      onSelectModel={model => {
+                        setAllowedModels([
+                          ...allowedModels,
+                          {
+                            name: model.name,
+                            type: (model.type as AllowedModelRef['type']) || 'public',
+                            namespace: model.namespace || 'default',
+                          },
+                        ])
                       }}
                       disabled={readOnly || loadingModels || !agentName}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder={t('settings:bot.allowed_models.placeholder')} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {models.map(model => {
-                          const isAdded = allowedModels.some(m => m.name === model.name)
-                          return (
-                            <SelectItem
-                              key={`${model.name}:${model.type}:${model.namespace || 'default'}`}
-                              value={`${model.name}:${model.type}:${model.namespace || 'default'}`}
-                              disabled={isAdded}
-                            >
-                              {model.displayName || model.name}
-                              {model.type === 'public' && (
-                                <span className="ml-1 text-xs text-text-muted">
-                                  [{t('common:bot.public_model', '公共')}]
-                                </span>
-                              )}
-                              {isAdded && <span className="ml-1 text-xs text-text-muted">✓</span>}
-                            </SelectItem>
-                          )
-                        })}
-                      </SelectContent>
-                    </Select>
+                      placeholder={t('settings:bot.allowed_models.placeholder')}
+                      dataTestId="bot-allowed-model-select"
+                      getModelKey={model =>
+                        `${model.name}:${model.type}:${model.namespace || 'default'}`
+                      }
+                      renderModelBadges={model =>
+                        model.type === 'public' ? (
+                          <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-text-muted">
+                            {t('common:bot.public_model', '公共')}
+                          </span>
+                        ) : null
+                      }
+                    />
                     {allowedModels.length > 0 ? (
                       <div className="flex flex-wrap gap-1.5 mt-2">
                         {allowedModels.map(m => {

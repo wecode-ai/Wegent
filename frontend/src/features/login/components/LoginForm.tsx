@@ -14,7 +14,12 @@ import { paths } from '@/config/paths'
 import { useTranslation } from '@/hooks/useTranslation'
 import LanguageSwitcher from '@/components/LanguageSwitcher'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
-import { POST_LOGIN_REDIRECT_KEY, sanitizeRedirectPath } from '@/features/login/constants'
+import {
+  isPasswordLoginForced,
+  POST_LOGIN_REDIRECT_KEY,
+  resolveLoginDisplayMode,
+  sanitizeRedirectPath,
+} from '@/features/login/constants'
 import Image from 'next/image'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
 
@@ -31,13 +36,13 @@ export default function LoginForm() {
   const [isLoading, setIsLoading] = useState(false)
 
   // Get login mode configuration from runtime config
-  const runtimeConfig = getRuntimeConfigSync()
-  const loginMode = runtimeConfig.loginMode
-  const showPasswordLogin = loginMode === 'password' || loginMode === 'all'
-  const showOidcLogin = loginMode === 'oidc' || loginMode === 'all'
+  const forcePasswordLogin = isPasswordLoginForced(searchParams)
+  const runtimeConfig = forcePasswordLogin ? null : getRuntimeConfigSync()
+  const loginMode = runtimeConfig?.loginMode || 'all'
+  const { showPasswordLogin, showOidcLogin } = resolveLoginDisplayMode(searchParams, loginMode)
 
   // Get OIDC login button text from runtime config
-  const oidcLoginText = runtimeConfig.oidcLoginText || t('common:login.oidc_login')
+  const oidcLoginText = runtimeConfig?.oidcLoginText || t('common:login.oidc_login')
   const loginPath = paths.auth.login.getHref()
   const defaultRedirect = paths.chat.getHref()
   const [redirectPath, setRedirectPath] = useState(defaultRedirect)

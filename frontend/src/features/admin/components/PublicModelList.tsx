@@ -60,12 +60,16 @@ const PublicModelList: React.FC = () => {
   const [formData, setFormData] = useState<{
     name: string
     namespace: string
+    modelGroup: string
+    modelSubGroup: string
     config: string
     is_active: boolean
     is_advanced: boolean
   }>({
     name: '',
     namespace: 'default',
+    modelGroup: '',
+    modelSubGroup: '',
     config: '{}',
     is_active: true,
     is_advanced: false,
@@ -113,6 +117,40 @@ const PublicModelList: React.FC = () => {
     }
   }
 
+  const getSpecValue = (json: Record<string, unknown>, key: 'modelGroup' | 'modelSubGroup') => {
+    const spec = json.spec
+    if (typeof spec === 'object' && spec !== null && !Array.isArray(spec)) {
+      const value = (spec as Record<string, unknown>)[key]
+      return typeof value === 'string' ? value : ''
+    }
+    return ''
+  }
+
+  const applyGroupingToConfig = (config: Record<string, unknown>) => {
+    const nextConfig = { ...config }
+    const currentSpec = nextConfig.spec
+    const spec =
+      typeof currentSpec === 'object' && currentSpec !== null && !Array.isArray(currentSpec)
+        ? { ...(currentSpec as Record<string, unknown>) }
+        : {}
+    const trimmedGroup = formData.modelGroup.trim()
+    const trimmedSubGroup = formData.modelSubGroup.trim()
+
+    if (trimmedGroup) {
+      spec.modelGroup = trimmedGroup
+    } else {
+      delete spec.modelGroup
+    }
+    if (trimmedSubGroup) {
+      spec.modelSubGroup = trimmedSubGroup
+    } else {
+      delete spec.modelSubGroup
+    }
+
+    nextConfig.spec = spec
+    return nextConfig
+  }
+
   const handleCreateModel = async () => {
     if (!formData.name.trim()) {
       toast({
@@ -122,8 +160,8 @@ const PublicModelList: React.FC = () => {
       return
     }
 
-    const config = validateConfig(formData.config)
-    if (!config) {
+    const parsedConfig = validateConfig(formData.config)
+    if (!parsedConfig) {
       toast({
         variant: 'destructive',
         title: t('admin:public_models.errors.config_invalid_json'),
@@ -133,6 +171,7 @@ const PublicModelList: React.FC = () => {
 
     setSaving(true)
     try {
+      const config = applyGroupingToConfig(parsedConfig)
       const createData: AdminPublicModelCreate = {
         name: formData.name.trim(),
         namespace: formData.namespace.trim() || 'default',
@@ -157,8 +196,8 @@ const PublicModelList: React.FC = () => {
   const handleUpdateModel = async () => {
     if (!selectedModel) return
 
-    const config = validateConfig(formData.config)
-    if (!config) {
+    const parsedConfig = validateConfig(formData.config)
+    if (!parsedConfig) {
       toast({
         variant: 'destructive',
         title: t('admin:public_models.errors.config_invalid_json'),
@@ -168,6 +207,7 @@ const PublicModelList: React.FC = () => {
 
     setSaving(true)
     try {
+      const config = applyGroupingToConfig(parsedConfig)
       const updateData: AdminPublicModelUpdate = {}
       if (formData.name !== selectedModel.name) {
         updateData.name = formData.name
@@ -224,6 +264,8 @@ const PublicModelList: React.FC = () => {
     setFormData({
       name: '',
       namespace: 'default',
+      modelGroup: '',
+      modelSubGroup: '',
       config: '{}',
       is_active: true,
       is_advanced: false,
@@ -237,6 +279,8 @@ const PublicModelList: React.FC = () => {
     setFormData({
       name: model.name,
       namespace: model.namespace,
+      modelGroup: getSpecValue(model.json, 'modelGroup'),
+      modelSubGroup: getSpecValue(model.json, 'modelSubGroup'),
       config: JSON.stringify(model.json, null, 2),
       is_active: model.is_active,
       is_advanced: model.is_advanced ?? false,
@@ -260,6 +304,13 @@ const PublicModelList: React.FC = () => {
   const getDisplayName = (model: AdminPublicModel): string => {
     // Use display_name from API response if available, otherwise fall back to name
     return model.display_name || model.name
+  }
+
+  const getGroupPath = (model: AdminPublicModel): string | null => {
+    const group = getSpecValue(model.json, 'modelGroup')
+    const subGroup = getSpecValue(model.json, 'modelSubGroup')
+    if (group && subGroup) return `${group} / ${subGroup}`
+    return group || subGroup || null
   }
 
   return (
@@ -327,6 +378,14 @@ const PublicModelList: React.FC = () => {
                         <span>
                           {t('admin:public_models.namespace_label')}: {model.namespace}
                         </span>
+                        {getGroupPath(model) && (
+                          <>
+                            <span>•</span>
+                            <span>
+                              {t('admin:public_models.form.model_group')}: {getGroupPath(model)}
+                            </span>
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -397,6 +456,30 @@ const PublicModelList: React.FC = () => {
                 placeholder={t('admin:public_models.form.namespace_placeholder')}
               />
             </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="model-group">{t('admin:public_models.form.model_group')}</Label>
+                <Input
+                  id="model-group"
+                  data-testid="public-model-group-input"
+                  value={formData.modelGroup}
+                  onChange={e => setFormData({ ...formData, modelGroup: e.target.value })}
+                  placeholder={t('admin:public_models.form.model_group_placeholder')}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="model-sub-group">
+                  {t('admin:public_models.form.model_sub_group')}
+                </Label>
+                <Input
+                  id="model-sub-group"
+                  data-testid="public-model-sub-group-input"
+                  value={formData.modelSubGroup}
+                  onChange={e => setFormData({ ...formData, modelSubGroup: e.target.value })}
+                  placeholder={t('admin:public_models.form.model_sub_group_placeholder')}
+                />
+              </div>
+            </div>
             <div className="space-y-2">
               <Label htmlFor="config">{t('admin:public_models.form.config')} *</Label>
               <Textarea
@@ -448,6 +531,32 @@ const PublicModelList: React.FC = () => {
                 onChange={e => setFormData({ ...formData, namespace: e.target.value })}
                 placeholder={t('admin:public_models.form.namespace_placeholder')}
               />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit-model-group">
+                  {t('admin:public_models.form.model_group')}
+                </Label>
+                <Input
+                  id="edit-model-group"
+                  data-testid="edit-public-model-group-input"
+                  value={formData.modelGroup}
+                  onChange={e => setFormData({ ...formData, modelGroup: e.target.value })}
+                  placeholder={t('admin:public_models.form.model_group_placeholder')}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-model-sub-group">
+                  {t('admin:public_models.form.model_sub_group')}
+                </Label>
+                <Input
+                  id="edit-model-sub-group"
+                  data-testid="edit-public-model-sub-group-input"
+                  value={formData.modelSubGroup}
+                  onChange={e => setFormData({ ...formData, modelSubGroup: e.target.value })}
+                  placeholder={t('admin:public_models.form.model_sub_group_placeholder')}
+                />
+              </div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="edit-config">{t('admin:public_models.form.config')}</Label>

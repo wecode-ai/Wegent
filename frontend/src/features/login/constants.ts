@@ -3,6 +3,32 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export const POST_LOGIN_REDIRECT_KEY = 'postLoginRedirectPath'
+export const PASSWORD_LOGIN_SEARCH_PARAM = 'password_login'
+
+type SearchParamsLike = Pick<URLSearchParams, 'has'>
+
+export const isPasswordLoginForced = (
+  searchParams: SearchParamsLike | null | undefined
+): boolean => {
+  return Boolean(searchParams?.has(PASSWORD_LOGIN_SEARCH_PARAM))
+}
+
+export const resolveLoginDisplayMode = (
+  searchParams: SearchParamsLike | null | undefined,
+  loginMode: string
+) => {
+  if (isPasswordLoginForced(searchParams)) {
+    return {
+      showPasswordLogin: true,
+      showOidcLogin: false,
+    }
+  }
+
+  return {
+    showPasswordLogin: loginMode === 'password' || loginMode === 'all',
+    showOidcLogin: loginMode === 'oidc' || loginMode === 'all',
+  }
+}
 
 /**
  * Sanitizes redirect paths to prevent open redirect vulnerabilities

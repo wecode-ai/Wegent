@@ -28,7 +28,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { SearchableSelect } from '@/components/ui/searchable-select'
+import {
+  GroupedModelSelect,
+  type ModelCascadeLabels,
+  type SpecialModelOption,
+} from '@/components/model-select/ModelCascadeSelect'
 import { PromptDraftComparisonPanel } from '@/features/prompt-draft/components/PromptDraftComparisonPanel'
 import { PromptDraftVersionList } from '@/features/prompt-draft/components/PromptDraftVersionList'
 
@@ -196,6 +200,28 @@ export function PromptDraftDialog({ open, onOpenChange, taskId }: PromptDraftDia
     if (!model) return null
     return models.find(item => item.name === model) ?? null
   }, [model, models])
+  const cascadeLabels: ModelCascadeLabels = useMemo(
+    () => ({
+      ungrouped: t('common:models.ungrouped', 'Ungrouped'),
+      uncategorized: t('common:models.uncategorized', 'Uncategorized'),
+      searchPlaceholder: t('common:models.search_models', 'Search models or groups...'),
+      searchResults: t('common:models.search_results', 'Search results'),
+      noModels: t('common:models.no_models', 'No models available'),
+      noMatch: t('common:models.no_match', 'No matching models'),
+      primaryGroups: t('common:models.primary_groups', 'Primary groups'),
+      secondaryGroups: t('common:models.secondary_groups', 'Secondary groups'),
+    }),
+    [t]
+  )
+  const defaultModelOption: SpecialModelOption[] = useMemo(
+    () => [
+      {
+        key: '__default__',
+        label: t('promptDraft.useDefaultModel'),
+      },
+    ],
+    [t]
+  )
 
   const resetPromptDraftState = () => {
     requestVersionRef.current += 1
@@ -430,34 +456,25 @@ export function PromptDraftDialog({ open, onOpenChange, taskId }: PromptDraftDia
             <div className="space-y-2">
               <Label>{t('promptDraft.modelLabel')}</Label>
               <div data-testid="prompt-draft-model-selector">
-                <SearchableSelect
-                  value={selectedModel?.name || ''}
-                  onValueChange={value => setModel(value)}
+                <GroupedModelSelect
+                  models={models}
+                  selectedModel={selectedModel}
+                  selectedSpecialKey={model ? null : '__default__'}
+                  specialOptions={defaultModelOption}
+                  labels={cascadeLabels}
+                  onSelectModel={item => setModel(item.name)}
+                  onSelectSpecialOption={() => setModel('')}
                   disabled={modelsLoading}
                   placeholder={t('promptDraft.modelPlaceholder')}
-                  searchPlaceholder={t('promptDraft.modelSearch')}
-                  emptyText={t('promptDraft.noModelFound')}
-                  noMatchText={t('promptDraft.noModelFound')}
-                  showChevron={true}
-                  items={[
-                    {
-                      value: '',
-                      label: t('promptDraft.useDefaultModel'),
-                    },
-                    ...models.map(item => ({
-                      value: item.name,
-                      label: item.displayName || item.name,
-                      searchText: `${item.displayName || item.name} ${item.provider || ''}`,
-                      content: (
-                        <div className="flex flex-col">
-                          <span>{item.displayName || item.name}</span>
-                          {item.provider && (
-                            <span className="text-xs text-muted-foreground">{item.provider}</span>
-                          )}
-                        </div>
-                      ),
-                    })),
-                  ]}
+                  dataTestId="prompt-draft-grouped-model-select"
+                  getModelKey={item => `${item.type}-${item.namespace}-${item.name}`}
+                  renderModelMeta={item =>
+                    item.provider ? (
+                      <span className="block truncate text-xs text-text-muted">
+                        {item.provider}
+                      </span>
+                    ) : null
+                  }
                 />
               </div>
             </div>

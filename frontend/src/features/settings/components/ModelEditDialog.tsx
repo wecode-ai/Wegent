@@ -57,6 +57,8 @@ import {
 export interface ModelFormData {
   modelIdName: string
   displayName: string
+  modelGroup: string
+  modelSubGroup: string
   modelCategoryType: ModelCategoryType
   providerType: string
   modelId: string
@@ -93,6 +95,8 @@ export interface ModelFormData {
 export interface ModelInitialData {
   name: string
   displayName?: string
+  modelGroup?: string
+  modelSubGroup?: string
   modelCategoryType?: ModelCategoryType
   providerType?: string
   modelId?: string
@@ -287,6 +291,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         ? {
             name: model.metadata.name,
             displayName: model.metadata.displayName,
+            modelGroup: model.spec.modelGroup,
+            modelSubGroup: model.spec.modelSubGroup,
             modelCategoryType: model.spec.modelType,
             providerType: model.spec.modelConfig?.env?.model,
             modelId: model.spec.modelConfig?.env?.model_id,
@@ -314,6 +320,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   // Form state
   const [modelIdName, setModelIdName] = useState('')
   const [displayName, setDisplayName] = useState('')
+  const [modelGroup, setModelGroup] = useState('')
+  const [modelSubGroup, setModelSubGroup] = useState('')
   const [modelCategoryType, setModelCategoryType] = useState<ModelCategoryType>('llm')
   const [providerType, setProviderType] = useState<string>('openai')
   const [modelId, setModelId] = useState('')
@@ -390,6 +398,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       if (effectiveInitialData) {
         setModelIdName(effectiveInitialData.name || '')
         setDisplayName(effectiveInitialData.displayName || '')
+        setModelGroup(effectiveInitialData.modelGroup || '')
+        setModelSubGroup(effectiveInitialData.modelSubGroup || '')
         // Set model category type
         const categoryType = effectiveInitialData.modelCategoryType || 'llm'
         setModelCategoryType(categoryType)
@@ -496,6 +506,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         // Reset for new model
         setModelIdName('')
         setDisplayName('')
+        setModelGroup('')
+        setModelSubGroup('')
         setModelCategoryType('llm')
         setProviderType('openai')
         setModelId('')
@@ -1126,6 +1138,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           // LLM-specific fields
           ...(modelCategoryType === 'llm' && contextWindow && { contextWindow }),
           ...(modelCategoryType === 'llm' && maxOutputTokens && { maxOutputTokens }),
+          ...(modelGroup.trim() && { modelGroup: modelGroup.trim() }),
+          ...(modelSubGroup.trim() && { modelSubGroup: modelSubGroup.trim() }),
           ...(modelCapabilities && { modelCapabilities }),
           ...(ttsConfig && { ttsConfig }),
           ...(sttConfig && { sttConfig }),
@@ -1143,6 +1157,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       const formData: ModelFormData = {
         modelIdName: modelIdName.trim(),
         displayName: displayName.trim(),
+        modelGroup: modelGroup.trim(),
+        modelSubGroup: modelSubGroup.trim(),
         modelCategoryType,
         providerType,
         modelId: finalModelId,
@@ -1296,6 +1312,38 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                 className="bg-base"
               />
               <p className="text-xs text-text-muted">{t('common:models.display_name_hint')}</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="modelGroup" className="text-sm font-medium">
+                {t('common:models.model_group')}
+              </Label>
+              <Input
+                id="modelGroup"
+                data-testid="model-group-input"
+                value={modelGroup}
+                onChange={e => setModelGroup(e.target.value)}
+                placeholder={t('common:models.model_group_placeholder')}
+                className="bg-base"
+              />
+              <p className="text-xs text-text-muted">{t('common:models.model_group_hint')}</p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="modelSubGroup" className="text-sm font-medium">
+                {t('common:models.model_sub_group')}
+              </Label>
+              <Input
+                id="modelSubGroup"
+                data-testid="model-sub-group-input"
+                value={modelSubGroup}
+                onChange={e => setModelSubGroup(e.target.value)}
+                placeholder={t('common:models.model_sub_group_placeholder')}
+                className="bg-base"
+              />
+              <p className="text-xs text-text-muted">{t('common:models.model_sub_group_hint')}</p>
             </div>
           </div>
 

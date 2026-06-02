@@ -4,15 +4,17 @@
 
 'use client'
 
-import React from 'react'
+import React, { useMemo, useState } from 'react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useModelSelection, type Model } from '../../hooks/useModelSelection'
 import type { Team, TaskType } from '@/types/api'
 import type { ModelCategoryType } from '@/apis/models'
-import { cn } from '@/lib/utils'
-import { Globe, User } from 'lucide-react'
+import {
+  ModelCascadeContent,
+  type ModelCascadeLabels,
+} from '@/components/model-select/ModelCascadeSelect'
 
 /**
  * Maps task type to the corresponding model category type.
@@ -58,16 +60,13 @@ export function RegenerateModelPopover({
   taskType,
 }: RegenerateModelPopoverProps) {
   const { t } = useTranslation('chat')
+  const [searchValue, setSearchValue] = useState('')
 
   // Determine model category based on task type
   const modelCategoryType = getModelCategoryFromTaskType(taskType)
 
   // Use the model selection hook to get filtered models
-  const {
-    filteredModels,
-    isLoading: isModelsLoading,
-    getModelDisplayText,
-  } = useModelSelection({
+  const { filteredModels, isLoading: isModelsLoading } = useModelSelection({
     teamId: selectedTeam?.id ?? null,
     taskId: null,
     selectedTeam,
@@ -77,9 +76,23 @@ export function RegenerateModelPopover({
   const handleModelSelect = (model: Model) => {
     onSelectModel(model)
     onOpenChange(false)
+    setSearchValue('')
   }
 
   const loading = isLoading || isModelsLoading
+  const cascadeLabels: ModelCascadeLabels = useMemo(
+    () => ({
+      ungrouped: t('common:models.ungrouped', 'Ungrouped'),
+      uncategorized: t('common:models.uncategorized', 'Uncategorized'),
+      searchPlaceholder: t('common:models.search_models', 'Search models or groups...'),
+      searchResults: t('common:models.search_results', 'Search results'),
+      noModels: t('correction.no_models'),
+      noMatch: t('common:models.no_match', 'No matching models'),
+      primaryGroups: t('common:models.primary_groups', 'Primary groups'),
+      secondaryGroups: t('common:models.secondary_groups', 'Secondary groups'),
+    }),
+    [t]
+  )
 
   // Wrap trigger with Tooltip inside Popover to avoid asChild conflicts
   // The Tooltip wraps the PopoverTrigger so hover events work correctly
@@ -100,71 +113,40 @@ export function RegenerateModelPopover({
       <PopoverContent
         side="top"
         align="start"
-        className="w-64 p-2"
+        className="w-auto overflow-hidden rounded-xl border border-border p-0 shadow-xl"
         onInteractOutside={() => onOpenChange(false)}
       >
-        {/* Header */}
-        <div className="px-2 py-1.5 mb-1">
+        <div className="border-b border-border px-3 py-2">
           <h4 className="text-sm font-medium text-text-primary">{t('regenerate.select_model')}</h4>
           <p className="text-xs text-text-muted mt-0.5">{t('regenerate.select_model_desc')}</p>
         </div>
-
-        {/* Model list */}
-        <div className="max-h-60 overflow-y-auto">
-          {loading ? (
-            <div className="flex items-center justify-center py-4">
-              <div className="animate-spin h-4 w-4 border-2 border-primary border-t-transparent rounded-full" />
-            </div>
-          ) : filteredModels.length === 0 ? (
-            <div className="text-center text-sm text-text-muted py-4">
-              {t('correction.no_models')}
-            </div>
-          ) : (
-            <div className="space-y-0.5">
-              {filteredModels.map(model => {
-                const isPublic = model.type === 'public'
-                const displayName = getModelDisplayText(model)
-
-                return (
-                  <button
-                    type="button"
-                    key={`${model.name}:${model.type || ''}`}
-                    onClick={() => handleModelSelect(model)}
-                    className={cn(
-                      'w-full flex items-center gap-2 px-2 py-2 rounded-md text-left',
-                      'hover:bg-hover transition-colors',
-                      'focus:outline-none focus:ring-2 focus:ring-primary/20'
-                    )}
-                  >
-                    {/* Model type icon */}
-                    <span className="flex-shrink-0">
-                      {isPublic ? (
-                        <Globe className="h-3.5 w-3.5 text-text-muted" />
-                      ) : (
-                        <User className="h-3.5 w-3.5 text-text-muted" />
-                      )}
-                    </span>
-
-                    {/* Model name */}
-                    <span className="flex-1 text-sm text-text-primary truncate">{displayName}</span>
-
-                    {/* Model type badge */}
-                    <span
-                      className={cn(
-                        'text-xs px-1.5 py-0.5 rounded',
-                        isPublic
-                          ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
-                          : 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
-                      )}
-                    >
-                      {isPublic ? t('correction.public_model') : t('correction.user_model')}
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
-          )}
-        </div>
+        {loading ? (
+          <div className="flex w-[min(640px,calc(100vw-32px))] items-center justify-center py-8">
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          </div>
+        ) : (
+          <ModelCascadeContent
+            models={filteredModels}
+            labels={cascadeLabels}
+            searchValue={searchValue}
+            onSearchValueChange={setSearchValue}
+            onSelectModel={handleModelSelect}
+            getModelKey={model => `${model.name}:${model.type || ''}`}
+            className="w-[min(640px,calc(100vw-32px))]"
+            renderModelBadges={model => (
+              <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-text-muted">
+                {model.type === 'public'
+                  ? t('correction.public_model')
+                  : t('correction.user_model')}
+              </span>
+            )}
+            renderModelMeta={model =>
+              model.modelId ? (
+                <span className="block truncate text-xs text-text-muted">{model.modelId}</span>
+              ) : null
+            }
+          />
+        )}
       </PopoverContent>
     </Popover>
   )

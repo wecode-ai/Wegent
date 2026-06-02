@@ -22,6 +22,8 @@ import { useTranslation } from '@/hooks/useTranslation'
 import {
   isPredefinedModel,
   getModelFromConfig,
+  getModelNamespaceFromConfig,
+  getModelTypeFromConfig,
   getAllowedModelsFromConfig,
 } from '@/features/settings/services/bots'
 import { getCompatibleProviderFromAgentType } from '@/utils/modelCompatibility'
@@ -51,6 +53,8 @@ export interface Model {
   region?: ModelRegion
   isAdvanced?: boolean
   namespace?: string
+  modelGroup?: string | null
+  modelSubGroup?: string | null
   config?: Record<string, unknown>
 }
 
@@ -103,6 +107,7 @@ export interface UseModelSelectionReturn {
   isMixedTeam: boolean
   compatibleProvider: string | null
   hasAdvancedModels: boolean
+  boundDefaultModel: Model | null
 
   // Actions
   selectModel: (model: Model | null) => void
@@ -133,6 +138,9 @@ export function unifiedToModel(unified: UnifiedModel): Model {
     displayName: unified.displayName,
     type: unified.type,
     isAdvanced: unified.isAdvanced ?? false,
+    namespace: unified.namespace,
+    modelGroup: unified.modelGroup,
+    modelSubGroup: unified.modelSubGroup,
     config: unified.config,
   }
 }
@@ -140,6 +148,21 @@ export function unifiedToModel(unified: UnifiedModel): Model {
 /** Get display text for a model: displayName or name */
 function getModelDisplayTextHelper(model: Model): string {
   return model.displayName || model.name
+}
+
+function modelMatchesConfiguredRef(
+  model: Model,
+  modelName: string,
+  modelType?: ModelTypeEnum,
+  modelNamespace?: string
+): boolean {
+  const nameMatches = model.name === modelName || model.displayName === modelName
+  if (!nameMatches) return false
+  if (modelType && model.type !== modelType) return false
+  if (modelNamespace && modelNamespace !== 'default' && model.namespace !== modelNamespace) {
+    return false
+  }
+  return true
 }
 
 /** Check if all bots in a team have predefined models */
@@ -214,6 +237,32 @@ export function useModelSelection({
     if (!firstBot?.agent_config) return []
     return getAllowedModelsFromConfig(firstBot.agent_config as Record<string, unknown>)
   }, [selectedTeam])
+
+  const boundDefaultModel = useMemo((): Model | null => {
+    const configuredModels = (selectedTeam?.bots ?? [])
+      .map(botInfo => botInfo.bot?.agent_config as Record<string, unknown> | undefined)
+      .filter((config): config is Record<string, unknown> => Boolean(config))
+      .map(config => {
+        const modelName = getModelFromConfig(config)
+        if (!modelName) return null
+        return models.find(model =>
+          modelMatchesConfiguredRef(
+            model,
+            modelName,
+            getModelTypeFromConfig(config),
+            getModelNamespaceFromConfig(config)
+          )
+        )
+      })
+      .filter((model): model is Model => Boolean(model))
+
+    const uniqueKeys = new Set(configuredModels.map(model => `${model.name}:${model.type || ''}`))
+    if (uniqueKeys.size !== 1) {
+      return null
+    }
+
+    return configuredModels[0] ?? null
+  }, [selectedTeam?.bots, models])
 
   /** Check if there are any advanced models (after provider filtering) */
   const hasAdvancedModels = useMemo(() => {
@@ -591,6 +640,7 @@ export function useModelSelection({
     isMixedTeam,
     compatibleProvider,
     hasAdvancedModels,
+    boundDefaultModel,
 
     // Actions
     selectModel,
