@@ -5,9 +5,7 @@
 export type ChatPrimaryAction = 'send' | 'queue' | 'stop' | 'cancel' | 'loading'
 
 interface ChatSendStateInput {
-  isLoading: boolean
   isStreaming: boolean
-  isAwaitingResponseStart: boolean
   isStopping: boolean
   isModelSelectionRequired: boolean
   isAttachmentReadyToSend: boolean
@@ -30,13 +28,17 @@ export function getChatSendState(input: ChatSendStateInput): ChatSendState {
   const hasTextContent = input.taskInputMessage.trim().length > 0
   const hasUserProvidedContent = hasTextContent || Boolean(input.hasAttachments)
   const hasSendableContent = input.shouldHideChatInput || hasUserProvidedContent
-  const baseDisabled =
-    input.isLoading ||
+  const sendDisabled =
     input.isModelSelectionRequired ||
     !input.isAttachmentReadyToSend ||
     input.hasNoTeams ||
     !hasSendableContent
-  const isActiveStream = input.isStreaming || input.isAwaitingResponseStart || input.isStopping
+  const queueDisabled =
+    input.isModelSelectionRequired ||
+    !input.isAttachmentReadyToSend ||
+    input.hasNoTeams ||
+    !hasUserProvidedContent
+  const isActiveStream = input.isStreaming || input.isStopping
 
   if (input.isStopping) {
     return {
@@ -47,7 +49,7 @@ export function getChatSendState(input: ChatSendStateInput): ChatSendState {
     }
   }
 
-  if (isActiveStream && input.canQueueMessage && hasUserProvidedContent && !baseDisabled) {
+  if (isActiveStream && input.canQueueMessage && !queueDisabled) {
     return {
       primaryAction: 'queue',
       isPrimaryDisabled: false,
@@ -76,7 +78,7 @@ export function getChatSendState(input: ChatSendStateInput): ChatSendState {
 
   return {
     primaryAction: 'send',
-    isPrimaryDisabled: baseDisabled,
+    isPrimaryDisabled: sendDisabled,
     showStopAction: false,
     showPendingAction: false,
   }

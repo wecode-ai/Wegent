@@ -8,8 +8,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from executor.agents.codex.event_mapper import CodeXEventMapper
 
+from executor.agents.codex.event_mapper import CodeXEventMapper
 from shared.status import TaskStatus
 
 
