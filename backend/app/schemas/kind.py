@@ -238,6 +238,14 @@ class ModelSpec(BaseModel):
         ModelCategoryType.LLM,
         description="Model category type (llm, tts, stt, embedding, rerank). Defaults to 'llm' for backward compatibility.",
     )
+    modelGroup: Optional[str] = Field(
+        None,
+        description="Primary user-defined group used when displaying model selectors.",
+    )
+    modelSubGroup: Optional[str] = Field(
+        None,
+        description="Secondary user-defined group used within the primary model group.",
+    )
     ttsConfig: Optional[TTSConfig] = Field(
         None, description="TTS-specific configuration (when modelType='tts')"
     )
@@ -694,10 +702,6 @@ class SkillSpec(BaseModel):
     """Skill specification"""
 
     description: str  # Trigger condition description (from SKILL.md YAML frontmatter)
-    enabled: bool = Field(
-        True,
-        description="Whether this skill is globally enabled for the owning user.",
-    )
     displayName: Optional[str] = (
         None  # Friendly display name shown when tool is being used (e.g., "正在渲染图表")
     )

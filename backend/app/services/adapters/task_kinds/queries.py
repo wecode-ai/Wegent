@@ -136,6 +136,7 @@ class TaskQueryMixin:
         skip: int = 0,
         limit: int = 50,
         types: List[str] = None,
+        client_origin: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """
         Get user's personal (non-group-chat) task list with pagination.
@@ -147,9 +148,15 @@ class TaskQueryMixin:
         if types is None:
             types = ["online", "offline"]
 
-        task_ids, total_personal = get_personal_task_ids_and_total(
-            db, user_id=user_id, skip=skip, limit=limit, extra_limit=200
-        )
+        query_kwargs = {
+            "user_id": user_id,
+            "skip": skip,
+            "limit": limit,
+            "extra_limit": 200,
+        }
+        if client_origin:
+            query_kwargs["client_origin"] = client_origin
+        task_ids, total_personal = get_personal_task_ids_and_total(db, **query_kwargs)
 
         if not task_ids:
             return [], total_personal
@@ -170,6 +177,7 @@ class TaskQueryMixin:
         skip: int = 0,
         limit: int = 50,
         types: List[str] = None,
+        client_origin: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """
         Get user's personal task page grouped by device or team.
@@ -180,9 +188,15 @@ class TaskQueryMixin:
         if types is None:
             types = ["online", "offline"]
 
-        task_ids, total_personal = get_personal_task_ids_and_total(
-            db, user_id=user_id, skip=skip, limit=limit, extra_limit=200
-        )
+        query_kwargs = {
+            "user_id": user_id,
+            "skip": skip,
+            "limit": limit,
+            "extra_limit": 200,
+        }
+        if client_origin:
+            query_kwargs["client_origin"] = client_origin
+        task_ids, total_personal = get_personal_task_ids_and_total(db, **query_kwargs)
 
         if not task_ids:
             return [], total_personal
@@ -265,7 +279,12 @@ class TaskQueryMixin:
         return result, total
 
     def get_task_by_id(
-        self, db: Session, *, task_id: int, user_id: int
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        user_id: int,
+        client_origin: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Get task by ID and user ID (only active tasks).
@@ -274,16 +293,15 @@ class TaskQueryMixin:
         """
         from app.services.task_member_service import task_member_service
 
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active.in_(TaskResource.is_active_query()),
-                text("JSON_EXTRACT(json, '$.status.status') != 'DELETE'"),
-            )
-            .first()
+        query = db.query(TaskResource).filter(
+            TaskResource.id == task_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active.in_(TaskResource.is_active_query()),
+            text("JSON_EXTRACT(json, '$.status.status') != 'DELETE'"),
         )
+        if client_origin:
+            query = query.filter(TaskResource.client_origin == client_origin)
+        task = query.first()
 
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
@@ -294,7 +312,12 @@ class TaskQueryMixin:
         return convert_to_task_dict(task, db, task.user_id)
 
     def get_task_detail(
-        self, db: Session, *, task_id: int, user_id: int
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        user_id: int,
+        client_origin: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Get detailed task information including related entities."""
         from app.services.adapters.team_kinds import team_kinds_service
@@ -303,7 +326,9 @@ class TaskQueryMixin:
         from app.services.subtask import subtask_service
         from app.services.task_member_service import task_member_service
 
-        task_dict = self.get_task_by_id(db, task_id=task_id, user_id=user_id)
+        task_dict = self.get_task_by_id(
+            db, task_id=task_id, user_id=user_id, client_origin=client_origin
+        )
 
         # Get the raw task resource to extract requested skills from labels
         task_resource = (

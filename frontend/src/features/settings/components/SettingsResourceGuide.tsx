@@ -50,7 +50,7 @@ export function SettingsResourceGuide() {
           </div>
         </div>
 
-        <Button asChild type="button" variant="outline" size="sm" className="h-9 min-w-[44px] px-3">
+        <Button asChild type="button" variant="primary" size="sm" className="h-9 min-w-[44px] px-3">
           <Link href={RESOURCE_LIBRARY_HREF}>
             {translateWithFallback('resourceGuide.action', '前往资源库', 'Go to Resource Library')}
             <ArrowUpRight className="h-4 w-4" aria-hidden="true" />

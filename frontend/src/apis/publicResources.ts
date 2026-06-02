@@ -84,6 +84,8 @@ export function transformPublicModelToUnifiedModel(publicModel: AdminPublicModel
     isActive: publicModel.is_active,
     modelCategoryType: (spec?.modelType as 'llm' | 'tts' | 'stt' | 'embedding' | 'rerank') || 'llm',
     isAdvanced: publicModel.is_advanced ?? false,
+    modelGroup: (spec?.modelGroup as string) || null,
+    modelSubGroup: (spec?.modelSubGroup as string) || null,
   }
 }
 

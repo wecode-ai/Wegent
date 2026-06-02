@@ -45,6 +45,7 @@ async def sync_device_capabilities(
             device_id=device_id,
             skill_ids=request.skill_ids,
             installed_skill_ids=request.installed_skill_ids,
+            installed_plugin_ids=request.installed_plugin_ids,
             installed_mcp_ids=request.installed_mcp_ids,
             mcp_ids=request.mcp_ids,
             mode=request.mode,

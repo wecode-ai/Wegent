@@ -27,8 +27,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useTeamContext } from '@/contexts/TeamContext'
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { DEFAULT_MODEL_NAME, ModelSelector, type Model } from '@/features/tasks/components/selector'
 import { useUser } from '@/features/common/UserContext'
 
@@ -47,8 +46,7 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
   const [selectedModel, setSelectedModel] = useState<Model | null>(null)
 
   const { teams, isTeamsLoading } = useTeamContext()
-  const { sendMessage } = useChatStreamContext()
-  const { refreshTasks, setSelectedTask } = useTaskContext()
+  const { sendMessage, refreshTasks, selectTask } = useTaskSession()
   const { user } = useUser()
 
   // Filter teams to only show chat-type teams (agent_type === 'chat')
@@ -91,7 +89,7 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
         throw new Error('Selected team not found')
       }
 
-      // Use ChatStreamContext to send the message
+      // Use TaskSessionContext to send the message
       // This ensures the stream is registered globally and the task page can display it
       void sendMessage(
         {
@@ -131,7 +129,7 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
 
             // Set selected task with is_group_chat flag BEFORE navigation
             // This ensures ChatArea receives the correct isGroupChat prop immediately
-            setSelectedTask({
+            selectTask({
               id: realTaskId,
               title: title,
               team_id: selectedTeam?.id || 0,

@@ -64,6 +64,7 @@ export function ProjectWorkBar({
     })
   }, [projects, getDeviceForProject])
   const standaloneDevices = useMemo(() => sortStandaloneDevices(devices), [devices])
+  const isStandaloneMode = currentProjectId == null
   const defaultStandaloneDeviceId = useMemo(
     () => getPreferredStandaloneDeviceId(devices, currentStandaloneDeviceId),
     [currentStandaloneDeviceId, devices]
@@ -118,10 +119,11 @@ export function ProjectWorkBar({
                 {sortedProjects.map(project => {
                   const device = getDeviceForProject(project)
                   const isUnavailable = Boolean(device && device.status !== 'online')
+                  const selected = project.id === currentProjectId
                   const ProjectIcon = isUnavailable ? FolderX : FolderOpen
                   const projectTextClass = isUnavailable
                     ? 'text-text-muted'
-                    : project.id === currentProjectId
+                    : selected
                       ? 'text-text-primary'
                       : 'text-text-secondary'
                   return (
@@ -148,6 +150,14 @@ export function ProjectWorkBar({
                           }`}
                         />
                         <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-[18px]">{project.name}</span>
+                        {selected && (
+                          <Check
+                            data-testid={`project-selected-icon-${project.id}`}
+                            className={`h-3.5 w-3.5 shrink-0 ${
+                              isUnavailable ? 'text-text-muted' : 'text-text-primary'
+                            }`}
+                          />
+                        )}
                       </div>
                       {device && (
                         <span className={`ml-7 text-xs ${device.status === 'online' ? 'text-text-secondary' : 'text-text-muted'}`}>
@@ -159,58 +169,59 @@ export function ProjectWorkBar({
                 })}
               </div>
             )}
-            {currentProject && (
-              <>
-                <div className="my-2 border-t border-border" />
-                <button
-                  type="button"
-                  data-testid="no-project-option"
-                  onClick={handleUseNoProject}
-                  className="flex min-h-9 w-full items-center gap-3 rounded-xl px-4 py-2 text-left text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted"
-                >
-                  <FolderX className="h-4 w-4 shrink-0" />
-                  <span>{t('workbench.no_project', '不使用项目')}</span>
-                </button>
-                <div data-testid="standalone-device-list" className="mt-1 space-y-1 pl-6">
-                  {standaloneDevices.length === 0 ? (
-                    <div className="px-4 py-2 text-xs text-text-muted">
-                      {t('workbench.project_no_available_devices', '暂无可用设备')}
-                    </div>
-                  ) : (
-                    standaloneDevices.map(device => {
-                      const online = isOnlineDevice(device)
-                      const selected = device.device_id === selectedStandaloneDeviceId
-                      const DeviceIcon = isCloudDevice(device) ? Cloud : HardDrive
-                      return (
-                        <button
-                          key={device.device_id}
-                          type="button"
-                          data-testid={`standalone-device-option-${device.device_id}`}
-                          disabled={!online}
-                          onClick={() => handleSelectStandaloneDevice(device.device_id)}
-                          className={[
-                            'flex min-h-9 w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs',
-                            online
-                              ? 'text-text-secondary hover:bg-muted'
-                              : 'cursor-not-allowed text-text-muted opacity-60',
-                            selected ? 'bg-muted text-text-primary' : '',
-                          ].join(' ')}
-                        >
-                          <DeviceIcon className="h-3.5 w-3.5 shrink-0" />
-                          <span className="min-w-0 flex-1 truncate">
-                            {device.name || device.device_id}
-                          </span>
-                          <span className={online ? 'text-primary' : 'text-text-muted'}>
-                            {getDeviceStatusLabel(device)}
-                          </span>
-                          {selected && online && <Check className="h-3.5 w-3.5 shrink-0" />}
-                        </button>
-                      )
-                    })
-                  )}
+            <div className="my-2 border-t border-border" />
+            <button
+              type="button"
+              data-testid="no-project-option"
+              onClick={handleUseNoProject}
+              className="flex min-h-9 w-full items-center gap-3 rounded-xl px-4 py-2 text-left text-[13px] font-medium leading-[18px] text-text-secondary hover:bg-muted"
+            >
+              <FolderX className="h-4 w-4 shrink-0" />
+              <span>{t('workbench.no_project', '不使用项目')}</span>
+            </button>
+            <div data-testid="standalone-device-list" className="mt-1 space-y-1 pl-6">
+              {standaloneDevices.length === 0 ? (
+                <div className="px-4 py-2 text-xs text-text-muted">
+                  {t('workbench.project_no_available_devices', '暂无可用设备')}
                 </div>
-              </>
-            )}
+              ) : (
+                standaloneDevices.map(device => {
+                  const online = isOnlineDevice(device)
+                  const selected = isStandaloneMode && device.device_id === selectedStandaloneDeviceId
+                  const DeviceIcon = isCloudDevice(device) ? Cloud : HardDrive
+                  return (
+                    <button
+                      key={device.device_id}
+                      type="button"
+                      data-testid={`standalone-device-option-${device.device_id}`}
+                      disabled={!online}
+                      onClick={() => handleSelectStandaloneDevice(device.device_id)}
+                      className={[
+                        'flex min-h-9 w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs',
+                        online
+                          ? 'text-text-secondary hover:bg-muted'
+                          : 'cursor-not-allowed text-text-muted opacity-60',
+                        selected ? 'bg-muted text-text-primary' : '',
+                      ].join(' ')}
+                    >
+                      <DeviceIcon className="h-3.5 w-3.5 shrink-0" />
+                      <span className="min-w-0 flex-1 truncate">
+                        {device.name || device.device_id}
+                      </span>
+                      <span className={online ? 'text-primary' : 'text-text-muted'}>
+                        {getDeviceStatusLabel(device)}
+                      </span>
+                      {selected && online && (
+                        <Check
+                          data-testid={`standalone-device-selected-icon-${device.device_id}`}
+                          className="h-3.5 w-3.5 shrink-0"
+                        />
+                      )}
+                    </button>
+                  )
+                })
+              )}
+            </div>
           </div>
         )}
         <button

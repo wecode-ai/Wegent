@@ -51,6 +51,8 @@ export interface Model {
   region?: ModelRegion
   isAdvanced?: boolean
   namespace?: string
+  modelGroup?: string | null
+  modelSubGroup?: string | null
   config?: Record<string, unknown>
 }
 
@@ -131,6 +133,9 @@ export function unifiedToModel(unified: UnifiedModel): Model {
     displayName: unified.displayName,
     type: unified.type,
     isAdvanced: unified.isAdvanced ?? false,
+    namespace: unified.namespace,
+    modelGroup: unified.modelGroup,
+    modelSubGroup: unified.modelSubGroup,
     config: unified.config,
   }
 }

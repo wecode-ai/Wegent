@@ -184,7 +184,6 @@ function createProps(): ChatInputControlsProps {
     isModelSelectionRequired: false,
     isAttachmentReadyToSend: true,
     taskInputMessage: 'hello',
-    isSubtaskStreaming: false,
     onStopStream: jest.fn(),
     onSendMessage: jest.fn(),
     availableSkills: [

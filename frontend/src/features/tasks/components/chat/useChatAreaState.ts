@@ -19,7 +19,7 @@ import { useMultiAttachment } from '@/hooks/useMultiAttachment'
 import { userApis } from '@/apis/user'
 import { correctionApis } from '@/apis/correction'
 import { saveLastRepo } from '@/utils/userPreferences'
-import { useTaskContext } from '../../contexts/taskContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { teamRequiresWorkspace } from '../../service/messageService'
 
@@ -29,7 +29,10 @@ type WelcomeItemWithMode = {
   mode?: string
 }
 
-function getWelcomeItemsForMode<T extends WelcomeItemWithMode>(items: T[], taskType: TaskType): T[] {
+function getWelcomeItemsForMode<T extends WelcomeItemWithMode>(
+  items: T[],
+  taskType: TaskType
+): T[] {
   const getMatchedItems = (mode: TaskType) =>
     items.filter(item => {
       const itemMode = item.mode || 'both'
@@ -203,7 +206,7 @@ export function useChatAreaState({
   // because it's automatically bound to the task on creation
   const shouldShowInitialKbInContexts = taskType !== 'knowledge'
 
-  const { selectedTaskDetail } = useTaskContext()
+  const { selectedTaskDetail } = useTaskSession()
 
   // Pre-load team preference from localStorage to use as initial value
   const initialTeamIdRef = useRef<number | null>(null)

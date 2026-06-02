@@ -13,8 +13,7 @@
 import { useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { useSocket } from '@/contexts/SocketContext'
 import { useDevices } from '@/contexts/DeviceContext'
 import { DeviceInfo, deviceApis } from '@/apis/devices'
@@ -50,8 +49,7 @@ export interface DeviceHandlers {
 export function useDeviceHandlers(): DeviceHandlers {
   const { t } = useTranslation('devices')
   const router = useRouter()
-  const { clearAllStreams } = useChatStreamContext()
-  const { setSelectedTask } = useTaskContext()
+  const { selectTask } = useTaskSession()
   const { closeTaskSession } = useSocket()
   const { setSelectedDeviceId, setDefaultDevice, deleteDevice, refreshDevices } = useDevices()
 
@@ -64,11 +62,10 @@ export function useDeviceHandlers(): DeviceHandlers {
   const handleStartTask = useCallback(
     (deviceId: string) => {
       setSelectedDeviceId(deviceId)
-      setSelectedTask(null)
-      clearAllStreams()
+      selectTask(null)
       router.push(`/devices/chat?deviceId=${deviceId}`)
     },
-    [setSelectedDeviceId, setSelectedTask, clearAllStreams, router]
+    [setSelectedDeviceId, selectTask, router]
   )
 
   /**

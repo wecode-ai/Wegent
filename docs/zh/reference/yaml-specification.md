@@ -1,3 +1,7 @@
+---
+sidebar_position: 1
+---
+
 # YAML 定义格式
 
 [English](../en/reference/yaml-specification.md) | 简体中文
@@ -156,6 +160,8 @@ metadata:
   name: ClaudeSonnet4
   namespace: default
 spec:
+  modelGroup: "主分组"
+  modelSubGroup: "快速"
   modelConfig:
     env:
       ANTHROPIC_MODEL: "openrouter,anthropic/claude-sonnet-4"
@@ -170,8 +176,14 @@ spec:
 |------|------|------|------|
 | `metadata.name` | string | 是 | Model 的唯一标识符 |
 | `metadata.namespace` | string | 是 | 命名空间，通常为 `default` |
+| `spec.modelGroup` | string | 否 | 模型选择器使用的一级展示分组 |
+| `spec.modelSubGroup` | string | 否 | `spec.modelGroup` 下的二级展示分组 |
 | `spec.modelConfig` | object | 是 | 模型配置对象 |
 | `spec.modelConfig.env` | object | 是 | 环境变量配置 |
+
+### 模型选择器分组
+
+模型选择器会按 `modelGroup` → `modelSubGroup` → 模型进行展示。这两个字段保存在 `spec` 中，而不是 `metadata.labels`，因此分组属于 Model 资源定义的一部分。未设置分组字段的模型会展示在默认的未分组/未分类分组中。分组只影响展示与搜索，不改变模型协议、凭据、权限或运行时选择逻辑。
 
 ### ClaudeCode常用环境变量
 

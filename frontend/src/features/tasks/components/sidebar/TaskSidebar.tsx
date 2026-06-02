@@ -25,8 +25,7 @@ import {
   Search,
   SquarePen,
 } from 'lucide-react'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import TaskListSection from './TaskListSection'
 import TaskHistorySection from './TaskHistorySection'
 import FixedGroupChatsSection from './FixedGroupChatsSection'
@@ -72,7 +71,6 @@ export default function TaskSidebar({
 }: TaskSidebarProps) {
   const { t } = useTranslation()
   const router = useRouter()
-  const { clearAllStreams } = useChatStreamContext()
   const {
     tasks,
     groupTasks,
@@ -93,9 +91,9 @@ export default function TaskSidebar({
     getUnreadCount,
     markAllTasksAsViewed,
     viewStatusVersion,
-    setSelectedTask,
+    selectTask,
     isRefreshing,
-  } = useTaskContext()
+  } = useTaskSession()
   const desktopScrollRef = useRef<HTMLDivElement>(null)
   const mobileScrollRef = useRef<HTMLDivElement>(null)
   const moreNavCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -224,10 +222,7 @@ export default function TaskSidebar({
   const handleNewAgentClick = () => {
     // IMPORTANT: Clear selected task FIRST to ensure UI state is reset immediately
     // This prevents the UI from being stuck showing the previous task's messages
-    setSelectedTask(null)
-
-    // Clear all stream states to reset the chat area to initial state
-    clearAllStreams()
+    selectTask(null)
 
     if (typeof window !== 'undefined') {
       // Always navigate to chat page for new conversation
@@ -237,14 +232,11 @@ export default function TaskSidebar({
     setIsMobileSidebarOpen(false)
   }
 
-  // Handle navigation button click - for code mode, clear streams to create new task
+  // Handle navigation button click - reset the current task session when re-entering a page
   const handleNavigationClick = (path: string, isActive: boolean, buttonPageType?: string) => {
     if (isActive) {
       // IMPORTANT: Clear selected task FIRST to ensure UI state is reset immediately
-      setSelectedTask(null)
-
-      // If already on this page, clear streams to create new task
-      clearAllStreams()
+      selectTask(null)
 
       // For knowledge page, dispatch event to clear selected KB and return to homepage
       if (buttonPageType === 'knowledge' && typeof window !== 'undefined') {

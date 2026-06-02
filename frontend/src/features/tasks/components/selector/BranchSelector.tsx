@@ -13,7 +13,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { githubApis } from '@/apis/github'
 import { useToast } from '@/hooks/use-toast'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
-import { TaskContext } from '../../contexts/taskContext'
+import { TaskSessionContext } from '@/features/tasks/session/TaskSession'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
@@ -63,7 +63,7 @@ export default function BranchSelector({
   const [compactOpen, setCompactOpen] = React.useState(false)
 
   // Try to get context, but don't throw if not available
-  const taskContext = useContext(TaskContext)
+  const taskContext = useContext(TaskSessionContext)
   const selectedTaskDetail = taskDetail ?? taskContext?.selectedTaskDetail ?? null
 
   // antd Select does not need dropdownDirection

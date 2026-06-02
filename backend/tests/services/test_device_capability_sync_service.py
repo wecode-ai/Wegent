@@ -128,6 +128,48 @@ def _create_installed_mcp(
     return row
 
 
+def _create_installed_plugin(
+    test_db,
+    user_id: int,
+    *,
+    name: str = "context7",
+    marketplace: str = "claude-plugins-official",
+    version: str = "1057d02c5307",
+    enabled: bool = True,
+    active: bool = True,
+) -> Kind:
+    row = Kind(
+        user_id=user_id,
+        kind="InstalledPlugin",
+        name=name,
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "InstalledPlugin",
+            "metadata": {"name": name, "namespace": "default"},
+            "spec": {
+                "source": {
+                    "type": "marketplace",
+                    "marketplace": marketplace,
+                    "plugin": name,
+                },
+                "displayName": "Context7",
+                "description": "Docs lookup",
+                "marketplace": marketplace,
+                "version": version,
+                "installState": "installed",
+                "enabled": enabled,
+            },
+            "status": {"state": "Available"},
+        },
+        is_active=active,
+    )
+    test_db.add(row)
+    test_db.commit()
+    test_db.refresh(row)
+    return row
+
+
 @pytest.mark.anyio
 async def test_build_desired_capabilities_includes_only_enabled_installed_items(
     test_db, test_user
@@ -143,6 +185,8 @@ async def test_build_desired_capabilities_includes_only_enabled_installed_items(
     )
     enabled_mcp = _create_installed_mcp(test_db, test_user.id)
     _create_installed_mcp(test_db, test_user.id, name="disabled", enabled=False)
+    enabled_plugin = _create_installed_plugin(test_db, test_user.id)
+    _create_installed_plugin(test_db, test_user.id, name="disabled", enabled=False)
 
     service = DeviceCapabilitySyncService()
 
@@ -154,6 +198,12 @@ async def test_build_desired_capabilities_includes_only_enabled_installed_items(
     assert payload["skills"][0]["skill_id"] == skill.id
     assert payload["skills"][0]["name"] == skill.name
     assert [item["installed_mcp_id"] for item in payload["mcps"]] == [enabled_mcp.id]
+    assert [item["installed_plugin_id"] for item in payload["plugins"]] == [
+        enabled_plugin.id
+    ]
+    assert payload["plugins"][0]["name"] == "context7"
+    assert payload["plugins"][0]["marketplace"] == "claude-plugins-official"
+    assert payload["plugins"][0]["version"] == "1057d02c5307"
     assert payload["mode"] == "replace"
 
 

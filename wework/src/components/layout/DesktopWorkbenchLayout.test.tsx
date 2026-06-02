@@ -118,6 +118,7 @@ describe('DesktopWorkbenchLayout', () => {
       models: [],
       skills: [],
       selectedModel: null,
+      selectedModelOptions: {},
       selectedSkills: [],
       attachments: [],
       uploadingFiles: new Map(),
@@ -125,6 +126,7 @@ describe('DesktopWorkbenchLayout', () => {
       isOptionsLocked: false,
       isAttachmentReadyToSend: true,
       setSelectedModel: vi.fn(),
+      setSelectedModelOption: vi.fn(),
       setSelectedSkills: vi.fn(),
       toggleSkill: vi.fn(),
       handleFileSelect: vi.fn(),
@@ -178,6 +180,35 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByText('github_wegent')).toBeInTheDocument()
     expect(screen.getByText('远程连接 Claude Code')).toBeInTheDocument()
     expect(screen.getByText('我们该做什么？')).toBeInTheDocument()
+  })
+
+  test('collapses and expands project and chat sections from the sidebar headers', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(screen.getByTestId('projects-section-chevron-down')).toHaveClass('opacity-0')
+    expect(screen.getByText('github_wegent')).toBeInTheDocument()
+    expect(screen.getByTestId('chats-section-chevron-down')).toHaveClass('opacity-0')
+    expect(screen.getByText('远程连接 Claude Code')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('projects-section-toggle'))
+
+    expect(screen.getByTestId('projects-section-chevron-right')).toHaveClass('opacity-0')
+    expect(screen.queryByText('github_wegent')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('projects-section-toggle'))
+
+    expect(screen.getByTestId('projects-section-chevron-down')).toHaveClass('opacity-0')
+    expect(screen.getByText('github_wegent')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('chats-section-toggle'))
+
+    expect(screen.getByTestId('chats-section-chevron-right')).toHaveClass('opacity-0')
+    expect(screen.queryByText('远程连接 Claude Code')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('chats-section-toggle'))
+
+    expect(screen.getByTestId('chats-section-chevron-down')).toHaveClass('opacity-0')
+    expect(screen.getByText('远程连接 Claude Code')).toBeInTheDocument()
   })
 
   test('renders project-specific empty prompt after selecting a project', () => {
@@ -331,10 +362,12 @@ describe('DesktopWorkbenchLayout', () => {
 
   test('shows project header menus and creates a scratch project workspace', async () => {
     const onCreateProject = vi.fn().mockResolvedValue({ id: 2, name: 'alpha', tasks: [] })
+    const onRememberExecutionDevice = vi.fn()
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
         onCreateProject={onCreateProject}
+        onRememberExecutionDevice={onRememberExecutionDevice}
         state={{
           ...baseProps.state,
           devices: [
@@ -367,8 +400,10 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('project-start-from-scratch-button'))
 
     expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
+    await userEvent.selectOptions(screen.getByTestId('project-device-select'), 'local-device')
+    expect(onRememberExecutionDevice).toHaveBeenCalledWith('local-device')
     await userEvent.type(screen.getByTestId('project-name-input'), 'alpha app')
-    expect(screen.getByText(/\/workspace\/projects\/alpha-app/)).toBeInTheDocument()
+    expect(screen.queryByText(/\/workspace\/projects\/alpha-app/)).not.toBeInTheDocument()
     expect(screen.queryByText(/默认目录位于/)).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('create-project-button'))
@@ -381,7 +416,7 @@ describe('DesktopWorkbenchLayout', () => {
             mode: 'workspace',
             execution: {
               targetType: 'local',
-              deviceId: 'cloud-device',
+              deviceId: 'local-device',
             },
             workspace: {
               source: 'local_path',
@@ -601,7 +636,7 @@ describe('DesktopWorkbenchLayout', () => {
       'group-hover/task:opacity-100',
     )
     await userEvent.click(rows[0])
-    expect(baseProps.onOpenTask).toHaveBeenCalledWith(5, undefined)
+    expect(baseProps.onOpenTask).toHaveBeenCalledWith(5, 0)
 
     await userEvent.click(screen.getByTestId('history-task-menu-5'))
     expect(screen.getByTestId('archive-history-chat-5')).toHaveTextContent('归档会话')

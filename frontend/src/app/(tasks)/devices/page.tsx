@@ -19,8 +19,7 @@ import { ThemeToggle } from '@/features/theme/ThemeToggle'
 import { useTranslation } from '@/hooks/useTranslation'
 import { saveLastTab } from '@/utils/userPreferences'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { paths } from '@/config/paths'
 import { useDevices } from '@/contexts/DeviceContext'
 import { DeviceInfo } from '@/apis/devices'
@@ -56,8 +55,7 @@ function sortDevices(devices: DeviceInfo[]): DeviceInfo[] {
 export default function DevicesPage() {
   const { t } = useTranslation('devices')
   const router = useRouter()
-  const { clearAllStreams } = useChatStreamContext()
-  const { setSelectedTask } = useTaskContext()
+  const { selectTask } = useTaskSession()
   const isMobile = useIsMobile()
 
   // Environment variables for device setup
@@ -119,10 +117,9 @@ export default function DevicesPage() {
 
   // Handle new task from collapsed sidebar button
   const handleNewTask = useCallback(() => {
-    setSelectedTask(null)
-    clearAllStreams()
+    selectTask(null)
     router.replace(paths.chat.getHref())
-  }, [setSelectedTask, clearAllStreams, router])
+  }, [selectTask, router])
 
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">

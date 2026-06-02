@@ -63,10 +63,9 @@ export default function SelectedSkillBadges({
   const hiddenSkills = selectedSkillNames.slice(maxVisible)
   const hiddenCount = hiddenSkills.length
 
-  // Hint text based on shell type
   const hintText = isChatShell
-    ? t('common:skillSelector.preload_hint')
-    : t('common:skillSelector.download_hint')
+    ? t('common:skillSelector.temporaryPreloadHint')
+    : t('common:skillSelector.temporaryDownloadHint')
 
   return (
     <div className="flex flex-wrap items-center gap-1.5 px-3 py-2 border-b border-border bg-surface/50">

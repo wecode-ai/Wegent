@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
@@ -162,12 +163,18 @@ def prepare_execution_session(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Task {task_id} not found",
             )
+        if task.client_origin != resolved_task_params.client_origin:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Task {task_id} not found",
+            )
         if not resolved_task_params.skip_status_check:
             check_task_status(db, task)
         if should_trigger_ai:
             mark_task_pending(task)
         if (
             resolved_task_params.model_id
+            or resolved_task_params.model_options
             or resolved_task_params.auto_delete_executor is not None
         ):
             from sqlalchemy.orm.attributes import flag_modified
@@ -184,6 +191,10 @@ def prepare_execution_session(
             if resolved_task_params.force_override_bot_model_type:
                 task_crd.metadata.labels["forceOverrideBotModelType"] = (
                     resolved_task_params.force_override_bot_model_type
+                )
+            if resolved_task_params.model_options:
+                task_crd.metadata.labels["modelOptions"] = json.dumps(
+                    resolved_task_params.model_options
                 )
             if resolved_task_params.auto_delete_executor is not None:
                 task_crd.metadata.labels["autoDeleteExecutor"] = (

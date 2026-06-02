@@ -21,6 +21,7 @@ const DESKTOP_FLOATING_COMPOSER_CLASS =
 
 interface DesktopWorkbenchMainProps {
   sidebarCollapsed: boolean
+  isBootstrapping: boolean
   currentTask: Task | null
   currentProject: ProjectWithTasks | null
   messages: WorkbenchMessage[]
@@ -38,6 +39,7 @@ interface DesktopWorkbenchMainProps {
 
 export function DesktopWorkbenchMain({
   sidebarCollapsed,
+  isBootstrapping,
   currentTask,
   currentProject,
   messages,
@@ -77,7 +79,12 @@ export function DesktopWorkbenchMain({
             <ChevronRight className="h-4 w-4" />
           </button>
         )}
-        {hasConversation ? (
+        {isBootstrapping ? (
+          <div
+            className="flex flex-1"
+            data-testid="desktop-workbench-loading"
+          />
+        ) : hasConversation ? (
           <div className="relative min-h-0 flex-1 overflow-hidden">
             <ScrollableMessageArea
               messages={messages}

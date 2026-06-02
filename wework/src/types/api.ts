@@ -2,6 +2,20 @@ export interface User {
   id: number
   user_name: string
   email: string
+  preferences?: UserPreferences | null
+}
+
+export interface UserPreferences {
+  send_key?: 'enter' | 'cmd_enter'
+  search_key?: 'cmd_k' | 'cmd_f' | 'disabled'
+  memory_enabled?: boolean
+  mcp_provider_keys?: Record<string, unknown> | null
+  quick_access?: {
+    version?: number | null
+    teams?: number[]
+  } | null
+  default_execution_target?: string | null
+  wework_new_chat_model_selection?: ModelSelectionConfig | null
 }
 
 export interface Team {
@@ -25,12 +39,21 @@ export interface ProjectWorkspaceConfig {
   checkoutPath?: string
 }
 
+export type ModelType = 'public' | 'user' | 'group'
+
+export interface ModelSelectionConfig {
+  modelName: string
+  modelType?: ModelType | null
+  options?: Record<string, string>
+}
+
 export interface ProjectConfig {
   mode?: 'workspace' | string
   path?: string
   device_id?: string
   execution?: ProjectExecutionConfig | null
   workspace?: ProjectWorkspaceConfig | null
+  modelSelection?: ModelSelectionConfig | null
 }
 
 export interface DeviceInfo {
@@ -60,6 +83,7 @@ export interface ProjectWithTasks {
   name: string
   description?: string | null
   color?: string | null
+  client_origin?: string
   config?: ProjectConfig | null
   tasks?: ProjectTask[]
 }
@@ -73,6 +97,7 @@ export interface CreateProjectRequest {
   name: string
   description?: string
   color?: string
+  client_origin?: string
   config?: ProjectConfig
 }
 
@@ -90,11 +115,14 @@ export interface Task {
   task_type?: 'chat' | 'code' | 'task' | 'knowledge' | 'video' | 'image'
   team_id?: number
   project_id?: number
+  client_origin?: string
   device_id?: string | null
   created_at: string
   updated_at?: string
   is_group_chat?: boolean
   model_id?: string | null
+  force_override_bot_model_type?: ModelType | null
+  model_options?: Record<string, string> | null
   requested_skills?: SkillRef[]
 }
 
@@ -113,6 +141,7 @@ export interface ArchivedTask {
   updated_at: string
   completed_at?: string | null
   project_id: number
+  client_origin?: string
   project_name?: string | null
 }
 
@@ -207,10 +236,12 @@ export interface ChatSendPayload {
   title?: string
   task_type?: 'chat' | 'code' | 'task' | 'knowledge' | 'video' | 'image'
   project_id?: number
+  client_origin?: string
   device_id?: string
   model_id?: string
   force_override_bot_model?: string
-  force_override_bot_model_type?: string
+  force_override_bot_model_type?: ModelType
+  model_options?: ModelOptions
   attachment_ids?: number[]
   additional_skills?: SkillRef[]
 }
@@ -550,7 +581,7 @@ export interface ChatBlockUpdatedPayload {
   status?: ChatBlock['status'] | 'running'
 }
 
-export type ModelType = 'public' | 'user' | 'group'
+export type ModelOptions = Record<string, string>
 
 export interface UnifiedModel {
   name: string

@@ -20,6 +20,8 @@ interface DesktopWorkbenchLayoutProps {
   onSelectProject: (projectId: number | null) => void
   onStartNewProjectChat: (projectId: number) => void
   onOpenTask: (taskId: number, projectId?: number) => void
+  onRememberExecutionDevice?: (deviceId: string) => void
+  onRefreshDevices?: () => Promise<void>
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
   onRemoveProject: (projectId: number) => Promise<void>
@@ -58,6 +60,8 @@ export function DesktopWorkbenchLayout({
   onSelectProject,
   onStartNewProjectChat,
   onOpenTask,
+  onRememberExecutionDevice,
+  onRefreshDevices,
   onCreateProject,
   onUpdateProjectName,
   onRemoveProject,
@@ -155,6 +159,10 @@ export function DesktopWorkbenchLayout({
           runningTaskIds={runningTaskIds}
           currentProjectId={state.currentProject?.id}
           currentTaskId={state.currentTask?.id}
+          preferredDeviceId={
+            state.standaloneDeviceId ??
+            state.user?.preferences?.default_execution_target
+          }
           activeItem={activeItem}
           onCollapse={() => setSidebarCollapsed(true)}
           onNewChat={onNewChat}
@@ -162,7 +170,9 @@ export function DesktopWorkbenchLayout({
           onSelectProject={onSelectProject}
           onStartNewProjectChat={onStartNewProjectChat}
           onOpenTask={onOpenTask}
+          onRememberExecutionDevice={onRememberExecutionDevice}
           onOpenPlugins={onOpenPlugins}
+          onRefreshDevices={onRefreshDevices}
           onCreateProject={onCreateProject}
           onUpdateProjectName={onUpdateProjectName}
           onRemoveProject={onRemoveProject}
@@ -190,6 +200,7 @@ export function DesktopWorkbenchLayout({
       ) : (
         <DesktopWorkbenchMain
           sidebarCollapsed={sidebarCollapsed}
+          isBootstrapping={state.isBootstrapping}
           currentTask={state.currentTask}
           currentProject={state.currentProject}
           messages={messages}

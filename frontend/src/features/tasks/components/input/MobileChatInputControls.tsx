@@ -94,9 +94,9 @@ export interface MobileChatInputControlsProps {
   isAttachmentReadyToSend: boolean
   taskInputMessage: string
   hasAttachments?: boolean
-  isSubtaskStreaming: boolean
   canQueueMessage?: boolean
   canSendGuidance?: boolean
+  canCancelTask?: boolean
 
   // Actions
   onStopStream: () => void
@@ -162,9 +162,9 @@ export function MobileChatInputControls({
   isAttachmentReadyToSend,
   taskInputMessage,
   hasAttachments = false,
-  isSubtaskStreaming,
   canQueueMessage = false,
   canSendGuidance = false,
+  canCancelTask,
   onStopStream,
   onCancelTask,
   isCancelling = false,
@@ -223,10 +223,8 @@ export function MobileChatInputControls({
       shouldHideChatInput,
       taskInputMessage,
       hasAttachments,
-      selectedTaskStatus: selectedTaskDetail?.status,
-      isSubtaskStreaming,
-      isGroupChat: selectedTaskDetail?.is_group_chat,
       canQueueMessage,
+      canCancelTask,
     })
 
     const renderStopAction = () => (

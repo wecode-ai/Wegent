@@ -5,19 +5,11 @@
 'use client'
 
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { Check, ChevronsUpDown, Loader2 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Badge } from '@/components/ui/badge'
-import { cn } from '@/lib/utils'
+import {
+  GroupedModelSelect,
+  type ModelCascadeLabels,
+} from '@/components/model-select/ModelCascadeSelect'
 import { modelApis, UnifiedModel } from '@/apis/models'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getGlobalModelPreference } from '@/utils/modelPreferences'
@@ -43,7 +35,6 @@ export function SummaryModelSelector({
   bindModel,
 }: SummaryModelSelectorProps) {
   const { t } = useTranslation('knowledge')
-  const [open, setOpen] = useState(false)
   const [models, setModels] = useState<UnifiedModel[]>([])
   const [loading, setLoading] = useState(false)
   // Track the last team ID for which we attempted preselection
@@ -100,8 +91,10 @@ export function SummaryModelSelector({
     // - Re-attempt: teamId changed to a different value
     const shouldAttempt = () => {
       if (attemptedTeamIdRef.current === null) return true
-      if (attemptedTeamIdRef.current === ATTEMPTED_WITHOUT_TEAM && knowledgeDefaultTeamId) return true
-      if (knowledgeDefaultTeamId && attemptedTeamIdRef.current !== knowledgeDefaultTeamId) return true
+      if (attemptedTeamIdRef.current === ATTEMPTED_WITHOUT_TEAM && knowledgeDefaultTeamId)
+        return true
+      if (knowledgeDefaultTeamId && attemptedTeamIdRef.current !== knowledgeDefaultTeamId)
+        return true
       return false
     }
 
@@ -139,8 +132,8 @@ export function SummaryModelSelector({
 
     // Priority 2: Try team's bind_model from bot config
     if (bindModel) {
-      const matchedModel = models.find(model =>
-        model.name === bindModel || model.displayName === bindModel
+      const matchedModel = models.find(
+        model => model.name === bindModel || model.displayName === bindModel
       )
       if (matchedModel) {
         onChange({
@@ -171,6 +164,16 @@ export function SummaryModelSelector({
     )
   }, [models, value])
 
+  const selectedDisplayModel = useMemo(() => {
+    if (selectedModel) return selectedModel
+    if (!value) return null
+    return {
+      name: value.name,
+      namespace: value.namespace,
+      type: value.type,
+    } as UnifiedModel
+  }, [selectedModel, value])
+
   // Get display value
   const displayValue = useMemo(() => {
     if (selectedModel) {
@@ -189,7 +192,6 @@ export function SummaryModelSelector({
       namespace: model.namespace || 'default',
       type: model.type,
     })
-    setOpen(false)
   }
 
   const getTypeLabel = (type: string) => {
@@ -205,74 +207,45 @@ export function SummaryModelSelector({
     }
   }
 
+  const cascadeLabels: ModelCascadeLabels = useMemo(
+    () => ({
+      ungrouped: t('common:models.ungrouped', 'Ungrouped'),
+      uncategorized: t('common:models.uncategorized', 'Uncategorized'),
+      searchPlaceholder: t('common:models.search_models', 'Search models or groups...'),
+      searchResults: t('common:models.search_results', 'Search results'),
+      noModels: loading
+        ? t('common:loading', 'Loading...')
+        : t('common:models.no_models', 'No models available'),
+      noMatch: t('common:models.no_match', 'No matching models'),
+      primaryGroups: t('common:models.primary_groups', 'Primary groups'),
+      secondaryGroups: t('common:models.secondary_groups', 'Secondary groups'),
+    }),
+    [loading, t]
+  )
+
   return (
     <div className="flex flex-col gap-1">
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            variant="outline"
-            role="combobox"
-            aria-expanded={open}
-            className={cn(
-              'w-full justify-between font-normal',
-              !value && 'text-text-muted',
-              error && 'border-red-500'
-            )}
-            disabled={disabled || loading}
-          >
-            {loading ? (
-              <span className="flex items-center gap-2">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                {t('common:loading', 'Loading...')}
-              </span>
-            ) : (
-              <span className="truncate">{displayValue}</span>
-            )}
-            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-[400px] p-0" align="start">
-          <Command>
-            <CommandInput placeholder={t('document.summary.modelPlaceholder')} />
-            <CommandList
-              onWheel={e => {
-                e.stopPropagation()
-              }}
-            >
-              <CommandEmpty>{t('common:noResults', 'No results found')}</CommandEmpty>
-              <CommandGroup>
-                {models.map(model => {
-                  const isSelected =
-                    value?.name === model.name &&
-                    value?.namespace === model.namespace &&
-                    value?.type === model.type
-                  return (
-                    <CommandItem
-                      key={`${model.type}-${model.namespace}-${model.name}`}
-                      value={`${model.displayName || model.name} ${model.type}`}
-                      onSelect={() => handleSelect(model)}
-                      className="flex items-center justify-between"
-                    >
-                      <div className="flex items-center gap-2 flex-1 min-w-0">
-                        <Check
-                          className={cn(
-                            'h-4 w-4 shrink-0',
-                            isSelected ? 'opacity-100' : 'opacity-0'
-                          )}
-                        />
-                        <span className="truncate">{model.displayName || model.name}</span>
-                      </div>
-                      <Badge variant="secondary" size="sm" className="shrink-0 ml-2">
-                        {getTypeLabel(model.type)}
-                      </Badge>
-                    </CommandItem>
-                  )
-                })}
-              </CommandGroup>
-            </CommandList>
-          </Command>
-        </PopoverContent>
-      </Popover>
+      <GroupedModelSelect
+        models={models}
+        selectedModel={selectedDisplayModel}
+        labels={cascadeLabels}
+        onSelectModel={handleSelect}
+        placeholder={loading ? t('common:loading', 'Loading...') : displayValue}
+        disabled={disabled || loading}
+        dataTestId="summary-model-select"
+        triggerClassName={error ? 'border-red-500' : undefined}
+        getModelKey={model => `${model.type}-${model.namespace}-${model.name}`}
+        renderModelBadges={model => (
+          <Badge variant="secondary" size="sm" className="shrink-0">
+            {getTypeLabel(model.type)}
+          </Badge>
+        )}
+        renderModelMeta={model =>
+          model.modelId ? (
+            <span className="block truncate text-xs text-text-muted">{model.modelId}</span>
+          ) : null
+        }
+      />
       {error && <span className="text-xs text-red-500">{error}</span>}
     </div>
   )

@@ -27,16 +27,9 @@ jest.mock('@/hooks/useTranslation', () => ({
   }),
 }))
 
-// Mock ChatStreamContext
-jest.mock('@/features/tasks/contexts/chatStreamContext', () => ({
-  ChatStreamContext: {
-    Provider: ({ children }: { children: React.ReactNode }) => children,
-  },
-}))
-
-// Mock useTaskStateMachine hook
-jest.mock('@/features/tasks/hooks/useTaskStateMachine', () => ({
-  useTaskStateMachine: () => ({
+jest.mock('@/features/tasks/session/TaskSession', () => ({
+  useOptionalTaskSession: () => ({
+    taskState: { taskId: 1 },
     messages: new Map(),
   }),
 }))

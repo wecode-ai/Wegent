@@ -24,7 +24,9 @@ describe('REST adapters', () => {
 
     await createProjectApi(client).listProjects()
 
-    expect(client.get).toHaveBeenCalledWith('/projects?include_tasks=true')
+    expect(client.get).toHaveBeenCalledWith(
+      '/projects?include_tasks=true&client_origin=wework',
+    )
   })
 
   test('loads recent online and offline workbench tasks', async () => {
@@ -34,8 +36,17 @@ describe('REST adapters', () => {
     await createTaskApi(client).listRecentTasks({ limit: 20 })
 
     expect(client.get).toHaveBeenCalledWith(
-      '/tasks/lite/personal?limit=20&page=1&types=online%2Coffline',
+      '/tasks/lite/personal?limit=20&page=1&types=online%2Coffline&client_origin=wework',
     )
+  })
+
+  test('loads task detail from the wework client origin', async () => {
+    const client = mockClient()
+    vi.mocked(client.get).mockResolvedValueOnce({ id: 8 })
+
+    await createTaskApi(client).getTaskDetail(8)
+
+    expect(client.get).toHaveBeenCalledWith('/tasks/8?client_origin=wework')
   })
 
   test('picks default team for code first and then chat', async () => {
@@ -150,13 +161,30 @@ describe('REST adapters', () => {
     await createTaskApi(client).unarchiveTask(8)
     await createTaskApi(client).deleteArchivedTasks()
 
-    expect(client.post).toHaveBeenNthCalledWith(1, '/projects/7/archive-chats')
-    expect(client.post).toHaveBeenNthCalledWith(2, '/projects/archive-chats')
-    expect(client.post).toHaveBeenNthCalledWith(3, '/tasks/archive?scope=standalone')
-    expect(client.post).toHaveBeenNthCalledWith(4, '/tasks/8/archive')
-    expect(client.get).toHaveBeenCalledWith('/tasks/archived?limit=200&page=1')
-    expect(client.post).toHaveBeenNthCalledWith(5, '/tasks/8/unarchive')
-    expect(client.delete).toHaveBeenCalledWith('/tasks/archived')
+    expect(client.post).toHaveBeenNthCalledWith(
+      1,
+      '/projects/7/archive-chats?client_origin=wework',
+    )
+    expect(client.post).toHaveBeenNthCalledWith(
+      2,
+      '/projects/archive-chats?client_origin=wework',
+    )
+    expect(client.post).toHaveBeenNthCalledWith(
+      3,
+      '/tasks/archive?scope=standalone&client_origin=wework',
+    )
+    expect(client.post).toHaveBeenNthCalledWith(
+      4,
+      '/tasks/8/archive?client_origin=wework',
+    )
+    expect(client.get).toHaveBeenCalledWith(
+      '/tasks/archived?limit=200&page=1&client_origin=wework',
+    )
+    expect(client.post).toHaveBeenNthCalledWith(
+      5,
+      '/tasks/8/unarchive?client_origin=wework',
+    )
+    expect(client.delete).toHaveBeenCalledWith('/tasks/archived?client_origin=wework')
   })
 
   test('starts project-scoped terminal and IDE sessions', async () => {
@@ -168,8 +196,14 @@ describe('REST adapters', () => {
     await api.startTerminalSession(7)
     await api.startCodeServerSession(7)
 
-    expect(client.post).toHaveBeenNthCalledWith(1, '/projects/7/terminal')
-    expect(client.post).toHaveBeenNthCalledWith(2, '/projects/7/code-server')
+    expect(client.post).toHaveBeenNthCalledWith(
+      1,
+      '/projects/7/terminal?client_origin=wework',
+    )
+    expect(client.post).toHaveBeenNthCalledWith(
+      2,
+      '/projects/7/code-server?client_origin=wework',
+    )
   })
 
   test('resolves device home and project workspace root', async () => {

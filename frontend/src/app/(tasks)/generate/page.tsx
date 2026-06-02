@@ -45,7 +45,7 @@ export default function GeneratePage() {
 
   return (
     <>
-      {/* TaskParamSync handles URL taskId parameter synchronization with TaskContext */}
+      {/* TaskParamSync handles URL taskId parameter synchronization with TaskSessionContext */}
       <Suspense>
         <TaskParamSync />
       </Suspense>

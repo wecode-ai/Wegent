@@ -19,7 +19,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useUser } from '@/features/common/UserContext'
 import { useTeamContext } from '@/contexts/TeamContext'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { ChatArea } from '@/features/tasks/components/chat'
 import { DocumentList, type KbGroupInfo } from './DocumentList'
 import { DocumentPanel } from './DocumentPanel'
@@ -69,7 +69,7 @@ export function KnowledgeDetailPanel({
   const { user } = useUser()
 
   // Task context - used to clear selected task when entering notebook mode
-  const { setSelectedTask } = useTaskContext()
+  const { selectTask } = useTaskSession()
 
   // Team context for ChatArea
   const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
@@ -189,14 +189,14 @@ export function KnowledgeDetailPanel({
     if (selectedKb?.kb_type === 'notebook') {
       const isKbSwitch = prevKbIdRef.current !== null && prevKbIdRef.current !== selectedKb?.id
       if (isKbSwitch || !taskIdFromUrlRef.current) {
-        setSelectedTask(null)
+        selectTask(null)
       }
     }
 
     if (selectedKb?.id != null) {
       prevKbIdRef.current = selectedKb.id
     }
-  }, [selectedKb?.id, selectedKb?.kb_type, setSelectedTask])
+  }, [selectedKb?.id, selectedKb?.kb_type, selectTask])
 
   // When a notebook KB is selected, show chat interface with document panel
   // Simplified layout: direct left-right split without extra header bars

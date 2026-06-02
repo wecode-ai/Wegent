@@ -20,8 +20,7 @@ import { ThemeToggle } from '@/features/theme/ThemeToggle'
 import { useTranslation } from '@/hooks/useTranslation'
 import { saveLastTab } from '@/utils/userPreferences'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { paths } from '@/config/paths'
 import { useDevices } from '@/contexts/DeviceContext'
 import { useTeamContext } from '@/contexts/TeamContext'
@@ -38,9 +37,8 @@ const ChatArea = dynamic(() => import('@/features/tasks/components/chat/ChatArea
 export default function DeviceChatPage() {
   const { t } = useTranslation('devices')
   const router = useRouter()
-  const { clearAllStreams } = useChatStreamContext()
-  const { setSelectedTask, selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail } =
-    useTaskContext()
+  const { selectTask, selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail } =
+    useTaskSession()
   const isMobile = useIsMobile()
 
   // Team state from context (centralized to avoid duplicate API calls)
@@ -102,21 +100,20 @@ export default function DeviceChatPage() {
 
   // Handle new task from collapsed sidebar button
   const handleNewTask = () => {
-    setSelectedTask(null)
-    clearAllStreams()
+    selectTask(null)
     router.replace(paths.chat.getHref())
   }
 
   // Handle task deletion
   const handleTaskDeleted = () => {
-    setSelectedTask(null)
+    selectTask(null)
     refreshTasks()
   }
 
   // Handle members changed
   const handleMembersChanged = () => {
     refreshTasks()
-    refreshSelectedTaskDetail(false)
+    void refreshSelectedTaskDetail()
   }
 
   // Handle refresh teams
@@ -128,8 +125,7 @@ export default function DeviceChatPage() {
   const handleDeviceSelect = (deviceId: string) => {
     setSelectedDeviceId(deviceId)
     // Clear any existing task when selecting a new device
-    setSelectedTask(null)
-    clearAllStreams()
+    selectTask(null)
   }
 
   // Get current task title for top navigation

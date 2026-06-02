@@ -1,5 +1,6 @@
-import { Check, ChevronLeft, Folder, FolderPlus, X } from 'lucide-react'
+import { Check, ChevronLeft, Folder, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { CreateProjectRequest, DeviceInfo, ProjectWithTasks } from '@/types/api'
 
@@ -11,6 +12,8 @@ interface ProjectCreateDialogProps {
   devices: DeviceInfo[]
   onClose: () => void
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
+  preferredDeviceId?: string | null
+  onSelectDevicePreference?: (deviceId: string) => void
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onGetProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
@@ -62,7 +65,17 @@ function sortDevicesForProjectCreation(devices: DeviceInfo[]): DeviceInfo[] {
   })
 }
 
-function getDefaultDeviceId(devices: DeviceInfo[]): string {
+function getDefaultDeviceId(
+  devices: DeviceInfo[],
+  preferredDeviceId?: string | null
+): string {
+  const preferredDevice = preferredDeviceId
+    ? devices.find(device => device.device_id === preferredDeviceId)
+    : undefined
+  if (preferredDevice && isUsableDevice(preferredDevice)) {
+    return preferredDevice.device_id
+  }
+
   return sortDevicesForProjectCreation(devices).find(isUsableDevice)?.device_id ?? ''
 }
 
@@ -78,6 +91,8 @@ export function ProjectCreateDialog({
   devices = [],
   onClose,
   onCreateProject,
+  preferredDeviceId,
+  onSelectDevicePreference,
   onGetDeviceHomeDirectory,
   onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
@@ -91,6 +106,8 @@ export function ProjectCreateDialog({
       devices={devices}
       onClose={onClose}
       onCreateProject={onCreateProject}
+      preferredDeviceId={preferredDeviceId}
+      onSelectDevicePreference={onSelectDevicePreference}
       onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
       onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
       onListDeviceDirectories={onListDeviceDirectories}
@@ -103,13 +120,18 @@ function ProjectCreateDialogContent({
   devices,
   onClose,
   onCreateProject,
+  preferredDeviceId,
+  onSelectDevicePreference,
   onGetDeviceHomeDirectory,
   onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
 }: Omit<ProjectCreateDialogProps, 'open'>) {
   const { t } = useTranslation('common')
   const sortedDevices = useMemo(() => sortDevicesForProjectCreation(devices), [devices])
-  const firstDeviceId = useMemo(() => getDefaultDeviceId(sortedDevices), [sortedDevices])
+  const firstDeviceId = useMemo(
+    () => getDefaultDeviceId(sortedDevices, preferredDeviceId),
+    [preferredDeviceId, sortedDevices]
+  )
   const [deviceId, setDeviceId] = useState(firstDeviceId)
   const [projectName, setProjectName] = useState('')
   const [projectRoot, setProjectRoot] = useState(FALLBACK_PROJECTS_ROOT)
@@ -212,6 +234,9 @@ function ProjectCreateDialogContent({
 
   const handleDeviceChange = (nextDeviceId: string) => {
     setDeviceId(nextDeviceId)
+    if (nextDeviceId) {
+      onSelectDevicePreference?.(nextDeviceId)
+    }
     setProjectRoot(FALLBACK_PROJECTS_ROOT)
     setCurrentPath('')
     setSelectedPath('')
@@ -223,6 +248,8 @@ function ProjectCreateDialogContent({
     setSelectedPath(path)
     setCurrentPath(path)
   }
+
+  useEscapeKey(onClose)
 
   const title =
     mode === 'existing'
@@ -294,12 +321,6 @@ function ProjectCreateDialogContent({
               placeholder={t('workbench.project_name_placeholder', '输入项目名称')}
               className="mt-2 h-10 w-full rounded-lg border border-[#d8d8d8] px-3 text-[13px] outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20"
             />
-            <div className="mt-5 rounded-lg border border-[#e3e5e8] bg-[#f7f8f9] px-3 py-2">
-              <div className="flex items-center gap-2 text-[13px] text-[#3c4043]">
-                <FolderPlus className="h-4 w-4 shrink-0" />
-                <span className="min-w-0 truncate font-mono">{scratchPath}</span>
-              </div>
-            </div>
           </>
         ) : (
           <>

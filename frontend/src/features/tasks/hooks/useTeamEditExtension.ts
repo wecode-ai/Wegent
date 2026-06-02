@@ -99,6 +99,10 @@ export function useTeamEditExtension(
   // Render the dialog with current state
   // NOTE: All hooks must be called before any conditional return
   const renderDialog = useCallback(() => {
+    if (!open) {
+      return null
+    }
+
     return createDialogComponent({
       open,
       onClose: handleClose,

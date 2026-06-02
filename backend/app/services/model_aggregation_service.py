@@ -67,6 +67,8 @@ class UnifiedModel:
             str
         ] = None,  # New: llm, tts, stt, embedding, rerank
         is_advanced: bool = False,
+        model_group: Optional[str] = None,
+        model_sub_group: Optional[str] = None,
     ):
         self.name = name
         self.type = (
@@ -82,6 +84,8 @@ class UnifiedModel:
             model_category_type or "llm"
         )  # Default to 'llm' for backward compatibility
         self.is_advanced = is_advanced
+        self.model_group = model_group
+        self.model_sub_group = model_sub_group
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -101,6 +105,8 @@ class UnifiedModel:
             "namespace": self.namespace,
             "modelCategoryType": self.model_category_type,
             "isAdvanced": self.is_advanced,
+            "modelGroup": self.model_group,
+            "modelSubGroup": self.model_sub_group,
             "config": safe_config,
         }
 
@@ -142,6 +148,8 @@ class ModelAggregationService:
                 "config": {},
                 "model_category_type": "llm",
                 "is_advanced": False,
+                "model_group": None,
+                "model_sub_group": None,
             }
 
         try:
@@ -191,6 +199,8 @@ class ModelAggregationService:
                     if model_crd.spec.isAdvanced
                     else False
                 ),
+                "model_group": model_crd.spec.modelGroup,
+                "model_sub_group": model_crd.spec.modelSubGroup,
             }
         except (ValueError, KeyError, AttributeError) as e:
             logger.warning("Failed to extract model info: %s", e)
@@ -201,6 +211,8 @@ class ModelAggregationService:
                 "config": {},
                 "model_category_type": "llm",
                 "is_advanced": False,
+                "model_group": None,
+                "model_sub_group": None,
             }
 
     def _is_model_compatible_with_shell(
@@ -429,6 +441,8 @@ class ModelAggregationService:
                     namespace=resource.namespace,
                     model_category_type=info.get("model_category_type", "llm"),
                     is_advanced=info.get("is_advanced", False),
+                    model_group=info.get("model_group"),
+                    model_sub_group=info.get("model_sub_group"),
                 )
                 result.append(unified)
                 seen_names[resource.name] = resource_type
@@ -474,6 +488,10 @@ class ModelAggregationService:
                 namespace="default",
                 model_category_type=public_model_category_type,
                 is_advanced=model_dict.get("is_advanced", False),
+                model_group=model_dict.get("modelGroup")
+                or model_dict.get("model_group"),
+                model_sub_group=model_dict.get("modelSubGroup")
+                or model_dict.get("model_sub_group"),
             )
 
             # If name already exists as user model, we still add public model
@@ -531,6 +549,8 @@ class ModelAggregationService:
                     model_id=info["model_id"],
                     config=info["config"],
                     is_active=resource.is_active,
+                    model_group=info.get("model_group"),
+                    model_sub_group=info.get("model_sub_group"),
                 ).to_full_dict()
 
         elif model_type == ModelType.PUBLIC:
@@ -553,6 +573,10 @@ class ModelAggregationService:
                             "model_category_type", "llm"
                         ),
                         is_advanced=model_dict.get("is_advanced", False),
+                        model_group=model_dict.get("modelGroup")
+                        or model_dict.get("model_group"),
+                        model_sub_group=model_dict.get("modelSubGroup")
+                        or model_dict.get("model_sub_group"),
                     ).to_full_dict()
 
         return None
