@@ -465,6 +465,10 @@ sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 **基本信息**:
 - **名称**: 给 Model 起一个描述性的名称 (如 `my-claude-sonnet`)
 - **显示名称**: 可选的在界面上显示的人类可读名称
+- **一级分组**: 可选，用于模型选择器的第一级分组
+- **二级分组**: 可选，用于一级分组下的第二级分组
+
+分组字段会保存到 Model 的 `spec.modelGroup` 和 `spec.modelSubGroup` 中。它们只影响模型列表和选择器的展示组织方式，搜索仍会匹配模型名称、显示名称和分组名称。留空时，模型会进入默认的未分组或未分类分组。
 
 **提供商配置**:
 - **提供商类型**: 选择 `OpenAI` 或 `Anthropic`

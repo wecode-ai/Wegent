@@ -178,6 +178,7 @@
   "model_settings": "模型设置",
   "select_model": "选择模型",
   "select_model_placeholder": "使用默认模型",
+  "select_model_required": "请选择模型",
   "search_model": "搜索模型...",
   "no_model_found": "未找到模型",
   "use_default_model": "使用默认模型",
