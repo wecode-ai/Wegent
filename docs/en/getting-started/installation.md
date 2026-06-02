@@ -83,6 +83,7 @@ MYSQL_PASSWORD=your_password
 
 # Redis Configuration
 REDIS_PASSWORD=your_redis_password  # Optional
+REDIS_PROTOCOL=2  # Default RESP2, compatible with Redis-compatible servers without HELLO support
 
 # Backend Configuration
 PASSWORD_KEY=your-password-key-here
