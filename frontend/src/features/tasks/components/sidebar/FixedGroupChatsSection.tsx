@@ -70,7 +70,7 @@ export default function FixedGroupChatsSection({
 
   return (
     <div
-      className={`${isCollapsed ? 'px-0' : 'px-2.5'} py-1 border-t border-border-light shrink-0`}
+      className={`${isCollapsed ? 'px-0' : 'px-2.5'} py-1 border-t border-border/70 shrink-0`}
       data-testid="task-sidebar-group-chat-dock"
     >
       {!isCollapsed ? (
