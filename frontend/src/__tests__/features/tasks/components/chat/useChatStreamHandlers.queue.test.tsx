@@ -16,13 +16,15 @@ const mockCheckHealth = jest.fn().mockResolvedValue(undefined)
 let isMachineStreamingMock = true
 let activeStreamSubtaskIdMock: number | undefined = 77
 let taskInputMessageMock = 'next question'
-let sessionTaskIdMock = 42
+let currentTaskIdMock: number | null = 42
 let selectedTaskDetailMock: TaskDetail | null = {
   id: 42,
   status: 'RUNNING',
   is_group_chat: false,
   subtasks: [],
 } as unknown as TaskDetail
+
+const getTaskStatusMock = () => selectedTaskDetailMock?.status ?? 'COMPLETED'
 
 jest.mock('next/navigation', () => ({
   useRouter: () => ({ push: jest.fn() }),
@@ -31,40 +33,40 @@ jest.mock('next/navigation', () => ({
 }))
 
 jest.mock('@/features/tasks/session/TaskSession', () => ({
-  useTaskSession: () => {
-    const taskStatus = selectedTaskDetailMock?.status ?? 'COMPLETED'
-
-    return {
-      selectedTaskDetail: selectedTaskDetailMock,
-      refreshTasks: jest.fn(),
-      refreshSelectedTaskDetail: mockRefreshSelectedTaskDetail,
-      markTaskAsViewed: jest.fn(),
-      sendMessage: mockContextSendMessage,
-      stopStream: jest.fn(),
-      recoverCurrentTask: mockCheckHealth,
-      taskState: {
-        taskId: sessionTaskIdMock,
-        phase: isMachineStreamingMock ? 'streaming' : 'ready',
-        messages: new Map(),
-        isStopping: false,
-        runtime: {
-          taskStatus,
-          activeStreamSubtaskId: activeStreamSubtaskIdMock,
-        },
-        derived: {
-          isExecutionActive: taskStatus === 'RUNNING' || taskStatus === 'PENDING',
-          isTerminal:
-            taskStatus === 'COMPLETED' || taskStatus === 'FAILED' || taskStatus === 'CANCELLED',
-          isStreaming: isMachineStreamingMock,
-          shouldJoinRoom: false,
-          canSendMessage: taskStatus === 'COMPLETED',
-          canQueueMessage: isMachineStreamingMock,
-          canCancelTask: taskStatus === 'RUNNING' || taskStatus === 'PENDING',
-          blocksQueuedDispatch: taskStatus === 'RUNNING' || taskStatus === 'PENDING',
-        },
+  useTaskSession: () => ({
+    currentTaskId: currentTaskIdMock,
+    selectedTaskDetail: selectedTaskDetailMock,
+    refreshTasks: jest.fn(),
+    refreshSelectedTaskDetail: mockRefreshSelectedTaskDetail,
+    markTaskAsViewed: jest.fn(),
+    sendMessage: mockContextSendMessage,
+    stopStream: jest.fn(),
+    recoverCurrentTask: mockCheckHealth,
+    taskState: {
+      taskId: currentTaskIdMock ?? 0,
+      phase: isMachineStreamingMock ? 'streaming' : 'ready',
+      messages: new Map(),
+      isStopping: false,
+      runtime: {
+        taskStatus: getTaskStatusMock(),
+        activeStreamSubtaskId: activeStreamSubtaskIdMock,
       },
-    }
-  },
+      derived: {
+        isExecutionActive: getTaskStatusMock() === 'RUNNING' || getTaskStatusMock() === 'PENDING',
+        isTerminal:
+          getTaskStatusMock() === 'COMPLETED' ||
+          getTaskStatusMock() === 'FAILED' ||
+          getTaskStatusMock() === 'CANCELLED',
+        isStreaming: isMachineStreamingMock,
+        shouldJoinRoom: false,
+        canSendMessage: getTaskStatusMock() === 'COMPLETED',
+        canQueueMessage: isMachineStreamingMock,
+        canCancelTask: getTaskStatusMock() === 'RUNNING' || getTaskStatusMock() === 'PENDING',
+        blocksQueuedDispatch:
+          getTaskStatusMock() === 'RUNNING' || getTaskStatusMock() === 'PENDING',
+      },
+    },
+  }),
 }))
 
 jest.mock('@/features/projects/contexts/projectContext', () => ({
@@ -151,8 +153,8 @@ describe('useChatStreamHandlers queue integration', () => {
     jest.clearAllMocks()
     isMachineStreamingMock = true
     activeStreamSubtaskIdMock = 77
-    sessionTaskIdMock = 42
     taskInputMessageMock = 'next question'
+    currentTaskIdMock = 42
     selectedTaskDetailMock = {
       id: 42,
       status: 'RUNNING',
@@ -372,11 +374,11 @@ describe('useChatStreamHandlers queue integration', () => {
     expect(mockResetContexts).toHaveBeenCalled()
   })
 
-  it('continues on the resolved task when task detail has not refreshed yet', async () => {
+  it('uses the current task id for a follow-up while task detail is temporarily unavailable', async () => {
     isMachineStreamingMock = false
-    sessionTaskIdMock = 42
+    activeStreamSubtaskIdMock = undefined
     selectedTaskDetailMock = null
-    taskInputMessageMock = 'follow up'
+    currentTaskIdMock = 42
 
     const { result } = renderQueueableHook()
 
@@ -386,8 +388,8 @@ describe('useChatStreamHandlers queue integration', () => {
 
     expect(mockContextSendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
+        message: 'next question',
         task_id: 42,
-        message: 'follow up',
       }),
       expect.objectContaining({
         immediateTaskId: 42,

@@ -97,10 +97,10 @@ interface UseMessagePresenterOptions {
   /** Whether this is a group chat */
   isGroupChat: boolean
   /**
-   * Pending task ID - used when selectedTaskDetail.id is not yet available.
+   * Pending task ID - used before the selected task identity is available.
    * Can be either:
    * - tempTaskId (negative number like -Date.now()) for new tasks before backend responds
-   * - taskId (positive number) after backend responds but before selectedTaskDetail updates
+   * - taskId (positive number) after backend responds but before selection updates
    */
   pendingTaskId?: number | null
 }
@@ -169,8 +169,7 @@ export function useMessagePresenter({
   pendingTaskId,
 }: UseMessagePresenterOptions): UseMessagePresenterResult {
   const {
-    selectedTask,
-    selectedTaskDetail,
+    currentTaskId,
     messages: rawMessages,
     isStreaming,
     streamingSubtaskIds: sessionStreamingSubtaskIds,
@@ -178,12 +177,10 @@ export function useMessagePresenter({
   } = useTaskSession()
   const { user } = useUser()
 
-  const taskId = selectedTask?.id ?? selectedTaskDetail?.id
-
   // Determine effective task ID for querying state machine:
-  // - Use taskId (from selectedTask; selectedTaskDetail may load later) if available
+  // - Use currentTaskId (the selected task identity) if available
   // - Otherwise use pendingTaskId (tempTaskId or taskId before selectedTaskDetail updates)
-  const effectiveTaskId = taskId || pendingTaskId || undefined
+  const effectiveTaskId = currentTaskId || pendingTaskId || undefined
 
   // Build sync options
   const syncOptions: SyncOptions = useMemo(

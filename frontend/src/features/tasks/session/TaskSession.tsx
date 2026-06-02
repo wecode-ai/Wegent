@@ -37,6 +37,7 @@ export type TaskSession = Omit<
   'writeSelectedTask' | 'resetSelectedTaskState' | 'prepareSelectedTaskState'
 > &
   MessageSession & {
+    currentTaskId: number | null
     taskState: TaskStateSnapshot | null
     messages: Map<string, UnifiedMessage>
     isStreaming: boolean
@@ -236,6 +237,10 @@ export function TaskSessionProvider({ children }: { children: ReactNode }) {
     return Array.from(subtaskIds)
   }, [taskState])
 
+  const currentTaskId = useMemo(() => {
+    return selectedTask?.id && selectedTask.id > 0 ? selectedTask.id : null
+  }, [selectedTask?.id])
+
   const value = useMemo<TaskSession>(() => {
     const {
       writeSelectedTask: _writeSelectedTask,
@@ -246,6 +251,7 @@ export function TaskSessionProvider({ children }: { children: ReactNode }) {
 
     return {
       ...publicTaskPuller,
+      currentTaskId,
       selectTask,
       sendMessage: messageSyncer.sendMessage,
       stopStream,
@@ -260,6 +266,7 @@ export function TaskSessionProvider({ children }: { children: ReactNode }) {
       setMessageSyncOptions,
     }
   }, [
+    currentTaskId,
     messageSyncer,
     recoverCurrentTask,
     selectTask,

@@ -7,8 +7,7 @@ import { render } from '@testing-library/react'
 import { useMessagePresenter } from '@/features/tasks/presentation/useMessagePresenter'
 import type { DisplayMessage } from '@/features/tasks/presentation/useMessagePresenter'
 
-let mockSelectedTask: { id: number } | null = null
-let mockSelectedTaskDetail: { id: number } | null = { id: 42 }
+let mockCurrentTaskId: number | null = 42
 let mockMessages = new Map()
 let mockIsStreaming = false
 const mockSetMessageSyncOptions = jest.fn()
@@ -20,8 +19,7 @@ let latestMessages: {
 
 jest.mock('@/features/tasks/session/TaskSession', () => ({
   useTaskSession: () => ({
-    selectedTask: mockSelectedTask,
-    selectedTaskDetail: mockSelectedTaskDetail,
+    currentTaskId: mockCurrentTaskId,
     messages: mockMessages,
     isStreaming: mockIsStreaming,
     setMessageSyncOptions: mockSetMessageSyncOptions,
@@ -45,8 +43,7 @@ function Probe() {
 
 describe('useMessagePresenter', () => {
   beforeEach(() => {
-    mockSelectedTask = null
-    mockSelectedTaskDetail = { id: 42 }
+    mockCurrentTaskId = 42
     mockMessages = new Map()
     mockIsStreaming = false
     latestMessages = null
@@ -64,9 +61,8 @@ describe('useMessagePresenter', () => {
     )
   })
 
-  it('uses selectedTask while task detail is still loading', () => {
-    mockSelectedTask = { id: 99 }
-    mockSelectedTaskDetail = null
+  it('uses currentTaskId while task detail is still loading', () => {
+    mockCurrentTaskId = 99
     mockMessages = new Map([
       [
         'user-1',
