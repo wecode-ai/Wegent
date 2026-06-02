@@ -315,27 +315,27 @@ export default function TaskSidebar({
               variant="ghost"
               onClick={() => handleNavigationClick(btn.path, btn.isActive, btn.buttonPageType)}
               data-testid={btn.testId ?? `task-sidebar-nav-${btn.buttonPageType}-button`}
-              className={`w-full justify-between px-3 h-11 min-w-[44px] text-sm rounded-lg transition-colors lg:h-10 ${
+              className={`w-full justify-start px-3 h-11 min-w-[44px] text-sm rounded-md transition-all duration-200 lg:h-10 ${
                 btn.isActive
-                  ? 'bg-surface text-text-primary font-semibold hover:bg-surface'
-                  : 'text-text-primary hover:bg-surface dark:hover:bg-white/10'
+                  ? 'bg-primary/10 text-primary font-medium hover:bg-primary/15'
+                  : 'text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 hover:scale-[1.02]'
               }`}
               size="sm"
             >
-              <span className="flex items-center">
+              <span className="flex min-w-0 flex-1 items-center justify-start gap-2.5 text-left">
                 <btn.icon
-                  className={`h-5 w-5 flex-shrink-0 ${btn.isActive ? 'text-text-primary' : 'text-text-secondary'}`}
+                  className={`h-4 w-4 flex-shrink-0 ${btn.isActive ? 'text-primary' : ''}`}
                 />
                 <span
-                  className={`ml-3 text-[16px] leading-5 font-semibold ${
-                    btn.isActive ? 'text-text-primary' : 'text-text-primary'
+                  className={`min-w-0 truncate text-[14px] leading-5 font-medium ${
+                    btn.isActive ? 'text-primary' : 'text-text-primary'
                   }`}
                 >
                   {btn.label}
                 </span>
               </span>
               {btn.unreadCount !== undefined && btn.unreadCount > 0 && (
-                <span className="flex items-center justify-center min-w-[18px] h-[18px] px-1.5 text-[11px] font-medium bg-red-500 text-white rounded-full">
+                <span className="ml-auto flex items-center justify-center min-w-[18px] h-[18px] px-1.5 text-[11px] font-medium bg-red-500 text-white rounded-full">
                   {btn.unreadCount > 99 ? '99+' : btn.unreadCount}
                 </span>
               )}
@@ -395,27 +395,27 @@ export default function TaskSidebar({
               variant="ghost"
               data-testid="task-sidebar-more-button"
               onFocus={() => openMoreNavigation(menuId)}
-              className={`w-full justify-between px-3 h-11 min-w-[44px] text-sm rounded-lg transition-colors lg:h-10 ${
+              className={`w-full justify-start px-3 h-11 min-w-[44px] text-sm rounded-md transition-all duration-200 lg:h-10 ${
                 hasActiveItem
-                  ? 'bg-surface text-text-primary font-semibold hover:bg-surface'
-                  : 'text-text-primary hover:bg-surface dark:hover:bg-white/10'
+                  ? 'bg-primary/10 text-primary font-medium hover:bg-primary/15'
+                  : 'text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 hover:scale-[1.02]'
               }`}
               size="sm"
             >
-              <span className="flex items-center">
+              <span className="flex min-w-0 flex-1 items-center justify-start gap-2.5 text-left">
                 <LayoutGrid
                   aria-label="More navigation"
-                  className={`h-5 w-5 flex-shrink-0 ${hasActiveItem ? 'text-text-primary' : 'text-text-secondary'}`}
+                  className={`h-4 w-4 flex-shrink-0 ${hasActiveItem ? 'text-primary' : ''}`}
                 />
                 <span
-                  className={`ml-3 text-[16px] leading-5 font-semibold ${
-                    hasActiveItem ? 'text-text-primary' : 'text-text-primary'
+                  className={`min-w-0 truncate text-[14px] leading-5 font-medium ${
+                    hasActiveItem ? 'text-primary' : 'text-text-primary'
                   }`}
                 >
                   {t('common:navigation.more')}
                 </span>
               </span>
-              <span className="flex items-center gap-1">
+              <span className="ml-auto flex items-center gap-1">
                 {unreadCount > 0 && (
                   <span className="flex items-center justify-center min-w-[18px] h-[18px] px-1.5 text-[11px] font-medium bg-red-500 text-white rounded-full">
                     {unreadCount > 99 ? '99+' : unreadCount}
@@ -561,26 +561,31 @@ export default function TaskSidebar({
                     variant="ghost"
                     onClick={handleNewAgentClick}
                     data-testid="new-agent-button"
-                    className="w-full justify-start px-3 h-11 min-w-[44px] text-sm text-text-primary hover:bg-surface dark:hover:bg-white/10 rounded-lg group transition-colors lg:h-10"
+                    className="w-full justify-start px-3 h-11 min-w-[44px] text-sm text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 rounded-md group transition-all duration-200 hover:scale-[1.02] lg:h-10"
                     size="sm"
                   >
-                    <span className="flex items-center">
-                      <SquarePen className="h-5 w-5 flex-shrink-0 text-text-secondary" />
-                      <span className="ml-3 text-[16px] leading-5 font-semibold text-text-primary">
+                    <span className="flex min-w-0 flex-1 items-center justify-start gap-2.5 text-left">
+                      <SquarePen className="h-4 w-4 flex-shrink-0" />
+                      <span className="min-w-0 truncate text-[14px] leading-5 font-medium text-text-primary">
                         {t('common:tasks.new_conversation')}
                       </span>
+                    </span>
+                    <span className="ml-auto text-text-muted opacity-0 group-hover:opacity-100 transition-opacity">
+                      ›
                     </span>
                   </Button>
                   <Button
                     variant="ghost"
                     onClick={handleOpenSearchDialog}
                     data-testid="task-sidebar-search-button"
-                    className="w-full justify-start px-3 h-11 min-w-[44px] text-sm text-text-primary hover:bg-surface dark:hover:bg-white/10 rounded-lg transition-colors lg:h-10"
+                    className="w-full justify-start px-3 h-11 min-w-[44px] text-sm text-text-primary hover:bg-[rgb(238,238,238)] dark:hover:bg-white/10 rounded-md transition-all duration-200 hover:scale-[1.02] lg:h-10"
                     size="sm"
                   >
-                    <Search className="h-5 w-5 flex-shrink-0 text-text-secondary" />
-                    <span className="ml-3 text-[16px] leading-5 font-semibold text-text-primary">
-                      {t('common:actions.search')}
+                    <span className="flex min-w-0 flex-1 items-center justify-start gap-2.5 text-left">
+                      <Search className="h-4 w-4 flex-shrink-0" />
+                      <span className="min-w-0 truncate text-[14px] leading-5 font-medium text-text-primary">
+                        {t('common:actions.search')}
+                      </span>
                     </span>
                   </Button>
                 </div>

@@ -144,6 +144,8 @@ export default function ModelSelector({
     forceOverride: internalForceOverride,
     selectModel: selectInternalModel,
     setForceOverride: setInternalForceOverride,
+    showAdvancedModels,
+    setShowAdvancedModels,
   } = modelSelection
 
   // Get icon based on model category type
@@ -248,6 +250,19 @@ export default function ModelSelector({
       setSearchValue('')
     }
   }, [isOpen])
+
+  const selectedCascadeModel =
+    modelSelection.selectedModel?.name === DEFAULT_MODEL_NAME
+      ? modelSelection.boundDefaultModel
+      : modelSelection.selectedModel
+
+  const selectedModelIsAdvanced = selectedCascadeModel?.isAdvanced === true
+
+  useEffect(() => {
+    if (isOpen && selectedModelIsAdvanced && !showAdvancedModels) {
+      setShowAdvancedModels(true)
+    }
+  }, [isOpen, selectedModelIsAdvanced, showAdvancedModels, setShowAdvancedModels])
 
   // Determine if selector should be disabled
   const isDisabled =
@@ -361,11 +376,7 @@ export default function ModelSelector({
           ) : (
             <ModelCascadeContent
               models={modelSelection.filteredModels}
-              selectedModel={
-                modelSelection.selectedModel?.name === DEFAULT_MODEL_NAME
-                  ? null
-                  : modelSelection.selectedModel
-              }
+              selectedModel={selectedCascadeModel}
               selectedSpecialKey={
                 modelSelection.selectedModel?.name === DEFAULT_MODEL_NAME
                   ? DEFAULT_MODEL_NAME
@@ -378,13 +389,24 @@ export default function ModelSelector({
               onSelectModel={handleModelSelect}
               onSelectSpecialOption={handleSpecialOptionSelect}
               getModelKey={getModelKey}
-              renderModelBadges={model =>
-                model.type === 'user' ? (
-                  <Tag variant="info" className="text-[10px] flex-shrink-0 whitespace-nowrap">
-                    {t('common:settings.personal', 'Personal')}
-                  </Tag>
-                ) : null
-              }
+              renderModelBadges={model => (
+                <>
+                  {model.isAdvanced && (
+                    <Tag
+                      variant="warning"
+                      data-testid="model-advanced-badge"
+                      className="text-[10px] flex-shrink-0 whitespace-nowrap"
+                    >
+                      {t('common:models.advanced', 'Advanced')}
+                    </Tag>
+                  )}
+                  {model.type === 'user' && (
+                    <Tag variant="info" className="text-[10px] flex-shrink-0 whitespace-nowrap">
+                      {t('common:settings.personal', 'Personal')}
+                    </Tag>
+                  )}
+                </>
+              )}
               renderModelMeta={model =>
                 model.modelId ? (
                   <span className="block truncate text-xs text-text-muted" title={model.modelId}>
@@ -393,14 +415,26 @@ export default function ModelSelector({
                 ) : null
               }
               footer={
-                <>
+                <div
+                  data-testid="model-selector-footer"
+                  className="flex items-center justify-between gap-2 px-3 py-2.5"
+                >
+                  <button
+                    type="button"
+                    data-testid="model-settings-button"
+                    className="group -ml-1 flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors duration-150 hover:bg-hover"
+                    onClick={() => router.push(paths.settings.models.getHref())}
+                  >
+                    <Cog6ToothIcon className="h-4 w-4 text-text-secondary group-hover:text-text-primary" />
+                    <span className="text-xs text-text-secondary group-hover:text-text-primary">
+                      {t('common:models.manage', 'Model settings')}
+                    </span>
+                  </button>
                   {modelSelection.hasAdvancedModels && (
-                    <div
-                      className="flex cursor-pointer items-center gap-2 px-3 py-2.5 transition-colors duration-150 hover:bg-hover"
-                      onClick={e => {
-                        e.stopPropagation()
-                        modelSelection.setShowAdvancedModels(!modelSelection.showAdvancedModels)
-                      }}
+                    <label
+                      htmlFor="show-advanced-models-dropdown"
+                      data-testid="show-advanced-models-toggle"
+                      className="ml-auto flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 transition-colors duration-150 hover:bg-hover"
                     >
                       <Checkbox
                         id="show-advanced-models-dropdown"
@@ -413,26 +447,9 @@ export default function ModelSelector({
                       <span className="text-xs text-text-secondary">
                         {t('common:task_submit.show_advanced_models', 'Show advanced models')}
                       </span>
-                    </div>
+                    </label>
                   )}
-                  <div
-                    className="group flex cursor-pointer items-center gap-2 px-3 py-2.5 transition-colors duration-150 hover:bg-hover"
-                    onClick={() => router.push(paths.settings.models.getHref())}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault()
-                        router.push(paths.settings.models.getHref())
-                      }
-                    }}
-                  >
-                    <Cog6ToothIcon className="h-4 w-4 text-text-secondary group-hover:text-text-primary" />
-                    <span className="text-xs text-text-secondary group-hover:text-text-primary">
-                      {t('common:models.manage', 'Model settings')}
-                    </span>
-                  </div>
-                </>
+                </div>
               }
             />
           )}

@@ -346,6 +346,39 @@ describe('TaskSidebar scroll structure', () => {
     expect(moreLabel).not.toHaveClass('text-[#444746]')
   })
 
+  it('uses the same left-aligned label row for primary sidebar buttons', () => {
+    render(
+      <TaskSidebar isMobileSidebarOpen={false} setIsMobileSidebarOpen={jest.fn()} pageType="chat" />
+    )
+
+    const cases = [
+      {
+        button: screen.getAllByTestId('new-agent-button')[0],
+        label: 'common:tasks.new_conversation',
+      },
+      {
+        button: screen.getAllByTestId('task-sidebar-nav-flow-button')[0],
+        label: 'common:navigation.flow',
+      },
+      {
+        button: screen.getAllByTestId('task-sidebar-more-button')[0],
+        label: 'common:navigation.more',
+      },
+    ]
+
+    for (const { button, label } of cases) {
+      const labelText = within(button).getByText(label)
+      const labelRow = labelText.parentElement
+
+      expect(button).toHaveClass('justify-start')
+      expect(button).not.toHaveClass('justify-between')
+      expect(labelRow).toHaveClass('flex-1')
+      expect(labelRow).toHaveClass('justify-start')
+      expect(labelRow?.className).toContain('gap-')
+      expect(labelText.className).not.toContain('ml-')
+    }
+  })
+
   it('keeps the user menu outside of the scroll container', () => {
     render(
       <TaskSidebar isMobileSidebarOpen={false} setIsMobileSidebarOpen={jest.fn()} pageType="chat" />
