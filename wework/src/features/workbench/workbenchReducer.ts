@@ -34,6 +34,11 @@ export type WorkbenchAction =
       recentTasks: Task[]
       standaloneDeviceId?: string | null
     }
+  | {
+      type: 'devices_refreshed'
+      devices: DeviceInfo[]
+      standaloneDeviceId?: string | null
+    }
   | { type: 'bootstrap_failed'; error: string }
   | { type: 'project_selected'; project: ProjectWithTasks }
   | { type: 'project_cleared'; standaloneDeviceId?: string | null }
@@ -165,6 +170,15 @@ export function workbenchReducer(
       }
       return refreshedState
     }
+    case 'devices_refreshed':
+      return {
+        ...state,
+        devices: action.devices,
+        standaloneDeviceId:
+          action.standaloneDeviceId === undefined
+            ? state.standaloneDeviceId
+            : action.standaloneDeviceId,
+      }
     case 'bootstrap_failed':
       return { ...state, isBootstrapping: false, error: action.error }
     case 'project_selected':

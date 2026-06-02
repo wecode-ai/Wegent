@@ -4,17 +4,18 @@ sidebar_position: 4
 
 # Managing Skills
 
-Skills are Claude Code capability extension packages that add specialized functionality to your Bots. This guide will teach you how to upload, manage, and use Skills in Wegent.
+Skills are reusable capability packages. After upload or import, a Skill first enters the Skill Library. It can then be enabled by default, built into an agent, or selected for one chat only.
 
 ---
 
 ## 📋 Table of Contents
 
 - [What is a Skill](#-what-is-a-skill)
+- [How Skills Become Available](#-how-skills-become-available)
 - [Creating a Skill Package](#-creating-a-skill-package)
 - [Uploading Skills](#-uploading-skills)
 - [Managing Skills](#-managing-skills)
-- [Using Skills in Bots](#-using-skills-in-bots)
+- [Using Skills in Agents](#-using-skills-in-agents)
 - [Best Practices](#-best-practices)
 - [Common Issues](#-common-issues)
 - [Related Resources](#-related-resources)
@@ -23,19 +24,41 @@ Skills are Claude Code capability extension packages that add specialized functi
 
 ## 🎯 What is a Skill
 
-A **Skill** is a Claude Code capability extension package that contains executable code, configurations, and documentation. Skills are deployed to `~/.claude/skills/` when a task starts, extending the agent's capabilities.
+A **Skill** is a capability extension package that contains executable code, configurations, and documentation. Skills are deployed to `~/.claude/skills/` when a task starts, extending the agent's capabilities.
 
 **Analogy**: If a Bot is like a person, Skills are like tools or special training:
+
 - **Ghost**: Person's personality and base knowledge
 - **Skills**: Specialized tools and techniques the person can use
 - **Bot**: Complete person with tools
 
 **Examples of Skills**:
+
 - Python debugging tools
 - Code formatters and linters
 - API testing utilities
 - Database query helpers
 - Custom workflow automation
+
+---
+
+## 🧭 How Skills Become Available
+
+The Skill Library answers "which Skills can I use?" Availability answers "where will these Skills be used?"
+
+| Availability           | Meaning                          | When it applies                                                                |
+| ---------------------- | -------------------------------- | ------------------------------------------------------------------------------ |
+| Default Enabled Skills | Follows the current user         | Automatically available with default, system, shared, and self-created agents  |
+| Agent Built-in         | Follows the agent                | Automatically available after choosing that agent; cannot be removed from chat |
+| This Chat Only         | Follows the current chat or task | Applies after selecting the Skill from the chat input Skill button             |
+
+Rules:
+
+- New personal uploads enter the Skill Library and are automatically enabled by default for the uploader.
+- New group uploads belong to the group, but are automatically enabled by default only for the uploader.
+- Enabling a group Skill by default affects only you, not other group members.
+- System and library Skills are not automatically enabled by default; enable them manually when needed.
+- Existing Skills are not automatically enabled by default after upgrade.
 
 ---
 
@@ -75,12 +98,12 @@ Example code or commands...
 
 ### YAML Frontmatter Fields
 
-| Field | Required | Description | Example |
-|-------|----------|-------------|---------|
-| `description` | Yes | Brief skill description | "Python debugging tool with breakpoint support" |
-| `version` | No | Semantic version number | "1.0.0", "2.3.1" |
-| `author` | No | Author name or organization | "WeCode Team", "Your Name" |
-| `tags` | No | Category tags (array) | ["python", "debugging", "development"] |
+| Field         | Required | Description                 | Example                                         |
+| ------------- | -------- | --------------------------- | ----------------------------------------------- |
+| `description` | Yes      | Brief skill description     | "Python debugging tool with breakpoint support" |
+| `version`     | No       | Semantic version number     | "1.0.0", "2.3.1"                                |
+| `author`      | No       | Author name or organization | "WeCode Team", "Your Name"                      |
+| `tags`        | No       | Category tags (array)       | ["python", "debugging", "development"]          |
 
 ### Directory Structure Example
 
@@ -98,12 +121,14 @@ my-skill.zip
 ### Creating the ZIP Package
 
 **Using command line:**
+
 ```bash
 cd my-skill-directory
 zip -r my-skill.zip .
 ```
 
 **Important**:
+
 - Include SKILL.md at the root level or in a subdirectory
 - Keep file size under 10MB
 - Avoid including sensitive data (API keys, passwords)
@@ -128,7 +153,7 @@ zip -r my-skill.zip .
 3. **Verify Upload**
    - Skill card appears in the list
    - Check metadata (version, author, tags)
-   - Status shows "Available"
+   - New personal uploads show "Enabled by Default"
 
 ### Upload Requirements
 
@@ -140,6 +165,7 @@ zip -r my-skill.zip .
 ### Validation
 
 The system validates:
+
 - ✅ ZIP file format
 - ✅ File size < 10MB
 - ✅ SKILL.md exists
@@ -153,12 +179,38 @@ The system validates:
 
 ### Viewing Skills
 
-**Skills List displays:**
+The Skills page has two areas:
+
+- **Default Enabled Skills**: Skills that automatically follow you into conversations. You can disable them by default from this list.
+- **Skill Library**: All Skills you can use and manage. You can enable Skills by default from here.
+
+When you click **Add Default Skill**, Wegent lets you choose from all Skills available to you. You do not need to switch to a personal or team source first. Personal, team, system, and library are Skill sources, not ownership of the default-enabled setting.
+
+**The Skill Library displays:**
+
 - Skill name
 - Description (first 2 lines)
 - Version, author, tags
-- File size and status
+- Skill source: My Skill, Team Skill, System Skill, or Library Skill
+- Default enabled status
 - Last updated time
+
+The resource library asks you to choose a resource type first, such as Skill, Agent, or Model. Source filtering happens inside that type and defaults to "All". When you choose "Team", you can view all teams or pick one team from the dropdown. Source filtering only changes which resources appear in the list; Default Enabled Skills still belong to the current user. Team resources show their owning team on the list item so their source is clear.
+
+### Managing Default Enabled Skills
+
+In the Skill Library, use:
+
+- **Enable by Default**: the Skill becomes automatically available when you use default, system, shared, or self-created agents.
+- **Disable by Default**: the Skill no longer follows you automatically, but the Skill asset stays in the library.
+
+This only affects the current user. It does not modify agents, system assistants, or group Skill assets.
+
+In **Advanced Settings**, you can configure each default-enabled Skill further:
+
+- **Enabled Modes**: all modes are enabled by default. Unchecked modes do not auto-enable this Skill.
+- **Enabled Agents**: all agents are enabled by default. You can disable all My Agents, Team Agents, or System Agents at once, or disable a single agent.
+- **Force Activate**: when enabled, the Skill is injected into task context through preload. When disabled, the Skill remains automatically available but is loaded on demand by the model.
 
 ### Downloading Skills
 
@@ -183,19 +235,20 @@ The system validates:
 2. Confirm deletion in the dialog
 
 **Important**:
+
 - ⚠️ Cannot delete skills referenced by Bots/Ghosts
 - Remove skill from all Bots first
 - Error message shows which Bots are using the skill
 
 ---
 
-## 🤖 Using Skills in Bots
+## 🤖 Using Skills in Agents
 
-### Associating Skills with Bots
+### Associating Skills with Agents
 
-1. **Edit Bot**
-   - Go to Settings > Bots
-   - Click edit on a Bot
+1. **Edit Agent**
+   - Go to Settings > Agents
+   - Click edit on an Agent
 
 2. **Add Skills**
    - Find the "Skills" section (below Agent Config)
@@ -203,9 +256,11 @@ The system validates:
    - Select skills to add
    - Skills appear as removable tags
 
-3. **Save Bot**
+3. **Save Agent**
    - Click "Save" button
-   - Skills are now associated with the Bot
+   - Skills are now built into that agent
+
+If you only want a Skill to be automatically available for you across conversations, use "Enable by Default" in the Skill Library instead of copying a system agent.
 
 ### Via YAML Configuration
 
@@ -222,7 +277,7 @@ spec:
       command: docker
       args: [...]
   skills:
-    - python-debugger      # Skill name
+    - python-debugger # Skill name
     - code-formatter
     - api-tester
 ```
@@ -238,6 +293,7 @@ When a task starts:
 5. **Agent can use skill capabilities** during task execution
 
 **Deployment path example**:
+
 ```
 ~/.claude/skills/
 ├── python-debugger/
@@ -325,15 +381,18 @@ When a task starts:
 ### Upload Failures
 
 **Problem**: "SKILL.md not found in ZIP package"
+
 - ✅ Ensure SKILL.md exists at root or in subdirectory
 - ✅ Check file name is exactly `SKILL.md` (case-sensitive)
 
 **Problem**: "Invalid YAML frontmatter"
+
 - ✅ Verify YAML syntax between `---` markers
 - ✅ Ensure `description` field is present
 - ✅ Check for proper indentation
 
 **Problem**: "File size exceeds 10MB"
+
 - ✅ Remove unnecessary files
 - ✅ Compress large assets
 - ✅ Split into multiple smaller skills
@@ -341,6 +400,7 @@ When a task starts:
 ### Deletion Issues
 
 **Problem**: "Cannot delete Skill referenced by Ghosts"
+
 - ✅ Check error message for Bot/Ghost names
 - ✅ Edit those Bots to remove the skill
 - ✅ Then delete the skill
@@ -348,11 +408,13 @@ When a task starts:
 ### Deployment Issues
 
 **Problem**: Skill not available in task
+
 - ✅ Verify skill is associated with Bot
 - ✅ Check task logs for download errors
 - ✅ Ensure skill status is "Available"
 
 **Problem**: "Unsafe file path detected in ZIP"
+
 - ✅ Don't use `../` in file paths
 - ✅ Don't use absolute paths like `/etc/`
 - ✅ Use only relative paths within the ZIP
@@ -362,15 +424,18 @@ When a task starts:
 ## 🔗 Related Resources
 
 ### Documentation
+
 - [YAML Specification - Skill](../../reference/yaml-specification.md#-skill)
 - [Agent Settings](./agent-settings.md) - Configure agents and bots with skills
 
 ### External Resources
+
 - [Claude Code Skills Documentation](https://docs.claude.com/en/docs/claude-code/skills)
 - [Semantic Versioning](https://semver.org/)
 - [YAML Syntax Guide](https://yaml.org/spec/1.2/spec.html)
 
 ### Examples
+
 - Coming soon: Wegent Skills Repository
 - Community-contributed skills
 - Pre-built skill templates
@@ -382,6 +447,7 @@ When a task starts:
 ### 1. Create a Simple Skill
 
 Create a directory structure:
+
 ```
 hello-skill/
 ├── SKILL.md
@@ -389,6 +455,7 @@ hello-skill/
 ```
 
 **SKILL.md**:
+
 ```markdown
 ---
 description: "A simple hello world skill"
@@ -407,6 +474,7 @@ This skill provides a hello() function that can be called by the agent.
 ```
 
 **hello.py**:
+
 ```python
 def hello(name="World"):
     return f"Hello, {name}!"
@@ -445,6 +513,7 @@ Create a task using this Bot and ask it to use the hello skill!
 ---
 
 **Need Help?**
+
 - Check [Common Issues](#-common-issues)
 - Review [YAML Specification](../../reference/yaml-specification.md)
 - Ask in Wegent community forums

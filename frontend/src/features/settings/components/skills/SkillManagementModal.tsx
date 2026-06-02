@@ -30,6 +30,8 @@ import {
   removeSkillReferences,
   updateSkillFromGit,
   updatePublicSkillFromGit,
+  addSkillToMyDefault,
+  removeSkillFromMyDefault,
 } from '@/apis/skills'
 import SkillUploadModal from './SkillUploadModal'
 import { SkillReferenceConflictDialog } from './SkillReferenceConflictDialog'
@@ -73,6 +75,7 @@ export default function SkillManagementModal({
   const [skillToDelete, setSkillToDelete] = useState<UnifiedSkill | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [updatingFromGitId, setUpdatingFromGitId] = useState<number | null>(null)
+  const [updatingDefaultSkillId, setUpdatingDefaultSkillId] = useState<number | null>(null)
   const [referenceDialogOpen, setReferenceDialogOpen] = useState(false)
   const [referenceDialogMode, setReferenceDialogMode] = useState<'view' | 'delete_conflict'>(
     'delete_conflict'
@@ -272,6 +275,54 @@ export default function SkillManagementModal({
     }
   }
 
+  const handleToggleDefaultEnabledSkill = async (skill: UnifiedSkill) => {
+    setUpdatingDefaultSkillId(skill.id)
+    try {
+      if (skill.availability?.inMyDefault) {
+        await removeSkillFromMyDefault(skill.id)
+        toast({
+          title: t('common:common.success'),
+          description: t('settings:skills.availability.removeSuccess'),
+        })
+        setSkills(prev =>
+          prev.map(item =>
+            item.id === skill.id
+              ? {
+                  ...item,
+                  availability: { ...(item.availability || {}), inMyDefault: false },
+                }
+              : item
+          )
+        )
+      } else {
+        await addSkillToMyDefault(skill.id)
+        toast({
+          title: t('common:common.success'),
+          description: t('settings:skills.availability.addSuccess'),
+        })
+        setSkills(prev =>
+          prev.map(item =>
+            item.id === skill.id
+              ? {
+                  ...item,
+                  availability: { ...(item.availability || {}), inMyDefault: true },
+                }
+              : item
+          )
+        )
+      }
+      onSkillsChange?.()
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: t('settings:skills.availability.updateFailed'),
+        description: error instanceof Error ? error.message : t('common:common.unknown_error'),
+      })
+    } finally {
+      setUpdatingDefaultSkillId(null)
+    }
+  }
+
   const handleModalClose = (saved: boolean) => {
     setUploadModalOpen(false)
     setEditingSkill(null)
@@ -286,8 +337,8 @@ export default function SkillManagementModal({
       <Dialog open={open} onOpenChange={onClose}>
         <DialogContent className="sm:max-w-[800px] max-h-[80vh] flex flex-col bg-surface">
           <DialogHeader>
-            <DialogTitle>{t('common:skills.manage_skills')}</DialogTitle>
-            <DialogDescription>{t('common:skills.manage_skills_description')}</DialogDescription>
+            <DialogTitle>{t('settings:skills.libraryTitle')}</DialogTitle>
+            <DialogDescription>{t('settings:skills.libraryDescription')}</DialogDescription>
           </DialogHeader>
 
           <div className="flex-1 overflow-y-auto py-4">
@@ -352,6 +403,13 @@ export default function SkillManagementModal({
                                     {tag}
                                   </Tag>
                                 ))}
+                                <Tag
+                                  variant={skill.availability?.inMyDefault ? 'success' : 'default'}
+                                >
+                                  {skill.availability?.inMyDefault
+                                    ? t('settings:skills.availability.inMyDefault')
+                                    : t('settings:skills.availability.notInMyDefault')}
+                                </Tag>
                               </div>
 
                               {/* Bind Shells */}
@@ -397,6 +455,21 @@ export default function SkillManagementModal({
 
                           {/* Action Buttons */}
                           <div className="flex gap-1 flex-shrink-0 ml-4">
+                            <Button
+                              variant={skill.availability?.inMyDefault ? 'outline' : 'primary'}
+                              size="sm"
+                              onClick={() => handleToggleDefaultEnabledSkill(skill)}
+                              disabled={updatingDefaultSkillId === skill.id}
+                              data-testid={
+                                skill.availability?.inMyDefault
+                                  ? `remove-skill-default-button-${skill.id}`
+                                  : `add-skill-default-button-${skill.id}`
+                              }
+                            >
+                              {skill.availability?.inMyDefault
+                                ? t('settings:skills.availability.removeFromMyDefault')
+                                : t('settings:skills.availability.addToMyDefault')}
+                            </Button>
                             {/* Update from Git button - only show for git-imported skills */}
                             {skill.source?.type === 'git' && (
                               <Button
