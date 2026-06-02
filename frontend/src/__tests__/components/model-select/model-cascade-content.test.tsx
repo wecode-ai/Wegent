@@ -105,4 +105,44 @@ describe('ModelCascadeContent', () => {
     expect(screen.getByText('Model C')).toBeInTheDocument()
     expect(screen.queryByText('Model A')).not.toBeInTheDocument()
   })
+
+  it('constrains the cascade columns so long model lists do not push the footer out', () => {
+    render(
+      <ModelCascadeContent
+        models={models}
+        labels={labels}
+        searchValue=""
+        onSearchValueChange={jest.fn()}
+        onSelectModel={jest.fn()}
+        footer={<div data-testid="model-cascade-footer-content">Footer</div>}
+      />
+    )
+
+    const grid = screen.getByTestId('model-cascade-grid')
+    const footer = screen.getByTestId('model-cascade-footer')
+
+    expect(grid).toHaveClass('min-h-0')
+    expect(grid.className).toContain('h-[clamp(')
+    expect(footer).toHaveClass('shrink-0')
+  })
+
+  it('constrains search results so they do not push the footer out', () => {
+    render(
+      <ModelCascadeContent
+        models={models}
+        labels={labels}
+        searchValue="Model"
+        onSearchValueChange={jest.fn()}
+        onSelectModel={jest.fn()}
+        footer={<div data-testid="model-cascade-footer-content">Footer</div>}
+      />
+    )
+
+    const results = screen.getByTestId('model-cascade-search-results')
+    const footer = screen.getByTestId('model-cascade-footer')
+
+    expect(results).toHaveClass('min-h-0')
+    expect(results.className).toContain('h-[clamp(')
+    expect(footer).toHaveClass('shrink-0')
+  })
 })

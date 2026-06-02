@@ -253,7 +253,10 @@ export function ModelCascadeContent<T extends GroupableModel>({
       {models.length === 0 && specialOptions.length === 0 ? (
         <div className="px-4 py-8 text-center text-sm text-text-muted">{labels.noModels}</div>
       ) : isSearching ? (
-        <ScrollArea className="h-[320px]">
+        <ScrollArea
+          data-testid="model-cascade-search-results"
+          className="h-[clamp(120px,calc(var(--radix-popover-content-available-height,520px)-112px),360px)] min-h-0"
+        >
           <div className="px-2 py-2">
             <div className="px-2 pb-1 text-xs font-medium text-text-muted">
               {labels.searchResults}
@@ -266,7 +269,10 @@ export function ModelCascadeContent<T extends GroupableModel>({
           </div>
         </ScrollArea>
       ) : (
-        <div className="grid min-h-[300px] grid-cols-[180px_200px_minmax(260px,1fr)] overflow-hidden">
+        <div
+          data-testid="model-cascade-grid"
+          className="grid h-[clamp(120px,calc(var(--radix-popover-content-available-height,520px)-112px),360px)] min-h-0 grid-cols-[180px_200px_minmax(260px,1fr)] overflow-hidden"
+        >
           <ScrollArea className="border-r border-border">
             <div className="px-2 py-2">
               <div className="px-2 pb-1 text-xs font-medium text-text-muted">
@@ -339,7 +345,11 @@ export function ModelCascadeContent<T extends GroupableModel>({
         </div>
       )}
 
-      {footer && <div className="border-t border-border">{footer}</div>}
+      {footer && (
+        <div data-testid="model-cascade-footer" className="shrink-0 border-t border-border">
+          {footer}
+        </div>
+      )}
     </div>
   )
 }
