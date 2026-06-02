@@ -172,9 +172,6 @@ async def wait_for_shutdown():
     Returns:
         dict: Shutdown completion status
     """
-    # Import here to avoid circular imports
-    from chat_shell.api.v1.response import _active_streams
-
     # Initiate shutdown if not already
     if not shutdown_manager.is_shutting_down:
         await shutdown_manager.initiate_shutdown()
@@ -203,7 +200,7 @@ async def wait_for_shutdown():
     else:
         # Timeout reached, cancel remaining streams
         remaining = shutdown_manager.get_active_stream_count()
-        cancelled = await shutdown_manager.cancel_all_streams(_active_streams)
+        cancelled = await shutdown_manager.cancel_all_streams()
 
         return {
             "status": "timeout",

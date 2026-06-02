@@ -95,7 +95,6 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down Chat Shell Service...")
 
     # Graceful shutdown: wait for active streams to complete
-    from chat_shell.api.v1.response import _active_streams
     from chat_shell.core.shutdown import shutdown_manager
 
     if not shutdown_manager.is_shutting_down:
@@ -115,7 +114,7 @@ async def lifespan(app: FastAPI):
             logger.warning(
                 f"Timeout waiting for streams. Cancelling {remaining} remaining streams..."
             )
-            cancelled = await shutdown_manager.cancel_all_streams(_active_streams)
+            cancelled = await shutdown_manager.cancel_all_streams()
             logger.info(f"Cancelled {cancelled} streams")
     else:
         logger.info("No active streams, proceeding with shutdown")
