@@ -11,8 +11,10 @@ from typing import Optional
 from executor.agents.agno.agno_agent import AgnoAgent
 from executor.agents.base import Agent
 from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
+from executor.agents.codex import CodeXAgent, is_codex_compatible_model
 from executor.agents.dify.dify_agent import DifyAgent
 from executor.agents.image_validator.image_validator_agent import ImageValidatorAgent
+
 from shared.logger import setup_logger
 from shared.models import ResponsesAPIEmitter
 from shared.models.execution import ExecutionRequest
@@ -32,6 +34,7 @@ class AgentFactory:
 
     _agents = {
         "claudecode": ClaudeCodeAgent,
+        "codex": CodeXAgent,
         "agno": AgnoAgent,
         "dify": DifyAgent,
         "imagevalidator": ImageValidatorAgent,
@@ -61,6 +64,68 @@ class AgentFactory:
         else:
             logger.error(f"Unsupported agent type: {agent_type}")
             return None
+
+    @classmethod
+    def get_code_agent(
+        cls,
+        task_data: ExecutionRequest,
+        emitter: ResponsesAPIEmitter,
+    ) -> Agent:
+        """Create the local code agent for a task based on resolved model config."""
+        if is_codex_compatible_model(task_data.model_config):
+            logger.info(
+                "Routing task %s to CodeXAgent for model %s",
+                task_data.task_id,
+                task_data.model_config.get("model_id"),
+            )
+            return CodeXAgent(task_data, emitter=emitter)
+        return ClaudeCodeAgent(task_data, emitter=emitter)
+
+    @classmethod
+    def get_active_task_ids(cls) -> list[int]:
+        """Return active task IDs across agents that expose active sessions."""
+        active_ids: set[int] = set()
+        for agent_class in cls._agents.values():
+            getter = getattr(agent_class, "get_active_task_ids", None)
+            if not getter:
+                continue
+            try:
+                active_ids.update(int(task_id) for task_id in getter())
+            except Exception as exc:
+                logger.warning(
+                    "Failed to read active task IDs from %s: %s",
+                    agent_class.__name__,
+                    exc,
+                )
+        return sorted(active_ids)
+
+    @classmethod
+    async def cleanup_task_clients(cls, task_id: int) -> int:
+        """Cleanup lingering clients for a task across code agents."""
+        cleaned = 0
+        for agent_class in (ClaudeCodeAgent, CodeXAgent):
+            cleanup = getattr(agent_class, "cleanup_task_clients", None)
+            if not cleanup:
+                continue
+            try:
+                cleaned += await cleanup(task_id)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to cleanup %s clients for task %s: %s",
+                    agent_class.__name__,
+                    task_id,
+                    exc,
+                )
+        return cleaned
+
+    @classmethod
+    async def close_all_clients(cls) -> None:
+        """Close active clients across local code agents."""
+        for agent_class in (ClaudeCodeAgent, CodeXAgent):
+            closer = getattr(agent_class, "close_all_clients", None)
+            if not closer:
+                continue
+            await closer()
 
     @classmethod
     def is_external_api_agent(cls, agent_type: str) -> bool:

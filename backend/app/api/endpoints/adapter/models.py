@@ -311,6 +311,13 @@ def get_compatible_models(
             if isinstance(model_config, dict):
                 env = model_config.get("env", {})
                 model_type = env.get("model", "")
+                api_format = getattr(model_crd.spec.apiFormat, "value", None)
+                protocol = model_crd.spec.protocol
+                is_codex_compatible = (
+                    api_format == "responses"
+                    or protocol == "openai-responses"
+                    or model_config.get("wire_api") == "responses"
+                )
 
                 # Filter compatible models
                 # Agno supports OpenAI, Claude and Gemini models
@@ -320,7 +327,10 @@ def get_compatible_models(
                     "gemini",
                 ]:
                     compatible_models.append({"name": model_kind.name})
-                elif shell_type == "ClaudeCode" and model_type == "claude":
+                elif shell_type == "ClaudeCode" and (
+                    model_type == "claude"
+                    or (model_type == "openai" and is_codex_compatible)
+                ):
                     compatible_models.append({"name": model_kind.name})
         except Exception as e:
             logger.warning(f"Failed to parse model {model_kind.name}: {e}")

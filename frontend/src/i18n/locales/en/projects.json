@@ -14,7 +14,14 @@
   },
   "workspaceSection": {
     "title": "Projects",
-    "empty": "No projects, click + to create"
+    "empty": "No projects, click + to create",
+    "showMore": "Show more"
+  },
+  "relativeTime": {
+    "minute": "{{count}} min",
+    "hour": "{{count}} hr",
+    "day": "{{count}} d",
+    "week": "{{count}} wk"
   },
   "actions": {
     "edit": "Edit",
