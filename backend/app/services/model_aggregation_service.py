@@ -164,6 +164,10 @@ class ModelAggregationService:
                 model_category_type = model_crd.spec.modelType.value
 
             config = model_crd.spec.modelConfig
+            if model_crd.spec.protocol:
+                config = {**config, "protocol": model_crd.spec.protocol}
+            if model_crd.spec.apiFormat:
+                config = {**config, "apiFormat": model_crd.spec.apiFormat.value}
 
             # Include type-specific config for non-LLM models
             if model_category_type == "video":
@@ -216,7 +220,11 @@ class ModelAggregationService:
             }
 
     def _is_model_compatible_with_shell(
-        self, provider: Optional[str], shell_type: str, support_model: List[str]
+        self,
+        provider: Optional[str],
+        shell_type: str,
+        support_model: List[str],
+        config: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """
         Check if a model is compatible with the given shell type.
@@ -233,12 +241,18 @@ class ModelAggregationService:
         # Agno supports OpenAI, Claude and Gemini models
         shell_provider_map = {
             "Agno": ["openai", "claude", "gemini"],
-            "ClaudeCode": ["claude"],
+            "ClaudeCode": ["claude", "openai"],
         }
 
-        # If supportModel is specified in shell, use it
         if support_model:
-            return provider in support_model
+            if provider not in support_model:
+                return False
+
+        if shell_type == "ClaudeCode" and provider == "openai":
+            return self._is_codex_compatible_model_config(config or {})
+
+        if support_model:
+            return True
 
         # Otherwise, filter by shell's supported providers
         supported_providers = shell_provider_map.get(shell_type)
@@ -250,6 +264,18 @@ class ModelAggregationService:
 
         # No filter, allow all
         return True
+
+    @staticmethod
+    def _is_codex_compatible_model_config(config: Dict[str, Any]) -> bool:
+        """Return whether an OpenAI model config can run through CodeXAgent."""
+        api_format = str(config.get("apiFormat") or config.get("api_format") or "")
+        protocol = str(config.get("protocol") or "")
+        wire_api = str(config.get("wire_api") or "")
+        return (
+            api_format.lower() == "responses"
+            or protocol.lower() == "openai-responses"
+            or wire_api.lower() == "responses"
+        )
 
     def _get_shell_support_model(
         self, db: Session, shell_name: str, current_user: Optional[User] = None
@@ -415,7 +441,10 @@ class ModelAggregationService:
                 info = self._extract_model_info_from_crd(model_data)
 
                 if shell_type and not self._is_model_compatible_with_shell(
-                    info["provider"], actual_shell_type, support_model
+                    info["provider"],
+                    actual_shell_type,
+                    support_model,
+                    info.get("config"),
                 ):
                     continue
 
@@ -464,7 +493,10 @@ class ModelAggregationService:
             public_model_category_type = model_dict.get("model_category_type", "llm")
 
             if shell_type and not self._is_model_compatible_with_shell(
-                provider, actual_shell_type, support_model
+                provider,
+                actual_shell_type,
+                support_model,
+                config,
             ):
                 continue
 
