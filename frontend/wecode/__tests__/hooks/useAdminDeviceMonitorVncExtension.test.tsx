@@ -143,27 +143,49 @@ describe('useAdminDeviceMonitorVncExtension', () => {
     expect(screen.queryByTestId('vnc-device-device-cloud-openclaw')).not.toBeInTheDocument()
   })
 
-  it('closes the panel when the active device is no longer available for VNC', () => {
-    const onlineDevice = buildDevice({
+  it('renders VNC action for offline cloud Claude Code devices (admin only)', () => {
+    const offlineDevice = buildDevice({
       id: 5,
-      device_id: 'device-cloud-2',
-      name: 'cloud-device-2',
+      device_id: 'device-cloud-offline',
+      name: 'cloud-device-offline',
       device_type: 'cloud',
+      status: 'offline',
       user_id: 7,
       client_ip: '10.0.0.3',
     })
 
+    render(<ExtensionHarness devices={[offlineDevice]} />)
+
+    const button = screen.getByTestId('vnc-device-device-cloud-offline')
+    expect(button).toBeEnabled()
+
+    fireEvent.click(button)
+
+    expect(screen.getByTestId('admin-device-vnc-panel')).toBeInTheDocument()
+  })
+
+  it('closes the panel when the active device is no longer available for VNC', () => {
+    const onlineDevice = buildDevice({
+      id: 6,
+      device_id: 'device-cloud-3',
+      name: 'cloud-device-3',
+      device_type: 'cloud',
+      user_id: 8,
+      client_ip: '10.0.0.4',
+    })
+
     const { rerender } = render(<ExtensionHarness devices={[onlineDevice]} />)
 
-    fireEvent.click(screen.getByTestId('vnc-device-device-cloud-2'))
+    fireEvent.click(screen.getByTestId('vnc-device-device-cloud-3'))
     expect(screen.getByTestId('admin-device-vnc-panel')).toBeInTheDocument()
 
+    // Panel closes when device changes to local (no longer cloud)
     rerender(
       <ExtensionHarness
         devices={[
           {
             ...onlineDevice,
-            status: 'offline',
+            device_type: 'local',
           },
         ]}
       />
