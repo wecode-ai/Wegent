@@ -9,8 +9,10 @@ Unified service for handling attachments, knowledge bases, and other
 context types that can be associated with subtasks.
 """
 
+import json
 import logging
 import os
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from sqlalchemy.orm import Session
@@ -33,6 +35,7 @@ from app.services.attachment.parser import (
 )
 from app.services.attachment.storage_backend import StorageError, generate_storage_key
 from app.services.attachment.storage_factory import get_storage_backend
+from app.services.media.weibo_media_service import weibo_media_service
 from shared.telemetry.decorators import trace_sync
 from shared.utils.crypto import decrypt_attachment, encrypt_attachment
 
@@ -44,10 +47,28 @@ def _should_encrypt() -> bool:
     return os.environ.get("ATTACHMENT_ENCRYPTION_ENABLED", "false").lower() == "true"
 
 
+@dataclass
+class VideoAttachmentPayload:
+    """
+    Payload for video attachment processing.
+
+    Shared data structure used by both real-time send and HTTP history recovery paths.
+    """
+
+    video_url: str
+    mime_type: str
+    metadata_header: str
+    metadata_text: str
+
+
 class NotFoundException(Exception):
     """Exception raised when a context is not found."""
 
     pass
+
+
+class VideoAttachmentResolutionError(ValueError):
+    """Raised when a video attachment cannot be resolved to model input."""
 
 
 class ContextService:
@@ -66,6 +87,9 @@ class ContextService:
 
     # Image file extensions supported for vision models
     IMAGE_EXTENSIONS = frozenset([".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"])
+
+    # Video file extensions — derived from DocumentParser to ensure consistency
+    VIDEO_EXTENSIONS = DocumentParser.VIDEO_EXTENSIONS
 
     # ==================== Helper Methods ====================
 
@@ -410,6 +434,94 @@ class ContextService:
 
         return context, truncation_info
 
+    def upload_video_metadata(
+        self,
+        db: Session,
+        user_id: int,
+        filename: str,
+        file_size: int,
+        extension: str,
+        fid: int,
+        subtask_id: int = 0,
+    ) -> SubtaskContext:
+        """
+        Upload video metadata after frontend has uploaded to Weibo platform.
+
+        Unlike regular attachments, video binary data is NOT stored locally.
+        Only metadata (including fid) is saved to type_data for LLM tool access.
+
+        Args:
+            db: Database session
+            user_id: User ID
+            filename: Original filename
+            file_size: File size in bytes
+            extension: File extension (e.g., ".mp4")
+            fid: File ID returned by Weibo platform
+            subtask_id: Subtask ID to link to (0 means unlinked)
+
+        Returns:
+            Created SubtaskContext record
+
+        Raises:
+            ValueError: If video format is not supported or file size exceeds limit
+        """
+        # Validate extension
+        extension = extension.lower()
+        if extension not in self.VIDEO_EXTENSIONS:
+            raise ValueError(
+                f"Unsupported video format: {extension}. "
+                f"Supported formats: {', '.join(sorted(self.VIDEO_EXTENSIONS))}"
+            )
+
+        # Validate file size
+        max_size = self.parser.get_max_video_file_size()
+        if file_size > max_size:
+            raise ValueError(
+                f"Video file size exceeds maximum limit ({max_size / (1024 * 1024):.0f} MB)"
+            )
+
+        # Build MIME type
+        mime_type = self.parser.get_mime_type(extension)
+
+        # Create context with READY status (no processing needed)
+        effective_subtask_id = (
+            subtask_id if subtask_id > 0 else self.UNLINKED_SUBTASK_ID
+        )
+
+        type_data = {
+            "original_filename": filename,
+            "file_extension": extension,
+            "file_size": file_size,
+            "mime_type": mime_type,
+            "storage_backend": "weibo",
+            "fid": fid,
+        }
+
+        context = SubtaskContext(
+            subtask_id=effective_subtask_id,
+            user_id=user_id,
+            context_type=ContextType.ATTACHMENT.value,
+            name=filename,
+            status=ContextStatus.READY.value,  # Video is ready immediately
+            binary_data=b"",  # No binary data stored for videos
+            image_base64="",
+            extracted_text="",
+            text_length=0,
+            error_message="",
+            type_data=type_data,
+        )
+
+        db.add(context)
+        db.commit()
+        db.refresh(context)
+
+        logger.info(
+            f"Video metadata uploaded: id={context.id}, filename={filename}, "
+            f"fid={fid}, size={file_size}"
+        )
+
+        return context
+
     def overwrite_attachment(
         self,
         db: Session,
@@ -637,6 +749,95 @@ class ContextService:
         if context.context_type != ContextType.ATTACHMENT.value:
             return False
         return context.file_extension.lower() in self.IMAGE_EXTENSIONS
+
+    def is_video_context(self, context: SubtaskContext) -> bool:
+        """
+        Check if context is a video attachment.
+
+        Video attachments cannot be text-extracted, but their metadata
+        (including fid) are injected for LLM tool access.
+
+        Args:
+            context: SubtaskContext record
+
+        Returns:
+            True if the context is a video attachment
+        """
+        if context.context_type != ContextType.ATTACHMENT.value:
+            return False
+        return context.file_extension.lower() in self.VIDEO_EXTENSIONS
+
+    def build_video_content_from_attachment(
+        self, context: SubtaskContext
+    ) -> Optional[VideoAttachmentPayload]:
+        """
+        Build a provider-neutral video attachment payload.
+
+        Shared helper for both real-time send and HTTP history recovery paths.
+        It does not return protocol-specific message blocks.
+
+        Video URL resolution is mandatory. A missing fid or failed URL resolution
+        raises VideoAttachmentResolutionError so the chat request can fail explicitly
+        instead of silently sending metadata.
+
+        Note: Videos are stored on Weibo platform only, not in S3/MinIO storage backends.
+
+        Args:
+            context: SubtaskContext record with video attachment
+        Returns:
+            VideoAttachmentPayload, or None if not a video context
+        """
+        if not self.is_video_context(context):
+            logger.debug(
+                f"[build_video_content_from_attachment] Not a video context: id={context.id}, "
+                f"extension={context.file_extension}"
+            )
+            return None
+
+        filename = context.original_filename or "video"
+        attachment_id = context.id
+        mime_type = context.mime_type or "video/mp4"
+        file_size = context.file_size or 0
+        formatted_size = self.format_file_size(file_size)
+
+        metadata_header = (
+            f"[Video Attachment: {filename} | ID: {attachment_id} | "
+            f"Type: {mime_type} | Size: {formatted_size}]"
+        )
+
+        type_data = context.type_data or {}
+        fid = type_data.get("fid")
+
+        logger.info(
+            f"[build_video_content_from_attachment] Processing video: id={attachment_id}, "
+            f"filename={filename}, fid={fid}"
+        )
+
+        if not fid:
+            raise VideoAttachmentResolutionError(
+                f"Video attachment {attachment_id} is missing fid"
+            )
+
+        video_url = weibo_media_service.get_download_url(fid)
+        if not video_url:
+            raise VideoAttachmentResolutionError(
+                f"Failed to resolve video URL for attachment {attachment_id}"
+            )
+
+        metadata_text = f"{metadata_header}\n"
+        metadata_text += json.dumps({"fid": fid})
+
+        logger.info(
+            f"[build_video_content_from_attachment] Result: id={attachment_id}, "
+            "video_url_resolved=True"
+        )
+
+        return VideoAttachmentPayload(
+            video_url=video_url,
+            mime_type=mime_type,
+            metadata_header=metadata_header,
+            metadata_text=metadata_text,
+        )
 
     def build_vision_content_block(
         self,

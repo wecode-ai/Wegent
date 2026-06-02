@@ -1092,6 +1092,7 @@
     "public_models": "Public Models",
     "my_models": "My Models",
     "manage": "Model settings",
+    "video_understanding": "Video",
     "create": "Create Model",
     "create_title": "Create Model",
     "edit": "Edit Model",
@@ -1118,6 +1119,7 @@
     "custom_headers": "Custom Headers",
     "custom_headers_hint": "Enter custom HTTP headers in JSON format. These headers will override default values",
     "no_models": "No models available",
+    "no_video_input_models": "No video input models available",
     "no_models_hint": "Click the button above to create your first model",
     "loading": "Loading...",
     "test_success": "Connection test successful",
@@ -1195,6 +1197,8 @@
     "max_output_tokens_hint": "Maximum output tokens the model can generate per response.",
     "thinking_config": "Thinking Config",
     "thinking_config_hint": "Provider-native thinking/reasoning JSON config. Passed through to the LLM API as-is. Leave empty to disable.",
+    "supports_video_input": "Supports Video Attachments",
+    "supports_video_input_hint": "When enabled, video attachments can be uploaded in chat and sent to the model as video content blocks; otherwise messages with video attachments are not allowed.",
     "fetch_models": "Load Models",
     "fetching_models": "Loading...",
     "fetch_success": "Successfully loaded {{count}} models",
@@ -1206,6 +1210,8 @@
     "fetch_error_unsupported": "This provider does not support auto-loading model list",
     "errors": {
       "load_models_failed": "Failed to load models",
+      "load_model_detail_failed": "Failed to load model details",
+      "load_model_detail_failed_hint": "Unable to open model editing safely. Please try again later.",
       "create_failed": "Failed to create model",
       "update_failed": "Failed to update model",
       "delete_failed": "Failed to delete model",
@@ -1231,6 +1237,7 @@
     "default_model": "Default",
     "use_bot_model": "Use Bot's predefined model",
     "model_required": "Please select a model",
+    "video_model_required": "Please select a video-understanding model",
     "model_tooltip": "Select AI model for conversation"
   },
   "footer": {

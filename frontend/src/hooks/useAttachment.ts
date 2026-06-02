@@ -9,11 +9,9 @@
 import { useState, useCallback } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
-  uploadAttachment,
+  uploadFile,
   deleteAttachment,
-  isSupportedExtension,
-  isValidFileSize,
-  MAX_FILE_SIZE,
+  validateFile,
   getErrorMessageFromCode,
 } from '@/apis/attachments'
 import type { AttachmentUploadState, TruncationInfo } from '@/types/api'
@@ -46,28 +44,16 @@ export function useAttachment(): UseAttachmentReturn {
 
   const handleFileSelect = useCallback(
     async (file: File) => {
-      // Validate file type
-      if (!isSupportedExtension(file.name)) {
+      // Validate file
+      const validationError = validateFile(file, t)
+      if (validationError) {
         setState(prev => ({
           ...prev,
           file: null,
           attachment: null,
           isUploading: false,
           uploadProgress: 0,
-          error: `${t('common:attachment.errors.unsupported_type')}: ${t('common:attachment.errors.unsupported_type_hint', { types: t('common:attachment.supported_types') })}`,
-        }))
-        return
-      }
-
-      // Validate file size
-      if (!isValidFileSize(file.size)) {
-        setState(prev => ({
-          ...prev,
-          file: null,
-          attachment: null,
-          isUploading: false,
-          uploadProgress: 0,
-          error: `${t('common:attachment.errors.file_too_large')}: ${t('common:attachment.errors.file_too_large_hint', { size: Math.round(MAX_FILE_SIZE / (1024 * 1024)) })}`,
+          error: validationError,
         }))
         return
       }
@@ -84,14 +70,14 @@ export function useAttachment(): UseAttachmentReturn {
       setTruncationInfo(null)
 
       try {
-        const attachment = await uploadAttachment(file, progress => {
+        const attachment = await uploadFile(file, progress => {
           setState(prev => ({
             ...prev,
             uploadProgress: progress,
           }))
         })
 
-        // Check if parsing succeeded
+        // Check if parsing succeeded (non-video files only)
         if (attachment.status === 'failed') {
           const errorMessage =
             getErrorMessageFromCode(attachment.error_code, t) ||

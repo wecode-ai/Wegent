@@ -27,7 +27,7 @@ import { GuidedQuestions } from '@/features/knowledge/document/components/Guided
 import type { PipelineStageInfo } from '@/apis/tasks'
 import { useChatAreaState } from './useChatAreaState'
 import { useChatStreamHandlers } from './useChatStreamHandlers'
-import { allBotsHavePredefinedModel } from '../selector/ModelSelector'
+import { allBotsHavePredefinedModel, DEFAULT_MODEL_NAME } from '../selector/ModelSelector'
 import { QuoteProvider, SelectionTooltip, useQuote } from '../text-selection'
 import type { Team, SubtaskContextBrief, TaskType } from '@/types/api'
 import type { Model } from '../../hooks/useModelSelection'
@@ -51,15 +51,18 @@ import {
 import { useToast } from '@/hooks/use-toast'
 import { useScrollManagement } from '../hooks/useScrollManagement'
 import { useFloatingInput } from '../hooks/useFloatingInput'
-import { getAttachment } from '@/apis/attachments'
+import { getAttachment, isVideoFileName, isVideoExtension } from '@/apis/attachments'
 import { useAttachmentUpload } from '../hooks/useAttachmentUpload'
 import { useSchemeMessageActions } from '@/lib/scheme'
 import { QueryParamAutoSend } from '../params'
 import { useSkillSelector } from '../../hooks/useSkillSelector'
-import { useModelSelection } from '../../hooks/useModelSelection'
+import { unifiedToModel, useModelSelection } from '../../hooks/useModelSelection'
 import { QueueMessageHandler } from '@/features/inbox'
 import type { ChatAreaExtension } from './types'
 import { useProjectContext } from '@/features/projects/contexts/projectContext'
+import { modelApis } from '@/apis/models'
+import { getAllowedModelsFromConfig } from '@/features/settings/services/bots'
+import { getCompatibleProviderFromAgentType } from '@/utils/modelCompatibility'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -75,6 +78,59 @@ const PIPELINE_NEXT_STEP_CONTEXT_TYPES = new Set<SubtaskContextBrief['context_ty
   'knowledge_base',
   'table',
 ])
+
+function isVideoAttachment(attachment: {
+  mime_type?: string | null
+  file_extension?: string | null
+}): boolean {
+  if (attachment.mime_type?.toLowerCase().startsWith('video/')) {
+    return true
+  }
+  const extension = attachment.file_extension?.toLowerCase()
+  return Boolean(extension && isVideoExtension(extension))
+}
+
+function isVideoFile(file: File): boolean {
+  if (file.type.toLowerCase().startsWith('video/')) {
+    return true
+  }
+  return isVideoFileName(file.name)
+}
+
+function supportsVideoInput(model: Model | null | undefined): boolean {
+  if (!model || model.name === DEFAULT_MODEL_NAME) {
+    return false
+  }
+  const modelCapabilities = model.config?.modelCapabilities as
+    | { supportsVideo?: boolean }
+    | undefined
+  return modelCapabilities?.supportsVideo === true
+}
+
+async function hasAvailableVideoInputModel(team: Team | null | undefined): Promise<boolean> {
+  if (!team) {
+    return false
+  }
+
+  const response = await modelApis.getUnifiedModels(undefined, false, 'all', undefined, 'llm')
+  let models = (response.data || []).map(unifiedToModel)
+
+  const compatibleProvider = getCompatibleProviderFromAgentType(team.agent_type)
+  if (compatibleProvider) {
+    models = models.filter(model => model.provider === compatibleProvider)
+  }
+
+  const firstBot = team.bots?.[0]?.bot
+  const allowedModels = firstBot?.agent_config
+    ? getAllowedModelsFromConfig(firstBot.agent_config as Record<string, unknown>)
+    : []
+  if (allowedModels.length > 0) {
+    const allowedNames = new Set(allowedModels.map(model => model.name))
+    models = models.filter(model => allowedNames.has(model.name))
+  }
+
+  return models.some(supportsVideoInput)
+}
 
 function isPipelineNextStepContext(context: unknown): context is SubtaskContextBrief {
   if (!context || typeof context !== 'object') {
@@ -236,6 +292,58 @@ function ChatAreaContent({
     initialKnowledgeBase,
     maxAttachments: maxAttachmentsFromModel,
   })
+
+  const requireVideoInputModel = useMemo(() => {
+    if (taskType === 'video') {
+      return false
+    }
+    return chatState.attachmentState.attachments.some(isVideoAttachment)
+  }, [taskType, chatState.attachmentState.attachments])
+
+  const selectedModelSupportsVideoInput = useMemo(
+    () => supportsVideoInput(chatState.selectedModel),
+    [chatState.selectedModel]
+  )
+
+  const handleFileSelect = useCallback(
+    async (files: File | File[]) => {
+      const fileList = Array.isArray(files) ? files : [files]
+      const hasVideoFile = taskType !== 'video' && fileList.some(isVideoFile)
+
+      if (hasVideoFile && !selectedModelSupportsVideoInput) {
+        const hasVideoModel = await hasAvailableVideoInputModel(chatState.selectedTeam)
+        if (!hasVideoModel) {
+          toast({
+            title: t('common:task_submit.video_model_required'),
+            variant: 'destructive',
+          })
+          return
+        }
+      }
+
+      await chatState.handleFileSelect(files)
+    },
+    [chatState, selectedModelSupportsVideoInput, taskType, toast, t]
+  )
+
+  const previousRequireVideoInputModelRef = useRef(requireVideoInputModel)
+  const previousSelectedModelRef = useRef(chatState.selectedModel)
+  useEffect(() => {
+    if (
+      requireVideoInputModel &&
+      previousRequireVideoInputModelRef.current &&
+      previousSelectedModelRef.current &&
+      !chatState.selectedModel
+    ) {
+      toast({
+        title: t('common:task_submit.video_model_required'),
+        variant: 'destructive',
+      })
+    }
+
+    previousRequireVideoInputModelRef.current = requireVideoInputModel
+    previousSelectedModelRef.current = chatState.selectedModel
+  }, [requireVideoInputModel, chatState.selectedModel, toast, t])
 
   // Compute initial selected skills from task detail (for page refresh recovery)
   const initialSelectedSkills = useMemo(() => {
@@ -848,7 +956,7 @@ function ChatAreaContent({
       isLoading: chatState.isLoading,
       isStreaming: streamHandlers.isStreaming,
       attachmentState: chatState.attachmentState,
-      onFileSelect: chatState.handleFileSelect,
+      onFileSelect: handleFileSelect,
       setIsDragging: chatState.setIsDragging,
     })
 
@@ -1250,6 +1358,7 @@ function ChatAreaContent({
     setForceOverride: chatState.setForceOverride,
     teamId: chatState.selectedTeam?.id,
     taskId: selectedTaskDetail?.id,
+    requireVideoInputModel,
     showRepositorySelector,
     selectedRepo: chatState.selectedRepo,
     setSelectedRepo: chatState.setSelectedRepo,
@@ -1270,7 +1379,7 @@ function ChatAreaContent({
     selectedContexts: chatState.selectedContexts,
     setSelectedContexts: chatState.setSelectedContexts,
     attachmentState: chatState.attachmentState,
-    onFileSelect: chatState.handleFileSelect,
+    onFileSelect: handleFileSelect,
     onAttachmentRemove: chatState.handleAttachmentRemove,
     isLoading: chatState.isLoading,
     isStreaming: streamHandlers.isStreaming,

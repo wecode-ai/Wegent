@@ -2,7 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { getErrorMessageFromCode } from '@/apis/attachments'
+import {
+  getErrorMessageFromCode,
+  getWeiboChunkUploadError,
+  isVideoFileName,
+} from '@/apis/attachments'
 
 describe('getErrorMessageFromCode', () => {
   // Mock translation function
@@ -87,5 +91,29 @@ describe('getErrorMessageFromCode', () => {
     expect(result).toBeDefined()
     expect(result).toContain('File is too large')
     expect(result).toContain('100')
+  })
+})
+
+describe('video helpers', () => {
+  it('detects supported video filenames case-insensitively', () => {
+    expect(isVideoFileName('demo.MP4')).toBe(true)
+    expect(isVideoFileName('demo.txt')).toBe(false)
+  })
+})
+
+describe('getWeiboChunkUploadError', () => {
+  it('returns null for successful or unspecified business status', () => {
+    expect(getWeiboChunkUploadError({ succ: true, request_id: 'req-1' })).toBeNull()
+    expect(getWeiboChunkUploadError({ request_id: 'req-1' })).toBeNull()
+  })
+
+  it('returns business error details when Weibo returns succ false', () => {
+    expect(
+      getWeiboChunkUploadError({
+        succ: false,
+        request_id: 'req-1',
+        errmsg: 'section check mismatch',
+      })
+    ).toBe('section check mismatch')
   })
 })

@@ -20,6 +20,7 @@ import {
 import { getToken } from '@/apis/user'
 import type { Attachment, MultiAttachmentUploadState } from '@/types/api'
 import { useState, useEffect } from 'react'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface MultiFileUploadProps {
   /** Current attachments state */
@@ -238,6 +239,7 @@ export default function MultiFileUpload({
   showButtonOnly = false,
   showPreviewOnly = false,
 }: MultiFileUploadProps) {
+  const { t } = useTranslation('chat')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const handleClick = useCallback(() => {
@@ -284,7 +286,9 @@ export default function MultiFileUpload({
   const acceptString = SUPPORTED_EXTENSIONS.join(',')
 
   // Tooltip content
-  const tooltipContent = `支持的文件类型: PDF, Word, PPT, Excel, XMind, TXT, Markdown, 图片(JPG, PNG, GIF, BMP, WebP)\n最大文件大小: ${MAX_FILE_SIZE / (1024 * 1024)} MB\n支持多文件同时上传`
+  const tooltipContent = t('upload.tooltip', {
+    maxSize: MAX_FILE_SIZE / (1024 * 1024),
+  })
 
   const hasAttachments = state.attachments.length > 0
   const isUploading = state.uploadingFiles.size > 0

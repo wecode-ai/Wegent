@@ -9,10 +9,10 @@
 import { useState, useCallback } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
-  uploadAttachment,
+  uploadFile,
   deleteAttachment,
-  isSupportedExtension,
-  isValidFileSize,
+  validateFile,
+  isVideoExtension,
   getErrorMessageFromCode,
 } from '@/apis/attachments'
 import type { Attachment } from '@/types/api'
@@ -107,15 +107,10 @@ export function useBatchAttachment(): UseBatchAttachmentReturn {
       const validationErrors: string[] = []
 
       for (const file of filesToAdd) {
-        // Validate file type
-        if (!isSupportedExtension(file.name)) {
-          validationErrors.push(`${file.name}: ${t('common:attachment.errors.unsupported_type')}`)
-          continue
-        }
-
-        // Validate file size
-        if (!isValidFileSize(file.size)) {
-          validationErrors.push(`${file.name}: ${t('common:attachment.errors.file_too_large')}`)
+        // Validate file
+        const validationError = validateFile(file, t)
+        if (validationError) {
+          validationErrors.push(`${file.name}: ${validationError}`)
           continue
         }
 
@@ -176,16 +171,19 @@ export function useBatchAttachment(): UseBatchAttachmentReturn {
         ),
       }))
 
+      const extension = fileItem.file.name.substring(fileItem.file.name.lastIndexOf('.'))
+      const isVideo = isVideoExtension(extension)
+
       try {
-        const attachment = await uploadAttachment(fileItem.file, progress => {
+        const attachment = await uploadFile(fileItem.file, progress => {
           setState(prev => ({
             ...prev,
             files: prev.files.map(f => (f.id === fileItem.id ? { ...f, progress } : f)),
           }))
         })
 
-        // Check if parsing succeeded
-        if (attachment.status === 'failed') {
+        // Check if parsing succeeded (non-video files only)
+        if (!isVideo && attachment.status === 'failed') {
           const errorMessage =
             getErrorMessageFromCode(attachment.error_code, t) ||
             attachment.error_message ||

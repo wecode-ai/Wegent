@@ -537,6 +537,7 @@ class TaskAttachmentInfo:
     file_size: int
     mime_type: str
     subtask_id: int
+    file_extension: str  # File extension including the dot (e.g., ".mp4", ".pdf")
 
 
 @dataclass
@@ -588,6 +589,7 @@ def fetch_task_attachments(task_id: str, auth_token: str) -> TaskAttachmentsResu
                         file_size=att.get("file_size", 0),
                         mime_type=att.get("mime_type", ""),
                         subtask_id=att.get("subtask_id", 0),
+                        file_extension=att.get("file_extension", ""),
                     )
                 )
             logger.info(

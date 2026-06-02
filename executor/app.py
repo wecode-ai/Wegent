@@ -271,6 +271,8 @@ def _predownload_task_attachments(auth_token: str, task_id: str) -> None:
                 "id": att.id,
                 "original_filename": att.original_filename,
                 "subtask_id": att.subtask_id,
+                "mime_type": att.mime_type,
+                "file_extension": att.file_extension,
             }
         )
 

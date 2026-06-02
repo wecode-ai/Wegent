@@ -167,6 +167,7 @@ export function ChatInputCard({
   setForceOverride,
   teamId,
   taskId,
+  requireVideoInputModel,
   showRepositorySelector,
   selectedRepo,
   setSelectedRepo,
@@ -575,6 +576,7 @@ export function ChatInputCard({
             teamId={teamId}
             taskId={taskId}
             taskModelId={selectedTaskDetail?.model_id}
+            requireVideoInputModel={requireVideoInputModel}
             showRepositorySelector={showRepositorySelector}
             selectedRepo={selectedRepo}
             setSelectedRepo={setSelectedRepo}

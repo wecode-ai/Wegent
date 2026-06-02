@@ -1092,6 +1092,7 @@
     "public_models": "公共模型",
     "my_models": "我的模型",
     "manage": "模型设置",
+    "video_understanding": "视频",
     "create": "创建模型",
     "create_title": "创建模型",
     "edit": "编辑模型",
@@ -1118,6 +1119,7 @@
     "custom_headers": "自定义 Headers",
     "custom_headers_hint": "输入 JSON 格式的自定义 HTTP Headers，这些 Headers 会覆盖默认值",
     "no_models": "暂无模型",
+    "no_video_input_models": "暂无支持视频输入的模型",
     "no_models_hint": "点击上方按钮创建第一个模型",
     "loading": "加载中...",
     "test_success": "连接测试成功",
@@ -1195,6 +1197,8 @@
     "max_output_tokens_hint": "模型每次响应可生成的最大 token 数。",
     "thinking_config": "思考配置",
     "thinking_config_hint": "供应商原生的思考/推理 JSON 配置，将原样传递给 LLM API。留空则不启用。",
+    "supports_video_input": "支持视频附件输入",
+    "supports_video_input_hint": "开启后，聊天中可上传视频附件并按视频内容块传给模型；关闭时不能发送包含视频附件的消息。",
     "fetch_models": "加载模型",
     "fetching_models": "加载中...",
     "fetch_success": "成功加载 {{count}} 个模型",
@@ -1206,6 +1210,8 @@
     "fetch_error_unsupported": "该提供商暂不支持自动加载模型列表",
     "errors": {
       "load_models_failed": "加载模型列表失败",
+      "load_model_detail_failed": "加载模型详情失败",
+      "load_model_detail_failed_hint": "无法安全打开模型编辑，请稍后重试。",
       "create_failed": "创建模型失败",
       "update_failed": "更新模型失败",
       "delete_failed": "删除模型失败",
@@ -1231,6 +1237,7 @@
     "default_model": "默认模型",
     "use_bot_model": "使用 Bot 预设模型",
     "model_required": "请选择模型",
+    "video_model_required": "请选择支持视频理解的模型",
     "model_tooltip": "选择用于对话的 AI 模型"
   },
   "footer": {

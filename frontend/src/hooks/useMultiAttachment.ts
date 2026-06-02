@@ -9,11 +9,9 @@
 import { useState, useCallback } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
-  uploadAttachment,
+  uploadFile,
   deleteAttachment,
-  isSupportedExtension,
-  isValidFileSize,
-  MAX_FILE_SIZE,
+  validateFile,
   getErrorMessageFromCode,
 } from '@/apis/attachments'
 import type { MultiAttachmentUploadState, TruncationInfo } from '@/types/api'
@@ -80,27 +78,12 @@ export function useMultiAttachment(options?: {
         // Use only filename as fileId to avoid duplicate errors for the same file
         const fileId = file.name
 
-        // Validate file type
-        if (!isSupportedExtension(file.name)) {
+        // Validate file
+        const validationError = validateFile(file, t)
+        if (validationError) {
           setState(prev => {
             const newErrors = new Map(prev.errors)
-            newErrors.set(
-              fileId,
-              `${t('common:attachment.errors.unsupported_type')}: ${t('common:attachment.errors.unsupported_type_hint', { types: t('common:attachment.supported_types') })}`
-            )
-            return { ...prev, errors: newErrors }
-          })
-          continue
-        }
-
-        // Validate file size
-        if (!isValidFileSize(file.size)) {
-          setState(prev => {
-            const newErrors = new Map(prev.errors)
-            newErrors.set(
-              fileId,
-              `${t('common:attachment.errors.file_too_large')}: ${t('common:attachment.errors.file_too_large_hint', { size: Math.round(MAX_FILE_SIZE / (1024 * 1024)) })}`
-            )
+            newErrors.set(fileId, validationError)
             return { ...prev, errors: newErrors }
           })
           continue
@@ -120,7 +103,7 @@ export function useMultiAttachment(options?: {
         })
 
         try {
-          const attachment = await uploadAttachment(file, progress => {
+          const attachment = await uploadFile(file, progress => {
             setState(prev => {
               const newUploadingFiles = new Map(prev.uploadingFiles)
               const existing = newUploadingFiles.get(fileId)

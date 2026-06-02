@@ -27,6 +27,13 @@ function getModelKey(model: Model): string {
   return `${model.name}:${model.type || ''}`
 }
 
+function supportsVideoUnderstanding(model: Model): boolean {
+  return (
+    (model.config?.modelCapabilities as { supportsVideo?: boolean } | undefined)?.supportsVideo ===
+    true
+  )
+}
+
 interface MobileModelSelectorProps {
   selectedModel: Model | null
   setSelectedModel: (model: Model | null) => void
@@ -38,6 +45,7 @@ interface MobileModelSelectorProps {
   teamId?: number | null
   taskId?: number | null
   taskModelId?: string | null
+  requireVideoInput?: boolean
 }
 
 /**
@@ -55,6 +63,7 @@ export default function MobileModelSelector({
   teamId,
   taskId,
   taskModelId,
+  requireVideoInput = false,
 }: MobileModelSelectorProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -65,6 +74,7 @@ export default function MobileModelSelector({
     taskModelId,
     selectedTeam,
     disabled,
+    requireVideoInput,
   })
 
   // Sync external state with hook state
@@ -72,6 +82,8 @@ export default function MobileModelSelector({
     if (modelSelection.selectedModel !== externalSelectedModel) {
       if (modelSelection.selectedModel) {
         externalSetSelectedModel(modelSelection.selectedModel)
+      } else if (externalSelectedModel) {
+        externalSetSelectedModel(null)
       }
     }
   }, [modelSelection.selectedModel, externalSelectedModel, externalSetSelectedModel])
@@ -183,7 +195,9 @@ export default function MobileModelSelector({
             <div className="rounded-xl bg-white dark:bg-[#2c2c2e] p-4 text-center text-sm text-[#8e8e93]">
               {modelSelection.isLoading
                 ? t('common:loading', '加载中...')
-                : t('common:models.no_models', '暂无模型')}
+                : requireVideoInput
+                  ? t('common:models.no_video_input_models')
+                  : t('common:models.no_models', '暂无模型')}
             </div>
           ) : (
             <div className="rounded-xl bg-white dark:bg-[#2c2c2e] overflow-hidden">
@@ -241,6 +255,14 @@ export default function MobileModelSelector({
                             className="text-[10px] flex-shrink-0 whitespace-nowrap"
                           >
                             {t('common:settings.personal', '个人')}
+                          </Tag>
+                        )}
+                        {supportsVideoUnderstanding(model) && (
+                          <Tag
+                            variant="success"
+                            className="text-[10px] flex-shrink-0 whitespace-nowrap"
+                          >
+                            {t('common:models.video_understanding', '视频理解')}
                           </Tag>
                         )}
                       </div>

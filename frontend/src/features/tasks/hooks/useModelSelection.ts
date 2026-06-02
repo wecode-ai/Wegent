@@ -83,6 +83,8 @@ export interface UseModelSelectionOptions {
   disabled?: boolean
   /** Model category type to filter models (default: 'llm') */
   modelCategoryType?: ModelCategoryType
+  /** When true, only models that explicitly support video input are selectable */
+  requireVideoInput?: boolean
 }
 
 /** Return type for useModelSelection hook */
@@ -164,6 +166,7 @@ export function useModelSelection({
   taskModelId,
   selectedTeam,
   modelCategoryType = 'llm',
+  requireVideoInput = false,
 }: UseModelSelectionOptions): UseModelSelectionReturn {
   const { t } = useTranslation()
 
@@ -194,8 +197,11 @@ export function useModelSelection({
 
   /** Check if all bots have predefined models (show "Default" option) */
   const showDefaultOption = useMemo(() => {
+    if (requireVideoInput) {
+      return false
+    }
     return allBotsHavePredefinedModel(selectedTeam)
-  }, [selectedTeam])
+  }, [selectedTeam, requireVideoInput])
 
   /** Get compatible provider based on team agent_type */
   const compatibleProvider = useMemo((): string | null => {
@@ -232,12 +238,19 @@ export function useModelSelection({
       const allowedNames = new Set(allowedModels.map(m => m.name))
       result = result.filter(m => allowedNames.has(m.name))
     }
+    if (requireVideoInput) {
+      result = result.filter(
+        model =>
+          (model.config?.modelCapabilities as { supportsVideo?: boolean } | undefined)
+            ?.supportsVideo === true
+      )
+    }
     return result.slice().sort((a, b) => {
       const displayA = getModelDisplayTextHelper(a).toLowerCase()
       const displayB = getModelDisplayTextHelper(b).toLowerCase()
       return displayA.localeCompare(displayB)
     })
-  }, [models, compatibleProvider, showAdvancedModels, allowedModels])
+  }, [models, compatibleProvider, showAdvancedModels, allowedModels, requireVideoInput])
 
   /** Check if model selection is required */
   const isModelRequired = !showDefaultOption && !selectedModel
@@ -321,9 +334,13 @@ export function useModelSelection({
       let restoredForceOverride: boolean | undefined
 
       // Priority 1: Use taskModelId from API (if exists and not default)
-      // Search in ALL models, not just filtered ones, since task already has a recorded model
+      // Search in filtered models when video input is required to avoid restoring
+      // an incompatible model for a video attachment.
       if (taskModelId && taskModelId !== DEFAULT_MODEL_NAME) {
-        const foundModel = models.find(m => m.name === taskModelId || m.displayName === taskModelId)
+        const candidates = requireVideoInput ? filteredModels : models
+        const foundModel = candidates.find(
+          m => m.name === taskModelId || m.displayName === taskModelId
+        )
         if (foundModel) {
           restoredModel = foundModel
           restoredForceOverride = true
@@ -350,7 +367,7 @@ export function useModelSelection({
       }
 
       // Priority 3: Use team's bot bind_model as fallback
-      if (!restoredModel && !taskModelId) {
+      if (!restoredModel && !taskModelId && !requireVideoInput) {
         const teamDefaultModel = getTeamDefaultModel()
         if (teamDefaultModel) {
           restoredModel = teamDefaultModel
@@ -387,6 +404,12 @@ export function useModelSelection({
     }
 
     // Case 2: Model list changed - check compatibility
+    if (selectedModel?.name === DEFAULT_MODEL_NAME && requireVideoInput) {
+      setSelectedModel(null)
+      setForceOverrideState(false)
+      return
+    }
+
     if (selectedModel && selectedModel.name !== DEFAULT_MODEL_NAME) {
       const isStillCompatible = filteredModels.some(m => {
         if (selectedModel.type) {
@@ -408,6 +431,7 @@ export function useModelSelection({
     taskId,
     taskModelId,
     compatibleProvider,
+    requireVideoInput,
   ])
 
   // -------------------------------------------------------------------------
@@ -453,6 +477,9 @@ export function useModelSelection({
   const selectModelByKey = useCallback(
     (key: string) => {
       if (key === DEFAULT_MODEL_NAME) {
+        if (requireVideoInput) {
+          return
+        }
         const defaultModel = { name: DEFAULT_MODEL_NAME, provider: '', modelId: '' }
         setSelectedModel(defaultModel)
         setForceOverrideState(false)
@@ -466,15 +493,18 @@ export function useModelSelection({
         setForceOverrideState(true)
       }
     },
-    [filteredModels]
+    [filteredModels, requireVideoInput]
   )
 
   /** Select default model */
   const selectDefaultModel = useCallback(() => {
+    if (requireVideoInput) {
+      return
+    }
     const defaultModel = { name: DEFAULT_MODEL_NAME, provider: '', modelId: '' }
     setSelectedModel(defaultModel)
     setForceOverrideState(false)
-  }, [])
+  }, [requireVideoInput])
 
   /** Set force override flag */
   const setForceOverride = useCallback((value: boolean) => {
@@ -524,7 +554,9 @@ export function useModelSelection({
         return t('common:actions.loading')
       }
       if (isModelRequired) {
-        return t('common:task_submit.model_required', '请选择模型')
+        return requireVideoInput
+          ? t('common:task_submit.video_model_required', '请选择支持视频输入的模型')
+          : t('common:task_submit.model_required', '请选择模型')
       }
       return t('common:task_submit.select_model', '选择模型')
     }
@@ -539,7 +571,7 @@ export function useModelSelection({
       return t('common:task_submit.default_model', '默认')
     }
     return getModelDisplayTextHelper(selectedModel)
-  }, [selectedModel, isLoading, isModelRequired, getBoundModelDisplayNames, t])
+  }, [selectedModel, isLoading, isModelRequired, requireVideoInput, getBoundModelDisplayNames, t])
 
   // -------------------------------------------------------------------------
   // Return

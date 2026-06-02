@@ -1656,3 +1656,220 @@ class TestContextServiceCreateKnowledgeBaseContextWithResult:
         # Assert
         added_context = mock_db.add.call_args[0][0]
         assert added_context.type_data["auto_created"] is True
+
+
+class TestVideoAttachmentProcessing:
+    """Test video attachment processing functionality."""
+
+    def test_is_video_context_with_video_extension(self) -> None:
+        """Video context is identified by file extension."""
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context import context_service
+
+        context = SubtaskContext(
+            subtask_id=100,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="video.mp4",
+            status=ContextStatus.READY.value,
+            type_data={
+                "file_extension": ".mp4",
+                "mime_type": "video/mp4",
+            },
+        )
+
+        assert context_service.is_video_context(context) is True
+
+    def test_is_video_context_with_non_video_extension(self) -> None:
+        """Non-video files are not identified as video context."""
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context import context_service
+
+        context = SubtaskContext(
+            subtask_id=100,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="document.pdf",
+            status=ContextStatus.READY.value,
+            type_data={
+                "file_extension": ".pdf",
+                "mime_type": "application/pdf",
+            },
+        )
+
+        assert context_service.is_video_context(context) is False
+
+    def test_build_video_content_from_attachment_resolves_url(
+        self, monkeypatch
+    ) -> None:
+        """Video payload resolves URL and keeps fid metadata."""
+        from importlib import import_module
+
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context import context_service
+
+        context_service_module = import_module("app.services.context.context_service")
+
+        class FakeMediaService:
+            def get_download_url(self, fid: int) -> str:
+                assert fid == 12345
+                return "https://example.com/video.mp4"
+
+        context = SubtaskContext(
+            subtask_id=100,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="video.mp4",
+            status=ContextStatus.READY.value,
+            type_data={
+                "file_extension": ".mp4",
+                "original_filename": "video.mp4",
+                "file_size": 1024000,
+                "mime_type": "video/mp4",
+                "fid": 12345,
+            },
+        )
+        context.id = 999
+
+        monkeypatch.setattr(
+            context_service_module,
+            "weibo_media_service",
+            FakeMediaService(),
+        )
+        payload = context_service.build_video_content_from_attachment(context)
+
+        assert payload is not None
+        assert payload.video_url == "https://example.com/video.mp4"
+        assert "12345" in payload.metadata_text
+
+    def test_build_video_content_from_attachment_raises_when_url_missing(
+        self, monkeypatch
+    ) -> None:
+        """Video URL resolution failure raises instead of falling back to metadata."""
+        from importlib import import_module
+
+        import pytest
+
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context import context_service
+        from app.services.context.context_service import VideoAttachmentResolutionError
+
+        context_service_module = import_module("app.services.context.context_service")
+
+        class EmptyMediaService:
+            def get_download_url(self, fid: int) -> None:
+                assert fid == 12345
+                return None
+
+        context = SubtaskContext(
+            subtask_id=100,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="video.mp4",
+            status=ContextStatus.READY.value,
+            type_data={
+                "file_extension": ".mp4",
+                "original_filename": "video.mp4",
+                "file_size": 1024000,
+                "mime_type": "video/mp4",
+                "fid": 12345,
+            },
+        )
+        context.id = 999
+
+        monkeypatch.setattr(
+            context_service_module,
+            "weibo_media_service",
+            EmptyMediaService(),
+        )
+
+        with pytest.raises(VideoAttachmentResolutionError):
+            context_service.build_video_content_from_attachment(context)
+
+    def test_build_video_content_from_attachment_raises_without_fid_when_resolving(
+        self,
+    ) -> None:
+        """Video URL resolution requires fid."""
+        import pytest
+
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context import context_service
+        from app.services.context.context_service import VideoAttachmentResolutionError
+
+        context = SubtaskContext(
+            subtask_id=100,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="video.mp4",
+            status=ContextStatus.READY.value,
+            type_data={
+                "file_extension": ".mp4",
+                "original_filename": "video.mp4",
+                "file_size": 1024000,
+                "mime_type": "video/mp4",
+            },
+        )
+        context.id = 999
+
+        with pytest.raises(VideoAttachmentResolutionError):
+            context_service.build_video_content_from_attachment(context)
+
+    def test_build_video_content_from_non_video_returns_none(self) -> None:
+        """Non-video context returns None from video builder."""
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context import context_service
+
+        context = SubtaskContext(
+            subtask_id=100,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="document.pdf",
+            status=ContextStatus.READY.value,
+            type_data={
+                "file_extension": ".pdf",
+                "mime_type": "application/pdf",
+            },
+        )
+
+        payload = context_service.build_video_content_from_attachment(context)
+
+        assert payload is None
+
+    def test_video_attachment_payload_dataclass(self) -> None:
+        """VideoAttachmentPayload dataclass has expected fields."""
+        from app.services.context.context_service import VideoAttachmentPayload
+
+        payload = VideoAttachmentPayload(
+            video_url="https://example.com/video.mp4",
+            mime_type="video/mp4",
+            metadata_header="[Video Attachment: video.mp4 | ID: 999 | Type: video/mp4 | Size: 1.0 MB]",
+            metadata_text='[Video Attachment: video.mp4 | ID: 999 | Type: video/mp4 | Size: 1.0 MB]\n{"fid": 12345}',
+        )
+
+        assert payload.video_url == "https://example.com/video.mp4"
+        assert payload.mime_type == "video/mp4"
+        assert "12345" in payload.metadata_text

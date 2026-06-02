@@ -7,11 +7,13 @@ from types import SimpleNamespace
 import pytest
 
 from chat_shell.history.loader import (
+    _build_history_messages,
     _build_knowledge_base_text_prefix,
     _extract_user_text,
     _truncate_history,
     get_chat_history,
 )
+from shared.models.db import ContextStatus, ContextType, SubtaskRole
 
 
 class TestHistoryLoaderRestrictedKnowledgeBase:
@@ -193,3 +195,129 @@ class TestGetChatHistory:
         )
 
         assert history == []
+
+    @pytest.mark.asyncio
+    async def test_package_mode_passes_supports_video_to_db_loader(self, monkeypatch):
+        monkeypatch.setattr("chat_shell.history.loader._is_http_mode", lambda: False)
+        captured = {}
+
+        async def _fake_load_history_from_db(
+            task_id,
+            is_group_chat,
+            exclude_after_message_id=None,
+            limit=None,
+            supports_video=False,
+        ):
+            captured["supports_video"] = supports_video
+            return []
+
+        monkeypatch.setattr(
+            "chat_shell.history.loader._load_history_from_db",
+            _fake_load_history_from_db,
+        )
+
+        history = await get_chat_history(
+            task_id=1,
+            is_group_chat=False,
+            supports_video=True,
+        )
+
+        assert history == []
+        assert captured["supports_video"] is True
+
+
+class _FakeQuery:
+    def __init__(self, result):
+        self._result = result
+
+    def filter(self, *args, **kwargs):
+        return self
+
+    def order_by(self, *args, **kwargs):
+        return self
+
+    def all(self):
+        return self._result
+
+
+class _FakeDb:
+    def __init__(self, contexts):
+        self.contexts = contexts
+
+    def query(self, *args, **kwargs):
+        return _FakeQuery(self.contexts)
+
+
+class TestPackageModeVideoHistory:
+    def test_builds_video_blocks_when_model_supports_video(self, monkeypatch):
+        subtask = SimpleNamespace(
+            id=10,
+            task_id=20,
+            role=SubtaskRole.USER,
+            prompt="describe the video",
+        )
+        context = SimpleNamespace(
+            id=30,
+            context_type=ContextType.ATTACHMENT.value,
+            status=ContextStatus.READY.value,
+            name="clip.mp4",
+            mime_type="video/mp4",
+            file_extension=".mp4",
+            extracted_text="",
+            binary_data=b"",
+            text_length=0,
+            type_data={"fid": 123},
+        )
+        payload = SimpleNamespace(
+            video_url="https://example.com/video.mp4",
+            metadata_text='[Video Attachment: clip.mp4 | ID: 30]\n{"fid": 123}',
+        )
+        monkeypatch.setattr(
+            "chat_shell.history.loader._build_video_attachment_payload",
+            lambda _context: payload,
+        )
+
+        messages = _build_history_messages(
+            _FakeDb([context]),
+            subtask,
+            sender_username=None,
+            is_group_chat=False,
+            supports_video=True,
+        )
+
+        content = messages[0]["content"]
+        assert content[0] == {"type": "text", "text": "describe the video"}
+        assert content[1] == {
+            "type": "video_url",
+            "video_url": {"url": "https://example.com/video.mp4"},
+        }
+        assert "Video Attachment" in content[2]["text"]
+
+    def test_rejects_video_blocks_when_model_does_not_support_video(self):
+        subtask = SimpleNamespace(
+            id=10,
+            task_id=20,
+            role=SubtaskRole.USER,
+            prompt="describe the video",
+        )
+        context = SimpleNamespace(
+            id=30,
+            context_type=ContextType.ATTACHMENT.value,
+            status=ContextStatus.READY.value,
+            name="clip.mp4",
+            mime_type="video/mp4",
+            file_extension=".mp4",
+            extracted_text="",
+            binary_data=b"",
+            text_length=0,
+            type_data={"fid": 123},
+        )
+
+        with pytest.raises(ValueError, match="requires a video-capable model"):
+            _build_history_messages(
+                _FakeDb([context]),
+                subtask,
+                sender_username=None,
+                is_group_chat=False,
+                supports_video=False,
+            )
