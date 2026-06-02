@@ -17,7 +17,9 @@ from typing import Any, Dict, List, Optional
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.constants import CLIENT_ORIGIN_FRONTEND
 from app.models.kind import Kind
+from app.models.project import Project
 from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
@@ -81,6 +83,8 @@ class TaskCreationParams:
     device_id: Optional[str] = None
     # Project ID to associate task with
     project_id: Optional[int] = None
+    # Client surface that owns the task
+    client_origin: str = CLIENT_ORIGIN_FRONTEND
     # Task source label (e.g. chat_shell, responses_api)
     source: str = "chat_shell"
     # Whether the task originates from API-compatible surfaces
@@ -247,6 +251,20 @@ def create_new_task(
     if not task_kinds_service.validate_task_id(db, new_task_id):
         raise HTTPException(status_code=500, detail="Failed to create task ID")
 
+    if params.project_id:
+        project_exists = (
+            db.query(Project.id)
+            .filter(
+                Project.id == params.project_id,
+                Project.user_id == user.id,
+                Project.client_origin == params.client_origin,
+                Project.is_active == True,
+            )
+            .first()
+        )
+        if not project_exists:
+            raise HTTPException(status_code=404, detail="Project not found")
+
     # Create workspace
     workspace_name = f"workspace-{new_task_id}"
     workspace_json = {
@@ -272,6 +290,7 @@ def create_new_task(
         namespace="default",
         json=workspace_json,
         is_active=True,
+        client_origin=params.client_origin,
     )
     db.add(workspace)
 
@@ -378,6 +397,7 @@ def create_new_task(
         existing_placeholder.json = task_json
         existing_placeholder.is_active = True
         existing_placeholder.updated_at = datetime.now()
+        existing_placeholder.client_origin = params.client_origin
         existing_placeholder.is_group_chat = (
             params.is_group_chat
         )  # Sync to physical column
@@ -395,6 +415,7 @@ def create_new_task(
             json=task_json,
             is_active=True,
             is_group_chat=params.is_group_chat,  # Sync to physical column
+            client_origin=params.client_origin,
             **({"project_id": params.project_id} if params.project_id else {}),
         )
         db.add(task)

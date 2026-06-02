@@ -758,6 +758,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 skip_status_check=payload.action == "pipeline:confirm",
                 device_id=payload.device_id,
                 project_id=payload.project_id,
+                client_origin=payload.client_origin,
                 generate_params=generate_params_dict,
             )
 

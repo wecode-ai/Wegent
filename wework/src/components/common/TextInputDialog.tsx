@@ -1,5 +1,6 @@
 import { X } from 'lucide-react'
 import { useState } from 'react'
+import { useEscapeKey } from '@/hooks/useEscapeKey'
 
 interface TextInputDialogProps {
   open: boolean
@@ -38,6 +39,8 @@ function TextInputDialogContent({
   const [submitting, setSubmitting] = useState(false)
 
   const trimmedValue = value.trim()
+
+  useEscapeKey(onClose)
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/35 px-4">

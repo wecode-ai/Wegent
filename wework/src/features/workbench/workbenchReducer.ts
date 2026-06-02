@@ -42,6 +42,7 @@ export type WorkbenchAction =
   | { type: 'bootstrap_failed'; error: string }
   | { type: 'project_selected'; project: ProjectWithTasks }
   | { type: 'project_cleared'; standaloneDeviceId?: string | null }
+  | { type: 'standalone_device_preference_changed'; standaloneDeviceId: string | null }
   | {
       type: 'task_opened'
       task: Task
@@ -191,6 +192,11 @@ export function workbenchReducer(
             ? state.standaloneDeviceId
             : action.standaloneDeviceId,
         currentTask: null,
+      }
+    case 'standalone_device_preference_changed':
+      return {
+        ...state,
+        standaloneDeviceId: action.standaloneDeviceId,
       }
     case 'task_opened':
       return {
