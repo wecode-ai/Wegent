@@ -41,11 +41,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
 import socketio
-
 from executor.config import config
 from executor.modes.local.capabilities import GlobalCapabilityReporter
 from executor.platform_compat import get_permissions_manager
 from executor.version import get_version
+
 from shared.logger import setup_logger
 
 if TYPE_CHECKING:
@@ -530,10 +530,10 @@ class WebSocketClient:
             raise ConnectionError("WebSocket not connected")
 
         try:
-            # Get active task IDs from ClaudeCodeAgent
-            from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
+            # Get active task IDs from all local code agents.
+            from executor.agents.factory import AgentFactory
 
-            running_task_ids = ClaudeCodeAgent.get_active_task_ids()
+            running_task_ids = AgentFactory.get_active_task_ids()
 
             heartbeat_data = {
                 "device_id": self.device_id,

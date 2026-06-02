@@ -144,6 +144,13 @@ WEGENT_MCP_URL = os.environ.get(
     "WEGENT_MCP_URL", f"{WEGENT_BACKEND_URL}/api/mcp/system"
 )
 
+# Codex Agent configuration. The binary is intentionally configurable because
+# production local devices preinstall a vetted Codex version.
+CODEX_BINARY_PATH = os.environ.get("CODEX_BINARY_PATH") or os.environ.get(
+    "CODEX_BIN", "codex"
+)
+CODEX_MODEL_PROVIDER = os.environ.get("CODEX_MODEL_PROVIDER", "wecode-openai")
+
 
 def get_wegent_mcp_url() -> str:
     """Get the URL for the Wegent MCP server.

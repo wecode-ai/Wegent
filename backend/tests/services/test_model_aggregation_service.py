@@ -170,12 +170,21 @@ class TestModelAggregationService:
 
     def test_is_model_compatible_with_shell_claudecode(self, test_db: Session):
         """Test model compatibility for ClaudeCode shell type."""
-        # ClaudeCode only supports Claude models
+        # ClaudeCode keeps Claude support and routes OpenAI Responses models to CodeX.
         assert model_aggregation_service._is_model_compatible_with_shell(
             "claude", "ClaudeCode", []
         )
+        assert model_aggregation_service._is_model_compatible_with_shell(
+            "openai", "ClaudeCode", [], {"apiFormat": "responses"}
+        )
+        assert model_aggregation_service._is_model_compatible_with_shell(
+            "openai", "ClaudeCode", [], {"protocol": "openai-responses"}
+        )
         assert not model_aggregation_service._is_model_compatible_with_shell(
-            "openai", "ClaudeCode", []
+            "openai", "ClaudeCode", [], {"apiFormat": "chat/completions"}
+        )
+        assert not model_aggregation_service._is_model_compatible_with_shell(
+            "openai", "ClaudeCode", ["openai"], {"apiFormat": "chat/completions"}
         )
         assert not model_aggregation_service._is_model_compatible_with_shell(
             "gemini", "ClaudeCode", []
@@ -243,9 +252,12 @@ class TestModelAggregationService:
         assert model_aggregation_service._is_model_compatible_with_shell(
             "claude", shell_type, support_model
         )
-        # OpenAI should NOT be allowed for ClaudeCode type
+        # OpenAI should only be allowed when it uses the Responses API for CodeX.
         assert not model_aggregation_service._is_model_compatible_with_shell(
-            "openai", shell_type, support_model
+            "openai", shell_type, support_model, {"apiFormat": "chat/completions"}
+        )
+        assert model_aggregation_service._is_model_compatible_with_shell(
+            "openai", shell_type, support_model, {"apiFormat": "responses"}
         )
         # Gemini should NOT be allowed for ClaudeCode type
         assert not model_aggregation_service._is_model_compatible_with_shell(

@@ -7,8 +7,6 @@
 import { useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  ChevronDown,
-  ChevronUp,
   ChevronRight,
   FolderPlus,
   MoreHorizontal,
@@ -50,6 +48,12 @@ interface ProjectSectionProps {
   onTaskSelect?: () => void
   variant?: 'all' | 'group' | 'workspace'
 }
+
+const DEFAULT_VISIBLE_PROJECT_TASKS = 5
+const MINUTE_MS = 60 * 1000
+const HOUR_MS = 60 * MINUTE_MS
+const DAY_MS = 24 * HOUR_MS
+const WEEK_MS = 7 * DAY_MS
 
 export function ProjectSection({ onTaskSelect, variant = 'all' }: ProjectSectionProps) {
   const { t } = useTranslation('projects')
@@ -101,7 +105,6 @@ export function ProjectSection({ onTaskSelect, variant = 'all' }: ProjectSection
   const [selectedProject, setSelectedProject] = useState<ProjectWithTasks | null>(null)
 
   // Section collapsed state
-  const [sectionCollapsed, setSectionCollapsed] = useState(true)
   const sectionTitle = t(
     isUnifiedSection || isWorkspaceSection ? 'workspaceSection.title' : 'section.title'
   )
@@ -143,22 +146,16 @@ export function ProjectSection({ onTaskSelect, variant = 'all' }: ProjectSection
     <div className="mb-0">
       {/* Section Header */}
       <div
-        className="group flex h-6 items-center justify-between rounded-md px-1 text-xs font-medium text-text-muted hover:bg-[rgb(238,238,238)] hover:text-text-primary dark:hover:bg-white/10 transition-colors"
+        className="group flex h-8 items-center justify-between px-1 text-sm font-semibold text-text-muted"
         data-testid="project-section-header"
       >
         <button
           type="button"
           data-testid="project-section-toggle"
-          onClick={() => setSectionCollapsed(!sectionCollapsed)}
-          aria-expanded={!sectionCollapsed}
-          className="flex h-full min-w-0 flex-1 items-center justify-between"
+          aria-expanded={true}
+          className="flex h-full min-w-0 flex-1 items-center"
         >
           <span className="truncate">{sectionTitle}</span>
-          {sectionCollapsed ? (
-            <ChevronDown className="h-3.5 w-3.5 flex-shrink-0" />
-          ) : (
-            <ChevronUp className="h-3.5 w-3.5 flex-shrink-0" />
-          )}
         </button>
         <Button
           data-testid={
@@ -168,7 +165,7 @@ export function ProjectSection({ onTaskSelect, variant = 'all' }: ProjectSection
           }
           variant="ghost"
           size="sm"
-          className="ml-1 h-5 w-5 p-0 text-text-muted hover:text-text-primary transition-colors rounded"
+          className="ml-1 h-8 min-w-8 w-8 p-0 text-text-muted opacity-0 transition-colors hover:text-text-primary group-hover:opacity-100"
           onClick={() => setCreateDialogOpen(true)}
           title={t(
             isUnifiedSection || isWorkspaceSection ? 'workspaceCreate.title' : 'create.title'
@@ -179,42 +176,38 @@ export function ProjectSection({ onTaskSelect, variant = 'all' }: ProjectSection
       </div>
 
       {/* Project List */}
-      {!sectionCollapsed && (
-        <div className="mt-1 space-y-0.5" data-testid="project-section-list">
-          {isLoading ? (
-            <div className="px-4 py-2 text-xs text-text-muted">{t('common:loading')}</div>
-          ) : visibleProjects.length === 0 ? (
-            <div className="px-4 py-2 text-xs text-text-muted">
-              {t(
-                isUnifiedSection || isWorkspaceSection ? 'workspaceSection.empty' : 'section.empty'
-              )}
-            </div>
-          ) : (
-            visibleProjects.map(project => (
-              <DroppableProject
-                key={project.id}
-                projectId={project.id}
-                disabled={!canImportOrdinaryTaskToProject(project)}
-              >
-                <ProjectItem
-                  project={project}
-                  isExpanded={expandedProjects.has(project.id)}
-                  onToggleExpand={() => toggleProjectExpanded(project.id)}
-                  onEdit={() => handleEditProject(project)}
-                  onDelete={() => handleDeleteProject(project)}
-                  onTaskClick={handleTaskClick}
-                  selectedProjectTaskId={selectedProjectTaskId}
-                  onRefreshProjects={refreshProjects}
-                  isWorkspace={isWorkspaceProject(project)}
-                  onNewConversation={
-                    canStartProjectConversation(project) ? handleNewConversation : undefined
-                  }
-                />
-              </DroppableProject>
-            ))
-          )}
-        </div>
-      )}
+      <div className="mt-2 space-y-3" data-testid="project-section-list">
+        {isLoading ? (
+          <div className="px-4 py-2 text-xs text-text-muted">{t('common:loading')}</div>
+        ) : visibleProjects.length === 0 ? (
+          <div className="px-4 py-2 text-xs text-text-muted">
+            {t(isUnifiedSection || isWorkspaceSection ? 'workspaceSection.empty' : 'section.empty')}
+          </div>
+        ) : (
+          visibleProjects.map(project => (
+            <DroppableProject
+              key={project.id}
+              projectId={project.id}
+              disabled={!canImportOrdinaryTaskToProject(project)}
+            >
+              <ProjectItem
+                project={project}
+                isExpanded={expandedProjects.has(project.id)}
+                onToggleExpand={() => toggleProjectExpanded(project.id)}
+                onEdit={() => handleEditProject(project)}
+                onDelete={() => handleDeleteProject(project)}
+                onTaskClick={handleTaskClick}
+                selectedProjectTaskId={selectedProjectTaskId}
+                onRefreshProjects={refreshProjects}
+                isWorkspace={isWorkspaceProject(project)}
+                onNewConversation={
+                  canStartProjectConversation(project) ? handleNewConversation : undefined
+                }
+              />
+            </DroppableProject>
+          ))
+        )}
+      </div>
 
       {/* Dialogs */}
       <ProjectCreateDialog
@@ -263,6 +256,11 @@ function ProjectItem({
 }: ProjectItemProps) {
   const { t } = useTranslation('projects')
   const taskCount = project.tasks?.length || 0
+  const [showAllTasks, setShowAllTasks] = useState(false)
+  const visibleTasks = showAllTasks
+    ? project.tasks
+    : project.tasks?.slice(0, DEFAULT_VISIBLE_PROJECT_TASKS)
+  const hasHiddenTasks = taskCount > DEFAULT_VISIBLE_PROJECT_TASKS
 
   // Track which task is being renamed
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null)
@@ -284,37 +282,55 @@ function ProjectItem({
     [onRefreshProjects]
   )
 
+  const formatTimeAgo = (dateString?: string | null) => {
+    if (!dateString) return ''
+
+    const diffMs = Math.max(0, Date.now() - new Date(dateString).getTime())
+    if (diffMs < HOUR_MS) {
+      return t('relativeTime.minute', { count: Math.max(1, Math.floor(diffMs / MINUTE_MS)) })
+    }
+    if (diffMs < DAY_MS) {
+      return t('relativeTime.hour', { count: Math.floor(diffMs / HOUR_MS) })
+    }
+    if (diffMs < WEEK_MS) {
+      return t('relativeTime.day', { count: Math.floor(diffMs / DAY_MS) })
+    }
+    return t('relativeTime.week', { count: Math.floor(diffMs / WEEK_MS) })
+  }
+
   return (
     <div className="group">
       {/* Project Header */}
       <div
         className={cn(
-          'flex items-center gap-1 px-2 py-1.5 rounded-md cursor-pointer',
-          'hover:bg-surface transition-colors'
+          'flex h-8 items-center gap-2 rounded-md px-1 text-text-secondary',
+          'transition-colors hover:text-text-primary'
         )}
       >
         {/* Expand/Collapse Button */}
         <button
           onClick={onToggleExpand}
-          className="flex items-center justify-center w-5 h-5 text-text-secondary hover:text-text-primary"
+          className="flex h-8 min-w-8 items-center justify-center text-text-secondary hover:text-text-primary"
+          data-testid="project-item-toggle"
         >
-          {isExpanded ? (
-            <ChevronDown className="w-3.5 h-3.5" />
-          ) : (
-            <ChevronRight className="w-3.5 h-3.5" />
-          )}
+          <ChevronRight
+            className={cn('h-3.5 w-3.5 transition-transform', isExpanded && 'rotate-90')}
+          />
         </button>
 
         {/* Project Icon */}
         <div
-          className="flex items-center justify-center w-5 h-5"
+          className="flex h-6 w-6 items-center justify-center"
           style={{ color: project.color || 'var(--color-text-secondary)' }}
         >
-          {isExpanded ? <FolderOpen className="w-4 h-4" /> : <Folder className="w-4 h-4" />}
+          {isExpanded ? <FolderOpen className="h-5 w-5" /> : <Folder className="h-5 w-5" />}
         </div>
 
         {/* Project Name */}
-        <span className="flex-1 text-sm text-text-primary truncate" onClick={onToggleExpand}>
+        <span
+          className="flex-1 truncate text-sm font-medium text-text-secondary"
+          onClick={onToggleExpand}
+        >
           {project.name}
         </span>
 
@@ -324,7 +340,7 @@ function ProjectItem({
             <Button
               variant="ghost"
               size="sm"
-              className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-text-muted hover:text-text-primary"
+              className="h-8 min-w-8 w-8 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-text-muted hover:text-text-primary"
             >
               <MoreHorizontal className="w-3.5 h-3.5" />
             </Button>
@@ -346,7 +362,7 @@ function ProjectItem({
           <Button
             variant="ghost"
             size="sm"
-            className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-text-muted hover:text-text-primary"
+            className="h-8 min-w-8 w-8 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-text-muted hover:text-text-primary"
             onClick={e => {
               e.stopPropagation()
               onNewConversation(project)
@@ -361,10 +377,11 @@ function ProjectItem({
 
       {/* Task List (when expanded) */}
       {isExpanded && taskCount > 0 && (
-        <div className="ml-6 space-y-0.5">
-          {project.tasks?.map(projectTask => {
+        <div className="ml-12 space-y-0.5">
+          {visibleTasks?.map(projectTask => {
             const isSelected = selectedProjectTaskId === projectTask.task_id
             const isEditing = editingTaskId === projectTask.task_id
+            const timeAgo = formatTimeAgo(projectTask.updated_at)
             return (
               <DraggableProjectTask
                 key={projectTask.task_id}
@@ -379,11 +396,11 @@ function ProjectItem({
                     }
                   }}
                   className={cn(
-                    'group/task flex items-center gap-2 px-2 py-1 rounded-md cursor-pointer',
+                    'group/task flex h-8 min-w-0 cursor-pointer items-center gap-2 rounded-md px-2',
                     'text-sm transition-colors',
                     isSelected
-                      ? 'bg-primary/10 text-text-primary'
-                      : 'text-text-secondary hover:text-text-primary hover:bg-surface'
+                      ? 'bg-surface text-text-primary'
+                      : 'text-text-primary hover:bg-surface'
                   )}
                 >
                   {isEditing ? (
@@ -398,11 +415,14 @@ function ProjectItem({
                     />
                   ) : (
                     <span
-                      className="flex-1 truncate"
+                      className="min-w-0 flex-1 truncate font-medium"
                       onDoubleClick={e => handleDoubleClick(e, projectTask.task_id)}
                     >
                       {projectTask.task_title || `Task #${projectTask.task_id}`}
                     </span>
+                  )}
+                  {timeAgo && (
+                    <span className="shrink-0 text-xs font-medium text-text-muted">{timeAgo}</span>
                   )}
                   <div className="opacity-0 group-hover/task:opacity-100 transition-opacity">
                     <ProjectTaskMenu
@@ -416,12 +436,22 @@ function ProjectItem({
               </DraggableProjectTask>
             )
           })}
+          {hasHiddenTasks && !showAllTasks && (
+            <button
+              type="button"
+              data-testid="project-show-more-tasks-button"
+              onClick={() => setShowAllTasks(true)}
+              className="flex h-8 min-w-[44px] items-center rounded-md px-2 text-sm font-semibold text-text-muted transition-colors hover:bg-surface hover:text-text-primary"
+            >
+              {t('workspaceSection.showMore')}
+            </button>
+          )}
         </div>
       )}
 
       {/* Empty State (when expanded but no tasks) */}
       {isExpanded && taskCount === 0 && (
-        <div className="ml-6 px-2 py-1">
+        <div className="ml-12 px-2 py-1">
           <span className="text-xs text-text-muted">{t('section.noTasks')}</span>
         </div>
       )}
