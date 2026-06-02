@@ -25,15 +25,14 @@ from chat_shell.prompts.builder import (
 
 
 class TestDeepThinkingPrompt:
-    """Tests for deep thinking prompt injection."""
+    """Tests for legacy deep thinking prompt helpers."""
 
-    def test_append_deep_thinking_prompt_enabled(self):
-        """Test deep thinking prompt is appended when enabled."""
+    def test_append_deep_thinking_prompt_enabled_is_noop(self):
+        """Test legacy deep thinking prompt helper is a no-op when enabled."""
         base_prompt = "You are a helpful assistant."
         result = append_deep_thinking_prompt(base_prompt, enable_deep_thinking=True)
 
-        assert base_prompt in result
-        assert len(result) > len(base_prompt)
+        assert result == base_prompt
 
     def test_append_deep_thinking_prompt_disabled(self):
         """Test deep thinking prompt is NOT appended when disabled."""
@@ -42,8 +41,8 @@ class TestDeepThinkingPrompt:
 
         assert result == base_prompt
 
-    def test_build_system_prompt_with_deep_thinking(self):
-        """Test build_system_prompt includes deep thinking when enabled."""
+    def test_build_system_prompt_with_deep_thinking_keeps_base_prompt(self):
+        """Test deep thinking no longer appends legacy prompt text."""
         base_prompt = "You are helpful."
         result = build_system_prompt(
             base_prompt=base_prompt,
@@ -51,9 +50,7 @@ class TestDeepThinkingPrompt:
             enable_deep_thinking=True,
         )
 
-        assert base_prompt in result
-        # Deep thinking prompt should be appended
-        assert len(result) > len(base_prompt)
+        assert result == base_prompt
 
     def test_build_system_prompt_without_deep_thinking(self):
         """Test build_system_prompt does not include deep thinking when disabled."""
