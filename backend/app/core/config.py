@@ -582,6 +582,9 @@ class Settings(BaseSettings):
     DEFAULT_TEAM_TASK: str = (
         "wegent-wework#default"  # Default team for task mode (devices/chat page)
     )
+    DEFAULT_TEAM_WEWORK: str = (
+        "wegent-wework-hidden#default"  # Default hidden team for WeWork workbench
+    )
 
     # JSON configuration for MCP servers (similar to Claude Desktop format)
     # Example:

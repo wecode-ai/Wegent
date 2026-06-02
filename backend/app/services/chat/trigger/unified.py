@@ -39,6 +39,32 @@ logger = logging.getLogger(__name__)
 SELECTED_KB_PRELOAD_SKILL = "wegent-knowledge"
 
 
+def _reasoning_from_model_options(payload: Any) -> Optional[Dict[str, Any]]:
+    """Convert UI model options into execution reasoning config."""
+    if payload is None:
+        return None
+    model_options = getattr(payload, "model_options", None)
+    if not isinstance(model_options, dict):
+        return None
+    reasoning = model_options.get("reasoning")
+    summary = model_options.get("summary")
+    if not reasoning and not summary:
+        return None
+
+    result: Dict[str, Any] = {}
+    if isinstance(reasoning, dict):
+        effort = reasoning.get("effort") or reasoning.get("reasoning")
+        summary = summary or reasoning.get("summary")
+    else:
+        effort = reasoning
+
+    if effort:
+        result["effort"] = str(effort)
+    if summary:
+        result["summary"] = str(summary)
+    return result or None
+
+
 def _build_executor_attachment_payload(context: Any) -> dict[str, Any]:
     """Serialize an attachment context for executor-side downloading."""
     return {
@@ -274,13 +300,16 @@ async def build_execution_request(
             previous_bot_id=previous_bot_id,
         )
 
-        # Merge reasoning_config from API request into model_config
-        # Priority: API request reasoning_config > model's think_config
-        if reasoning_config:
-            request.model_config["reasoning"] = reasoning_config
+        # Merge reasoning config from API/model selection into model_config.
+        # Priority: explicit API reasoning_config > UI model_options > model think_config.
+        selected_reasoning_config = reasoning_config or _reasoning_from_model_options(
+            payload
+        )
+        if selected_reasoning_config:
+            request.model_config["reasoning"] = selected_reasoning_config
             logger.info(
-                "[build_execution_request] Applied reasoning config from API request: %s",
-                reasoning_config,
+                "[build_execution_request] Applied selected reasoning config: %s",
+                selected_reasoning_config,
             )
         elif request.model_config.get("think_config"):
             # If no API reasoning_config but model has think_config, use it
@@ -291,8 +320,8 @@ async def build_execution_request(
             )
 
         # Store reasoning_config in ExecutionRequest for downstream access
-        request.reasoning_config = reasoning_config or request.model_config.get(
-            "reasoning"
+        request.reasoning_config = (
+            selected_reasoning_config or request.model_config.get("reasoning")
         )
 
         # Merge user-selected generate_params into videoConfig for video models

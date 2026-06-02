@@ -96,6 +96,7 @@ def test_project_runtime_uses_global_claude_capability_dirs_without_merging_glob
 
 def test_default_manifest_path_lives_with_device_config(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("WEGENT_EXECUTOR_HOME", raising=False)
 
     assert (
         default_manifest_path() == tmp_path / ".wegent-executor" / "capabilities.json"
