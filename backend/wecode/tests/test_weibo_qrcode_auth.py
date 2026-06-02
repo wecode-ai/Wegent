@@ -75,6 +75,7 @@ async def test_complete_weibo_qrcode_login_creates_user(
     assert result.status == "success"
     assert result.access_token
     assert user is not None
+    assert user.email is None
     assert user.auth_source == "weibo_qrcode"
 
 

@@ -169,7 +169,7 @@ class WeiboQrcodeAuthService:
 
         user = User(
             user_name=username,
-            email=f"{username}@weibo.local",
+            email=None,
             password_hash=get_password_hash(str(uuid.uuid4())),
             git_info=[],
             is_active=True,
