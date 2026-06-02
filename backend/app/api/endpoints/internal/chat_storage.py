@@ -212,7 +212,10 @@ def parse_session_id(session_id: str) -> tuple[str, int]:
 
 
 def subtask_to_messages(
-    subtask: Subtask, db: Session, is_group_chat: bool = False
+    subtask: Subtask,
+    db: Session,
+    is_group_chat: bool = False,
+    model_config: Optional[dict[str, Any]] = None,
 ) -> list[MessageResponse]:
     """Convert Subtask ORM object to a list of MessageResponse objects.
 
@@ -228,6 +231,12 @@ def subtask_to_messages(
 
     For assistant messages, this function also extracts:
     - loaded_skills: List of skills loaded via load_skill tool in this turn
+
+    Args:
+        subtask: Subtask ORM object
+        db: Database session
+        is_group_chat: Whether this is a group chat
+        model_config: Optional model config for video capability check.
     """
     if subtask.role == SubtaskRole.USER:
         # Get sender username for group chat
@@ -239,7 +248,7 @@ def subtask_to_messages(
 
         # Build content with context (attachments and knowledge bases)
         content = _build_user_message_content(
-            db, subtask, sender_username, is_group_chat
+            db, subtask, sender_username, is_group_chat, model_config
         )
         return [
             MessageResponse(
@@ -327,6 +336,7 @@ def _build_user_message_content(
     subtask: Subtask,
     sender_username: str | None,
     is_group_chat: bool = False,
+    model_config: Optional[dict[str, Any]] = None,
 ) -> Any:
     """Build user message content with attachments and knowledge base contexts.
 
@@ -383,6 +393,7 @@ def _build_user_message_content(
 
     # Process attachments first (they have priority)
     vision_parts: list[dict[str, Any]] = []
+    video_parts: list[dict[str, Any]] = []  # New container for video attachments
     attachment_text_parts: list[str] = []
     total_attachment_text_length = 0
 
@@ -420,6 +431,43 @@ def _build_user_message_content(
                 f"[history] Loaded image attachment with metadata: id={attachment.id}, "
                 f"name={filename}, mime_type={mime_type}"
             )
+        elif context_service.is_video_context(attachment):
+            # Video attachment - use shared helper for video processing
+            # Check model capabilities first
+            model_capabilities = (model_config or {}).get("modelCapabilities") or {}
+            supports_video = model_capabilities.get("supportsVideo", False)
+            logger.info(
+                f"[history][VIDEO DEBUG] Processing video: id={attachment.id}, "
+                f"model_config_keys={list(model_config.keys()) if model_config else None}, "
+                f"model_capabilities={model_capabilities}, supports_video={supports_video}"
+            )
+
+            if not supports_video:
+                raise ValueError(
+                    f"Video attachment {attachment.id} requires a video-capable model"
+                )
+
+            payload = context_service.build_video_content_from_attachment(attachment)
+
+            if payload is None:
+                logger.warning(
+                    f"[history][VIDEO DEBUG] payload is None for id={attachment.id}"
+                )
+                continue
+
+            logger.info(
+                f"[history][VIDEO DEBUG] Adding video_url to video_parts: id={attachment.id}, "
+                f"video_url={payload.video_url[:80]}..."
+            )
+            video_parts.append(
+                {
+                    "type": "video_url",
+                    "video_url": {"url": payload.video_url},
+                }
+            )
+            video_text = f"{payload.metadata_text}\n"
+            attachment_text_parts.append(video_text)
+            total_attachment_text_length += len(video_text)
         else:
             # Document attachment - use context_service to build metadata-rich prefix
             doc_prefix = context_service.build_document_text_prefix(attachment)
@@ -527,10 +575,11 @@ def _build_user_message_content(
     # When extra_blocks is empty (old format), rebuild a system-reminder
     # from the DB context records.
     if extra_blocks:
-        if vision_parts:
+        if vision_parts or video_parts:
             return [
                 {"type": "text", "text": text_content},
                 *vision_parts,
+                *video_parts,  # Add video blocks
                 *extra_blocks,
             ]
         return [{"type": "text", "text": text_content}, *extra_blocks]
@@ -552,17 +601,22 @@ def _build_user_message_content(
             "type": "text",
             "text": f"<system-reminder>{inner}</system-reminder>",
         }
-        if vision_parts:
+        if vision_parts or video_parts:
             return [
                 {"type": "text", "text": text_content},
                 *vision_parts,
+                *video_parts,  # Add video blocks
                 reminder_block,
             ]
         return [{"type": "text", "text": text_content}, reminder_block]
 
     # No context at all
-    if vision_parts:
-        return [{"type": "text", "text": text_content}, *vision_parts]
+    if vision_parts or video_parts:
+        return [
+            {"type": "text", "text": text_content},
+            *vision_parts,
+            *video_parts,  # Add video blocks
+        ]
     if is_structured_prompt:
         return [{"type": "text", "text": text_content}]
     return text_content
@@ -829,6 +883,9 @@ async def get_chat_history(
         None, description="Only return messages before this ID"
     ),
     is_group_chat: bool = Query(False, description="Whether this is a group chat"),
+    supports_video: bool = Query(
+        False, description="Whether the model supports video input"
+    ),
     db: Session = Depends(get_db),
 ):
     """
@@ -840,6 +897,14 @@ async def get_chat_history(
     For user messages, also loads associated contexts (attachments, knowledge bases).
 
     When limit is specified, returns the most recent N messages (not the oldest N).
+
+    Args:
+        session_id: Session identifier (format: "task-{task_id}")
+        limit: Max number of messages to return (most recent N messages)
+        before_message_id: Only return messages before this ID
+        is_group_chat: Whether this is a group chat
+        supports_video: Whether the model supports video input.
+        db: Database session
     """
     session_type, task_id = parse_session_id(session_id)
     history_statuses = [
@@ -888,8 +953,12 @@ async def get_chat_history(
         subtasks = query.order_by(Subtask.message_id.asc()).all()
 
     # Convert to message format with full context loading
+    # Build model_config from supports_video parameter for video capability check
+    model_config = {"modelCapabilities": {"supportsVideo": supports_video}}
     messages = [
-        msg for st in subtasks for msg in subtask_to_messages(st, db, is_group_chat)
+        msg
+        for st in subtasks
+        for msg in subtask_to_messages(st, db, is_group_chat, model_config)
     ]
 
     logger.debug(

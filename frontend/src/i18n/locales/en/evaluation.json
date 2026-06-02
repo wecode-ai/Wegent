@@ -97,7 +97,7 @@
     "published_success_description": "The topic is now available to respondents",
     "video_upload": "Introduction Video (Optional)",
     "video_drop_or_click": "Click or drag video here",
-    "video_hint": "MP4, MOV, AVI formats supported",
+    "video_hint": "MP4, AVI, MKV, MOV, FLV, WMV formats supported",
     "video_uploading": "Uploading video...",
     "video_uploaded": "Video uploaded successfully",
     "video_invalid_type": "Please select a valid video file",

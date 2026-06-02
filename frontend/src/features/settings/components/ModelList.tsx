@@ -190,35 +190,6 @@ const ModelList: React.FC<ModelListProps> = ({
     return role === 'Owner' || role === 'Maintainer'
   }
 
-  // Convert DisplayModel to ModelCRD for editing
-  const convertToModelCRD = (displayModel: DisplayModel): ModelCRD => {
-    const env = (displayModel.config?.env as Record<string, unknown>) || {}
-    return {
-      apiVersion: 'agent.wecode.io/v1',
-      kind: 'Model',
-      metadata: {
-        name: displayModel.name,
-        namespace: displayModel.namespace || 'default',
-        displayName:
-          displayModel.displayName !== displayModel.name ? displayModel.displayName : undefined,
-      },
-      spec: {
-        modelConfig: {
-          env: {
-            model: displayModel.modelType === 'openai' ? 'openai' : 'claude',
-            model_id: displayModel.modelId,
-            api_key: (env.api_key as string) || '',
-            base_url: env.base_url as string | undefined,
-            custom_headers: env.custom_headers as Record<string, string> | undefined,
-          },
-        },
-      },
-      status: {
-        state: 'Available',
-      },
-    }
-  }
-
   const handleTestConnection = async (displayModel: DisplayModel) => {
     if (displayModel.isPublic) {
       // Public models cannot be tested (no API key access)
@@ -311,10 +282,12 @@ const ModelList: React.FC<ModelListProps> = ({
       setEditingModel(modelCRD)
       setDialogOpen(true)
     } catch (error) {
-      // If fetch fails, construct from unified data
-      console.warn('Failed to fetch model CRD, using unified data:', error)
-      setEditingModel(convertToModelCRD(displayModel))
-      setDialogOpen(true)
+      console.error('Failed to fetch model CRD for editing:', error)
+      toast({
+        variant: 'destructive',
+        title: t('common:models.errors.load_model_detail_failed'),
+        description: t('common:models.errors.load_model_detail_failed_hint'),
+      })
     } finally {
       setLoadingModelName(null)
     }

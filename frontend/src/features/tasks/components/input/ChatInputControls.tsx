@@ -65,6 +65,8 @@ export interface ChatInputControlsProps {
   taskId?: number | null
   /** Task's model_id from backend - used as fallback when no session preference exists */
   taskModelId?: string | null
+  /** Whether uploaded attachments require a video-input-capable chat model */
+  requireVideoInputModel?: boolean
   /** Knowledge base ID to exclude from context selector (used in notebook mode) */
   knowledgeBaseId?: number
 
@@ -205,6 +207,7 @@ export function ChatInputControls({
   teamId,
   taskId,
   taskModelId,
+  requireVideoInputModel = false,
   knowledgeBaseId,
   showRepositorySelector,
   selectedRepo,
@@ -402,6 +405,7 @@ export function ChatInputControls({
         teamId={teamId}
         taskId={taskId}
         taskModelId={taskModelId}
+        requireVideoInputModel={requireVideoInputModel}
         knowledgeBaseId={knowledgeBaseId}
         showRepositorySelector={showRepositorySelector}
         selectedRepo={selectedRepo}
@@ -657,6 +661,7 @@ export function ChatInputControls({
                 teamId={teamId}
                 taskId={taskId}
                 taskModelId={taskModelId}
+                requireVideoInput={requireVideoInputModel}
               />
             )}
           </div>

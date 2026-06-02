@@ -101,6 +101,7 @@ class HistoryStoreInterface(ABC):
         session_id: str,
         limit: Optional[int] = None,
         before_message_id: Optional[str] = None,
+        supports_video: bool = False,
     ) -> list[Message]:
         """
         Get chat history for a session.
@@ -109,6 +110,9 @@ class HistoryStoreInterface(ABC):
             session_id: Session identifier
             limit: Maximum number of messages to return
             before_message_id: Only return messages before this ID (for pagination)
+            supports_video: Whether the model supports video input.
+                If True, video attachments will include video_url blocks.
+                If False (default), video attachments cannot be resolved as model input.
 
         Returns:
             List of Message objects, ordered by creation time (oldest first)

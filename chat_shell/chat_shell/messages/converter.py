@@ -243,9 +243,10 @@ class MessageConverter:
         Returns:
             Message dict in LangChain/Chat Completions format
         """
-        # Phase 1 — convert blocks, separating text vs image
+        # Phase 1 — convert blocks, separating text vs image vs video
         text_entries: list[dict[str, Any]] = []  # (converted text blocks)
         image_entries: list[dict[str, Any]] = []  # (converted image blocks)
+        video_entries: list[dict[str, Any]] = []  # (converted video blocks)
 
         for block in content_blocks:
             block_type = block.get("type", "")
@@ -283,12 +284,20 @@ class MessageConverter:
                         {"type": "image_url", "image_url": {"url": image_url}}
                     )
 
+            elif block_type == "input_video":
+                # Convert input_video to video_url
+                video_url = block.get("video_url", "")
+                if video_url:
+                    video_entries.append(
+                        {"type": "video_url", "video_url": {"url": video_url}}
+                    )
+
         # Phase 2 — separate user message (last text) from context blocks
         if text_entries:
             user_msg_block = text_entries[-1]
             context_blocks = text_entries[:-1]  # independent text blocks
         else:
-            # Image-only message: create an empty text block for username
+            # Image/video-only message: create an empty text block for username
             user_msg_block = {"type": "text", "text": ""}
             context_blocks = []
 
@@ -296,9 +305,10 @@ class MessageConverter:
         if username:
             user_msg_block["text"] = f"User[{username}]: {user_msg_block['text']}"
 
-        # Phase 3 — assemble: [user_msg, images, context_blocks..., system-reminder]
+        # Phase 3 — assemble: [user_msg, images, videos, context_blocks..., system-reminder]
         langchain_content: list[dict[str, Any]] = [user_msg_block]
         langchain_content.extend(image_entries)
+        langchain_content.extend(video_entries)  # Add video blocks
         langchain_content.extend(context_blocks)
 
         reminder = MessageConverter._build_system_reminder_block(time_text)
@@ -420,11 +430,12 @@ class MessageConverter:
 
     @staticmethod
     def is_vision_message(message: dict[str, Any]) -> bool:
-        """Check if a message contains vision/image content."""
+        """Check if a message contains vision/image/video content."""
         content = message.get("content", "")
         if isinstance(content, list):
             return any(
-                isinstance(part, dict) and part.get("type") == "image_url"
+                isinstance(part, dict)
+                and part.get("type") in ("image_url", "video_url")
                 for part in content
             )
         return False

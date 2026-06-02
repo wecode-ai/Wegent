@@ -71,6 +71,13 @@ export interface TeamWithBotDetails extends Team {
   }>
 }
 
+function supportsVideoUnderstanding(model: Model): boolean {
+  return (
+    (model.config?.modelCapabilities as { supportsVideo?: boolean } | undefined)?.supportsVideo ===
+    true
+  )
+}
+
 /** Legacy props interface (backward compatible) */
 export interface ModelSelectorProps {
   selectedModel: Model | null
@@ -92,6 +99,8 @@ export interface ModelSelectorProps {
   initialForceOverride?: boolean
   /** Model category type for filtering and display (default: 'llm') */
   modelCategoryType?: ModelCategoryType
+  /** When true, only models that explicitly support video input are selectable */
+  requireVideoInput?: boolean
 }
 
 // ============================================================================
@@ -131,6 +140,7 @@ export default function ModelSelector({
   taskModelId,
   initialForceOverride,
   modelCategoryType = 'llm',
+  requireVideoInput = false,
 }: ModelSelectorProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -146,6 +156,7 @@ export default function ModelSelector({
     selectedTeam,
     disabled,
     modelCategoryType,
+    requireVideoInput,
   })
   const {
     selectedModel: internalSelectedModel,
@@ -198,7 +209,7 @@ export default function ModelSelector({
       return
     }
 
-    if (internalModelChanged && internalSelectedModel && internalModelKey !== externalModelKey) {
+    if (internalModelChanged && internalModelKey !== externalModelKey) {
       externalSetSelectedModel(internalSelectedModel)
     }
   }, [
@@ -387,7 +398,11 @@ export default function ModelSelector({
                 </div>
               ) : modelSelection.filteredModels.length === 0 ? (
                 <CommandEmpty className="py-4 text-center text-sm text-text-muted">
-                  {modelSelection.isLoading ? 'Loading...' : t('common:models.no_models')}
+                  {modelSelection.isLoading
+                    ? 'Loading...'
+                    : requireVideoInput
+                      ? t('common:models.no_video_input_models')
+                      : t('common:models.no_models')}
                 </CommandEmpty>
               ) : (
                 <>
@@ -461,6 +476,14 @@ export default function ModelSelector({
                                 className="text-[10px] flex-shrink-0 whitespace-nowrap"
                               >
                                 {t('common:settings.personal', '个人')}
+                              </Tag>
+                            )}
+                            {supportsVideoUnderstanding(model) && (
+                              <Tag
+                                variant="success"
+                                className="text-[10px] flex-shrink-0 whitespace-nowrap"
+                              >
+                                {t('common:models.video_understanding', '视频理解')}
                               </Tag>
                             )}
                           </div>

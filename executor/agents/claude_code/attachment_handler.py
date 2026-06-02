@@ -76,7 +76,10 @@ def download_attachments(
 
     try:
         from executor.config import config
-        from executor.services.attachment_downloader import AttachmentDownloader
+        from executor.services.attachment_downloader import (
+            ATTACHMENT_SKIP_REASON_VIDEO,
+            AttachmentDownloader,
+        )
         from executor.services.attachment_prompt_processor import (
             AttachmentPromptProcessor,
         )
@@ -111,18 +114,23 @@ def download_attachments(
         )
 
         result = downloader.download_all(attachments)
+        non_video_failures = [
+            att
+            for att in result.failed
+            if att.get("skip_reason") != ATTACHMENT_SKIP_REASON_VIDEO
+        ]
 
         modified_prompt = prompt
         image_content_blocks: List[Dict[str, Any]] = []
         prompt_has_inline_images = is_vision_prompt(prompt)
 
         # Process prompt to replace attachment references and add context
-        if result.success or result.failed:
+        if result.success or non_video_failures:
             # Rewrite backend attachment paths and replace [attachment:id] placeholders.
             modified_prompt = AttachmentPromptProcessor.process_prompt(
                 prompt,
                 result.success,
-                result.failed,
+                non_video_failures,
                 task_id=task_id,
                 subtask_id=subtask_id,
             )
@@ -149,17 +157,17 @@ def download_attachments(
                         f"Built {len(image_content_blocks)} image content blocks"
                     )
 
-        if result.failed:
+        if non_video_failures:
             logger.warning(
-                f"Failed to download {len(result.failed)} attachments: "
-                f"{[a.get('original_filename') for a in result.failed]}"
+                f"Failed to download {len(non_video_failures)} attachments: "
+                f"{[a.get('original_filename') for a in non_video_failures]}"
             )
 
         return AttachmentProcessResult(
             prompt=modified_prompt,
             image_content_blocks=image_content_blocks,
             success_count=len(result.success),
-            failed_count=len(result.failed),
+            failed_count=len(non_video_failures),
         )
 
     except Exception as e:
