@@ -85,6 +85,19 @@ _PERSONAL_COUNT_SQL = text(
 """
 )
 
+_PERSONAL_COUNT_BY_ORIGIN_SQL = text(
+    """
+    SELECT COUNT(*)
+    FROM tasks k
+    WHERE k.kind = 'Task'
+    AND k.is_active = :is_active
+    AND k.namespace != 'system'
+    AND k.user_id = :user_id
+    AND k.is_group_chat = 0
+    AND k.client_origin = :client_origin
+"""
+)
+
 _PERSONAL_IDS_SQL = text(
     """
     SELECT k.id, k.created_at
@@ -94,6 +107,21 @@ _PERSONAL_IDS_SQL = text(
     AND k.namespace != 'system'
     AND k.user_id = :user_id
     AND k.is_group_chat = 0
+    ORDER BY k.created_at DESC
+    LIMIT :limit OFFSET :skip
+"""
+)
+
+_PERSONAL_IDS_BY_ORIGIN_SQL = text(
+    """
+    SELECT k.id, k.created_at
+    FROM tasks k
+    WHERE k.kind = 'Task'
+    AND k.is_active = :is_active
+    AND k.namespace != 'system'
+    AND k.user_id = :user_id
+    AND k.is_group_chat = 0
+    AND k.client_origin = :client_origin
     ORDER BY k.created_at DESC
     LIMIT :limit OFFSET :skip
 """
@@ -215,29 +243,37 @@ def get_owned_task_ids_and_total(
 
 
 def get_personal_task_ids_and_total(
-    db: Session, *, user_id: int, skip: int, limit: int, extra_limit: int
+    db: Session,
+    *,
+    user_id: int,
+    skip: int,
+    limit: int,
+    extra_limit: int,
+    client_origin: Optional[str] = None,
 ) -> Tuple[List[int], int]:
     """Fetch owned non-group task IDs and total count."""
+    count_sql = _PERSONAL_COUNT_BY_ORIGIN_SQL if client_origin else _PERSONAL_COUNT_SQL
+    ids_sql = _PERSONAL_IDS_BY_ORIGIN_SQL if client_origin else _PERSONAL_IDS_SQL
+    params = {
+        "user_id": user_id,
+        "entity_id": str(user_id),
+        "is_active": TaskResource.STATE_ACTIVE,
+        "limit": limit + extra_limit,
+        "skip": skip,
+    }
+    if client_origin:
+        params["client_origin"] = client_origin
+
     total = _timed_scalar(
         db,
-        _PERSONAL_COUNT_SQL,
-        {
-            "user_id": user_id,
-            "entity_id": str(user_id),
-            "is_active": TaskResource.STATE_ACTIVE,
-        },
+        count_sql,
+        params,
         "personal_total",
     )
     rows = _timed_rows(
         db,
-        _PERSONAL_IDS_SQL,
-        {
-            "user_id": user_id,
-            "entity_id": str(user_id),
-            "is_active": TaskResource.STATE_ACTIVE,
-            "limit": limit + extra_limit,
-            "skip": skip,
-        },
+        ids_sql,
+        params,
         "personal_ids",
     )
     task_ids = [row[0] for row in rows]

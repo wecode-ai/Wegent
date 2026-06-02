@@ -14,6 +14,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.core.constants import CLIENT_ORIGIN_FRONTEND, SUPPORTED_CLIENT_ORIGINS
+
 
 class ProjectTaskBase(BaseModel):
     """Base model for project-task association."""
@@ -116,6 +118,21 @@ class ProjectGitConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ProjectModelSelection(BaseModel):
+    """Default model selection for new project conversations."""
+
+    modelName: str = Field(..., min_length=1, description="Selected model name")
+    modelType: Optional[Literal["public", "user", "group"]] = Field(
+        None, description="Selected model type"
+    )
+    options: dict[str, str] = Field(
+        default_factory=dict,
+        description="Model option values, such as reasoning effort.",
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class ProjectConfig(BaseModel):
     """Validated project configuration.
 
@@ -129,6 +146,7 @@ class ProjectConfig(BaseModel):
     team: Optional[ProjectTeamConfig] = None
     workspace: Optional[ProjectWorkspaceConfig] = None
     git: Optional[ProjectGitConfig] = None
+    modelSelection: Optional[ProjectModelSelection] = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -184,9 +202,20 @@ class ProjectBase(BaseModel):
         max_length=20,
         description="Project color identifier (e.g., #FF5733)",
     )
+    client_origin: str = Field(
+        default=CLIENT_ORIGIN_FRONTEND,
+        description="Client surface that owns this project",
+    )
     config: Optional[ProjectConfig] = Field(
         None, description="Workspace project configuration"
     )
+
+    @model_validator(mode="after")
+    def validate_client_origin(self) -> "ProjectBase":
+        """Validate project client origin."""
+        if self.client_origin not in SUPPORTED_CLIENT_ORIGINS:
+            raise ValueError("Unsupported client_origin")
+        return self
 
 
 class ProjectCreate(ProjectBase):

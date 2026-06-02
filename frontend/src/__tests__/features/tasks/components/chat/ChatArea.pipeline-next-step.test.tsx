@@ -141,7 +141,6 @@ jest.mock('@/features/tasks/components/chat/useChatStreamHandlers', () => ({
     pendingTaskId: null,
     isStreaming: false,
     isAwaitingResponseStart: false,
-    isSubtaskStreaming: false,
     isStopping: false,
     hasPendingUserMessage: false,
     localPendingMessage: null,
@@ -151,17 +150,24 @@ jest.mock('@/features/tasks/components/chat/useChatStreamHandlers', () => ({
     handleCancelTask: jest.fn(),
     stopStream: jest.fn(),
     resetStreamingState: jest.fn(),
-    handleNewMessages: jest.fn(),
-    handleStreamComplete: jest.fn(),
     isCancelling: false,
   }),
 }))
 
-jest.mock('@/features/tasks/contexts/taskContext', () => ({
-  useTaskContext: () => ({
+jest.mock('@/features/tasks/session/TaskSession', () => ({
+  useTaskSession: () => ({
     selectedTaskDetail: mockSelectedTaskDetail,
-    setSelectedTask: jest.fn(),
+    selectedTask: mockSelectedTaskDetail,
+    selectTask: jest.fn(),
     accessDenied: false,
+    taskState: {
+      taskId: mockSelectedTaskDetail.id,
+      messages: mockTaskMessages,
+      runtime: { taskStatus: undefined },
+    },
+  }),
+  useOptionalTaskSession: () => ({
+    sendMessage: mockSendMessage,
   }),
 }))
 
@@ -170,18 +176,6 @@ jest.mock('@/features/projects/contexts/projectContext', () => ({
     projects: [],
     projectTaskIds: new Set(),
     isWorkspaceEnabled: false,
-  }),
-}))
-
-jest.mock('@/features/tasks/contexts/chatStreamContext', () => ({
-  useOptionalChatStreamContext: () => ({
-    sendMessage: mockSendMessage,
-  }),
-}))
-
-jest.mock('@/features/tasks/hooks/useTaskStateMachine', () => ({
-  useTaskStateMachine: () => ({
-    state: { messages: mockTaskMessages },
   }),
 }))
 

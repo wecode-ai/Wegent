@@ -12,10 +12,20 @@ export type {
   MessageStatus,
   UnifiedMessage,
   StreamingInfo,
+  TaskRuntimeState,
+  TaskRuntimeDerivedState,
+  TaskRuntimeVerifyResult,
+  TaskRecoveryReason,
   TaskStateData,
   SyncOptions,
   StateListener,
   TaskStateMachineDeps,
 } from './TaskStateMachine'
 
-export { taskStateManager } from './TaskStateManager'
+export {
+  getRuntimePhaseForTaskStatus,
+  isActiveExecutionTaskStatus,
+  isTerminalTaskStatus,
+  isWaitingForUserTaskStatus,
+} from './taskStatusClassifier'
+export type { TaskRuntimePhase } from './taskStatusClassifier'

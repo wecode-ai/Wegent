@@ -6,7 +6,7 @@
 
 import { useEffect, useRef } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import type { Task } from '@/types/api'
 import { useToast } from '@/hooks/use-toast'
 
@@ -20,7 +20,7 @@ import { useToast } from '@/hooks/use-toast'
 export default function TaskParamSync() {
   const { toast } = useToast()
   const searchParams = useSearchParams()
-  const { selectedTask, selectedTaskDetail, setSelectedTask } = useTaskContext()
+  const { selectedTask, selectedTaskDetail, selectTask } = useTaskSession()
 
   const router = useRouter()
 
@@ -40,7 +40,7 @@ export default function TaskParamSync() {
     // Use ref to check current state without adding to dependencies
     if (!taskId) {
       if (selectedTaskRef.current || selectedTaskDetailRef.current) {
-        setSelectedTask(null)
+        selectTask(null)
       }
       return
     }
@@ -56,7 +56,7 @@ export default function TaskParamSync() {
       try {
         // Allow completed tasks to be selected, users should be able to view details of any task
         // If it exists, set it. The context will handle fetching the full detail.
-        setSelectedTask({ id: Number(taskId) } as Task)
+        selectTask({ id: Number(taskId) } as Task)
       } catch {
         toast({
           variant: 'destructive',
@@ -72,7 +72,7 @@ export default function TaskParamSync() {
     // IMPORTANT: selectedTaskDetail is intentionally NOT in the dependency array
     // This effect should only run when URL changes, not when task detail changes
     // Using ref to access current value without triggering re-runs
-  }, [searchParams, router, setSelectedTask, toast])
+  }, [searchParams, router, selectTask, toast])
 
   return null // Only responsible for synchronization, does not render any content
 }

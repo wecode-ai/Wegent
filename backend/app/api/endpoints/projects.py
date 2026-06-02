@@ -8,10 +8,13 @@ Project API endpoints for managing projects and project-task associations.
 Projects are containers for organizing tasks. Each task can belong to one project.
 """
 
+from typing import Annotated
+
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.core.constants import CLIENT_ORIGIN_FRONTEND, SUPPORTED_CLIENT_ORIGINS
 from app.core.security import get_current_user
 from app.models.user import User
 from app.schemas.project import (
@@ -32,12 +35,21 @@ from app.services import project_device_session_service, project_service
 
 router = APIRouter()
 
+ClientOriginQuery = Annotated[
+    str,
+    Query(
+        pattern=f"^({'|'.join(SUPPORTED_CLIENT_ORIGINS)})$",
+        description="Client surface to scope projects and project chats",
+    ),
+]
+
 
 @router.get("", response_model=ProjectListResponse)
 def list_projects(
     include_tasks: bool = Query(
         True, description="Whether to include tasks in response"
     ),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -46,7 +58,10 @@ def list_projects(
     Returns projects with optional task lists.
     """
     return project_service.list_projects(
-        db=db, user_id=current_user.id, include_tasks=include_tasks
+        db=db,
+        user_id=current_user.id,
+        include_tasks=include_tasks,
+        client_origin=client_origin,
     )
 
 
@@ -78,13 +93,14 @@ def create_project_endpoint(
     response_model=TaskArchiveBatchResponse,
 )
 def archive_all_project_chats_endpoint(
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Archive all active chats that belong to any project."""
     try:
         count = project_service.archive_all_project_chats(
-            db=db, user_id=current_user.id
+            db=db, user_id=current_user.id, client_origin=client_origin
         )
         return {"message": "Project chats archived successfully", "count": count}
     except HTTPException:
@@ -99,6 +115,7 @@ def archive_all_project_chats_endpoint(
 @router.get("/{project_id}", response_model=ProjectWithTasksResponse)
 def get_project_endpoint(
     project_id: int = Path(..., description="Project ID"),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -106,7 +123,10 @@ def get_project_endpoint(
     Get project details by ID with its tasks.
     """
     project = project_service.get_project(
-        db=db, project_id=project_id, user_id=current_user.id
+        db=db,
+        project_id=project_id,
+        user_id=current_user.id,
+        client_origin=client_origin,
     )
 
     if not project:
@@ -122,6 +142,7 @@ def get_project_endpoint(
 def update_project_endpoint(
     project_id: int = Path(..., description="Project ID"),
     project_update: ProjectUpdate = Body(...),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -134,6 +155,7 @@ def update_project_endpoint(
             project_id=project_id,
             update_data=project_update,
             user_id=current_user.id,
+            client_origin=client_origin,
         )
     except HTTPException:
         raise
@@ -147,6 +169,7 @@ def update_project_endpoint(
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_project_endpoint(
     project_id: int = Path(..., description="Project ID"),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -156,7 +179,10 @@ def delete_project_endpoint(
     """
     try:
         project_service.delete_project(
-            db=db, project_id=project_id, user_id=current_user.id
+            db=db,
+            project_id=project_id,
+            user_id=current_user.id,
+            client_origin=client_origin,
         )
         return None
     except HTTPException:
@@ -176,6 +202,7 @@ def delete_project_endpoint(
 def create_project_conversation_endpoint(
     project_id: int = Path(..., description="Project ID"),
     conversation_data: ProjectConversationCreate = Body(...),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -190,6 +217,7 @@ def create_project_conversation_endpoint(
             project_id=project_id,
             conversation_data=conversation_data,
             user=current_user,
+            client_origin=client_origin,
         )
     except HTTPException:
         raise
@@ -206,13 +234,17 @@ def create_project_conversation_endpoint(
 )
 def archive_project_chats_endpoint(
     project_id: int = Path(..., description="Project ID"),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Archive all active chats in a project."""
     try:
         count = project_service.archive_project_chats(
-            db=db, project_id=project_id, user_id=current_user.id
+            db=db,
+            project_id=project_id,
+            user_id=current_user.id,
+            client_origin=client_origin,
         )
         return {"message": "Project chats archived successfully", "count": count}
     except HTTPException:
@@ -230,6 +262,7 @@ def archive_project_chats_endpoint(
 )
 async def start_project_terminal_session_endpoint(
     project_id: int = Path(..., description="Project ID"),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -239,6 +272,7 @@ async def start_project_terminal_session_endpoint(
         user_id=current_user.id,
         project_id=project_id,
         session_type="terminal",
+        client_origin=client_origin,
     )
 
 
@@ -248,6 +282,7 @@ async def start_project_terminal_session_endpoint(
 )
 async def start_project_code_server_session_endpoint(
     project_id: int = Path(..., description="Project ID"),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -257,6 +292,7 @@ async def start_project_code_server_session_endpoint(
         user_id=current_user.id,
         project_id=project_id,
         session_type="code_server",
+        client_origin=client_origin,
     )
 
 
@@ -273,6 +309,7 @@ async def start_project_code_server_session_endpoint(
 def add_task_to_project_endpoint(
     project_id: int = Path(..., description="Project ID"),
     task_data: ProjectTaskCreate = Body(...),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -285,6 +322,7 @@ def add_task_to_project_endpoint(
             project_id=project_id,
             task_id=task_data.task_id,
             user_id=current_user.id,
+            client_origin=client_origin,
         )
         return AddTaskToProjectResponse(
             message="Task added to project successfully",
@@ -306,6 +344,7 @@ def add_task_to_project_endpoint(
 def remove_task_from_project_endpoint(
     project_id: int = Path(..., description="Project ID"),
     task_id: int = Path(..., description="Task ID"),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -319,6 +358,7 @@ def remove_task_from_project_endpoint(
             project_id=project_id,
             task_id=task_id,
             user_id=current_user.id,
+            client_origin=client_origin,
         )
         return RemoveTaskFromProjectResponse(
             message="Task removed from project successfully"

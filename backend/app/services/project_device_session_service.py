@@ -4,7 +4,7 @@
 
 """Project-scoped helpers for starting local device sessions."""
 
-from typing import Literal
+from typing import Literal, Optional
 
 from fastapi import HTTPException, status
 from pydantic import ValidationError
@@ -31,17 +31,17 @@ async def start_project_device_session(
     user_id: int,
     project_id: int,
     session_type: ProjectSessionType,
+    client_origin: Optional[str] = None,
 ) -> ProjectDeviceSessionResponse:
     """Start an interactive local device session for a workspace project."""
-    project = (
-        db.query(Project)
-        .filter(
-            Project.id == project_id,
-            Project.user_id == user_id,
-            Project.is_active == True,
-        )
-        .first()
+    query = db.query(Project).filter(
+        Project.id == project_id,
+        Project.user_id == user_id,
+        Project.is_active == True,
     )
+    if client_origin:
+        query = query.filter(Project.client_origin == client_origin)
+    project = query.first()
     if not project:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

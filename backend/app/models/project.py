@@ -22,6 +22,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.sql import func
 
+from app.core.constants import CLIENT_ORIGIN_FRONTEND
 from app.db.base import Base
 
 
@@ -57,6 +58,13 @@ class Project(Base):
         String(20),
         nullable=True,
         comment="Project color identifier (e.g., #FF5733)",
+    )
+    client_origin = Column(
+        String(32),
+        nullable=False,
+        default=CLIENT_ORIGIN_FRONTEND,
+        server_default=CLIENT_ORIGIN_FRONTEND,
+        comment="Client surface that owns this project, e.g. frontend or wework",
     )
     config = Column(
         JSON,

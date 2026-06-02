@@ -112,6 +112,9 @@ class TaskOperationsMixin:
         task_id: int,
     ) -> tuple:
         """Handle appending to an existing task."""
+        if existing_task.client_origin != obj_in.client_origin:
+            raise HTTPException(status_code=404, detail="Task not found")
+
         task_crd = Task.model_validate(existing_task.json)
         task_status = task_crd.status.status if task_crd.status else "PENDING"
 
@@ -217,6 +220,7 @@ class TaskOperationsMixin:
                 .filter(
                     Project.id == obj_in.project_id,
                     Project.user_id == user.id,
+                    Project.client_origin == obj_in.client_origin,
                     Project.is_active == True,
                 )
                 .first()
@@ -263,6 +267,7 @@ class TaskOperationsMixin:
             namespace="default",
             json=workspace_json,
             is_active=True,
+            client_origin=obj_in.client_origin,
         )
         db.add(workspace)
 
@@ -316,6 +321,11 @@ class TaskOperationsMixin:
                         else {}
                     ),
                     **(
+                        {"modelOptions": json_lib.dumps(obj_in.model_options)}
+                        if obj_in.model_options
+                        else {}
+                    ),
+                    **(
                         {"api_key_name": obj_in.api_key_name}
                         if obj_in.api_key_name
                         else {}
@@ -346,6 +356,7 @@ class TaskOperationsMixin:
             existing_placeholder.json = task_json
             existing_placeholder.is_active = True
             existing_placeholder.project_id = obj_in.project_id or 0
+            existing_placeholder.client_origin = obj_in.client_origin
             existing_placeholder.updated_at = datetime.now()
             task = existing_placeholder
         else:
@@ -359,6 +370,7 @@ class TaskOperationsMixin:
                 json=task_json,
                 is_active=True,
                 project_id=obj_in.project_id or 0,
+                client_origin=obj_in.client_origin,
             )
             db.add(task)
 
@@ -388,21 +400,26 @@ class TaskOperationsMixin:
         return None
 
     def update_task(
-        self, db: Session, *, task_id: int, obj_in: TaskUpdate, user_id: int
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        obj_in: TaskUpdate,
+        user_id: int,
+        client_origin: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Update user Task.
         """
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.user_id == user_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .first()
+        query = db.query(TaskResource).filter(
+            TaskResource.id == task_id,
+            TaskResource.user_id == user_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active == TaskResource.STATE_ACTIVE,
         )
+        if client_origin:
+            query = query.filter(TaskResource.client_origin == client_origin)
+        task = query.first()
 
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
@@ -529,7 +546,14 @@ class TaskOperationsMixin:
             workspace.json = workspace_crd.model_dump()
             flag_modified(workspace, "json")
 
-    def delete_task(self, db: Session, *, task_id: int, user_id: int) -> None:
+    def delete_task(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        user_id: int,
+        client_origin: Optional[str] = None,
+    ) -> None:
         """
         Delete user Task and handle running subtasks.
         """
@@ -539,21 +563,22 @@ class TaskOperationsMixin:
 
         # Preserve the existing OpenAPI delete response contract: deletion is
         # keyed by task id, while archived tasks are also accepted.
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active.in_(
-                    [TaskResource.STATE_ACTIVE, TaskResource.STATE_ARCHIVED]
-                ),
-            )
-            .first()
+        query = db.query(TaskResource).filter(
+            TaskResource.id == task_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active.in_(
+                [TaskResource.STATE_ACTIVE, TaskResource.STATE_ARCHIVED]
+            ),
         )
+        if client_origin:
+            query = query.filter(TaskResource.client_origin == client_origin)
+        task = query.first()
 
         # If not the owner, check if user is a group chat member
         if not task:
-            task = self._handle_member_leave(db, task_id, user_id)
+            task = self._handle_member_leave(
+                db, task_id, user_id, client_origin=client_origin
+            )
             if task is None:
                 return  # User left the group chat
 
@@ -676,7 +701,13 @@ class TaskOperationsMixin:
         db.commit()
 
     def list_archived_tasks(
-        self, db: Session, *, user_id: int, skip: int = 0, limit: int = 100
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        skip: int = 0,
+        limit: int = 100,
+        client_origin: Optional[str] = None,
     ) -> tuple[list[ArchivedTask], int]:
         """List archived chats owned by a user."""
 
@@ -686,6 +717,8 @@ class TaskOperationsMixin:
             TaskResource.namespace != "system",
             TaskResource.is_active == TaskResource.STATE_ARCHIVED,
         )
+        if client_origin:
+            base_query = base_query.filter(TaskResource.client_origin == client_origin)
         total = base_query.count()
         tasks = (
             base_query.order_by(TaskResource.updated_at.desc())
@@ -696,102 +729,133 @@ class TaskOperationsMixin:
         project_names = self._get_project_names(db, [task.project_id for task in tasks])
         return [self._to_archived_task(task, project_names) for task in tasks], total
 
-    def archive_task(self, db: Session, *, task_id: int, user_id: int) -> None:
+    def archive_task(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        user_id: int,
+        client_origin: Optional[str] = None,
+    ) -> None:
         """Archive a single chat without deleting its runtime data."""
 
         task = self._get_owned_task_for_archive(
-            db, task_id=task_id, user_id=user_id, state=TaskResource.STATE_ACTIVE
+            db,
+            task_id=task_id,
+            user_id=user_id,
+            state=TaskResource.STATE_ACTIVE,
+            client_origin=client_origin,
         )
         self._set_task_archive_state(db, task, TaskResource.STATE_ARCHIVED)
 
-    def unarchive_task(self, db: Session, *, task_id: int, user_id: int) -> None:
+    def unarchive_task(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        user_id: int,
+        client_origin: Optional[str] = None,
+    ) -> None:
         """Restore a single archived chat to normal chat lists."""
 
         task = self._get_owned_task_for_archive(
-            db, task_id=task_id, user_id=user_id, state=TaskResource.STATE_ARCHIVED
+            db,
+            task_id=task_id,
+            user_id=user_id,
+            state=TaskResource.STATE_ARCHIVED,
+            client_origin=client_origin,
         )
         self._set_task_archive_state(db, task, TaskResource.STATE_ACTIVE)
 
-    def archive_all_user_chats(self, db: Session, *, user_id: int) -> int:
+    def archive_all_user_chats(
+        self, db: Session, *, user_id: int, client_origin: Optional[str] = None
+    ) -> int:
         """Archive all active personal chat/code tasks owned by a user."""
 
-        tasks = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.user_id == user_id,
-                TaskResource.kind == "Task",
-                TaskResource.namespace != "system",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .all()
+        query = db.query(TaskResource).filter(
+            TaskResource.user_id == user_id,
+            TaskResource.kind == "Task",
+            TaskResource.namespace != "system",
+            TaskResource.is_active == TaskResource.STATE_ACTIVE,
         )
+        if client_origin:
+            query = query.filter(TaskResource.client_origin == client_origin)
+        tasks = query.all()
         return self._archive_tasks(db, tasks)
 
-    def archive_standalone_chats(self, db: Session, *, user_id: int) -> int:
+    def archive_standalone_chats(
+        self, db: Session, *, user_id: int, client_origin: Optional[str] = None
+    ) -> int:
         """Archive all active chat/code tasks that are not associated with projects."""
 
-        tasks = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.user_id == user_id,
-                TaskResource.project_id == 0,
-                TaskResource.kind == "Task",
-                TaskResource.namespace != "system",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .all()
+        query = db.query(TaskResource).filter(
+            TaskResource.user_id == user_id,
+            TaskResource.project_id == 0,
+            TaskResource.kind == "Task",
+            TaskResource.namespace != "system",
+            TaskResource.is_active == TaskResource.STATE_ACTIVE,
         )
+        if client_origin:
+            query = query.filter(TaskResource.client_origin == client_origin)
+        tasks = query.all()
         return self._archive_tasks(db, tasks)
 
-    def archive_all_project_chats(self, db: Session, *, user_id: int) -> int:
+    def archive_all_project_chats(
+        self, db: Session, *, user_id: int, client_origin: Optional[str] = None
+    ) -> int:
         """Archive all active chat/code tasks associated with any project."""
 
-        tasks = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.user_id == user_id,
-                TaskResource.project_id > 0,
-                TaskResource.kind == "Task",
-                TaskResource.namespace != "system",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .all()
+        query = db.query(TaskResource).filter(
+            TaskResource.user_id == user_id,
+            TaskResource.project_id > 0,
+            TaskResource.kind == "Task",
+            TaskResource.namespace != "system",
+            TaskResource.is_active == TaskResource.STATE_ACTIVE,
         )
+        if client_origin:
+            query = query.filter(TaskResource.client_origin == client_origin)
+        tasks = query.all()
         return self._archive_tasks(db, tasks)
 
     def archive_project_chats(
-        self, db: Session, *, project_id: int, user_id: int
+        self,
+        db: Session,
+        *,
+        project_id: int,
+        user_id: int,
+        client_origin: Optional[str] = None,
     ) -> int:
         """Archive all active chats in a project owned by a user."""
 
-        tasks = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.user_id == user_id,
-                TaskResource.project_id == project_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .all()
+        query = db.query(TaskResource).filter(
+            TaskResource.user_id == user_id,
+            TaskResource.project_id == project_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active == TaskResource.STATE_ACTIVE,
         )
+        if client_origin:
+            query = query.filter(TaskResource.client_origin == client_origin)
+        tasks = query.all()
         return self._archive_tasks(db, tasks)
 
-    def delete_all_archived_tasks(self, db: Session, *, user_id: int) -> int:
+    def delete_all_archived_tasks(
+        self, db: Session, *, user_id: int, client_origin: Optional[str] = None
+    ) -> int:
         """Soft delete every archived chat owned by a user."""
 
-        task_ids = [
-            row[0]
-            for row in db.query(TaskResource.id)
-            .filter(
-                TaskResource.user_id == user_id,
-                TaskResource.kind == "Task",
-                TaskResource.namespace != "system",
-                TaskResource.is_active == TaskResource.STATE_ARCHIVED,
-            )
-            .all()
-        ]
+        query = db.query(TaskResource.id).filter(
+            TaskResource.user_id == user_id,
+            TaskResource.kind == "Task",
+            TaskResource.namespace != "system",
+            TaskResource.is_active == TaskResource.STATE_ARCHIVED,
+        )
+        if client_origin:
+            query = query.filter(TaskResource.client_origin == client_origin)
+        task_ids = [row[0] for row in query.all()]
         for task_id in task_ids:
-            self.delete_task(db=db, task_id=task_id, user_id=user_id)
+            self.delete_task(
+                db=db, task_id=task_id, user_id=user_id, client_origin=client_origin
+            )
         return len(task_ids)
 
     def _archive_tasks(self, db: Session, tasks: list[TaskResource]) -> int:
@@ -831,18 +895,23 @@ class TaskOperationsMixin:
             db.commit()
 
     def _get_owned_task_for_archive(
-        self, db: Session, *, task_id: int, user_id: int, state: int
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        user_id: int,
+        state: int,
+        client_origin: Optional[str] = None,
     ) -> TaskResource:
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.user_id == user_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active == state,
-            )
-            .first()
+        query = db.query(TaskResource).filter(
+            TaskResource.id == task_id,
+            TaskResource.user_id == user_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active == state,
         )
+        if client_origin:
+            query = query.filter(TaskResource.client_origin == client_origin)
+        task = query.first()
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
         if not self._is_archivable_chat(task):
@@ -879,25 +948,29 @@ class TaskOperationsMixin:
             updated_at=task.updated_at,
             completed_at=task_crd.status.completedAt if task_crd.status else None,
             project_id=task.project_id or 0,
+            client_origin=task.client_origin,
             project_name=project_names.get(task.project_id or 0),
         )
 
     def _handle_member_leave(
-        self, db: Session, task_id: int, user_id: int
+        self,
+        db: Session,
+        task_id: int,
+        user_id: int,
+        client_origin: Optional[str] = None,
     ) -> Optional[TaskResource]:
         """Handle a member leaving a group chat using ResourceMember."""
         from app.models.resource_member import MemberStatus, ResourceMember
         from app.models.share_link import ResourceType
 
-        task = (
-            db.query(TaskResource)
-            .filter(
-                TaskResource.id == task_id,
-                TaskResource.kind == "Task",
-                TaskResource.is_active == TaskResource.STATE_ACTIVE,
-            )
-            .first()
+        query = db.query(TaskResource).filter(
+            TaskResource.id == task_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active == TaskResource.STATE_ACTIVE,
         )
+        if client_origin:
+            query = query.filter(TaskResource.client_origin == client_origin)
+        task = query.first()
 
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")

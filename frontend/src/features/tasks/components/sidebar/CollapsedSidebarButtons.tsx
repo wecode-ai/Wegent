@@ -8,7 +8,7 @@ import React from 'react'
 import { PanelLeftOpen, Plus } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 
 interface CollapsedSidebarButtonsProps {
   onExpand: () => void
@@ -20,7 +20,7 @@ export default function CollapsedSidebarButtons({
   onNewTask,
 }: CollapsedSidebarButtonsProps) {
   const { t } = useTranslation()
-  const { tasks, getUnreadCount, viewStatusVersion } = useTaskContext()
+  const { tasks, getUnreadCount, viewStatusVersion } = useTaskSession()
 
   // Calculate unread count from task context, same as TaskSidebar
   const hasUnreadTasks = React.useMemo(() => {
