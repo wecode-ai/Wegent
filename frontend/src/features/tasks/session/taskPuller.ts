@@ -88,7 +88,18 @@ export function useTaskPuller(): TaskPuller {
   // Track task status for notification
   const taskStatusMapRef = useRef<Map<number, TaskStatus>>(new Map())
   const selectedTaskRef = useRef<Task | null>(null)
+  const selectionEpochRef = useRef(0)
+
+  const isCurrentSelection = useCallback((taskId: number, epoch: number): boolean => {
+    return selectionEpochRef.current === epoch && selectedTaskRef.current?.id === taskId
+  }, [])
+
   const writeSelectedTask = useCallback((task: Task | null) => {
+    const previousTaskId = selectedTaskRef.current?.id ?? null
+    const nextTaskId = task?.id ?? null
+    if (previousTaskId !== nextTaskId) {
+      selectionEpochRef.current += 1
+    }
     selectedTaskRef.current = task
     setSelectedTaskState(task)
   }, [])
@@ -701,22 +712,34 @@ export function useTaskPuller(): TaskPuller {
 
   // Task lists are updated by WebSocket events and refreshed after runtime health checks.
 
-  const pullTaskDetail = useCallback(async (taskId: number): Promise<TaskDetail | null> => {
-    try {
-      setAccessDenied(false)
-      const updatedTaskDetail = await taskApis.getTaskDetail(taskId)
-      setSelectedTaskDetail(updatedTaskDetail)
-      return updatedTaskDetail
-    } catch (error) {
-      if (error instanceof ApiError && (error.status === 403 || error.status === 404)) {
-        setAccessDenied(true)
-        setSelectedTaskDetail(null)
+  const pullTaskDetail = useCallback(
+    async (taskId: number): Promise<TaskDetail | null> => {
+      const requestEpoch = selectionEpochRef.current
+
+      try {
+        if (isCurrentSelection(taskId, requestEpoch)) {
+          setAccessDenied(false)
+        }
+
+        const updatedTaskDetail = await taskApis.getTaskDetail(taskId)
+        if (!isCurrentSelection(taskId, requestEpoch)) return null
+
+        setSelectedTaskDetail(updatedTaskDetail)
+        return updatedTaskDetail
+      } catch (error) {
+        if (!isCurrentSelection(taskId, requestEpoch)) return null
+
+        if (error instanceof ApiError && (error.status === 403 || error.status === 404)) {
+          setAccessDenied(true)
+          setSelectedTaskDetail(null)
+          return null
+        }
+        console.error('[taskPuller] Failed to pull task detail:', error)
         return null
       }
-      console.error('[taskPuller] Failed to pull task detail:', error)
-      return null
-    }
-  }, [])
+    },
+    [isCurrentSelection]
+  )
 
   const refreshSelectedTaskDetail = async () => {
     if (!selectedTask) return
@@ -724,33 +747,43 @@ export function useTaskPuller(): TaskPuller {
     await pullTaskDetail(selectedTask.id)
   }
 
-  const pullRuntime = useCallback(async (taskId?: number): Promise<TaskRuntimeCheck | null> => {
-    const targetTaskId = taskId ?? selectedTaskRef.current?.id
-    if (!targetTaskId) return null
+  const pullRuntime = useCallback(
+    async (taskId?: number): Promise<TaskRuntimeCheck | null> => {
+      const targetTaskId = taskId ?? selectedTaskRef.current?.id
+      if (!targetTaskId) return null
+      const requestEpoch = selectionEpochRef.current
+      if (!isCurrentSelection(targetTaskId, requestEpoch)) return null
 
-    setIsRefreshing(true)
-    try {
-      const snapshot = await taskApis.getTaskRuntimeCheck(targetTaskId)
-      setTaskRuntimeSnapshot(snapshot)
+      setIsRefreshing(true)
+      try {
+        const snapshot = await taskApis.getTaskRuntimeCheck(targetTaskId)
+        if (!isCurrentSelection(targetTaskId, requestEpoch)) return null
 
-      setSelectedTaskDetail(prev => {
-        if (!prev || prev.id !== snapshot.task_id) return prev
-        return {
-          ...prev,
-          status: snapshot.task_status,
-          updated_at: snapshot.status_updated_at || prev.updated_at,
-          ...(snapshot.active_stream ? {} : { progress: prev.progress }),
+        setTaskRuntimeSnapshot(snapshot)
+
+        setSelectedTaskDetail(prev => {
+          if (!prev || prev.id !== snapshot.task_id) return prev
+          return {
+            ...prev,
+            status: snapshot.task_status,
+            updated_at: snapshot.status_updated_at || prev.updated_at,
+            ...(snapshot.active_stream ? {} : { progress: prev.progress }),
+          }
+        })
+
+        return snapshot
+      } catch (error) {
+        if (!isCurrentSelection(targetTaskId, requestEpoch)) return null
+        console.error('[taskPuller] Failed to verify task runtime:', error)
+        return null
+      } finally {
+        if (isCurrentSelection(targetTaskId, requestEpoch)) {
+          setIsRefreshing(false)
         }
-      })
-
-      return snapshot
-    } catch (error) {
-      console.error('[taskPuller] Failed to verify task runtime:', error)
-      return null
-    } finally {
-      setIsRefreshing(false)
-    }
-  }, [])
+      }
+    },
+    [isCurrentSelection]
+  )
 
   const verifyTaskRuntime = pullRuntime
 

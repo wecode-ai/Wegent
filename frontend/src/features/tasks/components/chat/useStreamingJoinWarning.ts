@@ -3,35 +3,35 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useRef } from 'react'
-import type { StreamingInfo } from '../../state'
+import type { TaskRuntimeState } from '../../state'
 import { getStreamingJoinWarningKey } from './streamingJoinWarning'
 
 interface UseStreamingJoinWarningOptions {
   taskId?: number | null
-  status?: string
-  streamingInfo?: StreamingInfo | null
+  phase?: string
+  runtime?: TaskRuntimeState | null
   translate: (key: string) => string
   notify: (title: string) => void
 }
 
 export function useStreamingJoinWarning({
   taskId,
-  status,
-  streamingInfo,
+  phase,
+  runtime,
   translate,
   notify,
 }: UseStreamingJoinWarningOptions) {
   const lastWarningRef = useRef<string | null>(null)
 
   useEffect(() => {
-    if (!streamingInfo || status !== 'streaming') {
+    if (!runtime?.activeStreamSubtaskId || phase !== 'streaming') {
       lastWarningRef.current = null
       return
     }
 
     const warningKey = getStreamingJoinWarningKey({
-      started_at: streamingInfo.started_at,
-      last_activity_at: streamingInfo.last_activity_at,
+      started_at: runtime.activeStreamStartedAt,
+      last_activity_at: runtime.activeStreamLastActivityAt,
     })
     if (!warningKey) return
 
@@ -40,5 +40,13 @@ export function useStreamingJoinWarning({
 
     lastWarningRef.current = dedupeKey
     notify(translate(warningKey))
-  }, [notify, status, streamingInfo, taskId, translate])
+  }, [
+    notify,
+    phase,
+    runtime?.activeStreamLastActivityAt,
+    runtime?.activeStreamStartedAt,
+    runtime?.activeStreamSubtaskId,
+    taskId,
+    translate,
+  ])
 }
