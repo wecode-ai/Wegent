@@ -26,7 +26,7 @@ import { PromptDraftDialog } from '@/features/prompt-draft/components/PromptDraf
 import { usePromptDraftHint } from '@/features/prompt-draft/hooks/usePromptDraftHint'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { cn } from '@/lib/utils'
-import { TaskContext } from '@/features/tasks/contexts/taskContext'
+import { TaskSessionContext } from '@/features/tasks/session/TaskSession'
 
 const POSITION_STORAGE_KEY = 'pet-widget-position'
 const DEFAULT_POSITION = { x: 16, y: 16 } // from bottom-right
@@ -54,7 +54,7 @@ export function PetWidget() {
   const [openPromptDraftDialog, setOpenPromptDraftDialog] = useState(false)
   const widgetRef = useRef<HTMLDivElement>(null)
   const hoverCloseTimerRef = useRef<number | null>(null)
-  const taskContext = useContext(TaskContext)
+  const taskContext = useContext(TaskSessionContext)
   const selectedTaskId = taskContext?.selectedTask?.id ?? null
   const showPromptHint = usePromptDraftHint(selectedTaskId)
   const dragStartRef = useRef<{

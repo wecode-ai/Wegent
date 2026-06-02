@@ -10,7 +10,7 @@ import { GitRepoInfo, GitBranch as GitBranchType, TaskDetail } from '@/types/api
 import { useTranslation } from '@/hooks/useTranslation'
 import { githubApis } from '@/apis/github'
 import { useToast } from '@/hooks/use-toast'
-import { TaskContext } from '../../contexts/taskContext'
+import { TaskSessionContext } from '@/features/tasks/session/TaskSession'
 import { cn } from '@/lib/utils'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
@@ -49,7 +49,7 @@ export default function MobileBranchSelector({
   const [userCleared, setUserCleared] = useState(false)
   const [open, setOpen] = useState(false)
 
-  const taskContext = useContext(TaskContext)
+  const taskContext = useContext(TaskSessionContext)
   const selectedTaskDetail = taskDetail ?? taskContext?.selectedTaskDetail ?? null
 
   // Fetch branch list

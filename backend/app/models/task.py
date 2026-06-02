@@ -21,6 +21,7 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 
+from app.core.constants import CLIENT_ORIGIN_FRONTEND
 from app.db.base import Base
 
 
@@ -92,6 +93,13 @@ class TaskResource(Base):
         default=0,
         index=True,
         comment="Project ID for task grouping",
+    )
+    client_origin = Column(
+        String(32),
+        nullable=False,
+        default=CLIENT_ORIGIN_FRONTEND,
+        server_default=CLIENT_ORIGIN_FRONTEND,
+        comment="Client surface that owns this task, e.g. frontend or wework",
     )
     is_group_chat = Column(
         Boolean,

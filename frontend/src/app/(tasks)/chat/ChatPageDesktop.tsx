@@ -20,8 +20,7 @@ import GreyTestButton from '@/features/layout/components/GreyTestButton'
 import { Team } from '@/types/api'
 import { saveLastTab } from '@/utils/userPreferences'
 import { useUser } from '@/features/common/UserContext'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { useDevices } from '@/contexts/DeviceContext'
 import { paths } from '@/config/paths'
 import { Button } from '@/components/ui/button'
@@ -71,13 +70,8 @@ export function ChatPageDesktop() {
   const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
 
   // Task context for refreshing task list
-  const {
-    refreshTasks,
-    selectedTask,
-    selectedTaskDetail,
-    setSelectedTask,
-    refreshSelectedTaskDetail,
-  } = useTaskContext()
+  const { refreshTasks, selectedTask, selectedTaskDetail, selectTask, refreshSelectedTaskDetail } =
+    useTaskSession()
 
   // Device context - when a device is selected, switch to 'task' mode
   const { selectedDeviceId, devices } = useDevices()
@@ -99,18 +93,15 @@ export function ChatPageDesktop() {
 
   // Handle task deletion
   const handleTaskDeleted = () => {
-    setSelectedTask(null)
+    selectTask(null)
     refreshTasks()
   }
 
   // Handle members changed (when converting to group chat or adding/removing members)
   const handleMembersChanged = () => {
     refreshTasks()
-    refreshSelectedTaskDetail(false)
+    void refreshSelectedTaskDetail()
   }
-
-  // Chat stream context
-  const { clearAllStreams } = useChatStreamContext()
 
   // User state for git token check
   const { user } = useUser()
@@ -236,7 +227,7 @@ export function ChatPageDesktop() {
     deps: teamEditDeps,
     onTeamUpdated: useCallback(() => {
       refreshTeams()
-      refreshSelectedTaskDetail(false)
+      void refreshSelectedTaskDetail()
     }, [refreshTeams, refreshSelectedTaskDetail]),
   })
 
@@ -286,8 +277,7 @@ export function ChatPageDesktop() {
   const handleNewTask = () => {
     // IMPORTANT: Clear selected task FIRST to ensure UI state is reset immediately
     // This prevents the UI from being stuck showing the previous task's messages
-    setSelectedTask(null)
-    clearAllStreams()
+    selectTask(null)
     // Force a hard reload to ensure a fresh start when already on /chat
     window.location.href = paths.chat.getHref()
   }

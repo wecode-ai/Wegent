@@ -12,7 +12,7 @@
 import { useCallback, useContext, useMemo } from 'react'
 import { traceLocalAction, traceLocalActionSync } from '@/lib/telemetry'
 import { useUser } from '@/features/common/UserContext'
-import { TaskContext } from '@/features/tasks/contexts/taskContext'
+import { TaskSessionContext } from '@/features/tasks/session/TaskSession'
 import { Attributes, AttributeValue } from '@opentelemetry/api'
 
 /**
@@ -46,7 +46,7 @@ type MessageType = 'user' | 'ai'
  */
 export function useTraceAction() {
   const { user } = useUser()
-  const taskContext = useContext(TaskContext)
+  const taskContext = useContext(TaskSessionContext)
 
   /**
    * Build common trace attributes from current context

@@ -32,6 +32,8 @@ const createTask = (id: number, overrides: Partial<Task> = {}): Task => ({
 })
 
 const mockPush = jest.fn()
+const mockSelectTask = jest.fn()
+const mockMarkTaskAsViewed = jest.fn()
 
 jest.mock('next/navigation', () => ({
   useRouter: () => ({
@@ -39,20 +41,14 @@ jest.mock('next/navigation', () => ({
   }),
 }))
 
-jest.mock('@/features/tasks/contexts/taskContext', () => ({
-  useTaskContext: () => ({
+jest.mock('@/features/tasks/session/TaskSession', () => ({
+  useTaskSession: () => ({
     selectedTask: null,
     selectedTaskDetail: null,
-    setSelectedTask: jest.fn(),
+    selectTask: mockSelectTask,
     refreshTasks: jest.fn(),
     viewStatusVersion: 0,
-    markTaskAsViewed: jest.fn(),
-  }),
-}))
-
-jest.mock('@/features/tasks/contexts/chatStreamContext', () => ({
-  useChatStreamContext: () => ({
-    clearAllStreams: jest.fn(),
+    markTaskAsViewed: mockMarkTaskAsViewed,
   }),
 }))
 
@@ -96,6 +92,10 @@ jest.mock('@/hooks/useTranslation', () => ({
 }))
 
 describe('TaskListSection', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+  })
+
   it('uses the task team icon when available', () => {
     const task = createTask(1, { team_icon: 'sparkles' })
 
@@ -184,5 +184,19 @@ describe('TaskListSection', () => {
 
     expect(taskTitle).toHaveClass('text-text-primary')
     expect(taskTitle).not.toHaveClass('text-[#444746]')
+  })
+
+  it('selects the clicked task immediately before route navigation', () => {
+    const task = createTask(7)
+
+    render(<TaskListSection tasks={[task]} title="History" />)
+
+    fireEvent.click(screen.getAllByText('Conversation 7')[0].closest('.cursor-pointer')!)
+
+    expect(mockSelectTask).toHaveBeenCalledWith(task)
+    expect(mockPush).toHaveBeenCalledWith('/chat?taskId=7')
+    expect(mockSelectTask.mock.invocationCallOrder[0]).toBeLessThan(
+      mockPush.mock.invocationCallOrder[0]
+    )
   })
 })

@@ -23,7 +23,7 @@ import { useToast } from '@/hooks/use-toast'
 import { useRepositorySearch } from '../../hooks/useRepositorySearch'
 import { RepoListView } from './RepoListView'
 import { BranchListView } from './BranchListView'
-import { TaskContext } from '../../contexts/taskContext'
+import { TaskSessionContext } from '@/features/tasks/session/TaskSession'
 import { getRepositoryIdentity } from './repositoryIdentity'
 
 /**
@@ -125,7 +125,7 @@ export default function UnifiedRepositorySelector({
   const prevRequiresWorkspaceRef = useRef(requiresWorkspace)
 
   // Try to get context, but don't throw if not available
-  const taskContext = useContext(TaskContext)
+  const taskContext = useContext(TaskSessionContext)
   const selectedTaskDetail = taskDetail ?? taskContext?.selectedTaskDetail ?? null
 
   // Use the custom hook for repository search logic

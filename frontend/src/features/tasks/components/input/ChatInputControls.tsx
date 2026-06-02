@@ -114,9 +114,9 @@ export interface ChatInputControlsProps {
   isModelSelectionRequired: boolean
   isAttachmentReadyToSend: boolean
   taskInputMessage: string
-  isSubtaskStreaming: boolean
   canQueueMessage?: boolean
   canSendGuidance?: boolean
+  canCancelTask?: boolean
 
   // Actions
   onStopStream: () => void
@@ -238,9 +238,9 @@ export function ChatInputControls({
   isModelSelectionRequired,
   isAttachmentReadyToSend,
   taskInputMessage,
-  isSubtaskStreaming,
   canQueueMessage = false,
   canSendGuidance = false,
+  canCancelTask,
   onStopStream,
   onCancelTask,
   isCancelling = false,
@@ -304,10 +304,8 @@ export function ChatInputControls({
       shouldHideChatInput,
       taskInputMessage,
       hasAttachments: attachmentState.attachments.length > 0,
-      selectedTaskStatus: selectedTaskDetail?.status,
-      isSubtaskStreaming,
-      isGroupChat: selectedTaskDetail?.is_group_chat,
       canQueueMessage,
+      canCancelTask,
     })
 
     const renderStopAction = () => (
@@ -433,9 +431,9 @@ export function ChatInputControls({
         isAttachmentReadyToSend={isAttachmentReadyToSend}
         taskInputMessage={taskInputMessage}
         hasAttachments={attachmentState.attachments.length > 0}
-        isSubtaskStreaming={isSubtaskStreaming}
         canQueueMessage={canQueueMessage}
         canSendGuidance={canSendGuidance}
+        canCancelTask={canCancelTask}
         onStopStream={onStopStream}
         onCancelTask={onCancelTask}
         isCancelling={isCancelling}
