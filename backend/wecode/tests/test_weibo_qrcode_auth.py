@@ -14,7 +14,7 @@ from wecode.service.weibo_qrcode_auth_service import WeiboQrcodeAuthService
 async def test_create_weibo_qrcode_challenge(httpx_mock):
     httpx_mock.add_response(
         method="GET",
-        url="https://qrcode.sina.com.cn/qrcode/newdata?appid=1142",
+        url="https://qrcode.sina.com.cn/qrcode/newdata?appid=1146",
         json={
             "status": 0,
             "msg": "OK",
@@ -47,7 +47,7 @@ async def test_complete_weibo_qrcode_login_creates_user(
     )
     httpx_mock.add_response(
         method="GET",
-        url="https://qrcode.sina.com.cn/qrcode/status?appid=1142&sid=sid-1&poll=1",
+        url="https://qrcode.sina.com.cn/qrcode/status?appid=1146&sid=sid-1&poll=1",
         json={
             "status": 2,
             "data": {
@@ -60,7 +60,7 @@ async def test_complete_weibo_qrcode_login_creates_user(
         method="GET",
         url=(
             "https://qrcode.sina.com.cn/qrcode/push?"
-            "appid=1142&uid=123&qrdata=https%3A%2F%2Fkoudai.sina.com%2Fqr"
+            "appid=1146&uid=123&qrdata=https%3A%2F%2Fkoudai.sina.com%2Fqr"
         ),
         json={"status": 0},
     )
@@ -85,7 +85,7 @@ async def test_complete_weibo_qrcode_login_returns_pending(
 ):
     httpx_mock.add_response(
         method="GET",
-        url="https://qrcode.sina.com.cn/qrcode/status?appid=1142&sid=sid-1&poll=1",
+        url="https://qrcode.sina.com.cn/qrcode/status?appid=1146&sid=sid-1&poll=1",
         json={"status": 0},
     )
 
