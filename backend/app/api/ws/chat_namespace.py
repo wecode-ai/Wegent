@@ -443,7 +443,6 @@ class ChatNamespace(socketio.AsyncNamespace):
                 )
         except Exception as e:
             logger.exception(f"[WS] task:join error fetching subtasks: {e}")
-            # Continue without subtasks - frontend can fall back to API call
 
         # Check for active streaming
         logger.info(
