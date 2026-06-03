@@ -311,6 +311,8 @@
     "local_skills_error": "无法加载本地技能",
     "retry_local_skills": "重试",
     "no_local_skills": "暂无匹配技能",
+    "local_skill_origin_local": "本地",
+    "local_skill_origin_wegent": "Wegent",
     "login_title": "登录 Wework",
     "login_subtitle": "使用 Wegent 账号继续",
     "login_username": "用户名",
