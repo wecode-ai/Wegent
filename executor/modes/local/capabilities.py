@@ -753,7 +753,16 @@ class CapabilitySyncHandler:
                 continue
             key = self._plugin_key(name, marketplace)
             install_path = self._plugin_install_path(item, name, marketplace)
-            if not install_path.exists() and item.get("download_path"):
+            expected_checksum = item.get("checksum")
+            should_download = not install_path.exists()
+            if (
+                isinstance(expected_checksum, str)
+                and expected_checksum
+                and self._persisted_plugin_checksum(installed_map, key, item)
+                != expected_checksum
+            ):
+                should_download = True
+            if should_download and item.get("download_path"):
                 if not client:
                     results.append(
                         {
@@ -801,6 +810,8 @@ class CapabilitySyncHandler:
                 {
                     "scope": scope,
                     "installPath": str(install_path),
+                    "installedPluginId": item.get("installed_plugin_id"),
+                    "checksum": item.get("checksum"),
                     "version": item.get("version"),
                     "componentStates": item.get("component_states") or {},
                     "installedAt": item.get("installed_at") or utc_now_iso(),
@@ -879,23 +890,28 @@ class CapabilitySyncHandler:
                 if not self.store._is_child(target, install_path):
                     raise ValueError(f"Unsafe path in plugin ZIP: {member.filename}")
 
-            if install_path.exists():
-                shutil.rmtree(install_path)
             temp_path = parent / f".{install_path.name}.tmp-{os.getpid()}"
+            staged_path = parent / f".{install_path.name}.staged-{os.getpid()}"
             if temp_path.exists():
                 shutil.rmtree(temp_path)
+            if staged_path.exists():
+                shutil.rmtree(staged_path)
             temp_path.mkdir(parents=True)
             try:
                 archive.extractall(temp_path)
                 root = self._normalized_plugin_root(temp_path)
                 if root != temp_path:
-                    shutil.move(str(root), str(install_path))
-                    shutil.rmtree(temp_path, ignore_errors=True)
+                    shutil.move(str(root), str(staged_path))
                 else:
-                    os.replace(temp_path, install_path)
+                    os.replace(temp_path, staged_path)
+                if install_path.exists():
+                    shutil.rmtree(install_path)
+                os.replace(staged_path, install_path)
             finally:
                 if temp_path.exists():
                     shutil.rmtree(temp_path, ignore_errors=True)
+                if staged_path.exists():
+                    shutil.rmtree(staged_path, ignore_errors=True)
         _set_owner_only(install_path, is_directory=True)
 
     def _normalized_plugin_root(self, path: Path) -> Path:
@@ -907,7 +923,7 @@ class CapabilitySyncHandler:
             and (children[0] / ".claude-plugin" / "plugin.json").exists()
         ):
             return children[0]
-        return path
+        raise ValueError("Plugin package must include .claude-plugin/plugin.json")
 
     def _plugin_marketplace(self, item: dict[str, Any]) -> str | None:
         source = item.get("source") or {}
@@ -933,6 +949,35 @@ class CapabilitySyncHandler:
             / str(item.get("version") or "latest")
         )
 
+    def _persisted_plugin_checksum(
+        self,
+        installed_map: dict[str, Any],
+        key: str,
+        item: dict[str, Any],
+    ) -> str | None:
+        installs = installed_map.get(key, [])
+        if not isinstance(installs, list):
+            return None
+
+        installed_plugin_id = item.get("installed_plugin_id")
+        scope = item.get("scope", "user")
+        for install in installs:
+            if not isinstance(install, dict):
+                continue
+            if (
+                installed_plugin_id
+                and install.get("installedPluginId") == installed_plugin_id
+            ):
+                checksum = install.get("checksum")
+                return checksum if isinstance(checksum, str) else None
+
+        for install in installs:
+            if not isinstance(install, dict) or install.get("scope", "user") != scope:
+                continue
+            checksum = install.get("checksum")
+            return checksum if isinstance(checksum, str) else None
+        return None
+
     def _plugin_record(
         self,
         item: dict[str, Any],
@@ -949,6 +994,7 @@ class CapabilitySyncHandler:
             "marketplace": marketplace,
             "version": item.get("version"),
             "source": item.get("source") or {},
+            "checksum": item.get("checksum"),
             "component_states": item.get("component_states") or {},
             "components": item.get("components") or {},
             "install_path": str(install_path),

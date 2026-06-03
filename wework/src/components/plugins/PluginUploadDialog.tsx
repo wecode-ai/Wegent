@@ -1,28 +1,43 @@
 import { Upload, X } from 'lucide-react'
 import { useState } from 'react'
-import { useTranslation } from 'react-i18next'
+import { useTranslation } from '@/hooks/useTranslation'
+
+const MAX_PLUGIN_PACKAGE_SIZE_BYTES = 50 * 1024 * 1024
 
 export function PluginUploadDialog({
   isUploading,
+  uploadError = null,
   onCancel,
+  onErrorReset,
   onUpload,
 }: {
   isUploading: boolean
+  uploadError?: string | null
   onCancel: () => void
+  onErrorReset?: () => void
   onUpload: (file: File) => Promise<void>
 }) {
   const { t } = useTranslation('common')
   const [file, setFile] = useState<File | null>(null)
   const [error, setError] = useState('')
+  const visibleError = error || uploadError
 
   const selectFile = (nextFile: File | null) => {
     setError('')
+    onErrorReset?.()
     if (!nextFile) {
       setFile(null)
       return
     }
-    if (!nextFile.name.endsWith('.zip')) {
+    if (!nextFile.name?.toLowerCase().endsWith('.zip')) {
       setError(t('workbench.plugins_plugin_upload_zip_error', '请选择 .zip 插件包'))
+      setFile(null)
+      return
+    }
+    if (nextFile.size > MAX_PLUGIN_PACKAGE_SIZE_BYTES) {
+      setError(
+        t('workbench.plugins_plugin_upload_size_error', '插件安装包不能超过 50MB'),
+      )
       setFile(null)
       return
     }
@@ -41,7 +56,13 @@ export function PluginUploadDialog({
             )
             return
           }
-          void onUpload(file)
+          onUpload(file).catch(uploadError => {
+            setError(
+              uploadError instanceof Error
+                ? uploadError.message
+                : t('workbench.plugins_plugin_upload_failed', '插件上传失败'),
+            )
+          })
         }}
       >
         <div className="flex items-start justify-between gap-4">
@@ -88,7 +109,9 @@ export function PluginUploadDialog({
           />
         </label>
 
-        {error && <p className="mt-3 text-sm font-semibold text-red-500">{error}</p>}
+        {visibleError && (
+          <p className="mt-3 text-sm font-semibold text-red-500">{visibleError}</p>
+        )}
 
         <div className="mt-5 flex justify-end gap-3">
           <button

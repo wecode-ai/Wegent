@@ -288,7 +288,11 @@ class InstalledPluginService:
 
     def _safe_kind_name(self, value: str) -> str:
         cleaned = re.sub(r"[^a-zA-Z0-9_.-]+", "-", value.strip()).strip("-")
-        return (cleaned or "plugin")[:100]
+        digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:10]
+        suffix = f"-{digest}"
+        max_base_length = 100 - len(suffix)
+        base = (cleaned or "plugin")[:max_base_length].rstrip("-") or "plugin"
+        return f"{base}{suffix}"
 
     def _kind_to_installed_plugin(self, row: Kind) -> InstalledPlugin:
         payload = dict(row.json)

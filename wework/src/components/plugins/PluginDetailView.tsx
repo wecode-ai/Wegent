@@ -81,7 +81,12 @@ function buildComponentItems(plugin: InstalledPlugin): DetailComponentItem[] {
       componentKey: `mcp:${item.name}`,
       type: 'mcp',
       name: item.name,
-      description: 'MCP server',
+      description:
+        typeof item.server.description === 'string'
+          ? item.server.description
+          : typeof item.server.command === 'string'
+            ? item.server.command
+            : item.name,
     })),
     ...components.lsps.map((item) => ({
       key: `lsp-${item.name}`,

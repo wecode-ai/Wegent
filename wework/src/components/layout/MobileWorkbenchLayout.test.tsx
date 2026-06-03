@@ -1,9 +1,11 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState, type ReactNode } from 'react'
-import { describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { UnifiedModel } from '@/types/api'
 import { MobileWorkbenchLayout } from './MobileWorkbenchLayout'
+
+const originalInnerWidth = window.innerWidth
 
 const baseState = {
   user: { id: 1, user_name: 'MI', email: 'mi@example.com' },
@@ -60,6 +62,15 @@ const baseProjectChat = {
 }
 
 describe('MobileWorkbenchLayout', () => {
+  afterEach(() => {
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      writable: true,
+      value: originalInnerWidth,
+    })
+    window.dispatchEvent(new Event('resize'))
+  })
+
   function renderAtMobileWidth(ui: ReactNode) {
     Object.defineProperty(window, 'innerWidth', {
       configurable: true,
@@ -178,6 +189,14 @@ describe('MobileWorkbenchLayout', () => {
       'data-mobile',
       'true',
     )
+    expect(screen.getByTestId('model-selector-menu')).toHaveAttribute(
+      'aria-modal',
+      'true',
+    )
+    expect(screen.getByTestId('model-selector-menu')).toHaveAttribute(
+      'aria-labelledby',
+      'model-selector-mobile-title',
+    )
     expect(screen.getByTestId('model-selector-menu')).toHaveClass('h-[82dvh]')
     expect(screen.getByTestId('model-selector-search-input')).toBeInTheDocument()
     expect(screen.getByTestId('model-selector-model-list')).toHaveClass(
@@ -185,7 +204,15 @@ describe('MobileWorkbenchLayout', () => {
       'scrollbar-none',
     )
     expect(screen.getByTestId('model-control-reasoning-high')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-reasoning-high')).toHaveClass(
+      'h-11',
+      'min-w-[44px]',
+    )
     expect(screen.getByTestId('model-control-speed-fast')).toBeInTheDocument()
+    expect(screen.getByTestId('model-family-claude')).toHaveClass(
+      'h-11',
+      'min-w-[44px]',
+    )
 
     await userEvent.click(screen.getByTestId('model-family-claude'))
     await userEvent.click(screen.getByTestId('model-option-claude-sonnet'))

@@ -299,6 +299,7 @@ export function PluginsWorkspace() {
   const [isCreatingCustomMcp, setIsCreatingCustomMcp] = useState(false)
   const [isUploadingSkill, setIsUploadingSkill] = useState(false)
   const [isUploadingPlugin, setIsUploadingPlugin] = useState(false)
+  const [pluginUploadError, setPluginUploadError] = useState<string | null>(null)
   const [systemSkillPage, setSystemSkillPage] = useState(1)
   const systemSkillApi = useMemo(() => createDefaultSystemSkillApi(), [])
   const mcpApi = useMemo(() => createDefaultMcpApi(), [])
@@ -603,6 +604,7 @@ export function PluginsWorkspace() {
 
   const uploadPlugin = async (file: File) => {
     setIsUploadingPlugin(true)
+    setPluginUploadError(null)
     try {
       const uploaded = await pluginApi.uploadPlugin(file)
       const item = toInstalledPluginItem(uploaded)
@@ -612,6 +614,11 @@ export function PluginsWorkspace() {
       ])
       setActiveTab('plugins')
       setShowPluginUploadDialog(false)
+    } catch (error) {
+      setPluginUploadError(
+        error instanceof Error ? error.message : 'Failed to upload plugin',
+      )
+      throw error
     } finally {
       setIsUploadingPlugin(false)
     }
@@ -1044,6 +1051,7 @@ export function PluginsWorkspace() {
               }}
               onCreatePlugin={() => {
                 setIsCreateMenuOpen(false)
+                setPluginUploadError(null)
                 setShowPluginUploadDialog(true)
               }}
             />
@@ -1081,7 +1089,7 @@ export function PluginsWorkspace() {
                       : t('workbench.plugins_search_plugins', '搜索插件')
                 }
                 data-testid="plugins-search-input"
-                className="h-10 w-full rounded-xl border border-border bg-background pl-11 pr-4 text-sm outline-none placeholder:text-text-muted focus:border-primary"
+                className="h-11 min-h-[44px] w-full rounded-xl border border-border bg-background pl-11 pr-4 text-sm outline-none placeholder:text-text-muted focus:border-primary"
               />
             </label>
             {activeTab === 'skills' && (
@@ -1139,7 +1147,10 @@ export function PluginsWorkspace() {
                   type="button"
                   data-testid="plugins-upload-empty-button"
                   className="rounded-xl bg-primary px-4 py-2 text-white hover:bg-primary/90"
-                  onClick={() => setShowPluginUploadDialog(true)}
+                  onClick={() => {
+                    setPluginUploadError(null)
+                    setShowPluginUploadDialog(true)
+                  }}
                 >
                   {t(
                     'workbench.plugins_plugin_upload_title',
@@ -1278,7 +1289,9 @@ export function PluginsWorkspace() {
       {showPluginUploadDialog && (
         <PluginUploadDialog
           isUploading={isUploadingPlugin}
+          uploadError={pluginUploadError}
           onCancel={() => setShowPluginUploadDialog(false)}
+          onErrorReset={() => setPluginUploadError(null)}
           onUpload={uploadPlugin}
         />
       )}

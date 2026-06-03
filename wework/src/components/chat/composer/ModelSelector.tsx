@@ -1,5 +1,13 @@
 import { Check, ChevronDown, ChevronRight, Search, X } from 'lucide-react'
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  type KeyboardEvent,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import {
@@ -19,6 +27,8 @@ const SUBMENU_GAP = 8
 const VIEWPORT_MARGIN = 16
 const SUBMENU_RIGHT_OFFSET = MAIN_MENU_WIDTH + SUBMENU_GAP
 const SUBMENU_LEFT_OFFSET = -(SUBMENU_WIDTH + SUBMENU_GAP)
+const FOCUSABLE_SELECTOR =
+  'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
 
 interface ModelSelectorProps {
   models: UnifiedModel[]
@@ -47,6 +57,8 @@ export function ModelSelector({
   const isMobile = useIsMobile()
   const containerRef = useRef<HTMLDivElement>(null)
   const menuPanelRef = useRef<HTMLDivElement>(null)
+  const mobileMenuRef = useRef<HTMLDivElement>(null)
+  const mobileCloseButtonRef = useRef<HTMLButtonElement>(null)
   const familyButtonRefs = useRef(new Map<string, HTMLButtonElement>())
   const [open, setOpen] = useState(false)
   const [mobileQuery, setMobileQuery] = useState('')
@@ -133,6 +145,16 @@ export function ModelSelector({
     if (!open) return
     updateSubmenuLayout(familyButtonRefs.current.get(displayedFamilyId) ?? null)
   }, [displayedFamilyId, open, updateSubmenuLayout])
+
+  useEffect(() => {
+    if (!open || !isMobile) return
+    const previousActiveElement =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
+    mobileCloseButtonRef.current?.focus()
+    return () => {
+      previousActiveElement?.focus()
+    }
+  }, [isMobile, open])
 
   const menuPositionClass =
     menuPlacement === 'below'
@@ -263,7 +285,7 @@ export function ModelSelector({
                   data-testid={`model-control-${control.id}-${option.value}`}
                   onClick={() => handleSelectModelOption(control.id, option.value)}
                   className={[
-                    'flex h-10 shrink-0 items-center gap-2 rounded-full border px-4 text-sm font-medium',
+                    'flex h-11 min-w-[44px] shrink-0 items-center gap-2 rounded-full border px-4 text-sm font-medium',
                     selected
                       ? 'border-[#1f2933] bg-[#1f2933] text-white'
                       : 'border-border bg-surface text-text-secondary',
@@ -289,13 +311,36 @@ export function ModelSelector({
           type="button"
           data-testid="model-control-reasoning-auto"
           disabled
-          className="flex h-10 items-center gap-2 rounded-full border border-[#1f2933] bg-[#1f2933] px-4 text-sm font-medium text-white disabled:cursor-default"
+          className="flex h-11 min-w-[44px] items-center gap-2 rounded-full border border-[#1f2933] bg-[#1f2933] px-4 text-sm font-medium text-white disabled:cursor-default"
         >
           <span>{t('workbench.reasoning_auto')}</span>
           <Check className="h-4 w-4" />
         </button>
       </section>
     )
+  }
+
+  function handleMobileDialogKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === 'Escape') {
+      closeMenu()
+      return
+    }
+    if (event.key !== 'Tab' || !mobileMenuRef.current) return
+
+    const focusableElements = Array.from(
+      mobileMenuRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+    ).filter(element => element.offsetParent !== null)
+    if (focusableElements.length === 0) return
+
+    const firstElement = focusableElements[0]
+    const lastElement = focusableElements[focusableElements.length - 1]
+    if (event.shiftKey && document.activeElement === firstElement) {
+      event.preventDefault()
+      lastElement.focus()
+    } else if (!event.shiftKey && document.activeElement === lastElement) {
+      event.preventDefault()
+      firstElement.focus()
+    }
   }
 
   function renderMobileSheet() {
@@ -305,21 +350,30 @@ export function ModelSelector({
         onClick={closeMenu}
       >
         <div
+          ref={mobileMenuRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="model-selector-mobile-title"
           data-testid="model-selector-menu"
           data-mobile="true"
           className="absolute inset-x-0 bottom-0 flex h-[82dvh] flex-col rounded-t-[28px] border border-border bg-background shadow-[0_-18px_48px_rgba(0,0,0,0.18)]"
           onClick={event => event.stopPropagation()}
+          onKeyDown={handleMobileDialogKeyDown}
         >
           <div className="mx-auto mt-3 h-1 w-11 rounded-full bg-border" />
           <div className="flex items-center justify-between px-5 pb-3 pt-4">
             <div className="min-w-0">
-              <h2 className="text-lg font-semibold text-text-primary">
+              <h2
+                id="model-selector-mobile-title"
+                className="text-lg font-semibold text-text-primary"
+              >
                 {t('workbench.model_picker_title')}
               </h2>
               <p className="mt-1 truncate text-xs text-text-muted">{buttonLabel}</p>
             </div>
             <button
               type="button"
+              ref={mobileCloseButtonRef}
               data-testid="model-selector-close-button"
               aria-label={t('workbench.close_menu')}
               onClick={closeMenu}
@@ -359,7 +413,7 @@ export function ModelSelector({
                       data-testid={`model-family-${group.config.id}`}
                       onClick={() => activateMobileFamily(group.config.id)}
                       className={[
-                        'h-10 shrink-0 rounded-full px-4 text-sm font-medium',
+                        'h-11 min-w-[44px] shrink-0 rounded-full px-4 text-sm font-medium',
                         active
                           ? 'bg-[#1f2933] text-white'
                           : 'bg-surface text-text-secondary',

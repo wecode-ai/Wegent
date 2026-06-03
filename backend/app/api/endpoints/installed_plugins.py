@@ -4,7 +4,7 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -16,11 +16,13 @@ from app.schemas.installed_plugin import (
     InstalledPluginListResponse,
     InstalledPluginUpdateRequest,
 )
+from app.services.claude_plugin_parser import MAX_PLUGIN_PACKAGE_SIZE_BYTES
 from app.services.device.capability_sync_service import device_capability_sync_service
 from app.services.installed_plugin_service import installed_plugin_service
 
 router = APIRouter(tags=["plugins"])
 logger = logging.getLogger(__name__)
+PLUGIN_UPLOAD_CHUNK_SIZE_BYTES = 1024 * 1024
 
 
 @router.get("/installed", response_model=InstalledPluginListResponse)
@@ -53,7 +55,7 @@ async def upload_plugin(
         file.filename,
         enabled,
     )
-    content = await file.read()
+    content = await _read_plugin_upload(file)
     installed = installed_plugin_service.upload_plugin(
         db=db,
         user_id=current_user.id,
@@ -63,6 +65,20 @@ async def upload_plugin(
     )
     await _sync_global_capabilities(db, current_user.id)
     return installed
+
+
+async def _read_plugin_upload(file: UploadFile) -> bytes:
+    chunks: list[bytes] = []
+    total_size = 0
+    while True:
+        chunk = await file.read(PLUGIN_UPLOAD_CHUNK_SIZE_BYTES)
+        if not chunk:
+            break
+        total_size += len(chunk)
+        if total_size > MAX_PLUGIN_PACKAGE_SIZE_BYTES:
+            raise HTTPException(status_code=413, detail="Plugin package is too large")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 @router.get("/installed/{installed_id}/download")

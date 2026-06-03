@@ -6,6 +6,7 @@ import { createTaskApi } from './tasks'
 import { createTeamApi } from './teams'
 import { createModelApi } from './models'
 import { createSkillApi } from './skills'
+import { createPluginApi } from './plugins'
 import type { HttpClient } from './http'
 
 function mockClient(): HttpClient {
@@ -146,6 +147,19 @@ describe('REST adapters', () => {
 
     expect(client.get).toHaveBeenNthCalledWith(1, '/v1/kinds/skills/unified?scope=all')
     expect(client.get).toHaveBeenNthCalledWith(2, '/teams/2/skills')
+  })
+
+  test('uploads plugins through the shared http client', async () => {
+    const client = mockClient()
+    vi.mocked(client.post).mockResolvedValueOnce({ metadata: { labels: { id: '1' } } })
+    const file = new File(['zip'], 'plugin.ZIP')
+
+    await createPluginApi(client).uploadPlugin(file, false)
+
+    expect(client.post).toHaveBeenCalledWith('/plugins/upload', expect.any(FormData))
+    const formData = vi.mocked(client.post).mock.calls[0][1] as FormData
+    expect(formData.get('file')).toBe(file)
+    expect(formData.get('enabled')).toBe('false')
   })
 
   test('adapts project and task archive endpoints', async () => {
