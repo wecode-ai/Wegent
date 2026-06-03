@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useReducer } from 'react'
 import type { ReactNode } from 'react'
 import { createDeviceApi } from '@/api/devices'
-import { commitProjectChanges, loadProjectEnvironment } from '@/api/environment'
+import {
+  checkoutProjectBranch,
+  commitProjectChanges,
+  createAndCheckoutProjectBranch,
+  listProjectBranches,
+  loadProjectEnvironment,
+} from '@/api/environment'
 import { createHttpClient } from '@/api/http'
 import { createModelApi } from '@/api/models'
 import { createProjectApi } from '@/api/projects'
@@ -103,10 +109,20 @@ export interface WorkbenchContextValue {
   getDeviceHomeDirectory: (deviceId: string) => Promise<string>
   getProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   listDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
+  createDeviceDirectory: (deviceId: string, path: string) => Promise<void>
   loadEnvironmentInfo: (project: ProjectWithTasks | null) => Promise<EnvironmentInfo>
   commitEnvironmentChanges: (
     project: ProjectWithTasks | null,
     message: string,
+  ) => Promise<void>
+  listEnvironmentBranches: (project: ProjectWithTasks | null) => Promise<string[]>
+  checkoutEnvironmentBranch: (
+    project: ProjectWithTasks | null,
+    branchName: string,
+  ) => Promise<void>
+  createEnvironmentBranch: (
+    project: ProjectWithTasks | null,
+    branchName: string,
   ) => Promise<void>
   setInput: (input: string) => void
   sendCurrentInput: () => Promise<void>
@@ -785,6 +801,12 @@ export function WorkbenchProvider({
     [resolvedServices]
   )
 
+  const createDeviceDirectory = useCallback(
+    (deviceId: string, path: string) =>
+      resolvedServices.deviceApi.createDirectory(deviceId, path),
+    [resolvedServices]
+  )
+
   const loadEnvironmentInfo = useCallback(
     (project: ProjectWithTasks | null) =>
       loadProjectEnvironment(resolvedServices.deviceApi, project),
@@ -794,6 +816,24 @@ export function WorkbenchProvider({
   const commitEnvironmentChanges = useCallback(
     (project: ProjectWithTasks | null, message: string) =>
       commitProjectChanges(resolvedServices.deviceApi, project, message),
+    [resolvedServices]
+  )
+
+  const listEnvironmentBranches = useCallback(
+    (project: ProjectWithTasks | null) =>
+      listProjectBranches(resolvedServices.deviceApi, project),
+    [resolvedServices]
+  )
+
+  const checkoutEnvironmentBranch = useCallback(
+    (project: ProjectWithTasks | null, branchName: string) =>
+      checkoutProjectBranch(resolvedServices.deviceApi, project, branchName),
+    [resolvedServices]
+  )
+
+  const createEnvironmentBranch = useCallback(
+    (project: ProjectWithTasks | null, branchName: string) =>
+      createAndCheckoutProjectBranch(resolvedServices.deviceApi, project, branchName),
     [resolvedServices]
   )
 
@@ -968,8 +1008,12 @@ export function WorkbenchProvider({
     getDeviceHomeDirectory,
     getProjectWorkspaceRoot,
     listDeviceDirectories,
+    createDeviceDirectory,
     loadEnvironmentInfo,
     commitEnvironmentChanges,
+    listEnvironmentBranches,
+    checkoutEnvironmentBranch,
+    createEnvironmentBranch,
     setInput,
     sendCurrentInput,
   }

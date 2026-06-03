@@ -39,6 +39,7 @@ export function PluginManagementPage() {
     getDeviceHomeDirectory,
     getProjectWorkspaceRoot,
     listDeviceDirectories,
+    createDeviceDirectory,
   } = useWorkbench()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -121,6 +122,7 @@ export function PluginManagementPage() {
           onGetDeviceHomeDirectory={getDeviceHomeDirectory}
           onGetProjectWorkspaceRoot={getProjectWorkspaceRoot}
           onListDeviceDirectories={listDeviceDirectories}
+          onCreateDeviceDirectory={createDeviceDirectory}
           onOpenSettings={() => setSettingsOpen(true)}
           onLogout={logout}
         />

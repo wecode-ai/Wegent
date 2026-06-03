@@ -36,8 +36,12 @@ export function WorkbenchPage() {
     getDeviceHomeDirectory,
     getProjectWorkspaceRoot,
     listDeviceDirectories,
+    createDeviceDirectory,
     loadEnvironmentInfo,
     commitEnvironmentChanges,
+    listEnvironmentBranches,
+    checkoutEnvironmentBranch,
+    createEnvironmentBranch,
     setInput,
     sendCurrentInput,
   } = useWorkbench()
@@ -81,8 +85,12 @@ export function WorkbenchPage() {
       onGetDeviceHomeDirectory={getDeviceHomeDirectory}
       onGetProjectWorkspaceRoot={getProjectWorkspaceRoot}
       onListDeviceDirectories={listDeviceDirectories}
+      onCreateDeviceDirectory={createDeviceDirectory}
       onLoadEnvironmentInfo={loadEnvironmentInfo}
       onCommitEnvironmentChanges={commitEnvironmentChanges}
+      onListEnvironmentBranches={listEnvironmentBranches}
+      onCheckoutEnvironmentBranch={checkoutEnvironmentBranch}
+      onCreateEnvironmentBranch={createEnvironmentBranch}
       onInputChange={setInput}
       onSend={sendCurrentInput}
       onLogout={logout}

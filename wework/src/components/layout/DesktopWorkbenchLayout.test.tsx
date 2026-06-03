@@ -182,6 +182,7 @@ describe('DesktopWorkbenchLayout', () => {
     onGetDeviceHomeDirectory: vi.fn().mockResolvedValue('/home/ubuntu'),
     onGetProjectWorkspaceRoot: vi.fn().mockResolvedValue('/workspace/projects'),
     onListDeviceDirectories: vi.fn(),
+    onCreateDeviceDirectory: vi.fn(),
     onLoadEnvironmentInfo: vi.fn().mockResolvedValue({
       additions: '+173',
       deletions: '-13366',
@@ -192,6 +193,13 @@ describe('DesktopWorkbenchLayout', () => {
         'https://github.com/wecode-ai/Wegent/compare/human%2Fnarwhal-20260528-073440?expand=1',
     }),
     onCommitEnvironmentChanges: vi.fn().mockResolvedValue(undefined),
+    onListEnvironmentBranches: vi.fn().mockResolvedValue([
+      'main',
+      'human/chipmunk-20260603-053420',
+      'human/narwhal-20260528-073440',
+    ]),
+    onCheckoutEnvironmentBranch: vi.fn().mockResolvedValue(undefined),
+    onCreateEnvironmentBranch: vi.fn().mockResolvedValue(undefined),
     onInputChange: vi.fn(),
     onSend: vi.fn(),
     onLogout: vi.fn(),
@@ -1016,9 +1024,11 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
     expect(screen.getByTestId('environment-info-popover')).toHaveClass(
       'w-[340px]',
-      'bg-popover',
+      'bg-[#fcfcfc]',
       'text-text-primary',
       'border-border',
+      'backdrop-blur-3xl',
+      'backdrop-saturate-150',
     )
     expect(screen.getByText('环境信息')).toBeInTheDocument()
     expect(screen.getByText('变更')).toBeInTheDocument()
@@ -1091,6 +1101,93 @@ describe('DesktopWorkbenchLayout', () => {
       ),
     )
     expect(screen.getByText('已提交')).toBeInTheDocument()
+  })
+
+  test('switches and creates branches from the environment popover', async () => {
+    const onListEnvironmentBranches = vi.fn().mockResolvedValue([
+      'main',
+      'human/chipmunk-20260603-053420',
+      'human/alpaca-20260603-050330',
+    ])
+    const onCheckoutEnvironmentBranch = vi.fn().mockResolvedValue(undefined)
+    const onCreateEnvironmentBranch = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onListEnvironmentBranches={onListEnvironmentBranches}
+        onCheckoutEnvironmentBranch={onCheckoutEnvironmentBranch}
+        onCreateEnvironmentBranch={onCreateEnvironmentBranch}
+        state={{
+          ...baseProps.state,
+          currentProject: {
+            id: 1,
+            name: 'github_wegent',
+            tasks: [],
+            config: {
+              mode: 'workspace',
+              execution: {
+                targetType: 'local',
+                deviceId: 'device-1',
+              },
+              workspace: {
+                source: 'local_path',
+                localPath: '/workspace/github_wegent',
+              },
+            },
+          },
+        }}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+    await userEvent.click(screen.getByTestId('environment-branch-row'))
+
+    expect(await screen.findByTestId('environment-branch-menu')).toBeInTheDocument()
+    await waitFor(() => expect(onListEnvironmentBranches).toHaveBeenCalledTimes(1))
+    expect(screen.getByText('main')).toBeInTheDocument()
+    expect(screen.getByText('human/chipmunk-20260603-053420')).toBeInTheDocument()
+
+    await userEvent.type(screen.getByTestId('environment-branch-search-input'), 'alp')
+    expect(screen.getByText('human/alpaca-20260603-050330')).toBeInTheDocument()
+    expect(screen.queryByText('human/chipmunk-20260603-053420')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByText('human/alpaca-20260603-050330'))
+    await waitFor(() =>
+      expect(onCheckoutEnvironmentBranch).toHaveBeenCalledWith(
+        expect.anything(),
+        'human/alpaca-20260603-050330',
+      ),
+    )
+
+    await userEvent.click(screen.getByTestId('environment-branch-row'))
+    await userEvent.click(await screen.findByTestId('environment-open-new-branch-button'))
+    await userEvent.type(screen.getByTestId('environment-new-branch-input'), 'human/new-branch')
+    await userEvent.click(screen.getByTestId('environment-confirm-new-branch-button'))
+
+    await waitFor(() =>
+      expect(onCreateEnvironmentBranch).toHaveBeenCalledWith(
+        expect.anything(),
+        'human/new-branch',
+      ),
+    )
+  })
+
+  test('does not reopen the branch menu when the environment popover is reopened', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+    await userEvent.click(screen.getByTestId('environment-branch-row'))
+
+    expect(await screen.findByTestId('environment-branch-menu')).toBeInTheDocument()
+
+    await userEvent.click(document.body)
+    expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+
+    expect(await screen.findByTestId('environment-info-popover')).toBeInTheDocument()
+    expect(screen.queryByTestId('environment-branch-menu')).not.toBeInTheDocument()
   })
 
   test('loads environment info from the first workspace project when the popover opens', async () => {

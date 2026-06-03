@@ -226,3 +226,66 @@ export async function commitProjectChanges(
     maxOutputBytes: 8192,
   })
 }
+
+export async function listProjectBranches(
+  api: DeviceCommandApi,
+  project: ProjectWithTasks | null,
+): Promise<string[]> {
+  if (!project) {
+    throw new Error('Project is required')
+  }
+
+  const { deviceId, path } = commandContext(project)
+  const output = await runGitCommand(api, deviceId, 'git_branch_list', path, {
+    timeoutSeconds: 15,
+    maxOutputBytes: 1024 * 64,
+  })
+
+  return output
+    .split('\n')
+    .map(branch => branch.trim())
+    .filter(Boolean)
+    .sort((left, right) => left.localeCompare(right))
+}
+
+export async function checkoutProjectBranch(
+  api: DeviceCommandApi,
+  project: ProjectWithTasks | null,
+  branchName: string,
+): Promise<void> {
+  const trimmedBranch = branchName.trim()
+  if (!trimmedBranch) {
+    throw new Error('Branch name is required')
+  }
+  if (!project) {
+    throw new Error('Project is required')
+  }
+
+  const { deviceId, path } = commandContext(project)
+  await runGitCommand(api, deviceId, 'git_checkout', path, {
+    args: [trimmedBranch],
+    timeoutSeconds: 30,
+    maxOutputBytes: 8192,
+  })
+}
+
+export async function createAndCheckoutProjectBranch(
+  api: DeviceCommandApi,
+  project: ProjectWithTasks | null,
+  branchName: string,
+): Promise<void> {
+  const trimmedBranch = branchName.trim()
+  if (!trimmedBranch) {
+    throw new Error('Branch name is required')
+  }
+  if (!project) {
+    throw new Error('Project is required')
+  }
+
+  const { deviceId, path } = commandContext(project)
+  await runGitCommand(api, deviceId, 'git_checkout_new', path, {
+    args: [trimmedBranch],
+    timeoutSeconds: 30,
+    maxOutputBytes: 8192,
+  })
+}

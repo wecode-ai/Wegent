@@ -251,4 +251,25 @@ describe('REST adapters', () => {
       expect.objectContaining({ command_key: 'project_workspace_root' }),
     )
   })
+
+  test('creates a directory through the device command API', async () => {
+    const client = mockClient()
+    vi.mocked(client.post).mockResolvedValueOnce({
+      success: true,
+      stdout: '',
+      stderr: '',
+    })
+
+    const api = createDeviceApi(client)
+
+    await expect(api.createDirectory('device-1', '/home/ubuntu/new-app')).resolves.toBeUndefined()
+
+    expect(client.post).toHaveBeenCalledWith(
+      '/devices/device-1/commands',
+      expect.objectContaining({
+        command_key: 'mkdir_p',
+        args: ['/home/ubuntu/new-app'],
+      }),
+    )
+  })
 })

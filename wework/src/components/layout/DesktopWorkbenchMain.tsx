@@ -32,6 +32,9 @@ interface DesktopWorkbenchMainProps {
   environmentInfo: EnvironmentInfo
   onRefreshEnvironmentInfo: () => Promise<void>
   onCommitEnvironmentChanges: (message: string) => Promise<void>
+  onListEnvironmentBranches: () => Promise<string[]>
+  onCheckoutEnvironmentBranch: (branchName: string) => Promise<void>
+  onCreateEnvironmentBranch: (branchName: string) => Promise<void>
   onExpandSidebar: () => void
   onInputChange: (value: string) => void
   onSend: () => void
@@ -50,6 +53,9 @@ export function DesktopWorkbenchMain({
   environmentInfo,
   onRefreshEnvironmentInfo,
   onCommitEnvironmentChanges,
+  onListEnvironmentBranches,
+  onCheckoutEnvironmentBranch,
+  onCreateEnvironmentBranch,
   onExpandSidebar,
   onInputChange,
   onSend,
@@ -151,6 +157,9 @@ export function DesktopWorkbenchMain({
         environmentInfo={environmentInfo}
         onRefreshEnvironmentInfo={onRefreshEnvironmentInfo}
         onCommitEnvironmentChanges={onCommitEnvironmentChanges}
+        onListEnvironmentBranches={onListEnvironmentBranches}
+        onCheckoutEnvironmentBranch={onCheckoutEnvironmentBranch}
+        onCreateEnvironmentBranch={onCreateEnvironmentBranch}
         rightPanelOpen={rightPanelOpen}
         bottomPanelOpen={bottomPanelOpen}
         onToggleRightPanel={() => setRightPanelOpen((open) => !open)}

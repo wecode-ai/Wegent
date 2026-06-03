@@ -37,10 +37,20 @@ interface DesktopWorkbenchLayoutProps {
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onGetProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
+  onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
   onLoadEnvironmentInfo: (project: ProjectWithTasks | null) => Promise<EnvironmentInfo>
   onCommitEnvironmentChanges: (
     project: ProjectWithTasks | null,
     message: string,
+  ) => Promise<void>
+  onListEnvironmentBranches: (project: ProjectWithTasks | null) => Promise<string[]>
+  onCheckoutEnvironmentBranch: (
+    project: ProjectWithTasks | null,
+    branchName: string,
+  ) => Promise<void>
+  onCreateEnvironmentBranch: (
+    project: ProjectWithTasks | null,
+    branchName: string,
   ) => Promise<void>
   onInputChange: (value: string) => void
   onSend: () => void
@@ -77,8 +87,12 @@ export function DesktopWorkbenchLayout({
   onGetDeviceHomeDirectory,
   onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
+  onCreateDeviceDirectory,
   onLoadEnvironmentInfo,
   onCommitEnvironmentChanges,
+  onListEnvironmentBranches,
+  onCheckoutEnvironmentBranch,
+  onCreateEnvironmentBranch,
   onInputChange,
   onSend,
   onLogout,
@@ -148,6 +162,16 @@ export function DesktopWorkbenchLayout({
     await refreshEnvironmentInfo()
   }
 
+  async function handleCheckoutEnvironmentBranch(branchName: string) {
+    await onCheckoutEnvironmentBranch(environmentProject, branchName)
+    await refreshEnvironmentInfo()
+  }
+
+  async function handleCreateEnvironmentBranch(branchName: string) {
+    await onCreateEnvironmentBranch(environmentProject, branchName)
+    await refreshEnvironmentInfo()
+  }
+
   return (
     <div className="flex h-screen overflow-hidden bg-background text-text-primary">
       {!settingsOpen && !sidebarCollapsed && (
@@ -184,6 +208,7 @@ export function DesktopWorkbenchLayout({
           onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
           onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
           onListDeviceDirectories={onListDeviceDirectories}
+          onCreateDeviceDirectory={onCreateDeviceDirectory}
           onOpenSettings={() => setSettingsOpen(true)}
           onLogout={onLogout}
         />
@@ -211,6 +236,9 @@ export function DesktopWorkbenchLayout({
           environmentInfo={environmentInfo}
           onRefreshEnvironmentInfo={refreshEnvironmentInfo}
           onCommitEnvironmentChanges={handleCommitEnvironmentChanges}
+          onListEnvironmentBranches={() => onListEnvironmentBranches(environmentProject)}
+          onCheckoutEnvironmentBranch={handleCheckoutEnvironmentBranch}
+          onCreateEnvironmentBranch={handleCreateEnvironmentBranch}
           onExpandSidebar={() => setSidebarCollapsed(false)}
           onInputChange={onInputChange}
           onSend={onSend}

@@ -1,7 +1,10 @@
 import { describe, expect, test, vi } from 'vitest'
 import {
   buildPullRequestUrl,
+  checkoutProjectBranch,
   commitProjectChanges,
+  createAndCheckoutProjectBranch,
+  listProjectBranches,
   loadProjectEnvironment,
   parseGitShortStat,
 } from './environment'
@@ -313,5 +316,65 @@ describe('commitProjectChanges', () => {
     ).rejects.toThrow('Commit message is required')
 
     expect(executeCommand).not.toHaveBeenCalled()
+  })
+})
+
+describe('branch environment commands', () => {
+  const project = {
+    id: 1,
+    name: 'Wegent',
+    config: {
+      mode: 'workspace',
+      execution: { targetType: 'local' as const, deviceId: 'device-123' },
+      workspace: { source: 'local_path' as const, localPath: '/workspace/Wegent' },
+    },
+  }
+
+  test('lists branches sorted by name', async () => {
+    const executeCommand = vi.fn().mockResolvedValue({
+      success: true,
+      stdout: 'human/zebra\nmain\nhuman/alpaca\n',
+      stderr: '',
+    })
+
+    await expect(listProjectBranches({ executeCommand }, project)).resolves.toEqual([
+      'human/alpaca',
+      'human/zebra',
+      'main',
+    ])
+    expect(executeCommand).toHaveBeenCalledWith('device-123', {
+      command_key: 'git_branch_list',
+      path: '/workspace/Wegent',
+      timeout_seconds: 15,
+      max_output_bytes: 1024 * 64,
+    })
+  })
+
+  test('checks out an existing branch', async () => {
+    const executeCommand = vi.fn().mockResolvedValue({ success: true, stdout: '', stderr: '' })
+
+    await checkoutProjectBranch({ executeCommand }, project, 'human/alpaca')
+
+    expect(executeCommand).toHaveBeenCalledWith('device-123', {
+      command_key: 'git_checkout',
+      path: '/workspace/Wegent',
+      args: ['human/alpaca'],
+      timeout_seconds: 30,
+      max_output_bytes: 8192,
+    })
+  })
+
+  test('creates and checks out a new branch', async () => {
+    const executeCommand = vi.fn().mockResolvedValue({ success: true, stdout: '', stderr: '' })
+
+    await createAndCheckoutProjectBranch({ executeCommand }, project, 'human/new-branch')
+
+    expect(executeCommand).toHaveBeenCalledWith('device-123', {
+      command_key: 'git_checkout_new',
+      path: '/workspace/Wegent',
+      args: ['human/new-branch'],
+      timeout_seconds: 30,
+      max_output_bytes: 8192,
+    })
   })
 })
