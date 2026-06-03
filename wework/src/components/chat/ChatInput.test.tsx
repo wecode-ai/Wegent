@@ -161,6 +161,9 @@ describe('ChatInput', () => {
       expect(listLocalSkills).toHaveBeenCalledTimes(1)
     })
     expect(screen.getByTestId('local-skill-autocomplete')).toHaveClass(
+      'bottom-[calc(100%+0.75rem)]',
+      'z-[80]',
+      'bg-background',
       'left-[-1rem]',
       'right-[-3.5rem]',
     )

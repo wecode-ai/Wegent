@@ -287,7 +287,7 @@ export function ComposerTextarea({
           ref={menuRef}
           data-testid="local-skill-autocomplete"
           className={[
-            'absolute bottom-full z-50 mb-2 max-h-72 overflow-y-auto rounded-2xl border border-border bg-base p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+            'absolute bottom-[calc(100%+0.75rem)] z-[80] max-h-72 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
             skillMenuClassName,
           ].join(' ')}
         >

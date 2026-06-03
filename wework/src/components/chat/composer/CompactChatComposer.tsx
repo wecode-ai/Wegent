@@ -112,6 +112,7 @@ export function CompactChatComposer({
           data-testid="compact-input-pill"
           className={[
             'relative flex min-h-[52px] min-w-0 flex-1 items-end rounded-[26px] border border-border bg-background pl-4 shadow-[0_12px_40px_rgba(0,0,0,0.08)]',
+            'z-[60]',
             hasText ? 'pr-14' : 'pr-[92px]',
           ].join(' ')}
         >
