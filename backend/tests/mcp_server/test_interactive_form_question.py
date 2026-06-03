@@ -4,12 +4,15 @@
 
 """Tests for interactive_form_question MCP tool."""
 
+import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools.interactive_form_question import (
+    _build_deferred_tool_result,
+    _build_form_render_payload,
     _generate_ask_id,
     _notify_frontend,
     interactive_form_question,
@@ -42,13 +45,30 @@ class TestInteractiveFormTool:
             user_name="tester",
         )
 
+    def test_tool_signature_only_accepts_form_questions(self):
+        """The MCP tool owns form creation, not deferred answer injection."""
+        signature = inspect.signature(interactive_form_question)
+
+        assert "token_info" in signature.parameters
+        assert "questions" in signature.parameters
+        assert "answers" not in signature.parameters
+        assert "success" not in signature.parameters
+        assert "status" not in signature.parameters
+        assert "message" not in signature.parameters
+
     @pytest.mark.asyncio
     async def test_returns_silent_exit(self):
         """interactive_form_question always returns __silent_exit__."""
         token = self._make_token()
-        with patch(
-            "app.mcp_server.tools.interactive_form_question._notify_frontend",
-            new_callable=AsyncMock,
+        with (
+            patch(
+                "app.mcp_server.tools.interactive_form_question._has_existing_interactive_form",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "app.mcp_server.tools.interactive_form_question._notify_frontend",
+                new_callable=AsyncMock,
+            ),
         ):
             result = await interactive_form_question(
                 token_info=token,
@@ -59,12 +79,18 @@ class TestInteractiveFormTool:
         assert "reason" in result
 
     @pytest.mark.asyncio
-    async def test_returns_pending_user_input_payload(self):
-        """interactive_form_question exposes pending user input compatibility fields."""
+    async def test_return_does_not_include_user_input_payload(self):
+        """interactive_form_question does not expose UI state to the model."""
         token = self._make_token(subtask_id=2)
-        with patch(
-            "app.mcp_server.tools.interactive_form_question._notify_frontend",
-            new_callable=AsyncMock,
+        with (
+            patch(
+                "app.mcp_server.tools.interactive_form_question._has_existing_interactive_form",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "app.mcp_server.tools.interactive_form_question._notify_frontend",
+                new_callable=AsyncMock,
+            ),
         ):
             result = await interactive_form_question(
                 token_info=token,
@@ -72,12 +98,55 @@ class TestInteractiveFormTool:
             )
 
         assert result["__silent_exit__"] is True
-        assert result["pending_user_input"] is True
-        payload = result["pending_user_input_payload"]
-        assert payload["type"] == "interactive_form_question"
-        assert payload["ask_id"] == "ask_2"
-        assert payload["submit_mode"] == "new_response"
-        assert payload["submit_format"] == "markdown_message"
+        assert "pending_user_input" not in result
+        assert "pending_user_input_payload" not in result
+
+    @pytest.mark.asyncio
+    async def test_returns_minimal_deferred_result(self):
+        """The tool result must not expose the renderable form schema to the model."""
+        token = self._make_token(task_id=10, subtask_id=20)
+        with (
+            patch(
+                "app.mcp_server.tools.interactive_form_question._has_existing_interactive_form",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "app.mcp_server.tools.interactive_form_question._notify_frontend",
+                new_callable=AsyncMock,
+            ),
+        ):
+            result = await interactive_form_question(
+                token_info=token,
+                questions=[
+                    {
+                        "id": "target_lang",
+                        "question": "Target language",
+                        "input_type": "multi_select",
+                        "options": [{"label": "English", "value": "en"}],
+                    }
+                ],
+            )
+
+        assert result["success"] is True
+        assert result["status"] == "waiting_for_user_response"
+        assert result["ask_id"] == "ask_20"
+        assert result["__deferred_user_input__"] is True
+        assert "form" not in result
+        assert "questions" not in result
+
+    @pytest.mark.asyncio
+    async def test_rejects_empty_question_text(self):
+        """Question text must be non-empty before a form can be rendered."""
+        token = self._make_token()
+        with patch(
+            "app.mcp_server.tools.interactive_form_question._has_existing_interactive_form",
+            new=AsyncMock(return_value=False),
+        ):
+            with pytest.raises(ValueError, match="question"):
+                await interactive_form_question(
+                    token_info=token,
+                    questions=[{"id": "description", "question": "   "}],
+                )
 
     @pytest.mark.asyncio
     async def test_single_question_choice_mode(self):
@@ -110,6 +179,176 @@ class TestInteractiveFormTool:
         assert captured["task_id"] == token.task_id
         assert captured["subtask_id"] == token.subtask_id
         assert captured["type"] == "interactive_form_question"
+
+    @pytest.mark.asyncio
+    async def test_multi_select_input_type_is_normalized_to_choice(self):
+        """input_type='multi_select' is accepted as a choice question alias."""
+        token = self._make_token()
+        captured = {}
+
+        async def capture(task_id, subtask_id, question_data):
+            captured.update(question_data)
+
+        with patch(
+            "app.mcp_server.tools.interactive_form_question._notify_frontend",
+            side_effect=capture,
+        ):
+            await interactive_form_question(
+                token_info=token,
+                questions=[
+                    {
+                        "id": "features",
+                        "question": "Pick features",
+                        "input_type": "multi_select",
+                        "options": [{"label": "A", "value": "a"}],
+                    }
+                ],
+            )
+
+        assert captured["questions"][0]["input_type"] == "choice"
+        assert captured["questions"][0]["multi_select"] is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "input_type",
+        ["textarea", "long_text", "short_text", "string", "input", "free_text"],
+    )
+    async def test_text_input_type_aliases_are_normalized_to_text(self, input_type):
+        """Common model text input aliases are accepted and normalized."""
+        token = self._make_token()
+        captured = {}
+
+        async def capture(task_id, subtask_id, question_data):
+            captured.update(question_data)
+
+        with patch(
+            "app.mcp_server.tools.interactive_form_question._notify_frontend",
+            side_effect=capture,
+        ):
+            await interactive_form_question(
+                token_info=token,
+                questions=[
+                    {
+                        "id": "description",
+                        "question": "Describe it",
+                        "input_type": input_type,
+                    }
+                ],
+            )
+
+        assert captured["questions"][0]["input_type"] == "text"
+        assert captured["questions"][0]["multi_select"] is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "input_type",
+        [
+            "single_select",
+            "select",
+            "dropdown",
+            "radio",
+            "radio_group",
+            "enum",
+            "option",
+        ],
+    )
+    async def test_single_choice_input_type_aliases_are_normalized_to_choice(
+        self, input_type
+    ):
+        """Common model single-choice aliases are accepted and normalized."""
+        token = self._make_token()
+        captured = {}
+
+        async def capture(task_id, subtask_id, question_data):
+            captured.update(question_data)
+
+        with patch(
+            "app.mcp_server.tools.interactive_form_question._notify_frontend",
+            side_effect=capture,
+        ):
+            await interactive_form_question(
+                token_info=token,
+                questions=[
+                    {
+                        "id": "source_lang",
+                        "question": "Source language",
+                        "input_type": input_type,
+                        "options": [{"label": "Auto", "value": "auto"}],
+                    }
+                ],
+            )
+
+        assert captured["questions"][0]["input_type"] == "choice"
+        assert captured["questions"][0]["multi_select"] is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "input_type",
+        [
+            "multiple_select",
+            "multiselect",
+            "multi_choice",
+            "multiple_choice",
+            "checkbox",
+            "checkboxes",
+            "checkbox_group",
+        ],
+    )
+    async def test_multi_choice_input_type_aliases_are_normalized_to_choice(
+        self, input_type
+    ):
+        """Common model multi-choice aliases are accepted and normalized."""
+        token = self._make_token()
+        captured = {}
+
+        async def capture(task_id, subtask_id, question_data):
+            captured.update(question_data)
+
+        with patch(
+            "app.mcp_server.tools.interactive_form_question._notify_frontend",
+            side_effect=capture,
+        ):
+            await interactive_form_question(
+                token_info=token,
+                questions=[
+                    {
+                        "id": "features",
+                        "question": "Features",
+                        "input_type": input_type,
+                        "options": [{"label": "Basic", "value": "basic"}],
+                    }
+                ],
+            )
+
+        assert captured["questions"][0]["input_type"] == "choice"
+        assert captured["questions"][0]["multi_select"] is True
+
+    @pytest.mark.asyncio
+    async def test_string_default_value_is_normalized_to_list(self):
+        """Models commonly emit a single default string; normalize it."""
+        token = self._make_token()
+        captured = {}
+
+        async def capture(task_id, subtask_id, question_data):
+            captured.update(question_data)
+
+        with patch(
+            "app.mcp_server.tools.interactive_form_question._notify_frontend",
+            side_effect=capture,
+        ):
+            await interactive_form_question(
+                token_info=token,
+                questions=[
+                    {
+                        "id": "skill_name",
+                        "question": "Skill name",
+                        "input_type": "text",
+                        "default": "翻译助手",
+                    }
+                ],
+            )
+
+        assert captured["questions"][0]["default"] == ["翻译助手"]
 
     @pytest.mark.asyncio
     async def test_question_without_options_becomes_text(self):
@@ -163,9 +402,9 @@ class TestInteractiveFormTool:
 
         assert "questions" in captured
         assert len(captured["questions"]) == 2
-        # q1 has options → choice
+        # q1 has options -> choice
         assert captured["questions"][0]["input_type"] == "choice"
-        # q2 has no options → text
+        # q2 has no options -> text
         assert captured["questions"][1]["input_type"] == "text"
 
     @pytest.mark.asyncio
@@ -221,6 +460,185 @@ class TestInteractiveFormTool:
         ):
             await interactive_form_question(token_info=token, questions=[])
 
+    @pytest.mark.asyncio
+    async def test_rejects_second_form_for_same_subtask(self):
+        """A subtask can display at most one interactive form."""
+        token = self._make_token(subtask_id=2)
+        mock_session_manager = MagicMock()
+        mock_session_manager.get_blocks = AsyncMock(
+            return_value=[
+                {
+                    "type": "tool",
+                    "tool_name": "interactive_form_question",
+                    "tool_use_id": "tool-1",
+                    "tool_input": {"questions": [{"id": "q1", "question": "Raw?"}]},
+                    "render_payload": {
+                        "type": "interactive_form_question",
+                        "ask_id": "ask_2",
+                        "task_id": 1,
+                        "subtask_id": 2,
+                        "questions": [
+                            {
+                                "id": "q1",
+                                "question": "Raw?",
+                                "input_type": "text",
+                                "options": None,
+                                "multi_select": False,
+                                "required": True,
+                                "default": None,
+                                "placeholder": None,
+                            }
+                        ],
+                    },
+                }
+            ]
+        )
+        mock_notify = AsyncMock()
+
+        with (
+            patch(
+                "app.services.chat.storage.session.session_manager",
+                mock_session_manager,
+            ),
+            patch(
+                "app.mcp_server.tools.interactive_form_question._notify_frontend",
+                mock_notify,
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="already displayed"):
+                await interactive_form_question(
+                    token_info=token,
+                    questions=[{"id": "q2", "question": "Second form?"}],
+                )
+
+        mock_notify.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_allows_retry_after_raw_unrendered_tool_blocks(self):
+        """Raw tool argument blocks do not count as displayed forms."""
+        token = self._make_token(subtask_id=2)
+        mock_session_manager = MagicMock()
+        mock_session_manager.get_blocks = AsyncMock(
+            return_value=[
+                {
+                    "type": "tool",
+                    "tool_name": "mcp__interactive-form-question_wegent-interactive-form-question__interactive_form_question",
+                    "tool_use_id": "tool-1",
+                    "tool_input": {"questions": [{"id": "q1", "question": "First?"}]},
+                },
+                {
+                    "type": "tool",
+                    "tool_name": "mcp__interactive-form-question_wegent-interactive-form-question__interactive_form_question",
+                    "tool_use_id": "tool-2",
+                    "tool_input": {"questions": [{"id": "q2", "question": "Second?"}]},
+                },
+            ]
+        )
+        mock_notify = AsyncMock()
+
+        with (
+            patch(
+                "app.services.chat.storage.session.session_manager",
+                mock_session_manager,
+            ),
+            patch(
+                "app.mcp_server.tools.interactive_form_question._notify_frontend",
+                mock_notify,
+            ),
+        ):
+            await interactive_form_question(
+                token_info=token,
+                questions=[{"id": "q2", "question": "Second form?"}],
+            )
+
+        mock_notify.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_allows_current_raw_tool_block_for_first_form(self):
+        """The first call is allowed when only its current raw tool block exists."""
+        token = self._make_token(subtask_id=2)
+        mock_session_manager = MagicMock()
+        mock_session_manager.get_blocks = AsyncMock(
+            return_value=[
+                {
+                    "type": "tool",
+                    "tool_name": "mcp__interactive-form-question_wegent-interactive-form-question__interactive_form_question",
+                    "tool_use_id": "tool-current",
+                    "tool_input": {"questions": [{"id": "q1", "question": "First?"}]},
+                }
+            ]
+        )
+        mock_notify = AsyncMock()
+
+        with (
+            patch(
+                "app.services.chat.storage.session.session_manager",
+                mock_session_manager,
+            ),
+            patch(
+                "app.mcp_server.tools.interactive_form_question._notify_frontend",
+                mock_notify,
+            ),
+        ):
+            await interactive_form_question(
+                token_info=token,
+                questions=[{"id": "q1", "question": "First form?"}],
+            )
+
+        mock_notify.assert_awaited_once()
+
+
+class TestFormRenderPayloadSchema:
+    """Tests for the strict UI-only form schema emitted to frontend."""
+
+    def test_rejects_choice_question_without_options(self):
+        """Backend must not emit a choice question that frontend cannot render."""
+        with pytest.raises(ValueError, match="choice questions"):
+            _build_form_render_payload(
+                {
+                    "type": "interactive_form_question",
+                    "ask_id": "ask_1",
+                    "task_id": 1,
+                    "subtask_id": 2,
+                    "questions": [
+                        {
+                            "id": "q1",
+                            "question": "Pick one",
+                            "input_type": "choice",
+                            "options": None,
+                            "multi_select": False,
+                            "required": True,
+                            "default": None,
+                            "placeholder": None,
+                        }
+                    ],
+                }
+            )
+
+    def test_rejects_unknown_input_type(self):
+        """Backend must emit only frontend-supported input types."""
+        with pytest.raises(ValueError, match="Input should be"):
+            _build_form_render_payload(
+                {
+                    "type": "interactive_form_question",
+                    "ask_id": "ask_1",
+                    "task_id": 1,
+                    "subtask_id": 2,
+                    "questions": [
+                        {
+                            "id": "q1",
+                            "question": "Describe it",
+                            "input_type": "textarea",
+                            "options": None,
+                            "multi_select": False,
+                            "required": True,
+                            "default": None,
+                            "placeholder": None,
+                        }
+                    ],
+                }
+            )
+
 
 class TestNotifyFrontendFallback:
     """Tests for synthetic block fallback when tool block is missing."""
@@ -230,6 +648,7 @@ class TestNotifyFrontendFallback:
         mock_session_manager = MagicMock()
         mock_session_manager.get_blocks = AsyncMock(return_value=[])
         mock_session_manager.add_tool_block = AsyncMock()
+        mock_session_manager.update_tool_block_status = AsyncMock()
 
         mock_ws_emitter = MagicMock()
         mock_ws_emitter.emit_block_created = AsyncMock()
@@ -269,7 +688,80 @@ class TestNotifyFrontendFallback:
             subtask_id=2,
             tool_use_id="ask_123",
             tool_name="interactive_form_question",
-            tool_input=question_data,
+            tool_input={},
             display_name="interactive_form_question",
         )
+        mock_session_manager.update_tool_block_status.assert_awaited_once_with(
+            subtask_id=2,
+            tool_use_id="ask_123",
+            tool_output=_build_deferred_tool_result("ask_123"),
+            render_payload=question_data,
+        )
         mock_ws_emitter.emit_block_created.assert_awaited_once()
+        created_block = mock_ws_emitter.emit_block_created.await_args.kwargs["block"]
+        assert created_block["tool_output"] == _build_deferred_tool_result("ask_123")
+        assert created_block["render_payload"] == question_data
+
+    @pytest.mark.asyncio
+    async def test_updates_existing_block_with_form_payload(self):
+        mock_session_manager = MagicMock()
+        mock_session_manager.get_blocks = AsyncMock(
+            return_value=[
+                {
+                    "type": "tool",
+                    "tool_name": "interactive_form_question",
+                    "tool_use_id": "tool-123",
+                    "tool_input": {"questions": []},
+                }
+            ]
+        )
+        mock_session_manager.update_tool_block_status = AsyncMock()
+
+        mock_ws_emitter = MagicMock()
+        mock_ws_emitter.emit_block_updated = AsyncMock()
+
+        question_data = {
+            "type": "interactive_form_question",
+            "ask_id": "ask_123",
+            "task_id": 1,
+            "subtask_id": 2,
+            "questions": [
+                {
+                    "id": "q1",
+                    "question": "Hello?",
+                    "input_type": "text",
+                    "options": None,
+                    "multi_select": False,
+                    "required": True,
+                    "default": None,
+                    "placeholder": None,
+                }
+            ],
+        }
+
+        with (
+            patch(
+                "app.services.chat.storage.session.session_manager",
+                mock_session_manager,
+            ),
+            patch(
+                "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter",
+                return_value=mock_ws_emitter,
+            ),
+        ):
+            await _notify_frontend(task_id=1, subtask_id=2, question_data=question_data)
+
+        mock_session_manager.update_tool_block_status.assert_awaited_once_with(
+            subtask_id=2,
+            tool_use_id="tool-123",
+            tool_output=_build_deferred_tool_result("ask_123"),
+            render_payload=question_data,
+        )
+        mock_ws_emitter.emit_block_updated.assert_awaited_once_with(
+            task_id=1,
+            subtask_id=2,
+            block_id="tool-123",
+            tool_output=_build_deferred_tool_result("ask_123"),
+            render_payload=question_data,
+            status="pending",
+        )

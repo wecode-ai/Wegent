@@ -206,8 +206,8 @@ function ProjectTaskRow({
     <div
       data-testid={`project-chat-row-${task.task_id}`}
       className={[
-        'group/task ml-5 flex h-8 items-center rounded-md pl-3 pr-1 text-[13px] leading-[18px]',
-        selected ? 'bg-white text-text-primary' : 'text-text-secondary hover:bg-white/70',
+        'group/task flex h-8 items-center rounded-md pl-8 pr-1 text-[13px] leading-[18px]',
+        selected ? 'bg-[#dedfe2] text-text-primary' : 'text-text-secondary hover:bg-white/70',
       ].join(' ')}
     >
       <button
@@ -419,7 +419,7 @@ function RecentTaskRow({
       data-testid={`history-task-row-${task.id}`}
       className={[
         'group/task flex h-8 items-center gap-2 rounded-md pl-3 pr-1 text-[13px] leading-[18px]',
-        selected ? 'bg-white text-text-primary' : 'text-text-secondary hover:bg-white/70',
+        selected ? 'bg-[#dedfe2] text-text-primary' : 'text-text-secondary hover:bg-white/70',
       ].join(' ')}
     >
       <Clock className="h-4 w-4 shrink-0" />

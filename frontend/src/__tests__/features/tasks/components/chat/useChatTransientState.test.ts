@@ -1,13 +1,19 @@
 import { act, renderHook } from '@testing-library/react'
 import { useChatTransientState } from '@/features/tasks/components/chat/useChatTransientState'
 
+type UseChatTransientStateTestProps = {
+  selectedTaskId?: number | null
+}
+
 describe('useChatTransientState', () => {
   it('clears a resolved pending task id when no task is selected', () => {
+    const initialProps: UseChatTransientStateTestProps = { selectedTaskId: 42 }
+
     const { result, rerender } = renderHook(
-      ({ selectedTaskId }: { selectedTaskId?: number | null }) =>
+      ({ selectedTaskId }: UseChatTransientStateTestProps) =>
         useChatTransientState({ selectedTaskId }),
       {
-        initialProps: { selectedTaskId: 42 },
+        initialProps,
       }
     )
 

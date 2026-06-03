@@ -2059,12 +2059,16 @@ start_services() {
     # 1. Start Backend
     if [ "$start_backend" = true ]; then
         # EXECUTOR_MANAGER_URL: URL for backend to call executor_manager
+        # BACKEND_INTERNAL_URL: URL passed into task runtime configs such as MCP
+        # server URLs. Use TASK_API_DOMAIN so Docker executor containers can
+        # reach the host backend instead of receiving localhost.
         # CHAT_SHELL_URL: URL for backend to call chat_shell service
+        # NEVIS_CALLBACK_URL: URL for cloud device executors to call backend
         # LOG_LEVEL: Application log level (DEBUG enables debug logging)
         # --reload-dir: Watch shared module for changes (editable dependency)
         # --reload-exclude: Exclude .venv and __pycache__ to reduce CPU usage
         start_service "backend" "backend" \
-            "export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=http://localhost:$BACKEND_PORT && export NEVIS_CALLBACK_URL=$NEVIS_CALLBACK_URL && export LOG_LEVEL=DEBUG && source .venv/bin/activate && uvicorn app.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $BACKEND_PORT --log-level debug" \
+            "export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=$TASK_API_DOMAIN && export NEVIS_CALLBACK_URL=$NEVIS_CALLBACK_URL && export LOG_LEVEL=DEBUG && source .venv/bin/activate && uvicorn app.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $BACKEND_PORT --log-level debug" \
             "$BACKEND_PORT"
     fi
 
@@ -2151,6 +2155,7 @@ start_services() {
 
         export VITE_API_PROXY_TARGET=http://localhost:$BACKEND_PORT
         export VITE_SOCKET_PROXY_TARGET=$WEGENT_SOCKET_URL
+        export VITE_SOCKET_BASE_URL=$WEGENT_SOCKET_URL
 
         local wework_cmd="npm run dev -- --host 0.0.0.0 --port $WEWORK_PORT"
 

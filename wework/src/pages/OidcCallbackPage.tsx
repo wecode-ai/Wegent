@@ -53,7 +53,7 @@ export function OidcCallbackPage() {
   }, [loginWithOidcToken])
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-base">
+    <div className="flex min-h-screen items-center justify-center bg-background">
       <div className="rounded-2xl border border-border bg-surface px-8 py-8 text-sm font-medium text-text-secondary shadow-[0_16px_44px_rgba(0,0,0,0.08)]">
         {t('workbench.oidc_processing', '正在处理 OpenID Connect 登录...')}
       </div>

@@ -324,6 +324,10 @@ describe('PluginsWorkspace', () => {
     render(<PluginsWorkspace />)
 
     expect(await screen.findByText('Weibo Skill 1')).toBeInTheDocument()
+    expect(screen.getByTestId('plugins-search-input')).toHaveClass(
+      'h-11',
+      'min-h-[44px]',
+    )
 
     await userEvent.type(
       screen.getByTestId('plugins-search-input'),

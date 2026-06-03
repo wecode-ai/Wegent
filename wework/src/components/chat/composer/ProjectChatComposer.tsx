@@ -61,7 +61,7 @@ export function ProjectChatComposer({
   return (
     <div className="w-full rounded-[28px] bg-surface shadow-[0_16px_44px_rgba(0,0,0,0.08)]">
       <form
-        className="flex min-h-[112px] w-full flex-col rounded-[28px] border border-border bg-base pb-2 pl-4 pr-2 pt-3.5"
+        className="flex min-h-[112px] w-full flex-col rounded-[28px] border border-border bg-background pb-2 pl-4 pr-2 pt-3.5"
         onSubmit={event => {
           event.preventDefault()
           if (canSend) onSubmit()

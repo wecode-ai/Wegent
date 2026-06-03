@@ -68,6 +68,16 @@
     "confirm_hint": "开始这条新消息",
     "confirming": "处理中..."
   },
+  "pending_form_confirm": {
+    "eyebrow": "表单待提交",
+    "title": "当前智能体正在等待表单结果",
+    "description": "发送新消息前，需要先提交当前表单，或取消表单并把这条消息作为新的说明交给智能体。",
+    "keep": "继续填写",
+    "keep_hint": "保留当前表单",
+    "confirm": "取消表单并发送",
+    "confirm_hint": "用这条消息继续",
+    "confirming": "处理中..."
+  },
   "status": {
     "typing": "AI 正在输入...",
     "thinking": "AI 正在思考...",
@@ -250,6 +260,14 @@
   "send_shortcut": "回车发送，Shift+回车换行",
   "send_shortcut_cmd_enter_mac": "⌘+回车发送，回车换行",
   "send_shortcut_cmd_enter_win": "Ctrl+回车发送，回车换行",
+  "quick_launch": {
+    "system_functions": "推荐功能",
+    "favorite_agents": "我的收藏",
+    "overwrite_confirm_title": "覆盖当前输入？",
+    "overwrite_confirm_description": "发送框里已有内容，使用这条快捷短语会替换当前输入。",
+    "overwrite_confirm_cancel": "保留当前输入",
+    "overwrite_confirm_action": "覆盖"
+  },
   "errors": {
     "request_failed": "请求大模型接口失败",
     "request_failed_retry": "请求大模型接口失败, 请点击重试",

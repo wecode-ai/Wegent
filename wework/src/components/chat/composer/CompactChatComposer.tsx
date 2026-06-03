@@ -100,7 +100,7 @@ export function CompactChatComposer({
           data-testid="add-context-button"
           onClick={() => !disabled && setContextSheetOpen(true)}
           disabled={disabled}
-          className="flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-[26px] border border-border bg-base p-0 text-text-secondary shadow-[0_8px_28px_rgba(0,0,0,0.08)] hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-[26px] border border-border bg-background p-0 text-text-secondary shadow-[0_8px_28px_rgba(0,0,0,0.08)] hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
           aria-expanded={contextSheetOpen}
           aria-label={t('workbench.add_context', '添加上下文')}
         >
@@ -109,7 +109,7 @@ export function CompactChatComposer({
         <div
           data-testid="compact-input-pill"
           className={[
-            'relative flex min-h-[52px] min-w-0 flex-1 items-end rounded-[26px] border border-border bg-base pl-4 shadow-[0_12px_40px_rgba(0,0,0,0.08)]',
+            'relative flex min-h-[52px] min-w-0 flex-1 items-end rounded-[26px] border border-border bg-background pl-4 shadow-[0_12px_40px_rgba(0,0,0,0.08)]',
             hasText ? 'pr-14' : 'pr-[92px]',
           ].join(' ')}
         >
@@ -163,7 +163,7 @@ export function CompactChatComposer({
         >
           <div
             data-testid="mobile-context-sheet"
-            className="absolute bottom-0 left-0 right-0 rounded-t-[28px] border border-white/10 bg-base px-5 pb-[max(20px,env(safe-area-inset-bottom))] pt-3 shadow-[0_-20px_60px_rgba(0,0,0,0.18)]"
+            className="absolute bottom-0 left-0 right-0 rounded-t-[28px] border border-white/10 bg-background px-5 pb-[max(20px,env(safe-area-inset-bottom))] pt-3 shadow-[0_-20px_60px_rgba(0,0,0,0.18)]"
             onClick={event => event.stopPropagation()}
           >
             <div className="mx-auto mb-4 h-1 w-12 rounded-full bg-border" />
@@ -191,14 +191,14 @@ export function CompactChatComposer({
       {fullscreenInputOpen && (
         <div
           data-testid="fullscreen-input-sheet"
-          className="fixed inset-0 z-50 flex h-dvh flex-col bg-base px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
+          className="fixed inset-0 z-50 flex h-dvh flex-col bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
         >
           <div className="relative min-h-0 flex-1">
             <button
               type="button"
               data-testid="collapse-input-button"
               onClick={() => setFullscreenInputOpen(false)}
-              className="absolute right-3 top-3 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-base/90 text-text-secondary shadow-sm hover:bg-muted"
+              className="absolute right-3 top-3 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-background/90 text-text-secondary shadow-sm hover:bg-muted"
               aria-label={t('workbench.collapse_input', '折叠输入框')}
             >
               <Minimize2 className="h-5 w-5" />

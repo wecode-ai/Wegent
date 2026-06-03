@@ -653,7 +653,7 @@ describe('DesktopWorkbenchLayout', () => {
       'opacity-0',
       'group-hover/task:opacity-100',
     )
-    expect(screen.getByTestId('project-chat-row-11')).toHaveClass('bg-white')
+    expect(screen.getByTestId('project-chat-row-11')).toHaveClass('bg-[#dedfe2]')
     await userEvent.click(screen.getByTestId('project-chat-button'))
     expect(baseProps.onOpenTask).toHaveBeenCalledWith(11, 1)
 

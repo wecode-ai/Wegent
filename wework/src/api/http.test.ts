@@ -50,6 +50,29 @@ describe('createHttpClient', () => {
     })
   })
 
+  test('posts FormData without forcing a json content type', async () => {
+    localStorage.setItem('auth_token', 'token-1')
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true }),
+    })
+
+    const formData = new FormData()
+    formData.append('file', new File(['zip'], 'plugin.zip'))
+    const client = createHttpClient({ baseUrl: '/api' })
+
+    await client.post('/plugins/upload', formData)
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/plugins/upload', {
+      method: 'POST',
+      body: formData,
+      headers: {
+        Authorization: 'Bearer token-1',
+      },
+    })
+  })
+
   test('clears token and redirects to login on 401', async () => {
     localStorage.setItem('auth_token', 'token-1')
     window.history.pushState({}, '', '/current?x=1')

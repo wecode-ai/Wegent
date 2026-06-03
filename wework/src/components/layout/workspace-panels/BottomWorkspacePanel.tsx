@@ -16,7 +16,7 @@ export function BottomWorkspacePanel({ currentProject, onRequestClose }: BottomW
   return (
     <section
       data-testid="bottom-workspace-panel"
-      className="relative flex shrink-0 flex-col border-t border-border bg-base"
+      className="relative flex shrink-0 flex-col border-t border-border bg-background"
       style={{ height }}
     >
       <div

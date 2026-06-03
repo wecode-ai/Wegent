@@ -27,6 +27,7 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
 from app.schemas.kind import Bot, Ghost, Model, Shell, Task, Team
+from app.schemas.quick_launch import normalize_quick_phrases
 from app.schemas.team import BotInfo, TeamCreate, TeamDetail, TeamInDB, TeamUpdate
 from app.services.adapters.shell_utils import get_shell_type
 from app.services.adapters.task_kinds.running_tasks import get_running_tasks_for_team
@@ -187,6 +188,10 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         requires_workspace = getattr(obj_in, "requires_workspace", None)
         if requires_workspace is not None:
             spec["requiresWorkspace"] = requires_workspace
+
+        quick_phrases = getattr(obj_in, "quick_phrases", None)
+        if quick_phrases is not None:
+            spec["quick_phrases"] = normalize_quick_phrases(quick_phrases)
 
         metadata = {"name": obj_in.name, "namespace": namespace}
         display_name = getattr(obj_in, "displayName", None)
@@ -936,6 +941,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         if "requires_workspace" in update_data:
             team_crd.spec.requiresWorkspace = update_data["requires_workspace"]
 
+        if "quick_phrases" in update_data:
+            team_crd.spec.quick_phrases = normalize_quick_phrases(
+                update_data["quick_phrases"]
+            )
+
         # Save the updated team CRD
         team.json = team_crd.model_dump(mode="json")
         team.updated_at = datetime.now()
@@ -1373,6 +1383,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         # Get requires_workspace from spec
         requires_workspace = team_crd.spec.requiresWorkspace
 
+        quick_phrases = normalize_quick_phrases(team_crd.spec.quick_phrases)
+
         total_convert_time = time.time() - convert_start
         if total_convert_time > 0.2:
             logger.info(
@@ -1396,6 +1408,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "updated_at": team.updated_at,
             "agent_type": agent_type,  # Add agent_type field
             "icon": icon,  # Add icon field
+            "quick_phrases": quick_phrases,
             "requires_workspace": requires_workspace,  # Add requires_workspace field
         }
 
@@ -1572,6 +1585,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         # Get requires_workspace from spec
         requires_workspace = team_crd.spec.requiresWorkspace
 
+        quick_phrases = normalize_quick_phrases(team_crd.spec.quick_phrases)
+
         return {
             "id": team.id,
             "user_id": team.user_id,
@@ -1589,6 +1604,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "updated_at": team.updated_at,
             "agent_type": agent_type,
             "icon": icon,
+            "quick_phrases": quick_phrases,
             "requires_workspace": requires_workspace,  # Add requires_workspace field
         }
 

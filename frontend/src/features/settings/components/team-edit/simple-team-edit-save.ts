@@ -30,6 +30,7 @@ export interface SimpleTeamFormValue {
   displayName: string
   description: string
   bindMode: TaskType[]
+  quickPhrases: string[]
   icon?: string | null
   requiresWorkspace?: boolean | null
   namespace?: string
@@ -92,6 +93,7 @@ export function buildSimpleTeamRequest(
 ): CreateTeamRequest {
   const trimmedDisplayName = form.displayName.trim()
   const trimmedDescription = form.description.trim()
+  const quickPhrases = form.quickPhrases.map(phrase => phrase.trim()).filter(Boolean)
 
   return {
     name: form.name.trim(),
@@ -109,6 +111,7 @@ export function buildSimpleTeamRequest(
         role: 'leader',
       },
     ],
+    quick_phrases: quickPhrases,
     namespace: form.namespace,
     icon: form.icon || undefined,
     requires_workspace: form.requiresWorkspace ?? undefined,

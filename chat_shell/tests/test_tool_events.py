@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from chat_shell.tools.deferred_input import DeferredUserInputExit
 from chat_shell.tools.events import create_tool_event_handler
 
 
@@ -72,4 +73,65 @@ async def test_mcp_tool_end_error_emits_failed_status(monkeypatch):
         server_label="wegent-knowledge",
         status="failed",
         error=error_output,
+    )
+
+
+@pytest.mark.asyncio
+async def test_deferred_interactive_form_tool_end_emits_result_then_exits(monkeypatch):
+    emitter = AsyncMock()
+    tool = SimpleNamespace(
+        name="interactive_form_question",
+        _wegent_tool_protocol="mcp",
+        _wegent_mcp_server_label="wegent-interactive-form-question",
+    )
+    agent_builder = _AgentBuilder(tool)
+    state = _State()
+    pending = []
+
+    def run_immediately(coro):
+        pending.append(asyncio.create_task(coro))
+
+    monkeypatch.setattr("chat_shell.tools.events._run_async", run_immediately)
+
+    handler = create_tool_event_handler(
+        state=state,
+        emitter=emitter,
+        agent_builder=agent_builder,
+    )
+    output = {
+        "__deferred_user_input__": True,
+        "success": True,
+        "status": "waiting_for_user_response",
+        "ask_id": "ask_123",
+    }
+
+    with pytest.raises(DeferredUserInputExit) as exc_info:
+        handler(
+            "tool_end",
+            {
+                "run_id": "run_123",
+                "tool_use_id": "mcp_123",
+                "name": "interactive_form_question",
+                "data": {
+                    "input": {"questions": [{"id": "q1", "question": "Q?"}]},
+                    "output": output,
+                },
+            },
+        )
+
+    assert exc_info.value.ask_id == "ask_123"
+    assert state.is_deferred_user_input is True
+    assert state.deferred_user_input_ask_id == "ask_123"
+
+    await asyncio.gather(*pending)
+
+    emitter.tool_done.assert_awaited_once_with(
+        call_id="mcp_123",
+        name="interactive_form_question",
+        arguments=None,
+        output=output,
+        tool_protocol="mcp_call",
+        server_label="wegent-interactive-form-question",
+        status="completed",
+        error=None,
     )

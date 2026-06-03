@@ -130,6 +130,7 @@ export interface ToolBlock extends BaseBlock {
   display_name?: string // Display name for tool (optional)
   tool_input?: Record<string, unknown> // Tool input parameters
   tool_output?: unknown // Tool execution result
+  render_payload?: unknown // UI-only renderer payload
   argument_status?: 'streaming' | 'done'
   metadata?: Record<string, unknown> // Additional metadata
 }

@@ -69,6 +69,22 @@ def test_round_trip_preserves_skill_reference_metadata():
     assert converted.preload_skill_refs == request.preload_skill_refs
 
 
+def test_round_trip_preserves_interactive_form_answer():
+    request = ExecutionRequest(
+        interactive_form_answer={
+            "type": "interactive_form_question",
+            "tool_use_id": "tool-1",
+            "answers": {"language": "python"},
+            "message": "selected python",
+        }
+    )
+
+    openai_request = OpenAIRequestConverter.from_execution_request(request)
+    converted = OpenAIRequestConverter.to_execution_request(openai_request)
+
+    assert converted.interactive_form_answer == request.interactive_form_answer
+
+
 def test_to_execution_request_preserves_message_history_and_stateless_flag():
     openai_request = {
         "model": "test-model",

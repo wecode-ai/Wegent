@@ -13,7 +13,7 @@ export function AppLayout({ children }: AppLayoutProps) {
   const isDesktop = useIsDesktop()
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden bg-base">
+    <div className="flex flex-col h-screen overflow-hidden bg-background">
       <Header onMenuClick={isDesktop ? undefined : () => setSidebarOpen(true)} />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar

@@ -136,7 +136,7 @@ function DocumentAttachmentCard({
   return (
     <div
       data-testid="attachment-badge"
-      className="relative inline-flex h-14 w-[220px] items-center gap-3 rounded-xl border border-border bg-base px-3 pr-8 text-xs text-text-secondary shadow-sm"
+      className="relative inline-flex h-14 w-[220px] items-center gap-3 rounded-xl border border-border bg-background px-3 pr-8 text-xs text-text-secondary shadow-sm"
     >
       <span
         data-testid="attachment-document-icon"

@@ -42,6 +42,7 @@ describe('AskUserForm', () => {
   const createMockData = (overrides: Partial<AskUserFormData> = {}): AskUserFormData => ({
     type: 'interactive_form_question',
     ask_id: 'ask_test123',
+    tool_use_id: 'tool_test123',
     task_id: 1,
     subtask_id: 2,
     questions: [
@@ -137,7 +138,14 @@ describe('AskUserForm', () => {
     // onSubmit receives (askId, formattedMessage) — structured markdown for ClarificationAnswerSummary
     expect(mockOnSubmit).toHaveBeenCalledWith(
       'ask_test123',
-      '## 📝 我的回答 (My Answers)\n\n### ASK_TEST123: Which programming language do you prefer?\n**Answer**: `javascript` - JavaScript\n\n'
+      '## 📝 我的回答 (My Answers)\n\n### ASK_TEST123: Which programming language do you prefer?\n**Answer**: `javascript` - JavaScript\n\n',
+      expect.objectContaining({
+        ask_id: 'ask_test123',
+        tool_use_id: 'tool_test123',
+        success: true,
+        status: 'answered',
+        answers: { ask_test123: 'javascript' },
+      })
     )
   })
 
@@ -177,7 +185,12 @@ describe('AskUserForm', () => {
     // onSubmit receives structured markdown with multiple values as a list
     expect(mockOnSubmit).toHaveBeenCalledWith(
       'ask_test123',
-      '## 📝 我的回答 (My Answers)\n\n### ASK_TEST123: Which programming language do you prefer?\n**Answer**: \n- `python` - Python\n- `go` - Go\n\n'
+      '## 📝 我的回答 (My Answers)\n\n### ASK_TEST123: Which programming language do you prefer?\n**Answer**: \n- `python` - Python\n- `go` - Go\n\n',
+      expect.objectContaining({
+        ask_id: 'ask_test123',
+        tool_use_id: 'tool_test123',
+        answers: { ask_test123: ['python', 'go'] },
+      })
     )
   })
 
@@ -207,7 +220,12 @@ describe('AskUserForm', () => {
 
     expect(mockOnSubmit).toHaveBeenCalledWith(
       'ask_test123',
-      '## 📝 我的回答 (My Answers)\n\n### ASK_TEST123: Which programming language do you prefer?\n**Answer**: My custom answer\n\n'
+      '## 📝 我的回答 (My Answers)\n\n### ASK_TEST123: Which programming language do you prefer?\n**Answer**: My custom answer\n\n',
+      expect.objectContaining({
+        ask_id: 'ask_test123',
+        tool_use_id: 'tool_test123',
+        answers: { ask_test123: 'My custom answer' },
+      })
     )
   })
 
@@ -322,7 +340,12 @@ describe('AskUserForm', () => {
 
     expect(mockOnSubmit).toHaveBeenCalledWith(
       'ask_test123',
-      '## 📝 我的回答 (My Answers)\n\n### ASK_TEST123: Which programming language do you prefer?\n**Answer**: My custom preference\n\n'
+      '## 📝 我的回答 (My Answers)\n\n### ASK_TEST123: Which programming language do you prefer?\n**Answer**: My custom preference\n\n',
+      expect.objectContaining({
+        ask_id: 'ask_test123',
+        tool_use_id: 'tool_test123',
+        answers: { ask_test123: 'My custom preference' },
+      })
     )
   })
 })
