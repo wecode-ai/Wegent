@@ -1,4 +1,4 @@
-import type { DeviceCommandResponse } from '@/types/api'
+import type { DeviceCommandResponse, LocalDeviceSkill } from '@/types/api'
 import type {
   CloudDeviceResponse,
   CloudDeviceMetricsResponse,
@@ -13,6 +13,22 @@ import type { HttpClient } from './http'
 function getCommandText(response: DeviceCommandResponse): string {
   const output = Array.isArray(response.stdout) ? response.stdout.join('\n') : response.stdout
   return output.trim()
+}
+
+function getStringArrayOutput(response: DeviceCommandResponse): string[] {
+  if (!Array.isArray(response.stdout)) return []
+  return response.stdout.filter((item): item is string => typeof item === 'string')
+}
+
+function getSkillArrayOutput(response: DeviceCommandResponse): LocalDeviceSkill[] {
+  if (!Array.isArray(response.stdout)) return []
+  return response.stdout.filter(
+    (item): item is LocalDeviceSkill =>
+      typeof item === 'object' &&
+      item !== null &&
+      'name' in item &&
+      'path' in item,
+  )
 }
 
 export function createDeviceApi(client: HttpClient) {
@@ -68,7 +84,22 @@ export function createDeviceApi(client: HttpClient) {
       if (!response.success) {
         throw new Error(response.error || response.stderr || 'Failed to list directories')
       }
-      return Array.isArray(response.stdout) ? response.stdout : []
+      return getStringArrayOutput(response)
+    },
+
+    async listSkills(deviceId: string): Promise<LocalDeviceSkill[]> {
+      const response = await client.post<DeviceCommandResponse>(
+        `/devices/${encodeURIComponent(deviceId)}/commands`,
+        {
+          command_key: 'ls_skills',
+          timeout_seconds: 15,
+          max_output_bytes: 1024 * 256,
+        },
+      )
+      if (!response.success) {
+        throw new Error(response.error || response.stderr || 'Failed to list skills')
+      }
+      return getSkillArrayOutput(response)
     },
 
     executeCommand(

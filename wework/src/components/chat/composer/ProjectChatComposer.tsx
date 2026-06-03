@@ -1,4 +1,11 @@
-import type { Attachment, ModelOptions, SkillRef, UnifiedModel, UnifiedSkill } from '@/types/api'
+import type {
+  Attachment,
+  LocalDeviceSkill,
+  ModelOptions,
+  SkillRef,
+  UnifiedModel,
+  UnifiedSkill,
+} from '@/types/api'
 import type { ProjectWorkControls } from '../ChatInput'
 import { AttachmentBadges } from './AttachmentBadges'
 import { ComposerToolbar } from './ComposerToolbar'
@@ -27,6 +34,7 @@ interface ProjectChatComposerProps {
   onToggleSkill: (skill: SkillRef) => void
   onFileSelect: (files: File | File[]) => void
   onRemoveAttachment: (attachmentId: number) => void
+  onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
   projectWork: ProjectWorkControls
   showProjectWorkBar?: boolean
 }
@@ -52,6 +60,7 @@ export function ProjectChatComposer({
   onToggleSkill,
   onFileSelect,
   onRemoveAttachment,
+  onListLocalSkills,
   projectWork,
   showProjectWorkBar = true,
 }: ProjectChatComposerProps) {
@@ -82,6 +91,7 @@ export function ProjectChatComposer({
           placeholder={placeholder}
           rows={2}
           className="max-h-[128px] min-h-9 w-full resize-none overflow-y-auto bg-transparent p-0 text-sm leading-5 text-text-primary outline-none placeholder:text-text-muted"
+          onListLocalSkills={onListLocalSkills}
         />
         <ComposerToolbar
           canSend={canSend}

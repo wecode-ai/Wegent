@@ -37,6 +37,85 @@ GIT_BRANCH_DIFF_SHORTSTAT_COMMAND = (
     'git diff --shortstat "$merge_base" --\''
 )
 
+LS_SKILLS_SCRIPT = """
+import json
+import re
+from pathlib import Path
+
+FRONTMATTER_PATTERN = re.compile(r"^---\\n(.*?)\\n---", re.S)
+ROOTS = (
+    (Path.home() / ".claude" / "skills", "claude"),
+    (Path.home() / ".codex" / "skills", "codex"),
+)
+
+
+def read_frontmatter(path):
+    text = path.read_text(encoding="utf-8", errors="replace")
+    match = FRONTMATTER_PATTERN.match(text)
+    return match.group(1) if match else ""
+
+
+def frontmatter_field(frontmatter, field_name):
+    pattern = re.compile(rf"^\\s*{re.escape(field_name)}\\s*:\\s*(.+?)\\s*$")
+    for line in frontmatter.splitlines():
+        match = pattern.match(line)
+        if match:
+            return match.group(1).strip().strip(chr(34)).strip(chr(39))
+    return None
+
+
+def nested_metadata_field(frontmatter, field_name):
+    in_metadata = False
+    pattern = re.compile(rf"^\\s+{re.escape(field_name)}\\s*:\\s*(.+?)\\s*$")
+    for line in frontmatter.splitlines():
+        if re.match(r"^metadata\\s*:\\s*$", line):
+            in_metadata = True
+            continue
+        if in_metadata and line and not line.startswith((" ", "\\t")):
+            in_metadata = False
+        if not in_metadata:
+            continue
+        match = pattern.match(line)
+        if match:
+            return match.group(1).strip().strip(chr(34)).strip(chr(39))
+    return None
+
+
+def skill_metadata(skill_file, source):
+    stat = skill_file.stat()
+    frontmatter = read_frontmatter(skill_file)
+    name = frontmatter_field(frontmatter, "name") or skill_file.parent.name
+    return {
+        "name": name,
+        "description": frontmatter_field(frontmatter, "description") or "",
+        "short_description": nested_metadata_field(frontmatter, "short-description")
+        or frontmatter_field(frontmatter, "short-description"),
+        "path": str(skill_file),
+        "source": source,
+        "mtime": stat.st_mtime,
+    }
+
+
+skills = []
+seen_paths = set()
+for root, source in ROOTS:
+    if not root.is_dir():
+        continue
+    for skill_file in sorted(root.glob("**/SKILL.md")):
+        key = str(skill_file)
+        if key in seen_paths:
+            continue
+        try:
+            skills.append(skill_metadata(skill_file, source))
+            seen_paths.add(key)
+        except OSError:
+            continue
+
+print(json.dumps(skills, ensure_ascii=False))
+""".strip()
+
+LS_SKILLS_COMMAND = f"python3 -c {shlex.quote(LS_SKILLS_SCRIPT)}"
+
 
 DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "pwd": LocalDeviceCommandDefinition(command="pwd"),
@@ -65,6 +144,10 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "git_remote_url": LocalDeviceCommandDefinition(command="git remote get-url origin"),
     "git_add_all": LocalDeviceCommandDefinition(command="git add --all"),
     "git_commit": LocalDeviceCommandDefinition(command="git commit"),
+    "ls_skills": LocalDeviceCommandDefinition(
+        command=LS_SKILLS_COMMAND,
+        post_processor="json",
+    ),
 }
 
 

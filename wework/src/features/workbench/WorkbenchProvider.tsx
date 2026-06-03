@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react'
 import type { ReactNode } from 'react'
 import { createDeviceApi } from '@/api/devices'
 import { commitProjectChanges, loadProjectEnvironment } from '@/api/environment'
@@ -19,6 +19,7 @@ import type {
   ChatSendPayload,
   CreateProjectRequest,
   DeviceInfo,
+  LocalDeviceSkill,
   ModelOptions,
   ModelSelectionConfig,
   ProjectWithTasks,
@@ -42,6 +43,7 @@ import {
 import { WorkbenchContext } from './useWorkbench'
 
 const WEWORK_CLIENT_ORIGIN = 'wework'
+const LOCAL_SKILLS_CACHE_TTL_MS = 60_000
 
 export interface WorkbenchServices {
   teamApi: ReturnType<typeof createTeamApi>
@@ -77,6 +79,7 @@ export interface WorkbenchContextValue {
     addExistingAttachment: (attachment: Attachment) => void
     removeAttachment: (attachmentId: number) => Promise<void>
     resetAttachments: () => void
+    listLocalSkills: () => Promise<LocalDeviceSkill[]>
   }
   runningTaskIds: Set<number>
   selectProject: (projectId: number | null) => void
@@ -288,6 +291,9 @@ export function WorkbenchProvider({
     initialWorkbenchState
   )
   const [messages, dispatchMessages] = useReducer(messageReducer, [])
+  const localSkillsCacheRef = useRef<
+    Map<string, { expiresAt: number; skills: LocalDeviceSkill[] }>
+  >(new Map())
   const isOptionsLocked = Boolean(state.currentTask)
   const currentUser = state.user ?? user
   const modelSelectionConfig = useMemo(
@@ -343,6 +349,25 @@ export function WorkbenchProvider({
     locked: isOptionsLocked,
   })
   const attachmentSelection = useWorkbenchAttachments()
+  const currentTaskDeviceId = state.currentTask?.device_id
+  const currentProjectExecutionDeviceId =
+    state.currentProject?.config?.execution?.deviceId
+  const currentProjectDeviceId = state.currentProject?.config?.device_id
+  const hasCurrentProject = Boolean(state.currentProject)
+  const activeDeviceId = useMemo(
+    () =>
+      currentTaskDeviceId ??
+      currentProjectExecutionDeviceId ??
+      currentProjectDeviceId ??
+      (!hasCurrentProject ? state.standaloneDeviceId ?? undefined : undefined),
+    [
+      currentProjectDeviceId,
+      currentProjectExecutionDeviceId,
+      currentTaskDeviceId,
+      hasCurrentProject,
+      state.standaloneDeviceId,
+    ]
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -817,12 +842,6 @@ export function WorkbenchProvider({
       },
     })
 
-    const activeDeviceId =
-      state.currentTask?.device_id ??
-      state.currentProject?.config?.execution?.deviceId ??
-      state.currentProject?.config?.device_id ??
-      (!state.currentProject ? state.standaloneDeviceId ?? undefined : undefined)
-
     const payload: ChatSendPayload = {
       task_id: state.currentTask?.id,
       team_id: state.defaultTeam.id,
@@ -895,12 +914,28 @@ export function WorkbenchProvider({
     modelSelection.selectedModelOptions,
     resolvedServices,
     skillSelection.selectedSkills,
+    activeDeviceId,
     state.currentProject,
     state.currentTask,
     state.defaultTeam,
     state.input,
-    state.standaloneDeviceId,
   ])
+
+  const listLocalSkills = useCallback(async () => {
+    if (!activeDeviceId) return []
+
+    const cached = localSkillsCacheRef.current.get(activeDeviceId)
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.skills
+    }
+
+    const skills = await resolvedServices.deviceApi.listSkills(activeDeviceId)
+    localSkillsCacheRef.current.set(activeDeviceId, {
+      expiresAt: Date.now() + LOCAL_SKILLS_CACHE_TTL_MS,
+      skills,
+    })
+    return skills
+  }, [activeDeviceId, resolvedServices.deviceApi])
 
   const runningTaskIds = useMemo(() => {
     const ids = new Set<number>()
@@ -943,6 +978,7 @@ export function WorkbenchProvider({
       addExistingAttachment: attachmentSelection.addExistingAttachment,
       removeAttachment: attachmentSelection.removeAttachment,
       resetAttachments: attachmentSelection.resetAttachments,
+      listLocalSkills,
     },
     selectProject,
     selectStandaloneDevice,

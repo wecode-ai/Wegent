@@ -5,6 +5,7 @@ import { describe, expect, test, vi } from 'vitest'
 import type {
   Attachment,
   DeviceInfo,
+  LocalDeviceSkill,
   ProjectWithTasks,
   SkillRef,
   UnifiedModel,
@@ -15,12 +16,22 @@ import type { ProjectChatControls, ProjectWorkControls } from './ChatInput'
 
 function ControlledChatInput({
   onSubmit = vi.fn(),
+  projectChat,
 }: {
   onSubmit?: () => void
+  projectChat?: ProjectChatControls
 }) {
   const [value, setValue] = useState('')
 
-  return <ChatInput value={value} onChange={setValue} onSubmit={onSubmit} disabled={false} />
+  return (
+    <ChatInput
+      value={value}
+      onChange={setValue}
+      onSubmit={onSubmit}
+      disabled={false}
+      projectChat={projectChat}
+    />
+  )
 }
 
 function projectChatControls(overrides: Partial<ProjectChatControls> = {}): ProjectChatControls {
@@ -39,6 +50,7 @@ function projectChatControls(overrides: Partial<ProjectChatControls> = {}): Proj
     toggleSkill: vi.fn(),
     handleFileSelect: vi.fn().mockResolvedValue(undefined),
     removeAttachment: vi.fn().mockResolvedValue(undefined),
+    listLocalSkills: vi.fn().mockResolvedValue([]),
     ...overrides,
   }
 }
@@ -122,6 +134,50 @@ describe('ChatInput', () => {
       'bottom-1',
       'right-1',
     )
+  })
+
+  test('opens local skill autocomplete after a standalone dollar trigger', async () => {
+    const skill: LocalDeviceSkill = {
+      name: 'env-context',
+      description: 'Use when environment facts are needed',
+      short_description: 'Environment facts',
+      path: '/Users/crystal/.codex/skills/env-context/SKILL.md',
+      source: 'codex',
+    }
+    const listLocalSkills = vi.fn().mockResolvedValue([skill])
+
+    render(
+      <ControlledChatInput
+        projectChat={projectChatControls({ listLocalSkills })}
+      />,
+    )
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
+
+    await waitFor(() => {
+      expect(listLocalSkills).toHaveBeenCalledTimes(1)
+    })
+    expect(screen.getByTestId('local-skill-autocomplete')).toBeInTheDocument()
+    await userEvent.click(await screen.findByTestId('local-skill-option-env-context'))
+
+    expect(screen.getByTestId('chat-message-input')).toHaveValue(
+      '[$env-context](/Users/crystal/.codex/skills/env-context/SKILL.md)env-context ',
+    )
+  })
+
+  test('does not open local skill autocomplete for a dollar inside a word', async () => {
+    const listLocalSkills = vi.fn().mockResolvedValue([])
+
+    render(
+      <ControlledChatInput
+        projectChat={projectChatControls({ listLocalSkills })}
+      />,
+    )
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), 'hello$')
+
+    expect(listLocalSkills).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('local-skill-autocomplete')).not.toBeInTheDocument()
   })
 
   test('opens a mobile context sheet that only uploads images', async () => {

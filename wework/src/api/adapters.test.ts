@@ -251,4 +251,30 @@ describe('REST adapters', () => {
       expect.objectContaining({ command_key: 'project_workspace_root' }),
     )
   })
+
+  test('loads local device skills through the device command API', async () => {
+    const client = mockClient()
+    const skills = [
+      {
+        name: 'env-context',
+        description: 'Environment facts',
+        path: '/Users/crystal/.codex/skills/env-context/SKILL.md',
+        source: 'codex',
+      },
+    ]
+    vi.mocked(client.post).mockResolvedValueOnce({
+      success: true,
+      stdout: skills,
+      stderr: '',
+    })
+
+    await expect(createDeviceApi(client).listSkills('device-1')).resolves.toEqual(skills)
+
+    expect(client.post).toHaveBeenCalledWith(
+      '/devices/device-1/commands',
+      expect.objectContaining({
+        command_key: 'ls_skills',
+      }),
+    )
+  })
 })

@@ -223,6 +223,7 @@ describe('WorkbenchProvider', () => {
             getHomeDirectory: vi.fn(),
             getProjectWorkspaceRoot: vi.fn(),
             listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
           },
           chatStream: {
             joinTask: vi.fn(),
@@ -314,6 +315,7 @@ describe('WorkbenchProvider', () => {
             getHomeDirectory: vi.fn(),
             getProjectWorkspaceRoot: vi.fn(),
             listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
           },
           chatStream: {
             joinTask: vi.fn(),
@@ -405,6 +407,7 @@ describe('WorkbenchProvider', () => {
             getHomeDirectory: vi.fn(),
             getProjectWorkspaceRoot: vi.fn(),
             listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
           },
           chatStream: {
             joinTask: vi.fn(),
@@ -512,6 +515,7 @@ describe('WorkbenchProvider', () => {
             getHomeDirectory: vi.fn(),
             getProjectWorkspaceRoot: vi.fn(),
             listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
           },
           userApi: {
             updateCurrentUser,
@@ -644,6 +648,7 @@ describe('WorkbenchProvider', () => {
             getHomeDirectory: vi.fn(),
             getProjectWorkspaceRoot: vi.fn(),
             listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
           },
           chatStream: {
             joinTask,
@@ -744,6 +749,7 @@ describe('WorkbenchProvider', () => {
             getHomeDirectory: vi.fn(),
             getProjectWorkspaceRoot: vi.fn(),
             listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
           },
           userApi: {
             updateCurrentUser,
@@ -871,6 +877,7 @@ describe('WorkbenchProvider', () => {
             getHomeDirectory: vi.fn(),
             getProjectWorkspaceRoot: vi.fn(),
             listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
           },
           userApi: {
             updateCurrentUser,
@@ -1014,6 +1021,7 @@ describe('WorkbenchProvider', () => {
             getHomeDirectory: vi.fn(),
             getProjectWorkspaceRoot: vi.fn(),
             listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
           },
           chatStream: {
             joinTask: vi.fn(),
@@ -1120,6 +1128,7 @@ describe('WorkbenchProvider', () => {
             getHomeDirectory: vi.fn(),
             getProjectWorkspaceRoot: vi.fn(),
             listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
           },
           chatStream: {
             joinTask: vi.fn(),
@@ -1238,6 +1247,7 @@ describe('WorkbenchProvider', () => {
             getHomeDirectory: vi.fn(),
             getProjectWorkspaceRoot: vi.fn(),
             listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
           },
           chatStream: {
             joinTask: vi.fn(),
@@ -1353,6 +1363,7 @@ describe('WorkbenchProvider', () => {
             getHomeDirectory: vi.fn(),
             getProjectWorkspaceRoot: vi.fn(),
             listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
           },
           chatStream: {
             joinTask: vi.fn(),
@@ -1477,6 +1488,7 @@ describe('WorkbenchProvider', () => {
             getHomeDirectory: vi.fn(),
             getProjectWorkspaceRoot: vi.fn(),
             listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
           },
           userApi: {
             updateCurrentUser,
@@ -1579,6 +1591,7 @@ describe('WorkbenchProvider', () => {
             getHomeDirectory: vi.fn(),
             getProjectWorkspaceRoot: vi.fn(),
             listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
           },
           chatStream: {
             joinTask: vi.fn(),
@@ -1663,6 +1676,7 @@ describe('WorkbenchProvider', () => {
             getHomeDirectory: vi.fn(),
             getProjectWorkspaceRoot: vi.fn(),
             listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
           },
           chatStream: {
             joinTask: vi.fn(),

@@ -170,10 +170,19 @@ export interface DeviceCommandRequest {
   max_output_bytes?: number
 }
 
+export interface LocalDeviceSkill {
+  name: string
+  description: string
+  short_description?: string | null
+  path: string
+  source: 'claude' | 'codex' | string
+  mtime?: number
+}
+
 export interface DeviceCommandResponse {
   success: boolean
   exit_code?: number | null
-  stdout: string | string[]
+  stdout: string | string[] | LocalDeviceSkill[]
   stderr: string
   error?: string
   duration?: number
