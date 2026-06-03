@@ -1295,6 +1295,10 @@ class ExecutionDispatcher:
                     )
 
                 if not cancelled and not terminal_event_type:
+                    error_message = (
+                        "Chat Shell SSE stream ended without terminal event "
+                        f"after {event_count} events"
+                    )
                     logger.warning(
                         "[ExecutionDispatcher] SSE stream ended without terminal event: "
                         "task_id=%d, subtask_id=%d, request_id=%s, total_events=%d",
@@ -1311,6 +1315,16 @@ class ExecutionDispatcher:
                             "task_id": str(request.task_id),
                             "subtask_id": str(request.subtask_id),
                         },
+                    )
+                    await emitter.emit(
+                        ExecutionEvent(
+                            type=EventType.ERROR,
+                            task_id=request.task_id,
+                            subtask_id=request.subtask_id,
+                            message_id=request.message_id,
+                            error=error_message,
+                            error_code="sse_stream_no_terminal",
+                        )
                     )
 
                 # Log when stream iteration completes
