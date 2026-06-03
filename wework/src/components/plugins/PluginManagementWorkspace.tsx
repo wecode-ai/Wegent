@@ -711,7 +711,7 @@ export function PluginManagementWorkspace() {
   }
 
   return (
-    <main className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-base px-4 pb-5 pt-20 text-text-primary sm:px-7 sm:py-4">
+    <main className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-background px-4 pb-5 pt-20 text-text-primary sm:px-7 sm:py-4">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <nav
           className="flex h-10 items-center gap-3 text-sm font-semibold"
@@ -797,7 +797,7 @@ export function PluginManagementWorkspace() {
               onChange={(event) => setQuery(event.target.value)}
               placeholder={t('workbench.plugins_search_plugins', '搜索插件')}
               data-testid="plugin-management-search-input"
-              className="h-11 w-full rounded-xl border border-border bg-base pl-11 pr-4 text-sm outline-none placeholder:text-text-muted focus:border-primary"
+              className="h-11 w-full rounded-xl border border-border bg-background pl-11 pr-4 text-sm outline-none placeholder:text-text-muted focus:border-primary"
             />
           </label>
         </div>

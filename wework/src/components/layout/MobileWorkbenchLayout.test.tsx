@@ -1,6 +1,8 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useState, type ReactNode } from 'react'
 import { describe, expect, test, vi } from 'vitest'
+import type { UnifiedModel } from '@/types/api'
 import { MobileWorkbenchLayout } from './MobileWorkbenchLayout'
 
 const baseState = {
@@ -58,6 +60,15 @@ const baseProjectChat = {
 }
 
 describe('MobileWorkbenchLayout', () => {
+  function renderAtMobileWidth(ui: ReactNode) {
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      writable: true,
+      value: 400,
+    })
+    return render(ui)
+  }
+
   test('uses the project selector instead of a static project work shortcut', async () => {
     const onSelectProject = vi.fn()
 
@@ -82,7 +93,7 @@ describe('MobileWorkbenchLayout', () => {
   })
 
   test('does not show the user avatar on the mobile empty chat page', () => {
-    render(
+    renderAtMobileWidth(
       <MobileWorkbenchLayout
         state={baseState}
         messages={[]}
@@ -95,7 +106,7 @@ describe('MobileWorkbenchLayout', () => {
     )
 
     expect(screen.queryByText('MI')).not.toBeInTheDocument()
-    expect(screen.getByTestId('mobile-empty-header')).toHaveClass('bg-base/95')
+    expect(screen.getByTestId('mobile-empty-header')).toHaveClass('bg-background/95')
     expect(screen.getByTestId('open-mobile-drawer-button')).toHaveClass(
       'h-10',
       'text-text-primary',
@@ -112,6 +123,136 @@ describe('MobileWorkbenchLayout', () => {
     )
     expect(screen.getByTestId('compact-input-pill')).toHaveClass('min-h-[52px]')
     expect(screen.getByTestId('add-context-button')).toHaveClass('h-[52px]')
+  })
+
+  test('uses a bottom sheet for the mobile model picker', async () => {
+    const gptModel: UnifiedModel = {
+      name: 'overseas-gpt-5.5',
+      type: 'user',
+      displayName: '海外:gpt-5.5',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.5',
+          sortOrder: 10,
+          controls: ['speed'],
+        },
+      },
+    }
+    const claudeModel: UnifiedModel = {
+      name: 'claude-sonnet',
+      type: 'user',
+      displayName: 'Claude Sonnet',
+      config: {
+        ui: {
+          family: 'claude',
+          modelLabel: 'Claude Sonnet',
+          sortOrder: 10,
+        },
+      },
+    }
+    const setSelectedModel = vi.fn()
+
+    renderAtMobileWidth(
+      <MobileWorkbenchLayout
+        state={baseState}
+        messages={[]}
+        projectChat={{
+          ...baseProjectChat,
+          models: [claudeModel, gptModel],
+          selectedModel: gptModel,
+          selectedModelOptions: { reasoning: 'high', speed: 'standard' },
+          setSelectedModel,
+        }}
+        onSelectProject={vi.fn()}
+        onOpenTask={vi.fn()}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+
+    expect(screen.getByTestId('model-selector-menu')).toHaveAttribute(
+      'data-mobile',
+      'true',
+    )
+    expect(screen.getByTestId('model-selector-menu')).toHaveClass('h-[82dvh]')
+    expect(screen.getByTestId('model-selector-search-input')).toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-model-list')).toHaveClass(
+      'overflow-y-auto',
+      'scrollbar-none',
+    )
+    expect(screen.getByTestId('model-control-reasoning-high')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-speed-fast')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('model-family-claude'))
+    await userEvent.click(screen.getByTestId('model-option-claude-sonnet'))
+
+    expect(setSelectedModel).toHaveBeenCalledWith(claudeModel)
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('model-selector-confirm-button'))
+
+    expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
+  })
+
+  test('updates mobile reasoning controls without closing the model picker', async () => {
+    const gptModel: UnifiedModel = {
+      name: 'overseas-gpt-5.5',
+      type: 'user',
+      displayName: '海外:gpt-5.5',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.5',
+          sortOrder: 10,
+        },
+      },
+    }
+
+    function Harness() {
+      const [selectedModelOptions, setSelectedModelOptions] = useState({
+        reasoning: 'high',
+      })
+
+      return (
+        <MobileWorkbenchLayout
+          state={baseState}
+          messages={[]}
+          projectChat={{
+            ...baseProjectChat,
+            models: [gptModel],
+            selectedModel: gptModel,
+            selectedModelOptions,
+            setSelectedModelOption: (optionId, value) =>
+              setSelectedModelOptions(current => ({
+                ...current,
+                [optionId]: value,
+              })),
+          }}
+          onSelectProject={vi.fn()}
+          onOpenTask={vi.fn()}
+          onInputChange={vi.fn()}
+          onSend={vi.fn()}
+        />
+      )
+    }
+
+    renderAtMobileWidth(<Harness />)
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.click(screen.getByTestId('model-control-reasoning-medium'))
+
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-reasoning-medium')).toHaveClass(
+      'bg-[#1f2933]',
+    )
+    expect(screen.getByTestId('model-control-reasoning-high')).toHaveClass(
+      'bg-surface',
+    )
   })
 
   test('shows the selected project in the mobile empty project selector', () => {
@@ -178,7 +319,7 @@ describe('MobileWorkbenchLayout', () => {
     )
     expect(screen.getByTestId('mobile-conversation-header')).toHaveClass(
       'absolute',
-      'bg-base/95',
+      'bg-background/95',
       'backdrop-blur',
     )
     expect(screen.getByTestId('mobile-conversation-header')).toHaveClass('gap-2')

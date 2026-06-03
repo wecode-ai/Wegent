@@ -159,7 +159,7 @@ export function PluginDetailView({
   const rows = detailRows(raw)
 
   return (
-    <main className="min-w-0 flex-1 overflow-y-auto bg-base px-4 pb-8 pt-20 text-text-primary sm:px-8 sm:py-5">
+    <main className="min-w-0 flex-1 overflow-y-auto bg-background px-4 pb-8 pt-20 text-text-primary sm:px-8 sm:py-5">
       <div className="mx-auto flex w-full max-w-[860px] flex-col gap-8">
         <nav
           className="flex items-center gap-2 text-sm font-semibold"
@@ -244,7 +244,7 @@ export function PluginDetailView({
                 key={item.key}
                 className="grid grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-3 px-5 py-3"
               >
-                <div className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-base text-text-muted">
+                <div className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background text-text-muted">
                   <Sparkles className="h-4 w-4" />
                 </div>
                 <div className="min-w-0">

@@ -91,7 +91,7 @@ export function PluginsPage() {
   }
 
   return (
-    <div className="flex h-dvh overflow-hidden bg-base text-text-primary lg:h-screen">
+    <div className="flex h-dvh overflow-hidden bg-background text-text-primary lg:h-screen">
       {!isMobile && !sidebarCollapsed ? (
         <DesktopSidebar
           user={state.user}
@@ -135,7 +135,7 @@ export function PluginsPage() {
           <ChevronRight className="h-4 w-4" />
         </button>
       ) : (
-        <header className="absolute left-0 right-0 top-0 z-20 flex h-14 items-center justify-between bg-base/95 px-4 backdrop-blur">
+        <header className="absolute left-0 right-0 top-0 z-20 flex h-14 items-center justify-between bg-background/95 px-4 backdrop-blur">
           <button
             type="button"
             data-testid="open-mobile-drawer-button"

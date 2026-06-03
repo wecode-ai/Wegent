@@ -16,7 +16,7 @@ export function RightWorkspacePanel({ currentProject, onRequestClose }: RightWor
   return (
     <section
       data-testid="right-workspace-panel"
-      className="relative flex shrink-0 flex-col border-l border-border bg-base"
+      className="relative flex shrink-0 flex-col border-l border-border bg-background"
       style={{ width }}
     >
       <div
@@ -29,7 +29,7 @@ export function RightWorkspacePanel({ currentProject, onRequestClose }: RightWor
         type="button"
         data-testid="close-right-workspace-panel-button"
         onClick={onRequestClose}
-        className="absolute left-2 top-2 z-30 flex h-9 w-9 items-center justify-center rounded-md bg-base text-text-secondary hover:bg-muted hover:text-text-primary"
+        className="absolute left-2 top-2 z-30 flex h-9 w-9 items-center justify-center rounded-md bg-background text-text-secondary hover:bg-muted hover:text-text-primary"
         aria-label={t('workbench.close_right_workspace_panel', '关闭右侧栏')}
       >
         <X className="h-4 w-4" />

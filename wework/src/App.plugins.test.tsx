@@ -430,7 +430,10 @@ describe('App plugins route', () => {
     await userEvent.click(screen.getByTestId('plugins-button'))
 
     await waitFor(() => expect(window.location.pathname).toBe('/plugins'))
-    expect(screen.queryByRole('tab', { name: '插件' })).not.toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '插件' })).toHaveAttribute(
+      'aria-selected',
+      'false',
+    )
     expect(screen.getByRole('tab', { name: '技能' })).toHaveAttribute(
       'aria-selected',
       'true',

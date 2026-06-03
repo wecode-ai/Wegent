@@ -976,7 +976,7 @@ export function PluginsWorkspace() {
   }
 
   return (
-    <main className="min-w-0 flex-1 overflow-y-auto bg-base px-4 pb-5 pt-20 text-text-primary sm:px-8 sm:py-5">
+    <main className="min-w-0 flex-1 overflow-y-auto bg-background px-4 pb-5 pt-20 text-text-primary sm:px-8 sm:py-5">
       <div className="mx-auto flex w-full max-w-[1000px] flex-col gap-8 sm:gap-10">
         <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div
@@ -1081,7 +1081,7 @@ export function PluginsWorkspace() {
                       : t('workbench.plugins_search_plugins', '搜索插件')
                 }
                 data-testid="plugins-search-input"
-                className="h-10 w-full rounded-xl border border-border bg-base pl-11 pr-4 text-sm outline-none placeholder:text-text-muted focus:border-primary"
+                className="h-10 w-full rounded-xl border border-border bg-background pl-11 pr-4 text-sm outline-none placeholder:text-text-muted focus:border-primary"
               />
             </label>
             {activeTab === 'skills' && (

@@ -539,7 +539,7 @@ export function ConfirmUninstallDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="uninstall-skill-dialog-title"
-        className="w-full max-w-[360px] rounded-2xl bg-base p-5 shadow-xl"
+        className="w-full max-w-[360px] rounded-2xl bg-background p-5 shadow-xl"
       >
         <h2
           id="uninstall-skill-dialog-title"
