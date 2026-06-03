@@ -160,10 +160,14 @@ export function EnvironmentInfoPopover({
 
   async function handleToggleBranchMenu() {
     const nextOpen = !branchMenuOpen
-    setBranchMenuOpen(nextOpen)
+    if (!nextOpen) {
+      closeBranchMenu()
+      return
+    }
+    setBranchMenuOpen(true)
     setBranchError(null)
 
-    if (!nextOpen || !onListBranches) {
+    if (!onListBranches) {
       return
     }
 
@@ -181,7 +185,7 @@ export function EnvironmentInfoPopover({
 
   async function handleCheckoutBranch(nextBranchName: string) {
     if (!onCheckoutBranch || nextBranchName === info.branchName) {
-      setBranchMenuOpen(false)
+      closeBranchMenu()
       return
     }
 
@@ -189,8 +193,7 @@ export function EnvironmentInfoPopover({
     setBranchActionStatus('switching')
     try {
       await onCheckoutBranch(nextBranchName)
-      setBranchMenuOpen(false)
-      setBranchQuery('')
+      closeBranchMenu()
     } catch (error) {
       setBranchError(error instanceof Error ? error.message : t('workbench.environment_branch_checkout_failed', '切换分支失败'))
     } finally {

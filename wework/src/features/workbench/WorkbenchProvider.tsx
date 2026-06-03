@@ -1045,8 +1045,19 @@ export function WorkbenchProvider({
         },
       })
 
-      const ack = await resolvedServices.chatStream.sendMessage(payload)
-      dispatch({ type: 'sending_finished' })
+      let ack
+      try {
+        ack = await resolvedServices.chatStream.sendMessage(payload)
+      } catch (error) {
+        setIsAwaitingAssistantStart(false)
+        dispatch({
+          type: 'error_set',
+          error: error instanceof Error ? error.message : '发送失败',
+        })
+        return false
+      } finally {
+        dispatch({ type: 'sending_finished' })
+      }
 
       if (ack.error || ack.success === false) {
         setIsAwaitingAssistantStart(false)
@@ -1277,35 +1288,34 @@ export function WorkbenchProvider({
         )
       )
 
-      const cancelAck = await resolvedServices.chatStream.cancelStream({
-        subtask_id: activeSubtaskId,
-        partial_content: activeAssistantMessage.content,
-        shell_type: activeAssistantMessage.shellType,
-      })
-
-      if (cancelAck.error || cancelAck.success === false) {
-        setQueuedSends(items =>
-          items.map(queued =>
-            queued.id === id
-              ? {
-                  ...queued,
-                  status: 'failed',
-                  error: normalizeGuidanceError(cancelAck.error ?? '取消当前回复失败'),
-                }
-              : queued
-            )
-        )
-        guidanceSendInFlightRef.current = false
-        return
-      }
-
-      dispatchMessages({
-        type: 'assistant_done',
-        subtaskId: activeSubtaskId,
-        content: activeAssistantMessage.content,
-      })
-
       try {
+        const cancelAck = await resolvedServices.chatStream.cancelStream({
+          subtask_id: activeSubtaskId,
+          partial_content: activeAssistantMessage.content,
+          shell_type: activeAssistantMessage.shellType,
+        })
+
+        if (cancelAck.error || cancelAck.success === false) {
+          setQueuedSends(items =>
+            items.map(queued =>
+              queued.id === id
+                ? {
+                    ...queued,
+                    status: 'failed',
+                    error: normalizeGuidanceError(cancelAck.error ?? '取消当前回复失败'),
+                  }
+                : queued
+            )
+          )
+          return
+        }
+
+        dispatchMessages({
+          type: 'assistant_done',
+          subtaskId: activeSubtaskId,
+          content: activeAssistantMessage.content,
+        })
+
         const sent = await sendPreparedMessage(
           item.content,
           item.payload,
@@ -1325,6 +1335,20 @@ export function WorkbenchProvider({
                   : queued
               )
             : items.filter(queued => queued.id !== id)
+        )
+      } catch (error) {
+        setQueuedSends(items =>
+          items.map(queued =>
+            queued.id === id
+              ? {
+                  ...queued,
+                  status: 'failed',
+                  error: normalizeGuidanceError(
+                    error instanceof Error ? error.message : '取消当前回复失败',
+                  ),
+                }
+              : queued
+          )
         )
       } finally {
         guidanceSendInFlightRef.current = false

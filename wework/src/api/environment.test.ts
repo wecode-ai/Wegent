@@ -377,4 +377,17 @@ describe('branch environment commands', () => {
       max_output_bytes: 8192,
     })
   })
+
+  test('rejects invalid branch names before running checkout commands', async () => {
+    const executeCommand = vi.fn()
+
+    await expect(checkoutProjectBranch({ executeCommand }, project, '-bad')).rejects.toThrow(
+      'Invalid branch name',
+    )
+    await expect(
+      createAndCheckoutProjectBranch({ executeCommand }, project, 'feature/bad..name'),
+    ).rejects.toThrow('Invalid branch name')
+
+    expect(executeCommand).not.toHaveBeenCalled()
+  })
 })

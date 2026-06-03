@@ -132,11 +132,16 @@ export function createDeviceApi(client: HttpClient) {
     },
 
     async createDirectory(deviceId: string, path: string): Promise<void> {
+      const normalizedPath = path.trim()
+      if (!normalizedPath) {
+        throw new Error('Directory path is required')
+      }
+
       const response = await client.post<DeviceCommandResponse>(
         `/devices/${encodeURIComponent(deviceId)}/commands`,
         {
           command_key: 'mkdir_p',
-          args: [path],
+          args: [normalizedPath],
           timeout_seconds: 15,
           max_output_bytes: 4096,
         },

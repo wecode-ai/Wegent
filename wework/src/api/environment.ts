@@ -16,6 +16,7 @@ const EMPTY_ENVIRONMENT_INFO: EnvironmentInfo = {
   executionTarget: 'local',
 }
 const DEFAULT_DIFF_BASE_REFS = ['main', 'origin/main', 'master', 'origin/master']
+const INVALID_BRANCH_CHARACTERS = new Set([' ', '~', '^', ':', '?', '*', '[', '\\', ']'])
 
 function outputAsString(output: DeviceCommandResponse['stdout']): string {
   return Array.isArray(output) ? output.join('\n') : output
@@ -29,6 +30,30 @@ function workspacePath(project: ProjectWithTasks): string | undefined {
 function executionDeviceId(project: ProjectWithTasks): string | undefined {
   const config = project.config
   return config?.execution?.deviceId || config?.device_id
+}
+
+function validateBranchName(branchName: string): void {
+  const components = branchName.split('/')
+  const invalidComponent = components.some(
+    component => !component || component.startsWith('.') || component.endsWith('.lock'),
+  )
+  const invalidCharacter = Array.from(branchName).some(character => {
+    const code = character.charCodeAt(0)
+    return code <= 31 || code === 127 || INVALID_BRANCH_CHARACTERS.has(character)
+  })
+
+  if (
+    branchName === '@' ||
+    branchName.startsWith('-') ||
+    branchName.endsWith('.') ||
+    branchName.includes('..') ||
+    branchName.includes('@{') ||
+    branchName.includes('//') ||
+    invalidCharacter ||
+    invalidComponent
+  ) {
+    throw new Error('Invalid branch name')
+  }
 }
 
 export function parseGitShortStat(value: string): Pick<EnvironmentInfo, 'additions' | 'deletions'> {
@@ -257,6 +282,7 @@ export async function checkoutProjectBranch(
   if (!trimmedBranch) {
     throw new Error('Branch name is required')
   }
+  validateBranchName(trimmedBranch)
   if (!project) {
     throw new Error('Project is required')
   }
@@ -278,6 +304,7 @@ export async function createAndCheckoutProjectBranch(
   if (!trimmedBranch) {
     throw new Error('Branch name is required')
   }
+  validateBranchName(trimmedBranch)
   if (!project) {
     throw new Error('Project is required')
   }

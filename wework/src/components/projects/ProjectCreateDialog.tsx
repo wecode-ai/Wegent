@@ -501,7 +501,7 @@ function ProjectCreateDialogContent({
                     setNewFolderOpen(open => !open)
                     setCreateDirectoryError(null)
                   }}
-                  className="flex h-8 shrink-0 items-center gap-1 rounded-md px-2 text-xs font-medium text-[#0f766e] hover:bg-[#e5f6f4]"
+                  className="flex h-11 min-w-[44px] shrink-0 items-center gap-1 rounded-md px-2 text-xs font-medium text-[#0f766e] hover:bg-[#e5f6f4]"
                 >
                   <FolderPlus className="h-4 w-4" />
                   {t('workbench.project_create_folder', '新建文件夹')}
@@ -534,7 +534,7 @@ function ProjectCreateDialogContent({
                       setNewFolderName('')
                       setCreateDirectoryError(null)
                     }}
-                    className="h-8 rounded-md border border-[#d8d8d8] px-2 text-xs font-medium text-[#3c4043] hover:bg-[#f7f7f8]"
+                    className="h-11 min-w-[44px] rounded-md border border-[#d8d8d8] px-2 text-xs font-medium text-[#3c4043] hover:bg-[#f7f7f8]"
                   >
                     {t('workbench.cancel', '取消')}
                   </button>
@@ -543,7 +543,7 @@ function ProjectCreateDialogContent({
                     data-testid="confirm-create-folder-button"
                     disabled={!newFolderName.trim() || creatingDirectory}
                     onClick={() => void handleCreateDirectory()}
-                    className="h-8 rounded-md bg-[#14b8a6] px-2 text-xs font-medium text-white hover:bg-[#0f9f93] disabled:opacity-50"
+                    className="h-11 min-w-[44px] rounded-md bg-[#14b8a6] px-2 text-xs font-medium text-white hover:bg-[#0f9f93] disabled:opacity-50"
                   >
                     {creatingDirectory
                       ? t('workbench.project_creating_folder', '创建中')

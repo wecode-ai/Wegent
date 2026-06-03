@@ -273,6 +273,16 @@ describe('REST adapters', () => {
     )
   })
 
+  test('rejects blank directory paths before calling the device command API', async () => {
+    const client = mockClient()
+    const api = createDeviceApi(client)
+
+    await expect(api.createDirectory('device-1', '   ')).rejects.toThrow(
+      'Directory path is required',
+    )
+    expect(client.post).not.toHaveBeenCalled()
+  })
+
   test('loads local device skills through the device command API', async () => {
     const client = mockClient()
     const skills = [
