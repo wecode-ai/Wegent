@@ -541,6 +541,7 @@ export function ComposerTextarea({
         <div
           ref={menuRef}
           data-testid="local-skill-autocomplete"
+          role="listbox"
           className={[
             'absolute bottom-[calc(100%+1rem)] z-[80] max-h-72 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
             skillMenuClassName,
@@ -574,10 +575,14 @@ export function ComposerTextarea({
                 key={`${skill.source}:${skill.path}`}
                 type="button"
                 data-testid={`local-skill-option-${skill.name}`}
+                aria-selected={index === selectedIndex}
+                role="option"
+                onMouseEnter={() => setSelectedIndex(index)}
+                onPointerEnter={() => setSelectedIndex(index)}
                 onClick={() => selectSkill(skill)}
                 className={[
                   'flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left',
-                  index === selectedIndex ? 'bg-muted' : 'hover:bg-muted',
+                  index === selectedIndex ? 'bg-muted' : '',
                 ].join(' ')}
               >
                 <Sparkles className="h-4 w-4 shrink-0 text-primary" />

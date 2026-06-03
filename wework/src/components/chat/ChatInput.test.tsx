@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { StrictMode, useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
@@ -172,6 +172,49 @@ describe('ChatInput', () => {
     )
     expect(screen.getByTestId('local-skill-chip-env-context')).toHaveTextContent('Env Context')
     expect(await screen.findByTestId('local-skill-caret')).toHaveClass('local-skill-caret')
+  })
+
+  test('keeps only one local skill autocomplete option highlighted', async () => {
+    const chronicleSkill: LocalDeviceSkill = {
+      name: 'chronicle',
+      description: 'Allows you to view the user screen history',
+      short_description: 'Screen history',
+      path: '/Users/crystal/.codex/skills/chronicle/SKILL.md',
+      source: 'codex',
+    }
+    const dingtalkSkill: LocalDeviceSkill = {
+      name: 'dingtalk-ai-table',
+      description: 'Use DingTalk AI Table data',
+      short_description: 'DingTalk AI Table',
+      path: '/Users/crystal/.claude/skills/dingtalk-ai-table/SKILL.md',
+      source: 'claude',
+    }
+    const listLocalSkills = vi.fn().mockResolvedValue([chronicleSkill, dingtalkSkill])
+
+    render(
+      <ControlledChatInput
+        projectChat={projectChatControls({ listLocalSkills })}
+      />,
+    )
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
+
+    const firstOption = await screen.findByTestId('local-skill-option-chronicle')
+    const secondOption = await screen.findByTestId('local-skill-option-dingtalk-ai-table')
+
+    expect(firstOption).toHaveClass('bg-muted')
+    expect(firstOption).toHaveAttribute('aria-selected', 'true')
+    expect(secondOption).not.toHaveClass('bg-muted')
+    expect(secondOption).toHaveAttribute('aria-selected', 'false')
+
+    fireEvent.pointerEnter(secondOption)
+
+    await waitFor(() => {
+      expect(firstOption).not.toHaveClass('bg-muted')
+      expect(firstOption).toHaveAttribute('aria-selected', 'false')
+      expect(secondOption).toHaveClass('bg-muted')
+      expect(secondOption).toHaveAttribute('aria-selected', 'true')
+    })
   })
 
   test('keeps the composer editable after selecting a local skill', async () => {
