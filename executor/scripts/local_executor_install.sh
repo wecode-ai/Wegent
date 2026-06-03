@@ -29,8 +29,8 @@ BINARY_NAME="wegent-executor"
 VERSION=""
 
 # Claude Code minimum version requirement
-# Based on Docker image version: @anthropic-ai/claude-code@2.1.27
-MIN_CLAUDE_CODE_VERSION="2.1.0"
+# Claude Code defer requires 2.1.89+.
+MIN_CLAUDE_CODE_VERSION="2.1.89"
 MIN_NODE_VERSION="18"
 
 # Feature flags

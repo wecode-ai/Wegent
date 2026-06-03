@@ -57,6 +57,7 @@ class ToolBlock:
         timestamp: Unix timestamp in milliseconds
         display_name: Optional human-readable display name
         tool_output: Optional output from tool execution
+        render_payload: Optional UI-only payload for frontend renderers
     """
 
     id: str
@@ -69,6 +70,7 @@ class ToolBlock:
     timestamp: int = 0
     display_name: Optional[str] = None
     tool_output: Optional[str] = None
+    render_payload: Optional[Dict[str, Any]] = None
     type: Literal["tool"] = "tool"
 
     def to_dict(self) -> Dict[str, Any]:
@@ -90,6 +92,8 @@ class ToolBlock:
             result["display_name"] = self.display_name
         if self.tool_output:
             result["tool_output"] = self.tool_output
+        if self.render_payload:
+            result["render_payload"] = self.render_payload
         return result
 
     @classmethod
@@ -106,6 +110,7 @@ class ToolBlock:
             timestamp=data.get("timestamp", 0),
             display_name=data.get("display_name"),
             tool_output=data.get("tool_output"),
+            render_payload=data.get("render_payload"),
         )
 
 

@@ -285,6 +285,7 @@ class WebPageSocketEmitter:
         content: Optional[str] = None,
         tool_output: Optional[Any] = None,
         tool_input: Optional[Dict[str, Any]] = None,
+        render_payload: Optional[Dict[str, Any]] = None,
         status: Optional[str] = None,
     ) -> None:
         """
@@ -298,7 +299,8 @@ class WebPageSocketEmitter:
             block_id: Block ID to update
             content: Optional text content update
             tool_output: Optional tool output data
-            tool_input: Optional tool input/arguments update (for interactive_form_question form rendering)
+            tool_input: Optional tool input/arguments update
+            render_payload: Optional UI-only renderer payload update
             status: Optional status update (pending, streaming, running, done, error)
         """
         payload: Dict[str, Any] = {
@@ -312,6 +314,8 @@ class WebPageSocketEmitter:
             payload["tool_output"] = tool_output
         if tool_input is not None:
             payload["tool_input"] = tool_input
+        if render_payload is not None:
+            payload["render_payload"] = render_payload
         if status is not None:
             payload["status"] = status
 

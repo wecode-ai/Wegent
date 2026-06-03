@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom'
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { TaskDetail } from '@/types/api'
 
 import { ChatArea } from '@/features/tasks/components/chat'
@@ -32,6 +32,8 @@ const defaultStreamHandlers = {
 
 let streamHandlersMock = { ...defaultStreamHandlers }
 let selectedTaskDetailMock: TaskDetail | null = null
+let mockTaskInputMessage = ''
+const mockSetTaskInputMessage = jest.fn()
 
 jest.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
@@ -64,8 +66,10 @@ jest.mock('@/features/tasks/components/chat/useChatAreaState', () => ({
     setSelectedBranch: jest.fn(),
     effectiveRequiresWorkspace: false,
     setRequiresWorkspaceOverride: jest.fn(),
-    taskInputMessage: '',
-    setTaskInputMessage: jest.fn(),
+    taskInputMessage: mockTaskInputMessage,
+    setTaskInputMessage: mockSetTaskInputMessage,
+    setIsLoading: jest.fn(),
+    isLoading: false,
     enableDeepThinking: false,
     setEnableDeepThinking: jest.fn(),
     enableClarification: false,
@@ -133,7 +137,17 @@ jest.mock(
     }
 )
 jest.mock('@/features/tasks/components/chat/QuickAccessCards', () => ({
-  QuickAccessCards: () => <div data-testid="quick-access-cards" />,
+  QuickAccessCards: (props: { onPhraseSelect: (phrase: string) => void }) => (
+    <div data-testid="quick-access-cards">
+      <button
+        type="button"
+        data-testid="quick-phrase-trigger"
+        onClick={() => props.onPhraseSelect('quick phrase')}
+      >
+        Quick phrase
+      </button>
+    </div>
+  ),
 }))
 jest.mock('@/features/tasks/components/chat/SloganDisplay', () => ({
   SloganDisplay: () => <div data-testid="slogan-display" />,
@@ -232,6 +246,8 @@ describe('ChatArea queue message handler mounting', () => {
   beforeEach(() => {
     streamHandlersMock = { ...defaultStreamHandlers }
     selectedTaskDetailMock = null
+    mockTaskInputMessage = ''
+    mockSetTaskInputMessage.mockClear()
     mockChatInputCard.mockClear()
   })
 
@@ -325,6 +341,40 @@ describe('ChatArea queue message handler mounting', () => {
     )
   })
 
+  it('fills a quick phrase directly and requests focus at the end when input is empty', async () => {
+    render(<ChatArea teams={[]} isTeamsLoading={false} taskType="chat" showRepositorySelector />)
+
+    fireEvent.click(screen.getByTestId('quick-phrase-trigger'))
+
+    expect(mockSetTaskInputMessage).toHaveBeenCalledWith('quick phrase')
+    expect(screen.queryByText('quick_launch.overwrite_confirm_title')).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(mockChatInputCard).toHaveBeenLastCalledWith(
+        expect.objectContaining({ focusInputAtEndSignal: 1 })
+      )
+    })
+  })
+
+  it('asks before overwriting existing input with a quick phrase', async () => {
+    mockTaskInputMessage = 'existing input'
+
+    render(<ChatArea teams={[]} isTeamsLoading={false} taskType="chat" showRepositorySelector />)
+
+    fireEvent.click(screen.getByTestId('quick-phrase-trigger'))
+
+    expect(mockSetTaskInputMessage).not.toHaveBeenCalledWith('quick phrase')
+    expect(screen.getByText('quick_launch.overwrite_confirm_title')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('quick-phrase-overwrite-confirm'))
+
+    expect(mockSetTaskInputMessage).toHaveBeenCalledWith('quick phrase')
+    await waitFor(() => {
+      expect(mockChatInputCard).toHaveBeenLastCalledWith(
+        expect.objectContaining({ focusInputAtEndSignal: 1 })
+      )
+    })
+  })
+
   it('submits to the stream handler for queueing when a pending task is already streaming', async () => {
     const handleSendMessage = jest.fn().mockResolvedValue(undefined)
     streamHandlersMock = {
@@ -350,7 +400,7 @@ describe('ChatArea queue message handler mounting', () => {
       await latestProps.handleSendMessage('follow up while streaming')
     })
 
-    expect(handleSendMessage).toHaveBeenCalledWith('follow up while streaming')
+    expect(handleSendMessage).toHaveBeenCalledWith('follow up while streaming', undefined)
   })
 
   it('keeps submit available for queueing while a pending user message is in state', () => {

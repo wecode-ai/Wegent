@@ -347,6 +347,19 @@ class TestRedisTransport:
 
 class TestResponsesAPIEmitter:
     @pytest.mark.asyncio
+    async def test_reasoning_emits_summary_text_delta(self):
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+
+        await emitter.reasoning("目标")
+
+        events = transport.get_events()
+        assert [event_type for event_type, _ in events] == [
+            "response.reasoning_summary_text.delta"
+        ]
+        assert events[0][1]["delta"] == "目标"
+
+    @pytest.mark.asyncio
     async def test_mcp_tool_done_failed_emits_failed_terminal_events(self):
         transport = GeneratorTransport()
         emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()

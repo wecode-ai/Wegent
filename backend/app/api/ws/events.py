@@ -135,6 +135,41 @@ class GenerateParams(BaseModel):
     duration: Optional[int] = Field(None, description="Duration in seconds")
 
 
+class InteractiveFormAnswerPayload(BaseModel):
+    """Structured answer for a deferred interactive_form_question tool call."""
+
+    type: Literal["interactive_form_question"] = Field(
+        "interactive_form_question",
+        description="Interactive form answer type",
+    )
+    ask_id: str = Field(..., description="Rendered form ask ID")
+    tool_use_id: Optional[str] = Field(
+        None,
+        description="Deferred tool_use_id returned by Claude Code",
+    )
+    task_id: Optional[int] = Field(None, description="Task ID for the rendered form")
+    subtask_id: Optional[int] = Field(
+        None,
+        description="Assistant subtask ID that rendered the form",
+    )
+    answers: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Normalized answer values keyed by question ID",
+    )
+    success: bool = Field(
+        True,
+        description="Whether the user submitted the form successfully.",
+    )
+    status: Literal["answered", "cancelled"] = Field(
+        "answered",
+        description="Answer status for the deferred form tool result.",
+    )
+    message: Optional[str] = Field(
+        None,
+        description="Human-readable formatted answer message",
+    )
+
+
 class ChatSendPayload(BaseModel):
     """Payload for chat:send event."""
 
@@ -212,6 +247,10 @@ class ChatSendPayload(BaseModel):
     # Video generation parameters (user-selected at generation time)
     generate_params: Optional[GenerateParams] = Field(
         None, description="Video generation params from user selection"
+    )
+    interactive_form_answer: Optional[InteractiveFormAnswerPayload] = Field(
+        None,
+        description="Answer payload for a deferred interactive_form_question tool call",
     )
 
 

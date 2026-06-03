@@ -304,7 +304,8 @@ class TestStreamingServiceReasoning:
         mcp_completed = next(
             e for e in events if e["type"] == "response.mcp_call.completed"
         )
-        assert mcp_completed["output"] == tool_output
+        assert "pending_user_input" not in mcp_completed["output"]
+        assert "pending_user_input_payload" not in mcp_completed["output"]
 
         mcp_done = next(
             e
@@ -312,15 +313,18 @@ class TestStreamingServiceReasoning:
             if e["type"] == "response.output_item.done"
             and e["item"]["type"] == "mcp_call"
         )
-        assert mcp_done["item"]["output"] == tool_output
+        assert "pending_user_input" not in mcp_done["item"]["output"]
+        assert "pending_user_input_payload" not in mcp_done["item"]["output"]
 
         completed = next(e for e in events if e["type"] == "response.completed")
-        assert completed["response"]["pending_user_input"] is True
-        assert (
-            completed["response"]["pending_user_input_payload"]["ask_id"] == "ask_123"
-        )
+        assert completed["response"]["pending_user_input"] is None
+        assert completed["response"]["pending_user_input_payload"] is None
         assert completed["response"]["output"][0]["type"] == "mcp_call"
-        assert completed["response"]["output"][0]["output"] == tool_output
+        assert "pending_user_input" not in completed["response"]["output"][0]["output"]
+        assert (
+            "pending_user_input_payload"
+            not in completed["response"]["output"][0]["output"]
+        )
         assert completed["response"]["output"][1]["type"] == "message"
 
     @pytest.mark.asyncio

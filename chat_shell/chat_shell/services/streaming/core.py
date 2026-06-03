@@ -113,6 +113,8 @@ class StreamingState:
     # Silent exit state
     is_silent_exit: bool = False
     silent_exit_reason: str = ""
+    is_deferred_user_input: bool = False
+    deferred_user_input_ask_id: Optional[str] = None
 
     # Truncation state (when model output reaches max_token limit)
     is_truncated: bool = False
@@ -197,6 +199,10 @@ class StreamingState:
             result["silent_exit"] = True
             if self.silent_exit_reason:
                 result["silent_exit_reason"] = self.silent_exit_reason
+        if self.is_deferred_user_input:
+            result["deferred_user_input"] = True
+            if self.deferred_user_input_ask_id:
+                result["deferred_user_input_ask_id"] = self.deferred_user_input_ask_id
         # Include truncation flag if set
         if self.is_truncated:
             result["truncated"] = True

@@ -365,8 +365,8 @@ def test_build_response_output_restores_mcp_call_output_from_blocks():
 
     assert len(output) == 1
     assert output[0].type == "mcp_call"
-    assert output[0].output["pending_user_input"] is True
-    assert output[0].output["pending_user_input_payload"]["ask_id"] == "ask_108"
+    assert "pending_user_input" not in output[0].output
+    assert "pending_user_input_payload" not in output[0].output
 
 
 def test_extract_pending_user_input_state_from_tool_blocks():
@@ -397,11 +397,8 @@ def test_extract_pending_user_input_state_from_tool_blocks():
 
     pending_user_input, payload = extract_pending_user_input_state([subtask])
 
-    assert pending_user_input is True
-    assert payload == {
-        "type": "interactive_form_question",
-        "ask_id": "ask_109",
-    }
+    assert pending_user_input is False
+    assert payload is None
 
 
 def test_extract_pending_user_input_state_rebuilds_minimal_payload_from_fallback():
@@ -432,9 +429,5 @@ def test_extract_pending_user_input_state_rebuilds_minimal_payload_from_fallback
 
     pending_user_input, payload = extract_pending_user_input_state([subtask])
 
-    assert pending_user_input is True
-    assert payload == {
-        "ask_id": "ask_110",
-        "questions": [{"id": "exp_id", "question": "Enter exp id"}],
-        "type": "interactive_form_question",
-    }
+    assert pending_user_input is False
+    assert payload is None

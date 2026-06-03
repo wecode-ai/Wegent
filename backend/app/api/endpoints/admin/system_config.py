@@ -20,11 +20,16 @@ from app.schemas.admin import (
     SystemConfigResponse,
     SystemConfigUpdate,
 )
+from app.schemas.quick_launch import (
+    QuickLaunchFunctionsResponse,
+    QuickLaunchFunctionsUpdate,
+)
 
 router = APIRouter()
 
 # Config keys
 QUICK_ACCESS_CONFIG_KEY = "quick_access_recommended"
+QUICK_LAUNCH_FUNCTIONS_CONFIG_KEY = "quick_launch_functions"
 CHAT_SLOGAN_TIPS_CONFIG_KEY = "chat_slogan_tips"
 ADMIN_SETUP_CONFIG_KEY = "admin_setup_completed"
 
@@ -134,6 +139,75 @@ async def update_quick_access_config(
     return SystemConfigResponse(
         version=config.version,
         teams=config.config_value.get("teams", []),
+    )
+
+
+@router.get(
+    "/system-config/quick-launch-functions",
+    response_model=QuickLaunchFunctionsResponse,
+)
+async def get_quick_launch_functions_config(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Get system function launchers shown in the homepage QuickCard.
+    """
+    config = (
+        db.query(SystemConfig)
+        .filter(SystemConfig.config_key == QUICK_LAUNCH_FUNCTIONS_CONFIG_KEY)
+        .first()
+    )
+    if not config:
+        return QuickLaunchFunctionsResponse(version=0, functions=[])
+
+    config_value = config.config_value or {}
+    return QuickLaunchFunctionsResponse(
+        version=config.version,
+        functions=config_value.get("functions", []),
+    )
+
+
+@router.put(
+    "/system-config/quick-launch-functions",
+    response_model=QuickLaunchFunctionsResponse,
+)
+async def update_quick_launch_functions_config(
+    config_data: QuickLaunchFunctionsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Update system function launchers shown in the homepage QuickCard.
+    """
+    config_value = {
+        "functions": [function.model_dump() for function in config_data.functions]
+    }
+    config = (
+        db.query(SystemConfig)
+        .filter(SystemConfig.config_key == QUICK_LAUNCH_FUNCTIONS_CONFIG_KEY)
+        .first()
+    )
+
+    if not config:
+        config = SystemConfig(
+            config_key=QUICK_LAUNCH_FUNCTIONS_CONFIG_KEY,
+            config_value=config_value,
+            version=1,
+            updated_by=current_user.id,
+        )
+        db.add(config)
+    else:
+        config.config_value = config_value
+        config.version = config.version + 1
+        config.updated_by = current_user.id
+
+    db.commit()
+    db.refresh(config)
+
+    return QuickLaunchFunctionsResponse(
+        version=config.version,
+        functions=config_value["functions"],
     )
 
 

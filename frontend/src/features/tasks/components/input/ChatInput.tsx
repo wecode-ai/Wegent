@@ -59,6 +59,8 @@ interface ChatInputProps {
   onExpandToggle?: () => void
   /** Use tighter vertical spacing for prefilled queue-message state */
   compactSpacing?: boolean
+  /** Increment to focus the editor and move the cursor to the end after external fills. */
+  focusAtEndSignal?: number
 }
 
 export default function ChatInput({
@@ -88,6 +90,7 @@ export default function ChatInput({
   isExpanded = false,
   onExpandToggle,
   compactSpacing = false,
+  focusAtEndSignal,
 }: ChatInputProps) {
   const { t, i18n } = useTranslation()
 
@@ -124,6 +127,7 @@ export default function ChatInput({
   const { user } = useUser()
   const editableRef = useRef<HTMLDivElement>(null)
   const badgeRef = useRef<HTMLSpanElement>(null)
+  const lastFocusAtEndSignalRef = useRef(focusAtEndSignal)
   const [badgeWidth, setBadgeWidth] = useState(0)
 
   // Track if we should show placeholder
@@ -222,6 +226,18 @@ export default function ChatInput({
     element.innerHTML = htmlContent
   }, [])
 
+  const collapseRangeAtContentEnd = useCallback((range: Range, element: HTMLElement) => {
+    const lastChild = element.lastChild
+    if (lastChild?.nodeType === Node.TEXT_NODE) {
+      range.setStart(lastChild, lastChild.textContent?.length ?? 0)
+      range.collapse(true)
+      return
+    }
+
+    range.selectNodeContents(element)
+    range.collapse(false)
+  }, [])
+
   // Sync contenteditable content with message prop
   useEffect(() => {
     if (editableRef.current) {
@@ -237,14 +253,13 @@ export default function ChatInput({
         // Restore cursor to end if had focus
         if (hadFocus && selection && message) {
           const range = document.createRange()
-          range.selectNodeContents(editableRef.current)
-          range.collapse(false)
+          collapseRangeAtContentEnd(range, editableRef.current)
           selection.removeAllRanges()
           selection.addRange(range)
         }
       }
     }
-  }, [message, getTextWithNewlines, setContentWithNewlines])
+  }, [message, getTextWithNewlines, setContentWithNewlines, collapseRangeAtContentEnd])
 
   // Auto focus the input when autoFocus is true and not disabled
   useEffect(() => {
@@ -588,8 +603,7 @@ export default function ChatInput({
           // If still no selection after focus, create one at the end of the input
           if (selection) {
             const range = document.createRange()
-            range.selectNodeContents(editableRef.current)
-            range.collapse(false) // Collapse to end
+            collapseRangeAtContentEnd(range, editableRef.current)
             selection.removeAllRanges()
             selection.addRange(range)
           }
@@ -617,22 +631,35 @@ export default function ChatInput({
         setShowPlaceholder(!newText)
       }
     },
-    [isInputDisabled, setMessage, getTextWithNewlines, onPasteFile]
+    [isInputDisabled, setMessage, getTextWithNewlines, onPasteFile, collapseRangeAtContentEnd]
   )
 
-  const handleFocus = useCallback(() => {
-    // Move cursor to end on focus
+  const focusEditableAtEnd = useCallback(() => {
     if (editableRef.current) {
+      editableRef.current.focus()
       const selection = window.getSelection()
       if (selection) {
         const range = document.createRange()
-        range.selectNodeContents(editableRef.current)
-        range.collapse(false)
+        collapseRangeAtContentEnd(range, editableRef.current)
         selection.removeAllRanges()
         selection.addRange(range)
       }
     }
-  }, [])
+  }, [collapseRangeAtContentEnd])
+
+  const handleFocus = useCallback(() => {
+    // Move cursor to end on focus
+    focusEditableAtEnd()
+  }, [focusEditableAtEnd])
+
+  useEffect(() => {
+    if (focusAtEndSignal === undefined || lastFocusAtEndSignalRef.current === focusAtEndSignal) {
+      return
+    }
+
+    lastFocusAtEndSignalRef.current = focusAtEndSignal
+    focusEditableAtEnd()
+  }, [focusAtEndSignal, focusEditableAtEnd])
 
   // Calculate min height based on device
   // Figma design shows input card ~140px total, text area takes most of it

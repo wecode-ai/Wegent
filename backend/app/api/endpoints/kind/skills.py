@@ -17,8 +17,10 @@ from fastapi import (
     Depends,
     File,
     Form,
+    Header,
     HTTPException,
     Query,
+    Security,
     UploadFile,
     status,
 )
@@ -49,11 +51,85 @@ from app.schemas.skill_binding import (
 )
 from app.services.adapters.public_skill import public_skill_service
 from app.services.adapters.skill_kinds import skill_kinds_service
+from app.services.auth import verify_skill_identity_token
 from app.services.git_skill import git_skill_service
 from app.services.group_permission import check_group_permission
 from app.services.skill_binding_service import skill_binding_service
 
 router = APIRouter()
+
+
+def _extract_bearer_token(authorization: str, oauth2_token: Optional[str]) -> str:
+    """Extract a bearer token from FastAPI auth sources."""
+    if authorization.startswith("Bearer "):
+        return authorization[7:]
+    return oauth2_token or ""
+
+
+def _get_current_user_or_skill_identity(
+    db: Session = Depends(get_db),
+    oauth2_token: Optional[str] = Security(security.oauth2_scheme_optional),
+    authorization: str = Header(default="", include_in_schema=False),
+) -> User:
+    """
+    Authenticate Skill package publishing requests.
+
+    Supports the normal user JWT used by Settings and the skill runtime identity
+    token used by Skill scripts. It intentionally does not accept generic task
+    auth tokens.
+    """
+    token = _extract_bearer_token(authorization, oauth2_token)
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing authentication token")
+
+    try:
+        return security.get_current_user(token=token, db=db)
+    except HTTPException as jwt_error:
+        token_info = verify_skill_identity_token(token)
+        if not token_info:
+            raise jwt_error
+
+    user = db.query(User).filter(User.id == token_info.user_id).first()
+    if not user or not user.is_active or user.user_name != token_info.user_name:
+        raise HTTPException(status_code=401, detail="Could not validate credentials")
+
+    return user
+
+
+def _get_current_user_or_skill_query_identity(
+    db: Session = Depends(get_db),
+    oauth2_token: Optional[str] = Security(security.oauth2_scheme_optional),
+    x_api_key_security: Optional[str] = Security(security.api_key_header_optional),
+    authorization: str = Header(default="", include_in_schema=False),
+    x_api_key: str = Header(
+        default="",
+        alias="X-API-Key",
+        include_in_schema=False,
+    ),
+) -> User:
+    """Authenticate Skill read requests, including runtime Skill identity tokens."""
+    try:
+        return security.get_current_user_jwt_apikey_tasktoken(
+            db=db,
+            oauth2_token=oauth2_token,
+            x_api_key_security=x_api_key_security,
+            authorization=authorization,
+            x_api_key=x_api_key,
+        )
+    except HTTPException as auth_error:
+        token = _extract_bearer_token(authorization, oauth2_token)
+        if not token:
+            raise auth_error
+
+        token_info = verify_skill_identity_token(token)
+        if not token_info:
+            raise auth_error
+
+    user = db.query(User).filter(User.id == token_info.user_id).first()
+    if not user or not user.is_active or user.user_name != token_info.user_name:
+        raise HTTPException(status_code=401, detail="Could not validate credentials")
+
+    return user
 
 
 def _resolve_manageable_skill(
@@ -214,7 +290,7 @@ async def upload_skill(
     file: UploadFile = File(..., description="Skill ZIP package (max 10MB)"),
     name: str = Form(..., description="Skill name (unique)"),
     namespace: str = Form("default", description="Namespace"),
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(_get_current_user_or_skill_identity),
     db: Session = Depends(get_db),
 ):
     """
@@ -281,7 +357,7 @@ def list_skills(
         description="Task ID for task-based authorization. "
         "If provided, also searches skills owned by the task owner.",
     ),
-    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
+    current_user: User = Depends(_get_current_user_or_skill_query_identity),
     db: Session = Depends(get_db),
 ):
     """
@@ -1541,7 +1617,7 @@ def update_skill_from_git(
 async def update_skill(
     skill_id: int,
     file: UploadFile = File(..., description="New Skill ZIP package (max 10MB)"),
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(_get_current_user_or_skill_identity),
     db: Session = Depends(get_db),
 ):
     """
