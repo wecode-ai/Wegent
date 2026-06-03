@@ -26,7 +26,6 @@ describe('interactiveFormPending', () => {
               tool_use_id: 'tool-1',
               render_payload: {
                 type: 'interactive_form_question',
-                ask_id: 'ask_20',
                 task_id: 100,
                 subtask_id: 20,
                 questions: [{ id: 'q1', question: 'Question?' }],
@@ -38,7 +37,6 @@ describe('interactiveFormPending', () => {
     ])
 
     expect(pending).toEqual({
-      askId: 'ask_20',
       toolUseId: 'tool-1',
       taskId: 100,
       subtaskId: 20,
@@ -61,7 +59,6 @@ describe('interactiveFormPending', () => {
               tool_use_id: 'tool-1',
               render_payload: {
                 type: 'interactive_form_question',
-                ask_id: 'ask_20',
                 task_id: 100,
                 subtask_id: 20,
                 questions: [{ id: 'q1', question: 'Question?' }],
@@ -79,7 +76,6 @@ describe('interactiveFormPending', () => {
   it('builds a cancelled tool result payload for a replacement chat message', () => {
     const cancellation = buildInteractiveFormCancellation(
       {
-        askId: 'ask_20',
         toolUseId: 'tool-1',
         taskId: 100,
         subtaskId: 20,
@@ -90,7 +86,6 @@ describe('interactiveFormPending', () => {
     expect(cancellation.message).toContain('直接创建中英翻译 skill')
     expect(cancellation.answer).toEqual({
       type: 'interactive_form_question',
-      ask_id: 'ask_20',
       tool_use_id: 'tool-1',
       task_id: 100,
       subtask_id: 20,

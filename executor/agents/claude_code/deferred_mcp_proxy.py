@@ -25,7 +25,6 @@ INTERACTIVE_FORM_TOOL_MARKER = "interactive_form_question"
 WAITING_FOR_USER_INPUT_REASON = "waiting_for_user_input"
 INTERACTIVE_FORM_ANSWER_FIELDS = (
     "type",
-    "ask_id",
     "tool_use_id",
     "task_id",
     "subtask_id",
@@ -77,10 +76,6 @@ def build_interactive_form_answer_payload(
     if not isinstance(tool_use_id, str) or not tool_use_id.strip():
         return None
 
-    ask_id = answer.get("ask_id")
-    if isinstance(ask_id, str) and tool_use_id.strip() == ask_id.strip():
-        return None
-
     payload = {
         field: answer[field]
         for field in INTERACTIVE_FORM_ANSWER_FIELDS
@@ -99,6 +94,7 @@ async def create_interactive_form_answer_query(
         return
 
     tool_use_id = payload["tool_use_id"]
+    payload_text = json.dumps(payload, ensure_ascii=False, indent=2)
     yield {
         "type": "user",
         "message": {
@@ -107,22 +103,12 @@ async def create_interactive_form_answer_query(
                 {
                     "type": "tool_result",
                     "tool_use_id": tool_use_id,
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": json.dumps(payload, ensure_ascii=False),
-                        }
-                    ],
+                    "content": [{"type": "text", "text": payload_text}],
                     "is_error": False,
                 }
             ],
         },
-        "parent_tool_use_id": tool_use_id,
-        "tool_use_result": {
-            "tool_use_id": tool_use_id,
-            "content": payload,
-            "is_error": False,
-        },
+        "parent_tool_use_id": None,
     }
 
 

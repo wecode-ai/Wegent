@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from claude_agent_sdk.types import DeferredToolUse, ResultMessage
 
 from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
 from executor.agents.claude_code.deferred_mcp_proxy import (
@@ -82,12 +83,18 @@ async def test_interactive_form_answer_query_sends_tool_result_for_deferred_call
                             {
                                 "type": "text",
                                 "text": (
-                                    '{"type": "interactive_form_question", '
-                                    '"tool_use_id": "tool-1", '
-                                    '"answers": {"target": ["readme"], '
-                                    '"scope": "all"}, "success": true, '
-                                    '"status": "answered", '
-                                    '"message": "User answered the form."}'
+                                    '{\n  "type": "interactive_form_question",\n'
+                                    '  "tool_use_id": "tool-1",\n'
+                                    '  "answers": {\n'
+                                    '    "target": [\n'
+                                    '      "readme"\n'
+                                    "    ],\n"
+                                    '    "scope": "all"\n'
+                                    "  },\n"
+                                    '  "success": true,\n'
+                                    '  "status": "answered",\n'
+                                    '  "message": "User answered the form."\n'
+                                    "}"
                                 ),
                             }
                         ],
@@ -95,24 +102,12 @@ async def test_interactive_form_answer_query_sends_tool_result_for_deferred_call
                     }
                 ],
             },
-            "parent_tool_use_id": "tool-1",
-            "tool_use_result": {
-                "tool_use_id": "tool-1",
-                "content": {
-                    "type": "interactive_form_question",
-                    "tool_use_id": "tool-1",
-                    "answers": {"target": ["readme"], "scope": "all"},
-                    "success": True,
-                    "status": "answered",
-                    "message": "User answered the form.",
-                },
-                "is_error": False,
-            },
+            "parent_tool_use_id": None,
         }
     ]
 
 
-def test_interactive_form_answer_payload_excludes_runtime_metadata():
+def test_interactive_form_answer_payload_ignores_unknown_fields():
     payload = build_interactive_form_answer_payload(
         {
             "type": "interactive_form_question",
@@ -137,17 +132,21 @@ def test_interactive_form_answer_payload_excludes_runtime_metadata():
     }
 
 
-def test_interactive_form_answer_payload_rejects_synthetic_ask_id():
+def test_interactive_form_answer_payload_ignores_ask_id():
     payload = build_interactive_form_answer_payload(
         {
             "type": "interactive_form_question",
             "ask_id": "ask_6683514",
-            "tool_use_id": "ask_6683514",
+            "tool_use_id": "tool-1",
             "answers": {"target": "readme"},
         }
     )
 
-    assert payload is None
+    assert payload == {
+        "type": "interactive_form_question",
+        "tool_use_id": "tool-1",
+        "answers": {"target": "readme"},
+    }
 
 
 @pytest.mark.asyncio
@@ -184,6 +183,93 @@ async def test_agent_sends_interactive_form_answer_as_tool_result(tmp_path):
         not in messages[0]["message"]["content"][0]["content"][0]["text"]
     )
     assert agent.client.query.await_args.kwargs["session_id"] == agent.session_id
+
+
+@pytest.mark.asyncio
+async def test_agent_drains_answered_form_defer_before_tool_result(tmp_path):
+    answer = {
+        "type": "interactive_form_question",
+        "tool_use_id": "tool-1",
+        "answers": {"scope": "all"},
+    }
+    agent = _create_agent_for_query_test(
+        tmp_path=tmp_path,
+        prompt="User answer",
+        interactive_form_answer=answer,
+    )
+    agent.options["resume"] = "old-claude-session"
+    stale_defer = ResultMessage(
+        subtype="success",
+        duration_ms=1,
+        duration_api_ms=0,
+        is_error=False,
+        num_turns=1,
+        session_id="old-claude-session",
+        stop_reason="tool_deferred",
+        deferred_tool_use=DeferredToolUse(
+            id="tool-1",
+            name="mcp__demo__interactive_form_question",
+            input={"questions": []},
+        ),
+    )
+
+    async def receive_response():
+        yield stale_defer
+
+    agent.client = SimpleNamespace(
+        query=AsyncMock(),
+        receive_response=receive_response,
+    )
+
+    with patch(
+        "executor.agents.claude_code.claude_code_agent.process_response",
+        new=AsyncMock(return_value=TaskStatus.COMPLETED),
+    ):
+        result = await agent._async_execute()
+
+    assert result == TaskStatus.COMPLETED
+    agent.client.query.assert_awaited_once()
+    query_arg = agent.client.query.await_args.args[0]
+    messages = [message async for message in query_arg]
+    assert messages[0]["message"]["content"][0]["type"] == "tool_result"
+
+
+@pytest.mark.asyncio
+async def test_agent_preserves_resume_when_answering_interactive_form(tmp_path):
+    answer = {
+        "type": "interactive_form_question",
+        "tool_use_id": "tool-1",
+        "answers": {"scope": "all"},
+    }
+    agent = _create_agent_for_query_test(
+        tmp_path=tmp_path,
+        prompt="User answer",
+        interactive_form_answer=answer,
+    )
+    agent._create_and_connect_client = (
+        ClaudeCodeAgent._create_and_connect_client.__get__(agent, ClaudeCodeAgent)
+    )
+    fake_client = SimpleNamespace(connect=AsyncMock())
+
+    with (
+        patch(
+            "executor.agents.claude_code.claude_code_agent.SessionManager.load_saved_session_id",
+            return_value="old-claude-session",
+        ) as load_saved_session_id,
+        patch(
+            "executor.agents.claude_code.claude_code_agent.SessionManager.terminate_stale_resumed_process",
+            new=AsyncMock(),
+        ),
+        patch(
+            "executor.agents.claude_code.claude_code_agent.ClaudeSDKClient",
+            return_value=fake_client,
+        ),
+    ):
+        await agent._create_and_connect_client()
+
+    load_saved_session_id.assert_called_once_with(12345, 987)
+    assert agent.options["resume"] == "old-claude-session"
+    fake_client.connect.assert_awaited_once()
 
 
 @pytest.mark.asyncio

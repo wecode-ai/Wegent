@@ -166,6 +166,10 @@ def extract_completed_result(response_data: dict) -> dict:
         "blocks": response_data.get("blocks"),
         "silent_exit": response_data.get("silent_exit"),
         "silent_exit_reason": response_data.get("silent_exit_reason"),
+        "deferred_user_input": response_data.get("deferred_user_input"),
+        "deferred_user_input_tool_use_id": response_data.get(
+            "deferred_user_input_tool_use_id"
+        ),
         "loaded_skills": response_data.get("loaded_skills"),
         "stop_reason": response_data.get("stop_reason"),
         "messages_chain": response_data.get("messages_chain"),
