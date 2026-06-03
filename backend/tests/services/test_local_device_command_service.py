@@ -4,6 +4,9 @@
 
 """Tests for local device command RPC service."""
 
+import json
+import os
+import subprocess
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -223,6 +226,56 @@ def test_json_post_processor_reports_parse_failure():
 
     assert processed["success"] is False
     assert "Failed to parse command JSON output" in processed["error"]
+
+
+def test_ls_skills_command_parses_yaml_block_description(tmp_path):
+    """ls_skills should parse YAML block scalars without keeping the marker."""
+    from app.services.device.command_registry import LS_SKILLS_SCRIPT
+
+    skill_dir = tmp_path / ".codex" / "skills" / "chronicle"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        """---
+name: chronicle
+description: |
+  Allows you to view the user's screen as well as several hours of history.
+
+  Use when the user refers to recent work.
+metadata:
+  short-description: |
+    Screen history context.
+---
+
+# Chronicle
+""",
+        encoding="utf-8",
+    )
+
+    env = {**os.environ, "HOME": str(tmp_path)}
+    result = subprocess.run(
+        ["python3", "-c", LS_SKILLS_SCRIPT],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    skills = json.loads(result.stdout)
+
+    assert skills == [
+        {
+            "name": "chronicle",
+            "description": (
+                "Allows you to view the user's screen as well as several hours "
+                "of history. Use when the user refers to recent work."
+            ),
+            "short_description": "Screen history context.",
+            "path": str(skill_dir / "SKILL.md"),
+            "source": "codex",
+            "mtime": skills[0]["mtime"],
+        }
+    ]
+    assert "|" not in skills[0]["description"]
 
 
 @pytest.mark.asyncio

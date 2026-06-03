@@ -55,19 +55,52 @@ def read_frontmatter(path):
     return match.group(1) if match else ""
 
 
+def line_indent(line):
+    return len(line) - len(line.lstrip(" "))
+
+
+def clean_scalar(value):
+    return value.strip().strip(chr(34)).strip(chr(39)).strip()
+
+
+def fold_block_lines(lines, style):
+    text = "\\n".join(line.strip() for line in lines).strip()
+    if style.startswith(">"):
+        text = re.sub(r"\\s*\\n\\s*", " ", text)
+    return re.sub(r"\\s+", " ", text).strip()
+
+
+def collect_block_scalar(lines, start_index, base_indent, style):
+    block_lines = []
+    for line in lines[start_index + 1 :]:
+        if not line.strip():
+            block_lines.append("")
+            continue
+        if line_indent(line) <= base_indent:
+            break
+        block_lines.append(line)
+    return fold_block_lines(block_lines, style)
+
+
 def frontmatter_field(frontmatter, field_name):
-    pattern = re.compile(rf"^\\s*{re.escape(field_name)}\\s*:\\s*(.+?)\\s*$")
-    for line in frontmatter.splitlines():
+    lines = frontmatter.splitlines()
+    pattern = re.compile(rf"^(\\s*){re.escape(field_name)}\\s*:\\s*(.*?)\\s*$")
+    for index, line in enumerate(lines):
         match = pattern.match(line)
-        if match:
-            return match.group(1).strip().strip(chr(34)).strip(chr(39))
+        if not match:
+            continue
+        value = match.group(2).strip()
+        if value.startswith(("|", ">")):
+            return collect_block_scalar(lines, index, len(match.group(1)), value)
+        return clean_scalar(value)
     return None
 
 
 def nested_metadata_field(frontmatter, field_name):
     in_metadata = False
-    pattern = re.compile(rf"^\\s+{re.escape(field_name)}\\s*:\\s*(.+?)\\s*$")
-    for line in frontmatter.splitlines():
+    lines = frontmatter.splitlines()
+    pattern = re.compile(rf"^(\\s+){re.escape(field_name)}\\s*:\\s*(.*?)\\s*$")
+    for index, line in enumerate(lines):
         if re.match(r"^metadata\\s*:\\s*$", line):
             in_metadata = True
             continue
@@ -77,7 +110,10 @@ def nested_metadata_field(frontmatter, field_name):
             continue
         match = pattern.match(line)
         if match:
-            return match.group(1).strip().strip(chr(34)).strip(chr(39))
+            value = match.group(2).strip()
+            if value.startswith(("|", ">")):
+                return collect_block_scalar(lines, index, len(match.group(1)), value)
+            return clean_scalar(value)
     return None
 
 

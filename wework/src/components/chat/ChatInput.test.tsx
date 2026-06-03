@@ -161,7 +161,7 @@ describe('ChatInput', () => {
       expect(listLocalSkills).toHaveBeenCalledTimes(1)
     })
     expect(screen.getByTestId('local-skill-autocomplete')).toHaveClass(
-      'bottom-[calc(100%+0.75rem)]',
+      'bottom-[calc(100%+1rem)]',
       'z-[80]',
       'bg-background',
       'left-[-1rem]',
@@ -170,6 +170,34 @@ describe('ChatInput', () => {
     await userEvent.click(await screen.findByTestId('local-skill-option-env-context'))
 
     expect(screen.getByTestId('chat-message-input')).toHaveValue('Env Context ')
+    expect(screen.getByTestId('local-skill-chip-env-context')).toHaveTextContent('Env Context')
+  })
+
+  test('keeps the composer editable after selecting a local skill', async () => {
+    const skill: LocalDeviceSkill = {
+      name: 'env-context',
+      description: 'Use when environment facts are needed',
+      short_description: 'Environment facts',
+      path: '/Users/crystal/.codex/skills/env-context/SKILL.md',
+      source: 'codex',
+    }
+    const listLocalSkills = vi.fn().mockResolvedValue([skill])
+
+    render(
+      <ControlledChatInput
+        projectChat={projectChatControls({ listLocalSkills })}
+      />,
+    )
+
+    const input = screen.getByTestId('chat-message-input')
+    await userEvent.type(input, '$')
+    await userEvent.click(await screen.findByTestId('local-skill-option-env-context'))
+    await waitFor(() => {
+      expect(input).toHaveFocus()
+    })
+    await userEvent.type(input, 'hello')
+
+    expect(input).toHaveValue('Env Context hello')
     expect(screen.getByTestId('local-skill-chip-env-context')).toHaveTextContent('Env Context')
   })
 

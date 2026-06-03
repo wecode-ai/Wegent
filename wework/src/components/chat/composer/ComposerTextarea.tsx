@@ -80,11 +80,7 @@ function renderTextWithSkillMentions(value: string, mentions: SkillMention[]) {
 
     const text = value.slice(offset, mention.start)
     if (text) {
-      parts.push(
-        <span key={`text-${offset}`} className="text-transparent">
-          {text}
-        </span>,
-      )
+      parts.push(<span key={`text-${offset}`}>{text}</span>)
     }
 
     parts.push(
@@ -102,11 +98,7 @@ function renderTextWithSkillMentions(value: string, mentions: SkillMention[]) {
 
   const remainingText = value.slice(offset)
   if (remainingText) {
-    parts.push(
-      <span key={`text-${offset}`} className="text-transparent">
-        {remainingText}
-      </span>,
-    )
+    parts.push(<span key={`text-${offset}`}>{remainingText}</span>)
   }
 
   return parts
@@ -422,14 +414,23 @@ export function ComposerTextarea({
         onKeyDown={handleKeyDown}
         onSelect={updateSkillTrigger}
         placeholder={placeholder}
-        className={`${className} relative z-10`}
+        className={[
+          className,
+          'relative z-10',
+          hasSkillMentionOverlay ? 'text-transparent caret-text-primary' : '',
+        ].join(' ')}
+        style={
+          hasSkillMentionOverlay
+            ? { color: 'transparent', caretColor: 'rgb(var(--color-text-primary))' }
+            : undefined
+        }
       />
       {showSkillMenu && (
         <div
           ref={menuRef}
           data-testid="local-skill-autocomplete"
           className={[
-            'absolute bottom-[calc(100%+0.75rem)] z-[80] max-h-72 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+            'absolute bottom-[calc(100%+1rem)] z-[80] max-h-72 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
             skillMenuClassName,
           ].join(' ')}
         >
