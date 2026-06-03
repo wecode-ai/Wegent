@@ -1085,6 +1085,221 @@ describe('TaskStateMachine', () => {
     consoleInfoSpy.mockRestore()
   })
 
+  it('does not synthesize interactive form blocks from messages_chain on refresh', async () => {
+    const actions = createRuntimeActions({
+      verifyRuntime: jest.fn().mockResolvedValue({
+        task_id: 42,
+        task_status: 'COMPLETED',
+        status_updated_at: '2026-06-01T10:00:10',
+        active_stream: null,
+      }),
+      joinTask: jest.fn().mockResolvedValue({
+        subtasks: [
+          {
+            id: 77,
+            task_id: 42,
+            team_id: 1,
+            title: 'waiting',
+            bot_ids: [],
+            role: 'TEAM',
+            message_id: 2,
+            parent_id: 1,
+            prompt: '',
+            executor_namespace: '',
+            executor_name: '',
+            status: 'COMPLETED',
+            progress: 100,
+            batch: 0,
+            result: {
+              value: '请回答上面的几个问题',
+              deferred_user_input: true,
+              deferred_user_input_tool_use_id: 'tool_77',
+              messages_chain: [
+                {
+                  role: 'assistant',
+                  content: '',
+                  tool_calls: [
+                    {
+                      id: 'tool_77',
+                      type: 'function',
+                      function: {
+                        name: 'interactive_form_question',
+                        arguments: JSON.stringify({
+                          questions: [
+                            {
+                              id: 'genre',
+                              question: '你想写什么类型的小说？',
+                              input_type: 'choice',
+                              options: [{ label: '玄幻/仙侠', value: 'fantasy' }],
+                            },
+                          ],
+                        }),
+                      },
+                    },
+                  ],
+                },
+                {
+                  role: 'tool',
+                  tool_call_id: 'tool_77',
+                  name: 'interactive_form_question',
+                  content: JSON.stringify({
+                    __deferred_user_input__: true,
+                    status: 'waiting_for_user_response',
+                  }),
+                },
+              ],
+            },
+            error_message: '',
+            user_id: 1,
+            created_at: '2026-06-01T10:00:05.000Z',
+            updated_at: '2026-06-01T10:00:10.000Z',
+            completed_at: '2026-06-01T10:00:10.000Z',
+            bots: [],
+          },
+        ],
+      }),
+    })
+    const machine = new TaskStateMachine(42, actions)
+
+    machine.loadTask({
+      id: 42,
+      status: 'COMPLETED',
+      updated_at: '2026-06-01T10:00:10',
+    })
+    await machine.checkHealth('page-visible')
+
+    expect(machine.getState().messages.get('ai-77')?.result?.blocks ?? []).toHaveLength(0)
+  })
+
+  it('does not recover persisted interactive form when render payload is missing', async () => {
+    const deferredText = JSON.stringify({
+      __silent_exit__: true,
+      __deferred_user_input__: true,
+      success: true,
+      status: 'waiting_for_user_response',
+    })
+    const toolOutput = [{ type: 'text', text: deferredText, id: 'lc_1266' }]
+    const actions = createRuntimeActions({
+      verifyRuntime: jest.fn().mockResolvedValue({
+        task_id: 793,
+        task_status: 'COMPLETED',
+        status_updated_at: '2026-06-03T20:34:56',
+        active_stream: null,
+      }),
+      joinTask: jest.fn().mockResolvedValue({
+        subtasks: [
+          {
+            id: 1266,
+            task_id: 793,
+            team_id: 31,
+            title: 'Assistant response',
+            bot_ids: [],
+            role: 'ASSISTANT',
+            message_id: 2,
+            parent_id: 1,
+            prompt: '',
+            executor_namespace: '',
+            executor_name: '',
+            status: 'COMPLETED',
+            progress: 100,
+            batch: 0,
+            result: {
+              value: '我已经发出了第一个澄清表单，请回答这些问题',
+              blocks: [
+                {
+                  id: 'tool_1266',
+                  type: 'tool',
+                  status: 'done',
+                  tool_name:
+                    'interactive_wegent-interactive-form-question_interactive_form_question',
+                  tool_use_id: 'tool_1266',
+                  tool_input: {
+                    questions: [
+                      {
+                        id: 'novel_genre',
+                        question: '你想写什么类型的小说？',
+                        input_type: 'choice',
+                        required: true,
+                        options: [{ label: '科幻', value: 'sci_fi' }],
+                      },
+                    ],
+                  },
+                  tool_output: toolOutput,
+                },
+              ],
+              stop_reason: 'end_turn',
+              deferred_user_input: null,
+              deferred_user_input_tool_use_id: null,
+              messages_chain: [
+                {
+                  role: 'assistant',
+                  content: '',
+                  tool_calls: [
+                    {
+                      id: 'tool_1266',
+                      type: 'function',
+                      function: {
+                        name: 'interactive_wegent-interactive-form-question_interactive_form_question',
+                        arguments: JSON.stringify({
+                          questions: [
+                            {
+                              id: 'novel_genre',
+                              question: '你想写什么类型的小说？',
+                              input_type: 'choice',
+                              required: true,
+                              options: [{ label: '科幻', value: 'sci_fi' }],
+                            },
+                          ],
+                        }),
+                      },
+                    },
+                  ],
+                },
+                {
+                  role: 'tool',
+                  tool_call_id: 'tool_1266',
+                  name: 'interactive_wegent-interactive-form-question_interactive_form_question',
+                  content: JSON.stringify(toolOutput),
+                },
+              ],
+            },
+            error_message: '',
+            user_id: 1,
+            created_at: '2026-06-03T20:34:40.000Z',
+            updated_at: '2026-06-03T20:34:56.000Z',
+            completed_at: '2026-06-03T20:34:56.000Z',
+            bots: [],
+          },
+        ],
+      }),
+    })
+    const machine = new TaskStateMachine(793, actions)
+
+    machine.loadTask({
+      id: 793,
+      status: 'COMPLETED',
+      updated_at: '2026-06-03T20:34:56',
+    })
+    await machine.checkHealth('page-visible')
+
+    const blocks = machine.getState().messages.get('ai-1266')?.result?.blocks ?? []
+    expect(blocks).toEqual([
+      expect.objectContaining({
+        id: 'tool_1266',
+        type: 'tool',
+        tool_use_id: 'tool_1266',
+        status: 'done',
+      }),
+    ])
+    expect(blocks[0]).toMatchObject({
+      id: 'tool_1266',
+      type: 'tool',
+      tool_use_id: 'tool_1266',
+      status: 'done',
+    })
+    expect(blocks[0]).not.toHaveProperty('render_payload')
+  })
+
   it('checkHealth resyncs the active stream message when chat done was missed', async () => {
     const consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
     const finalAssistantSubtask = {

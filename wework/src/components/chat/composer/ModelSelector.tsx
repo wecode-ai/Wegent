@@ -18,7 +18,11 @@ import {
   groupModelsByFamily,
   inferModelFamily,
 } from '@/lib/model-ui'
-import type { ModelOptions, UnifiedModel } from '@/types/api'
+import type {
+  ModelCompatibilityDisabledReason,
+  ModelOptions,
+  UnifiedModel,
+} from '@/types/api'
 import { useOutsideClick } from './useOutsideClick'
 
 const MAIN_MENU_WIDTH = 256
@@ -27,6 +31,8 @@ const SUBMENU_GAP = 8
 const VIEWPORT_MARGIN = 16
 const SUBMENU_RIGHT_OFFSET = MAIN_MENU_WIDTH + SUBMENU_GAP
 const SUBMENU_LEFT_OFFSET = -(SUBMENU_WIDTH + SUBMENU_GAP)
+const SUBMENU_MAX_HEIGHT = 448
+const SUBMENU_VIEWPORT_VERTICAL_GAP = 128
 const FOCUSABLE_SELECTOR =
   'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
 
@@ -57,6 +63,7 @@ export function ModelSelector({
   const isMobile = useIsMobile()
   const containerRef = useRef<HTMLDivElement>(null)
   const menuPanelRef = useRef<HTMLDivElement>(null)
+  const submenuPanelRef = useRef<HTMLDivElement>(null)
   const mobileMenuRef = useRef<HTMLDivElement>(null)
   const mobileCloseButtonRef = useRef<HTMLButtonElement>(null)
   const familyButtonRefs = useRef(new Map<string, HTMLButtonElement>())
@@ -103,7 +110,30 @@ export function ModelSelector({
     const menuRect = menuPanelRef.current.getBoundingClientRect()
     const menuTop = menuRect.top
     const targetTop = target.getBoundingClientRect().top
-    setSubmenuOffset(Math.max(0, Math.round(targetTop - menuTop)))
+    const preferredOffset = Math.round(targetTop - menuTop)
+    const submenuRect = submenuPanelRef.current?.getBoundingClientRect()
+    const submenuScrollHeight = submenuPanelRef.current?.scrollHeight ?? 0
+    const maxSubmenuHeight = Math.min(
+      SUBMENU_MAX_HEIGHT,
+      Math.max(0, window.innerHeight - SUBMENU_VIEWPORT_VERTICAL_GAP),
+    )
+    const measuredSubmenuHeight = submenuRect?.height ?? 0
+    const submenuHeight = Math.min(
+      Math.max(measuredSubmenuHeight, submenuScrollHeight),
+      maxSubmenuHeight,
+    )
+
+    if (submenuHeight > 0) {
+      const viewportTop = VIEWPORT_MARGIN
+      const viewportBottom = window.innerHeight - VIEWPORT_MARGIN
+      const maxOffset = viewportBottom - submenuHeight - menuTop
+      const minOffset = viewportTop - menuTop
+      setSubmenuOffset(
+        Math.round(Math.max(minOffset, Math.min(preferredOffset, maxOffset))),
+      )
+    } else {
+      setSubmenuOffset(preferredOffset)
+    }
 
     const rightSideLeft = SUBMENU_RIGHT_OFFSET
     const rightSideEdge = menuRect.left + rightSideLeft + SUBMENU_WIDTH
@@ -438,25 +468,43 @@ export function ModelSelector({
                   {mobileModels.map(model => {
                     const selected =
                       model.name === selectedModel?.name && model.type === selectedModel?.type
+                    const modelDisabled = Boolean(model.compatibilityDisabled)
+                    const disabledMessage = modelDisabled
+                      ? getCompatibilityDisabledMessage(model.compatibilityDisabledReason)
+                      : undefined
                     return (
                       <button
                         key={`${model.type}:${model.name}`}
                         type="button"
                         data-testid={`model-option-${model.name}`}
-                        onClick={() => handleSelectModel(model)}
+                        disabled={modelDisabled}
+                        aria-disabled={modelDisabled}
+                        title={disabledMessage}
+                        onClick={() => {
+                          if (modelDisabled) return
+                          handleSelectModel(model)
+                        }}
                         className={[
-                          'flex min-h-14 w-full items-center gap-3 rounded-2xl border px-4 py-3 text-left',
+                          'flex min-h-14 w-full items-center gap-3 rounded-2xl border px-4 py-3 text-left disabled:cursor-not-allowed disabled:opacity-70',
                           selected
                             ? 'border-[#b9d1ca] bg-[#e8f2ef]'
-                            : 'border-transparent bg-surface',
+                            : 'border-transparent bg-surface disabled:bg-surface',
                         ].join(' ')}
                       >
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-semibold text-text-primary">
+                          <span
+                            className={[
+                              'block truncate text-sm font-semibold',
+                              modelDisabled ? 'text-text-muted' : 'text-text-primary',
+                            ].join(' ')}
+                          >
                             {getModelDisplayLabel(model, selectedModelOptions)}
                           </span>
                           <span className="mt-0.5 block truncate text-xs text-text-muted">
-                            {model.displayName || model.modelId || model.name}
+                            {disabledMessage ||
+                              model.displayName ||
+                              model.modelId ||
+                              model.name}
                           </span>
                         </span>
                         {selected && (
@@ -500,6 +548,27 @@ export function ModelSelector({
           </div>
         </div>
       </div>
+    )
+  }
+
+  function getCompatibilityDisabledMessage(
+    reason?: ModelCompatibilityDisabledReason,
+  ): string {
+    if (reason === 'missing_current_runtime_family') {
+      return t(
+        'workbench.model_disabled_missing_current_runtime_family',
+        'Current model is missing runtime.family',
+      )
+    }
+    if (reason === 'missing_target_runtime_family') {
+      return t(
+        'workbench.model_disabled_missing_target_runtime_family',
+        'This model is missing runtime.family',
+      )
+    }
+    return t(
+      'workbench.model_disabled_runtime_family_mismatch',
+      'Incompatible with the current model protocol',
     )
   }
 
@@ -570,6 +639,7 @@ export function ModelSelector({
 
           {activeGroup ? (
             <div
+              ref={submenuPanelRef}
               data-testid="model-selector-submenu"
               style={{ top: submenuOffset, left: submenuLeft }}
               className="absolute max-h-[min(28rem,calc(100vh-8rem))] min-h-48 w-72 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
@@ -581,16 +651,37 @@ export function ModelSelector({
                 {activeGroup.models.map(model => {
                   const selected =
                     model.name === selectedModel?.name && model.type === selectedModel?.type
+                  const modelDisabled = Boolean(model.compatibilityDisabled)
+                  const disabledMessage = modelDisabled
+                    ? getCompatibilityDisabledMessage(model.compatibilityDisabledReason)
+                    : undefined
                   return (
                     <button
                       key={`${model.type}:${model.name}`}
                       type="button"
                       data-testid={`model-option-${model.name}`}
-                      onClick={() => handleSelectModel(model)}
-                      className="flex h-9 w-full items-center gap-3 rounded-lg px-3 text-left text-[13px] leading-[18px] text-text-primary hover:bg-muted"
+                      disabled={modelDisabled}
+                      aria-disabled={modelDisabled}
+                      title={disabledMessage}
+                      onClick={() => {
+                        if (modelDisabled) return
+                        handleSelectModel(model)
+                      }}
+                      className="flex min-h-9 w-full items-center gap-3 rounded-lg px-3 py-1.5 text-left text-[13px] leading-[18px] text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:text-text-muted disabled:hover:bg-transparent"
                     >
                       <span className="min-w-0 flex-1 truncate font-medium">
-                        {getModelDisplayLabel(model, selectedModelOptions)}
+                        {disabledMessage ? (
+                          <>
+                            <span className="block truncate">
+                              {getModelDisplayLabel(model, selectedModelOptions)}
+                            </span>
+                            <span className="mt-0.5 block truncate text-xs font-normal text-text-muted">
+                              {disabledMessage}
+                            </span>
+                          </>
+                        ) : (
+                          getModelDisplayLabel(model, selectedModelOptions)
+                        )}
                       </span>
                       {selected && <Check className="h-4 w-4 shrink-0 text-text-secondary" />}
                     </button>
@@ -600,6 +691,7 @@ export function ModelSelector({
             </div>
           ) : (
             <div
+              ref={submenuPanelRef}
               data-testid="model-selector-submenu"
               style={{ top: submenuOffset, left: submenuLeft }}
               className="absolute w-72 rounded-2xl border border-border bg-background p-4 text-[13px] leading-[18px] text-text-muted shadow-[0_16px_44px_rgba(0,0,0,0.16)]"

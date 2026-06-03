@@ -25,6 +25,14 @@ describe('ScrollableMessageArea', () => {
     vi.useRealTimers()
   })
 
+  test('renders a centered empty state when the conversation has no messages', () => {
+    render(<ScrollableMessageArea messages={[]} />)
+
+    const emptyState = screen.getByTestId('chat-empty-state')
+    expect(emptyState).toHaveClass('min-h-full', 'items-center', 'justify-center')
+    expect(emptyState).toHaveTextContent('开始新的对话')
+  })
+
   test('shows a scroll-to-bottom button when messages overflow above the bottom', async () => {
     render(
       <ScrollableMessageArea

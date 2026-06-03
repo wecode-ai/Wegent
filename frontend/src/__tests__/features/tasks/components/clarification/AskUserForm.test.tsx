@@ -41,13 +41,12 @@ describe('AskUserForm', () => {
 
   const createMockData = (overrides: Partial<AskUserFormData> = {}): AskUserFormData => ({
     type: 'interactive_form_question',
-    ask_id: 'ask_test123',
     tool_use_id: 'tool_test123',
     task_id: 1,
     subtask_id: 2,
     questions: [
       {
-        id: 'ask_test123',
+        id: 'language',
         question: 'Which programming language do you prefer?',
         options: [
           { label: 'Python', value: 'python', recommended: true },
@@ -135,16 +134,15 @@ describe('AskUserForm', () => {
       fireEvent.click(submitButton)
     })
 
-    // onSubmit receives (askId, formattedMessage) — structured markdown for ClarificationAnswerSummary
+    // onSubmit receives (toolUseId, formattedMessage) and structured answer payload.
     expect(mockOnSubmit).toHaveBeenCalledWith(
-      'ask_test123',
-      '## 📝 我的回答 (My Answers)\n\n### ASK_TEST123: Which programming language do you prefer?\n**Answer**: `javascript` - JavaScript\n\n',
+      'tool_test123',
+      '## 📝 我的回答 (My Answers)\n\n### LANGUAGE: Which programming language do you prefer?\n**Answer**: `javascript` - JavaScript\n\n',
       expect.objectContaining({
-        ask_id: 'ask_test123',
         tool_use_id: 'tool_test123',
         success: true,
         status: 'answered',
-        answers: { ask_test123: 'javascript' },
+        answers: { language: 'javascript' },
       })
     )
   })
@@ -184,12 +182,11 @@ describe('AskUserForm', () => {
 
     // onSubmit receives structured markdown with multiple values as a list
     expect(mockOnSubmit).toHaveBeenCalledWith(
-      'ask_test123',
-      '## 📝 我的回答 (My Answers)\n\n### ASK_TEST123: Which programming language do you prefer?\n**Answer**: \n- `python` - Python\n- `go` - Go\n\n',
+      'tool_test123',
+      '## 📝 我的回答 (My Answers)\n\n### LANGUAGE: Which programming language do you prefer?\n**Answer**: \n- `python` - Python\n- `go` - Go\n\n',
       expect.objectContaining({
-        ask_id: 'ask_test123',
         tool_use_id: 'tool_test123',
-        answers: { ask_test123: ['python', 'go'] },
+        answers: { language: ['python', 'go'] },
       })
     )
   })
@@ -207,8 +204,7 @@ describe('AskUserForm', () => {
     })
     render(<AskUserForm data={data} taskId={1} currentMessageIndex={0} onSubmit={mockOnSubmit} />)
 
-    // testid includes question.id which is ask_id for single-question mode
-    const textarea = screen.getByTestId('ask-user-textarea-ask_test123')
+    const textarea = screen.getByTestId('ask-user-textarea-language')
     await act(async () => {
       fireEvent.change(textarea, { target: { value: 'My custom answer' } })
     })
@@ -219,12 +215,11 @@ describe('AskUserForm', () => {
     })
 
     expect(mockOnSubmit).toHaveBeenCalledWith(
-      'ask_test123',
-      '## 📝 我的回答 (My Answers)\n\n### ASK_TEST123: Which programming language do you prefer?\n**Answer**: My custom answer\n\n',
+      'tool_test123',
+      '## 📝 我的回答 (My Answers)\n\n### LANGUAGE: Which programming language do you prefer?\n**Answer**: My custom answer\n\n',
       expect.objectContaining({
-        ask_id: 'ask_test123',
         tool_use_id: 'tool_test123',
-        answers: { ask_test123: 'My custom answer' },
+        answers: { language: 'My custom answer' },
       })
     )
   })
@@ -249,7 +244,7 @@ describe('AskUserForm', () => {
     })
 
     // Inline error shown via data-testid, not toast
-    expect(screen.getByTestId('ask-user-error-ask_test123')).toBeInTheDocument()
+    expect(screen.getByTestId('ask-user-error-language')).toBeInTheDocument()
     expect(screen.getByText('This field is required')).toBeInTheDocument()
     expect(mockOnSubmit).not.toHaveBeenCalled()
   })
@@ -289,17 +284,16 @@ describe('AskUserForm', () => {
 
     expect(screen.getByTestId('ask-user-form')).toBeInTheDocument()
     expect(screen.getByTestId('ask-user-submit')).toBeInTheDocument()
-    // option testids include question.id (ask_id) and index
-    expect(screen.getByTestId('ask-user-option-ask_test123-0')).toBeInTheDocument()
-    expect(screen.getByTestId('ask-user-option-ask_test123-1')).toBeInTheDocument()
-    expect(screen.getByTestId('ask-user-option-ask_test123-2')).toBeInTheDocument()
+    expect(screen.getByTestId('ask-user-option-language-0')).toBeInTheDocument()
+    expect(screen.getByTestId('ask-user-option-language-1')).toBeInTheDocument()
+    expect(screen.getByTestId('ask-user-option-language-2')).toBeInTheDocument()
   })
 
   it('shows custom input toggle button for choice questions', () => {
     const data = createMockData()
     render(<AskUserForm data={data} taskId={1} currentMessageIndex={0} />)
 
-    expect(screen.getByTestId('ask-user-toggle-custom-ask_test123')).toBeInTheDocument()
+    expect(screen.getByTestId('ask-user-toggle-custom-language')).toBeInTheDocument()
     expect(screen.getByText('Custom Input')).toBeInTheDocument()
   })
 
@@ -307,12 +301,12 @@ describe('AskUserForm', () => {
     const data = createMockData()
     render(<AskUserForm data={data} taskId={1} currentMessageIndex={0} />)
 
-    const toggleButton = screen.getByTestId('ask-user-toggle-custom-ask_test123')
+    const toggleButton = screen.getByTestId('ask-user-toggle-custom-language')
     await act(async () => {
       fireEvent.click(toggleButton)
     })
 
-    expect(screen.getByTestId('ask-user-custom-textarea-ask_test123')).toBeInTheDocument()
+    expect(screen.getByTestId('ask-user-custom-textarea-language')).toBeInTheDocument()
     expect(screen.getByText('Back to choices')).toBeInTheDocument()
   })
 
@@ -322,13 +316,13 @@ describe('AskUserForm', () => {
     render(<AskUserForm data={data} taskId={1} currentMessageIndex={0} onSubmit={mockOnSubmit} />)
 
     // Switch to custom mode
-    const toggleButton = screen.getByTestId('ask-user-toggle-custom-ask_test123')
+    const toggleButton = screen.getByTestId('ask-user-toggle-custom-language')
     await act(async () => {
       fireEvent.click(toggleButton)
     })
 
     // Type custom text
-    const customTextarea = screen.getByTestId('ask-user-custom-textarea-ask_test123')
+    const customTextarea = screen.getByTestId('ask-user-custom-textarea-language')
     await act(async () => {
       fireEvent.change(customTextarea, { target: { value: 'My custom preference' } })
     })
@@ -339,12 +333,11 @@ describe('AskUserForm', () => {
     })
 
     expect(mockOnSubmit).toHaveBeenCalledWith(
-      'ask_test123',
-      '## 📝 我的回答 (My Answers)\n\n### ASK_TEST123: Which programming language do you prefer?\n**Answer**: My custom preference\n\n',
+      'tool_test123',
+      '## 📝 我的回答 (My Answers)\n\n### LANGUAGE: Which programming language do you prefer?\n**Answer**: My custom preference\n\n',
       expect.objectContaining({
-        ask_id: 'ask_test123',
         tool_use_id: 'tool_test123',
-        answers: { ask_test123: 'My custom preference' },
+        answers: { language: 'My custom preference' },
       })
     )
   })

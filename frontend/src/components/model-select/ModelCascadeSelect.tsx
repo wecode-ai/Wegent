@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronsUpDown, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -124,6 +124,8 @@ export function ModelCascadeContent<T extends GroupableModel>({
   )
   const [activeGroupName, setActiveGroupName] = useState<string>('')
   const [activeSubGroupName, setActiveSubGroupName] = useState<string>('')
+  const selectedModelOptionRef = useRef<HTMLButtonElement | null>(null)
+  const selectedModelKey = selectedModel ? getModelKey(selectedModel) : null
 
   useEffect(() => {
     if (groups.length === 0) {
@@ -163,6 +165,11 @@ export function ModelCascadeContent<T extends GroupableModel>({
     return specialOptions.filter(option => getSpecialOptionSearchText(option).includes(query))
   }, [normalizedSearchValue, specialOptions])
 
+  useEffect(() => {
+    if (!selectedModelKey || isSearching) return
+    selectedModelOptionRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [activeGroup?.name, activeSubGroup?.name, isSearching, selectedModelKey])
+
   const renderSpecialOption = (option: SpecialModelOption) => {
     const isSelected = selectedSpecialKey === option.key
 
@@ -193,12 +200,12 @@ export function ModelCascadeContent<T extends GroupableModel>({
 
   const renderModelOption = (model: T, showPath: boolean) => {
     const modelKey = getModelKey(model)
-    const selectedModelKey = selectedModel ? getModelKey(selectedModel) : null
     const isSelected = selectedModelKey === modelKey
     const groupPath = `${getModelGroupName(model, labels)} / ${getModelSubGroupName(model, labels)}`
 
     return (
       <button
+        ref={isSelected ? selectedModelOptionRef : undefined}
         key={modelKey}
         type="button"
         data-model-key={modelKey}

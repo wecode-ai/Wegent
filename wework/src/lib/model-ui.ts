@@ -26,6 +26,19 @@ export interface ModelFamilyConfig {
   controls: ModelControlConfig[]
 }
 
+export type ModelCompatibilityFamily = string
+
+export interface ModelCompatibilitySource {
+  name?: string | null
+  displayName?: string | null
+  provider?: string | null
+  modelId?: string | null
+  config?: Record<string, unknown> | null
+  runtime?: {
+    family?: string | null
+  } | null
+}
+
 interface ModelUiMetadata {
   family: string
   region?: string
@@ -141,6 +154,27 @@ function identityTextForModel(model: UnifiedModel): string {
     .filter(Boolean)
     .join(' ')
     .toLowerCase()
+}
+
+function normalizeCompatibilitySignal(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : ''
+}
+
+export function getModelCompatibilityFamily(
+  model?: ModelCompatibilitySource | null,
+): ModelCompatibilityFamily | null {
+  if (!model) return null
+  return normalizeCompatibilitySignal(model.runtime?.family) || null
+}
+
+export function areModelsProtocolCompatible(
+  currentModel?: ModelCompatibilitySource | null,
+  nextModel?: ModelCompatibilitySource | null,
+): boolean {
+  const currentFamily = getModelCompatibilityFamily(currentModel)
+  const nextFamily = getModelCompatibilityFamily(nextModel)
+  if (!currentFamily || !nextFamily) return false
+  return currentFamily === nextFamily
 }
 
 export function inferModelFamily(model: UnifiedModel): string {

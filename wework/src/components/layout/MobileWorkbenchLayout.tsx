@@ -16,12 +16,19 @@ import type {
   ProjectWithTasks,
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
-import type { WorkbenchMessage, WorkbenchState } from '@/types/workbench'
+import type {
+  GuidanceWorkbenchMessage,
+  QueuedWorkbenchMessage,
+  WorkbenchMessage,
+  WorkbenchState,
+} from '@/types/workbench'
 import { MobileDrawer } from './MobileDrawer'
 
 interface MobileWorkbenchLayoutProps {
   state: WorkbenchState
   messages: WorkbenchMessage[]
+  queuedMessages?: QueuedWorkbenchMessage[]
+  guidanceMessages?: GuidanceWorkbenchMessage[]
   runningTaskIds?: Set<number>
   activeItem?: 'chat' | 'plugins' | 'automation'
   onNewChat?: () => void
@@ -59,12 +66,20 @@ interface MobileWorkbenchLayoutProps {
   ) => Promise<void>
   onInputChange: (value: string) => void
   onSend: () => void
+  isResponseStreaming?: boolean
+  onPauseResponse?: () => void
+  onCancelQueuedMessage?: (id: string) => void
+  onSendQueuedAsGuidance?: (id: string) => void
+  onEditQueuedMessage?: (id: string) => void
+  onCancelGuidanceMessage?: (id: string) => void
   onLogout: () => void
 }
 
 export function MobileWorkbenchLayout({
   state,
   messages,
+  queuedMessages = [],
+  guidanceMessages = [],
   runningTaskIds,
   activeItem,
   onNewChat,
@@ -76,6 +91,12 @@ export function MobileWorkbenchLayout({
   onOpenTask,
   onInputChange,
   onSend,
+  isResponseStreaming = false,
+  onPauseResponse = () => {},
+  onCancelQueuedMessage = () => {},
+  onSendQueuedAsGuidance = () => {},
+  onEditQueuedMessage = () => {},
+  onCancelGuidanceMessage = () => {},
 }: MobileWorkbenchLayoutProps) {
   const { t } = useTranslation('common')
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -149,7 +170,7 @@ export function MobileWorkbenchLayout({
                     models={effectiveProjectChat.models}
                     selectedModel={effectiveProjectChat.selectedModel}
                     selectedModelOptions={effectiveProjectChat.selectedModelOptions}
-                    disabled={effectiveProjectChat.isOptionsLocked}
+                    disabled={false}
                     onSelectModel={effectiveProjectChat.setSelectedModel}
                     onSelectModelOption={effectiveProjectChat.setSelectedModelOption}
                     menuPlacement="below"
@@ -184,6 +205,14 @@ export function MobileWorkbenchLayout({
                   )}
                   projectChat={projectChat}
                   projectWork={projectWork}
+                  queuedMessages={queuedMessages}
+                  guidanceMessages={guidanceMessages}
+                  isStreaming={isResponseStreaming}
+                  onPause={onPauseResponse}
+                  onCancelQueuedMessage={onCancelQueuedMessage}
+                  onSendQueuedAsGuidance={onSendQueuedAsGuidance}
+                  onEditQueuedMessage={onEditQueuedMessage}
+                  onCancelGuidanceMessage={onCancelGuidanceMessage}
                 />
               </div>
             </div>
@@ -209,7 +238,7 @@ export function MobileWorkbenchLayout({
                     models={effectiveProjectChat.models}
                     selectedModel={effectiveProjectChat.selectedModel}
                     selectedModelOptions={effectiveProjectChat.selectedModelOptions}
-                    disabled={effectiveProjectChat.isOptionsLocked}
+                    disabled={false}
                     onSelectModel={effectiveProjectChat.setSelectedModel}
                     onSelectModelOption={effectiveProjectChat.setSelectedModelOption}
                     menuPlacement="below"
@@ -253,6 +282,14 @@ export function MobileWorkbenchLayout({
                 )}
                 projectChat={projectChat}
                 projectWork={projectWork}
+                queuedMessages={queuedMessages}
+                guidanceMessages={guidanceMessages}
+                isStreaming={isResponseStreaming}
+                onPause={onPauseResponse}
+                onCancelQueuedMessage={onCancelQueuedMessage}
+                onSendQueuedAsGuidance={onSendQueuedAsGuidance}
+                onEditQueuedMessage={onEditQueuedMessage}
+                onCancelGuidanceMessage={onCancelGuidanceMessage}
               />
             </div>
           </div>

@@ -190,7 +190,6 @@ async def submit_prompt_changes(
 
         block_data = {
             "type": "prompt_optimization",
-            "ask_id": f"po_{token_info.subtask_id}",
             "task_id": token_info.task_id,
             "subtask_id": token_info.subtask_id,
             "team_id": team_id,

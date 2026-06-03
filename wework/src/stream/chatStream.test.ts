@@ -50,6 +50,29 @@ describe('createChatStream', () => {
     expect(result).toEqual({ success: false, error: 'boom' })
   })
 
+  test('cancels active stream through chat:cancel', async () => {
+    const emit = vi.fn((_event, _payload, ack) => ack({ success: true }))
+    const socket = { emit, on: vi.fn(), off: vi.fn(), connected: true }
+    const stream = createChatStream(socket)
+
+    const result = await stream.cancelStream({
+      subtask_id: 9,
+      partial_content: 'partial',
+      shell_type: 'ClaudeCode',
+    })
+
+    expect(result).toEqual({ success: true })
+    expect(emit).toHaveBeenCalledWith(
+      'chat:cancel',
+      {
+        subtask_id: 9,
+        partial_content: 'partial',
+        shell_type: 'ClaudeCode',
+      },
+      expect.any(Function)
+    )
+  })
+
   test('registers and unregisters streaming handlers', () => {
     const socket = { emit: vi.fn(), on: vi.fn(), off: vi.fn(), connected: true }
     const stream = createChatStream(socket)

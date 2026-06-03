@@ -157,6 +157,7 @@ describe('DesktopWorkbenchLayout', () => {
       addExistingAttachment: vi.fn(),
       removeAttachment: vi.fn(),
       resetAttachments: vi.fn(),
+      listLocalSkills: vi.fn().mockResolvedValue([]),
     },
     projectWork: {
       projects: [{ id: 1, name: 'github_wegent', tasks: [] }],
@@ -294,6 +295,35 @@ describe('DesktopWorkbenchLayout', () => {
       'pointer-events-auto',
     )
     expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
+  })
+
+  test('reserves extra bottom space when queued messages are shown above the composer', () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'assistant',
+            content: 'Ready',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+          },
+        ]}
+        queuedMessages={[
+          {
+            id: 'queued-1',
+            content: '你叫什么',
+            status: 'failed',
+            error: '发送失败',
+            createdAt: '2026-05-29T00:01:00.000Z',
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass('pb-56')
+    expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass('pb-40')
   })
 
   test('restores and stores sidebar width in localStorage', () => {
@@ -653,7 +683,9 @@ describe('DesktopWorkbenchLayout', () => {
       'opacity-0',
       'group-hover/task:opacity-100',
     )
-    expect(screen.getByTestId('project-chat-row-11')).toHaveClass('bg-[#dedfe2]')
+    expect(screen.getByTestId('project-chat-row-11')).toHaveClass(
+      'bg-[rgb(var(--color-sidebar-active))]',
+    )
     await userEvent.click(screen.getByTestId('project-chat-button'))
     expect(baseProps.onOpenTask).toHaveBeenCalledWith(11, 1)
 
@@ -1012,7 +1044,12 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('environment-info-button'))
 
     expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
-    expect(screen.getByTestId('environment-info-popover')).toHaveClass('w-[340px]')
+    expect(screen.getByTestId('environment-info-popover')).toHaveClass(
+      'w-[340px]',
+      'bg-popover',
+      'text-text-primary',
+      'border-border',
+    )
     expect(screen.getByText('环境信息')).toBeInTheDocument()
     expect(screen.getByText('变更')).toBeInTheDocument()
     const deviceButton = await screen.findByTestId('environment-device-button')

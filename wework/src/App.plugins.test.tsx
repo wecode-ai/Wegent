@@ -45,6 +45,7 @@ const workbenchValue: WorkbenchContextValue = {
     addExistingAttachment: vi.fn(),
     removeAttachment: vi.fn(),
     resetAttachments: vi.fn(),
+    listLocalSkills: vi.fn().mockResolvedValue([]),
   },
   selectProject: vi.fn(),
   selectStandaloneDevice: vi.fn(),
@@ -563,7 +564,9 @@ describe('App plugins route', () => {
 
     render(<App />)
 
-    expect(screen.getByTestId('plugins-button')).toHaveClass('bg-[#cfd1d4]')
+    expect(screen.getByTestId('plugins-button')).toHaveClass(
+      'bg-[rgb(var(--color-sidebar-active))]',
+    )
     expect(screen.getByPlaceholderText('搜索插件')).toBeInTheDocument()
     expect(await screen.findByText('Custom Docs MCP')).toBeInTheDocument()
     await waitFor(() =>

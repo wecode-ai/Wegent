@@ -141,6 +141,71 @@ class TestWebSocketResultEmitter:
                 "reasoning_chunk": "Let me reason about this..."
             }
 
+    @pytest.mark.asyncio
+    async def test_tool_result_emits_interactive_form_render_payload(self):
+        """Interactive form tool results should update the real tool block with render payload."""
+        from app.services.execution.emitters import WebSocketResultEmitter
+
+        with patch(
+            "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
+        ) as mock_get:
+            mock_ws = AsyncMock()
+            mock_get.return_value = mock_ws
+
+            emitter = WebSocketResultEmitter(task_id=10, subtask_id=20)
+            event = ExecutionEvent.create(
+                EventType.TOOL_RESULT,
+                task_id=10,
+                subtask_id=20,
+                tool_name="interactive_form_question",
+                tool_use_id="tool-real-1",
+                tool_input={
+                    "questions": [
+                        {
+                            "id": "genre",
+                            "question": "Genre?",
+                            "input_type": "choice",
+                            "options": [{"label": "Fantasy", "value": "fantasy"}],
+                        }
+                    ],
+                },
+                tool_output={
+                    "__deferred_user_input__": True,
+                    "success": True,
+                    "status": "waiting_for_user_response",
+                },
+            )
+
+            await emitter.emit(event)
+
+            mock_ws.emit_block_updated.assert_awaited_once()
+            call_kwargs = mock_ws.emit_block_updated.call_args.kwargs
+            assert call_kwargs["block_id"] == "tool-real-1"
+            assert call_kwargs["render_payload"] == {
+                "type": "interactive_form_question",
+                "task_id": 10,
+                "subtask_id": 20,
+                "questions": [
+                    {
+                        "id": "genre",
+                        "question": "Genre?",
+                        "input_type": "choice",
+                        "options": [
+                            {
+                                "label": "Fantasy",
+                                "value": "fantasy",
+                                "recommended": False,
+                            }
+                        ],
+                        "multi_select": False,
+                        "required": True,
+                        "default": None,
+                        "placeholder": None,
+                    }
+                ],
+            }
+            assert "ask_id" not in call_kwargs["render_payload"]
+
 
 class TestSSEResultEmitter:
     """Tests for SSEResultEmitter."""

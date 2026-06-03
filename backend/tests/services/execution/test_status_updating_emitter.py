@@ -161,6 +161,94 @@ async def test_tool_events_persist_mcp_protocol_metadata():
 
 
 @pytest.mark.asyncio
+async def test_interactive_form_tool_result_persists_render_payload_on_real_tool_block():
+    from app.services.execution.emitters import StatusUpdatingEmitter
+
+    wrapped = AsyncMock()
+    emitter = StatusUpdatingEmitter(wrapped=wrapped, task_id=101, subtask_id=202)
+    mock_session_manager = AsyncMock()
+
+    event = ExecutionEvent(
+        type=EventType.TOOL_RESULT.value,
+        task_id=101,
+        subtask_id=202,
+        tool_use_id="tool-real-1",
+        tool_name="interactive_wegent-interactive-form-question_interactive_form_question",
+        tool_input={
+            "questions": [
+                {
+                    "id": "genre",
+                    "question": "Genre?",
+                    "input_type": "choice",
+                    "options": [{"label": "Fantasy", "value": "fantasy"}],
+                }
+            ]
+        },
+        tool_output={
+            "__silent_exit__": True,
+            "__deferred_user_input__": True,
+            "success": True,
+            "status": "waiting_for_user_response",
+        },
+        data={
+            "tool_protocol": "mcp_call",
+            "server_label": "wegent-interactive-form-question",
+            "status": "completed",
+        },
+    )
+
+    with patch("app.services.chat.storage.session_manager", mock_session_manager):
+        await emitter.emit(event)
+
+    mock_session_manager.update_tool_block_status.assert_awaited_once_with(
+        subtask_id=202,
+        tool_use_id="tool-real-1",
+        status="done",
+        tool_output={
+            "__silent_exit__": True,
+            "__deferred_user_input__": True,
+            "success": True,
+            "status": "waiting_for_user_response",
+        },
+        tool_input={
+            "questions": [
+                {
+                    "id": "genre",
+                    "question": "Genre?",
+                    "input_type": "choice",
+                    "options": [{"label": "Fantasy", "value": "fantasy"}],
+                }
+            ]
+        },
+        render_payload={
+            "type": "interactive_form_question",
+            "task_id": 101,
+            "subtask_id": 202,
+            "questions": [
+                {
+                    "id": "genre",
+                    "question": "Genre?",
+                    "input_type": "choice",
+                    "options": [
+                        {
+                            "label": "Fantasy",
+                            "value": "fantasy",
+                            "recommended": False,
+                        }
+                    ],
+                    "multi_select": False,
+                    "required": True,
+                    "default": None,
+                    "placeholder": None,
+                }
+            ],
+        },
+        tool_protocol="mcp_call",
+        server_label="wegent-interactive-form-question",
+    )
+
+
+@pytest.mark.asyncio
 async def test_thinking_events_persist_thinking_blocks():
     from app.services.execution.emitters import StatusUpdatingEmitter
 

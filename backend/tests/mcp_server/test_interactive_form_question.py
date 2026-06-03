@@ -13,25 +13,9 @@ from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools.interactive_form_question import (
     _build_deferred_tool_result,
     _build_form_render_payload,
-    _generate_ask_id,
     _notify_frontend,
     interactive_form_question,
 )
-
-
-class TestGenerateAskId:
-    """Tests for _generate_ask_id helper."""
-
-    def test_format(self):
-        assert _generate_ask_id(456) == "ask_456"
-
-    def test_deterministic(self):
-        ids = [_generate_ask_id(42) for _ in range(10)]
-        assert len(set(ids)) == 1
-
-    def test_unique_per_subtask(self):
-        ids = [_generate_ask_id(i) for i in range(100)]
-        assert len(set(ids)) == 100
 
 
 class TestInteractiveFormTool:
@@ -129,7 +113,7 @@ class TestInteractiveFormTool:
 
         assert result["success"] is True
         assert result["status"] == "waiting_for_user_response"
-        assert result["ask_id"] == "ask_20"
+        assert "ask_id" not in result
         assert result["__deferred_user_input__"] is True
         assert "form" not in result
         assert "questions" not in result
@@ -431,8 +415,8 @@ class TestInteractiveFormTool:
         )
 
     @pytest.mark.asyncio
-    async def test_ask_id_in_question_data(self):
-        """question_data contains correct ask_id derived from subtask_id."""
+    async def test_question_data_has_no_generated_form_id(self):
+        """The rendered form uses the tool call ID, not a separate ask_id."""
         token = self._make_token(subtask_id=99)
         captured = {}
 
@@ -448,7 +432,7 @@ class TestInteractiveFormTool:
                 questions=[{"id": "q1", "question": "Q?"}],
             )
 
-        assert captured["ask_id"] == "ask_99"
+        assert "ask_id" not in captured
 
     @pytest.mark.asyncio
     async def test_requires_at_least_one_question(self):
@@ -474,7 +458,6 @@ class TestInteractiveFormTool:
                     "tool_input": {"questions": [{"id": "q1", "question": "Raw?"}]},
                     "render_payload": {
                         "type": "interactive_form_question",
-                        "ask_id": "ask_2",
                         "task_id": 1,
                         "subtask_id": 2,
                         "questions": [
@@ -597,7 +580,6 @@ class TestFormRenderPayloadSchema:
             _build_form_render_payload(
                 {
                     "type": "interactive_form_question",
-                    "ask_id": "ask_1",
                     "task_id": 1,
                     "subtask_id": 2,
                     "questions": [
@@ -621,7 +603,6 @@ class TestFormRenderPayloadSchema:
             _build_form_render_payload(
                 {
                     "type": "interactive_form_question",
-                    "ask_id": "ask_1",
                     "task_id": 1,
                     "subtask_id": 2,
                     "questions": [
@@ -640,11 +621,11 @@ class TestFormRenderPayloadSchema:
             )
 
 
-class TestNotifyFrontendFallback:
-    """Tests for synthetic block fallback when tool block is missing."""
+class TestNotifyFrontend:
+    """Tests for attaching rendered forms to existing tool blocks."""
 
     @pytest.mark.asyncio
-    async def test_creates_synthetic_block_when_tool_block_missing(self):
+    async def test_does_not_create_synthetic_block_when_tool_block_missing(self):
         mock_session_manager = MagicMock()
         mock_session_manager.get_blocks = AsyncMock(return_value=[])
         mock_session_manager.add_tool_block = AsyncMock()
@@ -655,7 +636,6 @@ class TestNotifyFrontendFallback:
 
         question_data = {
             "type": "interactive_form_question",
-            "ask_id": "ask_123",
             "task_id": 1,
             "subtask_id": 2,
             "questions": [
@@ -684,23 +664,9 @@ class TestNotifyFrontendFallback:
         ):
             await _notify_frontend(task_id=1, subtask_id=2, question_data=question_data)
 
-        mock_session_manager.add_tool_block.assert_awaited_once_with(
-            subtask_id=2,
-            tool_use_id="ask_123",
-            tool_name="interactive_form_question",
-            tool_input={},
-            display_name="interactive_form_question",
-        )
-        mock_session_manager.update_tool_block_status.assert_awaited_once_with(
-            subtask_id=2,
-            tool_use_id="ask_123",
-            tool_output=_build_deferred_tool_result("ask_123"),
-            render_payload=question_data,
-        )
-        mock_ws_emitter.emit_block_created.assert_awaited_once()
-        created_block = mock_ws_emitter.emit_block_created.await_args.kwargs["block"]
-        assert created_block["tool_output"] == _build_deferred_tool_result("ask_123")
-        assert created_block["render_payload"] == question_data
+        mock_session_manager.add_tool_block.assert_not_awaited()
+        mock_session_manager.update_tool_block_status.assert_not_awaited()
+        mock_ws_emitter.emit_block_created.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_updates_existing_block_with_form_payload(self):
@@ -722,7 +688,6 @@ class TestNotifyFrontendFallback:
 
         question_data = {
             "type": "interactive_form_question",
-            "ask_id": "ask_123",
             "task_id": 1,
             "subtask_id": 2,
             "questions": [
@@ -754,14 +719,14 @@ class TestNotifyFrontendFallback:
         mock_session_manager.update_tool_block_status.assert_awaited_once_with(
             subtask_id=2,
             tool_use_id="tool-123",
-            tool_output=_build_deferred_tool_result("ask_123"),
+            tool_output=_build_deferred_tool_result(),
             render_payload=question_data,
         )
         mock_ws_emitter.emit_block_updated.assert_awaited_once_with(
             task_id=1,
             subtask_id=2,
             block_id="tool-123",
-            tool_output=_build_deferred_tool_result("ask_123"),
+            tool_output=_build_deferred_tool_result(),
             render_payload=question_data,
             status="pending",
         )

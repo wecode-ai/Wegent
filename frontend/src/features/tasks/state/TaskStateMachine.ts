@@ -1590,13 +1590,14 @@ export class TaskStateMachine {
       const existingMessage = this.state.messages.get(messageId)
       const hasFrontendError =
         existingMessage && existingMessage.status === 'error' && existingMessage.error
+      const subtaskResult = subtask.result as UnifiedMessage['result']
 
       // Handle RUNNING AI messages with content priority
       // IMPORTANT: Always process RUNNING AI messages even if they already exist
       // This ensures Redis cached_content and better existing content are used
       if (!isUserMessage && subtask.status === 'RUNNING') {
         const existingAiMessage = messages.get(messageId)
-        const backendContent = typeof subtask.result?.value === 'string' ? subtask.result.value : ''
+        const backendContent = typeof subtaskResult?.value === 'string' ? subtaskResult.value : ''
 
         // Content priority: Redis > existing > backend
         let bestContent = backendContent
@@ -1628,7 +1629,7 @@ export class TaskStateMachine {
           contexts: subtask.contexts,
           botName: subtask.bots?.[0]?.name || teamName,
           subtaskStatus: subtask.status,
-          result: subtask.result as UnifiedMessage['result'],
+          result: subtaskResult,
           error: hasFrontendError ? existingMessage?.error : undefined,
           errorType: hasFrontendError ? existingMessage?.errorType : undefined,
           // Preserve existing reasoning content if present
@@ -1644,7 +1645,7 @@ export class TaskStateMachine {
 
       const existingSnapshotMessage = messages.get(messageId)
       if (existingSnapshotMessage && !isUserMessage) {
-        const backendContent = typeof subtask.result?.value === 'string' ? subtask.result.value : ''
+        const backendContent = typeof subtaskResult?.value === 'string' ? subtaskResult.value : ''
         const nextStatus: MessageStatus =
           subtask.status === 'FAILED' || subtask.status === 'CANCELLED' || hasFrontendError
             ? 'error'
@@ -1659,11 +1660,11 @@ export class TaskStateMachine {
               : existingSnapshotMessage.content,
           messageId: subtask.message_id,
           subtaskStatus: subtask.status,
-          result: subtask.result as UnifiedMessage['result'],
+          result: subtaskResult,
           error: hasFrontendError ? existingMessage?.error : subtask.error_message || undefined,
           errorType: hasFrontendError
             ? existingMessage?.errorType
-            : ((subtask.result as Record<string, unknown>)?.error_type as string | undefined),
+            : ((subtaskResult as Record<string, unknown>)?.error_type as string | undefined),
           isReasoningStreaming: false,
         })
         continue
@@ -1695,8 +1696,8 @@ export class TaskStateMachine {
       // Get content
       const content = isUserMessage
         ? subtask.prompt || ''
-        : typeof subtask.result?.value === 'string'
-          ? subtask.result.value
+        : typeof subtaskResult?.value === 'string'
+          ? subtaskResult.value
           : ''
 
       const errorField = hasFrontendError
@@ -1706,7 +1707,7 @@ export class TaskStateMachine {
       // Recover error_type from result JSON (set by backend on FAILED subtasks)
       const errorTypeField = hasFrontendError
         ? existingMessage?.errorType
-        : ((subtask.result as Record<string, unknown>)?.error_type as string | undefined)
+        : ((subtaskResult as Record<string, unknown>)?.error_type as string | undefined)
 
       messages.set(messageId, {
         id: messageId,
@@ -1725,7 +1726,7 @@ export class TaskStateMachine {
         senderUserId: subtask.sender_user_id || (isUserMessage ? currentUserId : undefined),
         shouldShowSender: isGroupChat && isUserMessage,
         subtaskStatus: subtask.status,
-        result: subtask.result as UnifiedMessage['result'],
+        result: subtaskResult,
         error: errorField,
         errorType: errorTypeField,
       })
