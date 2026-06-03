@@ -551,6 +551,90 @@ export interface InstalledMCPInstallRequest {
   sourcePayload?: Record<string, unknown> | null
 }
 
+export type PluginInstallState =
+  | 'not_installed'
+  | 'installed'
+  | 'update_available'
+  | 'unavailable'
+  | 'failed'
+  | 'uninstalled'
+
+export interface PluginSkillComponent {
+  name: string
+  description: string
+  path: string
+}
+
+export interface PluginPathComponent {
+  name: string
+  path: string
+}
+
+export interface PluginMCPComponent {
+  name: string
+  server: Record<string, unknown>
+}
+
+export interface InstalledPluginComponents {
+  skills: PluginSkillComponent[]
+  commands: PluginPathComponent[]
+  agents: PluginPathComponent[]
+  hooks: PluginPathComponent[]
+  mcps: PluginMCPComponent[]
+  lsps: PluginPathComponent[]
+  monitors: PluginPathComponent[]
+  bins: PluginPathComponent[]
+  settings?: Record<string, unknown> | null
+}
+
+export interface InstalledPluginSource {
+  type: 'upload' | 'marketplace' | 'local'
+  providerKey: string
+  pluginKey: string
+  catalogItemId?: string | null
+  marketplace?: string | null
+}
+
+export interface InstalledPluginPackageRef {
+  storageKey: string
+  checksum: string
+  sizeBytes: number
+}
+
+export interface InstalledPlugin {
+  apiVersion: string
+  kind: 'InstalledPlugin'
+  metadata: Record<string, unknown>
+  spec: {
+    source: InstalledPluginSource
+    displayName: string
+    description: string
+    version?: string | null
+    author?: string | null
+    installState: PluginInstallState
+    enabled: boolean
+    componentStates?: Record<string, boolean>
+    manifest: Record<string, unknown>
+    components: InstalledPluginComponents
+    packageRef?: InstalledPluginPackageRef | null
+    sourcePayload?: Record<string, unknown> | null
+  }
+  status: {
+    state: string
+  }
+}
+
+export interface InstalledPluginListResponse {
+  items: InstalledPlugin[]
+}
+
+export interface InstalledPluginUpdateRequest {
+  enabled?: boolean
+  componentStates?: Record<string, boolean>
+  displayName?: string
+  description?: string
+}
+
 export type ChatBlockType = 'text' | 'tool' | 'thinking' | 'error' | 'guidance'
 
 export interface ChatBlock {

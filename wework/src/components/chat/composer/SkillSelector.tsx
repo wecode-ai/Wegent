@@ -50,7 +50,7 @@ export function SkillSelector({
       {open && (
         <div
           data-testid="skill-selector-menu"
-          className="absolute bottom-[52px] left-0 z-40 max-h-80 w-80 overflow-y-auto rounded-2xl border border-border bg-base p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
+          className="absolute bottom-[52px] left-0 z-40 max-h-80 w-80 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
         >
           <div className="px-4 pb-2 pt-1 text-[13px] font-semibold leading-[18px] text-text-muted">
             {t('workbench.select_skills', '选择技能')}

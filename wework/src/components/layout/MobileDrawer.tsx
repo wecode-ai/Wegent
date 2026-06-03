@@ -144,7 +144,7 @@ export function MobileDrawer({
           data-testid="mobile-search-input"
           type="search"
           placeholder={t('workbench.search', '搜索')}
-          className="h-12 w-full rounded-2xl border-0 bg-white/70 pl-12 pr-4 text-base font-medium text-text-primary outline-none placeholder:text-[#686d75] focus:bg-white"
+          className="h-12 w-full rounded-2xl border-0 bg-white/70 pl-12 pr-4 text-sm font-medium text-text-primary outline-none placeholder:text-[#686d75] focus:bg-white"
         />
       </div>
 
@@ -168,9 +168,9 @@ export function MobileDrawer({
                     onClick={() => toggleProject(project.id)}
                     aria-expanded={expanded}
                     className={[
-                      'flex h-11 min-w-[44px] w-full items-center gap-3 rounded-xl px-3 text-left text-base font-medium',
+                      'flex h-11 min-w-[44px] w-full items-center gap-3 rounded-xl px-3 text-left text-sm font-medium',
                       selected
-                        ? 'bg-white text-text-primary'
+                        ? 'bg-[#dedfe2] text-text-primary'
                         : 'text-text-primary hover:bg-white/70',
                     ].join(' ')}
                   >
@@ -195,9 +195,9 @@ export function MobileDrawer({
                               onClose()
                             }}
                             className={[
-                              'flex h-9 min-w-[44px] w-full items-center rounded-lg px-2 text-left text-sm',
+                              'flex h-9 min-w-[44px] w-full items-center rounded-lg px-2 text-left text-[13px]',
                               currentTaskId === task.task_id
-                                ? 'bg-white text-text-primary'
+                                ? 'bg-[#dedfe2] text-text-primary'
                                 : 'text-text-secondary hover:bg-white/70',
                             ].join(' ')}
                           >
@@ -241,9 +241,9 @@ export function MobileDrawer({
                     onClose()
                   }}
                   className={[
-                    'flex h-11 min-w-[44px] w-full items-center gap-3 rounded-xl px-3 text-left text-base',
+                    'flex h-11 min-w-[44px] w-full items-center gap-3 rounded-xl px-3 text-left text-sm',
                     currentTaskId === task.id && !currentProjectId
-                      ? 'bg-white text-text-primary'
+                      ? 'bg-[#dedfe2] text-text-primary'
                       : 'text-text-primary hover:bg-white/70',
                   ].join(' ')}
                 >
@@ -268,7 +268,7 @@ export function MobileDrawer({
           type="button"
           data-testid="mobile-settings-button"
           onClick={() => closeAfter(onOpenSettings)}
-          className="flex h-11 min-w-[44px] items-center gap-3 rounded-xl px-3 text-base font-medium text-text-primary hover:bg-white/70"
+          className="flex h-11 min-w-[44px] items-center gap-3 rounded-xl px-3 text-sm font-medium text-text-primary hover:bg-white/70"
         >
           <Settings className="h-5 w-5 text-text-secondary" />
           {t('workbench.settings', '设置')}

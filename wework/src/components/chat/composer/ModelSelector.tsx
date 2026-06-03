@@ -1,6 +1,15 @@
-import { Check, ChevronDown, ChevronRight } from 'lucide-react'
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Check, ChevronDown, ChevronRight, Search, X } from 'lucide-react'
+import {
+  type KeyboardEvent,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import {
   type ModelControlConfig,
   getControlsForModel,
@@ -18,6 +27,8 @@ const SUBMENU_GAP = 8
 const VIEWPORT_MARGIN = 16
 const SUBMENU_RIGHT_OFFSET = MAIN_MENU_WIDTH + SUBMENU_GAP
 const SUBMENU_LEFT_OFFSET = -(SUBMENU_WIDTH + SUBMENU_GAP)
+const FOCUSABLE_SELECTOR =
+  'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
 
 interface ModelSelectorProps {
   models: UnifiedModel[]
@@ -43,10 +54,14 @@ export function ModelSelector({
   menuClassName = '',
 }: ModelSelectorProps) {
   const { t } = useTranslation('common')
+  const isMobile = useIsMobile()
   const containerRef = useRef<HTMLDivElement>(null)
   const menuPanelRef = useRef<HTMLDivElement>(null)
+  const mobileMenuRef = useRef<HTMLDivElement>(null)
+  const mobileCloseButtonRef = useRef<HTMLButtonElement>(null)
   const familyButtonRefs = useRef(new Map<string, HTMLButtonElement>())
   const [open, setOpen] = useState(false)
+  const [mobileQuery, setMobileQuery] = useState('')
   const [submenuOffset, setSubmenuOffset] = useState(0)
   const [submenuLeft, setSubmenuLeft] = useState(SUBMENU_RIGHT_OFFSET)
   const familyGroups = useMemo(() => groupModelsByFamily(models), [models])
@@ -56,13 +71,27 @@ export function ModelSelector({
     activeFamilyId || selectedFamily || familyGroups[0]?.config.id || ''
   const activeGroup =
     familyGroups.find(group => group.config.id === displayedFamilyId) ?? familyGroups[0]
-  const closeMenu = useCallback(() => setOpen(false), [])
+  const closeMenu = useCallback(() => {
+    setOpen(false)
+    setMobileQuery('')
+  }, [])
   const handleSelectModelOption = useCallback(
     (optionId: string, value: string) => {
       onSelectModelOption(optionId, value)
-      setOpen(false)
+      if (!isMobile) {
+        closeMenu()
+      }
     },
-    [onSelectModelOption],
+    [closeMenu, isMobile, onSelectModelOption],
+  )
+  const handleSelectModel = useCallback(
+    (model: UnifiedModel | null) => {
+      onSelectModel(model)
+      if (!isMobile) {
+        closeMenu()
+      }
+    },
+    [closeMenu, isMobile, onSelectModel],
   )
   const updateSubmenuLayout = useCallback((target: HTMLElement | null) => {
     if (!target || !menuPanelRef.current) {
@@ -106,6 +135,9 @@ export function ModelSelector({
     },
     [updateSubmenuLayout],
   )
+  const activateMobileFamily = useCallback((familyId: string) => {
+    setActiveFamilyId(current => (current === familyId ? current : familyId))
+  }, [])
 
   useOutsideClick(containerRef, open, closeMenu)
 
@@ -113,6 +145,16 @@ export function ModelSelector({
     if (!open) return
     updateSubmenuLayout(familyButtonRefs.current.get(displayedFamilyId) ?? null)
   }, [displayedFamilyId, open, updateSubmenuLayout])
+
+  useEffect(() => {
+    if (!open || !isMobile) return
+    const previousActiveElement =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
+    mobileCloseButtonRef.current?.focus()
+    return () => {
+      previousActiveElement?.focus()
+    }
+  }, [isMobile, open])
 
   const menuPositionClass =
     menuPlacement === 'below'
@@ -139,6 +181,24 @@ export function ModelSelector({
     : []
   const controlsBelowModels =
     selectedModelControls.filter(control => control.placement === 'belowModels')
+  const normalizedMobileQuery = mobileQuery.trim().toLowerCase()
+  const mobileModels = useMemo(() => {
+    const modelsToFilter = activeGroup?.models ?? []
+    if (!normalizedMobileQuery) return modelsToFilter
+
+    return modelsToFilter.filter(model => {
+      const searchableText = [
+        model.name,
+        model.displayName,
+        model.modelId,
+        getModelDisplayLabel(model, selectedModelOptions),
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+      return searchableText.includes(normalizedMobileQuery)
+    })
+  }, [activeGroup, normalizedMobileQuery, selectedModelOptions])
 
   function renderControlSection(control: ModelControlConfig) {
     return (
@@ -204,9 +264,249 @@ export function ModelSelector({
     )
   }
 
+  function renderMobileControlSection(control: ModelControlConfig) {
+    return (
+      <section key={control.id} className="space-y-2">
+        <h3 className="px-1 text-xs font-semibold text-text-muted">
+          {control.labelKey ? t(control.labelKey) : control.label}
+        </h3>
+        <div className="scrollbar-none flex gap-2 overflow-x-auto pb-1">
+          {control.options
+            .slice()
+            .sort((a, b) => a.order - b.order)
+            .map(option => {
+              const selected =
+                (selectedModelOptions[control.id] ?? control.defaultValue) ===
+                option.value
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  data-testid={`model-control-${control.id}-${option.value}`}
+                  onClick={() => handleSelectModelOption(control.id, option.value)}
+                  className={[
+                    'flex h-11 min-w-[44px] shrink-0 items-center gap-2 rounded-full border px-4 text-sm font-medium',
+                    selected
+                      ? 'border-[#1f2933] bg-[#1f2933] text-white'
+                      : 'border-border bg-surface text-text-secondary',
+                  ].join(' ')}
+                >
+                  <span>{option.labelKey ? t(option.labelKey) : option.label}</span>
+                  {selected && <Check className="h-4 w-4" />}
+                </button>
+              )
+            })}
+        </div>
+      </section>
+    )
+  }
+
+  function renderMobileAutomaticReasoningSection() {
+    return (
+      <section className="space-y-2">
+        <h3 className="px-1 text-xs font-semibold text-text-muted">
+          {t('workbench.reasoning_level')}
+        </h3>
+        <button
+          type="button"
+          data-testid="model-control-reasoning-auto"
+          disabled
+          className="flex h-11 min-w-[44px] items-center gap-2 rounded-full border border-[#1f2933] bg-[#1f2933] px-4 text-sm font-medium text-white disabled:cursor-default"
+        >
+          <span>{t('workbench.reasoning_auto')}</span>
+          <Check className="h-4 w-4" />
+        </button>
+      </section>
+    )
+  }
+
+  function handleMobileDialogKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === 'Escape') {
+      closeMenu()
+      return
+    }
+    if (event.key !== 'Tab' || !mobileMenuRef.current) return
+
+    const focusableElements = Array.from(
+      mobileMenuRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+    ).filter(element => element.offsetParent !== null)
+    if (focusableElements.length === 0) return
+
+    const firstElement = focusableElements[0]
+    const lastElement = focusableElements[focusableElements.length - 1]
+    if (event.shiftKey && document.activeElement === firstElement) {
+      event.preventDefault()
+      lastElement.focus()
+    } else if (!event.shiftKey && document.activeElement === lastElement) {
+      event.preventDefault()
+      firstElement.focus()
+    }
+  }
+
+  function renderMobileSheet() {
+    return (
+      <div
+        className="fixed inset-0 z-50 bg-black/25"
+        onClick={closeMenu}
+      >
+        <div
+          ref={mobileMenuRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="model-selector-mobile-title"
+          data-testid="model-selector-menu"
+          data-mobile="true"
+          className="absolute inset-x-0 bottom-0 flex h-[82dvh] flex-col rounded-t-[28px] border border-border bg-background shadow-[0_-18px_48px_rgba(0,0,0,0.18)]"
+          onClick={event => event.stopPropagation()}
+          onKeyDown={handleMobileDialogKeyDown}
+        >
+          <div className="mx-auto mt-3 h-1 w-11 rounded-full bg-border" />
+          <div className="flex items-center justify-between px-5 pb-3 pt-4">
+            <div className="min-w-0">
+              <h2
+                id="model-selector-mobile-title"
+                className="text-lg font-semibold text-text-primary"
+              >
+                {t('workbench.model_picker_title')}
+              </h2>
+              <p className="mt-1 truncate text-xs text-text-muted">{buttonLabel}</p>
+            </div>
+            <button
+              type="button"
+              ref={mobileCloseButtonRef}
+              data-testid="model-selector-close-button"
+              aria-label={t('workbench.close_menu')}
+              onClick={closeMenu}
+              className="flex h-11 w-11 items-center justify-center rounded-full bg-surface text-text-primary"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          <div className="px-5">
+            <label className="flex h-11 items-center gap-3 rounded-2xl bg-surface px-4 text-text-secondary">
+              <Search className="h-5 w-5 shrink-0" />
+              <input
+                data-testid="model-selector-search-input"
+                value={mobileQuery}
+                onChange={event => setMobileQuery(event.target.value)}
+                placeholder={t('workbench.search_models')}
+                className="min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted"
+              />
+            </label>
+          </div>
+
+          <div className="flex min-h-0 flex-1 flex-col px-5 pb-24 pt-5">
+            <div className="mb-5 shrink-0 space-y-4">
+              {controlsAboveFamilies.map(renderMobileControlSection)}
+              {!supportsReasoningControl && renderMobileAutomaticReasoningSection()}
+            </div>
+
+            <div className="scrollbar-none -mx-5 mb-5 shrink-0 overflow-x-auto px-5">
+              <div className="flex gap-2">
+                {familyGroups.map(group => {
+                  const active = group.config.id === activeGroup?.config.id
+                  return (
+                    <button
+                      key={group.config.id}
+                      type="button"
+                      data-testid={`model-family-${group.config.id}`}
+                      onClick={() => activateMobileFamily(group.config.id)}
+                      className={[
+                        'h-11 min-w-[44px] shrink-0 rounded-full px-4 text-sm font-medium',
+                        active
+                          ? 'bg-[#1f2933] text-white'
+                          : 'bg-surface text-text-secondary',
+                      ].join(' ')}
+                    >
+                      {group.config.label}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            <section className="flex min-h-0 flex-1 flex-col space-y-2" data-testid="model-selector-submenu">
+              <h3 className="shrink-0 px-1 text-xs font-semibold text-text-muted">
+                {activeGroup?.config.label ?? t('workbench.model_version')}
+              </h3>
+              {mobileModels.length > 0 ? (
+                <div
+                  data-testid="model-selector-model-list"
+                  className="scrollbar-none min-h-0 flex-1 space-y-2 overflow-y-auto pb-2"
+                >
+                  {mobileModels.map(model => {
+                    const selected =
+                      model.name === selectedModel?.name && model.type === selectedModel?.type
+                    return (
+                      <button
+                        key={`${model.type}:${model.name}`}
+                        type="button"
+                        data-testid={`model-option-${model.name}`}
+                        onClick={() => handleSelectModel(model)}
+                        className={[
+                          'flex min-h-14 w-full items-center gap-3 rounded-2xl border px-4 py-3 text-left',
+                          selected
+                            ? 'border-[#b9d1ca] bg-[#e8f2ef]'
+                            : 'border-transparent bg-surface',
+                        ].join(' ')}
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-semibold text-text-primary">
+                            {getModelDisplayLabel(model, selectedModelOptions)}
+                          </span>
+                          <span className="mt-0.5 block truncate text-xs text-text-muted">
+                            {model.displayName || model.modelId || model.name}
+                          </span>
+                        </span>
+                        {selected && (
+                          <Check className="h-5 w-5 shrink-0 text-text-primary" />
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className="rounded-2xl bg-surface px-4 py-6 text-center text-sm text-text-muted">
+                  {t('workbench.no_models')}
+                </div>
+              )}
+            </section>
+
+            {controlsBelowModels.length > 0 && (
+              <div className="mt-5 space-y-4">
+                {controlsBelowModels.map(renderMobileControlSection)}
+              </div>
+            )}
+          </div>
+
+          <div className="absolute inset-x-0 bottom-0 flex gap-3 border-t border-border bg-background/95 px-5 pb-[max(20px,env(safe-area-inset-bottom))] pt-3 backdrop-blur">
+            <button
+              type="button"
+              data-testid="model-selector-auto-button"
+              onClick={() => handleSelectModel(null)}
+              className="h-11 flex-1 rounded-full border border-border bg-background text-sm font-semibold text-text-primary"
+            >
+              {t('workbench.model_auto_select')}
+            </button>
+            <button
+              type="button"
+              data-testid="model-selector-confirm-button"
+              onClick={closeMenu}
+              className="h-11 flex-1 rounded-full bg-[#1f2933] text-sm font-semibold text-white"
+            >
+              {t('workbench.use_current_model')}
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div ref={containerRef} className="relative">
-      {open && (
+      {open && isMobile && renderMobileSheet()}
+      {open && !isMobile && (
         <div
           className={[
             'absolute z-40 w-[min(46rem,calc(100vw-2rem))]',
@@ -217,7 +517,7 @@ export function ModelSelector({
           <div
             ref={menuPanelRef}
             data-testid="model-selector-menu"
-            className="max-h-[min(32rem,calc(100vh-8rem))] w-64 shrink-0 overflow-y-auto rounded-2xl border border-border bg-base p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
+            className="max-h-[min(32rem,calc(100vh-8rem))] w-64 shrink-0 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
           >
             {(controlsAboveFamilies.length > 0 || activeGroup) && (
               <>
@@ -272,7 +572,7 @@ export function ModelSelector({
             <div
               data-testid="model-selector-submenu"
               style={{ top: submenuOffset, left: submenuLeft }}
-              className="absolute max-h-[min(28rem,calc(100vh-8rem))] min-h-48 w-72 overflow-y-auto rounded-2xl border border-border bg-base p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
+              className="absolute max-h-[min(28rem,calc(100vh-8rem))] min-h-48 w-72 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
             >
               <div className="px-3 pb-1.5 pt-0.5 text-[13px] font-semibold leading-[18px] text-text-muted">
                 {t('workbench.model_version')}
@@ -286,10 +586,7 @@ export function ModelSelector({
                       key={`${model.type}:${model.name}`}
                       type="button"
                       data-testid={`model-option-${model.name}`}
-                      onClick={() => {
-                        onSelectModel(model)
-                        setOpen(false)
-                      }}
+                      onClick={() => handleSelectModel(model)}
                       className="flex h-9 w-full items-center gap-3 rounded-lg px-3 text-left text-[13px] leading-[18px] text-text-primary hover:bg-muted"
                     >
                       <span className="min-w-0 flex-1 truncate font-medium">
@@ -305,7 +602,7 @@ export function ModelSelector({
             <div
               data-testid="model-selector-submenu"
               style={{ top: submenuOffset, left: submenuLeft }}
-              className="absolute w-72 rounded-2xl border border-border bg-base p-4 text-[13px] leading-[18px] text-text-muted shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
+              className="absolute w-72 rounded-2xl border border-border bg-background p-4 text-[13px] leading-[18px] text-text-muted shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
             >
               {t('workbench.no_models')}
             </div>

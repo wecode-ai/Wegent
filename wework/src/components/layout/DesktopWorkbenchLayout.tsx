@@ -149,7 +149,7 @@ export function DesktopWorkbenchLayout({
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-base text-text-primary">
+    <div className="flex h-screen overflow-hidden bg-background text-text-primary">
       {!settingsOpen && !sidebarCollapsed && (
         <DesktopSidebar
           user={state.user}

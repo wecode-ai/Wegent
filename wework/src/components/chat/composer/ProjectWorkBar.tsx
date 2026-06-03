@@ -103,7 +103,7 @@ export function ProjectWorkBar({
           <div
             data-testid="project-work-menu"
             className={cn(
-              'absolute bottom-[52px] left-0 z-40 max-h-72 w-80 overflow-y-auto rounded-2xl border border-border bg-base p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+              'absolute bottom-[52px] left-0 z-40 max-h-72 w-80 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
               menuClassName,
             )}
           >

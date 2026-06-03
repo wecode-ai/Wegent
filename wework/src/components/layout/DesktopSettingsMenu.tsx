@@ -78,7 +78,7 @@ export function DesktopSettingsMenu({
   return (
     <div
       data-testid="settings-menu"
-      className="absolute bottom-[68px] left-4 right-4 z-30 overflow-hidden rounded-xl border border-border bg-base py-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
+      className="absolute bottom-[68px] left-4 right-4 z-30 overflow-hidden rounded-xl border border-border bg-background py-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
     >
       <div className="flex min-h-10 items-center gap-3 px-4 text-[13px] leading-[18px] text-text-secondary">
         <UserCircle className="h-4 w-4 shrink-0" />

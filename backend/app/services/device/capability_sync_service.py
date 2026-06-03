@@ -636,7 +636,8 @@ class DeviceCapabilitySyncService:
         spec = installed.json.get("spec", {})
         source = spec.get("source") or {}
         marketplace = spec.get("marketplace") or source.get("marketplace")
-        return {
+        package_ref = spec.get("packageRef") or {}
+        payload = {
             "installed_plugin_id": installed.id,
             "name": installed.name,
             "display_name": spec.get("displayName") or installed.name,
@@ -645,6 +646,16 @@ class DeviceCapabilitySyncService:
             "version": spec.get("version"),
             "source": source,
         }
+        component_states = spec.get("componentStates") or {}
+        if component_states:
+            payload["component_states"] = component_states
+        components = spec.get("components") or {}
+        if components:
+            payload["components"] = components
+        if package_ref:
+            payload["checksum"] = package_ref.get("checksum")
+            payload["download_path"] = f"/api/plugins/installed/{installed.id}/download"
+        return payload
 
     def _aggregate_response(
         self,

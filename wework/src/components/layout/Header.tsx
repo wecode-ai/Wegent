@@ -8,7 +8,7 @@ export function Header({ onMenuClick }: HeaderProps) {
   const { t } = useTranslation('common')
 
   return (
-    <header className="flex items-center justify-between h-12 px-4 bg-base border-b border-border">
+    <header className="flex items-center justify-between h-12 px-4 bg-background border-b border-border">
       <div className="flex items-center gap-3">
         {onMenuClick && (
           <button
