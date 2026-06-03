@@ -87,6 +87,32 @@ describe('ProjectCreateDialog', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
+  test('keeps the dialog open and shows an error when project creation fails', async () => {
+    const onClose = vi.fn()
+    const onCreateProject = vi.fn().mockRejectedValue(new Error('create failed'))
+
+    render(
+      <ProjectCreateDialog
+        open
+        mode="scratch"
+        devices={devices}
+        preferredDeviceId="local-device"
+        onClose={onClose}
+        onCreateProject={onCreateProject}
+        onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
+        onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
+        onListDeviceDirectories={vi.fn().mockResolvedValue([])}
+        onCreateDeviceDirectory={vi.fn()}
+      />,
+    )
+
+    await userEvent.type(screen.getByTestId('project-name-input'), 'demo')
+    await userEvent.click(screen.getByTestId('create-project-button'))
+
+    await waitFor(() => expect(screen.getByTestId('project-create-error')).toHaveTextContent('create failed'))
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
   test('filters parent directory entries when the path is typed partially', async () => {
     const onListDeviceDirectories = vi.fn((_: string, path: string) =>
       Promise.resolve(path === '/home/user/repo' ? ['src'] : ['Desktop', 'Downloads', 'repo']),

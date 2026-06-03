@@ -1220,6 +1220,22 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('environment-branch-menu')).not.toBeInTheDocument()
   })
 
+  test('closes the branch menu when Escape is pressed', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+    await userEvent.click(screen.getByTestId('environment-branch-row'))
+
+    expect(await screen.findByTestId('environment-branch-menu')).toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('environment-branch-menu')).not.toBeInTheDocument(),
+    )
+    expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
+  })
+
   test('loads environment info from the first workspace project when the popover opens', async () => {
     const onLoadEnvironmentInfo = vi.fn().mockResolvedValue({
       additions: '+8',

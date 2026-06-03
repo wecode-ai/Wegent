@@ -11,7 +11,7 @@ import {
   Search,
   Settings,
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { EnvironmentInfo } from '@/types/environment'
@@ -112,13 +112,28 @@ export function EnvironmentInfoPopover({
     [branchQuery, branches],
   )
 
-  function closeBranchMenu() {
+  const closeBranchMenu = useCallback(() => {
     setBranchMenuOpen(false)
     setBranchQuery('')
     setBranchError(null)
     setNewBranchFormOpen(false)
     setNewBranchName('')
-  }
+  }, [])
+
+  useEffect(() => {
+    if (!branchMenuOpen) {
+      return
+    }
+
+    function handleBranchMenuKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        closeBranchMenu()
+      }
+    }
+
+    window.addEventListener('keydown', handleBranchMenuKeyDown)
+    return () => window.removeEventListener('keydown', handleBranchMenuKeyDown)
+  }, [branchMenuOpen, closeBranchMenu])
 
   function handleCreatePullRequest() {
     if (!info.createPullRequestUrl) {
@@ -248,7 +263,7 @@ export function EnvironmentInfoPopover({
 
     document.addEventListener('pointerdown', handlePointerDown)
     return () => document.removeEventListener('pointerdown', handlePointerDown)
-  }, [open])
+  }, [closeBranchMenu, open])
 
   return (
     <div ref={rootRef}>

@@ -185,6 +185,7 @@ function ProjectCreateDialogContent({
   const [newFolderName, setNewFolderName] = useState('')
   const [creatingDirectory, setCreatingDirectory] = useState(false)
   const [createDirectoryError, setCreateDirectoryError] = useState<string | null>(null)
+  const [projectCreateError, setProjectCreateError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
@@ -456,7 +457,10 @@ function ProjectCreateDialogContent({
             <input
               data-testid="project-name-input"
               value={projectName}
-              onChange={event => setProjectName(event.target.value)}
+              onChange={event => {
+                setProjectName(event.target.value)
+                setProjectCreateError(null)
+              }}
               placeholder={t('workbench.project_name_placeholder', '输入项目名称')}
               className="mt-2 h-10 w-full rounded-lg border border-[#d8d8d8] px-3 text-[13px] outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20"
             />
@@ -611,6 +615,12 @@ function ProjectCreateDialogContent({
           </>
         )}
 
+        {projectCreateError && (
+          <p data-testid="project-create-error" className="mt-4 text-xs text-[#c44]">
+            {projectCreateError}
+          </p>
+        )}
+
         <div className="mt-7 flex justify-end gap-3">
           <button
             type="button"
@@ -626,6 +636,7 @@ function ProjectCreateDialogContent({
             disabled={!canCreate || submitting}
             onClick={async () => {
               setSubmitting(true)
+              setProjectCreateError(null)
               try {
                 await onCreateProject({
                   name: finalProjectName,
@@ -643,6 +654,12 @@ function ProjectCreateDialogContent({
                   },
                 })
                 onClose()
+              } catch (error) {
+                setProjectCreateError(
+                  error instanceof Error
+                    ? error.message
+                    : t('workbench.project_create_failed', '项目创建失败'),
+                )
               } finally {
                 setSubmitting(false)
               }

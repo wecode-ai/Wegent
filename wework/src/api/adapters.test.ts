@@ -283,6 +283,21 @@ describe('REST adapters', () => {
     expect(client.post).not.toHaveBeenCalled()
   })
 
+  test('throws backend command errors when directory creation fails', async () => {
+    const client = mockClient()
+    vi.mocked(client.post).mockResolvedValueOnce({
+      success: false,
+      stdout: '',
+      stderr: 'mkdir failed',
+    })
+
+    const api = createDeviceApi(client)
+
+    await expect(api.createDirectory('device-1', '/home/ubuntu/new-app')).rejects.toThrow(
+      'mkdir failed',
+    )
+  })
+
   test('loads local device skills through the device command API', async () => {
     const client = mockClient()
     const skills = [
