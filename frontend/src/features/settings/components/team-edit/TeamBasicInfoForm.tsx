@@ -13,6 +13,7 @@ import { TeamIconPicker } from '../teams/TeamIconPicker'
 import { HelpCircle } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { TaskType } from '@/types/api'
+import QuickPhraseEditor from './QuickPhraseEditor'
 
 interface TeamBasicInfoFormProps {
   name: string
@@ -21,6 +22,8 @@ interface TeamBasicInfoFormProps {
   setDisplayName: (displayName: string) => void
   description: string
   setDescription: (description: string) => void
+  quickPhrases?: string[]
+  onQuickPhrasesChange?: (quickPhrases: string[]) => void
   bindMode: TaskType[]
   setBindMode: (bindMode: TaskType[]) => void
   icon?: string | null
@@ -36,6 +39,8 @@ export default function TeamBasicInfoForm({
   setDisplayName,
   description,
   setDescription,
+  quickPhrases,
+  onQuickPhrasesChange,
   bindMode,
   setBindMode,
   icon,
@@ -131,6 +136,16 @@ export default function TeamBasicInfoForm({
           className="bg-base"
         />
       </div>
+
+      {quickPhrases && onQuickPhrasesChange && (
+        <div className="space-y-2">
+          <Label className="text-sm font-medium">{t('settings:team.quick_phrases.label')}</Label>
+          <p className="text-xs leading-5 text-text-muted">
+            {t('settings:team.quick_phrases.description')}
+          </p>
+          <QuickPhraseEditor value={quickPhrases} onChange={onQuickPhrasesChange} />
+        </div>
+      )}
 
       {/* Requires Workspace Toggle - Only show when code mode is selected */}
       {showRequiresWorkspace && (

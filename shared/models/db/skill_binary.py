@@ -9,8 +9,11 @@ Skill binary storage model for Claude Code Skills ZIP packages.
 from datetime import datetime
 
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, LargeBinary, String
+from sqlalchemy.dialects.mysql import MEDIUMBLOB
 
 from .base import Base
+
+SkillBinaryDataType = LargeBinary().with_variant(MEDIUMBLOB, "mysql")
 
 
 class SkillBinary(Base):
@@ -22,7 +25,7 @@ class SkillBinary(Base):
     kind_id = Column(
         Integer, ForeignKey("kinds.id", ondelete="CASCADE"), nullable=False, unique=True
     )
-    binary_data = Column(LargeBinary, nullable=False)  # ZIP package binary data
+    binary_data = Column(SkillBinaryDataType, nullable=False)  # ZIP package binary data
     file_size = Column(Integer, nullable=False)  # File size in bytes
     file_hash = Column(String(64), nullable=False)  # SHA256 hash
     created_at = Column(DateTime, default=datetime.now)

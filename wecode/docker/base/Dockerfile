@@ -39,7 +39,7 @@ RUN yum install -y almalinux-release almalinux-release-devel almalinux-repos epe
 RUN dnf module disable -y nodejs && \
     dnf remove -y nodejs npm || true && curl -fsSL https://rpm.nodesource.com/setup_20.x | bash - && \
     dnf install -y nodejs && \
-    npm install -g @anthropic-ai/claude-code@2.0.25
+    npm install -g @anthropic-ai/claude-code@2.1.142
 
 RUN wget -O glab_1.74.0_linux_amd64.rpm "https://gitlab.com/gitlab-org/cli/-/releases/v1.74.0/downloads/glab_1.74.0_linux_amd64.rpm" \
  && dnf install -y glab_1.74.0_linux_amd64.rpm \

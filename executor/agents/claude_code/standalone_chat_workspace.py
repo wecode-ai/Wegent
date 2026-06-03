@@ -103,8 +103,16 @@ def _copy_session_files(task_id: int, workspace_path: Path) -> None:
     for session_file in workspace_path.glob(".claude_session_id*"):
         if not session_file.is_file():
             continue
+        target_file = session_dir / session_file.name
+        if target_file.exists():
+            logger.info(
+                "Skipped standalone chat session migration for task %s because %s already exists",
+                task_id,
+                target_file,
+            )
+            continue
         session_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(session_file, session_dir / session_file.name)
+        shutil.copy2(session_file, target_file)
 
 
 def _move_user_workspace(source: Path, target: Path) -> None:
