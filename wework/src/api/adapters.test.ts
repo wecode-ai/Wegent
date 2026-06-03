@@ -262,7 +262,7 @@ describe('REST adapters', () => {
 
     const api = createDeviceApi(client)
 
-    await expect(api.createDirectory('device-1', '/home/ubuntu/new-app')).resolves.toBeUndefined()
+    await expect(api.createDirectory('device-1', '  /home/ubuntu/new-app  ')).resolves.toBeUndefined()
 
     expect(client.post).toHaveBeenCalledWith(
       '/devices/device-1/commands',
