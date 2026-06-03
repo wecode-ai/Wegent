@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import type { ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { WorkbenchMessage } from '@/types/workbench'
@@ -38,9 +39,45 @@ export function MessageList({ messages }: MessageListProps) {
 function UserMessage({ content }: { content: string }) {
   return (
     <div className="max-w-[80%] overflow-hidden break-words whitespace-pre-wrap rounded-2xl bg-primary/15 px-4 py-3 text-[13px] leading-5 text-text-primary">
-      {content}
+      {renderUserContent(content)}
     </div>
   )
+}
+
+const LOCAL_SKILL_LINK_PATTERN = /\[\$([^\]]+)]\(skill:\/\/([^)]+)\)/g
+
+function renderUserContent(content: string) {
+  const parts: ReactNode[] = []
+  let offset = 0
+
+  for (const match of content.matchAll(LOCAL_SKILL_LINK_PATTERN)) {
+    const start = match.index ?? 0
+    const text = content.slice(offset, start)
+    if (text) {
+      parts.push(<span key={`text-${offset}`}>{text}</span>)
+    }
+
+    const skillName = match[1]
+    const href = `skill://${match[2]}`
+    parts.push(
+      <a
+        key={`skill-${start}`}
+        href={href}
+        className="inline-flex items-center rounded-md bg-white/70 px-1.5 py-0.5 font-medium text-[#6F4D13] underline decoration-[#D6B56A]"
+        onClick={event => event.preventDefault()}
+      >
+        {`$${skillName}`}
+      </a>,
+    )
+    offset = start + match[0].length
+  }
+
+  const remainingText = content.slice(offset)
+  if (remainingText) {
+    parts.push(<span key={`text-${offset}`}>{remainingText}</span>)
+  }
+
+  return parts
 }
 
 function AssistantMessage({ message }: { message: WorkbenchMessage }) {

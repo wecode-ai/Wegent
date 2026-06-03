@@ -169,7 +169,9 @@ describe('ChatInput', () => {
     )
     await userEvent.click(await screen.findByTestId('local-skill-option-env-context'))
 
-    expect(screen.getByTestId('chat-message-input')).toHaveValue('Env Context ')
+    expect(screen.getByTestId('chat-message-input')).toHaveValue(
+      '[$env-context](skill://env-context) ',
+    )
     expect(screen.getByTestId('local-skill-chip-env-context')).toHaveTextContent('Env Context')
     expect(await screen.findByTestId('local-skill-caret')).toHaveClass('local-skill-caret')
   })
@@ -198,7 +200,7 @@ describe('ChatInput', () => {
     })
     await userEvent.type(input, 'hello')
 
-    expect(input).toHaveValue('Env Context hello')
+    expect(input).toHaveValue('[$env-context](skill://env-context) hello')
     expect(screen.getByTestId('local-skill-chip-env-context')).toHaveTextContent('Env Context')
   })
 

@@ -26,6 +26,7 @@ interface SkillMention {
   id: string
   name: string
   label: string
+  reference: string
   start: number
   end: number
 }
@@ -35,6 +36,8 @@ interface TextSelection {
   end: number
   focused: boolean
 }
+
+const LOCAL_SKILL_REFERENCE_PATTERN = /\[\$([^\]]+)]\(skill:\/\/([^)]+)\)/g
 
 function findSkillTrigger(value: string, cursor: number): SkillTrigger | null {
   const beforeCursor = value.slice(0, cursor)
@@ -50,16 +53,40 @@ function findSkillTrigger(value: string, cursor: number): SkillTrigger | null {
   return { start: triggerIndex, query }
 }
 
-function displaySkillName(skill: LocalDeviceSkill): string {
-  return skill.name
+function displaySkillNameFromName(name: string): string {
+  return name
     .split(/[-_\s]+/)
     .filter(Boolean)
     .map(part => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ')
 }
 
+function displaySkillName(skill: LocalDeviceSkill): string {
+  return displaySkillNameFromName(skill.name)
+}
+
 function localSkillTestId(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, '-')
+}
+
+function skillReference(skill: LocalDeviceSkill): string {
+  return `[$${skill.name}](skill://${encodeURIComponent(skill.name)})`
+}
+
+function parseSkillMentions(value: string): SkillMention[] {
+  return Array.from(value.matchAll(LOCAL_SKILL_REFERENCE_PATTERN)).map(match => {
+    const start = match.index ?? 0
+    const reference = match[0]
+    const name = match[1]
+    return {
+      id: `parsed:${start}:${reference}`,
+      name,
+      label: displaySkillNameFromName(name),
+      reference,
+      start,
+      end: start + reference.length,
+    }
+  })
 }
 
 function findSkillMentionBeforeCursor(
@@ -179,12 +206,17 @@ export function ComposerTextarea({
   const [loadError, setLoadError] = useState(false)
 
   const validSkillMentions = useMemo(
-    () =>
-      selectedSkillMentions
-        .filter(
-          mention => value.slice(mention.start, mention.end) === mention.label,
-        )
-        .sort((left, right) => left.start - right.start),
+    () => {
+      const mentions = new Map<string, SkillMention>()
+      for (const mention of parseSkillMentions(value)) {
+        mentions.set(`${mention.start}:${mention.end}`, mention)
+      }
+      for (const mention of selectedSkillMentions) {
+        if (value.slice(mention.start, mention.end) !== mention.reference) continue
+        mentions.set(`${mention.start}:${mention.end}`, mention)
+      }
+      return Array.from(mentions.values()).sort((left, right) => left.start - right.start)
+    },
     [selectedSkillMentions, value],
   )
 
@@ -352,11 +384,12 @@ export function ComposerTextarea({
 
       const cursor = textarea.selectionStart
       const label = displaySkillName(skill)
-      const replacement = `${label} `
+      const reference = skillReference(skill)
+      const replacement = `${reference} `
       const nextValue =
         value.slice(0, trigger.start) + replacement + value.slice(cursor)
       const nextCursor = trigger.start + replacement.length
-      const mentionEnd = trigger.start + label.length
+      const mentionEnd = trigger.start + reference.length
       const delta = replacement.length - (cursor - trigger.start)
 
       setSelectedSkillMentions(current => [
@@ -374,6 +407,7 @@ export function ComposerTextarea({
           id: `${skill.source}:${skill.path}:${trigger.start}:${Date.now()}`,
           name: skill.name,
           label,
+          reference,
           start: trigger.start,
           end: mentionEnd,
         },
