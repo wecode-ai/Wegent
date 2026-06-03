@@ -25,6 +25,14 @@ from executor.agents.claude_code.mode_strategy import (
 from shared.models.execution import ExecutionRequest
 
 
+def _parse_header_lines(headers: str) -> dict[str, str]:
+    return {
+        name.strip(): value.strip()
+        for line in headers.splitlines()
+        for name, value in [line.split(":", 1)]
+    }
+
+
 class TestModeStrategyFactory:
     """Tests for ModeStrategyFactory."""
 
@@ -285,17 +293,53 @@ class TestLocalModeStrategy:
         with patch("executor.config.config.ANTHROPIC_CUSTOM_HEADERS", custom_headers):
             result = strategy.configure_client_options(options, config_dir, {}, {})
 
-        assert result["env"]["ANTHROPIC_CUSTOM_HEADERS"] == custom_headers
+        headers = _parse_header_lines(result["env"]["ANTHROPIC_CUSTOM_HEADERS"])
+        assert headers["x-custom-user"] == "test"
+        assert headers["x-custom-source"] == "executor"
+        assert headers["wecode-action"] == "wegent"
+        assert headers["wecode-executor"] == "claudecode"
+        assert headers["wecode-source"] == "wegent-local"
 
-    def test_configure_client_options_no_custom_headers_when_empty(self, strategy):
-        """Test that ANTHROPIC_CUSTOM_HEADERS is not added when empty."""
+    def test_configure_client_options_merges_local_headers_with_wecode_user(
+        self, strategy
+    ):
+        """Local headers should preserve model headers and include the task user."""
+        options = {"cwd": "/workspace"}
+        config_dir = "/workspace/12345/.claude"
+        env_config = {
+            "ANTHROPIC_CUSTOM_HEADERS": "x-model-source: model\nx-shared: model"
+        }
+        task_identity_env = {"WEGENT_SKILL_USER_NAME": "alice"}
+        local_headers = "x-local-source: executor\nx-shared: local"
+
+        with patch("executor.config.config.ANTHROPIC_CUSTOM_HEADERS", local_headers):
+            result = strategy.configure_client_options(
+                options, config_dir, env_config, task_identity_env
+            )
+
+        headers = _parse_header_lines(result["env"]["ANTHROPIC_CUSTOM_HEADERS"])
+        assert headers["x-model-source"] == "model"
+        assert headers["x-local-source"] == "executor"
+        assert headers["x-shared"] == "local"
+        assert headers["wecode-action"] == "wegent"
+        assert headers["wecode-executor"] == "claudecode"
+        assert headers["wecode-source"] == "wegent-local"
+        assert headers["wecode-user"] == "alice"
+
+    def test_configure_client_options_adds_default_wecode_headers(self, strategy):
+        """Local mode should always add Wegent Claude request headers."""
         options = {"cwd": "/workspace"}
         config_dir = "/workspace/12345/.claude"
 
         with patch("executor.config.config.ANTHROPIC_CUSTOM_HEADERS", ""):
             result = strategy.configure_client_options(options, config_dir, {}, {})
 
-        assert "ANTHROPIC_CUSTOM_HEADERS" not in result["env"]
+        headers = _parse_header_lines(result["env"]["ANTHROPIC_CUSTOM_HEADERS"])
+        assert headers == {
+            "wecode-action": "wegent",
+            "wecode-executor": "claudecode",
+            "wecode-source": "wegent-local",
+        }
 
     def test_configure_client_options_refreshes_task_identity_without_mutating_input(
         self, strategy

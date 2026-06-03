@@ -202,6 +202,20 @@ Plugin 上报必须包含其内部 Skill 列表。Executor 会扫描每个 Plugi
 
 项目任务使用本地 executor 执行时，任务级 `CLAUDE_CONFIG_DIR` 会同时暴露全局 `skills` 和 `plugins` 目录，并从本机 `~/.claude/settings.json` 继承 `enabledPlugins`、`extraKnownMarketplaces` 等非敏感插件配置，使 Claude Code 能加载全局 Skill 以及 Plugin 内部提供的 Skill。模型、Token 等敏感配置仍通过运行时环境变量注入，不会从全局 settings 写入任务目录。
 
+### Claude 自定义请求头
+
+本地 executor 调用 Claude Code 时，会把 Model/Bot 的 `agent_config.env.ANTHROPIC_CUSTOM_HEADERS` 与本机 executor 进程的 `ANTHROPIC_CUSTOM_HEADERS` 合并后传给 Claude Code SDK。请求头格式为每行一个 `name: value`；同名请求头按后写入者覆盖先写入者，本机 executor 进程配置优先于 Model/Bot 配置。
+
+本地模式还会追加以下 Wegent 请求头，用于标识 Claude 模型请求来源：
+
+| 请求头 | 值 |
+|--------|----|
+| `wecode-action` | `wegent` |
+| `wecode-executor` | `claudecode` |
+| `wecode-source` | `wegent-local` |
+
+Executor 会根据当前任务身份追加 `wecode-user: <user_name>`。如果前面的配置中已经包含上述 Wegent 请求头，local 模式的标准值会覆盖对应字段，确保 Claude 模型请求携带当前 Wegent 用户身份和本地执行来源。
+
 ---
 
 ## 🔄 任务执行流程

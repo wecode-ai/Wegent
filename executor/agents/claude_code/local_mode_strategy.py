@@ -35,6 +35,53 @@ from shared.logger import setup_logger
 logger = setup_logger("local_mode_strategy")
 
 GLOBAL_PLUGIN_SETTINGS_KEYS = ("enabledPlugins", "extraKnownMarketplaces")
+LOCAL_CLAUDE_REQUEST_HEADERS = {
+    "wecode-action": "wegent",
+    "wecode-executor": "claudecode",
+    "wecode-source": "wegent-local",
+}
+
+
+def _merge_anthropic_custom_headers(*header_values: str) -> str:
+    """Merge newline-delimited Anthropic custom headers by header name."""
+    merged: dict[str, tuple[str, str]] = {}
+    order: list[str] = []
+
+    for header_value in header_values:
+        if not header_value:
+            continue
+        for raw_line in str(header_value).splitlines():
+            line = raw_line.strip()
+            if not line or ":" not in line:
+                continue
+            name, value = line.split(":", 1)
+            header_name = name.strip()
+            normalized_name = header_name.lower()
+            if not header_name:
+                continue
+            if normalized_name not in merged:
+                order.append(normalized_name)
+            merged[normalized_name] = (header_name, value.strip())
+
+    return "\n".join(
+        f"{merged[normalized_name][0]}: {merged[normalized_name][1]}"
+        for normalized_name in order
+    )
+
+
+def _ensure_wecode_user_header(headers: str, user_name: str | None) -> str:
+    """Ensure ANTHROPIC_CUSTOM_HEADERS contains the task user header."""
+    if not user_name:
+        return headers
+
+    return _merge_anthropic_custom_headers(headers, f"wecode-user: {user_name}")
+
+
+def _build_local_claude_request_headers() -> str:
+    """Build local-mode default Claude request headers."""
+    return "\n".join(
+        f"{name}: {value}" for name, value in LOCAL_CLAUDE_REQUEST_HEADERS.items()
+    )
 
 
 class LocalModeStrategy(ExecutionModeStrategy):
@@ -169,12 +216,18 @@ class LocalModeStrategy(ExecutionModeStrategy):
         env["CLAUDE_CONFIG_DIR"] = config_dir
         env["SKILLS_DIR"] = self.get_skills_directory(config_dir)
 
-        # Add ANTHROPIC_CUSTOM_HEADERS if configured via environment variable
-        if config.ANTHROPIC_CUSTOM_HEADERS:
-            env["ANTHROPIC_CUSTOM_HEADERS"] = config.ANTHROPIC_CUSTOM_HEADERS
-            logger.info(
-                f"Local mode: ANTHROPIC_CUSTOM_HEADERS={config.ANTHROPIC_CUSTOM_HEADERS}"
-            )
+        custom_headers = _merge_anthropic_custom_headers(
+            env.get("ANTHROPIC_CUSTOM_HEADERS", ""),
+            config.ANTHROPIC_CUSTOM_HEADERS,
+            _build_local_claude_request_headers(),
+        )
+        custom_headers = _ensure_wecode_user_header(
+            custom_headers,
+            task_identity_env.get("WEGENT_SKILL_USER_NAME"),
+        )
+        if custom_headers:
+            env["ANTHROPIC_CUSTOM_HEADERS"] = custom_headers
+            logger.info("Local mode: ANTHROPIC_CUSTOM_HEADERS configured")
 
         updated_options["env"] = env
 

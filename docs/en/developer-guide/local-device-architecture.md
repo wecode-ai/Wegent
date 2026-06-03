@@ -202,6 +202,20 @@ In `replace` mode, the executor only removes capabilities marked as `managed` in
 
 When a project task runs through the local executor, its task-level `CLAUDE_CONFIG_DIR` exposes both global `skills` and `plugins` directories and inherits non-sensitive plugin settings such as `enabledPlugins` and `extraKnownMarketplaces` from the local `~/.claude/settings.json`. This lets Claude Code load global Skills and Skills provided by Plugins. Sensitive model and token configuration is still injected through runtime environment variables and is not copied from global settings into the task directory.
 
+### Claude Custom Request Headers
+
+When the local executor calls Claude Code, it merges `agent_config.env.ANTHROPIC_CUSTOM_HEADERS` from the Model/Bot configuration with `ANTHROPIC_CUSTOM_HEADERS` from the local executor process environment before passing the result to the Claude Code SDK. The header format is one `name: value` entry per line. If the same header appears more than once, the later value wins, so the local executor process configuration takes precedence over Model/Bot configuration.
+
+Local mode also appends these Wegent headers to identify Claude model request provenance:
+
+| Header | Value |
+|--------|-------|
+| `wecode-action` | `wegent` |
+| `wecode-executor` | `claudecode` |
+| `wecode-source` | `wegent-local` |
+
+The executor also appends `wecode-user: <user_name>` from the current task identity. If earlier configuration already contains these Wegent headers, the local-mode standard values replace them so Claude model requests carry the current Wegent user identity and local execution source.
+
 ---
 
 ## 🔄 Task Execution Flow
