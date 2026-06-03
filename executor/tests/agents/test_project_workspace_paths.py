@@ -13,6 +13,10 @@ from executor.agents.codex.codex_agent import CodeXAgent
 from shared.models.execution import ExecutionRequest
 
 
+def _enable_standalone_chats(monkeypatch):
+    monkeypatch.setenv("WEGENT_EXECUTOR_STANDALONE_CHATS_ENABLED", "true")
+
+
 def test_git_project_path_uses_project_workspace_root_when_project_id_present():
     request = ExecutionRequest(
         task_id=1001,
@@ -140,6 +144,7 @@ def test_initial_standalone_chat_prepares_request_named_cwd(tmp_path, monkeypatc
     agent._claude_config_dir = str(task_dir / ".claude")
 
     executor_home = tmp_path / ".wegent-executor"
+    _enable_standalone_chats(monkeypatch)
     monkeypatch.setenv("WEGENT_EXECUTOR_CHATS_DIR", str(chats_root))
     with (
         patch(
@@ -226,6 +231,7 @@ def test_initial_standalone_chat_coordinate_mode_keeps_claude_out_of_chat_dir(
     agent._claude_config_dir = str(task_dir / ".claude")
 
     executor_home = tmp_path / ".wegent-executor"
+    _enable_standalone_chats(monkeypatch)
     monkeypatch.setenv("WEGENT_EXECUTOR_CHATS_DIR", str(chats_root))
     with (
         patch(
