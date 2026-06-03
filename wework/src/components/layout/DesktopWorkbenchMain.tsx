@@ -9,7 +9,11 @@ import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ProjectWithTasks, Task } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
-import type { WorkbenchMessage } from '@/types/workbench'
+import type {
+  GuidanceWorkbenchMessage,
+  QueuedWorkbenchMessage,
+  WorkbenchMessage,
+} from '@/types/workbench'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
 import { RightWorkspacePanel } from './workspace-panels/RightWorkspacePanel'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
@@ -25,6 +29,8 @@ interface DesktopWorkbenchMainProps {
   currentTask: Task | null
   currentProject: ProjectWithTasks | null
   messages: WorkbenchMessage[]
+  queuedMessages: QueuedWorkbenchMessage[]
+  guidanceMessages: GuidanceWorkbenchMessage[]
   projectChat: ProjectChatControls
   projectWork: ProjectWorkControls
   input: string
@@ -35,6 +41,9 @@ interface DesktopWorkbenchMainProps {
   onExpandSidebar: () => void
   onInputChange: (value: string) => void
   onSend: () => void
+  onCancelQueuedMessage: (id: string) => void
+  onSendQueuedAsGuidance: (id: string) => void
+  onCancelGuidanceMessage: (id: string) => void
 }
 
 export function DesktopWorkbenchMain({
@@ -43,6 +52,8 @@ export function DesktopWorkbenchMain({
   currentTask,
   currentProject,
   messages,
+  queuedMessages,
+  guidanceMessages,
   projectChat,
   projectWork,
   input,
@@ -53,6 +64,9 @@ export function DesktopWorkbenchMain({
   onExpandSidebar,
   onInputChange,
   onSend,
+  onCancelQueuedMessage,
+  onSendQueuedAsGuidance,
+  onCancelGuidanceMessage,
 }: DesktopWorkbenchMainProps) {
   const { t } = useTranslation('common')
   const [rightPanelOpen, setRightPanelOpen] = useState(false)
@@ -111,6 +125,11 @@ export function DesktopWorkbenchMain({
                   projectChat={projectChat}
                   projectWork={projectWork}
                   showProjectWorkBar={false}
+                  queuedMessages={queuedMessages}
+                  guidanceMessages={guidanceMessages}
+                  onCancelQueuedMessage={onCancelQueuedMessage}
+                  onSendQueuedAsGuidance={onSendQueuedAsGuidance}
+                  onCancelGuidanceMessage={onCancelGuidanceMessage}
                 />
               </div>
             </div>
@@ -136,6 +155,11 @@ export function DesktopWorkbenchMain({
                 variant="desktop"
                 projectChat={projectChat}
                 projectWork={projectWork}
+                queuedMessages={queuedMessages}
+                guidanceMessages={guidanceMessages}
+                onCancelQueuedMessage={onCancelQueuedMessage}
+                onSendQueuedAsGuidance={onSendQueuedAsGuidance}
+                onCancelGuidanceMessage={onCancelGuidanceMessage}
               />
             </div>
           </div>

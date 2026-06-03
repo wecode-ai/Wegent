@@ -252,6 +252,21 @@ export interface ChatSendAck {
   error?: string
 }
 
+export interface ChatGuidePayload {
+  task_id: number
+  subtask_id: number
+  team_id: number
+  message: string
+  guidance?: string
+  client_guidance_id?: string
+}
+
+export interface ChatGuideAck {
+  success?: boolean
+  guidance_id?: string
+  error?: string
+}
+
 export interface ChatStartPayload {
   task_id: number
   subtask_id: number
@@ -663,6 +678,32 @@ export interface ChatBlockUpdatedPayload {
   tool_output?: unknown
   tool_input?: Record<string, unknown>
   status?: ChatBlock['status'] | 'running'
+}
+
+export interface ChatGuidanceQueuedPayload {
+  task_id: number
+  subtask_id: number
+  team_id?: number
+  user_id?: number
+  guidance_id: string
+  client_guidance_id?: string
+  message?: string
+  content?: string
+  created_at?: string
+}
+
+export interface ChatGuidanceAppliedPayload {
+  task_id: number
+  subtask_id: number
+  guidance_id: string
+  client_guidance_id?: string
+  applied_at: string
+}
+
+export interface ChatGuidanceExpiredPayload {
+  task_id: number
+  subtask_id: number
+  guidance_ids: string[]
 }
 
 export type ModelOptions = Record<string, string>

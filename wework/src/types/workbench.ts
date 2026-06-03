@@ -27,6 +27,25 @@ export interface WorkbenchMessage {
   createdAt: string
 }
 
+export type QueuedMessageStatus = 'queued' | 'sending' | 'failed'
+export type GuidanceMessageStatus = 'sending' | 'queued' | 'applied' | 'expired' | 'failed'
+
+export interface QueuedWorkbenchMessage {
+  id: string
+  content: string
+  status: QueuedMessageStatus
+  createdAt: string
+  error?: string
+}
+
+export interface GuidanceWorkbenchMessage {
+  id: string
+  content: string
+  status: GuidanceMessageStatus
+  createdAt: string
+  error?: string
+}
+
 export interface WorkbenchState {
   user: User | null
   defaultTeam: Team | null

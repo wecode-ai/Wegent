@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useState } from 'react'
 import type { ReactNode } from 'react'
 import { createDeviceApi } from '@/api/devices'
 import { commitProjectChanges, loadProjectEnvironment } from '@/api/environment'
@@ -30,7 +30,13 @@ import type {
   User,
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
-import type { ToolBlock, WorkbenchMessage, WorkbenchState } from '@/types/workbench'
+import type {
+  GuidanceWorkbenchMessage,
+  QueuedWorkbenchMessage,
+  ToolBlock,
+  WorkbenchMessage,
+  WorkbenchState,
+} from '@/types/workbench'
 import { useWorkbenchAttachments } from './useWorkbenchAttachments'
 import { useWorkbenchModels } from './useWorkbenchModels'
 import { useWorkbenchSkills } from './useWorkbenchSkills'
@@ -42,6 +48,11 @@ import {
 import { WorkbenchContext } from './useWorkbench'
 
 const WEWORK_CLIENT_ORIGIN = 'wework'
+
+interface QueuedWorkbenchSend extends QueuedWorkbenchMessage {
+  payload: ChatSendPayload
+  activeDeviceId?: string
+}
 
 export interface WorkbenchServices {
   teamApi: ReturnType<typeof createTeamApi>
@@ -57,6 +68,8 @@ export interface WorkbenchServices {
 export interface WorkbenchContextValue {
   state: WorkbenchState
   messages: WorkbenchMessage[]
+  queuedMessages: QueuedWorkbenchMessage[]
+  guidanceMessages: GuidanceWorkbenchMessage[]
   projectChat: {
     models: UnifiedModel[]
     skills: UnifiedSkill[]
@@ -110,6 +123,9 @@ export interface WorkbenchContextValue {
   ) => Promise<void>
   setInput: (input: string) => void
   sendCurrentInput: () => Promise<void>
+  cancelQueuedMessage: (id: string) => void
+  sendQueuedAsGuidance: (id: string) => Promise<void>
+  cancelGuidanceMessage: (id: string) => void
 }
 
 interface WorkbenchProviderProps {
@@ -288,6 +304,8 @@ export function WorkbenchProvider({
     initialWorkbenchState
   )
   const [messages, dispatchMessages] = useReducer(messageReducer, [])
+  const [queuedSends, setQueuedSends] = useState<QueuedWorkbenchSend[]>([])
+  const [guidanceMessages, setGuidanceMessages] = useState<GuidanceWorkbenchMessage[]>([])
   const isOptionsLocked = Boolean(state.currentTask)
   const currentUser = state.user ?? user
   const modelSelectionConfig = useMemo(
@@ -426,10 +444,11 @@ export function WorkbenchProvider({
           content: payload.content,
         }),
       onChatDone: payload => {
-        if (payload.task_id) {
+        const taskId = payload.task_id ?? state.currentTask?.id
+        if (taskId) {
           dispatch({
             type: 'task_status_changed',
-            taskId: payload.task_id,
+            taskId,
             status: 'COMPLETED',
           })
         }
@@ -443,10 +462,11 @@ export function WorkbenchProvider({
         })
       },
       onChatError: payload => {
-        if (payload.task_id) {
+        const taskId = payload.task_id ?? state.currentTask?.id
+        if (taskId) {
           dispatch({
             type: 'task_status_changed',
-            taskId: payload.task_id,
+            taskId,
             status: 'FAILED',
           })
         }
@@ -484,8 +504,40 @@ export function WorkbenchProvider({
           },
         })
       },
+      onGuidanceQueued: payload => {
+        setGuidanceMessages(items =>
+          items.map(item =>
+            item.id === payload.guidance_id ||
+            item.id === payload.client_guidance_id
+              ? {
+                  ...item,
+                  id: payload.guidance_id,
+                  content: payload.message ?? payload.content ?? item.content,
+                  status: 'queued',
+                }
+              : item
+          )
+        )
+      },
+      onGuidanceApplied: payload => {
+        setGuidanceMessages(items =>
+          items.filter(item =>
+            item.id !== payload.guidance_id &&
+            item.id !== payload.client_guidance_id
+          )
+        )
+      },
+      onGuidanceExpired: payload => {
+        setGuidanceMessages(items =>
+          items.map(item =>
+            payload.guidance_ids.includes(item.id)
+              ? { ...item, status: 'expired' }
+              : item
+          )
+        )
+      },
     })
-  }, [refreshDevices, resolvedServices])
+  }, [refreshDevices, resolvedServices, state.currentTask?.id])
 
   const rememberExecutionDevice = useCallback(
     (deviceId: string) => {
@@ -520,6 +572,8 @@ export function WorkbenchProvider({
           ),
         })
         dispatchMessages({ type: 'reset', messages: [] })
+        setQueuedSends([])
+        setGuidanceMessages([])
         return
       }
       const project = state.projects.find(item => item.id === projectId)
@@ -527,6 +581,8 @@ export function WorkbenchProvider({
         writeLastProjectId(user.id, project.id)
         dispatch({ type: 'project_selected', project })
         dispatchMessages({ type: 'reset', messages: [] })
+        setQueuedSends([])
+        setGuidanceMessages([])
       }
     },
     [state.devices, state.projects, state.standaloneDeviceId, user]
@@ -546,6 +602,8 @@ export function WorkbenchProvider({
         standaloneDeviceId,
       })
       dispatchMessages({ type: 'reset', messages: [] })
+      setQueuedSends([])
+      setGuidanceMessages([])
     },
     [
       rememberExecutionDevice,
@@ -573,6 +631,8 @@ export function WorkbenchProvider({
       })
     }
     dispatchMessages({ type: 'reset', messages: [] })
+    setQueuedSends([])
+    setGuidanceMessages([])
   }, [state.devices, state.projects, state.standaloneDeviceId, user])
 
   const startStandaloneChat = useCallback(() => {
@@ -585,6 +645,8 @@ export function WorkbenchProvider({
       ),
     })
     dispatchMessages({ type: 'reset', messages: [] })
+    setQueuedSends([])
+    setGuidanceMessages([])
   }, [state.devices, state.standaloneDeviceId, user])
 
   const startNewProjectChat = useCallback(
@@ -630,6 +692,8 @@ export function WorkbenchProvider({
         type: 'reset',
         messages: sortSubtasksForDisplay(detail.subtasks ?? []).map(subtaskToMessage),
       })
+      setQueuedSends([])
+      setGuidanceMessages([])
       await resolvedServices.chatStream.joinTask(taskId)
     },
     [
@@ -657,6 +721,8 @@ export function WorkbenchProvider({
       writeLastProjectId(user.id, project.id)
       dispatch({ type: 'project_selected', project })
       dispatchMessages({ type: 'reset', messages: [] })
+      setQueuedSends([])
+      setGuidanceMessages([])
       return project
     },
     [refreshWorkLists, rememberExecutionDevice, resolvedServices, user.id]
@@ -780,110 +846,299 @@ export function WorkbenchProvider({
     [resolvedServices]
   )
 
+  const activeAssistantMessage = useMemo(
+    () =>
+      [...messages]
+        .reverse()
+        .find(
+          message =>
+            message.role === 'assistant' &&
+            message.status === 'streaming' &&
+            message.subtaskId &&
+            (!state.currentTask || message.taskId === state.currentTask.id)
+        ),
+    [messages, state.currentTask]
+  )
+  const hasActiveTurn = Boolean(activeAssistantMessage)
+
+  const buildSendPayload = useCallback(
+    (message: string): { payload: ChatSendPayload; activeDeviceId?: string } | null => {
+      if (!state.defaultTeam) return null
+
+      const activeDeviceId =
+        state.currentTask?.device_id ??
+        state.currentProject?.config?.execution?.deviceId ??
+        state.currentProject?.config?.device_id ??
+        (!state.currentProject ? state.standaloneDeviceId ?? undefined : undefined)
+
+      const payload: ChatSendPayload = {
+        task_id: state.currentTask?.id,
+        team_id: state.defaultTeam.id,
+        project_id: state.currentTask ? undefined : state.currentProject?.id,
+        client_origin: WEWORK_CLIENT_ORIGIN,
+        device_id: activeDeviceId,
+        task_type: 'code',
+        message,
+      }
+
+      if (!isOptionsLocked && modelSelection.selectedModel) {
+        payload.force_override_bot_model = modelSelection.selectedModel.name
+        payload.force_override_bot_model_type = modelSelection.selectedModel.type
+        if (Object.keys(modelSelection.selectedModelOptions).length > 0) {
+          payload.model_options = modelSelection.selectedModelOptions
+        }
+      }
+
+      if (!isOptionsLocked && skillSelection.selectedSkills.length > 0) {
+        payload.additional_skills = skillSelection.selectedSkills
+      }
+
+      if (attachmentSelection.attachments.length > 0) {
+        payload.attachment_ids = attachmentSelection.attachments.map(attachment => attachment.id)
+      }
+
+      return { payload, activeDeviceId }
+    },
+    [
+      attachmentSelection.attachments,
+      isOptionsLocked,
+      modelSelection.selectedModel,
+      modelSelection.selectedModelOptions,
+      skillSelection.selectedSkills,
+      state.currentProject,
+      state.currentTask,
+      state.defaultTeam,
+      state.standaloneDeviceId,
+    ]
+  )
+
+  const sendPreparedMessage = useCallback(
+    async (
+      message: string,
+      payload: ChatSendPayload,
+      activeDeviceId?: string
+    ): Promise<boolean> => {
+      dispatch({ type: 'sending_started' })
+      dispatchMessages({
+        type: 'user_added',
+        message: {
+          id: `local-${Date.now()}`,
+          taskId: payload.task_id,
+          role: 'user',
+          content: message,
+          status: 'done',
+          createdAt: new Date().toISOString(),
+        },
+      })
+
+      const ack = await resolvedServices.chatStream.sendMessage(payload)
+      dispatch({ type: 'sending_finished' })
+
+      if (ack.error || ack.success === false) {
+        dispatch({ type: 'error_set', error: ack.error ?? '发送失败' })
+        return false
+      }
+
+      const activeTaskId = ack.task_id ?? payload.task_id
+      if (activeTaskId) {
+        dispatch({
+          type: 'task_status_changed',
+          taskId: activeTaskId,
+          status: 'RUNNING',
+        })
+      }
+
+      if (!state.currentTask && ack.task_id) {
+        const projectId = state.currentProject?.id ?? 0
+        const openedTask: Task = {
+          id: ack.task_id,
+          title: message.substring(0, 100),
+          status: 'RUNNING',
+          task_type: 'code',
+          team_id: payload.team_id,
+          project_id: projectId,
+          client_origin: WEWORK_CLIENT_ORIGIN,
+          device_id: activeDeviceId,
+          model_id: payload.force_override_bot_model,
+          force_override_bot_model_type: payload.force_override_bot_model_type,
+          model_options: payload.model_options,
+          created_at: new Date().toISOString(),
+        }
+        dispatch({
+          type: 'task_opened',
+          task: openedTask,
+        })
+        await refreshWorkLists()
+        dispatch({ type: 'task_upserted', task: openedTask })
+      }
+
+      return true
+    },
+    [
+      refreshWorkLists,
+      resolvedServices.chatStream,
+      state.currentProject?.id,
+      state.currentTask,
+    ]
+  )
+
   const sendCurrentInput = useCallback(async () => {
     const trimmedMessage = state.input.trim()
     const hasAttachments = attachmentSelection.attachments.length > 0
-    if ((!trimmedMessage && !hasAttachments) || !state.defaultTeam) return
+    if (!trimmedMessage && !hasAttachments) return
     const message = trimmedMessage || '请参考附件'
+    const prepared = buildSendPayload(message)
+    if (!prepared) return
 
-    dispatch({ type: 'sending_started' })
     dispatch({ type: 'input_changed', input: '' })
-    dispatchMessages({
-      type: 'user_added',
-      message: {
-        id: `local-${Date.now()}`,
-        taskId: state.currentTask?.id,
-        role: 'user',
-        content: message,
-        status: 'done',
-        createdAt: new Date().toISOString(),
-      },
-    })
 
-    const activeDeviceId =
-      state.currentTask?.device_id ??
-      state.currentProject?.config?.execution?.deviceId ??
-      state.currentProject?.config?.device_id ??
-      (!state.currentProject ? state.standaloneDeviceId ?? undefined : undefined)
-
-    const payload: ChatSendPayload = {
-      task_id: state.currentTask?.id,
-      team_id: state.defaultTeam.id,
-      project_id: state.currentTask ? undefined : state.currentProject?.id,
-      client_origin: WEWORK_CLIENT_ORIGIN,
-      device_id: activeDeviceId,
-      task_type: 'code',
-      message,
-    }
-
-    if (!isOptionsLocked && modelSelection.selectedModel) {
-      payload.force_override_bot_model = modelSelection.selectedModel.name
-      payload.force_override_bot_model_type = modelSelection.selectedModel.type
-      if (Object.keys(modelSelection.selectedModelOptions).length > 0) {
-        payload.model_options = modelSelection.selectedModelOptions
-      }
-    }
-
-    if (!isOptionsLocked && skillSelection.selectedSkills.length > 0) {
-      payload.additional_skills = skillSelection.selectedSkills
-    }
-
-    if (attachmentSelection.attachments.length > 0) {
-      payload.attachment_ids = attachmentSelection.attachments.map(attachment => attachment.id)
-    }
-
-    const ack = await resolvedServices.chatStream.sendMessage(payload)
-    dispatch({ type: 'sending_finished' })
-
-    if (ack.error || ack.success === false) {
-      dispatch({ type: 'error_set', error: ack.error ?? '发送失败' })
+    if (hasActiveTurn && state.currentTask?.id) {
+      setQueuedSends(items => [
+        ...items,
+        {
+          id: `queued-${state.currentTask?.id}-${Date.now()}`,
+          content: message,
+          status: 'queued',
+          createdAt: new Date().toISOString(),
+          payload: prepared.payload,
+          activeDeviceId: prepared.activeDeviceId,
+        },
+      ])
+      attachmentSelection.resetAttachments()
       return
     }
 
-    attachmentSelection.resetAttachments()
-
-    if (!state.currentTask && ack.task_id) {
-      const projectId = state.currentProject?.id ?? 0
-      const openedTask: Task = {
-        id: ack.task_id,
-        title: message.substring(0, 100),
-        status: 'RUNNING',
-        task_type: 'code',
-        team_id: state.defaultTeam.id,
-        project_id: projectId,
-        client_origin: WEWORK_CLIENT_ORIGIN,
-        device_id: activeDeviceId,
-        model_id: payload.force_override_bot_model,
-        force_override_bot_model_type: payload.force_override_bot_model_type,
-        model_options: payload.model_options,
-        created_at: new Date().toISOString(),
-      }
-      dispatch({
-        type: 'task_opened',
-        task: openedTask,
-      })
-      dispatch({
-        type: 'task_status_changed',
-        taskId: ack.task_id,
-        status: 'RUNNING',
-      })
-      await refreshWorkLists()
-      dispatch({ type: 'task_upserted', task: openedTask })
+    const sent = await sendPreparedMessage(
+      message,
+      prepared.payload,
+      prepared.activeDeviceId
+    )
+    if (sent) {
+      attachmentSelection.resetAttachments()
     }
   }, [
     attachmentSelection,
-    refreshWorkLists,
-    isOptionsLocked,
-    modelSelection.selectedModel,
-    modelSelection.selectedModelOptions,
-    resolvedServices,
-    skillSelection.selectedSkills,
-    state.currentProject,
-    state.currentTask,
-    state.defaultTeam,
+    buildSendPayload,
+    hasActiveTurn,
+    sendPreparedMessage,
+    state.currentTask?.id,
     state.input,
-    state.standaloneDeviceId,
   ])
+
+  const sendNextQueuedMessage = useCallback(
+    async (item: QueuedWorkbenchSend) => {
+      setQueuedSends(items =>
+        items.map(queued =>
+          queued.id === item.id ? { ...queued, status: 'sending' } : queued
+        )
+      )
+
+      const sent = await sendPreparedMessage(
+        item.content,
+        item.payload,
+        item.activeDeviceId
+      )
+
+      setQueuedSends(items =>
+        sent
+          ? items.filter(queued => queued.id !== item.id)
+          : items.map(queued =>
+              queued.id === item.id
+                ? { ...queued, status: 'failed', error: '发送失败' }
+                : queued
+            )
+      )
+    },
+    [sendPreparedMessage]
+  )
+
+  useEffect(() => {
+    const next = queuedSends.find(item => item.status === 'queued')
+    if (!next || hasActiveTurn || state.isSending) return
+
+    const timer = window.setTimeout(() => {
+      void sendNextQueuedMessage(next)
+    }, 0)
+
+    return () => window.clearTimeout(timer)
+  }, [hasActiveTurn, queuedSends, sendNextQueuedMessage, state.isSending])
+
+  const cancelQueuedMessage = useCallback((id: string) => {
+    setQueuedSends(items => items.filter(item => item.id !== id))
+  }, [])
+
+  const cancelGuidanceMessage = useCallback((id: string) => {
+    setGuidanceMessages(items => items.filter(item => item.id !== id))
+  }, [])
+
+  const sendQueuedAsGuidance = useCallback(
+    async (id: string) => {
+      const item = queuedSends.find(queued => queued.id === id)
+      const taskId = state.currentTask?.id ?? item?.payload.task_id
+      const subtaskId = activeAssistantMessage?.subtaskId
+      if (!item) return
+
+      if (!taskId || !subtaskId || !state.defaultTeam) {
+        setQueuedSends(items =>
+          items.map(queued =>
+            queued.id === id
+              ? {
+                  ...queued,
+                  status: 'failed',
+                  error: '当前没有可引导的回复',
+                }
+              : queued
+          )
+        )
+        return
+      }
+
+      const guidanceId = `guidance-${taskId}-${Date.now()}`
+      setQueuedSends(items => items.filter(queued => queued.id !== id))
+      setGuidanceMessages(items => [
+        ...items,
+        {
+          id: guidanceId,
+          content: item.content,
+          status: 'sending',
+          createdAt: new Date().toISOString(),
+        },
+      ])
+
+      const ack = await resolvedServices.chatStream.sendGuidance({
+        task_id: taskId,
+        subtask_id: subtaskId,
+        team_id: state.defaultTeam.id,
+        message: item.content,
+        client_guidance_id: guidanceId,
+      })
+
+      setGuidanceMessages(items =>
+        items.map(guidance => {
+          if (guidance.id !== guidanceId) return guidance
+          if (ack.error || ack.success === false) {
+            return {
+              ...guidance,
+              status: 'failed',
+              error: ack.error ?? '引导发送失败',
+            }
+          }
+          return {
+            ...guidance,
+            id: ack.guidance_id ?? guidance.id,
+            status: 'queued',
+          }
+        })
+      )
+    },
+    [
+      activeAssistantMessage?.subtaskId,
+      queuedSends,
+      resolvedServices.chatStream,
+      state.currentTask?.id,
+      state.defaultTeam,
+    ]
+  )
 
   const runningTaskIds = useMemo(() => {
     const ids = new Set<number>()
@@ -905,6 +1160,8 @@ export function WorkbenchProvider({
   const value: WorkbenchContextValue = {
     state,
     messages,
+    queuedMessages: queuedSends,
+    guidanceMessages,
     runningTaskIds,
     projectChat: {
       models: modelSelection.models,
@@ -955,6 +1212,9 @@ export function WorkbenchProvider({
     commitEnvironmentChanges,
     setInput,
     sendCurrentInput,
+    cancelQueuedMessage,
+    sendQueuedAsGuidance,
+    cancelGuidanceMessage,
   }
 
   return (
