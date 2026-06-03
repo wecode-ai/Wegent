@@ -886,9 +886,15 @@ export class TaskStateMachine {
       this.pendingChunks = []
     }
 
+    const shouldPreserveMessageRecoveryPhase =
+      isTerminal &&
+      (this.state.status === 'waiting_socket' ||
+        this.state.status === 'joining' ||
+        this.state.status === 'syncing')
+
     this.state = {
       ...this.state,
-      status: isTerminal ? 'ready' : this.state.status,
+      status: isTerminal && !shouldPreserveMessageRecoveryPhase ? 'ready' : this.state.status,
       isStopping: isTerminal ? false : this.state.isStopping,
       messages,
       runtime,
