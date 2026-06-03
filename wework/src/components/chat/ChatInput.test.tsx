@@ -165,6 +165,41 @@ describe('ChatInput', () => {
     )
   })
 
+  test('retries local skill loading from the autocomplete error state', async () => {
+    const skill: LocalDeviceSkill = {
+      name: 'env-context',
+      description: 'Use when environment facts are needed',
+      short_description: 'Environment facts',
+      path: '/Users/crystal/.codex/skills/env-context/SKILL.md',
+      source: 'codex',
+    }
+    let rejectInitialLoad: (error: Error) => void = () => {}
+    const listLocalSkills = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<LocalDeviceSkill[]>((_, reject) => {
+            rejectInitialLoad = reject
+          }),
+      )
+      .mockResolvedValueOnce([skill])
+
+    render(
+      <ControlledChatInput
+        projectChat={projectChatControls({ listLocalSkills })}
+      />,
+    )
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
+    rejectInitialLoad(new Error('Device is offline'))
+    await screen.findByText(/workbench.local_skills_error/)
+
+    await userEvent.click(screen.getByText('workbench.retry_local_skills'))
+
+    expect(await screen.findByTestId('local-skill-option-env-context')).toBeInTheDocument()
+    expect(listLocalSkills).toHaveBeenCalledTimes(2)
+  })
+
   test('does not open local skill autocomplete for a dollar inside a word', async () => {
     const listLocalSkills = vi.fn().mockResolvedValue([])
 

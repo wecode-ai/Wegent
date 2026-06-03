@@ -155,6 +155,7 @@ export function ComposerTextarea({
       .then(nextSkills => {
         if (!mountedRef.current || requestId !== skillsRequestIdRef.current) return
         skillsLoadedRef.current = true
+        setLoadError(false)
         setSkills(nextSkills)
       })
       .catch(() => {
@@ -292,9 +293,16 @@ export function ComposerTextarea({
               {t('workbench.loading_local_skills')}
             </div>
           ) : loadError ? (
-            <div className="px-3 py-3 text-sm text-text-muted">
-              {t('workbench.local_skills_error')}
-            </div>
+            <button
+              type="button"
+              className="w-full rounded-xl px-3 py-3 text-left text-sm text-text-muted hover:bg-muted"
+              onClick={loadLocalSkills}
+            >
+              {t('workbench.local_skills_error')}{' '}
+              <span className="font-medium text-primary">
+                {t('workbench.retry_local_skills')}
+              </span>
+            </button>
           ) : filteredSkills.length === 0 ? (
             <div className="px-3 py-3 text-sm text-text-muted">
               {t('workbench.no_local_skills')}

@@ -277,4 +277,23 @@ describe('REST adapters', () => {
       }),
     )
   })
+
+  test('loads local device skills from JSON command stdout', async () => {
+    const client = mockClient()
+    const skills = [
+      {
+        name: 'env-context',
+        description: 'Environment facts',
+        path: '/Users/crystal/.codex/skills/env-context/SKILL.md',
+        source: 'codex',
+      },
+    ]
+    vi.mocked(client.post).mockResolvedValueOnce({
+      success: true,
+      stdout: JSON.stringify(skills),
+      stderr: '',
+    })
+
+    await expect(createDeviceApi(client).listSkills('device-1')).resolves.toEqual(skills)
+  })
 })

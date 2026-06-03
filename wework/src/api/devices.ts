@@ -21,14 +21,26 @@ function getStringArrayOutput(response: DeviceCommandResponse): string[] {
 }
 
 function getSkillArrayOutput(response: DeviceCommandResponse): LocalDeviceSkill[] {
-  if (!Array.isArray(response.stdout)) return []
-  return response.stdout.filter(
+  const stdout =
+    typeof response.stdout === 'string'
+      ? parseJsonOutput(response.stdout)
+      : response.stdout
+  if (!Array.isArray(stdout)) return []
+  return stdout.filter(
     (item): item is LocalDeviceSkill =>
       typeof item === 'object' &&
       item !== null &&
       'name' in item &&
       'path' in item,
   )
+}
+
+function parseJsonOutput(output: string): unknown {
+  try {
+    return JSON.parse(output)
+  } catch {
+    return output
+  }
 }
 
 export function createDeviceApi(client: HttpClient) {
