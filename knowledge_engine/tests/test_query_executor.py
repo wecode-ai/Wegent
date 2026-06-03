@@ -148,6 +148,59 @@ async def test_query_executor_carries_search_hints_into_retrieval_setting() -> N
 
 
 @pytest.mark.asyncio
+async def test_query_executor_prefers_explicit_query_plan_over_search_hints() -> None:
+    from knowledge_engine.query import QueryExecutor
+
+    storage_backend = MagicMock()
+    storage_backend.retrieve.return_value = {"records": []}
+    executor = QueryExecutor(storage_backend=storage_backend, embed_model=object())
+
+    await executor.execute(
+        knowledge_id="1",
+        query="原始 query",
+        query_plan={
+            "dense_query": "dense rewrite",
+            "sparse_query": "phrase one keyword",
+            "keywords": ["keyword"],
+            "phrases": ["phrase one"],
+            "hint_source": "explicit_hints",
+        },
+        search_hints=SearchHints(
+            semantic_query="ignored semantic",
+            keywords=["ignored"],
+            phrases=["ignored phrase"],
+        ),
+        retrieval_config={
+            "top_k": 4,
+            "score_threshold": 0.5,
+            "retrieval_mode": "hybrid",
+        },
+    )
+
+    storage_backend.retrieve.assert_called_once_with(
+        knowledge_id="1",
+        query="原始 query",
+        embed_model=executor.embed_model,
+        retrieval_setting={
+            "top_k": 4,
+            "score_threshold": 0.5,
+            "retrieval_mode": "hybrid",
+            "dense_query": "dense rewrite",
+            "sparse_query": "phrase one keyword",
+            "keywords": ["keyword"],
+            "phrases": ["phrase one"],
+            "hint_source": "explicit_hints",
+            "search_hints": {
+                "semantic_query": "ignored semantic",
+                "keywords": ["ignored"],
+                "phrases": ["ignored phrase"],
+            },
+        },
+        metadata_condition=None,
+    )
+
+
+@pytest.mark.asyncio
 async def test_query_executor_merges_hierarchical_child_hits_into_parent_content() -> (
     None
 ):

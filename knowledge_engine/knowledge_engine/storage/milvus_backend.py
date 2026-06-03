@@ -252,21 +252,16 @@ class MilvusBackend(BaseStorageBackend):
 
     def _resolve_hybrid_ranker(self) -> str:
         """
-        Resolve the hybrid ranker with a conservative default.
+        Resolve the hybrid ranker with WeightedRanker as the default.
 
-        RRFRanker remains the default until an explicit opt-in is provided.
+        RRFRanker remains available as an explicit compatibility opt-out.
         """
         configured_ranker = self.ext.get("hybrid_ranker")
-        if configured_ranker == "WeightedRanker":
-            logger.warning(
-                "[Milvus] WeightedRanker requested. This path is experimental; "
-                "verify current LlamaIndex + Milvus score behavior before "
-                "production rollout."
-            )
-            return configured_ranker
         if configured_ranker == "RRFRanker":
             return configured_ranker
-        return "RRFRanker"
+        if configured_ranker == "WeightedRanker":
+            return configured_ranker
+        return "WeightedRanker"
 
     def _resolve_hybrid_ranker_params(
         self,

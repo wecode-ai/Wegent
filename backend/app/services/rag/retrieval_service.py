@@ -456,6 +456,7 @@ class RetrievalService:
             query: Search query text.
             knowledge_base_ids: List of knowledge base IDs to search.
             db: Database session.
+            search_hints: Optional retrieval hints for sparse/dense query shaping.
             max_results: Maximum number of results to return per KB.
             document_ids: Optional list of document IDs to filter.
             metadata_condition: Optional metadata filtering conditions.
@@ -623,6 +624,7 @@ class RetrievalService:
             query: Search query
             knowledge_base_id: Knowledge base ID
             db: Database session
+            search_hints: Optional retrieval hints for sparse/dense query shaping.
             metadata_condition: Optional metadata filtering conditions
             user_name: User name for placeholder replacement in embedding headers
 
@@ -675,6 +677,7 @@ class RetrievalService:
             query: Search query
             kb: Knowledge base Kind instance
             db: Database session
+            search_hints: Optional retrieval hints for sparse/dense query shaping.
             metadata_condition: Optional metadata filtering conditions
             user_name: User name for placeholder replacement in embedding headers (optional)
 
@@ -746,6 +749,7 @@ class RetrievalService:
         knowledge_base_config: RemoteKnowledgeBaseQueryConfig,
         metadata_condition: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        """Execute a single knowledge query with optional retrieval hints."""
         storage_backend = create_storage_backend_from_runtime_config(
             knowledge_base_config.retriever_config
         )

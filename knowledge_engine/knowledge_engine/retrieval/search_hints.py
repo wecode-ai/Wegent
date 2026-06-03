@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Helpers for consuming optional search hints in retrieval backends."""
+"""Helpers for resolving dense and sparse retrieval queries."""
 
 from __future__ import annotations
 
@@ -26,7 +26,11 @@ def resolve_search_queries(
     query: str,
     retrieval_setting: dict[str, Any],
 ) -> ResolvedSearchQueries:
-    """Resolve dense and sparse query strings from optional search hints."""
+    """Resolve dense and sparse query strings from plan fields or search hints."""
+
+    planned_queries = _resolve_planned_queries(retrieval_setting)
+    if planned_queries is not None:
+        return planned_queries
 
     search_hints = _coerce_search_hints(retrieval_setting.get("search_hints"))
     dense_query = _normalize_text(search_hints.semantic_query) if search_hints else ""
@@ -37,6 +41,29 @@ def resolve_search_queries(
     keywords = _normalize_terms(search_hints.keywords) if search_hints else []
     sparse_terms = phrases + [term for term in keywords if term not in phrases]
     sparse_query = " ".join(sparse_terms).strip() or query
+
+    return ResolvedSearchQueries(
+        dense_query=dense_query,
+        sparse_query=sparse_query,
+        keywords=keywords,
+        phrases=phrases,
+    )
+
+
+def _resolve_planned_queries(
+    retrieval_setting: dict[str, Any],
+) -> ResolvedSearchQueries | None:
+    dense_query = _normalize_text(retrieval_setting.get("dense_query"))
+    sparse_query = _normalize_text(retrieval_setting.get("sparse_query"))
+    keywords = _normalize_terms(retrieval_setting.get("keywords"))
+    phrases = _normalize_terms(retrieval_setting.get("phrases"))
+
+    if not dense_query and not sparse_query and not keywords and not phrases:
+        return None
+
+    fallback_query = _normalize_text(retrieval_setting.get("query"))
+    dense_query = dense_query or fallback_query
+    sparse_query = sparse_query or fallback_query or dense_query
 
     return ResolvedSearchQueries(
         dense_query=dense_query,

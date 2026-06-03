@@ -15,5 +15,7 @@ def test_query_planner_regression_cases() -> None:
 
     for case in cases:
         plan = planner.plan(case["query"])
-        assert plan.query_type == case["expected_type"]
-        assert plan.backend_query == case["expected_backend_query"]
+        assert plan.hint_source == case["expected_hint_source"]
+        assert plan.normalized_query == case["expected_normalized_query"]
+        assert plan.dense_query == case["expected_dense_query"]
+        assert plan.sparse_query == case["expected_sparse_query"]

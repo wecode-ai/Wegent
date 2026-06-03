@@ -52,7 +52,7 @@ class QueryExecutor:
         Returns:
             Query response with ranked records.
         """
-        plan = self._planner.plan(request.query)
+        plan = self._planner.plan(request.query, request.search_hints)
         all_records: list[RemoteQueryRecord] = []
         runtime_config_by_kb_id = self._build_runtime_config_map(
             request.knowledge_base_configs
@@ -65,9 +65,11 @@ class QueryExecutor:
         else:
             search_hints = request.search_hints.model_dump(exclude_none=True)
         logger.info(
-            "Query request: query_type=%s, backend_query='%s...', hints_present=%s, semantic_query=%s, keywords=%s, phrases=%s",
-            plan.query_type,
-            plan.backend_query[:50],
+            "Query request: hint_source=%s, normalized_query='%s...', dense_query='%s...', sparse_query='%s...', hints_present=%s, semantic_query=%s, keywords=%s, phrases=%s",
+            plan.hint_source,
+            plan.normalized_query[:50],
+            plan.dense_query[:50],
+            plan.sparse_query[:50],
             bool(search_hints),
             bool(search_hints.get("semantic_query")),
             len(search_hints.get("keywords") or []),
@@ -94,9 +96,9 @@ class QueryExecutor:
         )
 
         logger.info(
-            "Query complete: query_type=%s, backend_query='%s...', total_results=%d, returned=%d",
-            plan.query_type,
-            plan.backend_query[:50],
+            "Query complete: hint_source=%s, normalized_query='%s...', total_results=%d, returned=%d",
+            plan.hint_source,
+            plan.normalized_query[:50],
             len(all_records),
             len(limited_records),
         )
@@ -161,8 +163,14 @@ class QueryExecutor:
         knowledge_id = str(knowledge_base_id)
         result = await executor.execute(
             knowledge_id=knowledge_id,
-            query=plan.backend_query,
-            search_hints=request.search_hints,
+            query=plan.normalized_query,
+            query_plan={
+                "dense_query": plan.dense_query,
+                "sparse_query": plan.sparse_query,
+                "keywords": plan.keywords,
+                "phrases": plan.phrases,
+                "hint_source": plan.hint_source,
+            },
             retrieval_config=config.retrieval_config,
             metadata_condition=request.metadata_condition,
             user_id=config.index_owner_user_id,

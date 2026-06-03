@@ -30,6 +30,7 @@ class QueryExecutor:
         *,
         knowledge_id: str,
         query: str,
+        query_plan: dict[str, Any] | None = None,
         search_hints: SearchHints | dict[str, Any] | None = None,
         retrieval_config: RuntimeRetrievalConfig | dict[str, Any],
         metadata_condition: dict[str, Any] | None = None,
@@ -37,13 +38,15 @@ class QueryExecutor:
     ) -> dict[str, Any]:
         retrieval_setting = self._normalize_retrieval_setting(
             retrieval_config,
+            query_plan=query_plan,
             search_hints=search_hints,
         )
         resolved_queries = resolve_search_queries(query, retrieval_setting)
         logger.info(
-            "[QueryExecutor] knowledge_id=%s, retrieval_mode=%s, hints_present=%s, dense_query=%s, sparse_query=%s",
+            "[QueryExecutor] knowledge_id=%s, retrieval_mode=%s, hint_source=%s, hints_present=%s, dense_query=%s, sparse_query=%s",
             knowledge_id,
             retrieval_setting["retrieval_mode"],
+            retrieval_setting.get("hint_source", "fallback"),
             "search_hints" in retrieval_setting,
             resolved_queries.dense_query,
             resolved_queries.sparse_query,
@@ -71,6 +74,7 @@ class QueryExecutor:
     def _normalize_retrieval_setting(
         retrieval_config: RuntimeRetrievalConfig | dict[str, Any],
         *,
+        query_plan: dict[str, Any] | None = None,
         search_hints: SearchHints | dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if isinstance(retrieval_config, RuntimeRetrievalConfig):
@@ -91,6 +95,16 @@ class QueryExecutor:
             retrieval_setting["vector_weight"] = config["vector_weight"]
         if "keyword_weight" in config:
             retrieval_setting["keyword_weight"] = config["keyword_weight"]
+        if query_plan is not None:
+            for field in (
+                "dense_query",
+                "sparse_query",
+                "keywords",
+                "phrases",
+                "hint_source",
+            ):
+                if field in query_plan:
+                    retrieval_setting[field] = query_plan[field]
         if search_hints is not None:
             retrieval_setting["search_hints"] = (
                 search_hints.model_dump(exclude_none=True)

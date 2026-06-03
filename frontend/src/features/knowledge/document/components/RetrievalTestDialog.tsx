@@ -358,8 +358,8 @@ export function RetrievalTestDialog({
                           <Button
                             type="button"
                             variant="ghost"
-                            size="icon-sm"
-                            className="flex-shrink-0"
+                            size="icon"
+                            className="h-8 w-8 flex-shrink-0"
                             aria-label={t('common:actions.close')}
                           >
                             <X className="h-4 w-4" />

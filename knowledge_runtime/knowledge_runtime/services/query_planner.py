@@ -2,58 +2,70 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Conservative query planner for phase-1 keyword retrieval planning."""
+"""Query planner that resolves explicit dense and sparse retrieval inputs."""
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
-QueryType = Literal[
-    "keyword_bundle",
-    "short_phrase_sentence",
-    "enumeration_or_topic",
-    "structured_span",
-    "natural_sentence",
-]
+from shared.models import SearchHints
+
+HintSource = Literal["explicit_hints", "fallback"]
 
 
 @dataclass(slots=True)
 class QueryPlan:
-    """Normalized query planning result for one retrieval request."""
+    """Resolved retrieval inputs for one query request."""
 
     original_query: str
     normalized_query: str
-    backend_query: str
-    query_type: QueryType
-    sparse_query: str | None = None
-    phrase_spans: list[str] = field(default_factory=list)
+    dense_query: str
+    sparse_query: str
+    keywords: list[str] = field(default_factory=list)
+    phrases: list[str] = field(default_factory=list)
+    hint_source: HintSource = "fallback"
     structured_spans: list[str] = field(default_factory=list)
 
 
 class QueryPlanner:
-    """Build a conservative single-query plan for phase-1 retrieval."""
+    """Build a retrieval plan from the raw query and optional search hints."""
 
     _SPACE_RE = re.compile(r"\s+")
     _STRUCTURED_TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_./-]*")
-    _SENTENCE_HINT_RE = re.compile(r"[？?]|如何|怎么|为什么|是什么")
 
-    def plan(self, query: str) -> QueryPlan:
+    def plan(
+        self,
+        query: str,
+        search_hints: SearchHints | dict[str, Any] | None = None,
+    ) -> QueryPlan:
         normalized = self._normalize(query)
         structured_spans = self._extract_structured_spans(normalized)
-        query_type = self._classify(normalized, structured_spans)
+        hints = self._coerce_search_hints(search_hints)
+        semantic_query = self._normalize(getattr(hints, "semantic_query", None) or "")
+        phrases = self._normalize_terms(getattr(hints, "phrases", None))
+        keywords = self._normalize_terms(getattr(hints, "keywords", None))
+        sparse_terms = phrases + [term for term in keywords if term not in phrases]
+        dense_query = semantic_query or normalized
+        sparse_query = " ".join(sparse_terms).strip() or normalized
+        hint_source: HintSource = (
+            "explicit_hints" if semantic_query or phrases or keywords else "fallback"
+        )
 
         return QueryPlan(
             original_query=query,
             normalized_query=normalized,
-            backend_query=normalized,
-            query_type=query_type,
+            dense_query=dense_query,
+            sparse_query=sparse_query,
+            keywords=keywords,
+            phrases=phrases,
+            hint_source=hint_source,
             structured_spans=structured_spans,
         )
 
-    def _normalize(self, query: str) -> str:
-        return self._SPACE_RE.sub(" ", query).strip()
+    def _normalize(self, query: str | None) -> str:
+        return self._SPACE_RE.sub(" ", query or "").strip()
 
     def _extract_structured_spans(self, query: str) -> list[str]:
         spans: list[str] = []
@@ -62,11 +74,28 @@ class QueryPlanner:
                 spans.append(token)
         return spans
 
-    def _classify(self, query: str, structured_spans: list[str]) -> QueryType:
-        if self._SENTENCE_HINT_RE.search(query):
-            return "natural_sentence"
-        if "、" in query or " / " in query:
-            return "enumeration_or_topic"
-        if structured_spans:
-            return "keyword_bundle"
-        return "keyword_bundle"
+    def _normalize_terms(self, terms: list[str] | None) -> list[str]:
+        if not terms:
+            return []
+
+        normalized_terms: list[str] = []
+        seen: set[str] = set()
+        for term in terms:
+            normalized = self._normalize(term)
+            if not normalized or normalized in seen:
+                continue
+            normalized_terms.append(normalized)
+            seen.add(normalized)
+        return normalized_terms
+
+    def _coerce_search_hints(
+        self,
+        search_hints: SearchHints | dict[str, Any] | None,
+    ) -> SearchHints | None:
+        if search_hints is None:
+            return None
+        if isinstance(search_hints, SearchHints):
+            return search_hints
+        if isinstance(search_hints, dict):
+            return SearchHints.model_validate(search_hints)
+        return None

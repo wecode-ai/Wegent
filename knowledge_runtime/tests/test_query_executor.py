@@ -96,7 +96,13 @@ class TestQueryExecutor:
         mock_kb_executor.execute.assert_awaited_once_with(
             knowledge_id="1",
             query="红包 520 发送 金额 规则",
-            search_hints=None,
+            query_plan={
+                "dense_query": "红包 520 发送 金额 规则",
+                "sparse_query": "红包 520 发送 金额 规则",
+                "keywords": [],
+                "phrases": [],
+                "hint_source": "fallback",
+            },
             retrieval_config=config.retrieval_config,
             metadata_condition=None,
             user_id=7,
@@ -142,7 +148,13 @@ class TestQueryExecutor:
         mock_kb_executor.execute.assert_awaited_once_with(
             knowledge_id="1",
             query="test query",
-            search_hints=query_request.search_hints,
+            query_plan={
+                "dense_query": "How to verify the release checklist?",
+                "sparse_query": "release checklist release checklist",
+                "keywords": ["release", "checklist"],
+                "phrases": ["release checklist"],
+                "hint_source": "explicit_hints",
+            },
             retrieval_config=config.retrieval_config,
             metadata_condition=None,
             user_id=7,
@@ -257,7 +269,13 @@ class TestQueryExecutor:
         mock_kb_executor.execute.assert_awaited_once_with(
             knowledge_id="1",
             query="test query",
-            search_hints=None,
+            query_plan={
+                "dense_query": "test query",
+                "sparse_query": "test query",
+                "keywords": [],
+                "phrases": [],
+                "hint_source": "fallback",
+            },
             retrieval_config=RuntimeRetrievalConfig(
                 top_k=9,
                 score_threshold=0.2,
