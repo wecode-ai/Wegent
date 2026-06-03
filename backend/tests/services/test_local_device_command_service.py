@@ -457,6 +457,45 @@ async def test_execute_device_command_endpoint_applies_configured_post_processor
 
 
 @pytest.mark.asyncio
+async def test_execute_device_command_endpoint_returns_structured_stdout(monkeypatch):
+    """Endpoint should allow command processors to return object lists."""
+    from app.api.endpoints import devices
+    from app.schemas.device import DeviceCommandRequest
+
+    skills = [
+        {
+            "name": "env-context",
+            "description": "Environment facts.",
+            "short_description": "Environment facts.",
+            "path": "/Users/crystal/.codex/skills/env-context/SKILL.md",
+            "source": "codex",
+            "mtime": 1780462034.0,
+        }
+    ]
+    service_mock = AsyncMock(
+        return_value={
+            "success": True,
+            "exit_code": 0,
+            "stdout": skills,
+            "stderr": "",
+            "duration": 0.02,
+            "timed_out": False,
+        }
+    )
+    monkeypatch.setattr(devices, "execute_configured_device_command", service_mock)
+
+    response = await devices.execute_device_command(
+        device_id="device-abc",
+        request=DeviceCommandRequest(command_key="ls_skills"),
+        db=object(),
+        current_user=SimpleNamespace(id=7),
+    )
+
+    assert response.success is True
+    assert response.stdout == skills
+
+
+@pytest.mark.asyncio
 async def test_execute_device_command_endpoint_rejects_unknown_command_key(monkeypatch):
     """Endpoint should reject command keys missing from backend configuration."""
     from fastapi import HTTPException
