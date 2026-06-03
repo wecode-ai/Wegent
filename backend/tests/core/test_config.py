@@ -107,6 +107,20 @@ class TestSettings:
         assert s.EXECUTOR_DELETE_TASK_URL is not None
         assert s.MAX_RUNNING_TASKS_PER_USER == 10
 
+    def test_chat_standalone_workspace_setting_defaults_disabled(self):
+        """Test standalone chat workspace can be enabled explicitly."""
+        s = build_settings()
+
+        assert s.CHAT_STANDALONE_WORKSPACE_ENABLED is False
+
+    def test_chat_standalone_workspace_setting_from_env(self, monkeypatch):
+        """Test standalone chat workspace setting can be loaded from env."""
+        monkeypatch.setenv("CHAT_STANDALONE_WORKSPACE_ENABLED", "true")
+
+        s = build_settings_from_env()
+
+        assert s.CHAT_STANDALONE_WORKSPACE_ENABLED is True
+
     def test_settings_task_expiration(self):
         """Test task expiration configuration"""
         s = build_settings()
