@@ -106,3 +106,34 @@ class TestStreamingCore:
         result = streaming_state.get_current_result()
         assert result["value"] == "Hello"
         assert result["shell_type"] == "Chat"
+
+    @pytest.mark.asyncio
+    async def test_finalize_marks_deferred_user_input_as_tool_deferred(
+        self, streaming_state
+    ):
+        """Deferred form exits must persist as a waiting state, not a normal turn."""
+        from chat_shell.services.streaming.core import StreamingCore
+        from shared.models import EmitterBuilder, GeneratorTransport
+
+        transport = GeneratorTransport()
+        emitter = EmitterBuilder().with_task(1, 2).with_transport(transport).build()
+        streaming_state.is_silent_exit = True
+        streaming_state.silent_exit_reason = "waiting_for_user_input"
+        streaming_state.is_deferred_user_input = True
+        streaming_state.deferred_user_input_tool_use_id = "tool_123"
+
+        core = StreamingCore(emitter=emitter, state=streaming_state)
+
+        await core.finalize()
+
+        completed = next(
+            data
+            for event_type, data in transport.get_events()
+            if event_type == "response.completed"
+        )
+        response = completed["response"]
+        assert response["stop_reason"] == "tool_deferred"
+        assert response["silent_exit"] is True
+        assert response["silent_exit_reason"] == "waiting_for_user_input"
+        assert response["deferred_user_input"] is True
+        assert response["deferred_user_input_tool_use_id"] == "tool_123"

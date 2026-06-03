@@ -540,9 +540,8 @@ export interface AskUserQuestion {
 
 export interface AskUserFormData {
   type: 'interactive_form_question'
-  ask_id: string
-  /** Tool use ID from Claude (UUID format) - used as fallback for answer submission */
-  tool_use_id?: string | null
+  /** Tool call ID used to submit the deferred form answer. */
+  tool_use_id: string
   task_id: number
   subtask_id: number
   /** All questions to render. A single-question form uses a one-item array. */
@@ -556,8 +555,7 @@ export interface AskUserFormData {
 
 export interface InteractiveFormAnswerPayload {
   type: 'interactive_form_question'
-  ask_id: string
-  tool_use_id?: string | null
+  tool_use_id: string
   task_id?: number | null
   subtask_id?: number | null
   success?: boolean
@@ -567,9 +565,7 @@ export interface InteractiveFormAnswerPayload {
 }
 
 export interface AskUserAnswer {
-  ask_id: string
-  /** Tool use ID for fallback lookup when ask_id doesn't match */
-  tool_use_id?: string | null
+  tool_use_id: string
   /** Single-question answer */
   answer?: string | string[]
   /** Multi-question answers: {question_id: value_or_list} */

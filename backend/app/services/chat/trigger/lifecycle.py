@@ -54,7 +54,7 @@ def _merge_blocks(
 ) -> list[dict[str, Any]]:
     """Merge persisted and in-memory blocks while preserving first-seen order."""
     merged: list[dict[str, Any]] = []
-    seen_ids: set[str] = set()
+    block_indexes: dict[str, int] = {}
 
     for candidate in (existing_blocks, new_blocks):
         if not isinstance(candidate, list):
@@ -63,10 +63,15 @@ def _merge_blocks(
             if not isinstance(block, dict):
                 continue
             block_id = str(block.get("id") or "")
-            if block_id and block_id in seen_ids:
+            if block_id and block_id in block_indexes:
+                existing = merged[block_indexes[block_id]]
+                merged[block_indexes[block_id]] = {
+                    **existing,
+                    **{key: value for key, value in block.items() if value is not None},
+                }
                 continue
             if block_id:
-                seen_ids.add(block_id)
+                block_indexes[block_id] = len(merged)
             merged.append(block)
 
     return merged
