@@ -343,6 +343,43 @@ describe('QuickAccessCards', () => {
     expect(screen.getByTestId('quick-launch-cards')).toBeInTheDocument()
   })
 
+  test('staggers quick phrases with horizontal slide-in animation', async () => {
+    mockGetQuickLaunch.mockResolvedValueOnce({
+      system_functions: [
+        {
+          type: 'system_function',
+          id: 'create_ppt',
+          title: 'Create PPT',
+          team_id: 2,
+          name: 'system-team',
+          enabled: true,
+          order: 10,
+          quick_phrases: ['第一句', '第二句', '第三句'],
+        },
+      ],
+      favorite_agents: [],
+    } satisfies QuickLaunchResponse)
+
+    render(
+      <QuickAccessCards
+        teams={[makeTeam({ id: 2, name: 'system-team', description: 'System description' })]}
+        selectedTeam={null}
+        onTeamSelect={jest.fn()}
+        onPhraseSelect={jest.fn()}
+        currentMode="chat"
+      />
+    )
+
+    fireEvent.click(await screen.findByText('Create PPT'))
+
+    expect(screen.getByTestId('quick-phrase-0')).toHaveClass('slide-in-from-left-2')
+    expect(screen.getByTestId('quick-phrase-1')).toHaveClass('slide-in-from-left-2')
+    expect(screen.getByTestId('quick-phrase-2')).toHaveClass('slide-in-from-left-2')
+    expect(screen.getByTestId('quick-phrase-0')).toHaveStyle({ animationDelay: '0ms' })
+    expect(screen.getByTestId('quick-phrase-1')).toHaveStyle({ animationDelay: '35ms' })
+    expect(screen.getByTestId('quick-phrase-2')).toHaveStyle({ animationDelay: '70ms' })
+  })
+
   test('keeps quick cards visible when a launcher has no quick phrases', async () => {
     const onPhraseSelect = jest.fn()
     const onTeamSelect = jest.fn()
