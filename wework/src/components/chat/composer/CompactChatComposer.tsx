@@ -124,6 +124,7 @@ export function CompactChatComposer({
             placeholder={placeholder}
             rows={1}
             className="scrollbar-none max-h-32 min-h-6 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent py-[14px] text-base leading-6 text-text-primary outline-none placeholder:text-text-muted"
+            skillMenuClassName="left-[-1rem] right-[-3.5rem]"
             onListLocalSkills={onListLocalSkills}
           />
           {canExpandInput && (

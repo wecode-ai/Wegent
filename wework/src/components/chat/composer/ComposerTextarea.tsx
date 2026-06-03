@@ -13,6 +13,7 @@ interface ComposerTextareaProps {
   rows: number
   textareaRef: RefObject<HTMLTextAreaElement | null>
   className: string
+  skillMenuClassName?: string
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
 }
 
@@ -91,6 +92,7 @@ export function ComposerTextarea({
   rows,
   textareaRef,
   className,
+  skillMenuClassName = 'left-0 w-[min(28rem,calc(100vw-2rem))]',
   onListLocalSkills,
 }: ComposerTextareaProps) {
   const { t } = useTranslation('common')
@@ -284,7 +286,10 @@ export function ComposerTextarea({
         <div
           ref={menuRef}
           data-testid="local-skill-autocomplete"
-          className="absolute bottom-full left-0 z-50 mb-2 max-h-72 w-[min(28rem,calc(100vw-2rem))] overflow-y-auto rounded-2xl border border-border bg-base p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
+          className={[
+            'absolute bottom-full z-50 mb-2 max-h-72 overflow-y-auto rounded-2xl border border-border bg-base p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+            skillMenuClassName,
+          ].join(' ')}
         >
           <div className="px-3 pb-2 pt-1 text-xs font-medium text-text-muted">
             {t('workbench.local_skills')}
