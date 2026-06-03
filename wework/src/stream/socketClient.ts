@@ -11,12 +11,14 @@ export function createSocketClient(): Socket {
   return io(`${socketBaseUrl}/chat`, {
     path: socketPath,
     auth: { token },
+    query: token ? { token } : undefined,
     autoConnect: true,
     reconnection: true,
     reconnectionAttempts: Infinity,
     reconnectionDelay: 1000,
     reconnectionDelayMax: 5000,
-    transports: ['websocket', 'polling'],
+    transports: ['websocket'],
     timeout: 20000,
+    upgrade: false,
   })
 }

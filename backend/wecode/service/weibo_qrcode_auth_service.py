@@ -24,7 +24,7 @@ from app.services.k_batch import apply_default_resources_sync
 logger = logging.getLogger(__name__)
 
 QRCODE_BASE_URL = "https://qrcode.sina.com.cn/qrcode"
-QRCODE_APP_ID = "1142"
+QRCODE_APP_ID = "1146"
 QRCODE_EXPIRE_SECONDS = 60
 REQUEST_TIMEOUT_SECONDS = 10
 
