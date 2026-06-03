@@ -4,6 +4,7 @@
 
 """Post processors for local device command results."""
 
+import json
 from collections.abc import Callable
 from typing import Any
 
@@ -62,7 +63,21 @@ def _directory_list_processor(result: CommandResult) -> CommandResult:
     return result
 
 
+def _json_processor(result: CommandResult) -> CommandResult:
+    if not result.get("success"):
+        return result
+
+    stdout = result.get("stdout") or ""
+    try:
+        result["stdout"] = json.loads(str(stdout))
+    except json.JSONDecodeError as exc:
+        result["success"] = False
+        result["error"] = f"Failed to parse command JSON output: {exc}"
+    return result
+
+
 COMMAND_POST_PROCESSORS: dict[str, CommandPostProcessor] = {
     "file_list": _file_list_processor,
     "directory_list": _directory_list_processor,
+    "json": _json_processor,
 }

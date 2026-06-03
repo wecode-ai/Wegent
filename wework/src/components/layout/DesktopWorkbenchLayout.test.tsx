@@ -157,6 +157,7 @@ describe('DesktopWorkbenchLayout', () => {
       addExistingAttachment: vi.fn(),
       removeAttachment: vi.fn(),
       resetAttachments: vi.fn(),
+      listLocalSkills: vi.fn().mockResolvedValue([]),
     },
     projectWork: {
       projects: [{ id: 1, name: 'github_wegent', tasks: [] }],

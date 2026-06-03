@@ -2,7 +2,7 @@ import { ArrowUp, Camera, Image, Maximize2, Mic, Minimize2, Plus } from 'lucide-
 import type { ChangeEvent } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { Attachment } from '@/types/api'
+import type { Attachment, LocalDeviceSkill } from '@/types/api'
 import { AttachmentBadges } from './AttachmentBadges'
 import { ComposerTextarea } from './ComposerTextarea'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
@@ -18,6 +18,7 @@ interface CompactChatComposerProps {
   attachmentErrors?: Map<string, string>
   onImageSelect?: (files: File | File[]) => void
   onRemoveAttachment?: (attachmentId: number) => void
+  onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
 }
 
 export function CompactChatComposer({
@@ -31,6 +32,7 @@ export function CompactChatComposer({
   attachmentErrors = new Map(),
   onImageSelect,
   onRemoveAttachment = () => {},
+  onListLocalSkills,
 }: CompactChatComposerProps) {
   const { t } = useTranslation('common')
   const imageInputRef = useRef<HTMLInputElement>(null)
@@ -110,6 +112,7 @@ export function CompactChatComposer({
           data-testid="compact-input-pill"
           className={[
             'relative flex min-h-[52px] min-w-0 flex-1 items-end rounded-[26px] border border-border bg-background pl-4 shadow-[0_12px_40px_rgba(0,0,0,0.08)]',
+            'z-[60]',
             hasText ? 'pr-14' : 'pr-[92px]',
           ].join(' ')}
         >
@@ -122,6 +125,8 @@ export function CompactChatComposer({
             placeholder={placeholder}
             rows={1}
             className="scrollbar-none max-h-32 min-h-6 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent py-[14px] text-base leading-6 text-text-primary outline-none placeholder:text-text-muted"
+            skillMenuClassName="left-[-1rem] right-[-3.5rem]"
+            onListLocalSkills={onListLocalSkills}
           />
           {canExpandInput && (
             <button

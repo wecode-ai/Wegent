@@ -2,6 +2,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import type {
   Attachment,
   DeviceInfo,
+  LocalDeviceSkill,
   ModelOptions,
   ProjectWithTasks,
   SkillRef,
@@ -27,6 +28,7 @@ export interface ProjectChatControls {
   toggleSkill: (skill: SkillRef) => void
   handleFileSelect: (files: File | File[]) => Promise<void>
   removeAttachment: (attachmentId: number) => Promise<void>
+  listLocalSkills: () => Promise<LocalDeviceSkill[]>
 }
 
 export interface ProjectWorkControls {
@@ -80,6 +82,7 @@ export function ChatInput({
       toggleSkill: () => {},
       handleFileSelect: async () => {},
       removeAttachment: async () => {},
+      listLocalSkills: async () => [],
     }
 
   const composerProps = { value, onChange, onSubmit, disabled, placeholder: inputPlaceholder }
@@ -89,24 +92,21 @@ export function ChatInput({
       <ProjectChatComposer
         {...composerProps}
         models={controls.models}
-        skills={controls.skills}
         selectedModel={controls.selectedModel}
         selectedModelOptions={controls.selectedModelOptions}
         isModelSelectionReady={controls.isModelSelectionReady ?? true}
-        selectedSkills={controls.selectedSkills}
         attachments={controls.attachments}
         uploadingFiles={controls.uploadingFiles}
         attachmentErrors={controls.errors}
-        optionsLocked={controls.isOptionsLocked}
         onSelectModel={controls.setSelectedModel}
         onSelectModelOption={controls.setSelectedModelOption}
-        onToggleSkill={controls.toggleSkill}
         onFileSelect={files => {
           void controls.handleFileSelect(files)
         }}
         onRemoveAttachment={attachmentId => {
           void controls.removeAttachment(attachmentId)
         }}
+        onListLocalSkills={controls.listLocalSkills}
         projectWork={
           projectWork ?? {
             projects: [],
@@ -134,6 +134,7 @@ export function ChatInput({
       onRemoveAttachment={attachmentId => {
         void controls.removeAttachment(attachmentId)
       }}
+      onListLocalSkills={controls.listLocalSkills}
     />
   )
 }

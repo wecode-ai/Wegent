@@ -98,6 +98,22 @@ button:disabled {
 }
 
 @layer utilities {
+  @keyframes local-skill-caret-blink {
+    0%,
+    49% {
+      opacity: 1;
+    }
+
+    50%,
+    100% {
+      opacity: 0;
+    }
+  }
+
+  .local-skill-caret {
+    animation: local-skill-caret-blink 1s step-end infinite;
+  }
+
   .scrollbar-none {
     -ms-overflow-style: none;
     scrollbar-width: none;

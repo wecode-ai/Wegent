@@ -37,6 +37,121 @@ GIT_BRANCH_DIFF_SHORTSTAT_COMMAND = (
     'git diff --shortstat "$merge_base" --\''
 )
 
+LS_SKILLS_SCRIPT = """
+import json
+import re
+from pathlib import Path
+
+FRONTMATTER_PATTERN = re.compile(r"^---\\n(.*?)\\n---", re.S)
+ROOTS = (
+    (Path.home() / ".claude" / "skills", "claude"),
+    (Path.home() / ".codex" / "skills", "codex"),
+)
+
+
+def read_frontmatter(path):
+    text = path.read_text(encoding="utf-8", errors="replace")
+    match = FRONTMATTER_PATTERN.match(text)
+    return match.group(1) if match else ""
+
+
+def line_indent(line):
+    return len(line) - len(line.lstrip(" "))
+
+
+def clean_scalar(value):
+    return value.strip().strip(chr(34)).strip(chr(39)).strip()
+
+
+def fold_block_lines(lines, style):
+    text = "\\n".join(line.strip() for line in lines).strip()
+    if style.startswith(">"):
+        text = re.sub(r"\\s*\\n\\s*", " ", text)
+    return re.sub(r"\\s+", " ", text).strip()
+
+
+def collect_block_scalar(lines, start_index, base_indent, style):
+    block_lines = []
+    for line in lines[start_index + 1 :]:
+        if not line.strip():
+            block_lines.append("")
+            continue
+        if line_indent(line) <= base_indent:
+            break
+        block_lines.append(line)
+    return fold_block_lines(block_lines, style)
+
+
+def frontmatter_field(frontmatter, field_name):
+    lines = frontmatter.splitlines()
+    pattern = re.compile(rf"^(\\s*){re.escape(field_name)}\\s*:\\s*(.*?)\\s*$")
+    for index, line in enumerate(lines):
+        match = pattern.match(line)
+        if not match:
+            continue
+        value = match.group(2).strip()
+        if value.startswith(("|", ">")):
+            return collect_block_scalar(lines, index, len(match.group(1)), value)
+        return clean_scalar(value)
+    return None
+
+
+def nested_metadata_field(frontmatter, field_name):
+    in_metadata = False
+    lines = frontmatter.splitlines()
+    pattern = re.compile(rf"^(\\s+){re.escape(field_name)}\\s*:\\s*(.*?)\\s*$")
+    for index, line in enumerate(lines):
+        if re.match(r"^metadata\\s*:\\s*$", line):
+            in_metadata = True
+            continue
+        if in_metadata and line and not line.startswith((" ", "\\t")):
+            in_metadata = False
+        if not in_metadata:
+            continue
+        match = pattern.match(line)
+        if match:
+            value = match.group(2).strip()
+            if value.startswith(("|", ">")):
+                return collect_block_scalar(lines, index, len(match.group(1)), value)
+            return clean_scalar(value)
+    return None
+
+
+def skill_metadata(skill_file, source):
+    stat = skill_file.stat()
+    frontmatter = read_frontmatter(skill_file)
+    name = frontmatter_field(frontmatter, "name") or skill_file.parent.name
+    return {
+        "name": name,
+        "description": frontmatter_field(frontmatter, "description") or "",
+        "short_description": nested_metadata_field(frontmatter, "short-description")
+        or frontmatter_field(frontmatter, "short-description"),
+        "path": str(skill_file),
+        "source": source,
+        "mtime": stat.st_mtime,
+    }
+
+
+skills = []
+seen_paths = set()
+for root, source in ROOTS:
+    if not root.is_dir():
+        continue
+    for skill_file in sorted(root.glob("**/SKILL.md")):
+        key = str(skill_file)
+        if key in seen_paths:
+            continue
+        try:
+            skills.append(skill_metadata(skill_file, source))
+            seen_paths.add(key)
+        except OSError:
+            continue
+
+print(json.dumps(skills, ensure_ascii=False))
+""".strip()
+
+LS_SKILLS_COMMAND = f"python3 -c {shlex.quote(LS_SKILLS_SCRIPT)}"
+
 
 DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "pwd": LocalDeviceCommandDefinition(command="pwd"),
@@ -65,6 +180,10 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "git_remote_url": LocalDeviceCommandDefinition(command="git remote get-url origin"),
     "git_add_all": LocalDeviceCommandDefinition(command="git add --all"),
     "git_commit": LocalDeviceCommandDefinition(command="git commit"),
+    "ls_skills": LocalDeviceCommandDefinition(
+        command=LS_SKILLS_COMMAND,
+        post_processor="json",
+    ),
 }
 
 

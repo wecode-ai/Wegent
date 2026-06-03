@@ -1,37 +1,28 @@
 import { ArrowUp, Mic } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { ModelOptions, SkillRef, UnifiedModel, UnifiedSkill } from '@/types/api'
+import type { ModelOptions, UnifiedModel } from '@/types/api'
 import { AddContextMenu } from './AddContextMenu'
 import { ModelSelector } from './ModelSelector'
-import { SkillSelector } from './SkillSelector'
 
 interface ComposerToolbarProps {
   canSend: boolean
   models: UnifiedModel[]
-  skills: UnifiedSkill[]
   selectedModel: UnifiedModel | null
   selectedModelOptions: ModelOptions
   isModelSelectionReady: boolean
-  selectedSkills: SkillRef[]
-  optionsLocked: boolean
   onSelectModel: (model: UnifiedModel | null) => void
   onSelectModelOption: (optionId: string, value: string) => void
-  onToggleSkill: (skill: SkillRef) => void
   onFileSelect: (files: File | File[]) => void
 }
 
 export function ComposerToolbar({
   canSend,
   models,
-  skills,
   selectedModel,
   selectedModelOptions,
   isModelSelectionReady,
-  selectedSkills,
-  optionsLocked,
   onSelectModel,
   onSelectModelOption,
-  onToggleSkill,
   onFileSelect,
 }: ComposerToolbarProps) {
   const { t } = useTranslation('common')
@@ -40,12 +31,6 @@ export function ComposerToolbar({
     <div className="mt-auto flex min-h-9 items-center justify-between gap-4">
       <div className="-ml-2 flex min-w-0 items-center gap-2">
         <AddContextMenu disabled={false} onFileSelect={onFileSelect} />
-        <SkillSelector
-          skills={skills}
-          selectedSkills={selectedSkills}
-          disabled={optionsLocked}
-          onToggleSkill={onToggleSkill}
-        />
       </div>
       <div className="flex shrink-0 items-center gap-2">
         {isModelSelectionReady ? (

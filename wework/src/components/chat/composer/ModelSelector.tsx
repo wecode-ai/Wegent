@@ -31,6 +31,8 @@ const SUBMENU_GAP = 8
 const VIEWPORT_MARGIN = 16
 const SUBMENU_RIGHT_OFFSET = MAIN_MENU_WIDTH + SUBMENU_GAP
 const SUBMENU_LEFT_OFFSET = -(SUBMENU_WIDTH + SUBMENU_GAP)
+const SUBMENU_MAX_HEIGHT = 448
+const SUBMENU_VIEWPORT_VERTICAL_GAP = 128
 const FOCUSABLE_SELECTOR =
   'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
 
@@ -61,6 +63,7 @@ export function ModelSelector({
   const isMobile = useIsMobile()
   const containerRef = useRef<HTMLDivElement>(null)
   const menuPanelRef = useRef<HTMLDivElement>(null)
+  const submenuPanelRef = useRef<HTMLDivElement>(null)
   const mobileMenuRef = useRef<HTMLDivElement>(null)
   const mobileCloseButtonRef = useRef<HTMLButtonElement>(null)
   const familyButtonRefs = useRef(new Map<string, HTMLButtonElement>())
@@ -107,7 +110,30 @@ export function ModelSelector({
     const menuRect = menuPanelRef.current.getBoundingClientRect()
     const menuTop = menuRect.top
     const targetTop = target.getBoundingClientRect().top
-    setSubmenuOffset(Math.max(0, Math.round(targetTop - menuTop)))
+    const preferredOffset = Math.round(targetTop - menuTop)
+    const submenuRect = submenuPanelRef.current?.getBoundingClientRect()
+    const submenuScrollHeight = submenuPanelRef.current?.scrollHeight ?? 0
+    const maxSubmenuHeight = Math.min(
+      SUBMENU_MAX_HEIGHT,
+      Math.max(0, window.innerHeight - SUBMENU_VIEWPORT_VERTICAL_GAP),
+    )
+    const measuredSubmenuHeight = submenuRect?.height ?? 0
+    const submenuHeight = Math.min(
+      Math.max(measuredSubmenuHeight, submenuScrollHeight),
+      maxSubmenuHeight,
+    )
+
+    if (submenuHeight > 0) {
+      const viewportTop = VIEWPORT_MARGIN
+      const viewportBottom = window.innerHeight - VIEWPORT_MARGIN
+      const maxOffset = viewportBottom - submenuHeight - menuTop
+      const minOffset = viewportTop - menuTop
+      setSubmenuOffset(
+        Math.round(Math.max(minOffset, Math.min(preferredOffset, maxOffset))),
+      )
+    } else {
+      setSubmenuOffset(preferredOffset)
+    }
 
     const rightSideLeft = SUBMENU_RIGHT_OFFSET
     const rightSideEdge = menuRect.left + rightSideLeft + SUBMENU_WIDTH
@@ -613,6 +639,7 @@ export function ModelSelector({
 
           {activeGroup ? (
             <div
+              ref={submenuPanelRef}
               data-testid="model-selector-submenu"
               style={{ top: submenuOffset, left: submenuLeft }}
               className="absolute max-h-[min(28rem,calc(100vh-8rem))] min-h-48 w-72 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
@@ -664,6 +691,7 @@ export function ModelSelector({
             </div>
           ) : (
             <div
+              ref={submenuPanelRef}
               data-testid="model-selector-submenu"
               style={{ top: submenuOffset, left: submenuLeft }}
               className="absolute w-72 rounded-2xl border border-border bg-background p-4 text-[13px] leading-[18px] text-text-muted shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
