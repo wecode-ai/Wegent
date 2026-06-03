@@ -6,7 +6,13 @@ import type {
   WorkbenchState,
 } from '@/types/workbench'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
-import type { ArchivedTaskListResponse, CreateProjectRequest, ProjectWithTasks } from '@/types/api'
+import type {
+  ArchivedTaskListResponse,
+  CreateProjectRequest,
+  ProjectWithTasks,
+  TaskDetail,
+  TaskListResponse,
+} from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import { DesktopSidebar } from './DesktopSidebar'
 import { DesktopWorkbenchMain } from './DesktopWorkbenchMain'
@@ -27,6 +33,8 @@ interface DesktopWorkbenchLayoutProps {
   onSelectProject: (projectId: number | null) => void
   onStartNewProjectChat: (projectId: number) => void
   onOpenTask: (taskId: number, projectId?: number) => void
+  onSearchTasks?: (query: string) => Promise<TaskListResponse>
+  onSearchTaskDetail?: (taskId: number) => Promise<TaskDetail>
   onRememberExecutionDevice?: (deviceId: string) => void
   onRefreshDevices?: () => Promise<void>
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
@@ -75,6 +83,8 @@ export function DesktopWorkbenchLayout({
   onSelectProject,
   onStartNewProjectChat,
   onOpenTask,
+  onSearchTasks,
+  onSearchTaskDetail,
   onRememberExecutionDevice,
   onRefreshDevices,
   onCreateProject,
@@ -191,6 +201,8 @@ export function DesktopWorkbenchLayout({
           onSelectProject={onSelectProject}
           onStartNewProjectChat={onStartNewProjectChat}
           onOpenTask={onOpenTask}
+          onSearchTasks={onSearchTasks}
+          onSearchTaskDetail={onSearchTaskDetail}
           onRememberExecutionDevice={onRememberExecutionDevice}
           onOpenPlugins={onOpenPlugins}
           onRefreshDevices={onRefreshDevices}

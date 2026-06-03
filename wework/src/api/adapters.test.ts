@@ -50,6 +50,17 @@ describe('REST adapters', () => {
     expect(client.get).toHaveBeenCalledWith('/tasks/8?client_origin=wework')
   })
 
+  test('searches conversation tasks in the wework client origin', async () => {
+    const client = mockClient()
+    vi.mocked(client.get).mockResolvedValueOnce({ total: 0, items: [] })
+
+    await createTaskApi(client).searchTasks('胡云鹏', { limit: 30 })
+
+    expect(client.get).toHaveBeenCalledWith(
+      '/tasks/wework/conversation-search?keyword=%E8%83%A1%E4%BA%91%E9%B9%8F&page=1&limit=30',
+    )
+  })
+
   test('picks default team for wework first, then code and chat', async () => {
     const client = mockClient()
     vi.mocked(client.get).mockResolvedValueOnce({
