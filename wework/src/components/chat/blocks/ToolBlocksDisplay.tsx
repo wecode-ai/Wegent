@@ -19,7 +19,7 @@ export function ToolBlocksDisplay({ blocks, isStreaming }: ToolBlocksDisplayProp
     <div className="mb-3">
       <button
         type="button"
-        className="mb-2 flex items-center gap-1 text-xs text-[#999] hover:text-[#666]"
+        className="mb-2 flex items-center gap-1 text-xs text-text-muted hover:text-text-secondary"
         onClick={() => setExpanded(!expanded)}
       >
         <span>

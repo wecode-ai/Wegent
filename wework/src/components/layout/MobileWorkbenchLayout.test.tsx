@@ -379,6 +379,11 @@ describe('MobileWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
 
+    const mobileDrawer = screen.getByText('Wework').closest('.fixed')
+    expect(mobileDrawer).toHaveStyle({
+      backgroundColor: 'rgb(var(--color-mobile-drawer))',
+    })
+    expect(mobileDrawer).toHaveClass('backdrop-blur-3xl', 'backdrop-saturate-150')
     expect(screen.getByText('项目')).toBeInTheDocument()
     expect(screen.queryByText('图片')).not.toBeInTheDocument()
     expect(screen.queryByText('编码')).not.toBeInTheDocument()
@@ -396,14 +401,14 @@ describe('MobileWorkbenchLayout', () => {
       'false',
     )
     expect(screen.getByTestId('mobile-project-item-button')).toHaveClass(
-      'text-text-primary',
+      'text-[rgb(var(--color-sidebar-text-primary))]',
     )
     expect(screen.getByText('远程连接 Claude Code')).toBeInTheDocument()
     expect(screen.getByTestId('mobile-recent-task-button')).toHaveClass(
-      'text-text-primary',
+      'text-[rgb(var(--color-sidebar-text-primary))]',
     )
     expect(screen.getByTestId('mobile-settings-button')).toHaveClass(
-      'text-text-primary',
+      'text-[rgb(var(--color-sidebar-text-primary))]',
     )
     expect(screen.getByTestId('mobile-drawer-scroll')).toHaveClass('overflow-y-auto')
   })

@@ -200,7 +200,7 @@ export function ScrollableMessageArea({
           type="button"
           data-testid="scroll-to-bottom-button"
           onClick={handleScrollToBottom}
-          className="absolute bottom-4 left-1/2 z-10 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border border-border bg-white text-text-primary shadow-sm hover:bg-muted"
+          className="absolute bottom-4 left-1/2 z-10 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border border-border bg-surface text-text-primary shadow-sm hover:bg-muted"
           aria-label={t('workbench.scroll_to_bottom', '下拉到底')}
         >
           <ArrowDown className="h-4 w-4" />

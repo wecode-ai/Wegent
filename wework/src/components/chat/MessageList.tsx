@@ -37,7 +37,7 @@ export function MessageList({ messages }: MessageListProps) {
 
 function UserMessage({ content }: { content: string }) {
   return (
-    <div className="max-w-[80%] overflow-hidden break-words whitespace-pre-wrap rounded-2xl bg-[#f4f4f4] px-4 py-3 text-[13px] leading-5 text-[#1a1a1a]">
+    <div className="max-w-[80%] overflow-hidden break-words whitespace-pre-wrap rounded-2xl bg-primary/15 px-4 py-3 text-[13px] leading-5 text-text-primary">
       {content}
     </div>
   )
@@ -50,7 +50,7 @@ function AssistantMessage({ message }: { message: WorkbenchMessage }) {
   const isThinking = isStreaming && !hasContent && !hasBlocks
 
   return (
-    <div className="min-w-0 overflow-x-hidden text-[13px] leading-6 text-[#1a1a1a]">
+    <div className="min-w-0 overflow-x-hidden text-[13px] leading-6 text-text-primary">
       {hasBlocks && (
         <ToolBlocksDisplay
           blocks={message.blocks!}
@@ -77,14 +77,14 @@ function AssistantMessage({ message }: { message: WorkbenchMessage }) {
                   return <CodeBlock lang={lang}>{children}</CodeBlock>
                 }
                 return (
-                  <code className="break-words rounded bg-[#f0f0f0] px-1.5 py-0.5 text-xs font-medium text-[#1a1a1a]">
+                  <code className="break-words rounded bg-code-bg px-1.5 py-0.5 text-xs font-medium text-text-primary">
                     {children}
                   </code>
                 )
               },
               pre: ({ children }) => <pre className="mb-3 mt-2 max-w-full overflow-hidden">{children}</pre>,
               blockquote: ({ children }) => (
-                <blockquote className="mb-3 border-l-3 border-[#e0e0e0] pl-4 text-[#666]">
+                <blockquote className="mb-3 border-l-3 border-border pl-4 text-text-secondary">
                   {children}
                 </blockquote>
               ),
@@ -94,10 +94,10 @@ function AssistantMessage({ message }: { message: WorkbenchMessage }) {
                 </div>
               ),
               th: ({ children }) => (
-                <th className="border-b border-[#e0e0e0] px-3 py-2 text-left font-semibold">{children}</th>
+                <th className="border-b border-border px-3 py-2 text-left font-semibold">{children}</th>
               ),
               td: ({ children }) => (
-                <td className="border-b border-[#e0e0e0] px-3 py-2">{children}</td>
+                <td className="border-b border-border px-3 py-2">{children}</td>
               ),
               a: ({ href, children }) => (
                 <a href={href} className="break-words text-primary underline" target="_blank" rel="noopener noreferrer">{children}</a>
@@ -109,10 +109,10 @@ function AssistantMessage({ message }: { message: WorkbenchMessage }) {
         </div>
       )}
       {isThinking && (
-        <span className="text-[#999]">正在思考</span>
+        <span className="text-text-muted">正在思考</span>
       )}
       {isStreaming && hasContent && (
-        <span className="text-[#999]">正在思考</span>
+        <span className="text-text-muted">正在思考</span>
       )}
       {message.status === 'failed' && message.error && (
         <p className="mt-2 text-xs text-red-500">{message.error}</p>
@@ -132,14 +132,14 @@ function CodeBlock({ lang, children }: { lang: string; children: React.ReactNode
   }
 
   return (
-    <code className="block max-w-full overflow-hidden rounded-lg border border-[#e0e0e0]">
-      <span className="flex items-center justify-between border-b border-[#e0e0e0] bg-white px-3 py-1.5">
-        <span className="text-xs text-[#999]">{lang || 'text'}</span>
+    <code className="block max-w-full overflow-hidden rounded-lg border border-border">
+      <span className="flex items-center justify-between border-b border-border bg-surface px-3 py-1.5">
+        <span className="text-xs text-text-muted">{lang || 'text'}</span>
         <span className="flex items-center gap-1">
           <button
             type="button"
             onClick={handleCopy}
-            className="p-0.5 text-[#999] hover:text-[#666]"
+            className="p-0.5 text-text-muted hover:text-text-secondary"
           >
             {copied ? (
               <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -153,7 +153,7 @@ function CodeBlock({ lang, children }: { lang: string; children: React.ReactNode
           </button>
         </span>
       </span>
-      <span className="block max-w-full overflow-x-auto bg-white px-4 py-3 font-mono text-xs leading-5 text-[#1a1a1a]">
+      <span className="block max-w-full overflow-x-auto bg-code-bg px-4 py-3 font-mono text-xs leading-5 text-text-primary">
         {children}
       </span>
     </code>

@@ -320,6 +320,19 @@ describe('PluginsWorkspace', () => {
     mockSystemSkillsFetch()
   })
 
+  test('uses readable theme tokens for the selected catalog tab', async () => {
+    render(<PluginsWorkspace />)
+
+    const skillsTab = screen.getByRole('tab', { name: '技能' })
+
+    expect(skillsTab).toHaveAttribute('aria-selected', 'true')
+    expect(skillsTab).toHaveClass(
+      'bg-popover',
+      'text-text-primary',
+    )
+    expect(await screen.findByText('Weibo Skill 1')).toBeInTheDocument()
+  })
+
   test('filters skills and shows the empty state for unmatched search', async () => {
     render(<PluginsWorkspace />)
 
@@ -352,8 +365,19 @@ describe('PluginsWorkspace', () => {
     expect(screen.queryByTestId('system-skills-pagination')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('plugins-create-button'))
+    expect(screen.getByTestId('plugins-create-menu')).toHaveClass(
+      'bg-[rgb(var(--color-popover))]',
+      'text-text-primary',
+      'isolate',
+    )
     expect(screen.getByTestId('plugins-create-skill-option')).toBeInTheDocument()
+    expect(screen.getByTestId('plugins-create-skill-option')).toHaveClass(
+      'text-text-primary',
+    )
     expect(screen.getByTestId('plugins-create-mcp-option')).toBeInTheDocument()
+    expect(screen.getByTestId('plugins-create-mcp-option')).toHaveClass(
+      'text-text-primary',
+    )
     await userEvent.click(screen.getByTestId('plugins-create-skill-option'))
     expect(screen.getByRole('dialog')).toBeInTheDocument()
     const upload = screen.getByTestId('skill-upload-file-input')

@@ -88,18 +88,18 @@ export function DesktopSettingsMenu({
       <button
         type="button"
         data-testid="account-menu-button"
-        className="flex h-10 w-full items-center gap-3 px-4 text-left text-[13px] font-medium leading-[18px] text-[#333] hover:bg-muted"
+        className="flex h-10 w-full items-center gap-3 px-4 text-left text-[13px] font-medium leading-[18px] text-text-primary hover:bg-muted"
       >
-        <User className="h-4 w-4 shrink-0 text-[#555]" />
+        <User className="h-4 w-4 shrink-0 text-text-secondary" />
         <span>{t('workbench.personal_account', '个人账户')}</span>
       </button>
       <button
         type="button"
         data-testid="settings-menu-button"
         onClick={onOpenSettings}
-        className="flex h-10 w-full items-center gap-3 px-4 text-left text-[13px] font-medium leading-[18px] text-[#333] hover:bg-muted"
+        className="flex h-10 w-full items-center gap-3 px-4 text-left text-[13px] font-medium leading-[18px] text-text-primary hover:bg-muted"
       >
-        <Settings className="h-4 w-4 shrink-0 text-[#555]" />
+        <Settings className="h-4 w-4 shrink-0 text-text-secondary" />
         <span>{t('workbench.settings', '设置')}</span>
       </button>
       <div className="mx-4 border-t border-border" />
@@ -109,9 +109,9 @@ export function DesktopSettingsMenu({
         aria-expanded={isUsageExpanded}
         aria-controls="remaining-usage-panel"
         onClick={handleUsageClick}
-        className="flex h-10 w-full items-center gap-3 px-4 text-left text-[13px] font-medium leading-[18px] text-[#333] hover:bg-muted"
+        className="flex h-10 w-full items-center gap-3 px-4 text-left text-[13px] font-medium leading-[18px] text-text-primary hover:bg-muted"
       >
-        <Clock className="h-4 w-4 shrink-0 text-[#555]" />
+        <Clock className="h-4 w-4 shrink-0 text-text-secondary" />
         <span className="flex-1">
           {t('workbench.remaining_usage', '剩余用量')}
         </span>
@@ -165,9 +165,9 @@ export function DesktopSettingsMenu({
         type="button"
         data-testid="logout-menu-button"
         onClick={onLogout}
-        className="flex h-10 w-full items-center gap-3 px-4 text-left text-[13px] font-medium leading-[18px] text-[#333] hover:bg-muted"
+        className="flex h-10 w-full items-center gap-3 px-4 text-left text-[13px] font-medium leading-[18px] text-text-primary hover:bg-muted"
       >
-        <LogOut className="h-4 w-4 shrink-0 text-[#555]" />
+        <LogOut className="h-4 w-4 shrink-0 text-text-secondary" />
         <span>{t('workbench.logout', '退出登录')}</span>
       </button>
     </div>
