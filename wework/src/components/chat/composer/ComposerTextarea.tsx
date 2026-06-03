@@ -82,7 +82,7 @@ function renderCaret(key: string) {
     <span
       key={key}
       data-testid="local-skill-caret"
-      className="inline-block h-5 w-px animate-pulse align-middle"
+      className="local-skill-caret inline-block h-5 w-px align-middle"
       style={{ backgroundColor: 'rgb(26, 26, 26)' }}
     />
   )

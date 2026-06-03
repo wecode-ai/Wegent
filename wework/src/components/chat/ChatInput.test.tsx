@@ -171,7 +171,7 @@ describe('ChatInput', () => {
 
     expect(screen.getByTestId('chat-message-input')).toHaveValue('Env Context ')
     expect(screen.getByTestId('local-skill-chip-env-context')).toHaveTextContent('Env Context')
-    expect(await screen.findByTestId('local-skill-caret')).toBeInTheDocument()
+    expect(await screen.findByTestId('local-skill-caret')).toHaveClass('local-skill-caret')
   })
 
   test('keeps the composer editable after selecting a local skill', async () => {
