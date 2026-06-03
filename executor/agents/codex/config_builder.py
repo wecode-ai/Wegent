@@ -13,6 +13,7 @@ from typing import Any, Optional
 
 from executor.agents.env_value import resolve_env_value
 from executor.config import config
+from executor.config.local_cli_config import use_local_cli_config
 from shared.logger import setup_logger
 
 OPENAI_RESPONSES_PROTOCOL = "openai-responses"
@@ -30,7 +31,7 @@ class CodeXConfig:
 
     codex_bin: str
     model: str
-    model_provider: str
+    model_provider: Optional[str]
     config_overrides: tuple[str, ...]
     thread_config: dict[str, Any]
     effort: Optional[str]
@@ -57,6 +58,20 @@ def build_codex_config(model_config: dict[str, Any]) -> CodeXConfig:
     if not model:
         raise ValueError("CodeXAgent requires model_config.model_id")
 
+    local_config = use_local_cli_config("codex")
+    reasoning = _normalize_reasoning(model_config.get("reasoning"))
+    if local_config:
+        overrides = [f"model={model}"]
+        return CodeXConfig(
+            codex_bin=_resolve_codex_binary(config.CODEX_BINARY_PATH),
+            model=model,
+            model_provider=None,
+            config_overrides=tuple(overrides),
+            thread_config=_build_thread_config(reasoning),
+            effort=reasoning.get("effort"),
+            summary=reasoning.get("summary"),
+        )
+
     base_url = str(model_config.get("base_url") or "").strip()
     if not base_url:
         raise ValueError("CodeXAgent requires model_config.base_url")
@@ -69,7 +84,6 @@ def build_codex_config(model_config: dict[str, Any]) -> CodeXConfig:
 
     model_provider = _resolve_model_provider(model_config)
     wire_api = _resolve_wire_api(model_config)
-    reasoning = _normalize_reasoning(model_config.get("reasoning"))
 
     overrides = [
         "forced_login_method=api",
@@ -81,21 +95,24 @@ def build_codex_config(model_config: dict[str, Any]) -> CodeXConfig:
         f"model_providers.{model_provider}.experimental_bearer_token={api_key}",
     ]
 
-    thread_config: dict[str, Any] = {}
-    if reasoning.get("effort"):
-        thread_config["model_reasoning_effort"] = reasoning["effort"]
-    if reasoning.get("summary"):
-        thread_config["model_reasoning_summary"] = reasoning["summary"]
-
     return CodeXConfig(
         codex_bin=_resolve_codex_binary(config.CODEX_BINARY_PATH),
         model=model,
         model_provider=model_provider,
         config_overrides=tuple(overrides),
-        thread_config=thread_config,
+        thread_config=_build_thread_config(reasoning),
         effort=reasoning.get("effort"),
         summary=reasoning.get("summary"),
     )
+
+
+def _build_thread_config(reasoning: dict[str, str]) -> dict[str, Any]:
+    thread_config: dict[str, Any] = {}
+    if reasoning.get("effort"):
+        thread_config["model_reasoning_effort"] = reasoning["effort"]
+    if reasoning.get("summary"):
+        thread_config["model_reasoning_summary"] = reasoning["summary"]
+    return thread_config
 
 
 def _resolve_model_provider(model_config: dict[str, Any]) -> str:

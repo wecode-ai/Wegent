@@ -4,10 +4,17 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import pytest
+
 from executor.agents.codex.config_builder import (
     build_codex_config,
     is_codex_compatible_model,
 )
+
+
+@pytest.fixture(autouse=True)
+def clear_local_cli_config(monkeypatch):
+    monkeypatch.delenv("WEGENT_LOCAL_CLI_CONFIG_RUNTIMES", raising=False)
 
 
 def test_is_codex_compatible_model_requires_openai_responses():
@@ -53,6 +60,27 @@ def test_build_codex_config_maps_provider_and_reasoning():
     }
     assert config.effort == "high"
     assert config.summary == "concise"
+
+
+def test_build_codex_config_uses_local_cli_config(monkeypatch):
+    monkeypatch.setenv("WEGENT_LOCAL_CLI_CONFIG_RUNTIMES", "codex")
+
+    config = build_codex_config(
+        {
+            "model": "openai",
+            "model_id": "gpt-5.5",
+            "api_format": "responses",
+            "reasoning": {"effort": "high", "summary": "concise"},
+        }
+    )
+
+    assert config.model == "gpt-5.5"
+    assert config.model_provider is None
+    assert config.config_overrides == ("model=gpt-5.5",)
+    assert config.thread_config == {
+        "model_reasoning_effort": "high",
+        "model_reasoning_summary": "concise",
+    }
 
 
 def test_build_codex_config_resolves_api_key_env_placeholder(monkeypatch):
