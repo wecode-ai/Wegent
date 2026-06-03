@@ -336,7 +336,8 @@ Thanks to the following developers for their contributions and efforts to make t
             <br />
             <sub><b>Birch</b></sub>
         </a>
-    </td>
+    </td></tr>
+<tr>
     <td align="center">
         <a href="https://github.com/fengkuizhi">
             <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
