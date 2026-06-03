@@ -297,6 +297,35 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
   })
 
+  test('reserves extra bottom space when queued messages are shown above the composer', () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'assistant',
+            content: 'Ready',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+          },
+        ]}
+        queuedMessages={[
+          {
+            id: 'queued-1',
+            content: '你叫什么',
+            status: 'failed',
+            error: '发送失败',
+            createdAt: '2026-05-29T00:01:00.000Z',
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass('pb-56')
+    expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass('pb-40')
+  })
+
   test('restores and stores sidebar width in localStorage', () => {
     localStorage.setItem('wework.desktop.sidebar.width', '320')
 
