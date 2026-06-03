@@ -170,7 +170,9 @@ class RemoteRagGateway:
             query=spec.query,
             search_hints=spec.search_hints,
             max_results=spec.max_results,
-            knowledge_base_configs=spec.knowledge_base_configs or None,
+            knowledge_base_retrieval_overrides=(
+                spec.knowledge_base_retrieval_overrides or None
+            ),
             document_ids=spec.document_ids,
             metadata_condition=spec.metadata_condition,
         )

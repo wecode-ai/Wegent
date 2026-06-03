@@ -190,6 +190,18 @@ class RagRuntimeResolver:
             metadata_condition=metadata_condition,
             user_id=user_id,
             user_name=user_name,
+            knowledge_base_retrieval_overrides=[
+                {
+                    "knowledge_base_id": knowledge_base_id,
+                    "retrieval_config": RuntimeRetrievalConfig(
+                        top_k=max_results,
+                        score_threshold=score_threshold,
+                        retrieval_mode=retrieval_mode,
+                        vector_weight=vector_weight,
+                        keyword_weight=keyword_weight,
+                    ),
+                }
+            ],
             knowledge_base_configs=[
                 QueryKnowledgeBaseRuntimeConfig(
                     knowledge_base_id=knowledge_base_id,

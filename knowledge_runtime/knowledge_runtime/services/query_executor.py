@@ -19,7 +19,7 @@ from knowledge_engine.embedding.factory import (
 from knowledge_engine.query.executor import QueryExecutor as KnowledgeQueryExecutor
 from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
 from shared.models import (
-    RemoteKnowledgeBaseQueryConfig,
+    RemoteKnowledgeBaseRetrievalOverride,
     RemoteQueryRecord,
     RemoteQueryRequest,
     RemoteQueryResponse,
@@ -54,8 +54,9 @@ class QueryExecutor:
         """
         plan = self._planner.plan(request.query, request.search_hints)
         all_records: list[RemoteQueryRecord] = []
-        runtime_config_by_kb_id = self._build_runtime_config_map(
-            request.knowledge_base_configs
+        retrieval_override_by_kb_id = self._build_retrieval_override_map(
+            request.knowledge_base_ids,
+            request.knowledge_base_retrieval_overrides,
         )
 
         if request.search_hints is None:
@@ -82,7 +83,7 @@ class QueryExecutor:
                 request=request,
                 knowledge_base_id=knowledge_base_id,
                 plan=plan,
-                runtime_config=runtime_config_by_kb_id.get(knowledge_base_id),
+                retrieval_override=retrieval_override_by_kb_id.get(knowledge_base_id),
             )
             all_records.extend(records)
 
@@ -114,7 +115,7 @@ class QueryExecutor:
         request: RemoteQueryRequest,
         knowledge_base_id: int,
         plan: QueryPlan,
-        runtime_config: RemoteKnowledgeBaseQueryConfig | None = None,
+        retrieval_override: RemoteKnowledgeBaseRetrievalOverride | None = None,
     ) -> list[RemoteQueryRecord]:
         """Query a single knowledge base.
 
@@ -126,11 +127,20 @@ class QueryExecutor:
             List of records from this knowledge base.
         """
         # Resolve config from database
-        config = runtime_config or self._config_resolver.resolve_query_config(
+        config = self._config_resolver.resolve_query_config(
             db=self._db,
             knowledge_base_id=knowledge_base_id,
             user_id=request.user_id,
         )
+        if retrieval_override is not None:
+            config = config.__class__(
+                knowledge_base_id=config.knowledge_base_id,
+                index_owner_user_id=config.index_owner_user_id,
+                retriever_config=config.retriever_config,
+                embedding_model_config=config.embedding_model_config,
+                retrieval_config=retrieval_override.retrieval_config,
+                user_name=config.user_name,
+            )
 
         # Create storage backend and embedding model
         storage_backend = create_storage_backend_from_runtime_config(
@@ -144,7 +154,7 @@ class QueryExecutor:
         logger.info(
             "Query KB config: knowledge_base_id=%d, config_source=%s, storage_type=%s, retrieval_mode=%s, top_k=%s, score_threshold=%s, vector_weight=%s, keyword_weight=%s",
             knowledge_base_id,
-            "request_override" if runtime_config is not None else "database",
+            "request_override" if retrieval_override is not None else "database",
             storage_type,
             config.retrieval_config.retrieval_mode,
             config.retrieval_config.top_k,
@@ -198,11 +208,24 @@ class QueryExecutor:
 
         return records
 
-    def _build_runtime_config_map(
+    def _build_retrieval_override_map(
         self,
-        runtime_configs: list[RemoteKnowledgeBaseQueryConfig] | None,
-    ) -> dict[int, RemoteKnowledgeBaseQueryConfig]:
-        return {config.knowledge_base_id: config for config in runtime_configs or []}
+        knowledge_base_ids: list[int],
+        retrieval_overrides: list[RemoteKnowledgeBaseRetrievalOverride] | None,
+    ) -> dict[int, RemoteKnowledgeBaseRetrievalOverride]:
+        allowed_ids = set(knowledge_base_ids)
+        overrides_by_kb_id: dict[int, RemoteKnowledgeBaseRetrievalOverride] = {}
+        for override in retrieval_overrides or []:
+            if override.knowledge_base_id not in allowed_ids:
+                raise ValueError(
+                    "knowledge_base_retrieval_overrides contains an unknown knowledge_base_id"
+                )
+            if override.knowledge_base_id in overrides_by_kb_id:
+                raise ValueError(
+                    "knowledge_base_retrieval_overrides contains duplicate knowledge_base_id entries"
+                )
+            overrides_by_kb_id[override.knowledge_base_id] = override
+        return overrides_by_kb_id
 
     def _extract_document_id(self, record: dict[str, Any]) -> int | None:
         """Extract document ID from record metadata."""

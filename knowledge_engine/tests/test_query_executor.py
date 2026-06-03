@@ -201,6 +201,45 @@ async def test_query_executor_prefers_explicit_query_plan_over_search_hints() ->
 
 
 @pytest.mark.asyncio
+async def test_query_executor_uses_original_query_as_partial_plan_fallback() -> None:
+    from knowledge_engine.query import QueryExecutor
+
+    storage_backend = MagicMock()
+    storage_backend.retrieve.return_value = {"records": []}
+    executor = QueryExecutor(storage_backend=storage_backend, embed_model=object())
+
+    await executor.execute(
+        knowledge_id="1",
+        query="原始 query",
+        query_plan={
+            "keywords": ["keyword"],
+            "phrases": ["phrase one"],
+            "hint_source": "explicit_hints",
+        },
+        retrieval_config={
+            "top_k": 4,
+            "score_threshold": 0.5,
+            "retrieval_mode": "hybrid",
+        },
+    )
+
+    storage_backend.retrieve.assert_called_once_with(
+        knowledge_id="1",
+        query="原始 query",
+        embed_model=executor.embed_model,
+        retrieval_setting={
+            "top_k": 4,
+            "score_threshold": 0.5,
+            "retrieval_mode": "hybrid",
+            "keywords": ["keyword"],
+            "phrases": ["phrase one"],
+            "hint_source": "explicit_hints",
+        },
+        metadata_condition=None,
+    )
+
+
+@pytest.mark.asyncio
 async def test_query_executor_merges_hierarchical_child_hits_into_parent_content() -> (
     None
 ):

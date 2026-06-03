@@ -8,7 +8,7 @@ from typing import Dict, List, Optional
 from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.kind import EmbeddingModelRef, RetrieverRef
-from shared.models import SearchHints
+from shared.models import MAX_SEARCH_QUERY_LENGTH, SearchHints
 from shared.models.splitter_config import (  # noqa: F401
     FlatChunkConfig,
     HierarchicalChunkConfig,
@@ -63,7 +63,7 @@ class HybridWeights(BaseModel):
 class RetrieveRequest(BaseModel):
     """Document retrieval request."""
 
-    query: str
+    query: str = Field(..., min_length=1, max_length=MAX_SEARCH_QUERY_LENGTH)
     search_hints: Optional[SearchHints] = Field(
         None,
         description="Optional retrieval hints for dense rewrite and sparse planning",

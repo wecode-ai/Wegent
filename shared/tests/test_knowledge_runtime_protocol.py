@@ -25,6 +25,7 @@ def test_shared_models_exports_knowledge_runtime_protocol_types() -> None:
         "RuntimeRetrievalConfig",
         "RuntimeRetrieverConfig",
         "RemoteKnowledgeBaseQueryConfig",
+        "RemoteKnowledgeBaseRetrievalOverride",
         "RemoteDeleteDocumentIndexRequest",
         "RemoteIndexRequest",
         "RemoteListChunksRequest",
@@ -213,7 +214,20 @@ def test_remote_query_request_rejects_missing_user_id() -> None:
         )
 
 
-def test_remote_query_request_accepts_optional_runtime_configs() -> None:
+def test_remote_query_request_rejects_overlong_query() -> None:
+    remote_query_request = _require_model("RemoteQueryRequest")
+
+    with pytest.raises(ValidationError):
+        remote_query_request.model_validate(
+            {
+                "knowledge_base_ids": [1001],
+                "user_id": 42,
+                "query": "x" * 2001,
+            }
+        )
+
+
+def test_remote_query_request_accepts_optional_retrieval_overrides() -> None:
     remote_query_request = _require_model("RemoteQueryRequest")
 
     request = remote_query_request.model_validate(
@@ -221,20 +235,9 @@ def test_remote_query_request_accepts_optional_runtime_configs() -> None:
             "knowledge_base_ids": [1001],
             "user_id": 42,
             "query": "release checklist",
-            "knowledge_base_configs": [
+            "knowledge_base_retrieval_overrides": [
                 {
                     "knowledge_base_id": 1001,
-                    "index_owner_user_id": 42,
-                    "retriever_config": {
-                        "name": "retriever-a",
-                        "namespace": "default",
-                        "storage_config": {"type": "elasticsearch"},
-                    },
-                    "embedding_model_config": {
-                        "model_name": "bge-m3",
-                        "model_namespace": "default",
-                        "resolved_config": {"protocol": "openai"},
-                    },
                     "retrieval_config": {
                         "top_k": 5,
                         "score_threshold": 0.2,
@@ -247,7 +250,7 @@ def test_remote_query_request_accepts_optional_runtime_configs() -> None:
         }
     )
 
-    assert request.knowledge_base_configs is not None
+    assert request.knowledge_base_retrieval_overrides is not None
 
 
 def test_remote_query_request_accepts_search_hints() -> None:

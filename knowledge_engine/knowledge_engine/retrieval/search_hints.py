@@ -9,7 +9,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from shared.models import SearchHints
+from shared.models import (
+    build_search_hint_plan,
+    normalize_search_terms,
+    normalize_search_text,
+)
 
 
 @dataclass(slots=True)
@@ -28,40 +32,33 @@ def resolve_search_queries(
 ) -> ResolvedSearchQueries:
     """Resolve dense and sparse query strings from plan fields or search hints."""
 
-    planned_queries = _resolve_planned_queries(retrieval_setting)
+    planned_queries = _resolve_planned_queries(query, retrieval_setting)
     if planned_queries is not None:
         return planned_queries
 
-    search_hints = _coerce_search_hints(retrieval_setting.get("search_hints"))
-    dense_query = _normalize_text(search_hints.semantic_query) if search_hints else ""
-    if not dense_query:
-        dense_query = query
-
-    phrases = _normalize_terms(search_hints.phrases) if search_hints else []
-    keywords = _normalize_terms(search_hints.keywords) if search_hints else []
-    sparse_terms = phrases + [term for term in keywords if term not in phrases]
-    sparse_query = " ".join(sparse_terms).strip() or query
+    resolved = build_search_hint_plan(query, retrieval_setting.get("search_hints"))
 
     return ResolvedSearchQueries(
-        dense_query=dense_query,
-        sparse_query=sparse_query,
-        keywords=keywords,
-        phrases=phrases,
+        dense_query=resolved.dense_query,
+        sparse_query=resolved.sparse_query,
+        keywords=resolved.keywords,
+        phrases=resolved.phrases,
     )
 
 
 def _resolve_planned_queries(
+    query: str,
     retrieval_setting: dict[str, Any],
 ) -> ResolvedSearchQueries | None:
-    dense_query = _normalize_text(retrieval_setting.get("dense_query"))
-    sparse_query = _normalize_text(retrieval_setting.get("sparse_query"))
-    keywords = _normalize_terms(retrieval_setting.get("keywords"))
-    phrases = _normalize_terms(retrieval_setting.get("phrases"))
+    dense_query = normalize_search_text(retrieval_setting.get("dense_query"))
+    sparse_query = normalize_search_text(retrieval_setting.get("sparse_query"))
+    keywords = normalize_search_terms(retrieval_setting.get("keywords"))
+    phrases = normalize_search_terms(retrieval_setting.get("phrases"))
 
     if not dense_query and not sparse_query and not keywords and not phrases:
         return None
 
-    fallback_query = _normalize_text(retrieval_setting.get("query"))
+    fallback_query = normalize_search_text(query)
     dense_query = dense_query or fallback_query
     sparse_query = sparse_query or fallback_query or dense_query
 
@@ -85,32 +82,3 @@ def format_sparse_query_for_elasticsearch(
         if term not in resolved_queries.phrases
     )
     return " ".join(parts).strip() or resolved_queries.sparse_query
-
-
-def _coerce_search_hints(value: Any) -> SearchHints | None:
-    if value is None:
-        return None
-    if isinstance(value, SearchHints):
-        return value
-    if isinstance(value, dict):
-        return SearchHints.model_validate(value)
-    return None
-
-
-def _normalize_terms(terms: list[str] | None) -> list[str]:
-    if not terms:
-        return []
-
-    normalized_terms: list[str] = []
-    seen: set[str] = set()
-    for term in terms:
-        normalized = _normalize_text(term)
-        if not normalized or normalized in seen:
-            continue
-        normalized_terms.append(normalized)
-        seen.add(normalized)
-    return normalized_terms
-
-
-def _normalize_text(value: str | None) -> str:
-    return " ".join((value or "").split()).strip()

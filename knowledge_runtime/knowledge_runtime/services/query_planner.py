@@ -10,7 +10,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from shared.models import SearchHints
+from shared.models import SearchHints, build_search_hint_plan
 
 HintSource = Literal["explicit_hints", "fallback"]
 
@@ -40,27 +40,17 @@ class QueryPlanner:
         query: str,
         search_hints: SearchHints | dict[str, Any] | None = None,
     ) -> QueryPlan:
-        normalized = self._normalize(query)
-        structured_spans = self._extract_structured_spans(normalized)
-        hints = self._coerce_search_hints(search_hints)
-        semantic_query = self._normalize(getattr(hints, "semantic_query", None) or "")
-        phrases = self._normalize_terms(getattr(hints, "phrases", None))
-        keywords = self._normalize_terms(getattr(hints, "keywords", None))
-        sparse_terms = phrases + [term for term in keywords if term not in phrases]
-        dense_query = semantic_query or normalized
-        sparse_query = " ".join(sparse_terms).strip() or normalized
-        hint_source: HintSource = (
-            "explicit_hints" if semantic_query or phrases or keywords else "fallback"
-        )
+        resolved = build_search_hint_plan(query, search_hints)
+        structured_spans = self._extract_structured_spans(resolved.normalized_query)
 
         return QueryPlan(
             original_query=query,
-            normalized_query=normalized,
-            dense_query=dense_query,
-            sparse_query=sparse_query,
-            keywords=keywords,
-            phrases=phrases,
-            hint_source=hint_source,
+            normalized_query=resolved.normalized_query,
+            dense_query=resolved.dense_query,
+            sparse_query=resolved.sparse_query,
+            keywords=resolved.keywords,
+            phrases=resolved.phrases,
+            hint_source=resolved.hint_source,
             structured_spans=structured_spans,
         )
 
@@ -73,29 +63,3 @@ class QueryPlanner:
             if "_" in token or any(ch.isupper() for ch in token):
                 spans.append(token)
         return spans
-
-    def _normalize_terms(self, terms: list[str] | None) -> list[str]:
-        if not terms:
-            return []
-
-        normalized_terms: list[str] = []
-        seen: set[str] = set()
-        for term in terms:
-            normalized = self._normalize(term)
-            if not normalized or normalized in seen:
-                continue
-            normalized_terms.append(normalized)
-            seen.add(normalized)
-        return normalized_terms
-
-    def _coerce_search_hints(
-        self,
-        search_hints: SearchHints | dict[str, Any] | None,
-    ) -> SearchHints | None:
-        if search_hints is None:
-            return None
-        if isinstance(search_hints, SearchHints):
-            return search_hints
-        if isinstance(search_hints, dict):
-            return SearchHints.model_validate(search_hints)
-        return None

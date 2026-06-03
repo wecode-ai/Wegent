@@ -200,20 +200,9 @@ async def test_remote_gateway_query_posts_runtime_overrides(mocker) -> None:
         },
         user_id=8,
         max_results=5,
-        knowledge_base_configs=[
+        knowledge_base_retrieval_overrides=[
             {
                 "knowledge_base_id": 1,
-                "index_owner_user_id": 99,
-                "retriever_config": {
-                    "name": "retriever-a",
-                    "namespace": "default",
-                    "storage_config": {"type": "elasticsearch"},
-                },
-                "embedding_model_config": {
-                    "model_name": "bge-m3",
-                    "model_namespace": "default",
-                    "resolved_config": {"protocol": "openai"},
-                },
                 "retrieval_config": {
                     "top_k": 5,
                     "score_threshold": 0.2,
@@ -233,20 +222,9 @@ async def test_remote_gateway_query_posts_runtime_overrides(mocker) -> None:
         "keywords": ["release", "checklist"],
         "phrases": ["release checklist"],
     }
-    assert kwargs["json"]["knowledge_base_configs"] == [
+    assert kwargs["json"]["knowledge_base_retrieval_overrides"] == [
         {
             "knowledge_base_id": 1,
-            "index_owner_user_id": 99,
-            "retriever_config": {
-                "name": "retriever-a",
-                "namespace": "default",
-                "storage_config": {"type": "elasticsearch"},
-            },
-            "embedding_model_config": {
-                "model_name": "bge-m3",
-                "model_namespace": "default",
-                "resolved_config": {"protocol": "openai"},
-            },
             "retrieval_config": {
                 "top_k": 5,
                 "score_threshold": 0.2,

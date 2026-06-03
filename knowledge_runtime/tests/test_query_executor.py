@@ -11,7 +11,7 @@ from knowledge_runtime.services.config_resolver import QueryConfig
 from knowledge_runtime.services.query_executor import QueryExecutor
 
 from shared.models import (
-    RemoteKnowledgeBaseQueryConfig,
+    RemoteKnowledgeBaseRetrievalOverride,
     RemoteQueryRequest,
     RemoteQueryResponse,
     RuntimeEmbeddingModelConfig,
@@ -211,7 +211,7 @@ class TestQueryExecutor:
         assert len(result.records) == 2
 
     @pytest.mark.asyncio
-    async def test_execute_prefers_request_runtime_config_over_db_resolution(
+    async def test_execute_applies_request_retrieval_override(
         self, query_request
     ) -> None:
         mock_storage_backend = MagicMock()
@@ -235,25 +235,12 @@ class TestQueryExecutor:
         ):
             executor = QueryExecutor(db=MagicMock())
             executor._config_resolver.resolve_query_config = MagicMock(
-                side_effect=AssertionError(
-                    "DB config resolution should be skipped when runtime config is provided"
-                )
+                return_value=_make_query_config(1)
             )
             query_request.knowledge_base_ids = [1]
-            query_request.knowledge_base_configs = [
-                RemoteKnowledgeBaseQueryConfig(
+            query_request.knowledge_base_retrieval_overrides = [
+                RemoteKnowledgeBaseRetrievalOverride(
                     knowledge_base_id=1,
-                    index_owner_user_id=13,
-                    retriever_config=RuntimeRetrieverConfig(
-                        name="request-retriever",
-                        namespace="default",
-                        storage_config={"type": "elasticsearch"},
-                    ),
-                    embedding_model_config=RuntimeEmbeddingModelConfig(
-                        model_name="request-embedding",
-                        model_namespace="default",
-                        resolved_config={"protocol": "openai"},
-                    ),
                     retrieval_config=RuntimeRetrievalConfig(
                         top_k=9,
                         score_threshold=0.2,
@@ -284,8 +271,50 @@ class TestQueryExecutor:
                 keyword_weight=0.2,
             ),
             metadata_condition=None,
-            user_id=13,
+            user_id=7,
         )
+
+    @pytest.mark.asyncio
+    async def test_execute_rejects_duplicate_retrieval_overrides(
+        self, query_request
+    ) -> None:
+        executor = QueryExecutor(db=MagicMock())
+        query_request.knowledge_base_ids = [1]
+        query_request.knowledge_base_retrieval_overrides = [
+            RemoteKnowledgeBaseRetrievalOverride(
+                knowledge_base_id=1,
+                retrieval_config=RuntimeRetrievalConfig(top_k=5),
+            ),
+            RemoteKnowledgeBaseRetrievalOverride(
+                knowledge_base_id=1,
+                retrieval_config=RuntimeRetrievalConfig(top_k=6),
+            ),
+        ]
+
+        with pytest.raises(
+            ValueError,
+            match="duplicate knowledge_base_id",
+        ):
+            await executor.execute(query_request)
+
+    @pytest.mark.asyncio
+    async def test_execute_rejects_unknown_retrieval_override_kb_id(
+        self, query_request
+    ) -> None:
+        executor = QueryExecutor(db=MagicMock())
+        query_request.knowledge_base_ids = [1]
+        query_request.knowledge_base_retrieval_overrides = [
+            RemoteKnowledgeBaseRetrievalOverride(
+                knowledge_base_id=999,
+                retrieval_config=RuntimeRetrievalConfig(top_k=5),
+            )
+        ]
+
+        with pytest.raises(
+            ValueError,
+            match="unknown knowledge_base_id",
+        ):
+            await executor.execute(query_request)
 
     @pytest.mark.asyncio
     async def test_execute_sorts_by_score_descending(self, query_request) -> None:

@@ -442,38 +442,6 @@ export function RetrievalTestDialog({
                           </p>
                         </div>
 
-                        <div className="space-y-2 border-t border-border pt-4">
-                          <div className="flex items-center justify-between gap-3">
-                            <Label className="text-xs text-text-secondary">
-                              {t('knowledge:document.retrievalTest.searchHints')}
-                            </Label>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="h-7 px-2 text-xs"
-                              onClick={() =>
-                                setSearchHintsText(
-                                  t('knowledge:document.retrievalTest.searchHintsPlaceholder')
-                                )
-                              }
-                            >
-                              {t('knowledge:document.retrievalTest.searchHintsUseExample')}
-                            </Button>
-                          </div>
-                          <Textarea
-                            value={searchHintsText}
-                            onChange={e => setSearchHintsText(e.target.value)}
-                            placeholder={t(
-                              'knowledge:document.retrievalTest.searchHintsPlaceholder'
-                            )}
-                            className="min-h-[240px] max-h-[420px] overflow-y-auto resize-y font-mono text-xs leading-5"
-                            data-testid="retrieval-test-search-hints-input"
-                          />
-                          <p className="text-[10px] text-text-muted">
-                            {t('knowledge:document.retrievalTest.searchHintsHint')}
-                          </p>
-                        </div>
                       </div>
                     </ScrollArea>
                   </DrawerContent>
@@ -489,6 +457,39 @@ export function RetrievalTestDialog({
                 className="border-0 focus-visible:ring-0 resize-none min-h-[200px]"
                 disabled={!hasRetrievalConfig}
               />
+
+              <div className="border-t border-border bg-surface/30 px-3 py-3">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <Label className="text-xs text-text-secondary">
+                      {t('knowledge:document.retrievalTest.searchHints')}
+                    </Label>
+                    <p className="mt-1 text-[10px] text-text-muted">
+                      {t('knowledge:document.retrievalTest.searchHintsHint')}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={() =>
+                      setSearchHintsText(
+                        t('knowledge:document.retrievalTest.searchHintsPlaceholder')
+                      )
+                    }
+                  >
+                    {t('knowledge:document.retrievalTest.searchHintsUseExample')}
+                  </Button>
+                </div>
+                <Textarea
+                  value={searchHintsText}
+                  onChange={e => setSearchHintsText(e.target.value)}
+                  placeholder={t('knowledge:document.retrievalTest.searchHintsPlaceholder')}
+                  className="min-h-[180px] max-h-[320px] overflow-y-auto resize-y border-border bg-base font-mono text-xs leading-5"
+                  data-testid="retrieval-test-search-hints-input"
+                />
+              </div>
 
               {/* Footer with character count and search button */}
               <div className="flex items-center justify-between px-3 py-2 border-t border-border">

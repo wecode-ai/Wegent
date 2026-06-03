@@ -16,7 +16,7 @@ from shared.models.runtime_config import (
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
 )
-from shared.models.search_hints import SearchHints
+from shared.models.search_hints import MAX_SEARCH_QUERY_LENGTH, SearchHints
 
 
 class KnowledgeRuntimeProtocolModel(BaseModel):
@@ -83,6 +83,13 @@ class RemoteKnowledgeBaseQueryConfig(KnowledgeRuntimeProtocolModel):
     retrieval_config: RuntimeRetrievalConfig
 
 
+class RemoteKnowledgeBaseRetrievalOverride(KnowledgeRuntimeProtocolModel):
+    """Per-request retrieval-only override for one knowledge base."""
+
+    knowledge_base_id: int
+    retrieval_config: RuntimeRetrievalConfig
+
+
 class RemoteIndexRequest(KnowledgeRuntimeProtocolModel):
     """Index request - reference mode. KR resolves configs from DB."""
 
@@ -137,10 +144,12 @@ class RemoteQueryRequest(KnowledgeRuntimeProtocolModel):
 
     knowledge_base_ids: list[int]
     user_id: int
-    query: str
+    query: str = Field(min_length=1, max_length=MAX_SEARCH_QUERY_LENGTH)
     search_hints: SearchHints | None = None
     max_results: int = Field(default=5, gt=0)
-    knowledge_base_configs: list[RemoteKnowledgeBaseQueryConfig] | None = None
+    knowledge_base_retrieval_overrides: (
+        list[RemoteKnowledgeBaseRetrievalOverride] | None
+    ) = None
     document_ids: list[int] | None = None
     metadata_condition: dict[str, Any] | None = None
     extensions: dict[str, Any] | None = None
