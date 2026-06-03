@@ -308,6 +308,8 @@
     "local_skills_error": "Unable to load local skills",
     "retry_local_skills": "Retry",
     "no_local_skills": "No matching skills",
+    "local_skill_origin_local": "Local",
+    "local_skill_origin_wegent": "Wegent",
     "login_title": "Log in to Wework",
     "login_subtitle": "Continue with your Wegent account",
     "login_username": "Username",

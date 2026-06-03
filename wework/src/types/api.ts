@@ -176,6 +176,8 @@ export interface LocalDeviceSkill {
   short_description?: string | null
   path: string
   source: 'claude' | 'codex' | string
+  origin?: 'local' | 'wegent' | string
+  plugin_name?: string | null
   mtime?: number
 }
 
