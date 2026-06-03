@@ -75,7 +75,6 @@ from shared.models.responses_api_emitter import ResponsesAPIEmitter
 from shared.models.task import ExecutionResult, ThinkingStep
 from shared.status import TaskStatus
 from shared.telemetry.decorators import add_span_event, trace_async
-from shared.utils import git_util
 
 logger = setup_logger("claude_code_agent")
 
@@ -521,42 +520,13 @@ class ClaudeCodeAgent(Agent):
                 workspace_source = "local_path"
                 project_path = standalone_path
 
-        if not workspace_source:
-            return
-        if not project_id and not project_path:
-            return
-
-        if project_path:
-            project_path = os.path.expanduser(str(project_path))
-            if not os.path.isabs(project_path):
-                project_path = os.path.join(config.get_workspace_root(), project_path)
-        elif project_id and workspace_source == "git" and self.task_data.git_url:
-            repo_name = git_util.get_repo_name_from_url(self.task_data.git_url)
-            safe_repo_name = repo_name.replace("/", "_").replace("\\", "_")
-            project_path = os.path.join(
-                config.get_workspace_root(),
-                "projects",
-                str(project_id),
-                safe_repo_name,
-            )
-
+        project_path = self.prepare_project_workspace_path()
         if not project_path:
             return
 
-        if workspace_source == "local_path":
-            os.makedirs(project_path, exist_ok=True)
-        else:
-            parent_dir = os.path.dirname(project_path)
-            if parent_dir:
-                os.makedirs(parent_dir, exist_ok=True)
-
-        self.project_path = project_path
         self.options["cwd"] = project_path
         SessionManager.set_task_session_root(
             self.task_id, os.path.join(config.WEGENT_EXECUTOR_HOME, "sessions")
-        )
-        logger.info(
-            "Using project workspace path for task %s: %s", self.task_id, project_path
         )
 
     def _coordinate_mode_workspace_path(self) -> Optional[str]:

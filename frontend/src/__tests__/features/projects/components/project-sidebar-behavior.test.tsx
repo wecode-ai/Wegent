@@ -178,6 +178,7 @@ describe('project sidebar behavior', () => {
 
     fireEvent.click(screen.getByTestId('project-section-toggle'))
 
+    expect(screen.getByTestId('project-section-list')).toHaveClass('mt-1', 'space-y-0.5')
     expect(screen.getByText('pathless-project')).toBeInTheDocument()
     expect(screen.getByText('workspace-project')).toBeInTheDocument()
   })

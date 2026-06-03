@@ -104,8 +104,6 @@ jest.mock('@/features/tasks/components/chat/useChatAreaState', () => ({
     setRequiresWorkspaceOverride: jest.fn(),
     taskInputMessage: '',
     setTaskInputMessage: jest.fn(),
-    setIsLoading: jest.fn(),
-    isLoading: false,
     enableDeepThinking: false,
     setEnableDeepThinking: jest.fn(),
     enableClarification: false,
@@ -140,17 +138,14 @@ jest.mock('@/features/tasks/components/chat/useChatStreamHandlers', () => ({
   useChatStreamHandlers: () => ({
     pendingTaskId: null,
     isStreaming: false,
-    isAwaitingResponseStart: false,
     isStopping: false,
     hasPendingUserMessage: false,
-    localPendingMessage: null,
     handleSendMessage: jest.fn(),
     handleSendMessageWithModel: jest.fn(),
     handleRetry: jest.fn(),
     handleCancelTask: jest.fn(),
     stopStream: jest.fn(),
     resetStreamingState: jest.fn(),
-    isCancelling: false,
   }),
 }))
 

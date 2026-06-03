@@ -58,7 +58,10 @@ const mockTaskSessionContext = {
 
 jest.mock('next/image', () => ({
   __esModule: true,
-  default: (props: React.ImgHTMLAttributes<HTMLImageElement>) => {
+  default: ({
+    priority: _priority,
+    ...props
+  }: React.ImgHTMLAttributes<HTMLImageElement> & { priority?: boolean }) => {
     // Use a plain img in tests to avoid Next.js image runtime requirements.
     // eslint-disable-next-line @next/next/no-img-element
     return <img {...props} alt={props.alt} />
@@ -304,6 +307,21 @@ describe('TaskSidebar scroll structure', () => {
     expect(scrollableNavWrapper).not.toHaveClass('pt-0.5')
   })
 
+  it('uses compact spacing before the task sections', () => {
+    render(
+      <TaskSidebar isMobileSidebarOpen={false} setIsMobileSidebarOpen={jest.fn()} pageType="chat" />
+    )
+
+    const scrollableSection = screen.getAllByTestId('task-sidebar-scroll-content')[0]
+    const taskSectionsWrapper = scrollableSection.querySelector(
+      '[data-testid="task-sidebar-task-sections"]'
+    )
+
+    expect(taskSectionsWrapper).toHaveClass('px-2.5', 'pt-1.5', 'mt-1')
+    expect(taskSectionsWrapper).toHaveClass('border-t', 'border-border-light')
+    expect(taskSectionsWrapper).not.toHaveClass('px-3', 'pt-5', 'mt-2')
+  })
+
   it('uses compact vertical spacing in the fixed navigation section', () => {
     render(
       <TaskSidebar isMobileSidebarOpen={false} setIsMobileSidebarOpen={jest.fn()} pageType="chat" />
@@ -317,10 +335,51 @@ describe('TaskSidebar scroll structure', () => {
     const moreButton = screen.getAllByTestId('task-sidebar-more-button')[0]
 
     expect(logoSection).toHaveClass('pt-2', 'pb-1.5')
-    expect(newConversationButton).toHaveClass('h-11', 'lg:h-10', 'min-w-[44px]')
-    expect(automationButton).toHaveClass('h-11', 'lg:h-10', 'min-w-[44px]')
-    expect(moreButton).toHaveClass('h-11', 'lg:h-10', 'min-w-[44px]')
+    expect(newConversationButton).toHaveClass('h-11', 'lg:h-8', 'min-w-[44px]')
+    expect(automationButton).toHaveClass('h-11', 'lg:h-8', 'min-w-[44px]')
+    expect(moreButton).toHaveClass('h-11', 'lg:h-8', 'min-w-[44px]')
     expect(newConversationButton).toHaveAttribute('data-testid', 'new-agent-button')
+  })
+
+  it('shows the Wegent logo section when expanded', () => {
+    render(
+      <TaskSidebar
+        isMobileSidebarOpen={false}
+        setIsMobileSidebarOpen={jest.fn()}
+        pageType="chat"
+        onToggleCollapsed={jest.fn()}
+      />
+    )
+
+    const logoSection = screen.getAllByTestId('task-sidebar-logo-section')[0]
+    const logoImage = within(logoSection).getByRole('img', { name: 'Weibo Logo' })
+
+    expect(logoImage).toHaveAttribute('src', '/weibo-logo.png')
+    expect(logoImage).toHaveAttribute('width', '36')
+    expect(logoImage).toHaveAttribute('height', '35')
+    expect(logoImage).toHaveClass('object-contain')
+    expect(within(logoSection).getByText('Wegent')).toHaveClass('text-base')
+  })
+
+  it('uses restored expanded header spacing and collapse button sizing', () => {
+    render(
+      <TaskSidebar
+        isMobileSidebarOpen={false}
+        setIsMobileSidebarOpen={jest.fn()}
+        pageType="chat"
+        onToggleCollapsed={jest.fn()}
+      />
+    )
+
+    const logoSection = screen.getAllByTestId('task-sidebar-logo-section')[0]
+    const headerRow = logoSection.firstElementChild
+    const collapseButton = within(logoSection).getByTestId('collapse-sidebar-button')
+
+    expect(logoSection).toHaveClass('px-5', 'pt-2', 'pb-1.5')
+    expect(headerRow).toHaveClass('items-center', 'justify-between')
+    expect(headerRow).not.toHaveClass('h-8')
+    expect(collapseButton).toHaveClass('h-11', 'w-11', 'min-w-[44px]')
+    expect(collapseButton).toHaveClass('lg:h-10', 'lg:w-10', 'lg:min-w-10')
   })
 
   it('uses theme-aware text color for inactive sidebar labels', () => {
@@ -340,6 +399,39 @@ describe('TaskSidebar scroll structure', () => {
     expect(moreLabel).not.toHaveClass('text-[#444746]')
   })
 
+  it('uses the same left-aligned label row for primary sidebar buttons', () => {
+    render(
+      <TaskSidebar isMobileSidebarOpen={false} setIsMobileSidebarOpen={jest.fn()} pageType="chat" />
+    )
+
+    const cases = [
+      {
+        button: screen.getAllByTestId('new-agent-button')[0],
+        label: 'common:tasks.new_conversation',
+      },
+      {
+        button: screen.getAllByTestId('task-sidebar-nav-flow-button')[0],
+        label: 'common:navigation.flow',
+      },
+      {
+        button: screen.getAllByTestId('task-sidebar-more-button')[0],
+        label: 'common:navigation.more',
+      },
+    ]
+
+    for (const { button, label } of cases) {
+      const labelText = within(button).getByText(label)
+      const labelRow = labelText.parentElement
+
+      expect(button).toHaveClass('justify-start')
+      expect(button).not.toHaveClass('justify-between')
+      expect(labelRow).toHaveClass('flex-1')
+      expect(labelRow).toHaveClass('justify-start')
+      expect(labelRow?.className).toContain('gap-')
+      expect(labelText.className).not.toContain('ml-')
+    }
+  })
+
   it('keeps the user menu outside of the scroll container', () => {
     render(
       <TaskSidebar isMobileSidebarOpen={false} setIsMobileSidebarOpen={jest.fn()} pageType="chat" />
@@ -351,6 +443,8 @@ describe('TaskSidebar scroll structure', () => {
       .closest('[data-tour="settings-link"]') as HTMLElement | null
 
     expect(settingsLink).toBeInTheDocument()
+    expect(settingsLink).toHaveClass('px-2.5', 'py-3', 'border-t', 'border-border-light')
+    expect(settingsLink).toHaveClass('shrink-0')
     expect(scrollContainer).not.toContainElement(settingsLink)
   })
 
@@ -386,6 +480,7 @@ describe('TaskSidebar scroll structure', () => {
 
     const groupToggle = within(groupDock).getByTestId('task-sidebar-group-chat-toggle')
     expect(groupToggle).toHaveTextContent('common:tasks.group_chats')
+    expect(groupDock).toHaveClass('border-t', 'border-border/70')
     expect(groupToggle).toHaveClass('h-6', 'min-w-[44px]')
     expect(groupToggle).not.toHaveClass('h-11')
     expect(groupToggle).not.toHaveTextContent('(+2)')

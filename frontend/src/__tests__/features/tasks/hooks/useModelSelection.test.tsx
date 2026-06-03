@@ -11,6 +11,11 @@ import {
   type Model,
   type TeamWithBotDetails,
 } from '@/features/tasks/hooks/useModelSelection'
+import {
+  getModelFromConfig,
+  getModelNamespaceFromConfig,
+  getModelTypeFromConfig,
+} from '@/features/settings/services/bots'
 
 const mockTranslate = (_key: string, fallback?: string) => fallback ?? _key
 
@@ -29,6 +34,8 @@ jest.mock('@/apis/models', () => ({
 jest.mock('@/features/settings/services/bots', () => ({
   isPredefinedModel: jest.fn(() => false),
   getModelFromConfig: jest.fn(() => null),
+  getModelNamespaceFromConfig: jest.fn(() => undefined),
+  getModelTypeFromConfig: jest.fn(() => undefined),
   getAllowedModelsFromConfig: jest.fn(() => []),
 }))
 
@@ -47,6 +54,15 @@ const mockModel: Model = {
   provider: 'anthropic',
   modelId: 'claude-3-5-sonnet-20241022',
   type: 'public',
+}
+
+const mockAdvancedModel: Model = {
+  name: 'claude-opus-4-advanced',
+  displayName: 'Claude Opus 4 Advanced',
+  provider: 'anthropic',
+  modelId: 'claude-opus-4-advanced',
+  type: 'public',
+  isAdvanced: true,
 }
 
 const mockTeam: TeamWithBotDetails = {
@@ -130,5 +146,47 @@ describe('useModelSelection', () => {
     })
 
     expect(result.current.forceOverride).toBe(false)
+  })
+
+  it('resolves the concrete bot preset model from bot config', async () => {
+    ;(getModelFromConfig as jest.Mock).mockReturnValue(mockAdvancedModel.name)
+    ;(getModelTypeFromConfig as jest.Mock).mockReturnValue(mockAdvancedModel.type)
+    ;(getModelNamespaceFromConfig as jest.Mock).mockReturnValue(undefined)
+    const teamWithBotModel: TeamWithBotDetails = {
+      ...mockTeam,
+      bots: [
+        {
+          bot_id: 1,
+          bot_prompt: '',
+          bot: {
+            agent_config: { bind_model: mockAdvancedModel.name },
+          },
+        },
+      ],
+    } satisfies TeamWithBotDetails
+
+    ;(modelApis.getUnifiedModels as jest.Mock).mockReset()
+    let resolveModels!: (value: { data: Model[] }) => void
+    const promise = new Promise<{ data: Model[] }>(resolve => {
+      resolveModels = resolve
+    })
+    ;(modelApis.getUnifiedModels as jest.Mock).mockReturnValue(promise)
+
+    const { result } = renderHook(() =>
+      useModelSelection({
+        teamId: 1,
+        taskId: null,
+        selectedTeam: teamWithBotModel,
+      })
+    )
+
+    await act(async () => {
+      resolveModels({ data: [mockAdvancedModel] })
+      await promise
+    })
+
+    await waitFor(() => {
+      expect(result.current.boundDefaultModel).toEqual(mockAdvancedModel)
+    })
   })
 })

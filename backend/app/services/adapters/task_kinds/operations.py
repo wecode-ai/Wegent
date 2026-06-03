@@ -11,6 +11,7 @@ This module contains methods for creating, updating, deleting, and canceling tas
 import asyncio
 import json as json_lib
 import logging
+import uuid
 from datetime import datetime
 from typing import Any, Callable, Dict, Optional
 
@@ -1241,23 +1242,11 @@ class TaskOperationsMixin:
         Create new task id using tasks table auto increment.
         """
         try:
-            existing_placeholder = db.execute(
-                text(
-                    """
-                SELECT id FROM tasks
-                WHERE user_id = :user_id AND kind = 'Placeholder' AND is_active = false
-                LIMIT 1
-            """
-                ),
-                {"user_id": user_id},
-            ).fetchone()
-
-            if existing_placeholder:
-                return existing_placeholder[0]
+            placeholder_name = f"temp-placeholder-{uuid.uuid4().hex}"
 
             placeholder_json = {
                 "kind": "Placeholder",
-                "metadata": {"name": "temp-placeholder", "namespace": "default"},
+                "metadata": {"name": placeholder_name, "namespace": "default"},
                 "spec": {},
                 "status": {"state": "Reserved"},
             }
@@ -1267,11 +1256,12 @@ class TaskOperationsMixin:
                 text(
                     """
                 INSERT INTO tasks (user_id, kind, name, namespace, json, is_active, created_at, updated_at, project_id, is_group_chat)
-                VALUES (:user_id, 'Placeholder', 'temp-placeholder', 'default', :json, false, :created_at, :updated_at, :project_id, false)
+                VALUES (:user_id, 'Placeholder', :name, 'default', :json, false, :created_at, :updated_at, :project_id, false)
             """
                 ),
                 {
                     "user_id": user_id,
+                    "name": placeholder_name,
                     "json": json_lib.dumps(placeholder_json),
                     "created_at": now,
                     "updated_at": now,

@@ -43,6 +43,7 @@ def _get_default_teams_config() -> Dict[str, Dict[str, str]]:
     """
     config = {}
     mode_settings = {
+        "wework": settings.DEFAULT_TEAM_WEWORK,
         "chat": settings.DEFAULT_TEAM_CHAT,
         "code": settings.DEFAULT_TEAM_CODE,
         "knowledge": settings.DEFAULT_TEAM_KNOWLEDGE,

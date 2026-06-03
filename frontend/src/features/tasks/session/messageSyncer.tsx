@@ -765,6 +765,8 @@ export function useMessageSyncer({
           onTaskIdResolved(realTaskId, immediateTaskId)
         }
 
+        machine.markSendAccepted()
+
         // Join the task room
         if (realTaskId !== immediateTaskId && realTaskId > 0) {
           await joinTask(realTaskId)
@@ -801,7 +803,7 @@ export function useMessageSyncer({
       machine.setStopping(true)
       try {
         const state = machine.getState()
-        let subtaskId = state.streamingSubtaskId
+        let subtaskId = state.runtime.activeStreamSubtaskId
 
         // Find running subtask from backup if needed
         let runningSubtask: TaskDetailSubtask | undefined

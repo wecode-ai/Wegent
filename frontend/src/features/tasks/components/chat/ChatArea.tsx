@@ -612,7 +612,6 @@ function ChatAreaContent({
     effectiveRequiresWorkspace: chatState.effectiveRequiresWorkspace,
     taskInputMessage: chatState.taskInputMessage,
     setTaskInputMessage: chatState.setTaskInputMessage,
-    setIsLoading: chatState.setIsLoading,
     enableDeepThinking: chatState.enableDeepThinking,
     enableClarification: chatState.enableClarification,
     externalApiParams: chatState.externalApiParams,
@@ -655,7 +654,6 @@ function ChatAreaContent({
     const hasSelectedTask = Boolean(effectiveTaskId)
     const hasNewTaskStream =
       !effectiveTaskId && streamHandlers.pendingTaskId && streamHandlers.isStreaming
-    const hasLocalPending = streamHandlers.localPendingMessage !== null
     // Use taskState from state machine (single source of truth)
     const hasUnifiedMessages = taskState?.messages && taskState.messages.size > 0
 
@@ -672,7 +670,6 @@ function ChatAreaContent({
       streamHandlers.hasPendingUserMessage ||
       streamHandlers.isStreaming ||
       hasNewTaskStream ||
-      hasLocalPending ||
       hasUnifiedMessages
     )
   }, [
@@ -680,7 +677,6 @@ function ChatAreaContent({
     streamHandlers.hasPendingUserMessage,
     streamHandlers.isStreaming,
     streamHandlers.pendingTaskId,
-    streamHandlers.localPendingMessage,
     taskState?.messages,
   ])
 
@@ -743,14 +739,12 @@ function ChatAreaContent({
   const canSubmit = useMemo(() => {
     return (
       !disabledReason &&
-      !chatState.isLoading &&
       (!streamHandlers.isStreaming || streamHandlers.canQueueMessage) &&
       !isModelSelectionRequired &&
       chatState.isAttachmentReadyToSend
     )
   }, [
     disabledReason,
-    chatState.isLoading,
     streamHandlers.isStreaming,
     streamHandlers.canQueueMessage,
     isModelSelectionRequired,
@@ -788,7 +782,9 @@ function ChatAreaContent({
   selectedContextsRef.current = chatState.selectedContexts
 
   const shouldConfirmPendingReplacement =
-    runtimeTaskStatus === 'PENDING' && !selectedTaskDetail?.is_group_chat
+    runtimeTaskStatus === 'PENDING' &&
+    !streamHandlers.canQueueMessage &&
+    !selectedTaskDetail?.is_group_chat
 
   const applyQuickPhraseToInput = useCallback(
     (phrase: string) => {
@@ -945,7 +941,7 @@ function ChatAreaContent({
   const { handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handlePasteFile } =
     useAttachmentUpload({
       team: chatState.selectedTeam,
-      isLoading: chatState.isLoading,
+      isSendPending: streamHandlers.hasPendingUserMessage,
       isStreaming: streamHandlers.isStreaming,
       attachmentState: chatState.attachmentState,
       onFileSelect: chatState.handleFileSelect,
@@ -1331,11 +1327,13 @@ function ChatAreaContent({
     canCancelTask: streamHandlers.canCancelTask,
     queuedMessages: streamHandlers.queuedMessages,
     onCancelQueuedMessage: streamHandlers.cancelQueuedMessage,
+    onEditQueuedMessage: streamHandlers.editQueuedMessage,
     onSendQueuedAsGuidance: streamHandlers.sendQueuedAsGuidance,
     canSendGuidance: streamHandlers.canSendGuidance,
     guidanceMessages: streamHandlers.guidanceMessages,
     expiredGuidanceMessages: streamHandlers.expiredGuidanceMessages,
     onCancelGuidance: streamHandlers.cancelGuidance,
+    onEditGuidanceMessage: streamHandlers.editGuidanceMessage,
     onSendExpiredGuidanceAsMessage: streamHandlers.sendExpiredGuidanceAsMessage,
     handleSendMessage: async (overrideMessage?: string) => {
       // Format message with quote if present, then clear quote
@@ -1384,9 +1382,7 @@ function ChatAreaContent({
     attachmentState: chatState.attachmentState,
     onFileSelect: chatState.handleFileSelect,
     onAttachmentRemove: chatState.handleAttachmentRemove,
-    isLoading: chatState.isLoading,
     isStreaming: streamHandlers.isStreaming,
-    isAwaitingResponseStart: streamHandlers.isAwaitingResponseStart,
     isStopping: streamHandlers.isStopping,
     hasMessages,
     shouldCollapseSelectors,
@@ -1396,7 +1392,6 @@ function ChatAreaContent({
     isAttachmentReadyToSend: chatState.isAttachmentReadyToSend,
     onStopStream: streamHandlers.stopStream,
     onCancelTask: streamHandlers.handleCancelTask,
-    isCancelling: streamHandlers.isCancelling,
     onSendMessage: () => {
       // Format message with quote if present, then clear quote
       const message = formatQuoteForMessage(chatState.taskInputMessage.trim())

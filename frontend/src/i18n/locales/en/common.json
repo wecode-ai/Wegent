@@ -1073,6 +1073,7 @@
     "description": "Manage your AI model configurations",
     "public": "Public",
     "group": "Group",
+    "advanced": "Advanced",
     "group_models": "Group Models",
     "public_models": "Public Models",
     "my_models": "My Models",

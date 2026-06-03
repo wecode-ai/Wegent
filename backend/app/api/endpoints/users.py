@@ -708,6 +708,7 @@ class DefaultTeamConfig(BaseModel):
 class DefaultTeamsResponse(BaseModel):
     """Response model for default teams configuration"""
 
+    wework: Optional[DefaultTeamConfig] = None
     chat: Optional[DefaultTeamConfig] = None
     code: Optional[DefaultTeamConfig] = None
     knowledge: Optional[DefaultTeamConfig] = None
@@ -740,6 +741,7 @@ async def get_default_teams(
     from app.core.config import settings
 
     return DefaultTeamsResponse(
+        wework=parse_default_team_config(settings.DEFAULT_TEAM_WEWORK),
         chat=parse_default_team_config(settings.DEFAULT_TEAM_CHAT),
         code=parse_default_team_config(settings.DEFAULT_TEAM_CODE),
         knowledge=parse_default_team_config(settings.DEFAULT_TEAM_KNOWLEDGE),

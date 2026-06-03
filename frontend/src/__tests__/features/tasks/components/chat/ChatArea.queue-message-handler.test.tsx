@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { TaskDetail } from '@/types/api'
 
 import { ChatArea } from '@/features/tasks/components/chat'
@@ -11,7 +11,6 @@ const mockChatInputCard = jest.fn((_props: Record<string, unknown>) => (
 const defaultStreamHandlers = {
   pendingTaskId: null,
   isStreaming: false,
-  isAwaitingResponseStart: false,
   canQueueMessage: false,
   queuedMessageCount: 0,
   queuedMessages: [] as Array<{
@@ -23,14 +22,12 @@ const defaultStreamHandlers = {
   cancelQueuedMessage: jest.fn(),
   isStopping: false,
   hasPendingUserMessage: false,
-  localPendingMessage: null,
   handleSendMessage: jest.fn(),
   handleSendMessageWithModel: jest.fn(),
   handleRetry: jest.fn(),
   handleCancelTask: jest.fn(),
   stopStream: jest.fn(),
   resetStreamingState: jest.fn(),
-  isCancelling: false,
 }
 
 let streamHandlersMock = { ...defaultStreamHandlers }
@@ -376,5 +373,54 @@ describe('ChatArea queue message handler mounting', () => {
         expect.objectContaining({ focusInputAtEndSignal: 1 })
       )
     })
+  })
+
+  it('submits to the stream handler for queueing when a pending task is already streaming', async () => {
+    const handleSendMessage = jest.fn().mockResolvedValue(undefined)
+    streamHandlersMock = {
+      ...defaultStreamHandlers,
+      isStreaming: true,
+      canQueueMessage: true,
+      handleSendMessage,
+    }
+    selectedTaskDetailMock = {
+      id: 42,
+      status: 'PENDING',
+      is_group_chat: false,
+      subtasks: [],
+    } as unknown as TaskDetail
+
+    render(<ChatArea teams={[]} isTeamsLoading={false} taskType="chat" showRepositorySelector />)
+
+    const latestProps = mockChatInputCard.mock.calls.at(-1)?.[0] as {
+      handleSendMessage: (message?: string) => Promise<void>
+    }
+
+    await act(async () => {
+      await latestProps.handleSendMessage('follow up while streaming')
+    })
+
+    expect(handleSendMessage).toHaveBeenCalledWith('follow up while streaming', undefined)
+  })
+
+  it('keeps submit available for queueing while a pending user message is in state', () => {
+    streamHandlersMock = {
+      ...defaultStreamHandlers,
+      isStreaming: true,
+      canQueueMessage: true,
+      hasPendingUserMessage: true,
+    }
+    selectedTaskDetailMock = {
+      id: 42,
+      status: 'RUNNING',
+      is_group_chat: false,
+      subtasks: [],
+    } as unknown as TaskDetail
+
+    render(<ChatArea teams={[]} isTeamsLoading={false} taskType="chat" showRepositorySelector />)
+
+    expect(mockChatInputCard).toHaveBeenCalledWith(
+      expect.objectContaining({ canQueueMessage: true, canSubmit: true })
+    )
   })
 })

@@ -120,6 +120,37 @@ def test_finalize_standalone_chat_workspace_moves_initial_task_workspace(
     ) == "session-id"
 
 
+def test_finalize_standalone_chat_workspace_keeps_existing_session_root(
+    tmp_path,
+    monkeypatch,
+):
+    workspace_root = tmp_path / "workspace"
+    source = workspace_root / "126"
+    source.mkdir(parents=True)
+    (source / ".claude_session_id").write_text("stale-session-id", encoding="utf-8")
+    chats_root = tmp_path / "chats"
+    executor_home = tmp_path / ".wegent-executor"
+    session_file = executor_home / "sessions" / "126" / ".claude_session_id"
+    session_file.parent.mkdir(parents=True)
+    session_file.write_text("current-session-id", encoding="utf-8")
+    task_data = SimpleNamespace(
+        task_id=126,
+        project_id=None,
+        project_workspace_path=None,
+        git_url=None,
+    )
+
+    monkeypatch.setenv("WEGENT_EXECUTOR_CHATS_DIR", str(chats_root))
+    monkeypatch.setattr(
+        workspace.config, "get_workspace_root", lambda: str(workspace_root)
+    )
+    monkeypatch.setattr(workspace.config, "WEGENT_EXECUTOR_HOME", str(executor_home))
+
+    workspace.finalize_standalone_chat_workspace(task_data, "Hello")
+
+    assert session_file.read_text(encoding="utf-8") == "current-session-id"
+
+
 def test_finalize_standalone_chat_workspace_adds_duplicate_suffix(
     tmp_path,
     monkeypatch,
