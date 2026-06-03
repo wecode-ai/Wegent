@@ -89,10 +89,12 @@ function SidebarButton({
       onClick={onClick}
       className={[
         'flex h-8 w-full items-center gap-3 rounded-md px-3 text-left text-[13px] font-medium leading-[18px]',
-        selected ? 'bg-[#cfd1d4] text-[#222]' : 'text-[#333] hover:bg-white/70',
+        selected
+          ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
+          : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]',
       ].join(' ')}
     >
-      <Icon className="h-4 w-4 text-[#555]" />
+      <Icon className="h-4 w-4 text-[rgb(var(--color-sidebar-text-secondary))]" />
       <span>{label}</span>
     </button>
   )
@@ -127,12 +129,12 @@ function SidebarSectionHeader({
         aria-expanded={expanded}
         className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md text-left"
       >
-        <span className="truncate text-[13px] font-semibold leading-[18px] text-[#8a8a8a]">
+        <span className="truncate text-[13px] font-semibold leading-[18px] text-[rgb(var(--color-sidebar-text-muted))]">
           {title}
         </span>
         <ToggleIcon
           data-testid={iconTestId}
-          className={`h-4 w-4 shrink-0 text-[#8a8a8a] transition-opacity ${iconVisibilityClass}`}
+          className={`h-4 w-4 shrink-0 text-[rgb(var(--color-sidebar-text-muted))] transition-opacity ${iconVisibilityClass}`}
         />
       </button>
       <div className="flex items-center opacity-0 transition-opacity group-hover/section:opacity-100 focus-within:opacity-100">
@@ -207,7 +209,9 @@ function ProjectTaskRow({
       data-testid={`project-chat-row-${task.task_id}`}
       className={[
         'group/task flex h-8 items-center rounded-md pl-8 pr-1 text-[13px] leading-[18px]',
-        selected ? 'bg-[#dedfe2] text-text-primary' : 'text-text-secondary hover:bg-white/70',
+        selected
+          ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
+          : 'text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]',
       ].join(' ')}
     >
       <button
@@ -227,7 +231,7 @@ function ProjectTaskRow({
         ) : (
           <span
             data-testid={`project-chat-time-${task.task_id}`}
-            className="text-xs text-[#8a8a8a] transition-opacity group-hover/task:opacity-0 focus-within:opacity-0"
+            className="text-xs text-[rgb(var(--color-sidebar-text-muted))] transition-opacity group-hover/task:opacity-0 focus-within:opacity-0"
           >
             {formatRelativeSidebarTime(getProjectTaskTime(task))}
           </span>
@@ -302,7 +306,7 @@ function ProjectItem({
     <div data-testid="project-item" className="space-y-0.5">
       <div
         data-testid={`project-row-${project.id}`}
-        className="group/project flex h-8 items-center gap-1 rounded-md pl-3 pr-1 text-[13px] leading-[18px] text-text-secondary hover:bg-white/70"
+        className="group/project flex h-8 items-center gap-1 rounded-md pl-3 pr-1 text-[13px] leading-[18px] text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
       >
         <button
           type="button"
@@ -353,7 +357,7 @@ function ProjectItem({
               event.stopPropagation()
               onStartNewProjectChat(project.id)
             }}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-[#606368] hover:bg-white/80 hover:text-[#2d2d2d]"
+            className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
             aria-label={t('workbench.new_project_chat', '新建项目对话')}
           >
             <MessageSquarePlus className="h-4 w-4" />
@@ -363,7 +367,7 @@ function ProjectItem({
       {expanded && (
         <div className="space-y-0.5">
           {tasks.length === 0 ? (
-            <div className="ml-5 rounded-md px-3 py-1.5 text-xs text-[#8a8a8a]">
+            <div className="ml-5 rounded-md px-3 py-1.5 text-xs text-[rgb(var(--color-sidebar-text-muted))]">
               {t('workbench.no_chats', '暂无会话')}
             </div>
           ) : (
@@ -385,7 +389,7 @@ function ProjectItem({
               type="button"
               data-testid={`project-task-limit-toggle-${project.id}`}
               onClick={() => onToggleTaskLimit(project.id)}
-              className="ml-5 h-8 rounded-md px-3 text-left text-xs font-medium text-[#606368] hover:bg-white/70 hover:text-[#2d2d2d]"
+              className="ml-5 h-8 rounded-md px-3 text-left text-xs font-medium text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
             >
               {showAllTasks
                 ? t('workbench.show_less', '收起')
@@ -419,7 +423,9 @@ function RecentTaskRow({
       data-testid={`history-task-row-${task.id}`}
       className={[
         'group/task flex h-8 items-center gap-2 rounded-md pl-3 pr-1 text-[13px] leading-[18px]',
-        selected ? 'bg-[#dedfe2] text-text-primary' : 'text-text-secondary hover:bg-white/70',
+        selected
+          ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
+          : 'text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]',
       ].join(' ')}
     >
       <Clock className="h-4 w-4 shrink-0" />
@@ -440,7 +446,7 @@ function RecentTaskRow({
         ) : (
           <span
             data-testid={`history-task-time-${task.id}`}
-            className="text-xs text-[#8a8a8a] transition-opacity group-hover/task:opacity-0 focus-within:opacity-0"
+            className="text-xs text-[rgb(var(--color-sidebar-text-muted))] transition-opacity group-hover/task:opacity-0 focus-within:opacity-0"
           >
             {formatRelativeSidebarTime(task.updated_at || task.created_at)}
           </span>
@@ -581,7 +587,7 @@ export function DesktopSidebar({
 
   return (
     <aside
-      className="relative flex shrink-0 flex-col border-r border-white/45 bg-[#e5e5e7]/70 px-4 py-4 shadow-[inset_-1px_0_0_rgba(255,255,255,0.28)] backdrop-blur-xl backdrop-saturate-150"
+      className="relative flex shrink-0 flex-col border-r border-border/70 bg-[rgb(var(--color-sidebar))] px-4 py-4 shadow-[inset_-1px_0_0_rgb(var(--color-border))] backdrop-blur-xl backdrop-saturate-150"
       style={{ width: sidebarWidth }}
     >
       <div className="-mt-3 mb-1 flex justify-end">
@@ -589,7 +595,7 @@ export function DesktopSidebar({
           type="button"
           data-testid="collapse-sidebar-button"
           onClick={onCollapse}
-          className="flex h-8 w-8 items-center justify-center rounded-md text-[#555] hover:bg-white/70"
+          className="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
           aria-label={t('workbench.collapse_sidebar', '收起侧边栏')}
         >
           <ChevronLeft className="h-4 w-4" />
@@ -724,7 +730,7 @@ export function DesktopSidebar({
               type="button"
               data-testid="chats-new-conversation-button"
               onClick={onStartStandaloneChat}
-              className="flex h-7 w-7 items-center justify-center rounded-md text-[#606368] hover:bg-white/80 hover:text-[#2d2d2d]"
+              className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
               aria-label={t('workbench.new_chat', '新对话')}
             >
               <MessageSquarePlus className="h-4 w-4" />
@@ -753,7 +759,7 @@ export function DesktopSidebar({
           type="button"
           data-testid="settings-button"
           onClick={() => setSettingsMenuOpen(open => !open)}
-          className="flex h-9 shrink-0 items-center gap-3 rounded-md px-3 text-[13px] font-medium leading-[18px] text-[#333] hover:bg-white/70"
+          className="flex h-9 shrink-0 items-center gap-3 rounded-md px-3 text-[13px] font-medium leading-[18px] text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
           aria-expanded={settingsMenuOpen}
         >
           <Settings className="h-4 w-4" />

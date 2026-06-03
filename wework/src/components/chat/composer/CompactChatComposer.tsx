@@ -148,7 +148,7 @@ export function CompactChatComposer({
             type="submit"
             data-testid="send-message-button"
             disabled={!canSend}
-            className="absolute bottom-1 right-1 flex h-11 w-11 items-center justify-center rounded-[22px] bg-[#242424] p-0 text-white disabled:bg-[#9a9a9a]"
+            className="absolute bottom-1 right-1 flex h-11 w-11 items-center justify-center rounded-[22px] bg-primary p-0 text-primary-contrast disabled:bg-muted disabled:text-text-muted"
             aria-label={t('workbench.send_message', '发送消息')}
           >
             <ArrowUp className="h-5 w-5" />

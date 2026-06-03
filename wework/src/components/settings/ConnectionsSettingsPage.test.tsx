@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ConnectionsSettingsPage } from './ConnectionsSettingsPage'
 import { createDeviceApi } from '@/api/devices'
+import { AppearanceProvider } from '@/features/appearance'
 import type { DeviceInfo } from '@/types/devices'
 
 vi.mock('@/config/runtime', () => ({
@@ -93,7 +94,22 @@ describe('ConnectionsSettingsPage', () => {
     const creatingNotice = screen.getByText(
       '云设备创建中，初始化约需 2-3 分钟，完成后将自动出现在列表中',
     )
-    expect(creatingNotice).toHaveClass('text-[#2563eb]')
+    expect(creatingNotice).toHaveClass('text-primary')
+  })
+
+  test('opens appearance settings from desktop settings navigation', async () => {
+    api.getAllDevices.mockResolvedValue([])
+
+    render(
+      <AppearanceProvider>
+        <ConnectionsSettingsPage onBack={vi.fn()} />
+      </AppearanceProvider>,
+    )
+
+    await userEvent.click(screen.getByTestId('settings-nav-appearance'))
+
+    expect(screen.getByTestId('appearance-settings-page')).toBeInTheDocument()
+    expect(screen.getByTestId('appearance-mode-system')).toBeInTheDocument()
   })
 
   test('keeps uncommon cloud device actions in a compact more menu with confirmation', async () => {

@@ -653,7 +653,9 @@ describe('DesktopWorkbenchLayout', () => {
       'opacity-0',
       'group-hover/task:opacity-100',
     )
-    expect(screen.getByTestId('project-chat-row-11')).toHaveClass('bg-[#dedfe2]')
+    expect(screen.getByTestId('project-chat-row-11')).toHaveClass(
+      'bg-[rgb(var(--color-sidebar-active))]',
+    )
     await userEvent.click(screen.getByTestId('project-chat-button'))
     expect(baseProps.onOpenTask).toHaveBeenCalledWith(11, 1)
 
@@ -1012,7 +1014,12 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('environment-info-button'))
 
     expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
-    expect(screen.getByTestId('environment-info-popover')).toHaveClass('w-[340px]')
+    expect(screen.getByTestId('environment-info-popover')).toHaveClass(
+      'w-[340px]',
+      'bg-popover',
+      'text-text-primary',
+      'border-border',
+    )
     expect(screen.getByText('环境信息')).toBeInTheDocument()
     expect(screen.getByText('变更')).toBeInTheDocument()
     const deviceButton = await screen.findByTestId('environment-device-button')

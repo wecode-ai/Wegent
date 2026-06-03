@@ -273,7 +273,7 @@ function tabClassName(selected: boolean) {
   return [
     'h-9 rounded-xl px-4 text-sm font-semibold transition-colors',
     selected
-      ? 'bg-white text-text-primary shadow-sm'
+      ? 'bg-popover text-text-primary shadow-sm'
       : 'text-text-secondary hover:text-text-primary',
   ].join(' ')
 }
@@ -1146,7 +1146,7 @@ export function PluginsWorkspace() {
                 <button
                   type="button"
                   data-testid="plugins-upload-empty-button"
-                  className="rounded-xl bg-primary px-4 py-2 text-white hover:bg-primary/90"
+                  className="rounded-xl bg-primary px-4 py-2 text-primary-contrast hover:bg-primary/90"
                   onClick={() => {
                     setPluginUploadError(null)
                     setShowPluginUploadDialog(true)
