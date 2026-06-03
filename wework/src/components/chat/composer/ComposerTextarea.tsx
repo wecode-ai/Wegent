@@ -1,6 +1,6 @@
-import { Sparkles } from 'lucide-react'
+import { Package, Sparkles } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { KeyboardEventHandler, RefObject } from 'react'
+import type { KeyboardEventHandler, ReactNode, RefObject } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { LocalDeviceSkill } from '@/types/api'
 
@@ -22,7 +22,13 @@ interface SkillTrigger {
   query: string
 }
 
-const SKILL_REFERENCE_PATTERN = /\[\$([^\]]+)]\(([^)]+)\)([^\s]*)/g
+interface SkillMention {
+  id: string
+  name: string
+  label: string
+  start: number
+  end: number
+}
 
 function findSkillTrigger(value: string, cursor: number): SkillTrigger | null {
   const beforeCursor = value.slice(0, cursor)
@@ -46,38 +52,64 @@ function displaySkillName(skill: LocalDeviceSkill): string {
     .join(' ')
 }
 
-function skillReference(skill: LocalDeviceSkill): string {
-  return `$${skill.name}`
+function localSkillTestId(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_-]/g, '-')
 }
 
 function findSkillMentionBeforeCursor(
   value: string,
   cursor: number,
-  skills: LocalDeviceSkill[],
+  mentions: SkillMention[],
 ): { start: number; end: number } | null {
-  const end = cursor > 0 && value[cursor - 1] === ' ' ? cursor - 1 : cursor
-  const searchValue = value.slice(0, end)
+  const mention = mentions.find(item => {
+    if (item.end === cursor) return true
+    return cursor > item.end && value.slice(item.end, cursor) === ' '
+  })
 
-  for (const match of searchValue.matchAll(SKILL_REFERENCE_PATTERN)) {
-    const start = match.index ?? 0
-    const matchEnd = start + match[0].length
-    if (matchEnd === end) {
-      return { start, end: cursor }
-    }
-  }
-
-  const candidates = skills
-    .map(skillReference)
-    .sort((left, right) => right.length - left.length)
-
-  for (const candidate of candidates) {
-    if (!searchValue.endsWith(candidate)) continue
-    const start = end - candidate.length
-    if (start > 0 && !/\s/.test(value[start - 1])) continue
-    return { start, end: cursor }
-  }
+  if (mention) return { start: mention.start, end: cursor }
 
   return null
+}
+
+function renderTextWithSkillMentions(value: string, mentions: SkillMention[]) {
+  const parts: ReactNode[] = []
+  let offset = 0
+
+  mentions.forEach(mention => {
+    if (mention.start < offset) return
+
+    const text = value.slice(offset, mention.start)
+    if (text) {
+      parts.push(
+        <span key={`text-${offset}`} className="text-transparent">
+          {text}
+        </span>,
+      )
+    }
+
+    parts.push(
+      <span
+        key={mention.id}
+        data-testid={`local-skill-chip-${localSkillTestId(mention.name)}`}
+        className="inline-flex h-6 max-w-full items-center gap-1.5 rounded-md border border-[#E6D5AF] bg-[#FFF8EA] px-2 align-middle text-xs font-medium text-[#6F4D13]"
+      >
+        <Package className="h-3.5 w-3.5 shrink-0" />
+        <span className="truncate">{mention.label}</span>
+      </span>,
+    )
+    offset = mention.end
+  })
+
+  const remainingText = value.slice(offset)
+  if (remainingText) {
+    parts.push(
+      <span key={`text-${offset}`} className="text-transparent">
+        {remainingText}
+      </span>,
+    )
+  }
+
+  return parts
 }
 
 export function ComposerTextarea({
@@ -99,11 +131,23 @@ export function ComposerTextarea({
   const skillsRequestIdRef = useRef(0)
   const skillsSourceRef = useRef<typeof onListLocalSkills>(undefined)
   const mountedRef = useRef(true)
+  const overlayRef = useRef<HTMLDivElement>(null)
   const [skills, setSkills] = useState<LocalDeviceSkill[]>([])
+  const [selectedSkillMentions, setSelectedSkillMentions] = useState<SkillMention[]>([])
   const [trigger, setTrigger] = useState<SkillTrigger | null>(null)
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState(false)
+
+  const validSkillMentions = useMemo(
+    () =>
+      selectedSkillMentions
+        .filter(
+          mention => value.slice(mention.start, mention.end) === mention.label,
+        )
+        .sort((left, right) => left.start - right.start),
+    [selectedSkillMentions, value],
+  )
 
   const filteredSkills = useMemo(() => {
     const query = trigger?.query.trim().toLowerCase() ?? ''
@@ -125,6 +169,55 @@ export function ComposerTextarea({
     setTrigger(null)
     setSelectedIndex(0)
   }, [])
+
+  const handleValueChange = useCallback(
+    (nextValue: string) => {
+      const previousValue = value
+      let commonPrefixLength = 0
+      while (
+        commonPrefixLength < previousValue.length &&
+        commonPrefixLength < nextValue.length &&
+        previousValue[commonPrefixLength] === nextValue[commonPrefixLength]
+      ) {
+        commonPrefixLength += 1
+      }
+
+      let previousSuffixIndex = previousValue.length - 1
+      let nextSuffixIndex = nextValue.length - 1
+      while (
+        previousSuffixIndex >= commonPrefixLength &&
+        nextSuffixIndex >= commonPrefixLength &&
+        previousValue[previousSuffixIndex] === nextValue[nextSuffixIndex]
+      ) {
+        previousSuffixIndex -= 1
+        nextSuffixIndex -= 1
+      }
+
+      const replacedStart = commonPrefixLength
+      const replacedEnd = previousSuffixIndex + 1
+      const delta = nextValue.length - previousValue.length
+
+      setSelectedSkillMentions(current =>
+        current
+          .map(mention => {
+            if (mention.end <= replacedStart) return mention
+            if (mention.start >= replacedEnd) {
+              return {
+                ...mention,
+                start: mention.start + delta,
+                end: mention.end + delta,
+              }
+            }
+            return null
+          })
+          .filter((mention): mention is SkillMention =>
+            Boolean(mention && nextValue.slice(mention.start, mention.end) === mention.label),
+          ),
+      )
+      onChange(nextValue)
+    },
+    [onChange, value],
+  )
 
   useEffect(() => {
     mountedRef.current = true
@@ -208,11 +301,33 @@ export function ComposerTextarea({
       if (!textarea || !trigger) return
 
       const cursor = textarea.selectionStart
-      const replacement = `${skillReference(skill)} `
+      const label = displaySkillName(skill)
+      const replacement = `${label} `
       const nextValue =
         value.slice(0, trigger.start) + replacement + value.slice(cursor)
       const nextCursor = trigger.start + replacement.length
+      const mentionEnd = trigger.start + label.length
+      const delta = replacement.length - (cursor - trigger.start)
 
+      setSelectedSkillMentions(current => [
+        ...current
+          .filter(mention => mention.end <= trigger.start || mention.start >= cursor)
+          .map(mention => {
+            if (mention.start < cursor) return mention
+            return {
+              ...mention,
+              start: mention.start + delta,
+              end: mention.end + delta,
+            }
+          }),
+        {
+          id: `${skill.source}:${skill.path}:${trigger.start}:${Date.now()}`,
+          name: skill.name,
+          label,
+          start: trigger.start,
+          end: mentionEnd,
+        },
+      ])
       onChange(nextValue)
       closeSkillMenu()
 
@@ -232,12 +347,12 @@ export function ComposerTextarea({
       const mention = findSkillMentionBeforeCursor(
         value,
         event.currentTarget.selectionStart,
-        skills,
+        validSkillMentions,
       )
       if (mention) {
         event.preventDefault()
         const nextValue = value.slice(0, mention.start) + value.slice(mention.end)
-        onChange(nextValue)
+        handleValueChange(nextValue)
         window.requestAnimationFrame(() => {
           const textarea = textareaRef.current
           textarea?.setSelectionRange(mention.start, mention.start)
@@ -275,16 +390,33 @@ export function ComposerTextarea({
     if (canSend) onSubmit()
   }
 
+  const hasSkillMentionOverlay = validSkillMentions.length > 0
+
   return (
     <div className="relative min-w-0 flex-1 w-full">
+      {hasSkillMentionOverlay && (
+        <div
+          ref={overlayRef}
+          aria-hidden="true"
+          className={`${className} pointer-events-none absolute inset-0 z-20 whitespace-pre-wrap break-words overflow-hidden text-text-primary`}
+        >
+          {renderTextWithSkillMentions(value, validSkillMentions)}
+        </div>
+      )}
       <textarea
         ref={textareaRef}
         data-testid="chat-message-input"
         rows={rows}
         value={value}
         onChange={event => {
-          onChange(event.target.value)
+          handleValueChange(event.target.value)
           window.requestAnimationFrame(updateSkillTrigger)
+        }}
+        onScroll={event => {
+          if (overlayRef.current) {
+            overlayRef.current.scrollTop = event.currentTarget.scrollTop
+            overlayRef.current.scrollLeft = event.currentTarget.scrollLeft
+          }
         }}
         onClick={updateSkillTrigger}
         onKeyDown={handleKeyDown}

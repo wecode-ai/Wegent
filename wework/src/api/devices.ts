@@ -26,13 +26,14 @@ function getSkillArrayOutput(response: DeviceCommandResponse): LocalDeviceSkill[
       ? parseJsonOutput(response.stdout)
       : response.stdout
   if (!Array.isArray(stdout)) return []
-  return stdout.filter(
+  const skills = stdout.filter(
     (item): item is LocalDeviceSkill =>
       typeof item === 'object' &&
       item !== null &&
       'name' in item &&
       'path' in item,
   )
+  return sortSkillsByName(dedupeSkillsByName(skills))
 }
 
 function parseJsonOutput(output: string): unknown {
@@ -41,6 +42,22 @@ function parseJsonOutput(output: string): unknown {
   } catch {
     return output
   }
+}
+
+function dedupeSkillsByName(skills: LocalDeviceSkill[]): LocalDeviceSkill[] {
+  const seen = new Set<string>()
+  return skills.filter(skill => {
+    const key = skill.name.trim().toLowerCase()
+    if (!key || seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function sortSkillsByName(skills: LocalDeviceSkill[]): LocalDeviceSkill[] {
+  return [...skills].sort((left, right) =>
+    left.name.localeCompare(right.name, undefined, { sensitivity: 'base' }),
+  )
 }
 
 export function createDeviceApi(client: HttpClient) {

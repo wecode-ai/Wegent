@@ -169,7 +169,8 @@ describe('ChatInput', () => {
     )
     await userEvent.click(await screen.findByTestId('local-skill-option-env-context'))
 
-    expect(screen.getByTestId('chat-message-input')).toHaveValue('$env-context ')
+    expect(screen.getByTestId('chat-message-input')).toHaveValue('Env Context ')
+    expect(screen.getByTestId('local-skill-chip-env-context')).toHaveTextContent('Env Context')
   })
 
   test('deletes a selected local skill mention as one unit', async () => {
@@ -196,6 +197,7 @@ describe('ChatInput', () => {
     await userEvent.keyboard('{Backspace}')
 
     expect(screen.getByTestId('chat-message-input')).toHaveValue('')
+    expect(screen.queryByTestId('local-skill-chip-env-context')).not.toBeInTheDocument()
   })
 
   test('sizes desktop local skill autocomplete to the composer width', async () => {
@@ -273,9 +275,12 @@ describe('ChatInput', () => {
 
     await userEvent.type(screen.getByTestId('chat-message-input'), '$')
     rejectInitialLoad(new Error('Device is offline'))
-    await screen.findByText(/workbench.local_skills_error/)
 
-    await userEvent.click(screen.getByText('workbench.retry_local_skills'))
+    await userEvent.click(
+      await screen.findByRole('button', {
+        name: /workbench.local_skills_error.*workbench.retry_local_skills/,
+      }),
+    )
 
     expect(await screen.findByTestId('local-skill-option-env-context')).toBeInTheDocument()
     expect(listLocalSkills).toHaveBeenCalledTimes(2)

@@ -256,9 +256,27 @@ describe('REST adapters', () => {
     const client = mockClient()
     const skills = [
       {
-        name: 'env-context',
-        description: 'Environment facts',
-        path: '/Users/crystal/.codex/skills/env-context/SKILL.md',
+        name: 'zeta',
+        description: 'Zeta skill',
+        path: '/Users/crystal/.codex/skills/zeta/SKILL.md',
+        source: 'codex',
+      },
+      {
+        name: 'Dws',
+        description: 'DingTalk skill from Claude',
+        path: '/Users/crystal/.claude/skills/dws/SKILL.md',
+        source: 'claude',
+      },
+      {
+        name: 'dws',
+        description: 'DingTalk skill from Codex',
+        path: '/Users/crystal/.codex/skills/dws/SKILL.md',
+        source: 'codex',
+      },
+      {
+        name: 'alpha',
+        description: 'Alpha skill',
+        path: '/Users/crystal/.codex/skills/alpha/SKILL.md',
         source: 'codex',
       },
     ]
@@ -268,7 +286,11 @@ describe('REST adapters', () => {
       stderr: '',
     })
 
-    await expect(createDeviceApi(client).listSkills('device-1')).resolves.toEqual(skills)
+    await expect(createDeviceApi(client).listSkills('device-1')).resolves.toEqual([
+      skills[3],
+      skills[1],
+      skills[0],
+    ])
 
     expect(client.post).toHaveBeenCalledWith(
       '/devices/device-1/commands',
