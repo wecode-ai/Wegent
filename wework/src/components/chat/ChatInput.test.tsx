@@ -509,6 +509,73 @@ describe('ChatInput', () => {
     expect(setSelectedModel).toHaveBeenCalledWith(model)
   })
 
+  test('moves the desktop model submenu upward when the active family is near the viewport bottom', async () => {
+    const originalInnerHeight = window.innerHeight
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: 1000,
+    })
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
+      function getMockRect(this: HTMLElement) {
+        const testId = this.getAttribute('data-testid')
+        if (testId === 'model-selector-menu') {
+          return { top: 100, left: 480, width: 256, height: 720 } as DOMRect
+        }
+        if (testId === 'model-family-minimax') {
+          return { top: 900, left: 500, width: 220, height: 36 } as DOMRect
+        }
+        if (testId === 'model-selector-submenu') {
+          return { top: 0, left: 0, width: 288, height: 192 } as DOMRect
+        }
+        return { top: 0, left: 0, width: 0, height: 0 } as DOMRect
+      },
+    )
+
+    const minimaxModel: UnifiedModel = {
+      name: 'public-minimax-m2.7',
+      type: 'user',
+      displayName: '公网:minimax-m2.7',
+      config: {
+        ui: {
+          family: 'minimax',
+          region: 'public',
+          modelLabel: 'minimax-m2.7',
+          sortOrder: 10,
+        },
+      },
+    }
+
+    try {
+      render(
+        <ChatInput
+          value=""
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+          projectChat={projectChatControls({
+            models: [minimaxModel],
+            selectedModel: minimaxModel,
+            selectedModelOptions: {},
+          })}
+        />,
+      )
+
+      await userEvent.click(screen.getByTestId('model-selector-button'))
+
+      await waitFor(() => {
+        expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({
+          top: '692px',
+        })
+      })
+    } finally {
+      Object.defineProperty(window, 'innerHeight', {
+        configurable: true,
+        value: originalInnerHeight,
+      })
+    }
+  })
+
   test('shows incompatible model options as disabled', async () => {
     const selectedModel: UnifiedModel = {
       name: 'overseas-gpt-5.5',
