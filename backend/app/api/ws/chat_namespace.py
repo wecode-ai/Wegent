@@ -1361,6 +1361,25 @@ class ChatNamespace(socketio.AsyncNamespace):
                 f"[WS] chat:retry found user_subtask: id={user_subtask.id}, prompt={user_subtask.prompt[:50] if user_subtask.prompt else ''}..."
             )
 
+            retryable_statuses = {
+                SubtaskStatus.FAILED.value,
+                SubtaskStatus.CANCELLED.value,
+            }
+            current_status = (
+                failed_ai_subtask.status.value
+                if hasattr(failed_ai_subtask.status, "value")
+                else str(failed_ai_subtask.status)
+            )
+            if current_status not in retryable_statuses:
+                logger.warning(
+                    "[WS] chat:retry rejected non-terminal failed subtask: "
+                    "task_id=%s, subtask_id=%s, status=%s",
+                    payload.task_id,
+                    failed_ai_subtask.id,
+                    current_status,
+                )
+                return {"error": f"Cannot retry subtask in {current_status} state"}
+
             # Reset the failed AI subtask to PENDING status using service module
             # Also pass task to reset Task status (required for executor_manager to pick up the task)
             reset_subtask_for_retry(db, failed_ai_subtask, task)

@@ -12,6 +12,7 @@ import pytest
 
 from app.services.execution.dispatcher import ExecutionDispatcher
 from app.services.execution.router import CommunicationMode, ExecutionTarget
+from shared.models import EventType
 
 
 class _FakeEvent:
@@ -44,7 +45,10 @@ class _FakeStream:
         return self._events.pop(0)
 
 
-def _build_fake_openai_module(calls: dict):
+def _build_fake_openai_module(calls: dict, events=None):
+    if events is None:
+        events = [_FakeEvent("response.completed")]
+
     class _FakeResponses:
         async def create(
             self,
@@ -61,7 +65,7 @@ def _build_fake_openai_module(calls: dict):
             calls["tools"] = tools
             calls["stream"] = stream
             calls["extra_body"] = extra_body
-            return _FakeStream([_FakeEvent("response.completed")])
+            return _FakeStream(events)
 
     class _FakeAsyncOpenAI:
         def __init__(self, **kwargs):
@@ -185,3 +189,45 @@ async def test_dispatch_sse_generates_request_id_when_missing():
         await dispatcher._dispatch_sse(request, target, emitter)
 
     assert calls["extra_body"]["metadata"]["request_id"] == "req_77"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_sse_emits_error_when_stream_ends_without_terminal_event():
+    dispatcher = ExecutionDispatcher()
+    request = _make_request(subtask_id=88, request_id="backend-request-id")
+    target = ExecutionTarget(
+        mode=CommunicationMode.SSE,
+        url="http://chat-shell",
+        namespace=None,
+        event="task:execute",
+        room=None,
+    )
+    emitter = AsyncMock()
+    calls = {}
+    session_manager = AsyncMock()
+    session_manager.register_stream.return_value = asyncio.Event()
+    session_manager.is_cancelled.return_value = False
+
+    with (
+        patch.dict("sys.modules", {"openai": _build_fake_openai_module(calls, [])}),
+        patch(
+            "app.services.execution.dispatcher.OpenAIRequestConverter.from_execution_request",
+            return_value={
+                "model": "test-model",
+                "input": "hello",
+                "metadata": {},
+                "model_config": {},
+            },
+        ),
+        patch("app.services.chat.storage.session.session_manager", session_manager),
+    ):
+        await dispatcher._dispatch_sse(request, target, emitter)
+
+    emitted_events = [call.args[0] for call in emitter.emit.call_args_list]
+    assert len(emitted_events) == 1
+    error_event = emitted_events[0]
+    assert error_event.type == EventType.ERROR.value
+    assert error_event.task_id == request.task_id
+    assert error_event.subtask_id == request.subtask_id
+    assert error_event.message_id == request.message_id
+    assert "ended without terminal event" in error_event.error
