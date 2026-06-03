@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { useState } from 'react'
+import { StrictMode, useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
 import type {
   Attachment,
@@ -163,6 +163,29 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('chat-message-input')).toHaveValue(
       '[$env-context](/Users/crystal/.codex/skills/env-context/SKILL.md)env-context ',
     )
+  })
+
+  test('opens local skill autocomplete under React StrictMode', async () => {
+    const skill: LocalDeviceSkill = {
+      name: 'env-context',
+      description: 'Use when environment facts are needed',
+      short_description: 'Environment facts',
+      path: '/Users/crystal/.codex/skills/env-context/SKILL.md',
+      source: 'codex',
+    }
+    const listLocalSkills = vi.fn().mockResolvedValue([skill])
+
+    render(
+      <StrictMode>
+        <ControlledChatInput
+          projectChat={projectChatControls({ listLocalSkills })}
+        />
+      </StrictMode>,
+    )
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
+
+    expect(await screen.findByTestId('local-skill-option-env-context')).toBeInTheDocument()
   })
 
   test('retries local skill loading from the autocomplete error state', async () => {

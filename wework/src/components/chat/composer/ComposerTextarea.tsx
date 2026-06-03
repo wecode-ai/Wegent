@@ -128,6 +128,7 @@ export function ComposerTextarea({
   }, [])
 
   useEffect(() => {
+    mountedRef.current = true
     return () => {
       mountedRef.current = false
     }
