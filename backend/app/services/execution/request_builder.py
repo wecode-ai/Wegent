@@ -2299,8 +2299,18 @@ Response template:
         """Merge project or standalone chat workspace metadata for execution."""
 
         self._merge_project_workspace(task, workspace_data)
-        if not workspace_data.get("project"):
-            self._merge_standalone_chat_workspace(task, workspace_data)
+        if workspace_data.get("project"):
+            return
+
+        self._merge_standalone_chat_workspace(task, workspace_data)
+        if workspace_data.get("project"):
+            return
+
+        if (
+            not settings.CHAT_STANDALONE_WORKSPACE_ENABLED
+            and not self._has_git_workspace(workspace_data)
+        ):
+            self._merge_default_task_workspace(task, workspace_data)
 
     def _merge_project_workspace(
         self, task: TaskResource, workspace_data: dict
@@ -2405,6 +2415,31 @@ Response template:
             "checkout_path": None,
             "local_path": workspace_path.strip(),
         }
+
+    def _merge_default_task_workspace(
+        self, task: TaskResource, workspace_data: dict
+    ) -> None:
+        """Use the task workspace for new non-project Chats."""
+
+        task_workspace_path = str(task.id)
+        workspace_data["project"] = {
+            "project_id": None,
+            "workspace_source": "local_path",
+            "project_workspace_path": task_workspace_path,
+            "execution_target_type": "local",
+            "device_id": None,
+            "checkout_path": None,
+            "local_path": task_workspace_path,
+        }
+
+    def _has_git_workspace(self, workspace_data: dict) -> bool:
+        """Return true when workspace data already points to a git repository."""
+
+        repository = workspace_data.get("repository")
+        if not isinstance(repository, dict):
+            return False
+        git_url = repository.get("gitUrl")
+        return isinstance(git_url, str) and bool(git_url.strip())
 
     def _is_group_chat(self, task: TaskResource) -> bool:
         """Determine if task is a group chat.

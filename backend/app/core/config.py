@@ -110,6 +110,9 @@ class Settings(BaseSettings):
     STANDALONE_MODE: bool = False
     # Enable in-process executor (no Docker required) when in standalone mode
     STANDALONE_EXECUTOR_ENABLED: bool = True
+    # When disabled, new non-project Chats use the task workspace instead of
+    # creating date/slug-based standalone chat workspaces in the executor.
+    CHAT_STANDALONE_WORKSPACE_ENABLED: bool = False
 
     # Database configuration
     # Supports both MySQL and SQLite:

@@ -88,6 +88,9 @@ REDIS_PROTOCOL=2  # Default RESP2, compatible with Redis-compatible servers with
 # Backend Configuration
 PASSWORD_KEY=your-password-key-here
 DATABASE_URL=mysql+pymysql://task_user:your_password@mysql:3306/task_manager
+# New regular Chats use task workspaces by default (/workspace/{task_id} or local workspace/{task_id})
+# Set to true to restore date/title-based standalone chat workspace directories
+CHAT_STANDALONE_WORKSPACE_ENABLED=false
 
 # Attachment Storage Configuration (Optional)
 # Default: mysql (stores files in database)

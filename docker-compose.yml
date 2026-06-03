@@ -106,6 +106,7 @@ services:
       TEAM_SHARE_BASE_URL: ${TEAM_SHARE_BASE_URL:-http://localhost:3000/chat}
       TASK_SHARE_BASE_URL: ${TASK_SHARE_BASE_URL:-http://localhost:3000}
       TEAM_SHARE_QUERY_PARAM: ${TEAM_SHARE_QUERY_PARAM:-teamShare}
+      CHAT_STANDALONE_WORKSPACE_ENABLED: "${CHAT_STANDALONE_WORKSPACE_ENABLED:-false}"
       # Chat Shell Configuration (uncomment to use HTTP mode)
       CHAT_SHELL_MODE: ${CHAT_SHELL_MODE:-http}
       CHAT_SHELL_URL: ${CHAT_SHELL_URL:-http://chat_shell:8100}
