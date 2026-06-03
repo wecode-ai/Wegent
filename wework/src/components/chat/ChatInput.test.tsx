@@ -169,9 +169,33 @@ describe('ChatInput', () => {
     )
     await userEvent.click(await screen.findByTestId('local-skill-option-env-context'))
 
-    expect(screen.getByTestId('chat-message-input')).toHaveValue(
-      '[$env-context](/Users/crystal/.codex/skills/env-context/SKILL.md)env-context ',
+    expect(screen.getByTestId('chat-message-input')).toHaveValue('$env-context ')
+  })
+
+  test('deletes a selected local skill mention as one unit', async () => {
+    const skill: LocalDeviceSkill = {
+      name: 'env-context',
+      description: 'Use when environment facts are needed',
+      short_description: 'Environment facts',
+      path: '/Users/crystal/.codex/skills/env-context/SKILL.md',
+      source: 'codex',
+    }
+    const listLocalSkills = vi.fn().mockResolvedValue([skill])
+
+    render(
+      <ControlledChatInput
+        projectChat={projectChatControls({ listLocalSkills })}
+      />,
     )
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
+    await userEvent.click(await screen.findByTestId('local-skill-option-env-context'))
+    await waitFor(() => {
+      expect(screen.getByTestId('chat-message-input')).toHaveFocus()
+    })
+    await userEvent.keyboard('{Backspace}')
+
+    expect(screen.getByTestId('chat-message-input')).toHaveValue('')
   })
 
   test('sizes desktop local skill autocomplete to the composer width', async () => {

@@ -1,6 +1,6 @@
 import { Sparkles } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { KeyboardEventHandler, ReactNode, RefObject } from 'react'
+import type { KeyboardEventHandler, RefObject } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { LocalDeviceSkill } from '@/types/api'
 
@@ -47,40 +47,37 @@ function displaySkillName(skill: LocalDeviceSkill): string {
 }
 
 function skillReference(skill: LocalDeviceSkill): string {
-  const safePath = skill.path.replace(/\)/g, '%29')
-  return `[$${skill.name}](${safePath})${skill.name}`
+  return `$${skill.name}`
 }
 
-function renderHighlightedValue(value: string) {
-  const nodes: ReactNode[] = []
-  let lastIndex = 0
+function findSkillMentionBeforeCursor(
+  value: string,
+  cursor: number,
+  skills: LocalDeviceSkill[],
+): { start: number; end: number } | null {
+  const end = cursor > 0 && value[cursor - 1] === ' ' ? cursor - 1 : cursor
+  const searchValue = value.slice(0, end)
 
-  for (const match of value.matchAll(SKILL_REFERENCE_PATTERN)) {
-    const index = match.index ?? 0
-    if (index > lastIndex) {
-      nodes.push(value.slice(lastIndex, index))
+  for (const match of searchValue.matchAll(SKILL_REFERENCE_PATTERN)) {
+    const start = match.index ?? 0
+    const matchEnd = start + match[0].length
+    if (matchEnd === end) {
+      return { start, end: cursor }
     }
-    nodes.push(
-      <span
-        key={`${index}-${match[1]}`}
-        className="inline-flex rounded-md bg-primary/10 px-1 font-medium text-primary"
-      >
-        {displaySkillName({
-          name: match[3] || match[1],
-          description: '',
-          path: match[2],
-          source: 'codex',
-        })}
-      </span>,
-    )
-    lastIndex = index + match[0].length
   }
 
-  if (lastIndex < value.length) {
-    nodes.push(value.slice(lastIndex))
+  const candidates = skills
+    .map(skillReference)
+    .sort((left, right) => right.length - left.length)
+
+  for (const candidate of candidates) {
+    if (!searchValue.endsWith(candidate)) continue
+    const start = end - candidate.length
+    if (start > 0 && !/\s/.test(value[start - 1])) continue
+    return { start, end: cursor }
   }
 
-  return nodes.length > 0 ? nodes : value
+  return null
 }
 
 export function ComposerTextarea({
@@ -228,6 +225,27 @@ export function ComposerTextarea({
   )
 
   const handleKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = event => {
+    if (
+      event.key === 'Backspace' &&
+      event.currentTarget.selectionStart === event.currentTarget.selectionEnd
+    ) {
+      const mention = findSkillMentionBeforeCursor(
+        value,
+        event.currentTarget.selectionStart,
+        skills,
+      )
+      if (mention) {
+        event.preventDefault()
+        const nextValue = value.slice(0, mention.start) + value.slice(mention.end)
+        onChange(nextValue)
+        window.requestAnimationFrame(() => {
+          const textarea = textareaRef.current
+          textarea?.setSelectionRange(mention.start, mention.start)
+        })
+        return
+      }
+    }
+
     if (showSkillMenu) {
       if (event.key === 'ArrowDown') {
         event.preventDefault()
@@ -259,14 +277,6 @@ export function ComposerTextarea({
 
   return (
     <div className="relative min-w-0 flex-1 w-full">
-      {value.includes('[$') && (
-        <div
-          aria-hidden="true"
-          className={`${className} pointer-events-none absolute inset-0 whitespace-pre-wrap break-words text-text-primary`}
-        >
-          {renderHighlightedValue(value)}
-        </div>
-      )}
       <textarea
         ref={textareaRef}
         data-testid="chat-message-input"
@@ -280,7 +290,7 @@ export function ComposerTextarea({
         onKeyDown={handleKeyDown}
         onSelect={updateSkillTrigger}
         placeholder={placeholder}
-        className={`${className} relative z-10 ${value.includes('[$') ? 'text-transparent caret-text-primary' : ''}`}
+        className={`${className} relative z-10`}
       />
       {showSkillMenu && (
         <div
