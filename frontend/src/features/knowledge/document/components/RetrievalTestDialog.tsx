@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useCallback, useEffect, useMemo } from 'react'
-import { Search, FileText, Target, ChevronDown, ChevronUp, Settings2, X } from 'lucide-react'
+import { Search, FileText, Target, ChevronDown, ChevronUp, Settings2 } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -25,17 +25,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import {
-  Drawer,
-  DrawerClose,
-  DrawerContent,
-  DrawerDescription,
-  DrawerHeader,
-  DrawerTitle,
-  DrawerTrigger,
-} from '@/components/ui/drawer'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Label } from '@/components/ui/label'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { useTranslation } from '@/hooks/useTranslation'
 import { apiClient } from '@/apis/client'
 import { retrieverApis, type RetrievalMethodType } from '@/apis/retrievers'
@@ -92,7 +83,7 @@ export function RetrievalTestDialog({
   // Retrieval methods supported by the retriever
   const [supportedMethods, setSupportedMethods] = useState<RetrievalMethodType[]>([])
   const [loadingMethods, setLoadingMethods] = useState(false)
-  const [isConfigDrawerOpen, setIsConfigDrawerOpen] = useState(false)
+  const [isConfigPopoverOpen, setIsConfigPopoverOpen] = useState(false)
 
   // Test config - frontend only, overrides database config
   const [testConfig, setTestConfig] = useState<TestConfig>({
@@ -101,6 +92,7 @@ export function RetrievalTestDialog({
     top_k: 5,
   })
   const [searchHintsText, setSearchHintsText] = useState('')
+  const [isSearchHintsExpanded, setIsSearchHintsExpanded] = useState(false)
 
   const maxQueryLength = 200
 
@@ -260,7 +252,8 @@ export function RetrievalTestDialog({
     setHasSearched(false)
     setExpandedIndex(null)
     setFullKnowledgeBase(null)
-    setIsConfigDrawerOpen(false)
+    setIsConfigPopoverOpen(false)
+    setIsSearchHintsExpanded(false)
     onOpenChange(false)
   }
 
@@ -293,6 +286,8 @@ export function RetrievalTestDialog({
     )
   }, [searchHintsText, testConfig, knowledgeBase.retrieval_config])
 
+  const hasSearchHints = searchHintsText.trim().length > 0
+
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col">
@@ -316,8 +311,8 @@ export function RetrievalTestDialog({
                 </span>
 
                 {/* Config Popover */}
-                <Drawer open={isConfigDrawerOpen} onOpenChange={setIsConfigDrawerOpen}>
-                  <DrawerTrigger asChild>
+                <Popover open={isConfigPopoverOpen} onOpenChange={setIsConfigPopoverOpen}>
+                  <PopoverTrigger asChild>
                     <Button
                       variant="ghost"
                       size="sm"
@@ -339,113 +334,92 @@ export function RetrievalTestDialog({
                         </>
                       )}
                     </Button>
-                  </DrawerTrigger>
-                  <DrawerContent
-                    showHandle={false}
-                    className="h-[100vh] max-w-[520px] ml-auto flex flex-col"
-                  >
-                    <DrawerHeader className="border-b border-border px-4 pb-4 text-left flex-shrink-0">
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="min-w-0">
-                          <DrawerTitle className="text-lg font-semibold">
-                            {t('knowledge:document.retrievalTest.configTitle')}
-                          </DrawerTitle>
-                          <DrawerDescription className="mt-1">
-                            {t('knowledge:document.retrievalTest.configHint')}
-                          </DrawerDescription>
-                        </div>
-                        <DrawerClose asChild>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 flex-shrink-0"
-                            aria-label={t('common:actions.close')}
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        </DrawerClose>
-                      </div>
-                    </DrawerHeader>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" side="bottom" className="w-[360px] p-4">
+                    <div className="space-y-1 pb-3">
+                      <h3 className="text-sm font-semibold">
+                        {t('knowledge:document.retrievalTest.configTitle')}
+                      </h3>
+                      <p className="text-xs text-text-muted">
+                        {t('knowledge:document.retrievalTest.configHint')}
+                      </p>
+                    </div>
 
-                    <ScrollArea className="flex-1 min-h-0">
-                      <div className="space-y-5 px-4 py-4">
-                        {/* Retrieval Mode */}
-                        <div className="space-y-2">
-                          <Label className="text-xs text-text-secondary">
-                            {t('knowledge:document.retrieval.retrievalMode')}
-                          </Label>
-                          <Select
-                            value={testConfig.retrieval_mode}
-                            onValueChange={(value: RetrievalMethodType) =>
-                              setTestConfig(prev => ({ ...prev, retrieval_mode: value }))
+                    <div className="space-y-5">
+                      {/* Retrieval Mode */}
+                      <div className="space-y-2">
+                        <Label className="text-xs text-text-secondary">
+                          {t('knowledge:document.retrieval.retrievalMode')}
+                        </Label>
+                        <Select
+                          value={testConfig.retrieval_mode}
+                          onValueChange={(value: RetrievalMethodType) =>
+                            setTestConfig(prev => ({ ...prev, retrieval_mode: value }))
+                          }
+                        >
+                          <SelectTrigger className="h-9 text-sm">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {supportedMethods.map(method => (
+                              <SelectItem key={method} value={method}>
+                                {getRetrievalModeText(method)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {/* Score Threshold */}
+                      <div className="space-y-2">
+                        <Label className="text-xs text-text-secondary">
+                          {t('knowledge:document.retrieval.scoreThreshold')}
+                        </Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          max={1}
+                          step={0.1}
+                          value={testConfig.score_threshold}
+                          onChange={e => {
+                            const value = parseFloat(e.target.value)
+                            if (!isNaN(value) && value >= 0 && value <= 1) {
+                              setTestConfig(prev => ({ ...prev, score_threshold: value }))
                             }
-                          >
-                            <SelectTrigger className="h-9 text-sm">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {supportedMethods.map(method => (
-                                <SelectItem key={method} value={method}>
-                                  {getRetrievalModeText(method)}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-
-                        {/* Score Threshold */}
-                        <div className="space-y-2">
-                          <Label className="text-xs text-text-secondary">
-                            {t('knowledge:document.retrieval.scoreThreshold')}
-                          </Label>
-                          <Input
-                            type="number"
-                            min={0}
-                            max={1}
-                            step={0.1}
-                            value={testConfig.score_threshold}
-                            onChange={e => {
-                              const value = parseFloat(e.target.value)
-                              if (!isNaN(value) && value >= 0 && value <= 1) {
-                                setTestConfig(prev => ({ ...prev, score_threshold: value }))
-                              }
-                            }}
-                            className="h-9 text-sm"
-                          />
-                          <p className="text-[10px] text-text-muted">
-                            {t('knowledge:document.retrieval.scoreThresholdHint')}
-                          </p>
-                        </div>
-
-                        {/* Top K */}
-                        <div className="space-y-2">
-                          <Label className="text-xs text-text-secondary">
-                            {t('knowledge:document.retrieval.topK')}
-                          </Label>
-                          <Input
-                            type="number"
-                            min={1}
-                            max={20}
-                            step={1}
-                            value={testConfig.top_k}
-                            onChange={e => {
-                              const value = parseInt(e.target.value, 10)
-                              if (!isNaN(value) && value >= 1 && value <= 20) {
-                                setTestConfig(prev => ({ ...prev, top_k: value }))
-                              }
-                            }}
-                            className="h-9 text-sm"
-                          />
-                          <p className="text-[10px] text-text-muted">
-                            {t('knowledge:document.retrieval.topKHint')}
-                          </p>
-                        </div>
-
+                          }}
+                          className="h-9 text-sm"
+                        />
+                        <p className="text-[10px] text-text-muted">
+                          {t('knowledge:document.retrieval.scoreThresholdHint')}
+                        </p>
                       </div>
-                    </ScrollArea>
-                  </DrawerContent>
-                </Drawer>
+
+                      {/* Top K */}
+                      <div className="space-y-2">
+                        <Label className="text-xs text-text-secondary">
+                          {t('knowledge:document.retrieval.topK')}
+                        </Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={20}
+                          step={1}
+                          value={testConfig.top_k}
+                          onChange={e => {
+                            const value = parseInt(e.target.value, 10)
+                            if (!isNaN(value) && value >= 1 && value <= 20) {
+                              setTestConfig(prev => ({ ...prev, top_k: value }))
+                            }
+                          }}
+                          className="h-9 text-sm"
+                        />
+                        <p className="text-[10px] text-text-muted">
+                          {t('knowledge:document.retrieval.topKHint')}
+                        </p>
+                      </div>
+                    </div>
+                  </PopoverContent>
+                </Popover>
               </div>
 
               {/* Textarea */}
@@ -459,36 +433,61 @@ export function RetrievalTestDialog({
               />
 
               <div className="border-t border-border bg-surface/30 px-3 py-3">
-                <div className="mb-2 flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  className="flex w-full items-start justify-between gap-3 rounded-md text-left"
+                  onClick={() => setIsSearchHintsExpanded(prev => !prev)}
+                  aria-expanded={isSearchHintsExpanded}
+                  data-testid="retrieval-test-search-hints-toggle"
+                >
                   <div className="min-w-0">
-                    <Label className="text-xs text-text-secondary">
-                      {t('knowledge:document.retrievalTest.searchHints')}
-                    </Label>
+                    <div className="flex items-center gap-2">
+                      <Label className="cursor-pointer text-xs text-text-secondary">
+                        {t('knowledge:document.retrievalTest.searchHints')}
+                      </Label>
+                      {hasSearchHints && (
+                        <Badge variant="warning" className="h-4 px-1 text-[10px]">
+                          {t('knowledge:document.retrievalTest.modified')}
+                        </Badge>
+                      )}
+                    </div>
                     <p className="mt-1 text-[10px] text-text-muted">
                       {t('knowledge:document.retrievalTest.searchHintsHint')}
                     </p>
                   </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-7 px-2 text-xs"
-                    onClick={() =>
-                      setSearchHintsText(
-                        t('knowledge:document.retrievalTest.searchHintsPlaceholder')
-                      )
-                    }
-                  >
-                    {t('knowledge:document.retrievalTest.searchHintsUseExample')}
-                  </Button>
-                </div>
-                <Textarea
-                  value={searchHintsText}
-                  onChange={e => setSearchHintsText(e.target.value)}
-                  placeholder={t('knowledge:document.retrievalTest.searchHintsPlaceholder')}
-                  className="min-h-[180px] max-h-[320px] overflow-y-auto resize-y border-border bg-base font-mono text-xs leading-5"
-                  data-testid="retrieval-test-search-hints-input"
-                />
+                  {isSearchHintsExpanded ? (
+                    <ChevronUp className="mt-0.5 h-4 w-4 flex-shrink-0 text-text-muted" />
+                  ) : (
+                    <ChevronDown className="mt-0.5 h-4 w-4 flex-shrink-0 text-text-muted" />
+                  )}
+                </button>
+
+                {isSearchHintsExpanded && (
+                  <div className="mt-3 space-y-2">
+                    <div className="flex items-center justify-end">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 px-2 text-xs"
+                        onClick={() =>
+                          setSearchHintsText(
+                            t('knowledge:document.retrievalTest.searchHintsPlaceholder')
+                          )
+                        }
+                      >
+                        {t('knowledge:document.retrievalTest.searchHintsUseExample')}
+                      </Button>
+                    </div>
+                    <Textarea
+                      value={searchHintsText}
+                      onChange={e => setSearchHintsText(e.target.value)}
+                      placeholder={t('knowledge:document.retrievalTest.searchHintsPlaceholder')}
+                      className="min-h-[180px] max-h-[320px] overflow-y-auto resize-y border-border bg-base font-mono text-xs leading-5"
+                      data-testid="retrieval-test-search-hints-input"
+                    />
+                  </div>
+                )}
               </div>
 
               {/* Footer with character count and search button */}

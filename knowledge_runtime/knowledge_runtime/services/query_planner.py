@@ -10,7 +10,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from shared.models import SearchHints, build_search_hint_plan
+from knowledge_engine.retrieval.query_planning import build_search_hint_plan
+from shared.models import SearchHints
 
 HintSource = Literal["explicit_hints", "fallback"]
 
@@ -32,7 +33,6 @@ class QueryPlan:
 class QueryPlanner:
     """Build a retrieval plan from the raw query and optional search hints."""
 
-    _SPACE_RE = re.compile(r"\s+")
     _STRUCTURED_TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_./-]*")
 
     def plan(
@@ -53,9 +53,6 @@ class QueryPlanner:
             hint_source=resolved.hint_source,
             structured_spans=structured_spans,
         )
-
-    def _normalize(self, query: str | None) -> str:
-        return self._SPACE_RE.sub(" ", query or "").strip()
 
     def _extract_structured_spans(self, query: str) -> list[str]:
         spans: list[str] = []

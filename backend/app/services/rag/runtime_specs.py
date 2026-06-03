@@ -8,8 +8,8 @@ from app.services.knowledge.splitter_config import (
     normalize_runtime_splitter_config,
 )
 from shared.models import (
-    RemoteKnowledgeBaseRetrievalOverride,
     RemoteKnowledgeBaseQueryConfig,
+    RemoteKnowledgeBaseRetrievalOverride,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,

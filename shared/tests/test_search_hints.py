@@ -7,7 +7,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from shared.models import SearchHints, build_search_hint_plan
+from shared.models import SearchHints, normalize_search_terms, normalize_search_text
 
 
 def test_search_hints_normalize_and_deduplicate_terms() -> None:
@@ -36,10 +36,9 @@ def test_search_hints_reject_overlong_term() -> None:
         SearchHints.model_validate({"phrases": ["x" * 101]})
 
 
-def test_build_search_hint_plan_uses_normalized_fallback() -> None:
-    plan = build_search_hint_plan("  红包   520 发送   金额 规则  ")
-
-    assert plan.normalized_query == "红包 520 发送 金额 规则"
-    assert plan.dense_query == "红包 520 发送 金额 规则"
-    assert plan.sparse_query == "红包 520 发送 金额 规则"
-    assert plan.hint_source == "fallback"
+def test_normalize_helpers_are_stable() -> None:
+    assert normalize_search_text("  红包   520 发送   金额 规则  ") == "红包 520 发送 金额 规则"
+    assert normalize_search_terms([" release ", "", "checklist", "release"]) == [
+        "release",
+        "checklist",
+    ]
