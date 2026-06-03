@@ -8,7 +8,7 @@ export default {
         'text-primary': 'rgb(var(--color-text-primary) / <alpha-value>)',
         'text-secondary': 'rgb(var(--color-text-secondary) / <alpha-value>)',
         'text-muted': 'rgb(var(--color-text-muted) / <alpha-value>)',
-        base: 'rgb(var(--color-bg-base) / <alpha-value>)',
+        background: 'rgb(var(--color-bg-base) / <alpha-value>)',
         surface: 'rgb(var(--color-bg-surface) / <alpha-value>)',
         border: 'rgb(var(--color-border) / <alpha-value>)',
         muted: 'rgb(var(--color-muted) / <alpha-value>)',

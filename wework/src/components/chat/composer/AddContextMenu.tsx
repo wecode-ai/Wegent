@@ -45,7 +45,7 @@ export function AddContextMenu({ disabled, onFileSelect }: AddContextMenuProps) 
       {open && (
         <div
           data-testid="add-context-menu"
-          className="absolute bottom-[44px] left-0 z-40 w-60 overflow-hidden rounded-xl border border-border bg-base p-1.5 shadow-[0_12px_32px_rgba(0,0,0,0.12)]"
+          className="absolute bottom-[44px] left-0 z-40 w-60 overflow-hidden rounded-xl border border-border bg-background p-1.5 shadow-[0_12px_32px_rgba(0,0,0,0.12)]"
         >
           <button
             type="button"

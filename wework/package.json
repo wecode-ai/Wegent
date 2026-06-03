@@ -8,6 +8,7 @@
     "dev:mac": "bash scripts/dev-mac-app.sh",
     "tauri": "tauri dev",
     "build": "tsc -b && vite build",
+    "build:mac": "bash scripts/build-mac-app.sh",
     "tauri:build": "tauri build",
     "lint": "eslint .",
     "preview": "vite preview",

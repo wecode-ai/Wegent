@@ -57,10 +57,11 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
 
   async function request<T>(endpoint: string, init: RequestInit): Promise<T> {
     const token = getToken()
+    const isFormData = init.body instanceof FormData
     const response = await fetch(`${options.baseUrl}${endpoint}`, {
       ...init,
       headers: {
-        'Content-Type': 'application/json',
+        ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...init.headers,
       },
@@ -87,12 +88,22 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     post: (endpoint, data) =>
       request(endpoint, {
         method: 'POST',
-        body: data === undefined ? undefined : JSON.stringify(data),
+        body:
+          data === undefined
+            ? undefined
+            : data instanceof FormData
+              ? data
+              : JSON.stringify(data),
       }),
     put: (endpoint, data) =>
       request(endpoint, {
         method: 'PUT',
-        body: data === undefined ? undefined : JSON.stringify(data),
+        body:
+          data === undefined
+            ? undefined
+            : data instanceof FormData
+              ? data
+              : JSON.stringify(data),
       }),
     delete: endpoint => request(endpoint, { method: 'DELETE' }),
   }

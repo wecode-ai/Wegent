@@ -116,7 +116,7 @@ export function MobileWorkbenchLayout({
 
   if (state.isBootstrapping) {
     return (
-      <div className="flex h-dvh overflow-hidden bg-base text-text-primary">
+      <div className="flex h-dvh overflow-hidden bg-background text-text-primary">
         <main
           className="flex h-dvh min-h-0 w-full flex-col overflow-hidden"
           data-testid="mobile-workbench-loading"
@@ -126,13 +126,13 @@ export function MobileWorkbenchLayout({
   }
 
   return (
-    <div className="flex h-dvh overflow-hidden bg-base text-text-primary">
+    <div className="flex h-dvh overflow-hidden bg-background text-text-primary">
       <main className="flex h-dvh min-h-0 w-full flex-col overflow-hidden">
         {hasConversation ? (
           <div className="relative min-h-0 flex-1 overflow-hidden">
             <header
               data-testid="mobile-conversation-header"
-              className="pointer-events-none absolute left-0 right-0 top-0 z-20 flex min-h-[56px] items-center gap-2 border-b border-border/60 bg-base/95 px-3 pb-2 pt-[max(6px,env(safe-area-inset-top))] backdrop-blur"
+              className="pointer-events-none absolute left-0 right-0 top-0 z-20 flex min-h-[56px] items-center gap-2 border-b border-border/60 bg-background/95 px-3 pb-2 pt-[max(6px,env(safe-area-inset-top))] backdrop-blur"
             >
               <button
                 type="button"
@@ -192,7 +192,7 @@ export function MobileWorkbenchLayout({
           <div className="flex h-dvh min-h-0 flex-col pb-[max(16px,env(safe-area-inset-bottom))]">
             <header
               data-testid="mobile-empty-header"
-              className="flex min-h-[56px] shrink-0 items-center gap-2 border-b border-transparent bg-base/95 px-3 pb-2 pt-[max(6px,env(safe-area-inset-top))]"
+              className="flex min-h-[56px] shrink-0 items-center gap-2 border-b border-transparent bg-background/95 px-3 pb-2 pt-[max(6px,env(safe-area-inset-top))]"
             >
               <button
                 type="button"
