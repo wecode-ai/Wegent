@@ -26,6 +26,8 @@ import type {
   SkillRef,
   Subtask,
   Task,
+  TaskDetail,
+  TaskListResponse,
   UnifiedModel,
   UnifiedSkill,
   User,
@@ -62,7 +64,9 @@ export interface WorkbenchServices {
   modelApi: ReturnType<typeof createModelApi>
   skillApi: ReturnType<typeof createSkillApi>
   projectApi: ReturnType<typeof createProjectApi>
-  taskApi: ReturnType<typeof createTaskApi>
+  taskApi: Omit<ReturnType<typeof createTaskApi>, 'searchTasks'> & {
+    searchTasks?: ReturnType<typeof createTaskApi>['searchTasks']
+  }
   deviceApi: ReturnType<typeof createDeviceApi>
   userApi?: ReturnType<typeof createUserApi>
   chatStream: ReturnType<typeof createChatStream>
@@ -102,6 +106,8 @@ export interface WorkbenchContextValue {
   startStandaloneChat: () => void
   startNewProjectChat: (projectId: number) => void
   openTask: (taskId: number, projectId?: number) => Promise<void>
+  searchTasks: (query: string) => Promise<TaskListResponse>
+  searchTaskDetail: (taskId: number) => Promise<TaskDetail>
   rememberExecutionDevice: (deviceId: string) => void
   refreshWorkLists: () => Promise<void>
   refreshDevices: () => Promise<void>
@@ -777,6 +783,18 @@ export function WorkbenchProvider({
     ]
   )
 
+  const searchTaskDetail = useCallback(
+    (taskId: number) => resolvedServices.taskApi.getTaskDetail(taskId),
+    [resolvedServices]
+  )
+
+  const searchTasks = useCallback(
+    (query: string) =>
+      resolvedServices.taskApi.searchTasks?.(query, { limit: 30 }) ??
+      Promise.resolve({ total: 0, items: [] }),
+    [resolvedServices]
+  )
+
   const setInput = useCallback((input: string) => {
     dispatch({ type: 'input_changed', input })
   }, [])
@@ -1367,6 +1385,8 @@ export function WorkbenchProvider({
     startStandaloneChat,
     startNewProjectChat,
     openTask,
+    searchTasks,
+    searchTaskDetail,
     rememberExecutionDevice,
     refreshWorkLists,
     refreshDevices,

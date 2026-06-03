@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { createDeviceApi } from '@/api/devices'
@@ -59,6 +59,7 @@ describe('DesktopWorkbenchLayout', () => {
         writeText: vi.fn().mockResolvedValue(undefined),
       },
     })
+    Element.prototype.scrollIntoView = vi.fn()
     fetchQuotaMock.mockResolvedValue({
       quota: 748,
       usage: 747.74,
@@ -168,6 +169,7 @@ describe('DesktopWorkbenchLayout', () => {
     onSelectProject: vi.fn(),
     onStartNewProjectChat: vi.fn(),
     onOpenTask: vi.fn(),
+    onSearchTaskDetail: vi.fn(),
     onCreateProject: vi.fn(),
     onUpdateProjectName: vi.fn(),
     onRemoveProject: vi.fn(),
@@ -364,6 +366,253 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByText('新对话')).toBeInTheDocument()
     expect(document.querySelector('aside')).toBeInTheDocument()
+  })
+
+  test('opens and filters the desktop search dialog from the sidebar', async () => {
+    const onOpenTask = vi.fn()
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onOpenTask={onOpenTask}
+        state={{
+          ...baseProps.state,
+          projects: [
+            {
+              id: 9,
+              name: 'New project 5',
+              tasks: [
+                {
+                  id: 90,
+                  task_id: 90,
+                  task_title: '创建OKR系统',
+                  task_status: 'COMPLETED',
+                  updated_at: '2026-05-31T10:00:00.000Z',
+                },
+              ],
+            },
+          ],
+          recentTasks: [
+            {
+              id: 91,
+              title: '修复 git pull 失败',
+              status: 'COMPLETED',
+              task_type: 'code',
+              created_at: '2026-05-30T00:00:00.000Z',
+              updated_at: '2026-05-30T08:30:00.000Z',
+            },
+          ],
+        }}
+      />,
+    )
+
+    expect(screen.queryByTestId('desktop-search-dialog')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('search-button'))
+
+    const dialog = screen.getByTestId('desktop-search-dialog')
+    expect(dialog).toBeInTheDocument()
+    expect(screen.getByTestId('desktop-search-input')).toHaveFocus()
+    expect(within(dialog).getByText('近期对话')).toBeInTheDocument()
+    expect(within(dialog).getByText('创建OKR系统')).toBeInTheDocument()
+    expect(within(dialog).getByText('New project 5')).toBeInTheDocument()
+    expect(within(dialog).getByText('修复 git pull 失败')).toBeInTheDocument()
+    expect(within(dialog).queryByText('#1')).not.toBeInTheDocument()
+
+    await userEvent.type(screen.getByTestId('desktop-search-input'), 'okr')
+
+    expect(within(dialog).getByText('创建OKR系统')).toBeInTheDocument()
+    expect(within(dialog).queryByText('修复 git pull 失败')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('desktop-search-result-90'))
+
+    expect(onOpenTask).toHaveBeenCalledWith(90, 9)
+    expect(screen.queryByTestId('desktop-search-dialog')).not.toBeInTheDocument()
+  })
+
+  test('searches inside conversation messages from task details', async () => {
+    const onOpenTask = vi.fn()
+    const onSearchTaskDetail = vi.fn().mockImplementation(async (taskId: number) => ({
+      id: taskId,
+      title: 'hi',
+      status: 'COMPLETED',
+      task_type: 'code',
+      created_at: '2026-05-30T00:00:00.000Z',
+      updated_at: '2026-05-30T08:30:00.000Z',
+      subtasks: [
+        {
+          id: 101,
+          task_id: taskId,
+          role: 'assistant',
+          status: 'COMPLETED',
+          result: { value: '这是关于胡云鹏的回复内容' },
+          created_at: '2026-05-30T08:31:00.000Z',
+        },
+      ],
+    }))
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onOpenTask={onOpenTask}
+        onSearchTaskDetail={onSearchTaskDetail}
+        state={{
+          ...baseProps.state,
+          recentTasks: [
+            {
+              id: 91,
+              title: 'hi',
+              status: 'COMPLETED',
+              task_type: 'code',
+              created_at: '2026-05-30T00:00:00.000Z',
+              updated_at: '2026-05-30T08:30:00.000Z',
+            },
+          ],
+        }}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('search-button'))
+    await userEvent.type(screen.getByTestId('desktop-search-input'), '胡云鹏')
+
+    const dialog = screen.getByTestId('desktop-search-dialog')
+    expect(await within(dialog).findByText('hi')).toBeInTheDocument()
+    expect(onSearchTaskDetail).toHaveBeenCalledWith(91)
+
+    await userEvent.click(screen.getByTestId('desktop-search-result-91'))
+
+    expect(onOpenTask).toHaveBeenCalledWith(91, 0)
+  })
+
+  test('searches remote conversation content beyond loaded sidebar tasks', async () => {
+    const onOpenTask = vi.fn()
+    const onSearchTasks = vi.fn().mockResolvedValue({
+      total: 1,
+      items: [
+        {
+          id: 92,
+          title: 'hi',
+          status: 'COMPLETED',
+          task_type: 'code',
+          project_id: 9,
+          created_at: '2026-05-30T00:00:00.000Z',
+          updated_at: '2026-05-30T08:30:00.000Z',
+        },
+      ],
+    })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onOpenTask={onOpenTask}
+        onSearchTasks={onSearchTasks}
+        state={{
+          ...baseProps.state,
+          projects: [
+            {
+              id: 9,
+              name: '文档',
+              tasks: [],
+            },
+          ],
+          recentTasks: [],
+        }}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('search-button'))
+    await userEvent.type(screen.getByTestId('desktop-search-input'), '胡云鹏')
+
+    const dialog = screen.getByTestId('desktop-search-dialog')
+    expect(await within(dialog).findByText('hi')).toBeInTheDocument()
+    expect(within(dialog).getByText('文档')).toBeInTheDocument()
+    expect(onSearchTasks).toHaveBeenCalledWith('胡云鹏')
+
+    await userEvent.click(screen.getByTestId('desktop-search-result-92'))
+
+    expect(onOpenTask).toHaveBeenCalledWith(92, 9)
+  })
+
+  test('does not load local task details when remote search is available', async () => {
+    const onSearchTasks = vi.fn().mockResolvedValue({ total: 0, items: [] })
+    const onSearchTaskDetail = vi.fn().mockResolvedValue({ subtasks: [] })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onSearchTasks={onSearchTasks}
+        onSearchTaskDetail={onSearchTaskDetail}
+        state={{
+          ...baseProps.state,
+          recentTasks: [
+            {
+              id: 91,
+              title: 'hi',
+              status: 'COMPLETED',
+              task_type: 'code',
+              created_at: '2026-05-30T00:00:00.000Z',
+              updated_at: '2026-05-30T08:30:00.000Z',
+            },
+          ],
+        }}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('search-button'))
+    await userEvent.type(screen.getByTestId('desktop-search-input'), 'ubuntu')
+
+    await waitFor(() => expect(onSearchTasks).toHaveBeenCalledWith('ubuntu'))
+
+    expect(onSearchTaskDetail).not.toHaveBeenCalled()
+  })
+
+  test('expands and scrolls to the current project task after opening from search', async () => {
+    const projectTasks = Array.from({ length: 7 }, (_, index) => ({
+      id: 900 + index,
+      task_id: 900 + index,
+      task_title: `项目会话 ${index + 1}`,
+      task_status: 'COMPLETED',
+      created_at: `2026-05-30T0${index}:00:00.000Z`,
+      updated_at: `2026-05-30T0${index}:30:00.000Z`,
+    }))
+    const selectedTask = projectTasks[6]
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          projects: [
+            {
+              id: 9,
+              name: '文档',
+              tasks: projectTasks,
+            },
+          ],
+          currentProject: {
+            id: 9,
+            name: '文档',
+            tasks: projectTasks,
+          },
+          currentTask: {
+            id: selectedTask.task_id,
+            title: selectedTask.task_title,
+            status: 'COMPLETED',
+            task_type: 'code',
+            project_id: 9,
+            created_at: selectedTask.created_at,
+            updated_at: selectedTask.updated_at,
+          },
+        }}
+      />,
+    )
+
+    const selectedRow = await screen.findByTestId(
+      `project-chat-row-${selectedTask.task_id}`,
+    )
+
+    expect(selectedRow).toHaveTextContent('项目会话 7')
+    expect(selectedRow).toHaveClass('bg-[rgb(var(--color-sidebar-active))]')
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled()
   })
 
   test('opens the settings menu from the sidebar', async () => {
@@ -672,8 +921,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('confirm-rename-project-button'))
     expect(baseProps.onUpdateProjectName).toHaveBeenCalledWith(1, 'publish-v2')
 
-    await userEvent.click(screen.getByTestId('project-item-button'))
-    expect(screen.getByText('Implement archive')).toBeInTheDocument()
+    expect(await screen.findByText('Implement archive')).toBeInTheDocument()
     expect(screen.getByText('2h')).toBeInTheDocument()
     expect(screen.getByTestId('project-chat-time-11')).toHaveClass(
       'group-hover/task:opacity-0',
