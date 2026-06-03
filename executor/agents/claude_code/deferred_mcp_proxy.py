@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, AsyncGenerator, Callable
 
 from claude_agent_sdk import HookMatcher
 from mcp import ClientSession
@@ -23,6 +23,17 @@ from mcp.client.streamable_http import streamablehttp_client
 
 INTERACTIVE_FORM_TOOL_MARKER = "interactive_form_question"
 WAITING_FOR_USER_INPUT_REASON = "waiting_for_user_input"
+INTERACTIVE_FORM_ANSWER_FIELDS = (
+    "type",
+    "ask_id",
+    "tool_use_id",
+    "task_id",
+    "subtask_id",
+    "answers",
+    "success",
+    "status",
+    "message",
+)
 
 
 @dataclass(frozen=True)
@@ -49,6 +60,70 @@ class DeferredMcpProxyResult:
 def is_interactive_form_tool(tool_name: str | None) -> bool:
     """Return whether a tool name belongs to interactive_form_question."""
     return bool(tool_name and INTERACTIVE_FORM_TOOL_MARKER in tool_name)
+
+
+def build_interactive_form_answer_payload(
+    answer: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Return the safe answer payload to send back to a deferred form tool."""
+    if not isinstance(answer, dict):
+        return None
+
+    answer_type = answer.get("type")
+    if answer_type != INTERACTIVE_FORM_TOOL_MARKER:
+        return None
+
+    tool_use_id = answer.get("tool_use_id")
+    if not isinstance(tool_use_id, str) or not tool_use_id.strip():
+        return None
+
+    ask_id = answer.get("ask_id")
+    if isinstance(ask_id, str) and tool_use_id.strip() == ask_id.strip():
+        return None
+
+    payload = {
+        field: answer[field]
+        for field in INTERACTIVE_FORM_ANSWER_FIELDS
+        if field in answer and answer[field] is not None
+    }
+    payload["tool_use_id"] = tool_use_id.strip()
+    return payload
+
+
+async def create_interactive_form_answer_query(
+    answer: dict[str, Any],
+) -> AsyncGenerator[dict[str, Any], None]:
+    """Create a Claude SDK user message that resolves a deferred form tool."""
+    payload = build_interactive_form_answer_payload(answer)
+    if not payload:
+        return
+
+    tool_use_id = payload["tool_use_id"]
+    yield {
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": tool_use_id,
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(payload, ensure_ascii=False),
+                        }
+                    ],
+                    "is_error": False,
+                }
+            ],
+        },
+        "parent_tool_use_id": tool_use_id,
+        "tool_use_result": {
+            "tool_use_id": tool_use_id,
+            "content": payload,
+            "is_error": False,
+        },
+    }
 
 
 def parse_mcp_tool_name(tool_name: str | None) -> ParsedMcpToolName | None:

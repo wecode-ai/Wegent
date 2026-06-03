@@ -27,6 +27,8 @@ from executor.agents.claude_code.config_manager import (
     get_claude_config_dir,
 )
 from executor.agents.claude_code.deferred_mcp_proxy import (
+    build_interactive_form_answer_payload,
+    create_interactive_form_answer_query,
     install_deferred_mcp_proxy_hook,
 )
 from executor.agents.claude_code.git_operations import (
@@ -851,7 +853,23 @@ class ClaudeCodeAgent(Agent):
                 f"Sending query with prompt (length: {prompt_length}) for session_id: {self.session_id}"
             )
 
-            if is_vision_prompt(prompt):
+            interactive_form_answer = getattr(
+                self.task_data, "interactive_form_answer", None
+            )
+            interactive_form_payload = build_interactive_form_answer_payload(
+                interactive_form_answer
+            )
+
+            if interactive_form_payload:
+                logger.info(
+                    "Sending interactive form answer as tool_result for tool_use_id=%s",
+                    interactive_form_payload["tool_use_id"],
+                )
+                await self.client.query(
+                    create_interactive_form_answer_query(interactive_form_answer),
+                    session_id=self.session_id,
+                )
+            elif is_vision_prompt(prompt):
                 # Save images to disk before sending to SDK
                 saved_paths = save_vision_images(prompt, task_id=self.task_id)
                 if saved_paths:
