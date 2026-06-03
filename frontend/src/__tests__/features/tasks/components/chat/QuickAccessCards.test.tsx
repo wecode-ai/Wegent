@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 
 import { userApis } from '@/apis/user'
@@ -291,6 +291,56 @@ describe('QuickAccessCards', () => {
 
     expect(onTeamSelect).toHaveBeenCalledWith(expect.objectContaining({ id: 2 }))
     expect(onPhraseSelect).toHaveBeenCalledWith('帮我创建一个 xxx 的 PPT')
+  })
+
+  test('animates quick phrase panel in and out before restoring quick cards', async () => {
+    mockGetQuickLaunch.mockResolvedValueOnce({
+      system_functions: [
+        {
+          type: 'system_function',
+          id: 'create_ppt',
+          title: 'Create PPT',
+          team_id: 2,
+          name: 'system-team',
+          enabled: true,
+          order: 10,
+          quick_phrases: ['帮我创建一个 xxx 的 PPT'],
+        },
+      ],
+      favorite_agents: [],
+    } satisfies QuickLaunchResponse)
+
+    render(
+      <QuickAccessCards
+        teams={[makeTeam({ id: 2, name: 'system-team', description: 'System description' })]}
+        selectedTeam={null}
+        onTeamSelect={jest.fn()}
+        onPhraseSelect={jest.fn()}
+        currentMode="chat"
+      />
+    )
+
+    fireEvent.click(await screen.findByText('Create PPT'))
+
+    expect(screen.getByTestId('quick-phrase-list')).toHaveClass('animate-in')
+    expect(screen.getByTestId('quick-phrase-list')).toHaveClass('fade-in-0')
+
+    jest.useFakeTimers()
+    try {
+      fireEvent.click(screen.getByTestId('quick-phrase-back'))
+
+      expect(screen.getByTestId('quick-phrase-list')).toHaveClass('animate-out')
+      expect(screen.queryByTestId('quick-launch-cards')).not.toBeInTheDocument()
+
+      act(() => {
+        jest.advanceTimersByTime(160)
+      })
+    } finally {
+      jest.useRealTimers()
+    }
+
+    expect(screen.queryByTestId('quick-phrase-list')).not.toBeInTheDocument()
+    expect(screen.getByTestId('quick-launch-cards')).toBeInTheDocument()
   })
 
   test('keeps quick cards visible when a launcher has no quick phrases', async () => {

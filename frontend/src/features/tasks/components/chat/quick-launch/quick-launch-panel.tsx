@@ -1,11 +1,13 @@
 'use client'
 
-import { useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { TaskType, Team } from '@/types/api'
 import { QuickLauncherCards } from './quick-launcher-cards'
 import { QuickPhraseList } from './QuickPhraseList'
 import type { QuickLauncher } from './types'
 import { useQuickLaunchers } from './useQuickLaunchers'
+
+const QUICK_PHRASE_EXIT_ANIMATION_MS = 150
 
 interface QuickLaunchPanelProps {
   teams: Team[]
@@ -31,11 +33,48 @@ export function QuickLaunchPanel({
 }: QuickLaunchPanelProps) {
   const [selectedLauncher, setSelectedLauncher] = useState<QuickLauncher | null>(null)
   const [selectedLauncherKey, setSelectedLauncherKey] = useState<string | null>(null)
+  const [isPhraseListExiting, setIsPhraseListExiting] = useState(false)
+  const exitTimerRef = useRef<number | null>(null)
   const {
     isLoading: isQuickLaunchLoading,
     systemLaunchers,
     favoriteLaunchers,
   } = useQuickLaunchers({ teams, currentMode, defaultTeam })
+
+  const clearExitTimer = useCallback(() => {
+    if (exitTimerRef.current === null) {
+      return
+    }
+
+    window.clearTimeout(exitTimerRef.current)
+    exitTimerRef.current = null
+  }, [])
+
+  useEffect(() => clearExitTimer, [clearExitTimer])
+
+  const showPhraseList = useCallback(
+    (launcher: QuickLauncher) => {
+      clearExitTimer()
+      setSelectedLauncherKey(null)
+      setIsPhraseListExiting(false)
+      setSelectedLauncher(launcher)
+    },
+    [clearExitTimer]
+  )
+
+  const hidePhraseList = useCallback(() => {
+    if (isPhraseListExiting) {
+      return
+    }
+
+    clearExitTimer()
+    setIsPhraseListExiting(true)
+    exitTimerRef.current = window.setTimeout(() => {
+      setSelectedLauncher(null)
+      setIsPhraseListExiting(false)
+      exitTimerRef.current = null
+    }, QUICK_PHRASE_EXIT_ANIMATION_MS)
+  }, [clearExitTimer, isPhraseListExiting])
 
   if (isLoading || isQuickLaunchLoading) {
     return (
@@ -47,7 +86,8 @@ export function QuickLaunchPanel({
     return (
       <QuickPhraseList
         launcher={selectedLauncher}
-        onBack={() => setSelectedLauncher(null)}
+        isExiting={isPhraseListExiting}
+        onBack={hidePhraseList}
         onPhraseSelect={onPhraseSelect}
       />
     )
@@ -70,8 +110,7 @@ export function QuickLaunchPanel({
       onSelectLauncher={launcher => {
         onTeamSelect(launcher.team)
         if (launcher.quickPhrases.length > 0) {
-          setSelectedLauncherKey(null)
-          setSelectedLauncher(launcher)
+          showPhraseList(launcher)
           return
         }
         setSelectedLauncherKey(launcher.key)
