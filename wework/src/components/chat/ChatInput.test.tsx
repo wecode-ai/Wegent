@@ -7,9 +7,7 @@ import type {
   DeviceInfo,
   LocalDeviceSkill,
   ProjectWithTasks,
-  SkillRef,
   UnifiedModel,
-  UnifiedSkill,
 } from '@/types/api'
 import { ChatInput } from './ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from './ChatInput'
@@ -88,7 +86,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('chat-message-input')).toHaveAttribute('rows', '2')
     expect(screen.queryByTestId('custom-mode-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('model-selector-button')).toBeInTheDocument()
-    expect(screen.getByTestId('skill-selector-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('skill-selector-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('project-work-button')).toBeInTheDocument()
   })
 
@@ -715,17 +713,7 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('model-control-speed-fast')).not.toBeInTheDocument()
   })
 
-  test('opens the desktop skill menu and toggles a skill', async () => {
-    const skill: UnifiedSkill = {
-      id: 1,
-      name: 'project-summary',
-      namespace: 'default',
-      description: 'Summarize project context',
-      is_active: true,
-      is_public: false,
-      user_id: 1,
-    }
-    const toggleSkill = vi.fn()
+  test('does not render the desktop skill selector', () => {
     render(
       <ChatInput
         value=""
@@ -734,24 +722,23 @@ describe('ChatInput', () => {
         disabled={false}
         variant="desktop"
         projectChat={projectChatControls({
-          skills: [skill],
-          toggleSkill,
+          skills: [
+            {
+              id: 1,
+              name: 'project-summary',
+              namespace: 'default',
+              description: 'Summarize project context',
+              is_active: true,
+              is_public: false,
+              user_id: 1,
+            },
+          ],
         })}
       />,
     )
 
-    await userEvent.click(screen.getByTestId('skill-selector-button'))
-
-    expect(screen.getByTestId('skill-selector-menu')).toBeInTheDocument()
-    expect(screen.getByText('选择技能')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('skill-option-project-summary'))
-
-    expect(toggleSkill).toHaveBeenCalledWith({
-      name: 'project-summary',
-      namespace: 'default',
-      is_public: false,
-    })
+    expect(screen.queryByTestId('skill-selector-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('skill-selector-menu')).not.toBeInTheDocument()
   })
 
   test('opens the desktop add context menu with only file upload', async () => {
@@ -1343,13 +1330,7 @@ describe('ChatInput', () => {
     expect(onSelectProject).not.toHaveBeenCalledWith(8)
   })
 
-  test('keeps model selector enabled and skill selector disabled when options are locked', () => {
-    const selectedSkill: SkillRef = {
-      name: 'project-summary',
-      namespace: 'default',
-      is_public: false,
-    }
-
+  test('keeps model selector enabled and omits skill selector when options are locked', () => {
     render(
       <ChatInput
         value=""
@@ -1358,14 +1339,20 @@ describe('ChatInput', () => {
         disabled={false}
         variant="desktop"
         projectChat={projectChatControls({
-          selectedSkills: [selectedSkill],
+          selectedSkills: [
+            {
+              name: 'project-summary',
+              namespace: 'default',
+              is_public: false,
+            },
+          ],
           isOptionsLocked: true,
         })}
       />,
     )
 
     expect(screen.getByTestId('model-selector-button')).not.toBeDisabled()
-    expect(screen.getByTestId('skill-selector-button')).toBeDisabled()
+    expect(screen.queryByTestId('skill-selector-button')).not.toBeInTheDocument()
   })
 
   test.each([

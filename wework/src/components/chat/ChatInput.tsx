@@ -92,18 +92,14 @@ export function ChatInput({
       <ProjectChatComposer
         {...composerProps}
         models={controls.models}
-        skills={controls.skills}
         selectedModel={controls.selectedModel}
         selectedModelOptions={controls.selectedModelOptions}
         isModelSelectionReady={controls.isModelSelectionReady ?? true}
-        selectedSkills={controls.selectedSkills}
         attachments={controls.attachments}
         uploadingFiles={controls.uploadingFiles}
         attachmentErrors={controls.errors}
-        optionsLocked={controls.isOptionsLocked}
         onSelectModel={controls.setSelectedModel}
         onSelectModelOption={controls.setSelectedModelOption}
-        onToggleSkill={controls.toggleSkill}
         onFileSelect={files => {
           void controls.handleFileSelect(files)
         }}

@@ -2,9 +2,7 @@ import type {
   Attachment,
   LocalDeviceSkill,
   ModelOptions,
-  SkillRef,
   UnifiedModel,
-  UnifiedSkill,
 } from '@/types/api'
 import type { ProjectWorkControls } from '../ChatInput'
 import { AttachmentBadges } from './AttachmentBadges'
@@ -20,18 +18,14 @@ interface ProjectChatComposerProps {
   disabled: boolean
   placeholder: string
   models: UnifiedModel[]
-  skills: UnifiedSkill[]
   selectedModel: UnifiedModel | null
   selectedModelOptions: ModelOptions
   isModelSelectionReady: boolean
-  selectedSkills: SkillRef[]
   attachments: Attachment[]
   uploadingFiles: Map<string, { file: File; progress: number }>
   attachmentErrors: Map<string, string>
-  optionsLocked: boolean
   onSelectModel: (model: UnifiedModel | null) => void
   onSelectModelOption: (optionId: string, value: string) => void
-  onToggleSkill: (skill: SkillRef) => void
   onFileSelect: (files: File | File[]) => void
   onRemoveAttachment: (attachmentId: number) => void
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
@@ -46,18 +40,14 @@ export function ProjectChatComposer({
   disabled,
   placeholder,
   models,
-  skills,
   selectedModel,
   selectedModelOptions,
   isModelSelectionReady,
-  selectedSkills,
   attachments,
   uploadingFiles,
   attachmentErrors,
-  optionsLocked,
   onSelectModel,
   onSelectModelOption,
-  onToggleSkill,
   onFileSelect,
   onRemoveAttachment,
   onListLocalSkills,
@@ -97,15 +87,11 @@ export function ProjectChatComposer({
         <ComposerToolbar
           canSend={canSend}
           models={models}
-          skills={skills}
           selectedModel={selectedModel}
           selectedModelOptions={selectedModelOptions}
           isModelSelectionReady={isModelSelectionReady}
-          selectedSkills={selectedSkills}
-          optionsLocked={optionsLocked}
           onSelectModel={onSelectModel}
           onSelectModelOption={onSelectModelOption}
-          onToggleSkill={onToggleSkill}
           onFileSelect={onFileSelect}
         />
       </form>
