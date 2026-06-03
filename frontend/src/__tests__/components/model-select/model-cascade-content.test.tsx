@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import {
   ModelCascadeContent,
   type ModelCascadeLabels,
@@ -55,6 +55,10 @@ const models: GroupableModel[] = [
 ]
 
 describe('ModelCascadeContent', () => {
+  afterEach(() => {
+    jest.restoreAllMocks()
+  })
+
   it('shows primary and secondary groups before choosing a model', () => {
     render(
       <ModelCascadeContent
@@ -144,5 +148,38 @@ describe('ModelCascadeContent', () => {
     expect(results).toHaveClass('min-h-0')
     expect(results.className).toContain('h-[clamp(')
     expect(footer).toHaveClass('shrink-0')
+  })
+
+  it('scrolls the selected model into view when the active subgroup contains many models', async () => {
+    const scrollIntoView = jest.fn()
+    Object.defineProperty(Element.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    })
+
+    const longModelList = Array.from({ length: 32 }, (_, index) => ({
+      name: `model-${String(index).padStart(2, '0')}`,
+      displayName: `Model ${String(index).padStart(2, '0')}`,
+      provider: 'provider-one',
+      modelId: `provider-one-model-${index}`,
+      modelGroup: 'Primary One',
+      modelSubGroup: 'Secondary One',
+    }))
+    const selectedModel = longModelList[31]
+
+    render(
+      <ModelCascadeContent
+        models={longModelList}
+        selectedModel={selectedModel}
+        labels={labels}
+        searchValue=""
+        onSearchValueChange={jest.fn()}
+        onSelectModel={jest.fn()}
+      />
+    )
+
+    await waitFor(() => {
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' })
+    })
   })
 })
