@@ -22,6 +22,14 @@ from app.utils.prompt_utils import extract_display_prompt
 logger = logging.getLogger(__name__)
 
 
+def _extract_device_id_from_executor_name(executor_name: str | None) -> str | None:
+    """Extract a device ID from a device-mode executor name."""
+    if not executor_name or not executor_name.startswith("device-"):
+        return None
+    device_id = executor_name[len("device-") :].strip()
+    return device_id or None
+
+
 def schedule_dispatch(task_id: int) -> None:
     """Schedule async dispatch of a task from sync context.
 
@@ -30,7 +38,7 @@ def schedule_dispatch(task_id: int) -> None:
     the async dispatch operation.
 
     This replaces the former task_dispatcher.schedule_dispatch() method,
-    using HTTP+Callback mode via execution_dispatcher.
+    using execution_dispatcher to select the appropriate dispatch route.
 
     Args:
         task_id: Task ID to dispatch
@@ -101,7 +109,7 @@ async def _dispatch_task_async(task_id: int) -> None:
     This function:
     1. Queries database for task, subtask, user, team info
     2. Builds ExecutionRequest using TaskRequestBuilder
-    3. Dispatches via HTTP+Callback mode
+    3. Dispatches through execution_dispatcher
 
     Args:
         task_id: Task ID to dispatch
@@ -141,7 +149,6 @@ async def _dispatch_task_async(task_id: int) -> None:
             )
             .all()
         )
-
         if not subtasks:
             logger.debug(
                 f"[schedule_dispatch] No PENDING subtasks found for task {task_id}"
@@ -223,8 +230,18 @@ async def _dispatch_task_async(task_id: int) -> None:
                 subtask.status = SubtaskStatus.RUNNING
                 db.commit()
 
-                # Dispatch using HTTP+Callback mode
-                await execution_dispatcher.dispatch(request)
+                device_id = _extract_device_id_from_executor_name(subtask.executor_name)
+                logger.info(
+                    "[schedule_dispatch] Dispatching pending subtask: "
+                    "task_id=%s, subtask_id=%s, device_id=%s, executor=%s/%s",
+                    task_id,
+                    subtask.id,
+                    device_id,
+                    subtask.executor_namespace,
+                    subtask.executor_name,
+                )
+
+                await execution_dispatcher.dispatch(request, device_id=device_id)
 
                 logger.info(
                     f"[schedule_dispatch] Dispatched subtask {subtask.id} "

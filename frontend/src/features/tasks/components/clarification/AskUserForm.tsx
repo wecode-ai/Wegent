@@ -33,7 +33,11 @@ interface AskUserFormProps {
    * Callback when user submits the answer.
    * Receives the formatted message string ready to be sent as a new conversation.
    */
-  onSubmit?: (askId: string, formattedMessage: string, answer: InteractiveFormAnswerPayload) => void
+  onSubmit?: (
+    toolUseId: string,
+    formattedMessage: string,
+    answer: InteractiveFormAnswerPayload
+  ) => void
 }
 
 // ─── Single Question Widget ───────────────────────────────────────────────────
@@ -375,10 +379,9 @@ export default function AskUserForm({
     setLocalSubmitted(true)
 
     if (onSubmit) {
-      onSubmit(data.ask_id, formattedMessage, {
+      onSubmit(data.tool_use_id, formattedMessage, {
         type: 'interactive_form_question',
-        ask_id: data.ask_id,
-        tool_use_id: data.tool_use_id ?? null,
+        tool_use_id: data.tool_use_id,
         task_id: data.task_id,
         subtask_id: data.subtask_id,
         success: true,

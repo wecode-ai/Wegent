@@ -129,7 +129,7 @@ export function PluginsPage() {
           type="button"
           data-testid="expand-sidebar-button"
           onClick={() => setSidebarCollapsed(false)}
-          className="absolute left-4 top-4 z-20 flex h-9 w-9 items-center justify-center rounded-md bg-surface text-[#555] hover:bg-muted"
+          className="absolute left-4 top-4 z-20 flex h-9 w-9 items-center justify-center rounded-md bg-surface text-text-secondary hover:bg-muted"
           aria-label={t('workbench.expand_sidebar', '展开侧边栏')}
         >
           <ChevronRight className="h-4 w-4" />

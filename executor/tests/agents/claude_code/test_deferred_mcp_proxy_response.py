@@ -17,10 +17,18 @@ from shared.status import TaskStatus
 
 @pytest.mark.asyncio
 async def test_process_result_message_proxies_deferred_interactive_form(monkeypatch):
+    emitted_events = []
+
     emitter = SimpleNamespace(
+        tool_start=AsyncMock(
+            side_effect=lambda **kwargs: emitted_events.append(("tool_start", kwargs))
+        ),
         tool_done=AsyncMock(),
         done=AsyncMock(),
         error=AsyncMock(),
+    )
+    emitter.tool_done.side_effect = lambda **kwargs: emitted_events.append(
+        ("tool_done", kwargs)
     )
     state_manager = SimpleNamespace(
         task_data=SimpleNamespace(task_id=10, subtask_id=20),
@@ -82,6 +90,14 @@ async def test_process_result_message_proxies_deferred_interactive_form(monkeypa
     )
 
     assert result == TaskStatus.COMPLETED
+    emitter.tool_start.assert_awaited_once()
+    tool_start_kwargs = emitter.tool_start.await_args.kwargs
+    assert tool_start_kwargs["call_id"] == "tool-1"
+    assert tool_start_kwargs["name"] == (
+        "mcp__interactive_wegent-interactive-form-question__"
+        "interactive_form_question"
+    )
+    assert tool_start_kwargs["tool_protocol"] == "mcp_call"
     emitter.tool_done.assert_awaited_once()
     tool_done_kwargs = emitter.tool_done.await_args.kwargs
     assert tool_done_kwargs["call_id"] == "tool-1"
@@ -94,6 +110,85 @@ async def test_process_result_message_proxies_deferred_interactive_form(monkeypa
         content="",
         usage={"input_tokens": 1},
         stop_reason="tool_deferred",
+        silent_exit=True,
+        silent_exit_reason="waiting_for_user_input",
+    )
+    emitter.error.assert_not_awaited()
+    assert emitted_events[0][0] == "tool_start"
+    assert emitted_events[1][0] == "tool_done"
+
+
+@pytest.mark.asyncio
+async def test_process_result_message_handles_deferred_unavailable_form(
+    monkeypatch,
+):
+    emitter = SimpleNamespace(
+        tool_start=AsyncMock(),
+        tool_done=AsyncMock(),
+        done=AsyncMock(),
+        error=AsyncMock(),
+    )
+    state_manager = SimpleNamespace(
+        task_data=SimpleNamespace(task_id=10, subtask_id=20),
+        set_task_status=MagicMock(),
+        report_progress=MagicMock(),
+    )
+
+    async def fake_proxy_deferred_mcp_tool(*, deferred_tool_use, mcp_servers):
+        return DeferredMcpProxyResult(
+            tool_use_id=deferred_tool_use.id,
+            tool_name=deferred_tool_use.name,
+            server_name="interactive_wegent-interactive-form-question",
+            tool_result={
+                "content": [
+                    {
+                        "type": "text",
+                        "text": '{"__deferred_user_input__": true}',
+                    }
+                ]
+            },
+            output_text='{"__deferred_user_input__": true}',
+            is_deferred_user_input=True,
+        )
+
+    monkeypatch.setattr(
+        "executor.agents.claude_code.response_processor.proxy_deferred_mcp_tool",
+        fake_proxy_deferred_mcp_tool,
+    )
+
+    msg = ResultMessage(
+        subtype="success",
+        duration_ms=1,
+        duration_api_ms=1,
+        is_error=True,
+        num_turns=1,
+        session_id="session-1",
+        stop_reason="tool_deferred_unavailable",
+        usage={"input_tokens": 1},
+        deferred_tool_use=DeferredToolUse(
+            id="tool-2",
+            name=(
+                "mcp__interactive_wegent-interactive-form-question__"
+                "interactive_form_question"
+            ),
+            input={"questions": [{"id": "q1", "question": "Question?"}]},
+        ),
+    )
+
+    result = await _process_result_message(
+        msg=msg,
+        emitter=emitter,
+        state_manager=state_manager,
+        mcp_servers={},
+    )
+
+    assert result == TaskStatus.COMPLETED
+    emitter.tool_start.assert_awaited_once()
+    emitter.tool_done.assert_awaited_once()
+    emitter.done.assert_awaited_once_with(
+        content="",
+        usage={"input_tokens": 1},
+        stop_reason="tool_deferred_unavailable",
         silent_exit=True,
         silent_exit_reason="waiting_for_user_input",
     )

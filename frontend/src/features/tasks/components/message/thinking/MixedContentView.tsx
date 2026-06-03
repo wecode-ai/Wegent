@@ -116,7 +116,7 @@ interface MixedContentViewProps {
   currentMessageIndex?: number
   /** Callback when user submits an ask_user_question form - receives pre-formatted message string */
   onAskUserSubmit?: (
-    askId: string,
+    toolUseId: string,
     formattedMessage: string,
     answer: InteractiveFormAnswerPayload
   ) => void
@@ -250,10 +250,7 @@ const MixedContentView = memo(function MixedContentView({
                 return defaultValue
               }
 
-              const askId =
-                typeof formPayload.form.ask_id === 'string'
-                  ? formPayload.form.ask_id
-                  : block.tool_use_id || block.id
+              const toolUseId = block.tool_use_id || block.id
               const formTaskId =
                 typeof formPayload.form.task_id === 'number'
                   ? formPayload.form.task_id
@@ -292,8 +289,7 @@ const MixedContentView = memo(function MixedContentView({
 
               const askUserData: AskUserFormData = {
                 type: 'interactive_form_question',
-                ask_id: askId,
-                tool_use_id: block.tool_use_id || null, // Pass tool_use_id for fallback lookup
+                tool_use_id: toolUseId,
                 task_id: formTaskId,
                 subtask_id: formSubtaskId,
                 questions: parsedQuestions,
@@ -405,19 +401,32 @@ const MixedContentView = memo(function MixedContentView({
         }
       }
 
-      const interactiveForms = mapped
+      const dedupedMapped = mapped.filter((item, index, items) => {
+        if (!item || item.type !== 'interactive_form_question') return true
+
+        const toolUseId = item.data.tool_use_id || item.blockId
+        return !items
+          .slice(index + 1)
+          .some(
+            next =>
+              next?.type === 'interactive_form_question' &&
+              (next.data.tool_use_id || next.blockId) === toolUseId
+          )
+      })
+
+      const interactiveForms = dedupedMapped
         .filter(item => item?.type === 'interactive_form_question')
         .map(item => item.data)
 
       if (interactiveForms.length > 0) {
-        return mapped.filter(item => {
+        return dedupedMapped.filter(item => {
           if (!item) return false
           if (item.type !== 'content') return true
           return !isInteractiveFormDuplicateContent(item.content, interactiveForms)
         })
       }
 
-      return mapped
+      return dedupedMapped
     }
 
     // LEGACY: Thinking-based rendering (fallback for old messages)

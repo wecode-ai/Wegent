@@ -142,10 +142,9 @@ class InteractiveFormAnswerPayload(BaseModel):
         "interactive_form_question",
         description="Interactive form answer type",
     )
-    ask_id: str = Field(..., description="Rendered form ask ID")
-    tool_use_id: Optional[str] = Field(
-        None,
-        description="Deferred tool_use_id returned by Claude Code",
+    tool_use_id: str = Field(
+        ...,
+        description="Deferred tool call ID for the rendered form",
     )
     task_id: Optional[int] = Field(None, description="Task ID for the rendered form")
     subtask_id: Optional[int] = Field(

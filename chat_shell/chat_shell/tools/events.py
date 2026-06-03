@@ -17,7 +17,6 @@ from typing import Any, Callable
 from chat_shell.services.streaming.core import should_display_tool_details
 from chat_shell.tools.deferred_input import (
     DeferredUserInputExit,
-    get_deferred_ask_id,
     is_deferred_user_input_result,
 )
 from shared.models import ResponsesAPIEmitter
@@ -289,19 +288,17 @@ def _handle_tool_end(
     # Check for MCP silent_exit marker in tool output
     _check_silent_exit_marker(state, tool_name, serializable_output)
     is_deferred_user_input = False
-    deferred_ask_id = None
     if is_deferred_user_input_result(serializable_output):
         is_deferred_user_input = True
-        deferred_ask_id = get_deferred_ask_id(serializable_output)
         state.is_deferred_user_input = True
-        state.deferred_user_input_ask_id = deferred_ask_id
+        state.deferred_user_input_tool_use_id = tool_use_id
         state.is_silent_exit = True
         state.silent_exit_reason = "waiting_for_user_input"
         add_span_event(
             "deferred_user_input_detected",
             attributes={
                 "tool.name": tool_name,
-                "ask_id": deferred_ask_id or "",
+                "tool_use_id": tool_use_id,
             },
         )
 
@@ -386,7 +383,7 @@ def _handle_tool_end(
     )
 
     if is_deferred_user_input:
-        raise DeferredUserInputExit(deferred_ask_id)
+        raise DeferredUserInputExit()
 
 
 def _get_tool_instance(agent_builder: Any, tool_name: str) -> Any:

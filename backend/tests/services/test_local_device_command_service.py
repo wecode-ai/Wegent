@@ -4,6 +4,9 @@
 
 """Tests for local device command RPC service."""
 
+import json
+import os
+import subprocess
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -49,6 +52,9 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     git_commit_definition = resolve_local_device_command(
         "git_commit", settings.LOCAL_DEVICE_COMMANDS
     )
+    ls_skills_definition = resolve_local_device_command(
+        "ls_skills", settings.LOCAL_DEVICE_COMMANDS
+    )
 
     assert pwd_definition is not None
     assert pwd_definition.command == "pwd"
@@ -91,6 +97,11 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert git_commit_definition is not None
     assert git_commit_definition.command == "git commit"
     assert git_commit_definition.post_processor is None
+    assert ls_skills_definition is not None
+    assert "python3 -c" in ls_skills_definition.command
+    assert ".claude" in ls_skills_definition.command
+    assert ".codex" in ls_skills_definition.command
+    assert ls_skills_definition.post_processor == "json"
 
 
 def test_local_device_command_registry_supports_inline_post_processor():
@@ -180,6 +191,91 @@ def test_directory_list_post_processor_keeps_only_directories():
     processed = apply_command_post_processor(result, "directory_list")
 
     assert processed["stdout"] == ["backend", "frontend"]
+
+
+def test_json_post_processor_parses_structured_output():
+    """json post processor should return parsed command output."""
+    from app.services.device.command_post_processor import apply_command_post_processor
+
+    result = {
+        "success": True,
+        "exit_code": 0,
+        "stdout": '[{"name": "env-context", "source": "codex"}]',
+        "stderr": "",
+        "duration": 0.01,
+    }
+
+    processed = apply_command_post_processor(result, "json")
+
+    assert processed["stdout"] == [{"name": "env-context", "source": "codex"}]
+
+
+def test_json_post_processor_reports_parse_failure():
+    """json post processor should mark malformed JSON results as failed."""
+    from app.services.device.command_post_processor import apply_command_post_processor
+
+    result = {
+        "success": True,
+        "exit_code": 0,
+        "stdout": "not-json",
+        "stderr": "",
+        "duration": 0.01,
+    }
+
+    processed = apply_command_post_processor(result, "json")
+
+    assert processed["success"] is False
+    assert "Failed to parse command JSON output" in processed["error"]
+
+
+def test_ls_skills_command_parses_yaml_block_description(tmp_path):
+    """ls_skills should parse YAML block scalars without keeping the marker."""
+    from app.services.device.command_registry import LS_SKILLS_SCRIPT
+
+    skill_dir = tmp_path / ".codex" / "skills" / "chronicle"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        """---
+name: chronicle
+description: |
+  Allows you to view the user's screen as well as several hours of history.
+
+  Use when the user refers to recent work.
+metadata:
+  short-description: |
+    Screen history context.
+---
+
+# Chronicle
+""",
+        encoding="utf-8",
+    )
+
+    env = {**os.environ, "HOME": str(tmp_path)}
+    result = subprocess.run(
+        ["python3", "-c", LS_SKILLS_SCRIPT],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    skills = json.loads(result.stdout)
+
+    assert skills == [
+        {
+            "name": "chronicle",
+            "description": (
+                "Allows you to view the user's screen as well as several hours "
+                "of history. Use when the user refers to recent work."
+            ),
+            "short_description": "Screen history context.",
+            "path": str(skill_dir / "SKILL.md"),
+            "source": "codex",
+            "mtime": skills[0]["mtime"],
+        }
+    ]
+    assert "|" not in skills[0]["description"]
 
 
 @pytest.mark.asyncio
@@ -411,6 +507,45 @@ async def test_execute_device_command_endpoint_applies_configured_post_processor
 
     assert response.success is True
     assert response.stdout == [".env", "backend"]
+
+
+@pytest.mark.asyncio
+async def test_execute_device_command_endpoint_returns_structured_stdout(monkeypatch):
+    """Endpoint should allow command processors to return object lists."""
+    from app.api.endpoints import devices
+    from app.schemas.device import DeviceCommandRequest
+
+    skills = [
+        {
+            "name": "env-context",
+            "description": "Environment facts.",
+            "short_description": "Environment facts.",
+            "path": "/Users/crystal/.codex/skills/env-context/SKILL.md",
+            "source": "codex",
+            "mtime": 1780462034.0,
+        }
+    ]
+    service_mock = AsyncMock(
+        return_value={
+            "success": True,
+            "exit_code": 0,
+            "stdout": skills,
+            "stderr": "",
+            "duration": 0.02,
+            "timed_out": False,
+        }
+    )
+    monkeypatch.setattr(devices, "execute_configured_device_command", service_mock)
+
+    response = await devices.execute_device_command(
+        device_id="device-abc",
+        request=DeviceCommandRequest(command_key="ls_skills"),
+        db=object(),
+        current_user=SimpleNamespace(id=7),
+    )
+
+    assert response.success is True
+    assert response.stdout == skills
 
 
 @pytest.mark.asyncio

@@ -51,7 +51,7 @@ function TextInputDialogContent({
             type="button"
             data-testid={`${inputTestId}-close-button`}
             onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-md text-[#606368] hover:bg-[#f1f3f4]"
+            className="flex h-11 min-w-[44px] items-center justify-center rounded-md text-[#606368] hover:bg-[#f1f3f4]"
             aria-label={cancelLabel}
           >
             <X className="h-4 w-4" />
@@ -63,6 +63,7 @@ function TextInputDialogContent({
         <input
           data-testid={inputTestId}
           value={value}
+          autoFocus
           onChange={event => setValue(event.target.value)}
           className="mt-2 h-9 w-full rounded-md border border-[#d8d8d8] px-3 text-[13px] outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20"
         />
@@ -71,7 +72,7 @@ function TextInputDialogContent({
             type="button"
             data-testid={`${inputTestId}-cancel-button`}
             onClick={onClose}
-            className="h-8 rounded-md border border-[#d8d8d8] px-4 text-[13px] font-medium leading-[18px] text-[#3c4043] hover:bg-[#f7f7f8]"
+            className="h-11 min-w-[44px] rounded-md border border-[#d8d8d8] px-4 text-[13px] font-medium leading-[18px] text-[#3c4043] hover:bg-[#f7f7f8]"
           >
             {cancelLabel}
           </button>
@@ -88,7 +89,7 @@ function TextInputDialogContent({
                 setSubmitting(false)
               }
             }}
-            className="h-8 rounded-md bg-[#14b8a6] px-4 text-[13px] font-medium leading-[18px] text-white hover:bg-[#0f9f93] disabled:opacity-50"
+            className="h-11 min-w-[44px] rounded-md bg-[#14b8a6] px-4 text-[13px] font-medium leading-[18px] text-white hover:bg-[#0f9f93] disabled:opacity-50"
           >
             {confirmLabel}
           </button>

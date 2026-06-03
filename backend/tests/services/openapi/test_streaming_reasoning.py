@@ -244,7 +244,7 @@ class TestStreamingServiceReasoning:
                 "type": "interactive_form_question",
                 "interaction_type": "interactive_form",
                 "tool_name": "interactive_form_question",
-                "ask_id": "ask_123",
+                "tool_use_id": "call_mcp_123",
                 "task_id": 321,
                 "subtask_id": 456,
                 "questions": [

@@ -7,7 +7,6 @@ import type { InteractiveFormAnswerPayload } from '@/types/api'
 const INTERACTIVE_FORM_TYPE = 'interactive_form_question'
 
 export interface PendingInteractiveForm {
-  askId: string
   toolUseId: string
   taskId: number
   subtaskId: number
@@ -42,7 +41,6 @@ const getPendingFormFromBlock = (block: unknown): PendingInteractiveForm | null 
   const questions = renderPayload.questions
   if (!Array.isArray(questions) || questions.length === 0) return null
 
-  const askId = typeof renderPayload.ask_id === 'string' ? renderPayload.ask_id : ''
   const toolUseId =
     typeof blockRecord.tool_use_id === 'string'
       ? blockRecord.tool_use_id
@@ -52,10 +50,9 @@ const getPendingFormFromBlock = (block: unknown): PendingInteractiveForm | null 
   const taskId = typeof renderPayload.task_id === 'number' ? renderPayload.task_id : 0
   const subtaskId = typeof renderPayload.subtask_id === 'number' ? renderPayload.subtask_id : 0
 
-  if (!askId || !toolUseId) return null
+  if (!toolUseId) return null
 
   return {
-    askId,
     toolUseId,
     taskId,
     subtaskId,
@@ -96,7 +93,6 @@ export const buildInteractiveFormCancellation = (
     message: normalizedMessage,
     answer: {
       type: INTERACTIVE_FORM_TYPE,
-      ask_id: form.askId,
       tool_use_id: form.toolUseId,
       task_id: form.taskId,
       subtask_id: form.subtaskId,

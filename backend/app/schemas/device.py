@@ -175,7 +175,7 @@ class DeviceCommandResponse(BaseModel):
 
     success: bool
     exit_code: Optional[int] = None
-    stdout: Union[str, List[str]] = ""
+    stdout: Union[str, List[str], List[Dict[str, Any]]] = ""
     stderr: str = ""
     duration: float
     timed_out: bool = False

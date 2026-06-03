@@ -3,7 +3,7 @@ import type { ToolBlock, ToolBlockStatus, WorkbenchMessage } from '@/types/workb
 export type MessageAction =
   | { type: 'reset'; messages: WorkbenchMessage[] }
   | { type: 'user_added'; message: WorkbenchMessage }
-  | { type: 'assistant_started'; taskId?: number; subtaskId: number }
+  | { type: 'assistant_started'; taskId?: number; subtaskId: number; shellType?: string }
   | { type: 'assistant_chunk'; subtaskId: number; content: string }
   | { type: 'assistant_done'; subtaskId: number; content?: string }
   | { type: 'assistant_error'; subtaskId: number; error: string }
@@ -26,6 +26,7 @@ export function messageReducer(
           id: `assistant-${action.subtaskId}`,
           taskId: action.taskId,
           subtaskId: action.subtaskId,
+          shellType: action.shellType,
           role: 'assistant',
           content: '',
           status: 'streaming',
