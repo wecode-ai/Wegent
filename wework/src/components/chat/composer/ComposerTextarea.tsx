@@ -30,6 +30,12 @@ interface SkillMention {
   end: number
 }
 
+interface TextSelection {
+  start: number
+  end: number
+  focused: boolean
+}
+
 function findSkillTrigger(value: string, cursor: number): SkillTrigger | null {
   const beforeCursor = value.slice(0, cursor)
   const triggerIndex = beforeCursor.lastIndexOf('$')
@@ -71,7 +77,40 @@ function findSkillMentionBeforeCursor(
   return null
 }
 
-function renderTextWithSkillMentions(value: string, mentions: SkillMention[]) {
+function renderCaret(key: string) {
+  return (
+    <span
+      key={key}
+      data-testid="local-skill-caret"
+      className="inline-block h-5 w-px animate-pulse align-middle"
+      style={{ backgroundColor: 'rgb(26, 26, 26)' }}
+    />
+  )
+}
+
+function renderTextSegment(
+  text: string,
+  start: number,
+  key: string,
+  caretIndex: number | null,
+) {
+  if (caretIndex === null || caretIndex < start || caretIndex > start + text.length) {
+    return text ? [<span key={key}>{text}</span>] : []
+  }
+
+  const split = caretIndex - start
+  return [
+    text.slice(0, split) ? <span key={`${key}-before`}>{text.slice(0, split)}</span> : null,
+    renderCaret(`${key}-caret`),
+    text.slice(split) ? <span key={`${key}-after`}>{text.slice(split)}</span> : null,
+  ].filter(Boolean)
+}
+
+function renderTextWithSkillMentions(
+  value: string,
+  mentions: SkillMention[],
+  caretIndex: number | null,
+) {
   const parts: ReactNode[] = []
   let offset = 0
 
@@ -79,8 +118,10 @@ function renderTextWithSkillMentions(value: string, mentions: SkillMention[]) {
     if (mention.start < offset) return
 
     const text = value.slice(offset, mention.start)
-    if (text) {
-      parts.push(<span key={`text-${offset}`}>{text}</span>)
+    parts.push(...renderTextSegment(text, offset, `text-${offset}`, caretIndex))
+
+    if (caretIndex === mention.start) {
+      parts.push(renderCaret(`caret-before-${mention.id}`))
     }
 
     parts.push(
@@ -93,13 +134,14 @@ function renderTextWithSkillMentions(value: string, mentions: SkillMention[]) {
         <span className="truncate">{mention.label}</span>
       </span>,
     )
+    if (caretIndex !== null && caretIndex > mention.start && caretIndex <= mention.end) {
+      parts.push(renderCaret(`caret-after-${mention.id}`))
+    }
     offset = mention.end
   })
 
   const remainingText = value.slice(offset)
-  if (remainingText) {
-    parts.push(<span key={`text-${offset}`}>{remainingText}</span>)
-  }
+  parts.push(...renderTextSegment(remainingText, offset, `text-${offset}`, caretIndex))
 
   return parts
 }
@@ -126,6 +168,11 @@ export function ComposerTextarea({
   const overlayRef = useRef<HTMLDivElement>(null)
   const [skills, setSkills] = useState<LocalDeviceSkill[]>([])
   const [selectedSkillMentions, setSelectedSkillMentions] = useState<SkillMention[]>([])
+  const [selection, setSelection] = useState<TextSelection>({
+    start: 0,
+    end: 0,
+    focused: false,
+  })
   const [trigger, setTrigger] = useState<SkillTrigger | null>(null)
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [loading, setLoading] = useState(false)
@@ -161,6 +208,17 @@ export function ComposerTextarea({
     setTrigger(null)
     setSelectedIndex(0)
   }, [])
+
+  const syncSelection = useCallback(() => {
+    const textarea = textareaRef.current
+    if (!textarea) return
+
+    setSelection({
+      start: textarea.selectionStart,
+      end: textarea.selectionEnd,
+      focused: document.activeElement === textarea,
+    })
+  }, [textareaRef])
 
   const handleValueChange = useCallback(
     (nextValue: string) => {
@@ -326,6 +384,7 @@ export function ComposerTextarea({
       window.requestAnimationFrame(() => {
         textarea.focus()
         textarea.setSelectionRange(nextCursor, nextCursor)
+        setSelection({ start: nextCursor, end: nextCursor, focused: true })
       })
     },
     [closeSkillMenu, onChange, textareaRef, trigger, value],
@@ -348,6 +407,7 @@ export function ComposerTextarea({
         window.requestAnimationFrame(() => {
           const textarea = textareaRef.current
           textarea?.setSelectionRange(mention.start, mention.start)
+          setSelection({ start: mention.start, end: mention.start, focused: true })
         })
         return
       }
@@ -383,6 +443,10 @@ export function ComposerTextarea({
   }
 
   const hasSkillMentionOverlay = validSkillMentions.length > 0
+  const overlayCaretIndex =
+    hasSkillMentionOverlay && selection.focused && selection.start === selection.end
+      ? selection.start
+      : null
 
   return (
     <div className="relative min-w-0 flex-1 w-full">
@@ -392,7 +456,7 @@ export function ComposerTextarea({
           aria-hidden="true"
           className={`${className} pointer-events-none absolute inset-0 z-20 whitespace-pre-wrap break-words overflow-hidden text-text-primary`}
         >
-          {renderTextWithSkillMentions(value, validSkillMentions)}
+          {renderTextWithSkillMentions(value, validSkillMentions, overlayCaretIndex)}
         </div>
       )}
       <textarea
@@ -402,7 +466,10 @@ export function ComposerTextarea({
         value={value}
         onChange={event => {
           handleValueChange(event.target.value)
-          window.requestAnimationFrame(updateSkillTrigger)
+          window.requestAnimationFrame(() => {
+            updateSkillTrigger()
+            syncSelection()
+          })
         }}
         onScroll={event => {
           if (overlayRef.current) {
@@ -410,18 +477,29 @@ export function ComposerTextarea({
             overlayRef.current.scrollLeft = event.currentTarget.scrollLeft
           }
         }}
-        onClick={updateSkillTrigger}
+        onClick={() => {
+          updateSkillTrigger()
+          syncSelection()
+        }}
         onKeyDown={handleKeyDown}
-        onSelect={updateSkillTrigger}
+        onKeyUp={syncSelection}
+        onSelect={() => {
+          updateSkillTrigger()
+          syncSelection()
+        }}
+        onFocus={syncSelection}
+        onBlur={() => {
+          setSelection(current => ({ ...current, focused: false }))
+        }}
         placeholder={placeholder}
         className={[
           className,
           'relative z-30',
-          hasSkillMentionOverlay ? 'text-transparent caret-text-primary' : '',
+          hasSkillMentionOverlay ? 'text-transparent caret-transparent' : '',
         ].join(' ')}
         style={
           hasSkillMentionOverlay
-            ? { color: 'transparent', caretColor: 'rgb(26, 26, 26)' }
+            ? { color: 'transparent', caretColor: 'transparent' }
             : undefined
         }
       />
