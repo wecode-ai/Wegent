@@ -1,5 +1,5 @@
 ---
-name: "interactive-form-question"
+name: "interactive"
 description: "Ask the user questions or present choices via an interactive form. Use when you need to gather preferences, clarify ambiguous instructions, get decisions on implementation choices, or present a list of options for the user to select from. Never write options or questions as plain text — always use this tool."
 displayName: "交互式表单提问"
 version: "2.0.0"
@@ -42,7 +42,7 @@ You now have access to the `interactive_form_question` tool. Use it to ask the u
 
 ## Behavior
 
-`interactive_form_question` displays an interactive form and returns immediately (`__silent_exit__`). The current task ends silently and resumes when the user submits their answer as a new message.
+`interactive_form_question` displays an interactive form and returns immediately . The current task ends silently and resumes when the user submits their answer as a new message.
 
 ## Tool Parameters
 

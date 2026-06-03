@@ -3,11 +3,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { apiClient } from './client'
+import {
+  getQuickLaunchFunctionsConfig,
+  updateQuickLaunchFunctionsConfig,
+} from './admin-quick-launch'
 import { outboundTokenAdminApis } from './outboundTokens'
 import { RetrieverCRD } from './retrievers'
 
 // Re-export RetrieverCRD for backward compatibility
 export type { RetrieverCRD } from './retrievers'
+export type {
+  QuickLaunchFunctionConfig,
+  QuickLaunchFunctionsResponse,
+  QuickLaunchFunctionsUpdate,
+} from './admin-quick-launch'
 export type {
   SigningKey,
   SigningKeyCreateRequest,
@@ -556,6 +565,8 @@ export interface AdminTemplateUpdate {
 // Admin API Services
 export const adminApis = {
   ...outboundTokenAdminApis,
+  getQuickLaunchFunctionsConfig,
+  updateQuickLaunchFunctionsConfig,
 
   // ==================== User Management ====================
 

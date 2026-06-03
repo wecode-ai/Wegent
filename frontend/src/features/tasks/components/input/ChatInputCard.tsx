@@ -39,6 +39,7 @@ export interface ChatInputCardProps extends Omit<
   // Input message
   taskInputMessage: string
   setTaskInputMessage: (message: string) => void
+  focusInputAtEndSignal?: number
 
   // Team and external API
   selectedTeam: Team | null
@@ -127,6 +128,7 @@ export interface ChatInputCardProps extends Omit<
 export function ChatInputCard({
   taskInputMessage,
   setTaskInputMessage,
+  focusInputAtEndSignal,
   selectedTeam,
   teams = [],
   onTeamChange,
@@ -575,6 +577,7 @@ export function ChatInputCard({
               isExpanded={isInputExpanded}
               onExpandToggle={handleExpandToggle}
               compactSpacing={shouldUseCompactQueueSpacing}
+              focusAtEndSignal={focusInputAtEndSignal}
             />
           </div>
         )}

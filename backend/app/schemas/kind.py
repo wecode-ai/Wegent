@@ -19,6 +19,7 @@ from pydantic import (
     model_validator,
 )
 
+from app.schemas.quick_launch import QuickPhraseMixin
 from app.utils.workspace_archive_time import normalize_workspace_archive_datetime
 
 
@@ -416,7 +417,7 @@ class TeamMember(BaseModel):
     )
 
 
-class TeamSpec(BaseModel):
+class TeamSpec(QuickPhraseMixin):
     """Team specification"""
 
     members: List[TeamMember]

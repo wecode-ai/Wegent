@@ -26,6 +26,9 @@ from executor.agents.claude_code.config_manager import (
     extract_claude_options,
     get_claude_config_dir,
 )
+from executor.agents.claude_code.deferred_mcp_proxy import (
+    install_deferred_mcp_proxy_hook,
+)
 from executor.agents.claude_code.git_operations import (
     add_to_git_exclude,
     setup_claude_md_symlink,
@@ -881,6 +884,8 @@ class ClaudeCodeAgent(Agent):
                 self.thinking_manager,
                 self.task_state_manager,
                 session_id=self.session_id,
+                mcp_servers=self.options.get("mcp_servers")
+                or self.options.get("mcpServers"),
             )
 
             # Task completed or failed
@@ -976,6 +981,7 @@ class ClaudeCodeAgent(Agent):
         self.options = prepare_options_for_windows(
             self.options, self._get_claude_config_dir()
         )
+        self.options = install_deferred_mcp_proxy_hook(self.options)
 
         # Add stderr callback to capture CLI stderr output
         self.options["stderr"] = self._stderr_callback

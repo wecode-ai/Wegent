@@ -160,6 +160,7 @@ class ExecutionRequest:
     # === Context Data (from ChatRequest) ===
     contexts: list = field(default_factory=list)
     history: list = field(default_factory=list)
+    interactive_form_answer: Optional[dict] = None
 
     # === Authentication ===
     auth_token: str = ""

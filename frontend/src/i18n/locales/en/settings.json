@@ -195,6 +195,12 @@
       "filterDevice": "Device",
       "goToDevice": "Go to Device"
     },
+    "quick_phrases": {
+      "label": "Quick phrases",
+      "description": "Shown after a user clicks this QuickCard; selecting a phrase fills the message box.",
+      "placeholder": "Example: Help me create a product roadmap PPT",
+      "add": "Add phrase"
+    },
     "simple": {
       "advanced_title": "Advanced configuration",
       "advanced_description": "Collaboration modes, multi-bot orchestration, and detailed role settings live here.",

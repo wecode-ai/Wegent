@@ -19,7 +19,7 @@ import VideoPlayer from '../VideoPlayer'
 import { ImageGallery } from '../ImageGallery'
 import StreamingWaitIndicator from '../StreamingWaitIndicator'
 import { AskUserForm } from '../../clarification'
-import type { AskUserFormData } from '@/types/api'
+import type { AskUserFormData, InteractiveFormAnswerPayload } from '@/types/api'
 import { blockRendererRegistry } from '../block-registry'
 import {
   SubscriptionPreviewCard,
@@ -49,7 +49,54 @@ const isInteractiveFormDuplicateContent = (text: string, forms: AskUserFormData[
 
 const isRenderableInteractiveQuestion = (question: Record<string, unknown>): boolean => {
   const questionText = typeof question.question === 'string' ? question.question.trim() : ''
-  return questionText.length > 0
+  if (questionText.length === 0) return false
+  if (question.input_type === 'text') return true
+
+  return (
+    question.input_type === 'choice' &&
+    Array.isArray(question.options) &&
+    question.options.length > 0
+  )
+}
+
+const parseRecord = (value: unknown): Record<string, unknown> | null => {
+  if (!value) return null
+
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value)
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : null
+    } catch {
+      return null
+    }
+  }
+
+  return typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+const getRenderableInteractiveFormPayload = (
+  renderPayload: unknown
+): {
+  form: Record<string, unknown>
+  questions: Array<Record<string, unknown>>
+} | null => {
+  const form = parseRecord(renderPayload)
+  if (form?.type !== 'interactive_form_question') return null
+
+  const questions = Array.isArray(form.questions)
+    ? (form.questions as Array<Record<string, unknown>>).filter(isRenderableInteractiveQuestion)
+    : []
+
+  if (questions.length === 0) return null
+
+  return {
+    form,
+    questions,
+  }
 }
 
 interface MixedContentViewProps {
@@ -68,7 +115,11 @@ interface MixedContentViewProps {
   /** Current message index for AskUserForm submission tracking */
   currentMessageIndex?: number
   /** Callback when user submits an ask_user_question form - receives pre-formatted message string */
-  onAskUserSubmit?: (askId: string, formattedMessage: string) => void
+  onAskUserSubmit?: (
+    askId: string,
+    formattedMessage: string,
+    answer: InteractiveFormAnswerPayload
+  ) => void
 }
 
 /**
@@ -184,21 +235,10 @@ const MixedContentView = memo(function MixedContentView({
               blockId: block.id,
             }
           } else if (block.type === 'tool') {
-            const input =
-              block.tool_input && typeof block.tool_input === 'object'
-                ? (block.tool_input as Record<string, unknown>)
-                : null
-            const rawQuestions = Array.isArray(input?.questions)
-              ? (input.questions as Array<Record<string, unknown>>).filter(
-                  isRenderableInteractiveQuestion
-                )
-              : []
-            const hasRenderableQuestions = rawQuestions.length > 0
+            const formPayload = getRenderableInteractiveFormPayload(block.render_payload)
 
-            // Only render an interactive form when the block carries actual questions.
-            // The raw MCP tool block may exist with empty `{}` input while a synthetic
-            // fallback block already contains the complete question payload.
-            if (block.tool_name?.includes('interactive_form_question') && hasRenderableQuestions) {
+            // Only render an interactive form from the UI-only render payload.
+            if (block.tool_name?.includes('interactive_form_question') && formPayload) {
               // Helper function to parse boolean values (handles string "True"/"False" from AI)
               const parseBoolean = (value: unknown, defaultValue: boolean): boolean => {
                 if (typeof value === 'boolean') return value
@@ -210,30 +250,20 @@ const MixedContentView = memo(function MixedContentView({
                 return defaultValue
               }
 
-              // Try to extract ask_id from tool_output first (server-generated),
-              // then from tool_input.ask_id, finally fallback to tool_use_id
-              let askId = block.tool_use_id || block.id
-              if (block.tool_output) {
-                const output =
-                  typeof block.tool_output === 'string'
-                    ? (() => {
-                        try {
-                          return JSON.parse(block.tool_output)
-                        } catch {
-                          return {}
-                        }
-                      })()
-                    : block.tool_output
-                if (output && typeof output === 'object' && 'ask_id' in output) {
-                  askId = (output as Record<string, unknown>).ask_id as string
-                }
-              }
-              // Also check if ask_id is in the input (for some implementations)
-              if (input?.ask_id && typeof input.ask_id === 'string') {
-                askId = input.ask_id
-              }
+              const askId =
+                typeof formPayload.form.ask_id === 'string'
+                  ? formPayload.form.ask_id
+                  : block.tool_use_id || block.id
+              const formTaskId =
+                typeof formPayload.form.task_id === 'number'
+                  ? formPayload.form.task_id
+                  : taskId || 0
+              const formSubtaskId =
+                typeof formPayload.form.subtask_id === 'number'
+                  ? formPayload.form.subtask_id
+                  : subtaskId || 0
 
-              const parsedQuestions = rawQuestions.map(q => {
+              const parsedQuestions = formPayload.questions.map(q => {
                 const qHasOptions = Array.isArray(q.options) && (q.options as unknown[]).length > 0
                 const qInputType = qHasOptions ? 'choice' : 'text'
                 return {
@@ -255,33 +285,22 @@ const MixedContentView = memo(function MixedContentView({
                     : null,
                   multi_select: parseBoolean(q.multi_select, false),
                   required: parseBoolean(q.required, true),
-                  default: (q.default as string[]) || null,
+                  default: Array.isArray(q.default) ? (q.default as string[]) : null,
                   placeholder: (q.placeholder as string) || null,
                 }
               })
-
-              // Parse tool_output for timeout detection
-              const parsedToolOutput = block.tool_output
-                ? ((typeof block.tool_output === 'string'
-                    ? (() => {
-                        try {
-                          return JSON.parse(block.tool_output)
-                        } catch {
-                          return null
-                        }
-                      })()
-                    : block.tool_output) as Record<string, unknown> | null)
-                : null
 
               const askUserData: AskUserFormData = {
                 type: 'interactive_form_question',
                 ask_id: askId,
                 tool_use_id: block.tool_use_id || null, // Pass tool_use_id for fallback lookup
-                task_id: taskId || 0,
-                subtask_id: subtaskId || 0,
+                task_id: formTaskId,
+                subtask_id: formSubtaskId,
                 questions: parsedQuestions,
-                // Pass tool_output so AskUserForm can detect timeout vs normal completion
-                tool_output: parsedToolOutput,
+                tool_output:
+                  typeof block.tool_output === 'object' && block.tool_output !== null
+                    ? (block.tool_output as Record<string, unknown>)
+                    : null,
               }
               return {
                 type: 'interactive_form_question' as const,

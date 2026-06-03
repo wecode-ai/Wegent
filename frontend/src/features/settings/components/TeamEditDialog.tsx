@@ -71,6 +71,10 @@ interface TeamEditDialogProps {
 
 const SIMPLE_BIND_MODES = new Set<TaskType>(['chat', 'code', 'task'])
 
+function getQuickPhrasePayload(phrases: string[]): string[] {
+  return phrases.map(phrase => phrase.trim()).filter(Boolean)
+}
+
 function normalizeSimpleBindMode(team: Team): TaskType[] {
   if (team.bind_mode && Array.isArray(team.bind_mode)) {
     const supportedModes = team.bind_mode.filter(mode => SIMPLE_BIND_MODES.has(mode))
@@ -144,6 +148,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [name, setName] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [description, setDescription] = useState('')
+  const [quickPhrases, setQuickPhrases] = useState<string[]>([])
   const [mode, setMode] = useState<TeamMode>('solo')
   const [bindMode, setBindMode] = useState<TaskType[]>(['chat', 'code'])
   const [icon, setIcon] = useState<string | null>(null)
@@ -289,6 +294,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setName(formTeam.name)
       setDisplayName(formTeam.displayName || '')
       setDescription(formTeam.description || '')
+      setQuickPhrases(formTeam.quick_phrases || [])
       setIcon(formTeam.icon || null)
       const m = (formTeam.workflow?.mode as TeamMode) || 'solo'
       setMode(m)
@@ -335,6 +341,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setName('')
       setDisplayName('')
       setDescription('')
+      setQuickPhrases([])
       setIcon(null)
       setMode('solo')
       setAdvancedOpen(false)
@@ -658,6 +665,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           name,
           displayName,
           description,
+          quickPhrases,
           bindMode,
           icon,
           requiresWorkspace,
@@ -716,6 +724,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
 
     const trimmedDisplayName = displayName.trim()
     const displayNamePayload = trimmedDisplayName || (formTeam?.displayName ? null : undefined)
+    const quickPhrasePayload = getQuickPhrasePayload(quickPhrases)
 
     // For solo mode, save bot first via BotEdit ref
     if (mode === 'solo') {
@@ -755,6 +764,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
               workflow,
               bind_mode: bindMode,
               bots: botsData,
+              quick_phrases: quickPhrasePayload,
               namespace: scope === 'group' && groupName ? groupName : undefined,
               icon: icon || undefined,
               requires_workspace: requiresWorkspace ?? undefined,
@@ -768,6 +778,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
               workflow,
               bind_mode: bindMode,
               bots: botsData,
+              quick_phrases: quickPhrasePayload,
               namespace: scope === 'group' && groupName ? groupName : undefined,
               icon: icon || undefined,
               requires_workspace: requiresWorkspace ?? undefined,
@@ -843,6 +854,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           workflow,
           bind_mode: bindMode,
           bots: botsData,
+          quick_phrases: quickPhrasePayload,
           namespace: scope === 'group' && groupName ? groupName : undefined,
           icon: icon || undefined,
           requires_workspace: requiresWorkspace ?? undefined,
@@ -856,6 +868,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           workflow,
           bind_mode: bindMode,
           bots: botsData,
+          quick_phrases: quickPhrasePayload,
           namespace: scope === 'group' && groupName ? groupName : undefined,
           icon: icon || undefined,
           requires_workspace: requiresWorkspace ?? undefined,
@@ -920,6 +933,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                 setDisplayName={setDisplayName}
                 description={description}
                 setDescription={setDescription}
+                quickPhrases={quickPhrases}
+                onQuickPhrasesChange={setQuickPhrases}
                 bindMode={bindMode}
                 setBindMode={setBindMode}
                 icon={icon}
@@ -987,6 +1002,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   setDisplayName={setDisplayName}
                   description={description}
                   setDescription={setDescription}
+                  quickPhrases={quickPhrases}
+                  onQuickPhrasesChange={setQuickPhrases}
                   bindMode={bindMode}
                   setBindMode={setBindMode}
                   icon={icon}

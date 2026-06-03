@@ -658,6 +658,29 @@ class ChatNamespace(socketio.AsyncNamespace):
                     "error": "Deep Research does not support follow-up questions. Please start a new conversation."
                 }
 
+            if payload.task_id:
+                from app.services.chat.interactive_forms import (
+                    validate_interactive_form_answer,
+                )
+
+                form_validation = validate_interactive_form_answer(
+                    db,
+                    task_id=payload.task_id,
+                    answer=payload.interactive_form_answer,
+                )
+                if not form_validation.ok:
+                    logger.warning(
+                        "[WS] chat:send blocked by interactive form state: "
+                        "task_id=%s, error=%s, message=%s",
+                        payload.task_id,
+                        form_validation.error,
+                        form_validation.message,
+                    )
+                    return {
+                        "error": form_validation.error,
+                        "message": form_validation.message,
+                    }
+
             # Get task JSON for group chat check
             task_json = {}
             if payload.task_id:
