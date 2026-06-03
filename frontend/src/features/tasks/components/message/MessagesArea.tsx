@@ -1147,7 +1147,7 @@ function MessagesArea({
   // Handle ask_user_question form submission - send the pre-formatted message as a new conversation
   // AskUserForm already formats the message with question text and option labels
   const handleAskUserSubmit = useCallback(
-    (_askId: string, formattedMessage: string, answer: InteractiveFormAnswerPayload) => {
+    (_toolUseId: string, formattedMessage: string, answer: InteractiveFormAnswerPayload) => {
       if (!onSendMessage) return
       onSendMessage(formattedMessage, {
         interactiveFormAnswer: {

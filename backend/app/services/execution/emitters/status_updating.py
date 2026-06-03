@@ -23,6 +23,9 @@ from app.services.chat.trigger.lifecycle import (
     collect_completed_result,
     persist_completed_result,
 )
+from app.services.execution.interactive_form_render import (
+    build_interactive_form_render_payload,
+)
 from shared.models import EventType, ExecutionEvent
 
 from .protocol import ResultEmitter
@@ -152,15 +155,19 @@ class StatusUpdatingEmitter(ResultEmitter):
                 )
                 tool_protocol = event.data.get("tool_protocol") if event.data else None
                 server_label = event.data.get("server_label") if event.data else None
-                await session_manager.update_tool_block_status(
-                    subtask_id=self._subtask_id,
-                    tool_use_id=event.tool_use_id,
-                    status=tool_status,
-                    tool_output=event.tool_output,
-                    tool_input=event.tool_input,
-                    tool_protocol=tool_protocol,
-                    server_label=server_label,
-                )
+                update_kwargs = {
+                    "subtask_id": self._subtask_id,
+                    "tool_use_id": event.tool_use_id,
+                    "status": tool_status,
+                    "tool_output": event.tool_output,
+                    "tool_input": event.tool_input,
+                    "tool_protocol": tool_protocol,
+                    "server_label": server_label,
+                }
+                render_payload = build_interactive_form_render_payload(event)
+                if render_payload is not None:
+                    update_kwargs["render_payload"] = render_payload
+                await session_manager.update_tool_block_status(**update_kwargs)
         elif event.type == EventType.CHUNK.value:
             # Accumulate content and track text blocks
             content = event.content or ""

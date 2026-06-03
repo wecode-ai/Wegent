@@ -21,6 +21,7 @@ from claude_agent_sdk.types import (
 from executor.agents.claude_code.deferred_mcp_proxy import (
     WAITING_FOR_USER_INPUT_REASON,
     is_interactive_form_tool,
+    parse_mcp_tool_name,
     proxy_deferred_mcp_tool,
 )
 from executor.agents.claude_code.standalone_chat_workspace import (
@@ -44,6 +45,10 @@ logger = setup_logger("claude_response_processor")
 
 # Maximum retry count for API errors per session
 MAX_API_ERROR_RETRIES = 3
+DEFERRED_INTERACTIVE_FORM_STOP_REASONS = {
+    "tool_deferred",
+    "tool_deferred_unavailable",
+}
 
 # Error patterns to detect API errors that need retry
 API_ERROR_PATTERNS = [
@@ -926,14 +931,15 @@ async def _process_result_message(
 
     deferred_tool_use = getattr(msg, "deferred_tool_use", None)
     if (
-        stop_reason == "tool_deferred"
+        stop_reason in DEFERRED_INTERACTIVE_FORM_STOP_REASONS
         and deferred_tool_use
         and is_interactive_form_tool(deferred_tool_use.name)
     ):
         logger.info(
-            "Proxying deferred interactive form MCP tool call: id=%s, name=%s",
+            "Proxying deferred interactive form MCP tool call: id=%s, name=%s, stop_reason=%s",
             deferred_tool_use.id,
             deferred_tool_use.name,
+            stop_reason,
         )
 
         arguments = (
@@ -941,6 +947,20 @@ async def _process_result_message(
             if isinstance(deferred_tool_use.input, dict)
             else None
         )
+        parsed_tool_name = parse_mcp_tool_name(deferred_tool_use.name)
+        server_label = parsed_tool_name.server_name if parsed_tool_name else None
+
+        try:
+            await emitter.tool_start(
+                call_id=deferred_tool_use.id,
+                name=deferred_tool_use.name,
+                arguments=arguments,
+                tool_protocol="mcp_call",
+                server_label=server_label,
+            )
+        except Exception as e:
+            logger.warning("Failed to send deferred MCP tool_start event: %s", e)
+
         try:
             proxy_result = await proxy_deferred_mcp_tool(
                 deferred_tool_use=deferred_tool_use,
@@ -1001,7 +1021,7 @@ async def _process_result_message(
         await emitter.done(
             content="",
             usage=msg.usage,
-            stop_reason="tool_deferred",
+            stop_reason=stop_reason or "tool_deferred",
             silent_exit=True,
             silent_exit_reason=WAITING_FOR_USER_INPUT_REASON,
         )

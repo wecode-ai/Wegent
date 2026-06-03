@@ -168,7 +168,7 @@ export interface MessageBubbleProps {
   ) => void
   /** Callback when user submits an ask_user_question form - sends the pre-formatted answer as a new conversation message */
   onAskUserSubmit?: (
-    askId: string,
+    toolUseId: string,
     formattedMessage: string,
     answer: InteractiveFormAnswerPayload
   ) => void

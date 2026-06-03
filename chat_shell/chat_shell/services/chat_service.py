@@ -373,20 +373,18 @@ class ChatService(ChatInterface):
                 )
                 state.is_silent_exit = True
                 state.silent_exit_reason = e.reason
-            except DeferredUserInputExit as e:
+            except DeferredUserInputExit:
                 logger.info(
-                    "[CHAT_SERVICE] Deferred user input requested: subtask_id=%d, ask_id=%s",
+                    "[CHAT_SERVICE] Deferred user input requested: subtask_id=%d",
                     request.subtask_id,
-                    e.ask_id,
                 )
                 add_span_event(
                     "deferred_user_input_requested",
-                    {"ask_id": e.ask_id or "", "tokens_processed": token_count},
+                    {"tokens_processed": token_count},
                 )
                 state.is_silent_exit = True
                 state.silent_exit_reason = "waiting_for_user_input"
                 state.is_deferred_user_input = True
-                state.deferred_user_input_ask_id = e.ask_id
 
             # Transfer messages chain from agent builder to streaming state
             messages_chain = getattr(agent_builder, "_last_messages_chain", None)

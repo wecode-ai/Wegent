@@ -43,9 +43,9 @@ jest.mock('@/components/common/EnhancedMarkdown', () => ({
 }))
 
 jest.mock('@/features/tasks/components/clarification', () => ({
-  AskUserForm: ({ data }: { data: { ask_id: string; questions: unknown[] } }) => (
+  AskUserForm: ({ data }: { data: { tool_use_id: string; questions: unknown[] } }) => (
     <div data-testid="ask-user-form-block">
-      {data.ask_id}:{data.questions.length}
+      {data.tool_use_id}:{data.questions.length}
     </div>
   ),
 }))
@@ -88,7 +88,6 @@ describe('MixedContentView', () => {
   it('renders interactive forms from render_payload', () => {
     const renderPayload = {
       type: 'interactive_form_question',
-      ask_id: 'ask_render_payload',
       task_id: 2493,
       subtask_id: 2730,
       questions: [
@@ -127,7 +126,6 @@ describe('MixedContentView', () => {
               __deferred_user_input__: true,
               success: true,
               status: 'waiting_for_user_response',
-              ask_id: 'ask_render_payload',
             }),
             render_payload: renderPayload,
           },
@@ -135,13 +133,75 @@ describe('MixedContentView', () => {
       />
     )
 
-    expect(screen.getByTestId('ask-user-form-block')).toHaveTextContent('ask_render_payload:1')
+    expect(screen.getByTestId('ask-user-form-block')).toHaveTextContent('tool_render_payload:1')
+  })
+
+  it('deduplicates interactive forms with the same tool_use_id', () => {
+    const renderPayload = {
+      type: 'interactive_form_question',
+      task_id: 2493,
+      subtask_id: 2730,
+      questions: [
+        {
+          id: 'target_lang',
+          question: '目标语言',
+          input_type: 'choice',
+          required: true,
+          multi_select: false,
+          options: [{ label: 'English', value: 'en' }],
+          default: null,
+          placeholder: null,
+        },
+      ],
+    }
+
+    render(
+      <MixedContentView
+        thinking={null}
+        content=""
+        theme="light"
+        taskId={2493}
+        subtaskId={2730}
+        currentMessageIndex={0}
+        blocks={[
+          {
+            id: 'tool_duplicate_first',
+            type: 'tool',
+            status: 'pending',
+            tool_name: 'interactive_form_question',
+            tool_use_id: 'tool_duplicate',
+            tool_output: createToolOutput({
+              __deferred_user_input__: true,
+              success: true,
+              status: 'waiting_for_user_response',
+            }),
+            render_payload: renderPayload,
+          },
+          {
+            id: 'tool_duplicate_second',
+            type: 'tool',
+            status: 'pending',
+            tool_name: 'interactive_form_question',
+            tool_use_id: 'tool_duplicate',
+            tool_output: createToolOutput({
+              __deferred_user_input__: true,
+              success: true,
+              status: 'waiting_for_user_response',
+            }),
+            render_payload: renderPayload,
+          },
+        ]}
+      />
+    )
+
+    const forms = screen.getAllByTestId('ask-user-form-block')
+    expect(forms).toHaveLength(1)
+    expect(forms[0]).toHaveTextContent('tool_duplicate:1')
   })
 
   it('does not render interactive forms from tool_output.form', () => {
     const form = {
       type: 'interactive_form_question',
-      ask_id: 'ask_tool_output_form',
       task_id: 2493,
       subtask_id: 2730,
       questions: [
@@ -245,7 +305,6 @@ describe('MixedContentView', () => {
   it('renders only the interactive form block that contains questions', () => {
     const form = {
       type: 'interactive_form_question',
-      ask_id: 'ask_2730',
       task_id: 2493,
       subtask_id: 2730,
       questions: [
@@ -272,16 +331,15 @@ describe('MixedContentView', () => {
         currentMessageIndex={0}
         blocks={[
           {
-            id: 'ask_2730',
+            id: 'tool_2730',
             type: 'tool',
             status: 'pending',
             tool_name: 'interactive_form_question',
-            tool_use_id: 'ask_2730',
+            tool_use_id: 'tool_2730',
             tool_output: createToolOutput({
               __deferred_user_input__: true,
               success: true,
               status: 'waiting_for_user_response',
-              ask_id: 'ask_2730',
             }),
             tool_input: {},
             render_payload: form,
@@ -319,7 +377,7 @@ describe('MixedContentView', () => {
 
     const forms = screen.getAllByTestId('ask-user-form-block')
     expect(forms).toHaveLength(1)
-    expect(forms[0]).toHaveTextContent('ask_2730:1')
+    expect(forms[0]).toHaveTextContent('tool_2730:1')
     expect(screen.queryByTestId('tool-block')).not.toBeInTheDocument()
     expect(
       screen.getByText('我已经了解了项目的基本结构。让我向您询问关于登录功能的具体需求。')
@@ -332,7 +390,6 @@ describe('MixedContentView', () => {
   it('does not render an interactive form when restored questions are empty objects', () => {
     const form = {
       type: 'interactive_form_question',
-      ask_id: 'ask_2716',
       task_id: 2479,
       subtask_id: 2716,
       questions: [{}, {}, {}],
@@ -356,7 +413,6 @@ describe('MixedContentView', () => {
             tool_use_id: 'toolu_invalid',
             tool_input: {
               type: 'interactive_form_question',
-              ask_id: 'ask_2716',
               task_id: 2479,
               subtask_id: 2716,
               questions: [{}, {}, {}],
@@ -365,7 +421,6 @@ describe('MixedContentView', () => {
               __deferred_user_input__: true,
               success: true,
               status: 'waiting_for_user_response',
-              ask_id: 'ask_2716',
             }),
             render_payload: form,
           },
