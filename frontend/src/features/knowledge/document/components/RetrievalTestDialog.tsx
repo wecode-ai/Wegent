@@ -469,12 +469,13 @@ export function RetrievalTestDialog({
                         type="button"
                         variant="outline"
                         size="sm"
-                        className="h-7 px-2 text-xs"
+                        className="h-11 min-w-[44px] px-3 text-xs"
                         onClick={() =>
                           setSearchHintsText(
                             t('knowledge:document.retrievalTest.searchHintsPlaceholder')
                           )
                         }
+                        data-testid="retrieval-test-search-hints-example-button"
                       >
                         {t('knowledge:document.retrievalTest.searchHintsUseExample')}
                       </Button>
