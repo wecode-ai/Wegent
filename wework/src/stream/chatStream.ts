@@ -1,9 +1,16 @@
 import type {
   ChatBlockCreatedPayload,
   ChatBlockUpdatedPayload,
+  ChatCancelAck,
+  ChatCancelPayload,
   ChatChunkPayload,
   ChatDonePayload,
   ChatErrorPayload,
+  ChatGuideAck,
+  ChatGuidePayload,
+  ChatGuidanceAppliedPayload,
+  ChatGuidanceExpiredPayload,
+  ChatGuidanceQueuedPayload,
   ChatSendAck,
   ChatSendPayload,
   ChatStartPayload,
@@ -18,6 +25,9 @@ export interface ChatStreamHandlers {
   onChatError?: (payload: ChatErrorPayload) => void
   onBlockCreated?: (payload: ChatBlockCreatedPayload) => void
   onBlockUpdated?: (payload: ChatBlockUpdatedPayload) => void
+  onGuidanceQueued?: (payload: ChatGuidanceQueuedPayload) => void
+  onGuidanceApplied?: (payload: ChatGuidanceAppliedPayload) => void
+  onGuidanceExpired?: (payload: ChatGuidanceExpiredPayload) => void
   onDeviceOnline?: (payload: unknown) => void
   onDeviceOffline?: (payload: unknown) => void
   onDeviceStatus?: (payload: unknown) => void
@@ -28,6 +38,16 @@ const SEND_TIMEOUT_MS = 30_000
 function normalizeSendAck(response: ChatSendAck | undefined): ChatSendAck {
   if (!response) {
     return { success: false, error: '发送失败' }
+  }
+  if (response.error) {
+    return { ...response, success: false }
+  }
+  return { ...response, success: response.success ?? true }
+}
+
+function normalizeGuideAck(response: ChatGuideAck | undefined): ChatGuideAck {
+  if (!response) {
+    return { success: false, error: '引导发送失败' }
   }
   if (response.error) {
     return { ...response, success: false }
@@ -64,6 +84,42 @@ export function createChatStream(socket: Pick<WorkbenchSocket, 'emit' | 'on' | '
         })
       })
     },
+    sendGuidance(payload: ChatGuidePayload): Promise<ChatGuideAck> {
+      return new Promise((resolve) => {
+        if (!socket.connected) {
+          resolve({ success: false, error: '连接未建立，请刷新页面重试' })
+          return
+        }
+
+        const timer = setTimeout(() => {
+          resolve({ success: false, error: '引导发送超时，请重试' })
+        }, SEND_TIMEOUT_MS)
+
+        socket.emit('chat:guide', payload, (response: ChatGuideAck) => {
+          clearTimeout(timer)
+          resolve(normalizeGuideAck(response))
+        })
+      })
+    },
+    cancelStream(payload: ChatCancelPayload): Promise<ChatCancelAck> {
+      return new Promise(resolve => {
+        if (!socket.connected) {
+          resolve({ success: false, error: '连接未建立，请刷新页面重试' })
+          return
+        }
+
+        socket.emit('chat:cancel', payload, (response: ChatCancelAck) => {
+          if (!response) {
+            resolve({ success: false, error: '取消失败' })
+            return
+          }
+          resolve({
+            ...response,
+            success: response.error ? false : response.success ?? true,
+          })
+        })
+      })
+    },
     subscribe(handlers: ChatStreamHandlers): () => void {
       if (handlers.onChatStart) socket.on('chat:start', handlers.onChatStart)
       if (handlers.onChatChunk) socket.on('chat:chunk', handlers.onChatChunk)
@@ -71,6 +127,9 @@ export function createChatStream(socket: Pick<WorkbenchSocket, 'emit' | 'on' | '
       if (handlers.onChatError) socket.on('chat:error', handlers.onChatError)
       if (handlers.onBlockCreated) socket.on('chat:block_created', handlers.onBlockCreated)
       if (handlers.onBlockUpdated) socket.on('chat:block_updated', handlers.onBlockUpdated)
+      if (handlers.onGuidanceQueued) socket.on('chat:guidance_queued', handlers.onGuidanceQueued)
+      if (handlers.onGuidanceApplied) socket.on('chat:guidance_applied', handlers.onGuidanceApplied)
+      if (handlers.onGuidanceExpired) socket.on('chat:guidance_expired', handlers.onGuidanceExpired)
       if (handlers.onDeviceOnline) socket.on('device:online', handlers.onDeviceOnline)
       if (handlers.onDeviceOffline) socket.on('device:offline', handlers.onDeviceOffline)
       if (handlers.onDeviceStatus) socket.on('device:status', handlers.onDeviceStatus)
@@ -82,6 +141,9 @@ export function createChatStream(socket: Pick<WorkbenchSocket, 'emit' | 'on' | '
         if (handlers.onChatError) socket.off('chat:error', handlers.onChatError)
         if (handlers.onBlockCreated) socket.off('chat:block_created', handlers.onBlockCreated)
         if (handlers.onBlockUpdated) socket.off('chat:block_updated', handlers.onBlockUpdated)
+        if (handlers.onGuidanceQueued) socket.off('chat:guidance_queued', handlers.onGuidanceQueued)
+        if (handlers.onGuidanceApplied) socket.off('chat:guidance_applied', handlers.onGuidanceApplied)
+        if (handlers.onGuidanceExpired) socket.off('chat:guidance_expired', handlers.onGuidanceExpired)
         if (handlers.onDeviceOnline) socket.off('device:online', handlers.onDeviceOnline)
         if (handlers.onDeviceOffline) socket.off('device:offline', handlers.onDeviceOffline)
         if (handlers.onDeviceStatus) socket.off('device:status', handlers.onDeviceStatus)

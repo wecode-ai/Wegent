@@ -1,6 +1,11 @@
 import { Package, Sparkles } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { KeyboardEventHandler, ReactNode, RefObject } from 'react'
+import type {
+  ClipboardEventHandler,
+  KeyboardEventHandler,
+  ReactNode,
+  RefObject,
+} from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { LocalDeviceSkill } from '@/types/api'
 
@@ -14,6 +19,7 @@ interface ComposerTextareaProps {
   textareaRef: RefObject<HTMLTextAreaElement | null>
   className: string
   skillMenuClassName?: string
+  onPasteFiles?: (files: File[]) => void
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
 }
 
@@ -183,6 +189,7 @@ export function ComposerTextarea({
   textareaRef,
   className,
   skillMenuClassName = 'left-0 w-[min(28rem,calc(100vw-2rem))]',
+  onPasteFiles,
   onListLocalSkills,
 }: ComposerTextareaProps) {
   const { t } = useTranslation('common')
@@ -476,6 +483,14 @@ export function ComposerTextarea({
     if (canSend) onSubmit()
   }
 
+  const handlePaste: ClipboardEventHandler<HTMLTextAreaElement> = event => {
+    const files = Array.from(event.clipboardData.files)
+    if (files.length === 0) return
+
+    event.preventDefault()
+    onPasteFiles?.(files)
+  }
+
   const hasSkillMentionOverlay = validSkillMentions.length > 0
   const overlayCaretIndex =
     hasSkillMentionOverlay && selection.focused && selection.start === selection.end
@@ -521,6 +536,7 @@ export function ComposerTextarea({
           updateSkillTrigger()
           syncSelection()
         }}
+        onPaste={handlePaste}
         onFocus={syncSelection}
         onBlur={() => {
           setSelection(current => ({ ...current, focused: false }))

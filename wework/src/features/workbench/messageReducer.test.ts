@@ -19,6 +19,7 @@ describe('messageReducer', () => {
       type: 'assistant_started',
       taskId: 1,
       subtaskId: 9,
+      shellType: 'ClaudeCode',
     })
     const withChunk = messageReducer(withStart, {
       type: 'assistant_chunk',
@@ -32,6 +33,7 @@ describe('messageReducer', () => {
       role: 'assistant',
       content: 'hi',
       status: 'streaming',
+      shellType: 'ClaudeCode',
     })
   })
 

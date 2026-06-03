@@ -196,6 +196,9 @@ export interface TaskContextData {
   context_type: 'attachment' | 'knowledge_base'
   name: string
   status: string
+  file_extension?: string
+  file_size?: number
+  mime_type?: string
 }
 
 export interface Subtask {
@@ -209,6 +212,7 @@ export interface Subtask {
   created_at: string
   updated_at?: string
   contexts?: TaskContextData[]
+  attachments?: Attachment[]
   sender_user_name?: string
 }
 
@@ -258,6 +262,32 @@ export interface ChatSendPayload {
 export interface ChatSendAck {
   success?: boolean
   task_id?: number
+  error?: string
+}
+
+export interface ChatGuidePayload {
+  task_id: number
+  subtask_id: number
+  team_id: number
+  message: string
+  guidance?: string
+  client_guidance_id?: string
+}
+
+export interface ChatGuideAck {
+  success?: boolean
+  guidance_id?: string
+  error?: string
+}
+
+export interface ChatCancelPayload {
+  subtask_id: number
+  partial_content?: string
+  shell_type?: string
+}
+
+export interface ChatCancelAck {
+  success?: boolean
   error?: string
 }
 
@@ -672,6 +702,32 @@ export interface ChatBlockUpdatedPayload {
   tool_output?: unknown
   tool_input?: Record<string, unknown>
   status?: ChatBlock['status'] | 'running'
+}
+
+export interface ChatGuidanceQueuedPayload {
+  task_id: number
+  subtask_id: number
+  team_id?: number
+  user_id?: number
+  guidance_id: string
+  client_guidance_id?: string
+  message?: string
+  content?: string
+  created_at?: string
+}
+
+export interface ChatGuidanceAppliedPayload {
+  task_id: number
+  subtask_id: number
+  guidance_id: string
+  client_guidance_id?: string
+  applied_at: string
+}
+
+export interface ChatGuidanceExpiredPayload {
+  task_id: number
+  subtask_id: number
+  guidance_ids: string[]
 }
 
 export type ModelOptions = Record<string, string>

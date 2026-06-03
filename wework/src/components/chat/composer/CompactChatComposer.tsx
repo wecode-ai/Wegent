@@ -1,5 +1,5 @@
-import { ArrowUp, Camera, Image, Maximize2, Mic, Minimize2, Plus } from 'lucide-react'
-import type { ChangeEvent } from 'react'
+import { ArrowUp, Camera, Image, Maximize2, Mic, Minimize2, Plus, Square } from 'lucide-react'
+import type { ChangeEvent, ClipboardEventHandler } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Attachment, LocalDeviceSkill } from '@/types/api'
@@ -16,9 +16,11 @@ interface CompactChatComposerProps {
   attachments?: Attachment[]
   uploadingFiles?: Map<string, { file: File; progress: number }>
   attachmentErrors?: Map<string, string>
-  onImageSelect?: (files: File | File[]) => void
+  onFileSelect?: (files: File | File[]) => void
   onRemoveAttachment?: (attachmentId: number) => void
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
+  isStreaming?: boolean
+  onPause?: () => void
 }
 
 export function CompactChatComposer({
@@ -30,9 +32,11 @@ export function CompactChatComposer({
   attachments = [],
   uploadingFiles = new Map(),
   attachmentErrors = new Map(),
-  onImageSelect,
+  onFileSelect,
   onRemoveAttachment = () => {},
   onListLocalSkills,
+  isStreaming = false,
+  onPause,
 }: CompactChatComposerProps) {
   const { t } = useTranslation('common')
   const imageInputRef = useRef<HTMLInputElement>(null)
@@ -48,10 +52,18 @@ export function CompactChatComposer({
   const handleImageChange = (event: ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files
     if (files && files.length > 0) {
-      onImageSelect?.(Array.from(files))
+      onFileSelect?.(Array.from(files))
     }
     event.target.value = ''
     setContextSheetOpen(false)
+  }
+
+  const handlePasteFiles: ClipboardEventHandler<HTMLTextAreaElement> = event => {
+    const files = Array.from(event.clipboardData.files)
+    if (files.length === 0) return
+
+    event.preventDefault()
+    onFileSelect?.(files)
   }
 
   useEffect(() => {
@@ -76,7 +88,6 @@ export function CompactChatComposer({
         ref={imageInputRef}
         type="file"
         multiple
-        accept="image/*"
         className="hidden"
         data-testid="mobile-image-file-input"
         onChange={handleImageChange}
@@ -124,6 +135,7 @@ export function CompactChatComposer({
             canSend={canSend}
             placeholder={placeholder}
             rows={1}
+            onPasteFiles={files => onFileSelect?.(files)}
             className="scrollbar-none max-h-32 min-h-6 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent py-[14px] text-base leading-6 text-text-primary outline-none placeholder:text-text-muted"
             skillMenuClassName="left-[-1rem] right-[-3.5rem]"
             onListLocalSkills={onListLocalSkills}
@@ -149,15 +161,27 @@ export function CompactChatComposer({
               <Mic className="h-5 w-5" />
             </button>
           )}
-          <button
-            type="submit"
-            data-testid="send-message-button"
-            disabled={!canSend}
-            className="absolute bottom-1 right-1 flex h-11 w-11 items-center justify-center rounded-[22px] bg-primary p-0 text-primary-contrast disabled:bg-muted disabled:text-text-muted"
-            aria-label={t('workbench.send_message', '发送消息')}
-          >
-            <ArrowUp className="h-5 w-5" />
-          </button>
+          {isStreaming ? (
+            <button
+              type="button"
+              data-testid="pause-response-button"
+              onClick={onPause}
+              className="absolute bottom-1 right-1 flex h-11 w-11 items-center justify-center rounded-[22px] bg-[#242424] p-0 text-white hover:bg-[#333]"
+              aria-label={t('workbench.pause_response', '暂停回复')}
+            >
+              <Square className="h-4 w-4 fill-current" />
+            </button>
+          ) : (
+            <button
+              type="submit"
+              data-testid="send-message-button"
+              disabled={!canSend}
+              className="absolute bottom-1 right-1 flex h-11 w-11 items-center justify-center rounded-[22px] bg-[#242424] p-0 text-white disabled:bg-[#9a9a9a]"
+              aria-label={t('workbench.send_message', '发送消息')}
+            >
+              <ArrowUp className="h-5 w-5" />
+            </button>
+          )}
         </div>
       </form>
       {contextSheetOpen && (
@@ -188,7 +212,7 @@ export function CompactChatComposer({
               className="flex h-14 w-full items-center gap-4 rounded-2xl px-4 text-left text-base font-semibold text-text-primary hover:bg-muted"
             >
               <Image className="h-6 w-6 shrink-0 text-text-secondary" />
-              <span>{t('workbench.upload_image', '上传图片')}</span>
+              <span>{t('workbench.upload_image', '上传文件')}</span>
             </button>
           </div>
         </div>
@@ -212,6 +236,7 @@ export function CompactChatComposer({
               data-testid="fullscreen-message-input"
               value={value}
               onChange={event => onChange(event.target.value)}
+              onPaste={handlePasteFiles}
               placeholder={placeholder}
               className="h-full w-full resize-none rounded-2xl border border-border bg-surface px-4 pb-4 pt-14 text-base leading-7 text-text-primary outline-none placeholder:text-text-muted"
             />
