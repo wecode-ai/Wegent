@@ -369,4 +369,35 @@ describe('workbench project chat hooks', () => {
     act(() => result.current.resetAttachments())
     expect(result.current.attachments).toEqual([])
   })
+
+  test('uploads attachments without restricting file extensions', async () => {
+    const attachment: Attachment = {
+      id: 43,
+      filename: 'init_env.sh',
+      file_size: 1200,
+      mime_type: 'application/x-sh',
+      status: 'ready',
+      file_extension: '.sh',
+      created_at: '2026-05-27T00:00:00.000Z',
+    }
+    const upload = vi.fn().mockResolvedValue(attachment)
+
+    const { result } = renderHook(() =>
+      useWorkbenchAttachments({
+        uploadAttachment: upload,
+        deleteAttachment: vi.fn(),
+      })
+    )
+
+    const file = new File(['#!/bin/sh'], 'init_env.sh', {
+      type: 'application/x-sh',
+    })
+    await act(async () => {
+      await result.current.handleFileSelect(file)
+    })
+
+    expect(upload).toHaveBeenCalledWith(file, expect.any(Function))
+    expect(result.current.attachments).toEqual([attachment])
+    expect(result.current.errors.size).toBe(0)
+  })
 })

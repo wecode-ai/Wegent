@@ -9,6 +9,7 @@ import type {
   ProjectWithTasks,
   UnifiedModel,
 } from '@/types/api'
+import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/workbench'
 import { ChatInput } from './ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from './ChatInput'
 
@@ -90,6 +91,79 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('project-work-button')).toBeInTheDocument()
   })
 
+  test('shows desktop pause button while the assistant is streaming', async () => {
+    const onPause = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        isStreaming
+        onPause={onPause}
+      />,
+    )
+
+    expect(screen.getByTestId('pause-response-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('send-message-button')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('pause-response-button'))
+
+    expect(onPause).toHaveBeenCalledTimes(1)
+  })
+
+  test('renders queued messages and guidance controls above the composer', async () => {
+    const queuedMessages: QueuedWorkbenchMessage[] = [
+      {
+        id: 'queued-1',
+        content: '继续检查 capability sync',
+        status: 'queued',
+        createdAt: '2026-05-25T15:08:00.000+08:00',
+      },
+    ]
+    const guidanceMessages: GuidanceWorkbenchMessage[] = [
+      {
+        id: 'guidance-1',
+        content: '先跳过 device:sync_capabilities',
+        status: 'queued',
+        createdAt: '2026-05-25T15:09:00.000+08:00',
+      },
+    ]
+    const onSendQueuedAsGuidance = vi.fn()
+    const onCancelQueuedMessage = vi.fn()
+    const onEditQueuedMessage = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        queuedMessages={queuedMessages}
+        guidanceMessages={guidanceMessages}
+        onSendQueuedAsGuidance={onSendQueuedAsGuidance}
+        onCancelQueuedMessage={onCancelQueuedMessage}
+        onEditQueuedMessage={onEditQueuedMessage}
+      />,
+    )
+
+    expect(screen.getByTestId('conversation-queue-panel')).toBeInTheDocument()
+    expect(screen.getByText('继续检查 capability sync')).toBeInTheDocument()
+    expect(screen.getByText('先跳过 device:sync_capabilities')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('queue-guidance-button-queued-1'))
+    await userEvent.click(screen.getByTestId('queue-more-button-queued-1'))
+    await userEvent.click(screen.getByTestId('queue-edit-button-queued-1'))
+    await userEvent.click(screen.getByTestId('queue-cancel-button-queued-1'))
+
+    expect(onSendQueuedAsGuidance).toHaveBeenCalledWith('queued-1')
+    expect(onEditQueuedMessage).toHaveBeenCalledWith('queued-1')
+    expect(onCancelQueuedMessage).toHaveBeenCalledWith('queued-1')
+  })
+
   test('keeps the compact mobile composer close to one-line input height', () => {
     render(
       <ChatInput
@@ -121,6 +195,34 @@ describe('ChatInput', () => {
       'w-11',
       'rounded-[22px]',
     )
+  })
+
+  test('shows compact pause button while the assistant is streaming', async () => {
+    const onPause = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        isStreaming
+        onPause={onPause}
+      />,
+    )
+
+    expect(screen.getByTestId('pause-response-button')).toHaveClass(
+      'absolute',
+      'bottom-1',
+      'right-1',
+      'h-11',
+      'w-11',
+    )
+    expect(screen.queryByTestId('send-message-button')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('pause-response-button'))
+
+    expect(onPause).toHaveBeenCalledTimes(1)
   })
 
   test('hides voice input after typing in the compact composer', async () => {
@@ -375,9 +477,11 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('local-skill-autocomplete')).not.toBeInTheDocument()
   })
 
-  test('opens a mobile context sheet that only uploads images', async () => {
+  test('opens a mobile context sheet that uploads files without type restrictions', async () => {
     const handleFileSelect = vi.fn().mockResolvedValue(undefined)
-    const image = new File(['image'], 'photo.png', { type: 'image/png' })
+    const script = new File(['#!/bin/sh'], 'init_env.sh', {
+      type: 'application/x-sh',
+    })
 
     render(
       <ChatInput
@@ -393,7 +497,7 @@ describe('ChatInput', () => {
 
     expect(screen.getByTestId('mobile-context-sheet')).toBeInTheDocument()
     expect(screen.getByTestId('mobile-take-photo-button')).toHaveTextContent('拍照')
-    expect(screen.getByTestId('mobile-upload-image-button')).toHaveTextContent('上传图片')
+    expect(screen.getByTestId('mobile-upload-image-button')).toHaveTextContent('上传文件')
     expect(screen.queryByText('添加照片和文件')).not.toBeInTheDocument()
     expect(screen.getByTestId('mobile-camera-file-input')).toHaveAttribute(
       'accept',
@@ -403,15 +507,128 @@ describe('ChatInput', () => {
       'capture',
       'environment',
     )
-    expect(screen.getByTestId('mobile-image-file-input')).toHaveAttribute(
-      'accept',
-      'image/*',
+    expect(screen.getByTestId('mobile-image-file-input')).not.toHaveAttribute('accept')
+
+    await userEvent.upload(screen.getByTestId('mobile-image-file-input'), script)
+
+    expect(handleFileSelect).toHaveBeenCalledWith([script])
+    expect(screen.queryByTestId('mobile-context-sheet')).not.toBeInTheDocument()
+  })
+
+  test('desktop file picker does not restrict attachment file types', async () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+      />,
     )
 
-    await userEvent.upload(screen.getByTestId('mobile-image-file-input'), image)
+    await userEvent.click(screen.getByTestId('add-context-button'))
+
+    expect(screen.getByTestId('attachment-file-input')).not.toHaveAttribute('accept')
+  })
+
+  test('uploads pasted images from the desktop message textbox', () => {
+    const handleFileSelect = vi.fn().mockResolvedValue(undefined)
+    const image = new File(['image'], 'clipboard.png', { type: 'image/png' })
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({ handleFileSelect })}
+      />,
+    )
+
+    fireEvent.paste(screen.getByTestId('chat-message-input'), {
+      clipboardData: {
+        files: [image],
+      },
+    })
 
     expect(handleFileSelect).toHaveBeenCalledWith([image])
-    expect(screen.queryByTestId('mobile-context-sheet')).not.toBeInTheDocument()
+  })
+
+  test('uploads pasted documents from the desktop message textbox', () => {
+    const handleFileSelect = vi.fn().mockResolvedValue(undefined)
+    const documentFile = new File(['document'], 'requirements.pdf', {
+      type: 'application/pdf',
+    })
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({ handleFileSelect })}
+      />,
+    )
+
+    fireEvent.paste(screen.getByTestId('chat-message-input'), {
+      clipboardData: {
+        files: [documentFile],
+      },
+    })
+
+    expect(handleFileSelect).toHaveBeenCalledWith([documentFile])
+  })
+
+  test('uploads pasted images from the fullscreen compact textbox', async () => {
+    const handleFileSelect = vi.fn().mockResolvedValue(undefined)
+    const image = new File(['image'], 'fullscreen-clipboard.png', { type: 'image/png' })
+
+    render(
+      <ChatInput
+        value={'line 1\nline 2\nline 3\nline 4\nline 5'}
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        projectChat={projectChatControls({ handleFileSelect })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('expand-input-button'))
+    fireEvent.paste(screen.getByTestId('fullscreen-message-input'), {
+      clipboardData: {
+        files: [image],
+      },
+    })
+
+    expect(handleFileSelect).toHaveBeenCalledWith([image])
+  })
+
+  test('uploads pasted documents from the fullscreen compact textbox', async () => {
+    const handleFileSelect = vi.fn().mockResolvedValue(undefined)
+    const documentFile = new File(['document'], 'fullscreen-requirements.pdf', {
+      type: 'application/pdf',
+    })
+
+    render(
+      <ChatInput
+        value={'line 1\nline 2\nline 3\nline 4\nline 5'}
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        projectChat={projectChatControls({ handleFileSelect })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('expand-input-button'))
+    fireEvent.paste(screen.getByTestId('fullscreen-message-input'), {
+      clipboardData: {
+        files: [documentFile],
+      },
+    })
+
+    expect(handleFileSelect).toHaveBeenCalledWith([documentFile])
   })
 
   test('enables compact send when only image attachments are present', async () => {

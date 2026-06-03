@@ -192,7 +192,24 @@ export function ScrollableMessageArea({
         onScroll={updateScrollState}
       >
         <div ref={contentRef} className="min-w-0 overflow-x-hidden">
-          <MessageList messages={messages} />
+          {messages.length === 0 ? (
+            <div
+              data-testid="chat-empty-state"
+              className="flex min-h-full flex-col items-center justify-center px-6 py-16 text-center"
+            >
+              <h2 className="text-sm font-medium text-text-primary">
+                {t('workbench.empty_conversation_title', '开始新的对话')}
+              </h2>
+              <p className="mt-2 max-w-sm text-xs leading-5 text-text-muted">
+                {t(
+                  'workbench.empty_conversation_description',
+                  '在下方输入问题、粘贴上下文或添加附件，Codex 会在这里展示回复。',
+                )}
+              </p>
+            </div>
+          ) : (
+            <MessageList messages={messages} />
+          )}
         </div>
       </div>
       {showScrollButton && (

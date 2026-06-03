@@ -1,8 +1,21 @@
 import { render, screen } from '@testing-library/react'
-import { describe, expect, test } from 'vitest'
+import userEvent from '@testing-library/user-event'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+import type { Attachment } from '@/types/api'
 import { MessageList } from './MessageList'
 
 describe('MessageList', () => {
+  const originalCreateObjectUrl = URL.createObjectURL
+  const originalRevokeObjectUrl = URL.revokeObjectURL
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    localStorage.clear()
+    URL.createObjectURL = originalCreateObjectUrl
+    URL.revokeObjectURL = originalRevokeObjectUrl
+  })
+
   test('renders user and assistant messages', () => {
     const { container } = render(
       <MessageList
@@ -31,6 +44,223 @@ describe('MessageList', () => {
       'min-w-0',
       'overflow-x-hidden',
     )
+  })
+
+  test('uses neutral user bubble and blue assistant links', () => {
+    const { container } = render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: '总结下这个文档',
+            status: 'done',
+            createdAt: '2026-05-25T00:00:00.000Z',
+          },
+          {
+            id: '2',
+            role: 'assistant',
+            content: '联系 [jueding.ly@alibaba-inc.com](mailto:jueding.ly@alibaba-inc.com)',
+            status: 'done',
+            createdAt: '2026-05-25T00:00:01.000Z',
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.getByText('总结下这个文档').parentElement).toHaveClass('bg-muted')
+    expect(container.querySelector('a[href^="mailto:"]')).toHaveClass('text-blue-600')
+  })
+
+  test('renders image attachments in user messages', async () => {
+    URL.createObjectURL = vi.fn(() => 'blob:message-image-preview')
+    URL.revokeObjectURL = vi.fn()
+    localStorage.setItem('auth_token', 'token-1')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        blob: vi.fn().mockResolvedValue(new Blob(['image'], { type: 'image/png' })),
+      })
+    )
+
+    const attachment: Attachment = {
+      id: 43,
+      filename: 'diagram.png',
+      file_size: 1024,
+      mime_type: 'image/png',
+      status: 'ready',
+      file_extension: '.png',
+      created_at: '2026-05-25T15:08:00.000+08:00',
+    }
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: '分析下这个图片',
+            status: 'done',
+            attachments: [attachment],
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(await screen.findByTestId('message-image-preview')).toHaveAttribute(
+      'src',
+      'blob:message-image-preview'
+    )
+    expect(screen.getByTestId('message-image-preview')).toHaveAttribute(
+      'alt',
+      'diagram.png'
+    )
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/attachments/43/download'),
+      expect.objectContaining({
+        headers: { Authorization: 'Bearer token-1' },
+      })
+    )
+  })
+
+  test('renders document attachments in user messages', () => {
+    const attachment: Attachment = {
+      id: 44,
+      filename: 'requirements.pdf',
+      file_size: 2048,
+      mime_type: 'application/pdf',
+      status: 'ready',
+      file_extension: '.pdf',
+      created_at: '2026-05-25T15:09:00.000+08:00',
+    }
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: '分析下文档',
+            status: 'done',
+            attachments: [attachment],
+            createdAt: '2026-05-25T15:09:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('message-document-attachment')).toHaveTextContent(
+      'requirements.pdf'
+    )
+    expect(screen.getByTestId('message-document-attachment')).toHaveTextContent(
+      'PDF'
+    )
+  })
+
+  test('shows user message hover actions with time and copy', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, {
+      clipboard: { writeText },
+    })
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content: '对 bind_shell=openclaw 直接跳过',
+            status: 'done',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.getByTestId('message-hover-time')).toHaveTextContent('15:08')
+    const copyButton = screen.getByTestId('copy-message-button')
+    expect(copyButton).toHaveClass('opacity-0', 'group-hover:opacity-100')
+
+    await userEvent.click(copyButton)
+
+    expect(writeText).toHaveBeenCalledWith('对 bind_shell=openclaw 直接跳过')
+  })
+
+  test('shows only clock time for messages created today', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-05-25T18:50:00.000+08:00'))
+
+      render(
+        <MessageList
+          messages={[
+            {
+              id: '1',
+              role: 'user',
+              content: '今天的消息',
+              status: 'done',
+              createdAt: '2026-05-25T18:49:00.000+08:00',
+            },
+          ]}
+        />,
+      )
+
+      expect(screen.getByTestId('message-hover-time')).toHaveTextContent('18:49')
+      expect(screen.getByTestId('message-hover-time')).not.toHaveTextContent('Mon')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('shows assistant message hover actions with time and copy', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, {
+      clipboard: { writeText },
+    })
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '2',
+            role: 'assistant',
+            content: '好的，以下是作文内容。',
+            status: 'done',
+            createdAt: '2026-05-25T18:38:00.000+08:00',
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.getByTestId('message-hover-time')).toHaveTextContent('18:38')
+    const copyButton = screen.getByTestId('copy-message-button')
+    expect(copyButton).toHaveClass('opacity-0', 'group-hover:opacity-100')
+
+    await userEvent.click(copyButton)
+
+    expect(writeText).toHaveBeenCalledWith('好的，以下是作文内容。')
+  })
+
+  test('hides assistant hover actions while the response is streaming', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '2',
+            role: 'assistant',
+            content: '我正在处理你的请求。',
+            status: 'streaming',
+            createdAt: '2026-05-25T18:46:00.000+08:00',
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.queryByTestId('message-hover-time')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('copy-message-button')).not.toBeInTheDocument()
+    expect(screen.getByText('正在思考')).toBeInTheDocument()
   })
 
   test('keeps regular long content inside the page while tables and code scroll locally', () => {
@@ -107,6 +337,7 @@ describe('MessageList', () => {
       'href',
       'skill:///Users/crystal/.codex/skills/env-context/SKILL.md',
     )
+    expect(skillLink).toHaveClass('bg-muted', 'text-text-primary')
     expect(screen.getByTestId('message-user')).toHaveTextContent(
       'hello $env-context context',
     )

@@ -31,6 +31,8 @@ interface ProjectChatComposerProps {
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
   projectWork: ProjectWorkControls
   showProjectWorkBar?: boolean
+  isStreaming?: boolean
+  onPause?: () => void
 }
 
 export function ProjectChatComposer({
@@ -53,6 +55,8 @@ export function ProjectChatComposer({
   onListLocalSkills,
   projectWork,
   showProjectWorkBar = true,
+  isStreaming = false,
+  onPause,
 }: ProjectChatComposerProps) {
   const textareaRef = useAutoResizeTextarea(value, 168)
   const canSend = (value.trim().length > 0 || attachments.length > 0) && !disabled
@@ -80,6 +84,7 @@ export function ProjectChatComposer({
           canSend={canSend}
           placeholder={placeholder}
           rows={2}
+          onPasteFiles={onFileSelect}
           className="max-h-[128px] min-h-9 w-full resize-none overflow-y-auto bg-transparent p-0 text-sm leading-5 text-text-primary outline-none placeholder:text-text-muted"
           skillMenuClassName="left-[-1rem] right-[-0.5rem]"
           onListLocalSkills={onListLocalSkills}
@@ -93,6 +98,8 @@ export function ProjectChatComposer({
           onSelectModel={onSelectModel}
           onSelectModelOption={onSelectModelOption}
           onFileSelect={onFileSelect}
+          isStreaming={isStreaming}
+          onPause={onPause}
         />
       </form>
       {showProjectWorkBar && (

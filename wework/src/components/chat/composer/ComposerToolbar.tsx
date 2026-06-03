@@ -1,4 +1,4 @@
-import { ArrowUp, Mic } from 'lucide-react'
+import { ArrowUp, Mic, Square } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ModelOptions, UnifiedModel } from '@/types/api'
 import { AddContextMenu } from './AddContextMenu'
@@ -13,6 +13,8 @@ interface ComposerToolbarProps {
   onSelectModel: (model: UnifiedModel | null) => void
   onSelectModelOption: (optionId: string, value: string) => void
   onFileSelect: (files: File | File[]) => void
+  isStreaming?: boolean
+  onPause?: () => void
 }
 
 export function ComposerToolbar({
@@ -24,6 +26,8 @@ export function ComposerToolbar({
   onSelectModel,
   onSelectModelOption,
   onFileSelect,
+  isStreaming = false,
+  onPause,
 }: ComposerToolbarProps) {
   const { t } = useTranslation('common')
 
@@ -56,15 +60,27 @@ export function ComposerToolbar({
         >
           <Mic className="h-4 w-4" />
         </button>
-        <button
-          type="submit"
-          data-testid="send-message-button"
-          disabled={!canSend}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#1a1a1a] p-0 text-white disabled:cursor-not-allowed disabled:bg-[#d9d9d9]"
-          aria-label={t('workbench.send_message', '发送消息')}
-        >
-          <ArrowUp className="h-4 w-4" />
-        </button>
+        {isStreaming ? (
+          <button
+            type="button"
+            data-testid="pause-response-button"
+            onClick={onPause}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#1a1a1a] p-0 text-white hover:bg-[#333]"
+            aria-label={t('workbench.pause_response', '暂停回复')}
+          >
+            <Square className="h-3.5 w-3.5 fill-current" />
+          </button>
+        ) : (
+          <button
+            type="submit"
+            data-testid="send-message-button"
+            disabled={!canSend}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#1a1a1a] p-0 text-white disabled:cursor-not-allowed disabled:bg-[#d9d9d9]"
+            aria-label={t('workbench.send_message', '发送消息')}
+          >
+            <ArrowUp className="h-4 w-4" />
+          </button>
+        )}
       </div>
     </div>
   )
