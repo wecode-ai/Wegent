@@ -667,6 +667,15 @@ export interface ChatBlockUpdatedPayload {
 
 export type ModelOptions = Record<string, string>
 
+export type ModelCompatibilityDisabledReason =
+  | 'missing_current_runtime_family'
+  | 'missing_target_runtime_family'
+  | 'runtime_family_mismatch'
+
+export interface ModelRuntime {
+  family?: string | null
+}
+
 export interface UnifiedModel {
   name: string
   type: ModelType
@@ -675,7 +684,10 @@ export interface UnifiedModel {
   modelId?: string | null
   namespace?: string
   config?: Record<string, unknown>
+  runtime?: ModelRuntime | null
   isActive?: boolean
+  compatibilityDisabled?: boolean
+  compatibilityDisabledReason?: ModelCompatibilityDisabledReason
 }
 
 export interface UnifiedModelListResponse {

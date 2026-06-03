@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import {
+  areModelsProtocolCompatible,
+  getModelCompatibilityFamily,
   groupModelsByFamily,
   inferModelFamily,
   isSupportedModelFamily,
@@ -127,5 +129,64 @@ describe('model-ui', () => {
       '公网:GLM-5v',
       '公网:GLM4.7',
     ])
+  })
+
+  test('detects runtime family compatibility without changing display families', () => {
+    const claudeCompatibleDeepseek: UnifiedModel = {
+      name: 'ali-deepseek-v4-flash',
+      type: 'public',
+      displayName: '公网:DeepSeek V4 Flash',
+      modelId: 'deepseek-v4-flash',
+      runtime: { family: 'claude.claude' },
+    }
+    const claudeModel: UnifiedModel = {
+      name: 'claude-sonnet-4-5',
+      type: 'public',
+      modelId: 'claude-sonnet-4-5',
+      runtime: { family: 'claude.claude' },
+    }
+    const gptModel: UnifiedModel = {
+      name: 'gpt-5.5-medium',
+      type: 'user',
+      runtime: { family: 'openai.openai-responses' },
+    }
+    const geminiModel: UnifiedModel = {
+      name: 'gemini-2.5-pro',
+      type: 'public',
+      runtime: { family: 'gemini.gemini' },
+    }
+
+    expect(inferModelFamily(claudeCompatibleDeepseek)).toBe('deepseek')
+    expect(getModelCompatibilityFamily(claudeCompatibleDeepseek)).toBe('claude.claude')
+    expect(areModelsProtocolCompatible(claudeCompatibleDeepseek, claudeModel)).toBe(true)
+    expect(areModelsProtocolCompatible(claudeCompatibleDeepseek, gptModel)).toBe(false)
+    expect(areModelsProtocolCompatible(gptModel, geminiModel)).toBe(false)
+  })
+
+  test('uses runtime family instead of Kimi display identity for compatibility', () => {
+    const claudeCompatibleKimi: UnifiedModel = {
+      name: 'kimi-k2.5(内网)',
+      type: 'public',
+      displayName: '内网:Kimi-K2.5',
+      modelId: 'kimi-k2.5',
+      runtime: { family: 'claude.claude' },
+    }
+    const gptModel: UnifiedModel = {
+      name: 'wecode-gpt-5.5(海外)',
+      type: 'public',
+      displayName: '海外:GPT5.5',
+      modelId: 'gpt-5.5',
+      runtime: { family: 'openai.openai-responses' },
+    }
+    const unknownKimi: UnifiedModel = {
+      name: 'kimi-without-protocol',
+      type: 'public',
+      displayName: 'Kimi Without Protocol',
+    }
+
+    expect(inferModelFamily(claudeCompatibleKimi)).toBe('kimi')
+    expect(getModelCompatibilityFamily(claudeCompatibleKimi)).toBe('claude.claude')
+    expect(areModelsProtocolCompatible(claudeCompatibleKimi, gptModel)).toBe(false)
+    expect(areModelsProtocolCompatible(gptModel, unknownKimi)).toBe(false)
   })
 })

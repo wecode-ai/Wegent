@@ -48,6 +48,42 @@ describe('workbenchReducer', () => {
     expect(opened.currentProject?.id).toBe(9)
     expect(opened.currentProject?.name).toBe('sina-sso')
     expect(opened.currentTask?.id).toBe(3)
+    expect(opened.currentTask?.project_id).toBe(9)
+    expect(opened.recentTasks).toEqual([])
+  })
+
+  test('normalizes project task detail before updating work lists', () => {
+    const bootstrapped = workbenchReducer(initialWorkbenchState, {
+      type: 'bootstrapped',
+      user: { id: 1, user_name: 'admin', email: 'admin@example.com' },
+      defaultTeam: null,
+      projects: [{ id: 7, name: 'Repo', tasks: [] }],
+      devices: [],
+      recentTasks: [],
+      currentProject: { id: 7, name: 'Repo', tasks: [] },
+    })
+
+    const opened = workbenchReducer(bootstrapped, {
+      type: 'task_opened',
+      task: {
+        id: 12,
+        title: 'Project prompt',
+        status: 'COMPLETED',
+        task_type: 'code',
+        created_at: '2026-05-25T00:00:00.000Z',
+      },
+      project: { id: 7, name: 'Repo', tasks: [] },
+    })
+
+    expect(opened.currentTask?.project_id).toBe(7)
+    expect(opened.recentTasks).toEqual([])
+    expect(opened.projects[0].tasks).toEqual([
+      expect.objectContaining({
+        task_id: 12,
+        task_title: 'Project prompt',
+        task_status: 'COMPLETED',
+      }),
+    ])
   })
 
   test('adds a newly opened standalone task to recent chats immediately', () => {
@@ -176,6 +212,42 @@ describe('workbenchReducer', () => {
     expect(reinserted.recentTasks).toEqual([
       expect.objectContaining({ id: 11, status: 'COMPLETED' }),
     ])
+  })
+
+  test('updates model selection only on the current task state', () => {
+    const opened = workbenchReducer(initialWorkbenchState, {
+      type: 'task_opened',
+      task: {
+        id: 11,
+        title: 'Standalone prompt',
+        status: 'RUNNING',
+        task_type: 'code',
+        project_id: 0,
+        model_id: 'claude-sonnet-4-5',
+        force_override_bot_model_type: 'public',
+        created_at: '2026-05-25T00:00:00.000Z',
+      },
+      project: null,
+    })
+    const updated = workbenchReducer(opened, {
+      type: 'current_task_model_selection_changed',
+      selection: {
+        modelName: 'claude-opus-4-6',
+        modelType: 'user',
+        options: {},
+      },
+    })
+
+    expect(updated.currentTask).toMatchObject({
+      id: 11,
+      model_id: 'claude-opus-4-6',
+      force_override_bot_model_type: 'user',
+      model_options: {},
+    })
+    expect(updated.recentTasks[0]).toMatchObject({
+      id: 11,
+      model_id: 'claude-sonnet-4-5',
+    })
   })
 
   test('clears the current task without changing the selected project', () => {

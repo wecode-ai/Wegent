@@ -149,7 +149,7 @@ export function MobileWorkbenchLayout({
                     models={effectiveProjectChat.models}
                     selectedModel={effectiveProjectChat.selectedModel}
                     selectedModelOptions={effectiveProjectChat.selectedModelOptions}
-                    disabled={effectiveProjectChat.isOptionsLocked}
+                    disabled={false}
                     onSelectModel={effectiveProjectChat.setSelectedModel}
                     onSelectModelOption={effectiveProjectChat.setSelectedModelOption}
                     menuPlacement="below"
@@ -209,7 +209,7 @@ export function MobileWorkbenchLayout({
                     models={effectiveProjectChat.models}
                     selectedModel={effectiveProjectChat.selectedModel}
                     selectedModelOptions={effectiveProjectChat.selectedModelOptions}
-                    disabled={effectiveProjectChat.isOptionsLocked}
+                    disabled={false}
                     onSelectModel={effectiveProjectChat.setSelectedModel}
                     onSelectModelOption={effectiveProjectChat.setSelectedModelOption}
                     menuPlacement="below"

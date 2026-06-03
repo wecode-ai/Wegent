@@ -297,9 +297,12 @@ export function WorkbenchProvider({
       null,
     [currentUser, state.currentTask]
   )
+  const modelCompatibilityConfig = useMemo(
+    () => getTaskModelSelection(state.currentTask),
+    [state.currentTask]
+  )
   const persistNewChatModelSelection = useCallback(
     (selection: ModelSelectionConfig) => {
-      if (state.currentTask) return
       const preferences = {
         ...(currentUser.preferences ?? {}),
         wework_new_chat_model_selection: selection,
@@ -311,14 +314,28 @@ export function WorkbenchProvider({
           dispatch({ type: 'error_set', error: '模型配置保存失败' })
         })
     },
-    [currentUser.preferences, resolvedServices.userApi, state.currentTask]
+    [currentUser.preferences, resolvedServices.userApi]
+  )
+  const handleModelSelectionChange = useCallback(
+    (selection: ModelSelectionConfig) => {
+      if (state.currentTask) {
+        dispatch({
+          type: 'current_task_model_selection_changed',
+          selection,
+        })
+        return
+      }
+      persistNewChatModelSelection(selection)
+    },
+    [persistNewChatModelSelection, state.currentTask]
   )
   const modelSelection = useWorkbenchModels({
     api: resolvedServices.modelApi,
-    locked: isOptionsLocked,
+    locked: false,
     selectionConfig: modelSelectionConfig,
+    compatibilityConfig: modelCompatibilityConfig,
     selectionReady: !state.isBootstrapping,
-    onSelectionChange: persistNewChatModelSelection,
+    onSelectionChange: handleModelSelectionChange,
   })
   const skillSelection = useWorkbenchSkills({
     api: resolvedServices.skillApi,
@@ -816,7 +833,7 @@ export function WorkbenchProvider({
       message,
     }
 
-    if (!isOptionsLocked && modelSelection.selectedModel) {
+    if (modelSelection.selectedModel) {
       payload.force_override_bot_model = modelSelection.selectedModel.name
       payload.force_override_bot_model_type = modelSelection.selectedModel.type
       if (Object.keys(modelSelection.selectedModelOptions).length > 0) {

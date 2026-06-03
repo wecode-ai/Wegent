@@ -1375,8 +1375,9 @@ describe('WorkbenchProvider', () => {
     )
   })
 
-  test('does not send model or skill overrides after a task is open', async () => {
+  test('sends current-task model override but not skill overrides after a task is open', async () => {
     const sendMessage = vi.fn().mockResolvedValue({ success: true, task_id: 8 })
+    const updateCurrentUser = vi.fn()
 
     function LockedProbe() {
       const workbench = useWorkbench()
@@ -1427,7 +1428,19 @@ describe('WorkbenchProvider', () => {
               .fn()
               .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
           },
-          modelApi: { listModels: vi.fn().mockResolvedValue({ data: [] }) },
+          modelApi: {
+            listModels: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  name: 'gpt-5.5-medium',
+                  type: 'user',
+                  config: {
+                    protocol: 'openai',
+                  },
+                },
+              ],
+            }),
+          },
           skillApi: {
             listSkills: vi.fn().mockResolvedValue([]),
             getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
@@ -1465,6 +1478,9 @@ describe('WorkbenchProvider', () => {
             getProjectWorkspaceRoot: vi.fn(),
             listDirectories: vi.fn(),
           },
+          userApi: {
+            updateCurrentUser,
+          },
           chatStream: {
             joinTask: vi.fn(),
             leaveTask: vi.fn(),
@@ -1483,20 +1499,17 @@ describe('WorkbenchProvider', () => {
     await userEvent.click(screen.getByText('set input'))
     await userEvent.click(screen.getByText('send'))
 
-    await waitFor(() =>
-      expect(sendMessage).toHaveBeenCalledWith(
-        expect.not.objectContaining({
-          model_id: 'gpt-5.5-medium',
-          additional_skills: [
-            {
-              name: 'project-summary',
-              namespace: 'default',
-              is_public: false,
-            },
-          ],
-        })
-      )
+    await waitFor(() => expect(sendMessage).toHaveBeenCalled())
+    const payload = sendMessage.mock.calls[0][0]
+    expect(payload).toEqual(
+      expect.objectContaining({
+        task_id: 8,
+        force_override_bot_model: 'gpt-5.5-medium',
+        force_override_bot_model_type: 'user',
+      })
     )
+    expect(payload).not.toHaveProperty('additional_skills')
+    expect(updateCurrentUser).not.toHaveBeenCalled()
   })
 
   test('sends an attachment-only project message with fallback text', async () => {

@@ -53,7 +53,7 @@ export function ComposerToolbar({
             models={models}
             selectedModel={selectedModel}
             selectedModelOptions={selectedModelOptions}
-            disabled={optionsLocked}
+            disabled={false}
             onSelectModel={onSelectModel}
             onSelectModelOption={onSelectModelOption}
           />
