@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { StrictMode, useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
@@ -319,6 +319,108 @@ describe('ChatInput', () => {
     })
   })
 
+  test('shows plugin skill names with plugin prefix and origin labels', async () => {
+    const wegentPluginSkill: LocalDeviceSkill = {
+      name: 'brainstorming',
+      description: 'Use before creative work',
+      short_description: 'Use before creative work',
+      path: '/Users/crystal/.claude/plugins/cache/claude-plugins-official/superpowers/5.0.7/skills/brainstorming/SKILL.md',
+      source: 'claude-plugin',
+      origin: 'wegent',
+      plugin_name: 'superpowers',
+    }
+    const localPluginSkill: LocalDeviceSkill = {
+      name: 'github',
+      description: 'Inspect repositories and pull requests',
+      short_description: 'GitHub workflow support',
+      path: '/Users/crystal/.codex/plugins/cache/openai-curated/github/83d1f0d2/skills/github/SKILL.md',
+      source: 'codex-plugin',
+      origin: 'local',
+      plugin_name: 'github',
+    }
+    const listLocalSkills = vi
+      .fn()
+      .mockResolvedValue([wegentPluginSkill, localPluginSkill])
+
+    render(
+      <ControlledChatInput
+        projectChat={projectChatControls({ listLocalSkills })}
+      />,
+    )
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
+
+    const wegentOption = await screen.findByTestId('local-skill-option-brainstorming')
+    const localOption = screen.getByTestId('local-skill-option-github')
+
+    expect(screen.getByText('Superpowers: Brainstorming')).toBeInTheDocument()
+    expect(screen.getByText('Github: Github')).toBeInTheDocument()
+    expect(wegentOption).toHaveClass('min-h-8', 'py-1.5')
+    expect(wegentOption.querySelector('.lucide-package')).toBeInTheDocument()
+    expect(wegentOption).toHaveTextContent(
+      'workbench.local_skill_origin_wegent',
+    )
+    expect(localOption).toHaveTextContent(
+      'workbench.local_skill_origin_local',
+    )
+
+    await userEvent.click(wegentOption)
+
+    const selectedChip = screen.getByTestId('local-skill-chip-brainstorming')
+    expect(selectedChip).toHaveTextContent('Superpowers: Brainstorming')
+    expect(selectedChip).toHaveClass('text-blue-600')
+    expect(selectedChip).not.toHaveClass('bg-[#FFF8EA]', 'border-[#E6D5AF]')
+    expect(selectedChip.querySelector('.lucide-package')).toBeInTheDocument()
+  })
+
+  test('sorts local skill suggestions by display name', async () => {
+    const listLocalSkills = vi.fn().mockResolvedValue([
+      {
+        name: 'zeta-helper',
+        description: 'Last plugin skill',
+        short_description: 'Last plugin skill',
+        path: '/Users/crystal/.codex/plugins/cache/openai-curated/zeta/83d1f0d2/skills/zeta-helper/SKILL.md',
+        source: 'codex-plugin',
+        origin: 'local',
+        plugin_name: 'zeta',
+      },
+      {
+        name: 'alpha-helper',
+        description: 'First local skill',
+        short_description: 'First local skill',
+        path: '/Users/crystal/.codex/skills/alpha-helper/SKILL.md',
+        source: 'codex',
+        origin: 'local',
+      },
+      {
+        name: 'beta-helper',
+        description: 'Middle plugin skill',
+        short_description: 'Middle plugin skill',
+        path: '/Users/crystal/.claude/plugins/cache/claude-plugins-official/beta/5.0.7/skills/beta-helper/SKILL.md',
+        source: 'claude-plugin',
+        origin: 'wegent',
+        plugin_name: 'beta',
+      },
+    ])
+
+    render(
+      <ControlledChatInput
+        projectChat={projectChatControls({ listLocalSkills })}
+      />,
+    )
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
+
+    const listbox = await screen.findByTestId('local-skill-autocomplete')
+    const options = within(listbox).getAllByRole('option')
+
+    expect(options.map(option => option.dataset.testid)).toEqual([
+      'local-skill-option-alpha-helper',
+      'local-skill-option-beta-helper',
+      'local-skill-option-zeta-helper',
+    ])
+  })
+
   test('keeps the composer editable after selecting a local skill', async () => {
     const skill: LocalDeviceSkill = {
       name: 'env-context',
@@ -349,7 +451,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('local-skill-chip-env-context')).toHaveTextContent('Env Context')
   })
 
-  test('deletes a selected local skill mention as one unit', async () => {
+  test('does not delete a selected local skill mention as one unit', async () => {
     const skill: LocalDeviceSkill = {
       name: 'env-context',
       description: 'Use when environment facts are needed',
@@ -372,8 +474,42 @@ describe('ChatInput', () => {
     })
     await userEvent.keyboard('{Backspace}')
 
-    expect(screen.getByTestId('chat-message-input')).toHaveValue('')
-    expect(screen.queryByTestId('local-skill-chip-env-context')).not.toBeInTheDocument()
+    expect(screen.getByTestId('chat-message-input')).toHaveValue(
+      '[$env-context](skill:///Users/crystal/.codex/skills/env-context/SKILL.md)',
+    )
+    expect(screen.getByTestId('local-skill-chip-env-context')).toBeInTheDocument()
+  })
+
+  test('converts a selected local skill mention to visible text before deleting inside it', async () => {
+    const skill: LocalDeviceSkill = {
+      name: 'brainstorming',
+      description: 'Use before creative work',
+      short_description: 'Use before creative work',
+      path: '/home/ubuntu/.claude/plugins/cache/superpowers-marketplace/superpowers/5.1.0/skills/brainstorming/SKILL.md',
+      source: 'claude-plugin',
+      origin: 'local',
+      plugin_name: 'superpowers',
+    }
+    const listLocalSkills = vi.fn().mockResolvedValue([skill])
+
+    render(
+      <ControlledChatInput
+        projectChat={projectChatControls({ listLocalSkills })}
+      />,
+    )
+
+    const input = screen.getByTestId('chat-message-input')
+    await userEvent.type(input, '$')
+    await userEvent.click(await screen.findByTestId('local-skill-option-brainstorming'))
+    await waitFor(() => {
+      expect(input).toHaveFocus()
+    })
+
+    await userEvent.keyboard('{Backspace}{Backspace}')
+
+    expect(input).toHaveValue('Superpowers: Brainstormin')
+    expect(screen.queryByText(/\[\$brainstorming]/)).not.toBeInTheDocument()
+    expect(screen.queryByTestId('local-skill-chip-brainstorming')).not.toBeInTheDocument()
   })
 
   test('sizes desktop local skill autocomplete to the composer width', async () => {
@@ -1544,7 +1680,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('project-work-menu')).not.toHaveTextContent('进入项目工作')
   })
 
-  test('renders online project devices with neutral secondary text', async () => {
+  test('renders online project and standalone devices with neutral secondary text', async () => {
     const projects: ProjectWithTasks[] = [
       {
         id: 7,
@@ -1593,8 +1729,13 @@ describe('ChatInput', () => {
 
     const projectDeviceLabel = screen.getAllByText('online-executor')[0]
     const offlineProjectDeviceLabel = screen.getAllByText('offline-executor')[0]
+    const standaloneDeviceStatus = screen
+      .getByTestId('standalone-device-option-device-online')
+      .querySelector('span:last-of-type')
     expect(projectDeviceLabel).toHaveClass('text-text-secondary')
     expect(projectDeviceLabel).not.toHaveClass('text-primary')
+    expect(standaloneDeviceStatus).toHaveClass('text-text-secondary')
+    expect(standaloneDeviceStatus).not.toHaveClass('text-primary')
     expect(offlineProjectDeviceLabel).toHaveClass('text-text-muted')
   })
 

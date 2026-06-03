@@ -101,6 +101,7 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert "python3 -c" in ls_skills_definition.command
     assert ".claude" in ls_skills_definition.command
     assert ".codex" in ls_skills_definition.command
+    assert "plugins" in ls_skills_definition.command
     assert ls_skills_definition.post_processor == "json"
 
 
@@ -272,10 +273,125 @@ metadata:
             "short_description": "Screen history context.",
             "path": str(skill_dir / "SKILL.md"),
             "source": "codex",
+            "origin": "local",
             "mtime": skills[0]["mtime"],
         }
     ]
     assert "|" not in skills[0]["description"]
+
+
+def test_ls_skills_command_includes_plugin_skills(tmp_path):
+    """ls_skills should include skills bundled by installed Claude and Codex plugins."""
+    from app.services.device.command_registry import LS_SKILLS_SCRIPT
+
+    claude_skill_dir = (
+        tmp_path
+        / ".claude"
+        / "plugins"
+        / "cache"
+        / "claude-plugins-official"
+        / "superpowers"
+        / "5.0.7"
+        / "skills"
+        / "test-driven-development"
+    )
+    codex_skill_dir = (
+        tmp_path
+        / ".codex"
+        / "plugins"
+        / "cache"
+        / "openai-curated"
+        / "github"
+        / "83d1f0d2"
+        / "skills"
+        / "github"
+    )
+    claude_skill_dir.mkdir(parents=True)
+    codex_skill_dir.mkdir(parents=True)
+    manifest_path = tmp_path / ".wegent-executor" / "capabilities.json"
+    manifest_path.parent.mkdir(parents=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "revision": 1,
+                "skills": {},
+                "plugins": {
+                    "superpowers@claude-plugins-official": {
+                        "installed_plugin_id": 9,
+                        "managed": True,
+                    }
+                },
+                "mcps": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (claude_skill_dir / "SKILL.md").write_text(
+        """---
+name: test-driven-development
+description: Use when implementing features.
+---
+
+# TDD
+""",
+        encoding="utf-8",
+    )
+    (codex_skill_dir / "SKILL.md").write_text(
+        """---
+name: github
+description: Inspect repositories and pull requests.
+metadata:
+  short-description: GitHub workflow support.
+---
+
+# GitHub
+""",
+        encoding="utf-8",
+    )
+
+    env = {**os.environ, "HOME": str(tmp_path)}
+    result = subprocess.run(
+        ["python3", "-c", LS_SKILLS_SCRIPT],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    skills = json.loads(result.stdout)
+
+    assert {
+        (
+            skill["name"],
+            skill["source"],
+            skill["origin"],
+            skill["plugin_name"],
+            skill["path"],
+        )
+        for skill in skills
+    } == {
+        (
+            "test-driven-development",
+            "claude-plugin",
+            "wegent",
+            "superpowers",
+            str(claude_skill_dir / "SKILL.md"),
+        ),
+        (
+            "github",
+            "codex-plugin",
+            "local",
+            "github",
+            str(codex_skill_dir / "SKILL.md"),
+        ),
+    }
+    assert (
+        next(skill for skill in skills if skill["name"] == "github")[
+            "short_description"
+        ]
+        == "GitHub workflow support."
+    )
 
 
 @pytest.mark.asyncio
