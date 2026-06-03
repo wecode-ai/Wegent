@@ -128,6 +128,8 @@ class ResponsesAPIResponse(TypedDict, total=False):
     sources: List[Any]
     silent_exit: bool
     silent_exit_reason: str
+    deferred_user_input: bool
+    deferred_user_input_tool_use_id: str
 
 
 # ============================================================

@@ -37,6 +37,172 @@ GIT_BRANCH_DIFF_SHORTSTAT_COMMAND = (
     'git diff --shortstat "$merge_base" --\''
 )
 
+LS_SKILLS_SCRIPT = """
+import json
+import re
+from pathlib import Path
+
+FRONTMATTER_PATTERN = re.compile(r"^---\\n(.*?)\\n---", re.S)
+SKILL_SOURCES = (
+    (Path.home() / ".claude" / "skills", "claude", "**/SKILL.md", "skill"),
+    (Path.home() / ".codex" / "skills", "codex", "**/SKILL.md", "skill"),
+    (
+        Path.home() / ".claude" / "plugins" / "cache",
+        "claude-plugin",
+        "**/skills/**/SKILL.md",
+        "plugin",
+    ),
+    (
+        Path.home() / ".codex" / "plugins" / "cache",
+        "codex-plugin",
+        "**/skills/**/SKILL.md",
+        "plugin",
+    ),
+)
+
+
+def read_frontmatter(path):
+    text = path.read_text(encoding="utf-8", errors="replace")
+    match = FRONTMATTER_PATTERN.match(text)
+    return match.group(1) if match else ""
+
+
+def read_json_file(path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def line_indent(line):
+    return len(line) - len(line.lstrip(" "))
+
+
+def clean_scalar(value):
+    return value.strip().strip(chr(34)).strip(chr(39)).strip()
+
+
+def fold_block_lines(lines, style):
+    text = "\\n".join(line.strip() for line in lines).strip()
+    if style.startswith(">"):
+        text = re.sub(r"\\s*\\n\\s*", " ", text)
+    return re.sub(r"\\s+", " ", text).strip()
+
+
+def collect_block_scalar(lines, start_index, base_indent, style):
+    block_lines = []
+    for line in lines[start_index + 1 :]:
+        if not line.strip():
+            block_lines.append("")
+            continue
+        if line_indent(line) <= base_indent:
+            break
+        block_lines.append(line)
+    return fold_block_lines(block_lines, style)
+
+
+def frontmatter_field(frontmatter, field_name):
+    lines = frontmatter.splitlines()
+    pattern = re.compile(rf"^(\\s*){re.escape(field_name)}\\s*:\\s*(.*?)\\s*$")
+    for index, line in enumerate(lines):
+        match = pattern.match(line)
+        if not match:
+            continue
+        value = match.group(2).strip()
+        if value.startswith(("|", ">")):
+            return collect_block_scalar(lines, index, len(match.group(1)), value)
+        return clean_scalar(value)
+    return None
+
+
+def nested_metadata_field(frontmatter, field_name):
+    in_metadata = False
+    lines = frontmatter.splitlines()
+    pattern = re.compile(rf"^(\\s+){re.escape(field_name)}\\s*:\\s*(.*?)\\s*$")
+    for index, line in enumerate(lines):
+        if re.match(r"^metadata\\s*:\\s*$", line):
+            in_metadata = True
+            continue
+        if in_metadata and line and not line.startswith((" ", "\\t")):
+            in_metadata = False
+        if not in_metadata:
+            continue
+        match = pattern.match(line)
+        if match:
+            value = match.group(2).strip()
+            if value.startswith(("|", ">")):
+                return collect_block_scalar(lines, index, len(match.group(1)), value)
+            return clean_scalar(value)
+    return None
+
+
+def plugin_info(skill_file):
+    parts = skill_file.parts
+    try:
+        cache_index = parts.index("cache")
+        skills_index = parts.index("skills", cache_index + 1)
+    except ValueError:
+        return None, None
+    if skills_index <= cache_index + 2:
+        return None, None
+    marketplace = parts[cache_index + 1]
+    plugin_name = parts[cache_index + 2]
+    return plugin_name, f"{plugin_name}@{marketplace}"
+
+
+def is_managed(record):
+    return isinstance(record, dict) and record.get("managed", True) is not False
+
+
+def skill_origin(name, plugin_key, manifest):
+    if plugin_key:
+        return "wegent" if is_managed(manifest.get("plugins", {}).get(plugin_key)) else "local"
+    return "wegent" if is_managed(manifest.get("skills", {}).get(name)) else "local"
+
+
+def skill_metadata(skill_file, source, source_kind, manifest):
+    stat = skill_file.stat()
+    frontmatter = read_frontmatter(skill_file)
+    name = frontmatter_field(frontmatter, "name") or skill_file.parent.name
+    plugin_name, plugin_key = (
+        plugin_info(skill_file) if source_kind == "plugin" else (None, None)
+    )
+    metadata = {
+        "name": name,
+        "description": frontmatter_field(frontmatter, "description") or "",
+        "short_description": nested_metadata_field(frontmatter, "short-description")
+        or frontmatter_field(frontmatter, "short-description"),
+        "path": str(skill_file),
+        "source": source,
+        "origin": skill_origin(name, plugin_key, manifest),
+        "mtime": stat.st_mtime,
+    }
+    if plugin_name:
+        metadata["plugin_name"] = plugin_name
+    return metadata
+
+
+manifest = read_json_file(Path.home() / ".wegent-executor" / "capabilities.json")
+skills = []
+seen_paths = set()
+for root, source, pattern, source_kind in SKILL_SOURCES:
+    if not root.is_dir():
+        continue
+    for skill_file in sorted(root.glob(pattern)):
+        key = str(skill_file)
+        if key in seen_paths:
+            continue
+        try:
+            skills.append(skill_metadata(skill_file, source, source_kind, manifest))
+            seen_paths.add(key)
+        except OSError:
+            continue
+
+print(json.dumps(skills, ensure_ascii=False))
+""".strip()
+
+LS_SKILLS_COMMAND = f"python3 -c {shlex.quote(LS_SKILLS_SCRIPT)}"
+
 
 DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "pwd": LocalDeviceCommandDefinition(command="pwd"),
@@ -71,6 +237,10 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "git_remote_url": LocalDeviceCommandDefinition(command="git remote get-url origin"),
     "git_add_all": LocalDeviceCommandDefinition(command="git add --all"),
     "git_commit": LocalDeviceCommandDefinition(command="git commit"),
+    "ls_skills": LocalDeviceCommandDefinition(
+        command=LS_SKILLS_COMMAND,
+        post_processor="json",
+    ),
 }
 
 

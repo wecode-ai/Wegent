@@ -9,7 +9,11 @@ import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ProjectWithTasks, Task } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
-import type { WorkbenchMessage } from '@/types/workbench'
+import type {
+  GuidanceWorkbenchMessage,
+  QueuedWorkbenchMessage,
+  WorkbenchMessage,
+} from '@/types/workbench'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
 import { RightWorkspacePanel } from './workspace-panels/RightWorkspacePanel'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
@@ -25,6 +29,8 @@ interface DesktopWorkbenchMainProps {
   currentTask: Task | null
   currentProject: ProjectWithTasks | null
   messages: WorkbenchMessage[]
+  queuedMessages: QueuedWorkbenchMessage[]
+  guidanceMessages: GuidanceWorkbenchMessage[]
   projectChat: ProjectChatControls
   projectWork: ProjectWorkControls
   input: string
@@ -38,6 +44,12 @@ interface DesktopWorkbenchMainProps {
   onExpandSidebar: () => void
   onInputChange: (value: string) => void
   onSend: () => void
+  isResponseStreaming: boolean
+  onPauseResponse: () => void
+  onCancelQueuedMessage: (id: string) => void
+  onSendQueuedAsGuidance: (id: string) => void
+  onEditQueuedMessage: (id: string) => void
+  onCancelGuidanceMessage: (id: string) => void
 }
 
 export function DesktopWorkbenchMain({
@@ -46,6 +58,8 @@ export function DesktopWorkbenchMain({
   currentTask,
   currentProject,
   messages,
+  queuedMessages,
+  guidanceMessages,
   projectChat,
   projectWork,
   input,
@@ -59,11 +73,18 @@ export function DesktopWorkbenchMain({
   onExpandSidebar,
   onInputChange,
   onSend,
+  isResponseStreaming,
+  onPauseResponse,
+  onCancelQueuedMessage,
+  onSendQueuedAsGuidance,
+  onEditQueuedMessage,
+  onCancelGuidanceMessage,
 }: DesktopWorkbenchMainProps) {
   const { t } = useTranslation('common')
   const [rightPanelOpen, setRightPanelOpen] = useState(false)
   const [bottomPanelOpen, setBottomPanelOpen] = useState(false)
   const hasConversation = messages.length > 0 || currentTask
+  const hasQueuedComposerRows = queuedMessages.length > 0 || guidanceMessages.length > 0
   const emptyTitle = currentProject
     ? t('workbench.project_empty_title', {
         defaultValue: `我们应该在 ${currentProject.name} 中构建什么？`,
@@ -97,7 +118,7 @@ export function DesktopWorkbenchMain({
               conversationKey={currentTask?.id ?? null}
               className="h-full"
               scrollTestId="desktop-chat-scroll"
-              scrollerClassName="pb-40"
+              scrollerClassName={hasQueuedComposerRows ? 'pb-56' : 'pb-40'}
             />
             <div
               className={DESKTOP_FLOATING_COMPOSER_CLASS}
@@ -117,6 +138,14 @@ export function DesktopWorkbenchMain({
                   projectChat={projectChat}
                   projectWork={projectWork}
                   showProjectWorkBar={false}
+                  queuedMessages={queuedMessages}
+                  guidanceMessages={guidanceMessages}
+                  isStreaming={isResponseStreaming}
+                  onPause={onPauseResponse}
+                  onCancelQueuedMessage={onCancelQueuedMessage}
+                  onSendQueuedAsGuidance={onSendQueuedAsGuidance}
+                  onEditQueuedMessage={onEditQueuedMessage}
+                  onCancelGuidanceMessage={onCancelGuidanceMessage}
                 />
               </div>
             </div>
@@ -142,6 +171,14 @@ export function DesktopWorkbenchMain({
                 variant="desktop"
                 projectChat={projectChat}
                 projectWork={projectWork}
+                queuedMessages={queuedMessages}
+                guidanceMessages={guidanceMessages}
+                isStreaming={isResponseStreaming}
+                onPause={onPauseResponse}
+                onCancelQueuedMessage={onCancelQueuedMessage}
+                onSendQueuedAsGuidance={onSendQueuedAsGuidance}
+                onEditQueuedMessage={onEditQueuedMessage}
+                onCancelGuidanceMessage={onCancelGuidanceMessage}
               />
             </div>
           </div>

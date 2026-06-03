@@ -45,6 +45,7 @@ const workbenchValue: WorkbenchContextValue = {
     addExistingAttachment: vi.fn(),
     removeAttachment: vi.fn(),
     resetAttachments: vi.fn(),
+    listLocalSkills: vi.fn().mockResolvedValue([]),
   },
   selectProject: vi.fn(),
   selectStandaloneDevice: vi.fn(),

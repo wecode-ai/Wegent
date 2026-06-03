@@ -166,6 +166,10 @@ def extract_completed_result(response_data: dict) -> dict:
         "blocks": response_data.get("blocks"),
         "silent_exit": response_data.get("silent_exit"),
         "silent_exit_reason": response_data.get("silent_exit_reason"),
+        "deferred_user_input": response_data.get("deferred_user_input"),
+        "deferred_user_input_tool_use_id": response_data.get(
+            "deferred_user_input_tool_use_id"
+        ),
         "loaded_skills": response_data.get("loaded_skills"),
         "stop_reason": response_data.get("stop_reason"),
         "messages_chain": response_data.get("messages_chain"),
@@ -1295,6 +1299,10 @@ class ExecutionDispatcher:
                     )
 
                 if not cancelled and not terminal_event_type:
+                    error_message = (
+                        "Chat Shell SSE stream ended without terminal event "
+                        f"after {event_count} events"
+                    )
                     logger.warning(
                         "[ExecutionDispatcher] SSE stream ended without terminal event: "
                         "task_id=%d, subtask_id=%d, request_id=%s, total_events=%d",
@@ -1311,6 +1319,16 @@ class ExecutionDispatcher:
                             "task_id": str(request.task_id),
                             "subtask_id": str(request.subtask_id),
                         },
+                    )
+                    await emitter.emit(
+                        ExecutionEvent(
+                            type=EventType.ERROR,
+                            task_id=request.task_id,
+                            subtask_id=request.subtask_id,
+                            message_id=request.message_id,
+                            error=error_message,
+                            error_code="sse_stream_no_terminal",
+                        )
                     )
 
                 # Log when stream iteration completes

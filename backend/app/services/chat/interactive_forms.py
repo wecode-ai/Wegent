@@ -18,7 +18,6 @@ INTERACTIVE_FORM_TOOL_MARKER = "interactive_form_question"
 class PendingInteractiveForm:
     """Pending interactive form metadata stored in an assistant tool block."""
 
-    ask_id: str
     tool_use_id: str
     task_id: int
     assistant_subtask_id: int
@@ -69,6 +68,12 @@ def _extract_interactive_form_from_result(
         if INTERACTIVE_FORM_TOOL_MARKER not in tool_name:
             continue
 
+        tool_use_id = str(
+            block_record.get("tool_use_id") or block_record.get("id") or ""
+        ).strip()
+        if not tool_use_id:
+            continue
+
         render_payload = _as_record(block_record.get("render_payload"))
         if (
             not render_payload
@@ -77,23 +82,13 @@ def _extract_interactive_form_from_result(
             continue
 
         questions = render_payload.get("questions")
-        if not isinstance(questions, list) or not questions:
-            continue
-
-        ask_id = str(render_payload.get("ask_id") or "").strip()
-        tool_use_id = str(
-            block_record.get("tool_use_id") or block_record.get("id") or ""
-        ).strip()
-        if not ask_id or not tool_use_id:
-            continue
-
-        return PendingInteractiveForm(
-            ask_id=ask_id,
-            tool_use_id=tool_use_id,
-            task_id=task_id,
-            assistant_subtask_id=assistant_subtask_id,
-            message_id=message_id,
-        )
+        if isinstance(questions, list) and questions:
+            return PendingInteractiveForm(
+                tool_use_id=tool_use_id,
+                task_id=task_id,
+                assistant_subtask_id=assistant_subtask_id,
+                message_id=message_id,
+            )
 
     return None
 

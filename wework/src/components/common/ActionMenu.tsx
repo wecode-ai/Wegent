@@ -21,6 +21,7 @@ interface ActionMenuProps {
   items: ActionMenuItem[]
   icon?: ComponentType<{ className?: string }>
   variant?: 'horizontal' | 'vertical'
+  triggerClassName?: string
 }
 
 interface MenuPosition {
@@ -34,6 +35,7 @@ export function ActionMenu({
   items,
   icon: Icon = MoreHorizontal,
   variant = 'horizontal',
+  triggerClassName,
 }: ActionMenuProps) {
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -121,7 +123,10 @@ export function ActionMenu({
         type="button"
         data-testid={testId}
         onClick={handleTriggerClick}
-        className="flex h-7 w-7 items-center justify-center rounded-md text-[#606368] hover:bg-white/80 hover:text-[#2d2d2d]"
+        className={
+          triggerClassName ??
+          'flex h-7 w-7 items-center justify-center rounded-md text-[#606368] hover:bg-white/80 hover:text-[#2d2d2d]'
+        }
         aria-label={ariaLabel}
         aria-expanded={open}
       >

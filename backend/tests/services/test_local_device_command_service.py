@@ -4,6 +4,9 @@
 
 """Tests for local device command RPC service."""
 
+import json
+import os
+import subprocess
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -61,6 +64,9 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     git_commit_definition = resolve_local_device_command(
         "git_commit", settings.LOCAL_DEVICE_COMMANDS
     )
+    ls_skills_definition = resolve_local_device_command(
+        "ls_skills", settings.LOCAL_DEVICE_COMMANDS
+    )
 
     assert pwd_definition is not None
     assert pwd_definition.command == "pwd"
@@ -115,6 +121,12 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert git_commit_definition is not None
     assert git_commit_definition.command == "git commit"
     assert git_commit_definition.post_processor is None
+    assert ls_skills_definition is not None
+    assert "python3 -c" in ls_skills_definition.command
+    assert ".claude" in ls_skills_definition.command
+    assert ".codex" in ls_skills_definition.command
+    assert "plugins" in ls_skills_definition.command
+    assert ls_skills_definition.post_processor == "json"
 
 
 def test_local_device_command_registry_supports_inline_post_processor():
@@ -204,6 +216,206 @@ def test_directory_list_post_processor_keeps_only_directories():
     processed = apply_command_post_processor(result, "directory_list")
 
     assert processed["stdout"] == ["backend", "frontend"]
+
+
+def test_json_post_processor_parses_structured_output():
+    """json post processor should return parsed command output."""
+    from app.services.device.command_post_processor import apply_command_post_processor
+
+    result = {
+        "success": True,
+        "exit_code": 0,
+        "stdout": '[{"name": "env-context", "source": "codex"}]',
+        "stderr": "",
+        "duration": 0.01,
+    }
+
+    processed = apply_command_post_processor(result, "json")
+
+    assert processed["stdout"] == [{"name": "env-context", "source": "codex"}]
+
+
+def test_json_post_processor_reports_parse_failure():
+    """json post processor should mark malformed JSON results as failed."""
+    from app.services.device.command_post_processor import apply_command_post_processor
+
+    result = {
+        "success": True,
+        "exit_code": 0,
+        "stdout": "not-json",
+        "stderr": "",
+        "duration": 0.01,
+    }
+
+    processed = apply_command_post_processor(result, "json")
+
+    assert processed["success"] is False
+    assert "Failed to parse command JSON output" in processed["error"]
+
+
+def test_ls_skills_command_parses_yaml_block_description(tmp_path):
+    """ls_skills should parse YAML block scalars without keeping the marker."""
+    from app.services.device.command_registry import LS_SKILLS_SCRIPT
+
+    skill_dir = tmp_path / ".codex" / "skills" / "chronicle"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        """---
+name: chronicle
+description: |
+  Allows you to view the user's screen as well as several hours of history.
+
+  Use when the user refers to recent work.
+metadata:
+  short-description: |
+    Screen history context.
+---
+
+# Chronicle
+""",
+        encoding="utf-8",
+    )
+
+    env = {**os.environ, "HOME": str(tmp_path)}
+    result = subprocess.run(
+        ["python3", "-c", LS_SKILLS_SCRIPT],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    skills = json.loads(result.stdout)
+
+    assert skills == [
+        {
+            "name": "chronicle",
+            "description": (
+                "Allows you to view the user's screen as well as several hours "
+                "of history. Use when the user refers to recent work."
+            ),
+            "short_description": "Screen history context.",
+            "path": str(skill_dir / "SKILL.md"),
+            "source": "codex",
+            "origin": "local",
+            "mtime": skills[0]["mtime"],
+        }
+    ]
+    assert "|" not in skills[0]["description"]
+
+
+def test_ls_skills_command_includes_plugin_skills(tmp_path):
+    """ls_skills should include skills bundled by installed Claude and Codex plugins."""
+    from app.services.device.command_registry import LS_SKILLS_SCRIPT
+
+    claude_skill_dir = (
+        tmp_path
+        / ".claude"
+        / "plugins"
+        / "cache"
+        / "claude-plugins-official"
+        / "superpowers"
+        / "5.0.7"
+        / "skills"
+        / "test-driven-development"
+    )
+    codex_skill_dir = (
+        tmp_path
+        / ".codex"
+        / "plugins"
+        / "cache"
+        / "openai-curated"
+        / "github"
+        / "83d1f0d2"
+        / "skills"
+        / "github"
+    )
+    claude_skill_dir.mkdir(parents=True)
+    codex_skill_dir.mkdir(parents=True)
+    manifest_path = tmp_path / ".wegent-executor" / "capabilities.json"
+    manifest_path.parent.mkdir(parents=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "revision": 1,
+                "skills": {},
+                "plugins": {
+                    "superpowers@claude-plugins-official": {
+                        "installed_plugin_id": 9,
+                        "managed": True,
+                    }
+                },
+                "mcps": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (claude_skill_dir / "SKILL.md").write_text(
+        """---
+name: test-driven-development
+description: Use when implementing features.
+---
+
+# TDD
+""",
+        encoding="utf-8",
+    )
+    (codex_skill_dir / "SKILL.md").write_text(
+        """---
+name: github
+description: Inspect repositories and pull requests.
+metadata:
+  short-description: GitHub workflow support.
+---
+
+# GitHub
+""",
+        encoding="utf-8",
+    )
+
+    env = {**os.environ, "HOME": str(tmp_path)}
+    result = subprocess.run(
+        ["python3", "-c", LS_SKILLS_SCRIPT],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    skills = json.loads(result.stdout)
+
+    assert {
+        (
+            skill["name"],
+            skill["source"],
+            skill["origin"],
+            skill["plugin_name"],
+            skill["path"],
+        )
+        for skill in skills
+    } == {
+        (
+            "test-driven-development",
+            "claude-plugin",
+            "wegent",
+            "superpowers",
+            str(claude_skill_dir / "SKILL.md"),
+        ),
+        (
+            "github",
+            "codex-plugin",
+            "local",
+            "github",
+            str(codex_skill_dir / "SKILL.md"),
+        ),
+    }
+    assert (
+        next(skill for skill in skills if skill["name"] == "github")[
+            "short_description"
+        ]
+        == "GitHub workflow support."
+    )
 
 
 @pytest.mark.asyncio
@@ -435,6 +647,45 @@ async def test_execute_device_command_endpoint_applies_configured_post_processor
 
     assert response.success is True
     assert response.stdout == [".env", "backend"]
+
+
+@pytest.mark.asyncio
+async def test_execute_device_command_endpoint_returns_structured_stdout(monkeypatch):
+    """Endpoint should allow command processors to return object lists."""
+    from app.api.endpoints import devices
+    from app.schemas.device import DeviceCommandRequest
+
+    skills = [
+        {
+            "name": "env-context",
+            "description": "Environment facts.",
+            "short_description": "Environment facts.",
+            "path": "/Users/crystal/.codex/skills/env-context/SKILL.md",
+            "source": "codex",
+            "mtime": 1780462034.0,
+        }
+    ]
+    service_mock = AsyncMock(
+        return_value={
+            "success": True,
+            "exit_code": 0,
+            "stdout": skills,
+            "stderr": "",
+            "duration": 0.02,
+            "timed_out": False,
+        }
+    )
+    monkeypatch.setattr(devices, "execute_configured_device_command", service_mock)
+
+    response = await devices.execute_device_command(
+        device_id="device-abc",
+        request=DeviceCommandRequest(command_key="ls_skills"),
+        db=object(),
+        current_user=SimpleNamespace(id=7),
+    )
+
+    assert response.success is True
+    assert response.stdout == skills
 
 
 @pytest.mark.asyncio
