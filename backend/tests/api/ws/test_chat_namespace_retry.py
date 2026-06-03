@@ -154,3 +154,54 @@ async def test_chat_retry_new_model_without_type_clears_stale_override_model_typ
         mock_trigger.await_args.kwargs["payload"].force_override_bot_model
         == "new-model"
     )
+
+
+@pytest.mark.asyncio
+async def test_chat_retry_rejects_running_subtask_without_dispatching():
+    """Retry should not re-dispatch a subtask that is still marked RUNNING."""
+
+    namespace = ChatNamespace()
+    namespace.get_session = AsyncMock(return_value={"user_id": 1})
+    namespace._check_token_expiry = AsyncMock(return_value=False)
+
+    task = SimpleNamespace(id=100, json={"metadata": {"labels": {}}})
+    running_ai_subtask = SimpleNamespace(
+        id=42,
+        team_id=10,
+        message_id=7,
+        parent_id=41,
+        status=SimpleNamespace(value="RUNNING"),
+    )
+    team = SimpleNamespace(id=10)
+    user_subtask = SimpleNamespace(id=41, prompt="Hello", contexts=[])
+
+    db = Mock()
+
+    with (
+        patch("app.api.ws.chat_namespace.SessionLocal", return_value=db),
+        patch(
+            "app.api.ws.chat_namespace.can_access_task", AsyncMock(return_value=True)
+        ),
+        patch(
+            "app.api.ws.chat_namespace.fetch_retry_context",
+            return_value=(running_ai_subtask, task, team, user_subtask),
+        ),
+        patch("app.api.ws.chat_namespace.reset_subtask_for_retry") as mock_reset,
+        patch(
+            "app.services.chat.trigger.trigger_ai_response_unified", AsyncMock()
+        ) as mock_trigger,
+    ):
+        result = await namespace.on_chat_retry(
+            "sid-123",
+            {
+                "task_id": 100,
+                "subtask_id": 42,
+                "force_override_bot_model": None,
+                "force_override_bot_model_type": None,
+                "use_model_override": False,
+            },
+        )
+
+    assert result == {"error": "Cannot retry subtask in RUNNING state"}
+    mock_reset.assert_not_called()
+    mock_trigger.assert_not_awaited()

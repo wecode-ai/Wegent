@@ -1,26 +1,39 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { useState } from 'react'
+import { StrictMode, useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
 import type {
   Attachment,
   DeviceInfo,
+  LocalDeviceSkill,
   ProjectWithTasks,
-  SkillRef,
   UnifiedModel,
-  UnifiedSkill,
 } from '@/types/api'
+import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/workbench'
 import { ChatInput } from './ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from './ChatInput'
 
 function ControlledChatInput({
   onSubmit = vi.fn(),
+  projectChat,
+  variant,
 }: {
   onSubmit?: () => void
+  projectChat?: ProjectChatControls
+  variant?: 'compact' | 'desktop'
 }) {
   const [value, setValue] = useState('')
 
-  return <ChatInput value={value} onChange={setValue} onSubmit={onSubmit} disabled={false} />
+  return (
+    <ChatInput
+      value={value}
+      onChange={setValue}
+      onSubmit={onSubmit}
+      disabled={false}
+      variant={variant}
+      projectChat={projectChat}
+    />
+  )
 }
 
 function projectChatControls(overrides: Partial<ProjectChatControls> = {}): ProjectChatControls {
@@ -39,6 +52,7 @@ function projectChatControls(overrides: Partial<ProjectChatControls> = {}): Proj
     toggleSkill: vi.fn(),
     handleFileSelect: vi.fn().mockResolvedValue(undefined),
     removeAttachment: vi.fn().mockResolvedValue(undefined),
+    listLocalSkills: vi.fn().mockResolvedValue([]),
     ...overrides,
   }
 }
@@ -73,8 +87,81 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('chat-message-input')).toHaveAttribute('rows', '2')
     expect(screen.queryByTestId('custom-mode-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('model-selector-button')).toBeInTheDocument()
-    expect(screen.getByTestId('skill-selector-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('skill-selector-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('project-work-button')).toBeInTheDocument()
+  })
+
+  test('shows desktop pause button while the assistant is streaming', async () => {
+    const onPause = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        isStreaming
+        onPause={onPause}
+      />,
+    )
+
+    expect(screen.getByTestId('pause-response-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('send-message-button')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('pause-response-button'))
+
+    expect(onPause).toHaveBeenCalledTimes(1)
+  })
+
+  test('renders queued messages and guidance controls above the composer', async () => {
+    const queuedMessages: QueuedWorkbenchMessage[] = [
+      {
+        id: 'queued-1',
+        content: '继续检查 capability sync',
+        status: 'queued',
+        createdAt: '2026-05-25T15:08:00.000+08:00',
+      },
+    ]
+    const guidanceMessages: GuidanceWorkbenchMessage[] = [
+      {
+        id: 'guidance-1',
+        content: '先跳过 device:sync_capabilities',
+        status: 'queued',
+        createdAt: '2026-05-25T15:09:00.000+08:00',
+      },
+    ]
+    const onSendQueuedAsGuidance = vi.fn()
+    const onCancelQueuedMessage = vi.fn()
+    const onEditQueuedMessage = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        queuedMessages={queuedMessages}
+        guidanceMessages={guidanceMessages}
+        onSendQueuedAsGuidance={onSendQueuedAsGuidance}
+        onCancelQueuedMessage={onCancelQueuedMessage}
+        onEditQueuedMessage={onEditQueuedMessage}
+      />,
+    )
+
+    expect(screen.getByTestId('conversation-queue-panel')).toBeInTheDocument()
+    expect(screen.getByText('继续检查 capability sync')).toBeInTheDocument()
+    expect(screen.getByText('先跳过 device:sync_capabilities')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('queue-guidance-button-queued-1'))
+    await userEvent.click(screen.getByTestId('queue-more-button-queued-1'))
+    await userEvent.click(screen.getByTestId('queue-edit-button-queued-1'))
+    await userEvent.click(screen.getByTestId('queue-cancel-button-queued-1'))
+
+    expect(onSendQueuedAsGuidance).toHaveBeenCalledWith('queued-1')
+    expect(onEditQueuedMessage).toHaveBeenCalledWith('queued-1')
+    expect(onCancelQueuedMessage).toHaveBeenCalledWith('queued-1')
   })
 
   test('keeps the compact mobile composer close to one-line input height', () => {
@@ -110,6 +197,34 @@ describe('ChatInput', () => {
     )
   })
 
+  test('shows compact pause button while the assistant is streaming', async () => {
+    const onPause = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        isStreaming
+        onPause={onPause}
+      />,
+    )
+
+    expect(screen.getByTestId('pause-response-button')).toHaveClass(
+      'absolute',
+      'bottom-1',
+      'right-1',
+      'h-11',
+      'w-11',
+    )
+    expect(screen.queryByTestId('send-message-button')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('pause-response-button'))
+
+    expect(onPause).toHaveBeenCalledTimes(1)
+  })
+
   test('hides voice input after typing in the compact composer', async () => {
     render(<ControlledChatInput />)
 
@@ -124,9 +239,249 @@ describe('ChatInput', () => {
     )
   })
 
-  test('opens a mobile context sheet that only uploads images', async () => {
+  test('opens local skill autocomplete after a standalone dollar trigger', async () => {
+    const skill: LocalDeviceSkill = {
+      name: 'env-context',
+      description: 'Use when environment facts are needed',
+      short_description: 'Environment facts',
+      path: '/Users/crystal/.codex/skills/env-context/SKILL.md',
+      source: 'codex',
+    }
+    const listLocalSkills = vi.fn().mockResolvedValue([skill])
+
+    render(
+      <ControlledChatInput
+        projectChat={projectChatControls({ listLocalSkills })}
+      />,
+    )
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
+
+    await waitFor(() => {
+      expect(listLocalSkills).toHaveBeenCalledTimes(1)
+    })
+    expect(screen.getByTestId('local-skill-autocomplete')).toHaveClass(
+      'bottom-[calc(100%+1rem)]',
+      'z-[80]',
+      'bg-background',
+      'left-[-1rem]',
+      'right-[-3.5rem]',
+    )
+    await userEvent.click(await screen.findByTestId('local-skill-option-env-context'))
+
+    expect(screen.getByTestId('chat-message-input')).toHaveValue(
+      '[$env-context](skill:///Users/crystal/.codex/skills/env-context/SKILL.md) ',
+    )
+    expect(screen.getByTestId('local-skill-chip-env-context')).toHaveTextContent('Env Context')
+    expect(await screen.findByTestId('local-skill-caret')).toHaveClass('local-skill-caret')
+  })
+
+  test('keeps only one local skill autocomplete option highlighted', async () => {
+    const chronicleSkill: LocalDeviceSkill = {
+      name: 'chronicle',
+      description: 'Allows you to view the user screen history',
+      short_description: 'Screen history',
+      path: '/Users/crystal/.codex/skills/chronicle/SKILL.md',
+      source: 'codex',
+    }
+    const dingtalkSkill: LocalDeviceSkill = {
+      name: 'dingtalk-ai-table',
+      description: 'Use DingTalk AI Table data',
+      short_description: 'DingTalk AI Table',
+      path: '/Users/crystal/.claude/skills/dingtalk-ai-table/SKILL.md',
+      source: 'claude',
+    }
+    const listLocalSkills = vi.fn().mockResolvedValue([chronicleSkill, dingtalkSkill])
+
+    render(
+      <ControlledChatInput
+        projectChat={projectChatControls({ listLocalSkills })}
+      />,
+    )
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
+
+    const firstOption = await screen.findByTestId('local-skill-option-chronicle')
+    const secondOption = await screen.findByTestId('local-skill-option-dingtalk-ai-table')
+
+    expect(firstOption).toHaveClass('bg-muted')
+    expect(firstOption).toHaveAttribute('aria-selected', 'true')
+    expect(secondOption).not.toHaveClass('bg-muted')
+    expect(secondOption).toHaveAttribute('aria-selected', 'false')
+
+    fireEvent.pointerEnter(secondOption)
+
+    await waitFor(() => {
+      expect(firstOption).not.toHaveClass('bg-muted')
+      expect(firstOption).toHaveAttribute('aria-selected', 'false')
+      expect(secondOption).toHaveClass('bg-muted')
+      expect(secondOption).toHaveAttribute('aria-selected', 'true')
+    })
+  })
+
+  test('keeps the composer editable after selecting a local skill', async () => {
+    const skill: LocalDeviceSkill = {
+      name: 'env-context',
+      description: 'Use when environment facts are needed',
+      short_description: 'Environment facts',
+      path: '/Users/crystal/.codex/skills/env-context/SKILL.md',
+      source: 'codex',
+    }
+    const listLocalSkills = vi.fn().mockResolvedValue([skill])
+
+    render(
+      <ControlledChatInput
+        projectChat={projectChatControls({ listLocalSkills })}
+      />,
+    )
+
+    const input = screen.getByTestId('chat-message-input')
+    await userEvent.type(input, '$')
+    await userEvent.click(await screen.findByTestId('local-skill-option-env-context'))
+    await waitFor(() => {
+      expect(input).toHaveFocus()
+    })
+    await userEvent.type(input, 'hello')
+
+    expect(input).toHaveValue(
+      '[$env-context](skill:///Users/crystal/.codex/skills/env-context/SKILL.md) hello',
+    )
+    expect(screen.getByTestId('local-skill-chip-env-context')).toHaveTextContent('Env Context')
+  })
+
+  test('deletes a selected local skill mention as one unit', async () => {
+    const skill: LocalDeviceSkill = {
+      name: 'env-context',
+      description: 'Use when environment facts are needed',
+      short_description: 'Environment facts',
+      path: '/Users/crystal/.codex/skills/env-context/SKILL.md',
+      source: 'codex',
+    }
+    const listLocalSkills = vi.fn().mockResolvedValue([skill])
+
+    render(
+      <ControlledChatInput
+        projectChat={projectChatControls({ listLocalSkills })}
+      />,
+    )
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
+    await userEvent.click(await screen.findByTestId('local-skill-option-env-context'))
+    await waitFor(() => {
+      expect(screen.getByTestId('chat-message-input')).toHaveFocus()
+    })
+    await userEvent.keyboard('{Backspace}')
+
+    expect(screen.getByTestId('chat-message-input')).toHaveValue('')
+    expect(screen.queryByTestId('local-skill-chip-env-context')).not.toBeInTheDocument()
+  })
+
+  test('sizes desktop local skill autocomplete to the composer width', async () => {
+    const skill: LocalDeviceSkill = {
+      name: 'env-context',
+      description: 'Use when environment facts are needed',
+      short_description: 'Environment facts',
+      path: '/Users/crystal/.codex/skills/env-context/SKILL.md',
+      source: 'codex',
+    }
+    const listLocalSkills = vi.fn().mockResolvedValue([skill])
+
+    render(
+      <ControlledChatInput
+        variant="desktop"
+        projectChat={projectChatControls({ listLocalSkills })}
+      />,
+    )
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
+
+    expect(await screen.findByTestId('local-skill-autocomplete')).toHaveClass(
+      'left-[-1rem]',
+      'right-[-0.5rem]',
+    )
+  })
+
+  test('opens local skill autocomplete under React StrictMode', async () => {
+    const skill: LocalDeviceSkill = {
+      name: 'env-context',
+      description: 'Use when environment facts are needed',
+      short_description: 'Environment facts',
+      path: '/Users/crystal/.codex/skills/env-context/SKILL.md',
+      source: 'codex',
+    }
+    const listLocalSkills = vi.fn().mockResolvedValue([skill])
+
+    render(
+      <StrictMode>
+        <ControlledChatInput
+          projectChat={projectChatControls({ listLocalSkills })}
+        />
+      </StrictMode>,
+    )
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
+
+    expect(await screen.findByTestId('local-skill-option-env-context')).toBeInTheDocument()
+  })
+
+  test('retries local skill loading from the autocomplete error state', async () => {
+    const skill: LocalDeviceSkill = {
+      name: 'env-context',
+      description: 'Use when environment facts are needed',
+      short_description: 'Environment facts',
+      path: '/Users/crystal/.codex/skills/env-context/SKILL.md',
+      source: 'codex',
+    }
+    let rejectInitialLoad: (error: Error) => void = () => {}
+    const listLocalSkills = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<LocalDeviceSkill[]>((_, reject) => {
+            rejectInitialLoad = reject
+          }),
+      )
+      .mockResolvedValueOnce([skill])
+
+    render(
+      <ControlledChatInput
+        projectChat={projectChatControls({ listLocalSkills })}
+      />,
+    )
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), '$')
+    rejectInitialLoad(new Error('Device is offline'))
+
+    await userEvent.click(
+      await screen.findByRole('button', {
+        name: /workbench.local_skills_error.*workbench.retry_local_skills/,
+      }),
+    )
+
+    expect(await screen.findByTestId('local-skill-option-env-context')).toBeInTheDocument()
+    expect(listLocalSkills).toHaveBeenCalledTimes(2)
+  })
+
+  test('does not open local skill autocomplete for a dollar inside a word', async () => {
+    const listLocalSkills = vi.fn().mockResolvedValue([])
+
+    render(
+      <ControlledChatInput
+        projectChat={projectChatControls({ listLocalSkills })}
+      />,
+    )
+
+    await userEvent.type(screen.getByTestId('chat-message-input'), 'hello$')
+
+    expect(listLocalSkills).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('local-skill-autocomplete')).not.toBeInTheDocument()
+  })
+
+  test('opens a mobile context sheet that uploads files without type restrictions', async () => {
     const handleFileSelect = vi.fn().mockResolvedValue(undefined)
-    const image = new File(['image'], 'photo.png', { type: 'image/png' })
+    const script = new File(['#!/bin/sh'], 'init_env.sh', {
+      type: 'application/x-sh',
+    })
 
     render(
       <ChatInput
@@ -142,7 +497,7 @@ describe('ChatInput', () => {
 
     expect(screen.getByTestId('mobile-context-sheet')).toBeInTheDocument()
     expect(screen.getByTestId('mobile-take-photo-button')).toHaveTextContent('拍照')
-    expect(screen.getByTestId('mobile-upload-image-button')).toHaveTextContent('上传图片')
+    expect(screen.getByTestId('mobile-upload-image-button')).toHaveTextContent('上传文件')
     expect(screen.queryByText('添加照片和文件')).not.toBeInTheDocument()
     expect(screen.getByTestId('mobile-camera-file-input')).toHaveAttribute(
       'accept',
@@ -152,15 +507,128 @@ describe('ChatInput', () => {
       'capture',
       'environment',
     )
-    expect(screen.getByTestId('mobile-image-file-input')).toHaveAttribute(
-      'accept',
-      'image/*',
+    expect(screen.getByTestId('mobile-image-file-input')).not.toHaveAttribute('accept')
+
+    await userEvent.upload(screen.getByTestId('mobile-image-file-input'), script)
+
+    expect(handleFileSelect).toHaveBeenCalledWith([script])
+    expect(screen.queryByTestId('mobile-context-sheet')).not.toBeInTheDocument()
+  })
+
+  test('desktop file picker does not restrict attachment file types', async () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+      />,
     )
 
-    await userEvent.upload(screen.getByTestId('mobile-image-file-input'), image)
+    await userEvent.click(screen.getByTestId('add-context-button'))
+
+    expect(screen.getByTestId('attachment-file-input')).not.toHaveAttribute('accept')
+  })
+
+  test('uploads pasted images from the desktop message textbox', () => {
+    const handleFileSelect = vi.fn().mockResolvedValue(undefined)
+    const image = new File(['image'], 'clipboard.png', { type: 'image/png' })
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({ handleFileSelect })}
+      />,
+    )
+
+    fireEvent.paste(screen.getByTestId('chat-message-input'), {
+      clipboardData: {
+        files: [image],
+      },
+    })
 
     expect(handleFileSelect).toHaveBeenCalledWith([image])
-    expect(screen.queryByTestId('mobile-context-sheet')).not.toBeInTheDocument()
+  })
+
+  test('uploads pasted documents from the desktop message textbox', () => {
+    const handleFileSelect = vi.fn().mockResolvedValue(undefined)
+    const documentFile = new File(['document'], 'requirements.pdf', {
+      type: 'application/pdf',
+    })
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({ handleFileSelect })}
+      />,
+    )
+
+    fireEvent.paste(screen.getByTestId('chat-message-input'), {
+      clipboardData: {
+        files: [documentFile],
+      },
+    })
+
+    expect(handleFileSelect).toHaveBeenCalledWith([documentFile])
+  })
+
+  test('uploads pasted images from the fullscreen compact textbox', async () => {
+    const handleFileSelect = vi.fn().mockResolvedValue(undefined)
+    const image = new File(['image'], 'fullscreen-clipboard.png', { type: 'image/png' })
+
+    render(
+      <ChatInput
+        value={'line 1\nline 2\nline 3\nline 4\nline 5'}
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        projectChat={projectChatControls({ handleFileSelect })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('expand-input-button'))
+    fireEvent.paste(screen.getByTestId('fullscreen-message-input'), {
+      clipboardData: {
+        files: [image],
+      },
+    })
+
+    expect(handleFileSelect).toHaveBeenCalledWith([image])
+  })
+
+  test('uploads pasted documents from the fullscreen compact textbox', async () => {
+    const handleFileSelect = vi.fn().mockResolvedValue(undefined)
+    const documentFile = new File(['document'], 'fullscreen-requirements.pdf', {
+      type: 'application/pdf',
+    })
+
+    render(
+      <ChatInput
+        value={'line 1\nline 2\nline 3\nline 4\nline 5'}
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        projectChat={projectChatControls({ handleFileSelect })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('expand-input-button'))
+    fireEvent.paste(screen.getByTestId('fullscreen-message-input'), {
+      clipboardData: {
+        files: [documentFile],
+      },
+    })
+
+    expect(handleFileSelect).toHaveBeenCalledWith([documentFile])
   })
 
   test('enables compact send when only image attachments are present', async () => {
@@ -299,6 +767,137 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('model-option-overseas-gpt-5.5'))
 
     expect(setSelectedModel).toHaveBeenCalledWith(model)
+  })
+
+  test('moves the desktop model submenu upward when the active family is near the viewport bottom', async () => {
+    const originalInnerHeight = window.innerHeight
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: 1000,
+    })
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
+      function getMockRect(this: HTMLElement) {
+        const testId = this.getAttribute('data-testid')
+        if (testId === 'model-selector-menu') {
+          return { top: 100, left: 480, width: 256, height: 720 } as DOMRect
+        }
+        if (testId === 'model-family-minimax') {
+          return { top: 900, left: 500, width: 220, height: 36 } as DOMRect
+        }
+        if (testId === 'model-selector-submenu') {
+          return { top: 0, left: 0, width: 288, height: 192 } as DOMRect
+        }
+        return { top: 0, left: 0, width: 0, height: 0 } as DOMRect
+      },
+    )
+
+    const minimaxModel: UnifiedModel = {
+      name: 'public-minimax-m2.7',
+      type: 'user',
+      displayName: '公网:minimax-m2.7',
+      config: {
+        ui: {
+          family: 'minimax',
+          region: 'public',
+          modelLabel: 'minimax-m2.7',
+          sortOrder: 10,
+        },
+      },
+    }
+
+    try {
+      render(
+        <ChatInput
+          value=""
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+          projectChat={projectChatControls({
+            models: [minimaxModel],
+            selectedModel: minimaxModel,
+            selectedModelOptions: {},
+          })}
+        />,
+      )
+
+      await userEvent.click(screen.getByTestId('model-selector-button'))
+
+      await waitFor(() => {
+        expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({
+          top: '692px',
+        })
+      })
+    } finally {
+      Object.defineProperty(window, 'innerHeight', {
+        configurable: true,
+        value: originalInnerHeight,
+      })
+    }
+  })
+
+  test('shows incompatible model options as disabled', async () => {
+    const selectedModel: UnifiedModel = {
+      name: 'overseas-gpt-5.5',
+      type: 'user',
+      displayName: '海外:gpt-5.5',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.5',
+          sortOrder: 10,
+        },
+      },
+    }
+    const incompatibleModel: UnifiedModel = {
+      name: 'overseas-gpt-5.4',
+      type: 'user',
+      displayName: '海外:gpt-5.4',
+      compatibilityDisabled: true,
+      compatibilityDisabledReason: 'runtime_family_mismatch',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.4',
+          sortOrder: 20,
+        },
+      },
+    }
+    const setSelectedModel = vi.fn()
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [selectedModel, incompatibleModel],
+          selectedModel,
+          selectedModelOptions: {},
+          setSelectedModel,
+        })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+
+    const disabledOption = screen.getByTestId('model-option-overseas-gpt-5.4')
+    expect(disabledOption).toBeDisabled()
+    expect(disabledOption).toHaveAttribute('aria-disabled', 'true')
+    expect(disabledOption).toHaveAttribute(
+      'title',
+      'Incompatible with the current model protocol',
+    )
+    expect(disabledOption).toHaveTextContent(
+      'Incompatible with the current model protocol',
+    )
+
+    await userEvent.click(disabledOption)
+
+    expect(setSelectedModel).not.toHaveBeenCalled()
   })
 
   test('closes the model menu after selecting a reasoning option', async () => {
@@ -441,17 +1040,7 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('model-control-speed-fast')).not.toBeInTheDocument()
   })
 
-  test('opens the desktop skill menu and toggles a skill', async () => {
-    const skill: UnifiedSkill = {
-      id: 1,
-      name: 'project-summary',
-      namespace: 'default',
-      description: 'Summarize project context',
-      is_active: true,
-      is_public: false,
-      user_id: 1,
-    }
-    const toggleSkill = vi.fn()
+  test('does not render the desktop skill selector', () => {
     render(
       <ChatInput
         value=""
@@ -460,24 +1049,23 @@ describe('ChatInput', () => {
         disabled={false}
         variant="desktop"
         projectChat={projectChatControls({
-          skills: [skill],
-          toggleSkill,
+          skills: [
+            {
+              id: 1,
+              name: 'project-summary',
+              namespace: 'default',
+              description: 'Summarize project context',
+              is_active: true,
+              is_public: false,
+              user_id: 1,
+            },
+          ],
         })}
       />,
     )
 
-    await userEvent.click(screen.getByTestId('skill-selector-button'))
-
-    expect(screen.getByTestId('skill-selector-menu')).toBeInTheDocument()
-    expect(screen.getByText('选择技能')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('skill-option-project-summary'))
-
-    expect(toggleSkill).toHaveBeenCalledWith({
-      name: 'project-summary',
-      namespace: 'default',
-      is_public: false,
-    })
+    expect(screen.queryByTestId('skill-selector-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('skill-selector-menu')).not.toBeInTheDocument()
   })
 
   test('opens the desktop add context menu with only file upload', async () => {
@@ -1069,13 +1657,7 @@ describe('ChatInput', () => {
     expect(onSelectProject).not.toHaveBeenCalledWith(8)
   })
 
-  test('disables model and skill selectors when options are locked', () => {
-    const selectedSkill: SkillRef = {
-      name: 'project-summary',
-      namespace: 'default',
-      is_public: false,
-    }
-
+  test('keeps model selector enabled and omits skill selector when options are locked', () => {
     render(
       <ChatInput
         value=""
@@ -1084,14 +1666,20 @@ describe('ChatInput', () => {
         disabled={false}
         variant="desktop"
         projectChat={projectChatControls({
-          selectedSkills: [selectedSkill],
+          selectedSkills: [
+            {
+              name: 'project-summary',
+              namespace: 'default',
+              is_public: false,
+            },
+          ],
           isOptionsLocked: true,
         })}
       />,
     )
 
-    expect(screen.getByTestId('model-selector-button')).toBeDisabled()
-    expect(screen.getByTestId('skill-selector-button')).toBeDisabled()
+    expect(screen.getByTestId('model-selector-button')).not.toBeDisabled()
+    expect(screen.queryByTestId('skill-selector-button')).not.toBeInTheDocument()
   })
 
   test.each([

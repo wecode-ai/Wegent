@@ -28,6 +28,27 @@ from app.services.kind import kind_service
 logger = logging.getLogger(__name__)
 
 
+def _normalize_runtime_family_part(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    return normalized or None
+
+
+def build_model_runtime_family(
+    provider: Optional[str], config: Optional[Dict[str, Any]]
+) -> Optional[str]:
+    provider_key = _normalize_runtime_family_part(provider)
+    if not provider_key:
+        return None
+
+    protocol_key = _normalize_runtime_family_part((config or {}).get("protocol"))
+    if not protocol_key:
+        return provider_key
+
+    return f"{provider_key}.{protocol_key}"
+
+
 class ModelType(str, Enum):
     """
     Model type enumeration.
@@ -69,6 +90,7 @@ class UnifiedModel:
         is_advanced: bool = False,
         model_group: Optional[str] = None,
         model_sub_group: Optional[str] = None,
+        runtime_family: Optional[str] = None,
     ):
         self.name = name
         self.type = (
@@ -86,6 +108,13 @@ class UnifiedModel:
         self.is_advanced = is_advanced
         self.model_group = model_group
         self.model_sub_group = model_sub_group
+        self.runtime_family = runtime_family or build_model_runtime_family(
+            provider, self.config
+        )
+
+    @property
+    def runtime(self) -> Dict[str, Optional[str]]:
+        return {"family": self.runtime_family}
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -107,13 +136,13 @@ class UnifiedModel:
             "isAdvanced": self.is_advanced,
             "modelGroup": self.model_group,
             "modelSubGroup": self.model_sub_group,
+            "runtime": self.runtime,
             "config": safe_config,
         }
 
     def to_full_dict(self) -> Dict[str, Any]:
-        """Convert to full dictionary including config with env"""
+        """Convert to full dictionary without exposing sensitive env values."""
         result = self.to_dict()
-        result["config"] = self.config
         result["isActive"] = self.is_active
         return result
 

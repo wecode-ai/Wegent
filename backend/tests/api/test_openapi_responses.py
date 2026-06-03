@@ -260,8 +260,8 @@ def _assistant_subtask_with_pending_form(
     task_id: int,
     user_id: int,
     team_id: int,
-    ask_id: str,
 ) -> Subtask:
+    tool_use_id = f"call_mcp_{subtask_id}"
     return Subtask(
         id=subtask_id,
         user_id=user_id,
@@ -282,16 +282,20 @@ def _assistant_subtask_with_pending_form(
         result={
             "blocks": [
                 {
-                    "id": f"call_mcp_{subtask_id}",
+                    "id": tool_use_id,
                     "type": "tool",
-                    "tool_use_id": f"call_mcp_{subtask_id}",
+                    "tool_use_id": tool_use_id,
                     "tool_name": "interactive_form_question",
-                    "tool_input": {"ask_id": ask_id},
+                    "tool_input": {
+                        "questions": [
+                            {"id": "exp_id", "question": "Enter experiment id"}
+                        ],
+                    },
                     "tool_output": {
                         "pending_user_input": True,
                         "pending_user_input_payload": {
                             "type": "interactive_form_question",
-                            "ask_id": ask_id,
+                            "tool_use_id": tool_use_id,
                             "submit_mode": "new_response",
                             "submit_format": "markdown_message",
                         },
@@ -546,7 +550,6 @@ class TestOpenAPIResponsesCreate:
             task_id=101,
             user_id=test_user.id,
             team_id=test_team.id,
-            ask_id="ask_654",
         )
         query_db = MagicMock()
         query_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = [
@@ -1111,7 +1114,6 @@ class TestOpenAPIResponsesGet:
             task_id=42,
             user_id=test_user.id,
             team_id=test_team.id,
-            ask_id="ask_204",
         )
 
         response = _task_to_response_object(
@@ -1142,7 +1144,6 @@ class TestOpenAPIResponsesGet:
             task_id=test_task.id,
             user_id=test_user.id,
             team_id=test_team.id,
-            ask_id="ask_304",
         )
         assistant_subtask.message_id = 1
         test_db.add(assistant_subtask)
@@ -1177,7 +1178,6 @@ class TestOpenAPIResponsesGet:
             task_id=43,
             user_id=test_user.id,
             team_id=test_team.id,
-            ask_id="ask_205",
         )
         current_assistant = Subtask(
             user_id=test_user.id,
@@ -1225,7 +1225,6 @@ class TestOpenAPIResponsesGet:
             task_id=test_task.id,
             user_id=test_user.id,
             team_id=test_team.id,
-            ask_id="ask_305",
         )
         stale_assistant.message_id = 1
         current_assistant = Subtask(

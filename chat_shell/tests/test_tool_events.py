@@ -102,7 +102,6 @@ async def test_deferred_interactive_form_tool_end_emits_result_then_exits(monkey
         "__deferred_user_input__": True,
         "success": True,
         "status": "waiting_for_user_response",
-        "ask_id": "ask_123",
     }
 
     with pytest.raises(DeferredUserInputExit) as exc_info:
@@ -119,9 +118,9 @@ async def test_deferred_interactive_form_tool_end_emits_result_then_exits(monkey
             },
         )
 
-    assert exc_info.value.ask_id == "ask_123"
+    assert str(exc_info.value) == "Waiting for user input"
     assert state.is_deferred_user_input is True
-    assert state.deferred_user_input_ask_id == "ask_123"
+    assert state.deferred_user_input_tool_use_id == "mcp_123"
 
     await asyncio.gather(*pending)
 

@@ -76,6 +76,19 @@ class TestExtractCompletedResult:
         assert result["silent_exit"] is True
         assert result["silent_exit_reason"] == "user_cancelled"
 
+    def test_preserves_deferred_user_input_fields(self):
+        result = extract_completed_result(
+            {
+                "stop_reason": "tool_deferred",
+                "deferred_user_input": True,
+                "deferred_user_input_tool_use_id": "tool_123",
+            }
+        )
+
+        assert result["stop_reason"] == "tool_deferred"
+        assert result["deferred_user_input"] is True
+        assert result["deferred_user_input_tool_use_id"] == "tool_123"
+
     def test_missing_fields_are_none(self):
         """Fields not present in response_data are None."""
         result = extract_completed_result({})

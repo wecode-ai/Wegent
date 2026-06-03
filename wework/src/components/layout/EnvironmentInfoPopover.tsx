@@ -27,8 +27,8 @@ interface InfoRowProps {
 
 function InfoRow({ icon, label, children, testId }: InfoRowProps) {
   return (
-    <div data-testid={testId} className="flex h-9 items-center gap-3 text-[13px] text-[#333]">
-      <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-[#666]">
+    <div data-testid={testId} className="flex h-9 items-center gap-3 text-[13px] text-text-primary">
+      <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
         {icon}
       </span>
       <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
@@ -143,8 +143,8 @@ export function EnvironmentInfoPopover({
         data-testid="environment-info-button"
         onClick={handleToggleOpen}
         className={cn(
-          'flex h-8 w-8 items-center justify-center rounded-full text-[#666] transition-colors hover:bg-[#f3f4f6]',
-          open && 'bg-[#eeeeee] text-[#222]',
+          'flex h-8 w-8 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-hover hover:text-text-primary',
+          open && 'bg-popover text-text-primary shadow-sm',
         )}
         aria-expanded={open}
         aria-label={t('workbench.environment_info', '环境信息')}
@@ -155,16 +155,16 @@ export function EnvironmentInfoPopover({
       {open && (
         <div
           data-testid="environment-info-popover"
-          className="fixed right-6 top-[76px] z-[1000] w-[340px] max-w-[calc(100vw-2rem)] rounded-2xl border border-[#e8e8e8] bg-white px-5 py-5 shadow-[0_8px_24px_rgba(0,0,0,0.08)]"
+          className="fixed right-6 top-[76px] z-[1000] w-[340px] max-w-[calc(100vw-2rem)] rounded-2xl border border-border bg-popover px-5 py-5 text-text-primary shadow-[0_18px_44px_rgba(0,0,0,0.24)]"
         >
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-[13px] font-medium text-[#333]">
+            <h2 className="text-[13px] font-medium text-text-primary">
               {t('workbench.environment_info', '环境信息')}
             </h2>
             <button
               type="button"
               data-testid="environment-settings-button"
-              className="flex h-8 w-8 items-center justify-center rounded-full text-[#666] hover:bg-[#f3f4f6]"
+              className="flex h-8 w-8 items-center justify-center rounded-full text-text-secondary hover:bg-hover hover:text-text-primary"
               aria-label={t('workbench.environment_settings', '环境设置')}
             >
               <Settings className="h-[18px] w-[18px]" />
@@ -178,8 +178,8 @@ export function EnvironmentInfoPopover({
               label={t('workbench.environment_changes', '变更')}
             >
               <span className="flex gap-1.5 text-[13px]">
-                <span className="text-[#16a34a]">{additions}</span>
-                <span className="text-[#dc2626]">{deletions}</span>
+                <span className="text-green-500">{additions}</span>
+                <span className="text-red-500">{deletions}</span>
               </span>
             </InfoRow>
             <button
@@ -188,9 +188,9 @@ export function EnvironmentInfoPopover({
               disabled={!info.deviceId}
               onClick={handleCopyDeviceId}
               title={deviceTitle}
-              className="flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-[#333] hover:bg-[#f7f7f8] disabled:cursor-default disabled:hover:bg-transparent"
+              className="flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-text-primary hover:bg-hover disabled:cursor-default disabled:hover:bg-transparent"
             >
-              <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-[#666]">
+              <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
                 <Laptop className="h-[18px] w-[18px]" />
               </span>
               <span className="shrink-0">
@@ -198,12 +198,12 @@ export function EnvironmentInfoPopover({
               </span>
               <span
                 data-testid="environment-device-id"
-                className="ml-auto min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-right font-mono text-xs text-[#667085]"
+                className="ml-auto min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-right font-mono text-xs text-text-secondary"
               >
                 {shortDeviceId}
               </span>
               {deviceCopied && (
-                <span className="shrink-0 text-xs text-[#16a34a]">
+                <span className="shrink-0 text-xs text-green-500">
                   {t('workbench.environment_copied', '已复制')}
                 </span>
               )}
@@ -221,16 +221,16 @@ export function EnvironmentInfoPopover({
                 setCommitFormOpen(open => !open)
                 setCommitError(null)
               }}
-              className="flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-[#333] hover:bg-[#f7f7f8] disabled:cursor-not-allowed disabled:text-[#999]"
+              className="flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted"
             >
-              <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-[#666]">
+              <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
                 <GitCommit className="h-[18px] w-[18px]" />
               </span>
               <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
                 {t('workbench.environment_commit', '提交')}
               </span>
               {commitStatus === 'success' && (
-                <span className="shrink-0 text-xs text-[#16a34a]">
+                <span className="shrink-0 text-xs text-green-500">
                   {t('workbench.environment_committed', '已提交')}
                 </span>
               )}
@@ -244,7 +244,7 @@ export function EnvironmentInfoPopover({
                   data-testid="environment-commit-message-input"
                   value={commitMessage}
                   onChange={event => setCommitMessage(event.target.value)}
-                  className="h-8 w-full rounded-md border border-[#d8d8d8] px-2 text-[13px] outline-none focus:border-[#14b8a6]"
+                  className="h-8 w-full rounded-md border border-border bg-background px-2 text-[13px] text-text-primary outline-none placeholder:text-text-muted focus:border-primary"
                   placeholder={t('workbench.environment_commit_message', '提交说明')}
                   autoFocus
                 />
@@ -256,7 +256,7 @@ export function EnvironmentInfoPopover({
                       setCommitFormOpen(false)
                       setCommitError(null)
                     }}
-                    className="h-7 rounded-md px-2 text-xs text-[#666] hover:bg-[#f3f4f6]"
+                    className="h-7 rounded-md px-2 text-xs text-text-secondary hover:bg-hover hover:text-text-primary"
                   >
                     {t('workbench.environment_commit_cancel', '取消')}
                   </button>
@@ -264,7 +264,7 @@ export function EnvironmentInfoPopover({
                     type="submit"
                     data-testid="environment-confirm-commit-button"
                     disabled={!commitMessage.trim() || commitStatus === 'committing'}
-                    className="h-7 rounded-md bg-[#14b8a6] px-2 text-xs font-medium text-white disabled:cursor-not-allowed disabled:bg-[#b7d9d4]"
+                    className="h-7 rounded-md bg-primary px-2 text-xs font-medium text-primary-contrast disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {commitStatus === 'committing'
                       ? t('workbench.environment_committing', '提交中')
@@ -278,9 +278,9 @@ export function EnvironmentInfoPopover({
               data-testid="create-pull-request-button"
               disabled={!info.createPullRequestUrl}
               onClick={handleCreatePullRequest}
-              className="flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-[#333] hover:bg-[#f7f7f8] disabled:cursor-not-allowed disabled:text-[#999]"
+              className="flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted"
             >
-              <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-[#666]">
+              <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
                 <GitPullRequest className="h-[18px] w-[18px]" />
               </span>
               <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
@@ -300,13 +300,13 @@ export function EnvironmentInfoPopover({
             </p>
           )}
 
-          <div className="my-4 h-px bg-[#eeeeee]" />
+          <div className="my-4 h-px bg-border" />
 
           <section>
-            <h3 className="mb-3 text-[13px] text-[#777]">
+            <h3 className="mb-3 text-[13px] text-text-secondary">
               {t('workbench.environment_sources', '来源')}
             </h3>
-            <p className="text-[13px] text-[#999]">
+            <p className="text-[13px] text-text-muted">
               {t('workbench.environment_no_sources', '暂无来源')}
             </p>
           </section>

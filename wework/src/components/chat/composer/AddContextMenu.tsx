@@ -2,7 +2,6 @@ import { Paperclip, Plus } from 'lucide-react'
 import type { ChangeEvent } from 'react'
 import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { SUPPORTED_EXTENSIONS } from '@/api/attachments'
 import { useOutsideClick } from './useOutsideClick'
 
 interface AddContextMenuProps {
@@ -37,7 +36,6 @@ export function AddContextMenu({ disabled, onFileSelect }: AddContextMenuProps) 
         ref={fileInputRef}
         type="file"
         multiple
-        accept={SUPPORTED_EXTENSIONS.join(',')}
         className="hidden"
         data-testid="attachment-file-input"
         onChange={handleFileChange}

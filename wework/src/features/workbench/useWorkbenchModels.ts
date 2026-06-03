@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
+  areModelsProtocolCompatible,
   getDefaultModelOptions,
+  getModelCompatibilityFamily,
   inferModelFamily,
   isSupportedModelFamily,
   normalizeModelOptions,
 } from '@/lib/model-ui'
 import type {
+  ModelCompatibilityDisabledReason,
   ModelOptions,
   ModelSelectionConfig,
   UnifiedModel,
@@ -20,6 +23,7 @@ interface UseWorkbenchModelsOptions {
   api: WorkbenchModelApi
   locked: boolean
   selectionConfig?: ModelSelectionConfig | null
+  compatibilityConfig?: ModelSelectionConfig | null
   selectionReady?: boolean
   onSelectionChange?: (selection: ModelSelectionConfig) => void
 }
@@ -74,14 +78,57 @@ function getSelectionKey(
   ].join('::')
 }
 
+function isSameModel(left: UnifiedModel, right: UnifiedModel): boolean {
+  return left.name === right.name && left.type === right.type
+}
+
+function getCompatibilityDisabledReason(
+  currentModel: UnifiedModel,
+  nextModel: UnifiedModel
+): ModelCompatibilityDisabledReason | null {
+  if (isSameModel(currentModel, nextModel)) return null
+
+  const currentFamily = getModelCompatibilityFamily(currentModel)
+  if (!currentFamily) return 'missing_current_runtime_family'
+
+  const nextFamily = getModelCompatibilityFamily(nextModel)
+  if (!nextFamily) return 'missing_target_runtime_family'
+
+  return areModelsProtocolCompatible(currentModel, nextModel)
+    ? null
+    : 'runtime_family_mismatch'
+}
+
+function annotateModelsByCompatibility(
+  models: UnifiedModel[],
+  compatibilityConfig?: ModelSelectionConfig | null
+): UnifiedModel[] {
+  const currentModel = findConfiguredModel(models, compatibilityConfig)
+  if (!currentModel) return models
+  return models.map(model => {
+    const compatibilityDisabledReason = getCompatibilityDisabledReason(currentModel, model)
+    if (!compatibilityDisabledReason) return model
+    return {
+      ...model,
+      compatibilityDisabled: true,
+      compatibilityDisabledReason,
+    }
+  })
+}
+
 export function useWorkbenchModels({
   api,
   locked,
   selectionConfig,
+  compatibilityConfig,
   selectionReady = true,
   onSelectionChange,
 }: UseWorkbenchModelsOptions) {
-  const [models, setModels] = useState<UnifiedModel[]>([])
+  const [availableModels, setAvailableModels] = useState<UnifiedModel[]>([])
+  const models = useMemo(
+    () => annotateModelsByCompatibility(availableModels, compatibilityConfig),
+    [availableModels, compatibilityConfig],
+  )
   const [selectedModel, setSelectedModelState] = useState<UnifiedModel | null>(null)
   const [selectedModelOptions, setSelectedModelOptions] = useState<ModelOptions>({})
   const [isLoading, setIsLoading] = useState(false)
@@ -139,7 +186,7 @@ export function useWorkbenchModels({
         const response = await api.listModels()
         if (!cancelled) {
           const filtered = response.data.filter(isSupportedModelFamily)
-          setModels(filtered)
+          setAvailableModels(filtered)
         }
       } catch (nextError) {
         if (!cancelled) {
@@ -181,7 +228,7 @@ export function useWorkbenchModels({
 
   const setSelectedModel = useCallback(
     (model: UnifiedModel | null) => {
-      if (locked) return
+      if (locked || model?.compatibilityDisabled) return
       const currentFamily = selectedModel ? inferModelFamily(selectedModel) : null
       const nextFamily = model ? inferModelFamily(model) : null
       setSelectedModelState(model)

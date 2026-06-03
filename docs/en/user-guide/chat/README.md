@@ -24,11 +24,11 @@ A **Chat Task** is the basic unit of the Chat feature. Every interaction with AI
 
 Wegent provides multiple conversation modes for different scenarios:
 
-| Mode | Description | Use Case |
-|------|-------------|----------|
-| **Smart Follow-up** | AI asks questions to clarify requirements | Complex tasks with unclear requirements |
-| **AI Cross-Validation** | AI suggests modifications | Code review, document optimization |
-| **Direct Execution** | AI executes tasks immediately | Simple tasks with clear requirements |
+| Mode                    | Description                               | Use Case                                |
+| ----------------------- | ----------------------------------------- | --------------------------------------- |
+| **Smart Follow-up**     | AI asks questions to clarify requirements | Complex tasks with unclear requirements |
+| **AI Cross-Validation** | AI suggests modifications                 | Code review, document optimization      |
+| **Direct Execution**    | AI executes tasks immediately             | Simple tasks with clear requirements    |
 
 ---
 
@@ -69,15 +69,28 @@ Flexible conversation control options:
 - Modify context
 - Switch agents
 
+### 5. Runtime Model Switching
+
+After a task has started, you can adjust the model used for later responses in the current task. The change only affects the current task. It does not modify the agent, bot, or model defaults, and it does not affect other tasks or newly created conversations.
+
+To keep the runtime protocol consistent, WeWork limits model switching for already running tasks to the same runtime model family in the model selector. Wegent derives the API response field `runtime.family` from the combination of the model CRD's `modelConfig.env.model` and `spec.protocol` values:
+
+- The current task model and the target model must have the same `runtime.family` value
+- For example, Claude, Kimi, or DeepSeek-compatible models whose `runtime.family` is `claude.claude` can be switched between each other
+- Models with the same `env.model` but different `spec.protocol` values are treated as different runtime families
+- Models without `runtime.family` stay visible for an already running task, but are disabled
+
+Models with a different `runtime.family` value remain visible, but are disabled in the selector.
+
 ---
 
 ## 📖 Documentation Navigation
 
-| Document | Description |
-|----------|-------------|
-| [Managing Tasks](./managing-tasks.md) | Creating and managing chat tasks |
+| Document                                              | Description                                        |
+| ----------------------------------------------------- | -------------------------------------------------- |
+| [Managing Tasks](./managing-tasks.md)                 | Creating and managing chat tasks                   |
 | [Smart Follow-up Mode](./clarification-mode-guide.md) | Using smart follow-up mode to clarify requirements |
-| [AI Cross-Validation](./correction-mode-guide.md) | Using AI cross-validation to optimize results |
+| [AI Cross-Validation](./correction-mode-guide.md)     | Using AI cross-validation to optimize results      |
 
 ---
 

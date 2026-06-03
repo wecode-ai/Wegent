@@ -2,7 +2,6 @@ import { useCallback, useMemo, useState } from 'react'
 import type { Attachment, MultiAttachmentUploadState } from '@/types/api'
 import {
   deleteAttachment as defaultDeleteAttachment,
-  isSupportedExtension,
   isValidFileSize,
   uploadAttachment as defaultUploadAttachment,
 } from '@/api/attachments'
@@ -43,15 +42,6 @@ export function useWorkbenchAttachments(options: UseWorkbenchAttachmentsOptions 
 
       for (const file of fileList) {
         const fileId = file.name
-
-        if (!isSupportedExtension(file.name)) {
-          setState(current => {
-            const errors = new Map(current.errors)
-            errors.set(fileId, 'Unsupported file type')
-            return { ...current, errors }
-          })
-          continue
-        }
 
         if (!isValidFileSize(file.size)) {
           setState(current => {

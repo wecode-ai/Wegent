@@ -78,7 +78,7 @@ async def test_proxy_deferred_mcp_tool_calls_configured_mcp_server(monkeypatch):
                 content=[
                     SimpleNamespace(
                         type="text",
-                        text='{"__deferred_user_input__": true, "success": true, "status": "waiting_for_user_response", "ask_id": "ask_1"}',
+                        text='{"__deferred_user_input__": true, "success": true, "status": "waiting_for_user_response"}',
                     )
                 ],
                 isError=False,
