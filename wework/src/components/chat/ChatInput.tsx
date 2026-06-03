@@ -8,8 +8,6 @@ import type {
   UnifiedModel,
   UnifiedSkill,
 } from '@/types/api'
-import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/workbench'
-import { ConversationQueuePanel } from './ConversationQueuePanel'
 import { CompactChatComposer } from './composer/CompactChatComposer'
 import { ProjectChatComposer } from './composer/ProjectChatComposer'
 
@@ -50,11 +48,6 @@ interface ChatInputProps {
   projectChat?: ProjectChatControls
   projectWork?: ProjectWorkControls
   showProjectWorkBar?: boolean
-  queuedMessages?: QueuedWorkbenchMessage[]
-  guidanceMessages?: GuidanceWorkbenchMessage[]
-  onCancelQueuedMessage?: (id: string) => void
-  onSendQueuedAsGuidance?: (id: string) => void
-  onCancelGuidanceMessage?: (id: string) => void
 }
 
 export function ChatInput({
@@ -67,11 +60,6 @@ export function ChatInput({
   projectChat,
   projectWork,
   showProjectWorkBar = true,
-  queuedMessages = [],
-  guidanceMessages = [],
-  onCancelQueuedMessage,
-  onSendQueuedAsGuidance,
-  onCancelGuidanceMessage,
 }: ChatInputProps) {
   const { t } = useTranslation('common')
   const inputPlaceholder = placeholder ?? t('workbench.input_placeholder', '尽管问')
@@ -95,72 +83,57 @@ export function ChatInput({
     }
 
   const composerProps = { value, onChange, onSubmit, disabled, placeholder: inputPlaceholder }
-  const queuePanel = (
-    <ConversationQueuePanel
-      queuedMessages={queuedMessages}
-      guidanceMessages={guidanceMessages}
-      onCancelQueuedMessage={onCancelQueuedMessage}
-      onSendQueuedAsGuidance={onSendQueuedAsGuidance}
-      onCancelGuidanceMessage={onCancelGuidanceMessage}
-    />
-  )
 
   if (variant === 'desktop') {
     return (
-      <div className="w-full">
-        {queuePanel}
-        <ProjectChatComposer
-          {...composerProps}
-          models={controls.models}
-          skills={controls.skills}
-          selectedModel={controls.selectedModel}
-          selectedModelOptions={controls.selectedModelOptions}
-          isModelSelectionReady={controls.isModelSelectionReady ?? true}
-          selectedSkills={controls.selectedSkills}
-          attachments={controls.attachments}
-          uploadingFiles={controls.uploadingFiles}
-          attachmentErrors={controls.errors}
-          optionsLocked={controls.isOptionsLocked}
-          onSelectModel={controls.setSelectedModel}
-          onSelectModelOption={controls.setSelectedModelOption}
-          onToggleSkill={controls.toggleSkill}
-          onFileSelect={files => {
-            void controls.handleFileSelect(files)
-          }}
-          onRemoveAttachment={attachmentId => {
-            void controls.removeAttachment(attachmentId)
-          }}
-          projectWork={
-            projectWork ?? {
-              projects: [],
-              devices: [],
-              currentProjectId: undefined,
-              currentStandaloneDeviceId: null,
-              onSelectProject: () => {},
-              onSelectStandaloneDevice: () => {},
-            }
-          }
-          showProjectWorkBar={showProjectWorkBar}
-        />
-      </div>
-    )
-  }
-
-  return (
-    <div className="w-full">
-      {queuePanel}
-      <CompactChatComposer
+      <ProjectChatComposer
         {...composerProps}
+        models={controls.models}
+        skills={controls.skills}
+        selectedModel={controls.selectedModel}
+        selectedModelOptions={controls.selectedModelOptions}
+        isModelSelectionReady={controls.isModelSelectionReady ?? true}
+        selectedSkills={controls.selectedSkills}
         attachments={controls.attachments}
         uploadingFiles={controls.uploadingFiles}
         attachmentErrors={controls.errors}
-        onImageSelect={files => {
+        optionsLocked={controls.isOptionsLocked}
+        onSelectModel={controls.setSelectedModel}
+        onSelectModelOption={controls.setSelectedModelOption}
+        onToggleSkill={controls.toggleSkill}
+        onFileSelect={files => {
           void controls.handleFileSelect(files)
         }}
         onRemoveAttachment={attachmentId => {
           void controls.removeAttachment(attachmentId)
         }}
+        projectWork={
+          projectWork ?? {
+            projects: [],
+            devices: [],
+            currentProjectId: undefined,
+            currentStandaloneDeviceId: null,
+            onSelectProject: () => {},
+            onSelectStandaloneDevice: () => {},
+          }
+        }
+        showProjectWorkBar={showProjectWorkBar}
       />
-    </div>
+    )
+  }
+
+  return (
+    <CompactChatComposer
+      {...composerProps}
+      attachments={controls.attachments}
+      uploadingFiles={controls.uploadingFiles}
+      attachmentErrors={controls.errors}
+      onImageSelect={files => {
+        void controls.handleFileSelect(files)
+      }}
+      onRemoveAttachment={attachmentId => {
+        void controls.removeAttachment(attachmentId)
+      }}
+    />
   )
 }

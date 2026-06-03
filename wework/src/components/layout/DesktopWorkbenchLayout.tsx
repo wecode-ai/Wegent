@@ -1,10 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type {
-  GuidanceWorkbenchMessage,
-  QueuedWorkbenchMessage,
-  WorkbenchMessage,
-  WorkbenchState,
-} from '@/types/workbench'
+import type { WorkbenchMessage, WorkbenchState } from '@/types/workbench'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
 import type { ArchivedTaskListResponse, CreateProjectRequest, ProjectWithTasks } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
@@ -15,8 +10,6 @@ import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettin
 interface DesktopWorkbenchLayoutProps {
   state: WorkbenchState
   messages: WorkbenchMessage[]
-  queuedMessages?: QueuedWorkbenchMessage[]
-  guidanceMessages?: GuidanceWorkbenchMessage[]
   runningTaskIds: Set<number>
   activeItem?: 'chat' | 'plugins' | 'automation'
   onNewChat: () => void
@@ -51,17 +44,12 @@ interface DesktopWorkbenchLayoutProps {
   ) => Promise<void>
   onInputChange: (value: string) => void
   onSend: () => void
-  onCancelQueuedMessage?: (id: string) => void
-  onSendQueuedAsGuidance?: (id: string) => void
-  onCancelGuidanceMessage?: (id: string) => void
   onLogout: () => void
 }
 
 export function DesktopWorkbenchLayout({
   state,
   messages,
-  queuedMessages = [],
-  guidanceMessages = [],
   runningTaskIds,
   activeItem = 'chat',
   onNewChat,
@@ -93,9 +81,6 @@ export function DesktopWorkbenchLayout({
   onCommitEnvironmentChanges,
   onInputChange,
   onSend,
-  onCancelQueuedMessage = () => {},
-  onSendQueuedAsGuidance = () => {},
-  onCancelGuidanceMessage = () => {},
   onLogout,
 }: DesktopWorkbenchLayoutProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -219,8 +204,6 @@ export function DesktopWorkbenchLayout({
           currentTask={state.currentTask}
           currentProject={state.currentProject}
           messages={messages}
-          queuedMessages={queuedMessages}
-          guidanceMessages={guidanceMessages}
           projectChat={projectChat}
           projectWork={projectWork}
           input={state.input}
@@ -231,9 +214,6 @@ export function DesktopWorkbenchLayout({
           onExpandSidebar={() => setSidebarCollapsed(false)}
           onInputChange={onInputChange}
           onSend={onSend}
-          onCancelQueuedMessage={onCancelQueuedMessage}
-          onSendQueuedAsGuidance={onSendQueuedAsGuidance}
-          onCancelGuidanceMessage={onCancelGuidanceMessage}
         />
       )}
     </div>

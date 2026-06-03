@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { Copy, CopyCheck } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { WorkbenchMessage } from '@/types/workbench'
@@ -26,7 +25,7 @@ export function MessageList({ messages }: MessageListProps) {
           data-testid={`message-${message.role}`}
         >
           {message.role === 'user' ? (
-            <UserMessage message={message} />
+            <UserMessage content={message.content} />
           ) : (
             <AssistantMessage message={message} />
           )}
@@ -36,70 +35,10 @@ export function MessageList({ messages }: MessageListProps) {
   )
 }
 
-function formatMessageTime(createdAt: string) {
-  const date = new Date(createdAt)
-  if (Number.isNaN(date.getTime())) return ''
-
-  return new Intl.DateTimeFormat(undefined, {
-    weekday: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(date)
-}
-
-async function copyText(text: string) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text)
-    return
-  }
-
-  const textarea = document.createElement('textarea')
-  textarea.value = text
-  textarea.style.position = 'fixed'
-  textarea.style.opacity = '0'
-  document.body.appendChild(textarea)
-  textarea.select()
-  document.execCommand('copy')
-  document.body.removeChild(textarea)
-}
-
-function UserMessage({ message }: { message: WorkbenchMessage }) {
-  const [copied, setCopied] = useState(false)
-  const time = formatMessageTime(message.createdAt)
-
-  const handleCopy = () => {
-    void copyText(message.content).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    })
-  }
-
+function UserMessage({ content }: { content: string }) {
   return (
-    <div className="group flex max-w-[80%] flex-col items-end gap-1">
-      <div className="overflow-hidden break-words whitespace-pre-wrap rounded-2xl bg-[#f4f4f4] px-4 py-3 text-[13px] leading-5 text-[#1a1a1a]">
-        {message.content}
-      </div>
-      <div className="flex min-h-6 items-center gap-1 text-xs text-[#999] opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-        {time && (
-          <span data-testid="message-hover-time" className="px-1">
-            {time}
-          </span>
-        )}
-        <button
-          type="button"
-          data-testid="copy-message-button"
-          onClick={handleCopy}
-          className="flex h-6 w-6 items-center justify-center rounded-md text-[#999] opacity-0 transition-colors hover:bg-[#f0f0f0] hover:text-[#666] group-hover:opacity-100 group-focus:opacity-100 group-focus-within:opacity-100"
-          aria-label={copied ? '已复制' : '复制消息'}
-        >
-          {copied ? (
-            <CopyCheck className="h-3.5 w-3.5" />
-          ) : (
-            <Copy className="h-3.5 w-3.5" />
-          )}
-        </button>
-      </div>
+    <div className="max-w-[80%] overflow-hidden break-words whitespace-pre-wrap rounded-2xl bg-[#f4f4f4] px-4 py-3 text-[13px] leading-5 text-[#1a1a1a]">
+      {content}
     </div>
   )
 }

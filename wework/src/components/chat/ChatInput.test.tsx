@@ -10,7 +10,6 @@ import type {
   UnifiedModel,
   UnifiedSkill,
 } from '@/types/api'
-import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/workbench'
 import { ChatInput } from './ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from './ChatInput'
 
@@ -76,51 +75,6 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-selector-button')).toBeInTheDocument()
     expect(screen.getByTestId('skill-selector-button')).toBeInTheDocument()
     expect(screen.getByTestId('project-work-button')).toBeInTheDocument()
-  })
-
-  test('renders queued messages and guidance controls above the composer', async () => {
-    const queuedMessages: QueuedWorkbenchMessage[] = [
-      {
-        id: 'queued-1',
-        content: '继续检查 capability sync',
-        status: 'queued',
-        createdAt: '2026-05-25T15:08:00.000+08:00',
-      },
-    ]
-    const guidanceMessages: GuidanceWorkbenchMessage[] = [
-      {
-        id: 'guidance-1',
-        content: '先跳过 device:sync_capabilities',
-        status: 'queued',
-        createdAt: '2026-05-25T15:09:00.000+08:00',
-      },
-    ]
-    const onSendQueuedAsGuidance = vi.fn()
-    const onCancelQueuedMessage = vi.fn()
-
-    render(
-      <ChatInput
-        value=""
-        onChange={vi.fn()}
-        onSubmit={vi.fn()}
-        disabled={false}
-        variant="desktop"
-        queuedMessages={queuedMessages}
-        guidanceMessages={guidanceMessages}
-        onSendQueuedAsGuidance={onSendQueuedAsGuidance}
-        onCancelQueuedMessage={onCancelQueuedMessage}
-      />,
-    )
-
-    expect(screen.getByTestId('conversation-queue-panel')).toBeInTheDocument()
-    expect(screen.getByText('继续检查 capability sync')).toBeInTheDocument()
-    expect(screen.getByText('先跳过 device:sync_capabilities')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('queue-guidance-button-queued-1'))
-    await userEvent.click(screen.getByTestId('queue-cancel-button-queued-1'))
-
-    expect(onSendQueuedAsGuidance).toHaveBeenCalledWith('queued-1')
-    expect(onCancelQueuedMessage).toHaveBeenCalledWith('queued-1')
   })
 
   test('keeps the compact mobile composer close to one-line input height', () => {

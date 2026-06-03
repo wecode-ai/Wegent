@@ -16,19 +16,12 @@ import type {
   ProjectWithTasks,
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
-import type {
-  GuidanceWorkbenchMessage,
-  QueuedWorkbenchMessage,
-  WorkbenchMessage,
-  WorkbenchState,
-} from '@/types/workbench'
+import type { WorkbenchMessage, WorkbenchState } from '@/types/workbench'
 import { MobileDrawer } from './MobileDrawer'
 
 interface MobileWorkbenchLayoutProps {
   state: WorkbenchState
   messages: WorkbenchMessage[]
-  queuedMessages?: QueuedWorkbenchMessage[]
-  guidanceMessages?: GuidanceWorkbenchMessage[]
   runningTaskIds?: Set<number>
   activeItem?: 'chat' | 'plugins' | 'automation'
   onNewChat?: () => void
@@ -66,17 +59,12 @@ interface MobileWorkbenchLayoutProps {
   ) => Promise<void>
   onInputChange: (value: string) => void
   onSend: () => void
-  onCancelQueuedMessage?: (id: string) => void
-  onSendQueuedAsGuidance?: (id: string) => void
-  onCancelGuidanceMessage?: (id: string) => void
   onLogout: () => void
 }
 
 export function MobileWorkbenchLayout({
   state,
   messages,
-  queuedMessages = [],
-  guidanceMessages = [],
   runningTaskIds,
   activeItem,
   onNewChat,
@@ -88,9 +76,6 @@ export function MobileWorkbenchLayout({
   onOpenTask,
   onInputChange,
   onSend,
-  onCancelQueuedMessage = () => {},
-  onSendQueuedAsGuidance = () => {},
-  onCancelGuidanceMessage = () => {},
 }: MobileWorkbenchLayoutProps) {
   const { t } = useTranslation('common')
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -199,11 +184,6 @@ export function MobileWorkbenchLayout({
                   )}
                   projectChat={projectChat}
                   projectWork={projectWork}
-                  queuedMessages={queuedMessages}
-                  guidanceMessages={guidanceMessages}
-                  onCancelQueuedMessage={onCancelQueuedMessage}
-                  onSendQueuedAsGuidance={onSendQueuedAsGuidance}
-                  onCancelGuidanceMessage={onCancelGuidanceMessage}
                 />
               </div>
             </div>
@@ -273,11 +253,6 @@ export function MobileWorkbenchLayout({
                 )}
                 projectChat={projectChat}
                 projectWork={projectWork}
-                queuedMessages={queuedMessages}
-                guidanceMessages={guidanceMessages}
-                onCancelQueuedMessage={onCancelQueuedMessage}
-                onSendQueuedAsGuidance={onSendQueuedAsGuidance}
-                onCancelGuidanceMessage={onCancelGuidanceMessage}
               />
             </div>
           </div>

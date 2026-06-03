@@ -11,8 +11,6 @@ export function WorkbenchPage() {
   const {
     state,
     messages,
-    queuedMessages,
-    guidanceMessages,
     runningTaskIds,
     projectChat,
     selectProject,
@@ -42,9 +40,6 @@ export function WorkbenchPage() {
     commitEnvironmentChanges,
     setInput,
     sendCurrentInput,
-    cancelQueuedMessage,
-    sendQueuedAsGuidance,
-    cancelGuidanceMessage,
   } = useWorkbench()
   const Layout = isMobile ? MobileWorkbenchLayout : DesktopWorkbenchLayout
   const projectWork = {
@@ -60,8 +55,6 @@ export function WorkbenchPage() {
     <Layout
       state={state}
       messages={messages}
-      queuedMessages={queuedMessages}
-      guidanceMessages={guidanceMessages}
       runningTaskIds={runningTaskIds}
       onNewChat={startNewChat}
       onStartStandaloneChat={startStandaloneChat}
@@ -92,9 +85,6 @@ export function WorkbenchPage() {
       onCommitEnvironmentChanges={commitEnvironmentChanges}
       onInputChange={setInput}
       onSend={sendCurrentInput}
-      onCancelQueuedMessage={cancelQueuedMessage}
-      onSendQueuedAsGuidance={sendQueuedAsGuidance}
-      onCancelGuidanceMessage={cancelGuidanceMessage}
       onLogout={logout}
     />
   )
