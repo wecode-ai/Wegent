@@ -416,12 +416,12 @@ export function ComposerTextarea({
         placeholder={placeholder}
         className={[
           className,
-          'relative z-10',
+          'relative z-30',
           hasSkillMentionOverlay ? 'text-transparent caret-text-primary' : '',
         ].join(' ')}
         style={
           hasSkillMentionOverlay
-            ? { color: 'transparent', caretColor: 'rgb(var(--color-text-primary))' }
+            ? { color: 'transparent', caretColor: 'rgb(26, 26, 26)' }
             : undefined
         }
       />
