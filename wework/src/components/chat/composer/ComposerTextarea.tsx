@@ -37,7 +37,7 @@ interface TextSelection {
   focused: boolean
 }
 
-const LOCAL_SKILL_REFERENCE_PATTERN = /\[\$([^\]]+)]\(skill:\/\/([^)]+)\)/g
+const LOCAL_SKILL_REFERENCE_PATTERN = /\[\$([^\]]+)]\((skill:\/\/[^)]+SKILL\.md)\)/g
 
 function findSkillTrigger(value: string, cursor: number): SkillTrigger | null {
   const beforeCursor = value.slice(0, cursor)
@@ -70,7 +70,7 @@ function localSkillTestId(name: string): string {
 }
 
 function skillReference(skill: LocalDeviceSkill): string {
-  return `[$${skill.name}](skill://${encodeURIComponent(skill.name)})`
+  return `[$${skill.name}](skill://${skill.path})`
 }
 
 function parseSkillMentions(value: string): SkillMention[] {

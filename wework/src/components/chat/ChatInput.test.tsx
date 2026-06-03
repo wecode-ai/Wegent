@@ -170,7 +170,7 @@ describe('ChatInput', () => {
     await userEvent.click(await screen.findByTestId('local-skill-option-env-context'))
 
     expect(screen.getByTestId('chat-message-input')).toHaveValue(
-      '[$env-context](skill://env-context) ',
+      '[$env-context](skill:///Users/crystal/.codex/skills/env-context/SKILL.md) ',
     )
     expect(screen.getByTestId('local-skill-chip-env-context')).toHaveTextContent('Env Context')
     expect(await screen.findByTestId('local-skill-caret')).toHaveClass('local-skill-caret')
@@ -200,7 +200,9 @@ describe('ChatInput', () => {
     })
     await userEvent.type(input, 'hello')
 
-    expect(input).toHaveValue('[$env-context](skill://env-context) hello')
+    expect(input).toHaveValue(
+      '[$env-context](skill:///Users/crystal/.codex/skills/env-context/SKILL.md) hello',
+    )
     expect(screen.getByTestId('local-skill-chip-env-context')).toHaveTextContent('Env Context')
   })
 

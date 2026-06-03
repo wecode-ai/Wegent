@@ -93,7 +93,7 @@ describe('MessageList', () => {
           {
             id: '1',
             role: 'user',
-            content: 'hello [$env-context](skill://env-context) context',
+            content: 'hello [$env-context](skill:///Users/crystal/.codex/skills/env-context/SKILL.md) context',
             status: 'done',
             createdAt: '2026-05-25T00:00:00.000Z',
           },
@@ -103,7 +103,10 @@ describe('MessageList', () => {
 
     const skillLink = screen.getByRole('link', { name: '$env-context' })
 
-    expect(skillLink).toHaveAttribute('href', 'skill://env-context')
+    expect(skillLink).toHaveAttribute(
+      'href',
+      'skill:///Users/crystal/.codex/skills/env-context/SKILL.md',
+    )
     expect(screen.getByTestId('message-user')).toHaveTextContent(
       'hello $env-context context',
     )

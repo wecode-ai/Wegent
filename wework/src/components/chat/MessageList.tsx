@@ -44,7 +44,7 @@ function UserMessage({ content }: { content: string }) {
   )
 }
 
-const LOCAL_SKILL_LINK_PATTERN = /\[\$([^\]]+)]\(skill:\/\/([^)]+)\)/g
+const LOCAL_SKILL_LINK_PATTERN = /\[\$([^\]]+)]\((skill:\/\/[^)]+SKILL\.md)\)/g
 
 function renderUserContent(content: string) {
   const parts: ReactNode[] = []
@@ -58,7 +58,7 @@ function renderUserContent(content: string) {
     }
 
     const skillName = match[1]
-    const href = `skill://${match[2]}`
+    const href = match[2]
     parts.push(
       <a
         key={`skill-${start}`}
