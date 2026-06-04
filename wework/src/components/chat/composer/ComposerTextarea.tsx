@@ -123,11 +123,58 @@ function parseSkillMentions(value: string): SkillMention[] {
   })
 }
 
-function findSkillMentionEndingAtCursor(
+interface SkillMentionDeletionRange {
+  start: number
+  end: number
+  cursor: number
+}
+
+function findExpandedSelectionDeletionRange(
+  selectionStart: number,
+  selectionEnd: number,
+  mentions: SkillMention[],
+): SkillMentionDeletionRange | null {
+  if (selectionStart === selectionEnd) return null
+
+  let start = Math.min(selectionStart, selectionEnd)
+  let end = Math.max(selectionStart, selectionEnd)
+  let intersectsSkillMention = false
+
+  for (const mention of mentions) {
+    if (mention.end <= start || mention.start >= end) continue
+    intersectsSkillMention = true
+    start = Math.min(start, mention.start)
+    end = Math.max(end, mention.end)
+  }
+
+  return intersectsSkillMention ? { start, end, cursor: start } : null
+}
+
+function findBackspaceSkillMentionDeletionRange(
+  value: string,
   cursor: number,
   mentions: SkillMention[],
-): SkillMention | null {
-  return mentions.find(mention => mention.end === cursor) ?? null
+): SkillMentionDeletionRange | null {
+  for (const mention of mentions) {
+    if (cursor > mention.start && cursor <= mention.end) {
+      return { start: mention.start, end: mention.end, cursor: mention.start }
+    }
+  }
+
+  return null
+}
+
+function findDeleteSkillMentionDeletionRange(
+  value: string,
+  cursor: number,
+  mentions: SkillMention[],
+): SkillMentionDeletionRange | null {
+  const mention = mentions.find(item => cursor >= item.start && cursor < item.end)
+  const end =
+    mention && /\s/.test(value[mention.end] ?? '') ? mention.end + 1 : mention?.end
+  return mention
+    ? { start: mention.start, end: end ?? mention.end, cursor: mention.start }
+    : null
 }
 
 function renderCaret(key: string) {
@@ -181,9 +228,9 @@ function renderTextWithSkillMentions(
       <span
         key={mention.id}
         data-testid={`local-skill-chip-${localSkillTestId(mention.name)}`}
-        className="inline-flex max-w-full items-center gap-1 align-baseline text-sm font-medium leading-5 text-blue-600"
+        className="inline-flex max-w-full items-baseline gap-1 align-baseline text-[inherit] font-medium leading-[inherit] text-blue-600"
       >
-        <Package className="h-3.5 w-3.5 shrink-0" />
+        <Package className="h-[0.9em] w-[0.9em] shrink-0 translate-y-[0.08em]" />
         <span className="truncate">{mention.label}</span>
       </span>,
     )
@@ -454,23 +501,43 @@ export function ComposerTextarea({
   )
 
   const handleKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = event => {
-    if (
-      event.key === 'Backspace' &&
-      event.currentTarget.selectionStart === event.currentTarget.selectionEnd
-    ) {
-      const cursor = event.currentTarget.selectionStart
-      const mention = findSkillMentionEndingAtCursor(cursor, validSkillMentions)
-      if (mention) {
+    if (event.key === 'Backspace' || event.key === 'Delete') {
+      const selectionStart = event.currentTarget.selectionStart
+      const selectionEnd = event.currentTarget.selectionEnd
+      const deletionRange =
+        findExpandedSelectionDeletionRange(
+          selectionStart,
+          selectionEnd,
+          validSkillMentions,
+        ) ??
+        (selectionStart === selectionEnd && event.key === 'Backspace'
+          ? findBackspaceSkillMentionDeletionRange(
+              value,
+              selectionStart,
+              validSkillMentions,
+            )
+          : null) ??
+        (selectionStart === selectionEnd && event.key === 'Delete'
+          ? findDeleteSkillMentionDeletionRange(
+              value,
+              selectionStart,
+              validSkillMentions,
+            )
+          : null)
+
+      if (deletionRange) {
         event.preventDefault()
-        const replacement = mention.label.slice(0, -1)
         const nextValue =
-          value.slice(0, mention.start) + replacement + value.slice(mention.end)
-        const nextCursor = mention.start + replacement.length
+          value.slice(0, deletionRange.start) + value.slice(deletionRange.end)
         handleValueChange(nextValue)
         window.requestAnimationFrame(() => {
           const textarea = textareaRef.current
-          textarea?.setSelectionRange(nextCursor, nextCursor)
-          setSelection({ start: nextCursor, end: nextCursor, focused: true })
+          textarea?.setSelectionRange(deletionRange.cursor, deletionRange.cursor)
+          setSelection({
+            start: deletionRange.cursor,
+            end: deletionRange.cursor,
+            focused: true,
+          })
         })
         return
       }

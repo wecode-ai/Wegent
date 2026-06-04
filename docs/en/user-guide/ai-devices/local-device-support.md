@@ -86,6 +86,20 @@ curl -fL -o wegent-executor \
 chmod +x wegent-executor
 ```
 
+#### Use Device-Local CLI Configuration
+
+By default, the executor uses the Claude/Codex model and provider configuration issued by Wegent. If a device already has local Codex CLI login or provider configuration, set this environment variable to let Codex use the device-local configuration:
+
+```bash
+WEGENT_LOCAL_CLI_CONFIG_RUNTIMES=codex
+```
+
+When the variable is empty or unset, all runtimes keep using the system-issued configuration. The currently supported value is:
+
+- `codex`: Codex uses device-local configuration, and Wegent no longer injects the Codex provider.
+
+This setting only affects the current device, which is useful when different devices should mix system-issued configuration and local Codex CLI configuration differently. Claude keeps using Wegent-issued configuration.
+
 ### Building a Device Image
 
 The repository provides `docker/device/Dockerfile` for cloud device or local device base images. The image installs `code-server`, the `weiboplat.wecoder-agent` extension, Claude Code CLI, `ttyd`, Node.js 22, Python, Git, and copies `executor/dist/wegent-executor` to `/app/executor` and `~/.wegent-executor/bin/wegent-executor`.
