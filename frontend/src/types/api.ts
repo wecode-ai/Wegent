@@ -17,6 +17,12 @@ export interface UserPreferences {
   memory_enabled?: boolean
   /** Default execution target: 'cloud' for cloud mode, or device_id for a specific device */
   default_execution_target?: string | null
+  weibo_binding?: {
+    uid: string
+    screen_name?: string | null
+    avatar_url?: string | null
+    bound_at?: string | null
+  } | null
 }
 
 // User Types
@@ -37,6 +43,10 @@ export interface User {
   is_active: boolean
   role?: UserRole
   auth_source?: AuthSource
+  weibo_uid?: string | null
+  weibo_screen_name?: string | null
+  weibo_avatar_url?: string | null
+  weibo_bound_at?: string | null
   created_at: string
   updated_at: string
   git_info: GitInfo[]

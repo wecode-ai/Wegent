@@ -54,6 +54,20 @@ export interface FeatureFlags {
   memory_enabled: boolean
 }
 
+export interface WeiboBindingResponse {
+  bound: boolean
+  weibo_uid?: string | null
+  weibo_screen_name?: string | null
+  weibo_avatar_url?: string | null
+  weibo_bound_at?: string | null
+}
+
+export interface WeiboAccountPreviewResponse {
+  weibo_uid: string
+  weibo_screen_name?: string | null
+  weibo_avatar_url?: string | null
+}
+
 export interface McpProviderServiceConfig {
   provider_id: string
   service_id: string
@@ -170,6 +184,18 @@ export const userApis = {
 
   async updateUser(data: UpdateUserRequest): Promise<User> {
     return apiClient.put('/users/me', data)
+  },
+
+  async previewWeiboAccount(): Promise<WeiboAccountPreviewResponse> {
+    return apiClient.post('/users/me/weibo/preview')
+  },
+
+  async bindWeiboAccount(expectedUid: string): Promise<WeiboBindingResponse> {
+    return apiClient.post('/users/me/weibo/bind', { expected_uid: expectedUid })
+  },
+
+  async unbindWeiboAccount(): Promise<WeiboBindingResponse> {
+    return apiClient.delete('/users/me/weibo/bind')
   },
 
   async deleteGitToken(gitDomain: string, gitInfoId?: string): Promise<User> {

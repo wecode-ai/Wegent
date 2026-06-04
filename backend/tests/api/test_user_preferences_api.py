@@ -55,3 +55,103 @@ def test_update_user_preferences_preserves_quick_access(
     test_db.refresh(test_user)
     stored_preferences = json.loads(test_user.preferences)
     assert stored_preferences["quick_access"]["teams"] == [188]
+
+
+@pytest.mark.api
+def test_update_user_preferences_preserves_weibo_binding(
+    user_preferences_client: TestClient,
+    test_db: Session,
+    test_user: User,
+):
+    test_user.preferences = json.dumps(
+        {
+            "send_key": "enter",
+            "search_key": "cmd_k",
+            "weibo_binding": {
+                "uid": "1234567890",
+                "screen_name": "微博用户",
+                "avatar_url": "https://weibo.com/avatar.jpg",
+                "bound_at": "2026-06-03T00:00:00+00:00",
+            },
+        }
+    )
+    test_db.add(test_user)
+    test_db.commit()
+
+    response = user_preferences_client.put(
+        "/api/users/me",
+        json={"preferences": {"send_key": "cmd_enter"}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["weibo_uid"] == "1234567890"
+
+    test_db.refresh(test_user)
+    stored_preferences = json.loads(test_user.preferences)
+    assert stored_preferences["send_key"] == "cmd_enter"
+    assert stored_preferences["weibo_binding"] == {
+        "uid": "1234567890",
+        "screen_name": "微博用户",
+        "avatar_url": "https://weibo.com/avatar.jpg",
+        "bound_at": "2026-06-03T00:00:00+00:00",
+    }
+
+
+@pytest.mark.api
+def test_update_user_preferences_ignores_weibo_binding_payload(
+    user_preferences_client: TestClient,
+    test_db: Session,
+    test_user: User,
+):
+    test_user.preferences = json.dumps(
+        {
+            "weibo_binding": {
+                "uid": "1234567890",
+                "bound_at": "2026-06-03T00:00:00+00:00",
+            },
+        }
+    )
+    test_db.add(test_user)
+    test_db.commit()
+
+    response = user_preferences_client.put(
+        "/api/users/me",
+        json={
+            "preferences": {
+                "send_key": "cmd_enter",
+                "weibo_binding": None,
+            }
+        },
+    )
+
+    assert response.status_code == 200
+
+    test_db.refresh(test_user)
+    stored_preferences = json.loads(test_user.preferences)
+    assert stored_preferences["send_key"] == "cmd_enter"
+    assert stored_preferences["weibo_binding"]["uid"] == "1234567890"
+
+
+@pytest.mark.api
+def test_read_current_user_accepts_uid_only_weibo_binding(
+    user_preferences_client: TestClient,
+    test_db: Session,
+    test_user: User,
+):
+    test_user.preferences = json.dumps(
+        {
+            "weibo_binding": {
+                "uid": "1234567890",
+            },
+        }
+    )
+    test_db.add(test_user)
+    test_db.commit()
+
+    response = user_preferences_client.get("/api/users/me")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["weibo_uid"] == "1234567890"
+    assert body["weibo_bound_at"] is None
+    assert body["preferences"]["weibo_binding"]["uid"] == "1234567890"

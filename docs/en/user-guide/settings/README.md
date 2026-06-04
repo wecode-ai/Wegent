@@ -65,6 +65,12 @@ Skills are Claude Code capability extension packages:
 - **Manage Skills**: View, download, update, delete
 - **Use Skills**: Reference Skills in Bots
 
+### Weibo Account Binding
+
+In intranet deployments, users can bind the current Wegent account to a Weibo uid. When users visit `https://wegent.intra.weibo.com` and are already logged in to `weibo.com`, the browser carries the Weibo login cookie (`SUB`). From **Settings** → **General**, the Weibo account binding action sends the request to the backend, which reads `SUB` and calls the internal resolver service to obtain the Weibo uid, nickname, and avatar.
+
+The frontend first shows the resolved Weibo account profile and reminds users that they can switch accounts at `weibo.com`. Binding is written only after the user confirms. During confirmation, the backend resolves the current `SUB` again; if the uid changed, the user must confirm again. After binding succeeds, the page shows the bound Weibo uid, nickname, avatar, and binding time. Users can rebind to refresh the uid or unbind the account. Binding data is stored in the current user's preferences and does not require a separate database table. Unbinding only removes the Weibo binding data and keeps other preferences unchanged.
+
 ---
 
 ## 🚀 Configuration Workflow

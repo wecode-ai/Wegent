@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
@@ -30,16 +30,85 @@ from app.schemas.quick_launch import (
     normalize_quick_phrases,
 )
 from app.schemas.subscription import NotificationChannelInfo
-from app.schemas.user import UserCreate, UserInDB, UserUpdate
+from app.schemas.user import (
+    UserCreate,
+    UserInDB,
+    UserUpdate,
+    WeiboAccountPreviewResponse,
+    WeiboBindingRequest,
+    WeiboBindingResponse,
+)
 from app.services.kind import kind_service
 from app.services.subscription.notification_service import (
     subscription_notification_service,
 )
 from app.services.user import user_service
 from app.services.user_mcp_service import user_mcp_service
+from app.services.weibo_account_binding import (
+    ERROR_WEIBO_RESOLVER_NOT_CONFIGURED,
+    ERROR_WEIBO_SUB_MISSING,
+    ERROR_WEIBO_UID_CHANGED,
+    WeiboBindingError,
+    WeiboBindingStatus,
+    weibo_account_binding_service,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _build_user_response(
+    user: User, *, admin_setup_completed: Optional[bool] = None
+) -> UserInDB:
+    """Build a detached current-user response from the ORM user."""
+    weibo_binding = weibo_account_binding_service.get_status(user)
+    return UserInDB(
+        id=user.id,
+        user_name=user.user_name,
+        email=user.email,
+        is_active=user.is_active,
+        git_info=user.git_info,
+        preferences=user.preferences,
+        role=user.role,
+        auth_source=user.auth_source,
+        weibo_uid=weibo_binding.weibo_uid,
+        weibo_screen_name=weibo_binding.weibo_screen_name,
+        weibo_avatar_url=weibo_binding.weibo_avatar_url,
+        weibo_bound_at=weibo_binding.weibo_bound_at,
+        created_at=user.created_at,
+        updated_at=user.updated_at,
+        admin_setup_completed=admin_setup_completed,
+    )
+
+
+def _build_weibo_binding_response(
+    binding_status: WeiboBindingStatus,
+) -> WeiboBindingResponse:
+    """Build the public Weibo binding response."""
+    return WeiboBindingResponse(
+        bound=binding_status.bound,
+        weibo_uid=binding_status.weibo_uid,
+        weibo_screen_name=binding_status.weibo_screen_name,
+        weibo_avatar_url=binding_status.weibo_avatar_url,
+        weibo_bound_at=binding_status.weibo_bound_at,
+    )
+
+
+def _raise_weibo_binding_http_error(exc: WeiboBindingError) -> None:
+    """Convert Weibo binding domain errors into API errors."""
+    if exc.error_code == ERROR_WEIBO_SUB_MISSING:
+        status_code = status.HTTP_400_BAD_REQUEST
+    elif exc.error_code == ERROR_WEIBO_RESOLVER_NOT_CONFIGURED:
+        status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    elif exc.error_code == ERROR_WEIBO_UID_CHANGED:
+        status_code = status.HTTP_409_CONFLICT
+    else:
+        status_code = status.HTTP_502_BAD_GATEWAY
+
+    raise HTTPException(
+        status_code=status_code,
+        detail={"error_code": exc.error_code, "message": exc.message},
+    )
 
 
 # ==================== Feature Flags ====================
@@ -112,18 +181,8 @@ async def read_current_user(
         else:
             admin_setup_completed = False
 
-    # Create response with admin_setup_completed field
-    return UserInDB(
-        id=current_user.id,
-        user_name=current_user.user_name,
-        email=current_user.email,
-        is_active=current_user.is_active,
-        git_info=current_user.git_info,
-        preferences=current_user.preferences,
-        role=current_user.role,
-        auth_source=current_user.auth_source,
-        created_at=current_user.created_at,
-        updated_at=current_user.updated_at,
+    return _build_user_response(
+        current_user,
         admin_setup_completed=admin_setup_completed,
     )
 
@@ -141,22 +200,61 @@ async def update_current_user_endpoint(
             user=current_user,
             obj_in=user_update,
         )
-        # Explicitly convert ORM object to Pydantic model to avoid
-        # session access during response serialization
-        return UserInDB(
-            id=user.id,
-            user_name=user.user_name,
-            email=user.email,
-            is_active=user.is_active,
-            git_info=user.git_info,
-            preferences=user.preferences,
-            role=user.role,
-            auth_source=user.auth_source,
-            created_at=user.created_at,
-            updated_at=user.updated_at,
-        )
+        return _build_user_response(user)
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.post("/me/weibo/preview", response_model=WeiboAccountPreviewResponse)
+async def preview_current_user_weibo_account(
+    request: Request,
+    _current_user: User = Depends(security.get_current_user),
+):
+    """Resolve the current browser Weibo account before binding."""
+    try:
+        profile = await weibo_account_binding_service.preview_current_weibo_account(
+            sub_cookie=request.cookies.get("SUB"),
+        )
+        return WeiboAccountPreviewResponse(
+            weibo_uid=profile.uid,
+            weibo_screen_name=profile.screen_name,
+            weibo_avatar_url=profile.avatar_url,
+        )
+    except WeiboBindingError as exc:
+        _raise_weibo_binding_http_error(exc)
+
+
+@router.post("/me/weibo/bind", response_model=WeiboBindingResponse)
+async def bind_current_user_weibo_account(
+    bind_request: WeiboBindingRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Bind the current Wegent user after confirming the resolved Weibo UID."""
+    try:
+        binding_status = await weibo_account_binding_service.bind_current_user(
+            db=db,
+            user=current_user,
+            sub_cookie=request.cookies.get("SUB"),
+            expected_uid=bind_request.expected_uid,
+        )
+        return _build_weibo_binding_response(binding_status)
+    except WeiboBindingError as exc:
+        _raise_weibo_binding_http_error(exc)
+
+
+@router.delete("/me/weibo/bind", response_model=WeiboBindingResponse)
+async def unbind_current_user_weibo_account(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Remove the Weibo UID binding from the current Wegent user."""
+    binding_status = weibo_account_binding_service.unbind_current_user(
+        db=db,
+        user=current_user,
+    )
+    return _build_weibo_binding_response(binding_status)
 
 
 @router.get(
@@ -290,20 +388,7 @@ async def delete_git_token(
         user = user_service.delete_git_token(
             db=db, user=current_user, git_info_id=git_info_id, git_domain=git_domain
         )
-        # Explicitly convert ORM object to Pydantic model to avoid
-        # session access during response serialization
-        return UserInDB(
-            id=user.id,
-            user_name=user.user_name,
-            email=user.email,
-            is_active=user.is_active,
-            git_info=user.git_info,
-            preferences=user.preferences,
-            role=user.role,
-            auth_source=user.auth_source,
-            created_at=user.created_at,
-            updated_at=user.updated_at,
-        )
+        return _build_user_response(user)
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -316,20 +401,7 @@ def create_user(
 ):
     """Create new user (admin only)"""
     user = user_service.create_user(db=db, obj_in=user_create)
-    # Explicitly convert ORM object to Pydantic model to avoid
-    # session access during response serialization
-    return UserInDB(
-        id=user.id,
-        user_name=user.user_name,
-        email=user.email,
-        is_active=user.is_active,
-        git_info=user.git_info,
-        preferences=user.preferences,
-        role=user.role,
-        auth_source=user.auth_source,
-        created_at=user.created_at,
-        updated_at=user.updated_at,
-    )
+    return _build_user_response(user)
 
 
 QUICK_ACCESS_CONFIG_KEY = "quick_access_recommended"
