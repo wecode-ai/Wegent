@@ -186,13 +186,13 @@ the raw task payload.
 
 ## Integration Smoke Test
 
-Integration tests are opt-in because they require a running Wegent backend:
+Integration tests are opt-in because they require a running Wegent backend.
+`WEGENT_TEST_SERVER` is required. `WEGENT_TEST_TOKEN` is optional and only
+needed for backends that require authentication:
 
 ```bash
 cd wegent-cli
-WEGENT_TEST_SERVER=http://localhost:8000 \
-WEGENT_TEST_TOKEN=your-bearer-token \
-pytest tests/test_integration.py --integration -m integration
+WEGENT_TEST_SERVER=http://localhost:8000 pytest tests/test_integration.py --integration -m integration
 ```
 
 ## License
