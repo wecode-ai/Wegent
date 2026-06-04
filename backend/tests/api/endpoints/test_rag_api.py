@@ -22,6 +22,11 @@ def test_public_rag_retrieve_uses_gateway_runtime_spec(
 ):
     payload = {
         "query": "release checklist",
+        "search_hints": {
+            "semantic_query": "How to verify the release checklist?",
+            "keywords": ["release", "checklist"],
+            "phrases": ["release checklist"],
+        },
         "knowledge_id": "7",
         "retriever_ref": {
             "name": "retriever-a",
@@ -49,6 +54,7 @@ def test_public_rag_retrieve_uses_gateway_runtime_spec(
     runtime_spec = QueryRuntimeSpec(
         knowledge_base_ids=[7],
         query="release checklist",
+        search_hints=payload["search_hints"],
         max_results=6,
         route_mode="rag_retrieval",
         metadata_condition=payload["metadata_condition"],
@@ -99,6 +105,7 @@ def test_public_rag_retrieve_uses_gateway_runtime_spec(
         db=ANY,
         knowledge_base_id=7,
         query="release checklist",
+        search_hints=ANY,
         max_results=6,
         retriever_name="retriever-a",
         retriever_namespace="default",

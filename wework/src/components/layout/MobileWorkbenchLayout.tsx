@@ -1,5 +1,5 @@
 import { Bot, Menu } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type {
   ProjectChatControls,
@@ -8,7 +8,9 @@ import type {
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
 import { ProjectWorkBar } from '@/components/chat/composer/ProjectWorkBar'
 import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
+import { stripAppBasePath } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
+import { isSettingsRoute, navigateTo } from '@/lib/navigation'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import type {
   ArchivedTaskListResponse,
@@ -100,7 +102,9 @@ export function MobileWorkbenchLayout({
 }: MobileWorkbenchLayoutProps) {
   const { t } = useTranslation('common')
   const [drawerOpen, setDrawerOpen] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(() =>
+    isSettingsRoute(stripAppBasePath(window.location.pathname))
+  )
   const hasConversation = messages.length > 0 || state.currentTask
   const effectiveProjectChat = projectChat ?? {
     models: [],
@@ -126,10 +130,21 @@ export function MobileWorkbenchLayout({
     onSelectStandaloneDevice: () => {},
   }
 
+  useEffect(() => {
+    const handlePopState = () => {
+      setSettingsOpen(isSettingsRoute(stripAppBasePath(window.location.pathname)))
+    }
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
+
   if (settingsOpen) {
     return (
       <MobileSettingsPage
-        onBack={() => setSettingsOpen(false)}
+        onBack={() => {
+          setSettingsOpen(false)
+          navigateTo('/')
+        }}
         onOpenPlugins={onOpenPlugins}
       />
     )
@@ -153,13 +168,13 @@ export function MobileWorkbenchLayout({
           <div className="relative min-h-0 flex-1 overflow-hidden">
             <header
               data-testid="mobile-conversation-header"
-              className="pointer-events-none absolute left-0 right-0 top-0 z-20 flex min-h-[56px] items-center gap-2 border-b border-border/60 bg-background/95 px-3 pb-2 pt-[max(6px,env(safe-area-inset-top))] backdrop-blur"
+              className="pointer-events-none absolute left-0 right-0 top-0 z-chrome flex min-h-[56px] items-center gap-2 border-b border-border/60 bg-background/95 px-3 pb-2 pt-[max(6px,env(safe-area-inset-top))] backdrop-blur"
             >
               <button
                 type="button"
                 data-testid="open-mobile-drawer-button"
                 onClick={() => setDrawerOpen(true)}
-                className="pointer-events-auto flex h-10 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
+                className="pointer-events-auto flex h-11 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
                 aria-label={t('workbench.open_menu', '打开菜单')}
               >
                 <Menu className="h-5 w-5" />
@@ -181,7 +196,7 @@ export function MobileWorkbenchLayout({
                   <div className="h-10 w-32" data-testid="model-selector-loading" />
                 )}
               </div>
-              <div className="h-10 min-w-[44px]" />
+              <div className="h-11 min-w-[44px]" />
             </header>
             <ScrollableMessageArea
               messages={messages}
@@ -191,7 +206,7 @@ export function MobileWorkbenchLayout({
             />
             <div
               data-testid="mobile-chat-input-dock"
-              className="pointer-events-none absolute bottom-0 left-0 right-0 z-20 px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3"
+              className="pointer-events-none absolute bottom-0 left-0 right-0 z-chrome px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3"
             >
               <div className="pointer-events-auto">
                 <ChatInput
@@ -227,7 +242,7 @@ export function MobileWorkbenchLayout({
                 type="button"
                 data-testid="open-mobile-drawer-button"
                 onClick={() => setDrawerOpen(true)}
-                className="flex h-10 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
+                className="flex h-11 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
                 aria-label={t('workbench.open_menu', '打开菜单')}
               >
                 <Menu className="h-5 w-5" />
@@ -249,23 +264,26 @@ export function MobileWorkbenchLayout({
                   <div className="h-10 w-32" data-testid="model-selector-loading" />
                 )}
               </div>
-              <div className="h-10 min-w-[44px]" />
+              <div className="h-11 min-w-[44px]" />
             </header>
 
-            <section className="flex min-h-0 flex-1 flex-col justify-end px-5 pb-32">
-              <div className="mb-10 flex justify-center">
+            <section className="flex min-h-0 flex-1 items-center justify-center px-5 pb-6">
+              <div
+                data-testid="mobile-empty-state-content"
+                className="flex w-full max-w-[360px] flex-col items-center gap-6"
+              >
                 <Bot className="h-8 w-8 text-text-muted" />
+                <h1 className="text-center text-2xl font-semibold tracking-normal">
+                  {emptyTitle}
+                </h1>
+                <ProjectWorkBar
+                  {...effectiveProjectWork}
+                  className="min-h-0 justify-center px-0"
+                  buttonClassName="bg-surface px-4 text-text-primary"
+                  menuClassName="left-1/2 w-[min(20rem,calc(100vw-2.5rem))] -translate-x-1/2"
+                  emptyLabel={t('workbench.select_project', '选择项目')}
+                />
               </div>
-              <h1 className="mb-8 text-center text-2xl font-semibold tracking-normal">
-                {emptyTitle}
-              </h1>
-              <ProjectWorkBar
-                {...effectiveProjectWork}
-                className="mb-5 min-h-0 justify-center px-0"
-                buttonClassName="bg-surface px-4 text-text-primary"
-                menuClassName="left-1/2 w-[min(20rem,calc(100vw-2.5rem))] -translate-x-1/2"
-                emptyLabel={t('workbench.select_project', '选择项目')}
-              />
             </section>
             <div
               data-testid="mobile-empty-chat-input-dock"
@@ -308,7 +326,10 @@ export function MobileWorkbenchLayout({
         onClose={() => setDrawerOpen(false)}
         onNewChat={onNewChat}
         onStartStandaloneChat={onStartStandaloneChat}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={() => {
+          setSettingsOpen(true)
+          navigateTo('/settings')
+        }}
         onSelectProject={onSelectProject}
         onOpenTask={onOpenTask}
       />

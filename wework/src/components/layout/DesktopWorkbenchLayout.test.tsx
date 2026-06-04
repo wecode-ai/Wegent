@@ -30,7 +30,8 @@ function createRect({
 }
 
 vi.mock('@/config/runtime', () => ({
-  getRuntimeConfig: () => ({ apiBaseUrl: '/api' }),
+  getRuntimeConfig: () => ({ appBasePath: '', apiBaseUrl: '/api' }),
+  stripAppBasePath: (path: string) => path,
 }))
 
 vi.mock('@/api/http', () => ({
@@ -53,6 +54,7 @@ describe('DesktopWorkbenchLayout', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
+    window.history.pushState({}, '', '/')
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
       value: {
@@ -215,6 +217,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByText('github_wegent')).toBeInTheDocument()
     expect(screen.getByText('远程连接 Claude Code')).toBeInTheDocument()
     expect(screen.getByText('我们该做什么？')).toBeInTheDocument()
+    expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('automation-button')).not.toBeInTheDocument()
   })
 
   test('collapses and expands project and chat sections from the sidebar headers', async () => {
@@ -297,7 +301,7 @@ describe('DesktopWorkbenchLayout', () => {
       'pointer-events-none',
       'absolute',
       'bottom-0',
-      'z-40',
+      'z-10',
       'from-background',
     )
     expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass(
@@ -305,7 +309,7 @@ describe('DesktopWorkbenchLayout', () => {
       'absolute',
       'bottom-4',
       'left-1/2',
-      'z-50',
+      'z-chrome',
       '-translate-x-1/2',
     )
     expect(screen.getByTestId('desktop-floating-composer-card')).toHaveClass(
@@ -349,7 +353,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByTestId('scroll-to-bottom-button')).toHaveClass(
       'bottom-36',
-      'z-[60]',
+      'z-popover',
     )
   })
 
@@ -383,24 +387,24 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('restores and stores sidebar width in localStorage', () => {
-    localStorage.setItem('wework.desktop.sidebar.width', '320')
+    localStorage.setItem('wework.desktop.sidebar.width', '230')
 
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
-    expect(document.querySelector('aside')).toHaveStyle({ width: '320px' })
+    expect(document.querySelector('aside')).toHaveStyle({ width: '230px' })
 
     fireEvent.pointerDown(screen.getByTestId('sidebar-resize-handle'))
-    fireEvent.pointerMove(document, { clientX: 360 })
+    fireEvent.pointerMove(document, { clientX: 235 })
     fireEvent.pointerUp(document)
 
-    expect(document.querySelector('aside')).toHaveStyle({ width: '360px' })
-    expect(localStorage.getItem('wework.desktop.sidebar.width')).toBe('360')
+    expect(document.querySelector('aside')).toHaveStyle({ width: '235px' })
+    expect(localStorage.getItem('wework.desktop.sidebar.width')).toBe('235')
   })
 
   test('uses the selected sidebar width as the default', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
-    expect(document.querySelector('aside')).toHaveStyle({ width: '320px' })
+    expect(document.querySelector('aside')).toHaveStyle({ width: '220px' })
   })
 
   test('collapses and expands the sidebar', async () => {
@@ -464,6 +468,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('search-button'))
 
     const dialog = screen.getByTestId('desktop-search-dialog')
+    expect(dialog.closest('.fixed')).toHaveClass('z-critical')
     expect(dialog).toBeInTheDocument()
     expect(screen.getByTestId('desktop-search-input')).toHaveFocus()
     expect(within(dialog).getByText('近期对话')).toBeInTheDocument()
@@ -666,7 +671,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(selectedRow).toHaveTextContent('项目会话 7')
     expect(selectedRow).toHaveClass('bg-[rgb(var(--color-sidebar-active))]')
-    expect(Element.prototype.scrollIntoView).toHaveBeenCalled()
+    await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled())
   })
 
   test('opens the settings menu from the sidebar', async () => {
@@ -679,6 +684,15 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getAllByText('设置')).toHaveLength(2)
     expect(screen.getByText('剩余用量')).toBeInTheDocument()
     expect(screen.getByText('退出登录')).toBeInTheDocument()
+  })
+
+  test('opens settings page from the browser path on reload', () => {
+    window.history.pushState({}, '', '/settings')
+
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(screen.getByTestId('wework-settings-page')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '我们该做什么？' })).not.toBeInTheDocument()
   })
 
   test('closes the settings menu when clicking outside it', async () => {
@@ -965,9 +979,22 @@ describe('DesktopWorkbenchLayout', () => {
     expect(baseProps.onStartNewProjectChat).toHaveBeenCalledWith(1)
 
     await userEvent.click(screen.getByTestId('project-menu-1'))
+    expect(screen.getByTestId('project-menu-1-menu')).toHaveClass(
+      'bg-background',
+      'text-text-primary',
+      'border-border',
+    )
     expect(screen.getByTestId('rename-project-1')).toHaveTextContent('重命名项目')
+    expect(screen.getByTestId('rename-project-1')).toHaveClass(
+      'text-text-primary',
+      'hover:bg-muted',
+    )
     expect(screen.getByTestId('archive-project-chats-1')).toHaveTextContent('归档会话')
     expect(screen.getByTestId('remove-project-1')).toHaveTextContent('移除')
+    expect(screen.getByTestId('remove-project-1')).toHaveClass(
+      'text-red-500',
+      'hover:bg-red-500/10',
+    )
 
     await userEvent.click(screen.getByTestId('rename-project-1'))
     await userEvent.clear(screen.getByTestId('rename-project-input'))
@@ -1153,10 +1180,10 @@ describe('DesktopWorkbenchLayout', () => {
       'overflow-y-auto',
       'scrollbar-none',
     )
-    expect(screen.getByTestId('settings-button')).toHaveClass('shrink-0')
+    expect(screen.getByTestId('settings-button')).toHaveClass('shrink-0', 'w-full')
   })
 
-  test('toggles an empty project chat list without persistent project highlight', async () => {
+  test('toggles an empty project chat list without selecting the project chat context', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.queryByText('暂无会话')).not.toBeInTheDocument()
@@ -1164,14 +1191,14 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('project-item-button'))
 
-    expect(baseProps.onSelectProject).toHaveBeenCalledWith(1)
+    expect(baseProps.onSelectProject).not.toHaveBeenCalled()
     expect(screen.getByText('暂无会话')).toBeInTheDocument()
     expect(screen.getByTestId('project-row-1')).not.toHaveClass('bg-white')
 
     await userEvent.click(screen.getByTestId('project-item-button'))
 
     expect(screen.queryByText('暂无会话')).not.toBeInTheDocument()
-    expect(baseProps.onSelectProject).toHaveBeenCalledTimes(1)
+    expect(baseProps.onSelectProject).not.toHaveBeenCalled()
   })
 
   test('limits project chats to five and toggles show more and show less', async () => {
@@ -1273,8 +1300,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByText('控制其他设备')).not.toBeInTheDocument()
     expect(screen.queryByText('SSH')).not.toBeInTheDocument()
     expect(screen.getByTestId('settings-nav-connections')).toBeInTheDocument()
-    expect(screen.getByTestId('settings-nav-projects')).toBeInTheDocument()
-    expect(screen.getByText('项目')).toBeInTheDocument()
+    expect(screen.queryByTestId('settings-nav-projects')).not.toBeInTheDocument()
     expect(screen.queryByTestId('settings-nav-general')).not.toBeInTheDocument()
     expect(screen.queryByText('Personal Devices')).not.toBeInTheDocument()
     expect(screen.queryByText('Linux-Device-481b616e8e0b')).not.toBeInTheDocument()
@@ -1348,7 +1374,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
     expect(screen.getByTestId('environment-info-popover')).toHaveClass(
       'w-[340px]',
-      'bg-[#fcfcfc]',
+      'bg-background',
       'text-text-primary',
       'border-border',
       'backdrop-blur-3xl',

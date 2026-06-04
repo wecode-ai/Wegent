@@ -197,6 +197,12 @@ export function createDeviceApi(client: HttpClient) {
       )
     },
 
+    async deleteDevice(deviceId: string): Promise<{ message: string }> {
+      return client.delete<{ message: string }>(
+        `/devices/${encodeURIComponent(deviceId)}`,
+      )
+    },
+
     getMetrics(deviceId: string): Promise<CloudDeviceMetricsResponse> {
       return client.post<CloudDeviceMetricsResponse>(
         `/cloud-devices/${encodeURIComponent(deviceId)}/metrics`,

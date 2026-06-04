@@ -18,6 +18,7 @@ from app.schemas.system_skills import (
     InstalledSkillListResponse,
     InstalledSkillSource,
     InstalledSkillSpec,
+    PersonalSkillInstallRequest,
     SystemSkillCatalogItem,
     SystemSkillInstallRequest,
     SystemSkillListResponse,
@@ -31,6 +32,7 @@ class StubSystemSkillProviderService:
     def __init__(self) -> None:
         self.list_calls: list[dict[str, Any]] = []
         self.install_calls: list[dict[str, Any]] = []
+        self.install_personal_calls: list[dict[str, Any]] = []
         self.update_calls: list[dict[str, Any]] = []
         self.uninstall_calls: list[dict[str, Any]] = []
 
@@ -117,6 +119,36 @@ class StubSystemSkillProviderService:
                 displayName=request.displayName,
                 description=request.description,
                 version=request.version,
+                installState="installed",
+                enabled=True,
+            ),
+        )
+
+    def install_personal_skill(
+        self,
+        *,
+        db: Any,
+        user_id: int,
+        request: PersonalSkillInstallRequest,
+    ) -> InstalledSkill:
+        self.install_personal_calls.append(
+            {"db": db, "user_id": user_id, "request": request}
+        )
+        return InstalledSkill(
+            metadata={
+                "name": "personal-excel-helper",
+                "namespace": "default",
+                "labels": {"id": "88"},
+            },
+            spec=InstalledSkillSpec(
+                source=InstalledSkillSource(
+                    type="personal",
+                    skillKey="excel-helper",
+                    catalogItemId=f"personal/{request.skillId}",
+                ),
+                displayName="Excel Helper",
+                description="Analyze Excel workbooks",
+                version="1.0.0",
                 installState="installed",
                 enabled=True,
             ),
@@ -300,6 +332,22 @@ def test_install_system_skill_forwards_current_user(
     assert (
         stub_service.install_calls[0]["request"].catalogItemId == "@weibo/shitao7_wehot"
     )
+
+
+def test_install_personal_skill_forwards_current_user(
+    system_skills_client: TestClient,
+    stub_service: StubSystemSkillProviderService,
+) -> None:
+    response = system_skills_client.post(
+        "/api/system-skills/install/personal",
+        json={"skillId": 77},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["spec"]["source"]["type"] == "personal"
+    assert response.json()["spec"]["enabled"] is True
+    assert stub_service.install_personal_calls[0]["user_id"] == 123
+    assert stub_service.install_personal_calls[0]["request"].skillId == 77
 
 
 def test_list_installed_system_skills_returns_user_items(

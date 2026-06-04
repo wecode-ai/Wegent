@@ -38,6 +38,7 @@ import {
 } from '@/components/ui/dialog'
 import { adminApis, AdminPublicRetriever, RetrieverCRD } from '@/apis/admin'
 import { retrieverApis, RetrievalMethodType } from '@/apis/retrievers'
+import { formatRetrieverStorageExt, parseRetrieverStorageExt } from '@/utils/retriever-ext'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 import {
   RetrieverFormFields,
@@ -162,6 +163,8 @@ const PublicRetrieverList: React.FC = () => {
   )
 
   const formToRetrieverCRD = (data: RetrieverFormData): RetrieverCRD => {
+    const storageExt = parseRetrieverStorageExt(data.storageExtJson)
+
     // Build retrieval methods config
     const retrievalMethodsConfig: RetrieverCRD['spec']['retrievalMethods'] = {
       vector: {
@@ -192,6 +195,7 @@ const PublicRetrieverList: React.FC = () => {
           ...(data.username && { username: data.username }),
           ...(data.password && { password: data.password }),
           ...(data.apiKey && { apiKey: data.apiKey }),
+          ...(storageExt && { ext: storageExt }),
           indexStrategy: {
             mode: data.indexMode,
             ...(data.indexMode === 'fixed' && { fixedName: data.fixedName }),
@@ -235,6 +239,7 @@ const PublicRetrieverList: React.FC = () => {
       rollingStep: String(indexStrategy.rollingStep || 5000),
       prefix: indexStrategy.prefix || 'wegent',
       enabledRetrievalMethods: enabledMethods,
+      storageExtJson: formatRetrieverStorageExt(storageConfig.ext),
     }
   }
 
@@ -346,9 +351,18 @@ const PublicRetrieverList: React.FC = () => {
     return true
   }
 
+  const validateStorageExtJson = (): boolean => {
+    try {
+      parseRetrieverStorageExt(formData.storageExtJson)
+      return true
+    } catch {
+      return showValidationError(t('common:retrievers.extension_json_invalid'))
+    }
+  }
+
   // Main form validation - combines all validators
   const validateForm = (): boolean => {
-    return validateName() && validateUrl() && validateIndexStrategy()
+    return validateName() && validateUrl() && validateIndexStrategy() && validateStorageExtJson()
   }
 
   const handleCreateRetriever = async () => {

@@ -43,7 +43,7 @@ function TextInputDialogContent({
   useEscapeKey(onClose)
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/35 px-4">
+    <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4">
       <div className="w-full max-w-[420px] rounded-lg border border-[#d8d8d8] bg-white p-5 shadow-2xl">
         <div className="flex items-center justify-between gap-4">
           <h2 className="text-base font-semibold text-[#202124]">{title}</h2>

@@ -118,6 +118,7 @@ describe('REST adapters', () => {
     })
     await api.updateInstalledSystemSkill(42, false)
     await api.uninstallInstalledSystemSkill(42)
+    await api.installPersonalSkill(77)
     await api.updatePersonalSkillEnabled(77, false)
 
     expect(client.post).toHaveBeenCalledWith('/system-skills/install', {
@@ -131,6 +132,9 @@ describe('REST adapters', () => {
     })
     expect(client.put).toHaveBeenCalledWith('/system-skills/installed/42', {
       enabled: false,
+    })
+    expect(client.post).toHaveBeenCalledWith('/system-skills/install/personal', {
+      skillId: 77,
     })
     expect(client.put).toHaveBeenCalledWith('/v1/kinds/skills/77/enabled', {
       enabled: false,

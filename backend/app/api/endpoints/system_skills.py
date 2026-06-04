@@ -14,6 +14,7 @@ from app.models.user import User
 from app.schemas.system_skills import (
     InstalledSkill,
     InstalledSkillListResponse,
+    PersonalSkillInstallRequest,
     SystemSkillInstallRequest,
     SystemSkillListResponse,
     SystemSkillProviderListResponse,
@@ -86,6 +87,39 @@ async def install_system_skill(
     )
     logger.info(
         "System skill install completed: user_id=%s installed_id=%s skill=%s enabled=%s state=%s",
+        current_user.id,
+        _installed_skill_id(installed),
+        installed.spec.source.skillKey,
+        installed.spec.enabled,
+        installed.spec.installState,
+    )
+    await _sync_global_capabilities(db, current_user.id)
+    return installed
+
+
+@router.post(
+    "/install/personal",
+    response_model=InstalledSkill,
+    status_code=status.HTTP_201_CREATED,
+)
+async def install_personal_skill(
+    request: PersonalSkillInstallRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> InstalledSkill:
+    """Install a user-owned Skill asset for the current user."""
+    logger.info(
+        "Personal skill install requested: user_id=%s skill_id=%s",
+        current_user.id,
+        request.skillId,
+    )
+    installed = system_skill_provider_service.install_personal_skill(
+        db=db,
+        user_id=current_user.id,
+        request=request,
+    )
+    logger.info(
+        "Personal skill install completed: user_id=%s installed_id=%s skill=%s enabled=%s state=%s",
         current_user.id,
         _installed_skill_id(installed),
         installed.spec.source.skillKey,
