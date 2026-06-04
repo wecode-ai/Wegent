@@ -255,6 +255,30 @@ def test_kind_apply_reads_multi_document_yaml(tmp_path):
     )
 
 
+def test_kind_apply_json_backend_batch_failure_outputs_error_envelope():
+    client = MagicMock()
+    client.apply_kinds.return_value = {
+        "success": False,
+        "message": "Applied 0/1 resources",
+        "results": [{"success": False, "message": "missing metadata"}],
+    }
+
+    result = invoke_with_client(
+        ["kind", "apply", "--input", "-", "--json"],
+        client,
+        input_text='{"kind": "Ghost", "metadata": {"name": "g"}}',
+    )
+
+    assert result.exit_code == EXIT_API_ERROR
+    payload = load_error_payload(result)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "batch_operation_failed"
+    assert payload["error"]["message"] == "Applied 0/1 resources"
+    assert payload["error"]["details"]["results"] == [
+        {"success": False, "message": "missing metadata"}
+    ]
+
+
 def test_kind_apply_json_invalid_structured_input_outputs_error_envelope():
     client = MagicMock()
 
@@ -348,6 +372,86 @@ def test_kind_apply_json_rejects_scalar_resource_entries():
     client.apply_kinds.assert_not_called()
 
 
+def test_kind_apply_json_rejects_missing_kind():
+    client = MagicMock()
+
+    result = invoke_with_client(
+        ["kind", "apply", "--input", "-", "--json"],
+        client,
+        input_text='{"metadata": {"name": "g"}}',
+    )
+
+    assert result.exit_code != 0
+    payload = load_error_payload(result)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_input"
+    client.apply_kinds.assert_not_called()
+
+
+def test_kind_apply_json_rejects_unsupported_skill_kind():
+    client = MagicMock()
+
+    result = invoke_with_client(
+        ["kind", "apply", "--input", "-", "--json"],
+        client,
+        input_text='{"kind": "Skill", "metadata": {"name": "s"}}',
+    )
+
+    assert result.exit_code != 0
+    payload = load_error_payload(result)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_input"
+    client.apply_kinds.assert_not_called()
+
+
+def test_kind_apply_json_rejects_missing_metadata():
+    client = MagicMock()
+
+    result = invoke_with_client(
+        ["kind", "apply", "--input", "-", "--json"],
+        client,
+        input_text='{"kind": "Ghost"}',
+    )
+
+    assert result.exit_code != 0
+    payload = load_error_payload(result)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_input"
+    client.apply_kinds.assert_not_called()
+
+
+def test_kind_apply_json_rejects_non_dict_metadata():
+    client = MagicMock()
+
+    result = invoke_with_client(
+        ["kind", "apply", "--input", "-", "--json"],
+        client,
+        input_text='{"kind": "Ghost", "metadata": "bad"}',
+    )
+
+    assert result.exit_code != 0
+    payload = load_error_payload(result)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_input"
+    client.apply_kinds.assert_not_called()
+
+
+def test_kind_apply_json_rejects_blank_metadata_name():
+    client = MagicMock()
+
+    result = invoke_with_client(
+        ["kind", "apply", "--input", "-", "--json"],
+        client,
+        input_text='{"kind": "Ghost", "metadata": {"name": " "}}',
+    )
+
+    assert result.exit_code != 0
+    payload = load_error_payload(result)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_input"
+    client.apply_kinds.assert_not_called()
+
+
 def test_kind_delete_named_resource():
     client = MagicMock()
     client.delete_kind.return_value = {"message": "deleted"}
@@ -372,6 +476,30 @@ def test_kind_delete_reads_stdin_json():
     client.delete_kinds.assert_called_once_with(
         "dev", [{"kind": "Ghost", "metadata": {"name": "g"}}]
     )
+
+
+def test_kind_delete_json_backend_batch_failure_outputs_error_envelope():
+    client = MagicMock()
+    client.delete_kinds.return_value = {
+        "success": False,
+        "message": "Deleted 0/1 resources",
+        "results": [{"success": False, "message": "not found"}],
+    }
+
+    result = invoke_with_client(
+        ["kind", "delete", "--input", "-", "--json"],
+        client,
+        input_text='{"kind": "Ghost", "metadata": {"name": "g"}}',
+    )
+
+    assert result.exit_code == EXIT_API_ERROR
+    payload = load_error_payload(result)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "batch_operation_failed"
+    assert payload["error"]["message"] == "Deleted 0/1 resources"
+    assert payload["error"]["details"]["results"] == [
+        {"success": False, "message": "not found"}
+    ]
 
 
 def test_kind_delete_json_rejects_name_and_input_conflict():
@@ -439,6 +567,23 @@ def test_kind_delete_json_whitespace_only_input_outputs_invalid_input():
         payload["error"]["message"]
         == "Kind input must include at least one resource object"
     )
+    client.delete_kinds.assert_not_called()
+    client.delete_kind.assert_not_called()
+
+
+def test_kind_delete_json_rejects_missing_metadata_name():
+    client = MagicMock()
+
+    result = invoke_with_client(
+        ["kind", "delete", "--input", "-", "--json"],
+        client,
+        input_text='{"kind": "Ghost", "metadata": {}}',
+    )
+
+    assert result.exit_code != 0
+    payload = load_error_payload(result)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_input"
     client.delete_kinds.assert_not_called()
     client.delete_kind.assert_not_called()
 

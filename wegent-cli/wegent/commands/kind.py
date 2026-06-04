@@ -8,9 +8,19 @@ import yaml
 
 from ..client import WegentClient
 from ..config import get_namespace
-from ..errors import CliError
+from ..errors import EXIT_API_ERROR, CliError
 from ..io import read_input_text
 from ..output import dumps_json, dumps_yaml, error_envelope, success_envelope
+
+SUPPORTED_RESOURCE_KINDS = {
+    "Ghost",
+    "Model",
+    "Shell",
+    "Bot",
+    "Team",
+    "Workspace",
+    "Task",
+}
 
 
 def _as_resource_list(data: Any) -> list[dict[str, Any]]:
@@ -38,7 +48,46 @@ def _validate_resource_list(resources: list[Any]) -> list[dict[str, Any]]:
             "invalid_input",
             "Kind resource entries must be objects",
         )
-    return cast(list[dict[str, Any]], resources)
+
+    validated = cast(list[dict[str, Any]], resources)
+    for resource in validated:
+        _validate_resource_shape(resource)
+    return validated
+
+
+def _validate_resource_shape(resource: dict[str, Any]) -> None:
+    kind = resource.get("kind")
+    if not isinstance(kind, str) or not kind.strip():
+        raise CliError("invalid_input", "Kind resource kind must be a non-empty string")
+    if kind not in SUPPORTED_RESOURCE_KINDS:
+        raise CliError(
+            "invalid_input",
+            f"Unsupported kind resource kind: {kind}",
+            {"kind": kind, "supported_kinds": sorted(SUPPORTED_RESOURCE_KINDS)},
+        )
+
+    metadata = resource.get("metadata")
+    if not isinstance(metadata, dict):
+        raise CliError("invalid_input", "Kind resource metadata must be an object")
+
+    name = metadata.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise CliError(
+            "invalid_input",
+            "Kind resource metadata.name must be a non-empty string",
+        )
+
+
+def _checked_batch_result(result: Any) -> Any:
+    if isinstance(result, dict) and result.get("success") is False:
+        message = result.get("message")
+        raise CliError(
+            "batch_operation_failed",
+            message if isinstance(message, str) else "Kind batch operation failed",
+            {"results": result.get("results"), "response": result},
+            EXIT_API_ERROR,
+        )
+    return result
 
 
 def _emit(data: Any, json_output: bool) -> None:
@@ -179,7 +228,7 @@ def apply_cmd(
     source = file_path or input_path
     try:
         resources = _load_resource_input(source)
-        _emit(client.apply_kinds(ns, resources), json_output)
+        _emit(_checked_batch_result(client.apply_kinds(ns, resources)), json_output)
     except CliError as exc:
         _emit_error(exc, json_output)
 
@@ -211,7 +260,7 @@ def delete_cmd(
 
         if input_path:
             resources = _load_resource_input(input_path)
-            _emit(client.delete_kinds(ns, resources), json_output)
+            _emit(_checked_batch_result(client.delete_kinds(ns, resources)), json_output)
             return
 
         if not kind or not name:
