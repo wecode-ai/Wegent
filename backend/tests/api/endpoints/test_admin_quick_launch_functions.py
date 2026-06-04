@@ -70,7 +70,7 @@ async def test_get_quick_launch_functions_returns_empty_default():
 
 
 @pytest.mark.asyncio
-async def test_update_quick_launch_functions_normalizes_phrases():
+async def test_update_quick_launch_functions_normalizes_input_presets():
     db = _FakeDb()
 
     response = await system_config_endpoint.update_quick_launch_functions_config(
@@ -80,7 +80,19 @@ async def test_update_quick_launch_functions_normalizes_phrases():
                     "id": "create_ppt",
                     "title": "创建 PPT",
                     "team_id": 101,
-                    "quick_phrases": ["  帮我创建一个 xxx 的 PPT  ", ""],
+                    "input_presets": [
+                        {
+                            "id": " roadmap ",
+                            "title": " 产品路线图 ",
+                            "prompt": "  帮我创建一个 xxx 的 PPT  ",
+                            "options": {
+                                "enable_deep_thinking": False,
+                                "enable_clarification": True,
+                                "force_override": True,
+                                "selected_skill_names": [" ppt ", "", "ppt"],
+                            },
+                        }
+                    ],
                     "enabled": True,
                     "order": 10,
                 }
@@ -92,4 +104,12 @@ async def test_update_quick_launch_functions_normalizes_phrases():
 
     assert db.committed is True
     assert response.version == 1
-    assert response.functions[0].quick_phrases == ["帮我创建一个 xxx 的 PPT"]
+    assert response.functions[0].input_presets[0].id == "roadmap"
+    assert response.functions[0].input_presets[0].title == "产品路线图"
+    assert response.functions[0].input_presets[0].prompt == "帮我创建一个 xxx 的 PPT"
+    assert response.functions[0].input_presets[0].options.enable_deep_thinking is False
+    assert response.functions[0].input_presets[0].options.enable_clarification is True
+    assert response.functions[0].input_presets[0].options.force_override is True
+    assert response.functions[0].input_presets[0].options.selected_skill_names == [
+        "ppt"
+    ]

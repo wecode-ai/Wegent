@@ -291,7 +291,14 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass(
       'h-full',
       'overflow-y-auto',
-      'pb-40',
+      'pb-52',
+    )
+    expect(screen.getByTestId('desktop-floating-composer-backdrop')).toHaveClass(
+      'pointer-events-none',
+      'absolute',
+      'bottom-0',
+      'z-40',
+      'from-background',
     )
     expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass(
       'pointer-events-none',
@@ -305,6 +312,45 @@ describe('DesktopWorkbenchLayout', () => {
       'pointer-events-auto',
     )
     expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
+  })
+
+  test('positions the scroll-to-bottom button above the floating composer', () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'assistant',
+            content: 'Long reply',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+          },
+        ]}
+      />,
+    )
+
+    const scroller = screen.getByTestId('desktop-chat-scroll')
+    Object.defineProperty(scroller, 'clientHeight', {
+      value: 200,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 600,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 0,
+      writable: true,
+      configurable: true,
+    })
+
+    fireEvent.scroll(scroller)
+
+    expect(screen.getByTestId('scroll-to-bottom-button')).toHaveClass(
+      'bottom-36',
+      'z-[60]',
+    )
   })
 
   test('reserves extra bottom space when queued messages are shown above the composer', () => {
@@ -332,8 +378,8 @@ describe('DesktopWorkbenchLayout', () => {
       />,
     )
 
-    expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass('pb-56')
-    expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass('pb-40')
+    expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass('pb-72')
+    expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass('pb-52')
   })
 
   test('restores and stores sidebar width in localStorage', () => {
@@ -1111,7 +1157,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('settings-button')).toHaveClass('shrink-0')
   })
 
-  test('toggles an empty project chat list without persistent project highlight', async () => {
+  test('toggles an empty project chat list without selecting the project chat context', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.queryByText('暂无会话')).not.toBeInTheDocument()
@@ -1119,14 +1165,14 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('project-item-button'))
 
-    expect(baseProps.onSelectProject).toHaveBeenCalledWith(1)
+    expect(baseProps.onSelectProject).not.toHaveBeenCalled()
     expect(screen.getByText('暂无会话')).toBeInTheDocument()
     expect(screen.getByTestId('project-row-1')).not.toHaveClass('bg-white')
 
     await userEvent.click(screen.getByTestId('project-item-button'))
 
     expect(screen.queryByText('暂无会话')).not.toBeInTheDocument()
-    expect(baseProps.onSelectProject).toHaveBeenCalledTimes(1)
+    expect(baseProps.onSelectProject).not.toHaveBeenCalled()
   })
 
   test('limits project chats to five and toggles show more and show less', async () => {

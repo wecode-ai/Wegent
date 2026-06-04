@@ -88,6 +88,20 @@ curl -fL -o wegent-executor \
 chmod +x wegent-executor
 ```
 
+#### 使用设备本机 CLI 配置
+
+默认情况下，executor 会使用 Wegent 下发的 Claude/Codex 模型和 provider 配置。如果某台设备已经在本机配置好了 Codex CLI 登录或 provider，可以通过环境变量让 Codex 使用本机配置：
+
+```bash
+WEGENT_LOCAL_CLI_CONFIG_RUNTIMES=codex
+```
+
+该变量为空或未设置时，所有 runtime 都继续使用系统下发配置。当前仅支持以下值：
+
+- `codex`：Codex 使用设备本机配置，不再注入 Wegent Codex provider。
+
+该配置只影响当前设备，适合不同设备分别使用系统下发配置或本机 Codex CLI 配置的场景。Claude 仍保持 Wegent 下发的配置行为。
+
 ### 构建设备镜像
 
 仓库提供 `docker/device/Dockerfile` 用于构建云设备或本地设备基础镜像。该镜像会安装 `code-server`、`weiboplat.wecoder-agent` 扩展、Claude Code CLI、`ttyd`、Node.js 22、Python、Git，并把 `executor/dist/wegent-executor` 放到 `/app/executor` 和 `~/.wegent-executor/bin/wegent-executor`。

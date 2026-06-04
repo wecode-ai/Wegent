@@ -22,6 +22,12 @@ const DESKTOP_COMPOSER_FRAME_CLASS =
   'mx-auto w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100vw-4rem)]'
 const DESKTOP_FLOATING_COMPOSER_CLASS =
   'pointer-events-none absolute bottom-4 left-1/2 z-chrome w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100%_-_3rem)] -translate-x-1/2'
+const DESKTOP_FLOATING_COMPOSER_BACKDROP_CLASS =
+  'pointer-events-none absolute inset-x-0 bottom-0 z-40 h-56 bg-gradient-to-t from-background via-background to-transparent'
+const DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS =
+  'bottom-36 z-[60] bg-background/95 shadow-md'
+const DESKTOP_QUEUED_SCROLL_TO_BOTTOM_BUTTON_CLASS =
+  'bottom-64 z-[60] bg-background/95 shadow-md'
 
 interface DesktopWorkbenchMainProps {
   isBootstrapping: boolean
@@ -103,7 +109,16 @@ export function DesktopWorkbenchMain({
               conversationKey={currentTask?.id ?? null}
               className="h-full"
               scrollTestId="desktop-chat-scroll"
-              scrollerClassName={hasQueuedComposerRows ? 'pb-56' : 'pb-40'}
+              scrollerClassName={hasQueuedComposerRows ? 'pb-72' : 'pb-52'}
+              scrollButtonClassName={
+                hasQueuedComposerRows
+                  ? DESKTOP_QUEUED_SCROLL_TO_BOTTOM_BUTTON_CLASS
+                  : DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS
+              }
+            />
+            <div
+              className={DESKTOP_FLOATING_COMPOSER_BACKDROP_CLASS}
+              data-testid="desktop-floating-composer-backdrop"
             />
             <div
               className={DESKTOP_FLOATING_COMPOSER_CLASS}

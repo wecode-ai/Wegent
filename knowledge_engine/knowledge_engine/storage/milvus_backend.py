@@ -34,6 +34,7 @@ from knowledge_engine.retrieval.filters import (
     filter_chunk_records,
     parse_metadata_filters,
 )
+from knowledge_engine.retrieval.search_hints import resolve_search_queries
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 
@@ -249,11 +250,62 @@ class MilvusBackend(BaseStorageBackend):
         """
         return MilvusClient(uri=self.base_url, token=self.token, db_name=self.db_name)
 
+    def _resolve_hybrid_ranker(self) -> str:
+        """
+        Resolve the hybrid ranker with WeightedRanker as the default.
+
+        RRFRanker remains available as an explicit compatibility opt-out.
+        """
+        configured_ranker = self.ext.get("hybrid_ranker")
+        if configured_ranker == "RRFRanker":
+            return configured_ranker
+        if configured_ranker == "WeightedRanker":
+            return configured_ranker
+        return "WeightedRanker"
+
+    def _resolve_hybrid_ranker_params(
+        self,
+        retrieval_setting: Optional[Dict[str, Any]] = None,
+        *,
+        configured_ranker: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        configured_ranker = configured_ranker or self._resolve_hybrid_ranker()
+        configured_params = dict(self.ext.get("hybrid_ranker_params") or {})
+
+        if configured_ranker != "WeightedRanker":
+            return configured_params
+
+        vector_weight = (
+            retrieval_setting.get("vector_weight")
+            if retrieval_setting is not None
+            else None
+        )
+        keyword_weight = (
+            retrieval_setting.get("keyword_weight")
+            if retrieval_setting is not None
+            else None
+        )
+        if vector_weight is not None and keyword_weight is not None:
+            total = vector_weight + keyword_weight
+            if total > 0:
+                normalized_weights = [
+                    float(vector_weight) / float(total),
+                    float(keyword_weight) / float(total),
+                ]
+                logger.info(
+                    "[Milvus] Using WeightedRanker params from retrieval weights: weights=%s",
+                    normalized_weights,
+                )
+                return {"weights": normalized_weights}
+
+        return configured_params
+
     def create_vector_store(
         self,
         collection_name: str,
         retrieval_mode: str = "vector",
         dim: Optional[int] = None,
+        retrieval_setting: Optional[Dict[str, Any]] = None,
     ) -> MilvusVectorStore:
         """
         Create Milvus vector store instance.
@@ -277,6 +329,12 @@ class MilvusBackend(BaseStorageBackend):
             f"dim_param={dim}, self.dim={self.dim}, effective_dim={effective_dim}"
         )
 
+        hybrid_ranker = self._resolve_hybrid_ranker()
+        hybrid_ranker_params = self._resolve_hybrid_ranker_params(
+            retrieval_setting,
+            configured_ranker=hybrid_ranker,
+        )
+
         return LazyAsyncMilvusVectorStore(
             uri=self.base_url,
             token=self.token,
@@ -286,7 +344,8 @@ class MilvusBackend(BaseStorageBackend):
             upsert_mode=True,
             overwrite=False,  # Do not overwrite existing collection
             enable_sparse=True,  # Enable sparse vector for keyword/hybrid search
-            hybrid_ranker="RRFRanker",  # Use RRF for hybrid search ranking
+            hybrid_ranker=hybrid_ranker,
+            hybrid_ranker_params=hybrid_ranker_params,
         )
 
     def index_with_metadata(
@@ -435,32 +494,58 @@ class MilvusBackend(BaseStorageBackend):
             )
 
         # Create vector store
-        vector_store = self.create_vector_store(collection_name, retrieval_mode)
+        vector_store = self.create_vector_store(
+            collection_name,
+            retrieval_mode,
+            retrieval_setting=retrieval_setting,
+        )
 
         # Build metadata filters
         filters = self._build_metadata_filters(knowledge_id, metadata_condition)
 
         # Determine query mode and parameters
+        resolved_queries = resolve_search_queries(query, retrieval_setting)
         if retrieval_mode == "keyword":
             # Pure BM25 keyword search - no embedding needed
             query_mode = VectorStoreQueryMode.TEXT_SEARCH
             query_embedding = None
+            query_str = resolved_queries.sparse_query
         elif retrieval_mode == "hybrid":
             # Hybrid search - needs embedding
             query_mode = VectorStoreQueryMode.HYBRID
-            query_embedding = embed_model.get_query_embedding(query)
+            query_embedding = embed_model.get_query_embedding(
+                resolved_queries.dense_query
+            )
+            query_str = resolved_queries.sparse_query
         else:
             # Default: Pure vector search
             query_mode = VectorStoreQueryMode.DEFAULT
-            query_embedding = embed_model.get_query_embedding(query)
+            query_embedding = embed_model.get_query_embedding(
+                resolved_queries.dense_query
+            )
+            query_str = resolved_queries.dense_query
 
         # Create VectorStoreQuery
         vs_query = VectorStoreQuery(
-            query_str=query,
+            query_str=query_str,
             query_embedding=query_embedding,
             similarity_top_k=top_k,
             mode=query_mode,
             filters=filters,
+        )
+
+        logger.info(
+            "[Milvus] retrieve: collection=%s, mode=%s, query_mode=%s, top_k=%s, score_threshold=%s, effective_threshold=%s, hybrid_ranker=%s, hybrid_ranker_params=%s, dense_query=%s, sparse_query=%s",
+            collection_name,
+            retrieval_mode,
+            query_mode,
+            top_k,
+            score_threshold,
+            0.0 if retrieval_mode == "hybrid" else score_threshold,
+            getattr(vector_store, "hybrid_ranker", None),
+            getattr(vector_store, "hybrid_ranker_params", None),
+            resolved_queries.dense_query,
+            query_str,
         )
 
         # Debug logging for hybrid search troubleshooting
@@ -472,6 +557,13 @@ class MilvusBackend(BaseStorageBackend):
 
         # Execute query
         result = vector_store.query(vs_query)
+
+        logger.info(
+            "[Milvus] query result: collection=%s, nodes_count=%d, top_scores=%s",
+            collection_name,
+            len(result.nodes) if result.nodes else 0,
+            result.similarities[:5] if result.similarities else None,
+        )
 
         # Debug logging for query results
         logger.debug(

@@ -751,6 +751,10 @@
     "retrieval_method_vector": "Vector Search",
     "retrieval_method_keyword": "Full-Text Search",
     "retrieval_method_hybrid": "Hybrid Search",
+    "extension_json": "Extension JSON",
+    "extension_json_placeholder": "{\n  \"hybrid_ranker\": \"WeightedRanker\"\n}",
+    "extension_json_hint": "Optional advanced storage configuration. Must be a JSON object and will be saved to storageConfig.ext.",
+    "extension_json_invalid": "Extension JSON must be a valid JSON object",
     "errors": {
       "load_retrievers_failed": "Failed to load retrievers",
       "create_failed": "Failed to create retriever",
