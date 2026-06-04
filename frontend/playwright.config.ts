@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
+const EXECUTOR_REGRESSION_SPEC = /tasks\/agent-conversation-regression\.spec\.ts/
+
 /**
  * Playwright configuration for Wegent E2E testing
  * Optimized for faster execution while maintaining test reliability
@@ -68,7 +70,10 @@ export default defineConfig({
     },
     {
       name: 'chromium',
-      testIgnore: /api\/.*\.spec\.ts/, // Exclude API tests from chromium project
+      testIgnore: [
+        /api\/.*\.spec\.ts/,
+        EXECUTOR_REGRESSION_SPEC, // Run executor-heavy coverage in a dedicated CI job.
+      ],
       use: {
         ...devices['Desktop Chrome'],
         storageState: './e2e/.auth/user.json',
@@ -82,6 +87,15 @@ export default defineConfig({
       use: {
         // API tests don't need a browser
         baseURL: process.env.E2E_API_URL || 'http://localhost:8000',
+      },
+      dependencies: ['setup'],
+    },
+    {
+      name: 'executor-chromium',
+      testMatch: EXECUTOR_REGRESSION_SPEC,
+      use: {
+        ...devices['Desktop Chrome'],
+        storageState: './e2e/.auth/user.json',
       },
       dependencies: ['setup'],
     },

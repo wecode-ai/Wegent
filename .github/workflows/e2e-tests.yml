@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Single consolidated job that runs all tests with sharding
+  # Runs browser and API tests with sharding. Executor-heavy coverage runs separately.
   e2e-tests:
     name: E2E Tests (Shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
     runs-on: ubuntu-latest
@@ -57,17 +57,17 @@ jobs:
 
       # Cache Python packages
       - name: Cache Python packages
+        id: python-cache
         uses: actions/cache@v4
         with:
           path: |
             ~/.cache/uv
             backend/.venv
-            executor/.venv
-            executor_manager/.venv
             shared/.venv
-          key: ${{ runner.os }}-python-${{ hashFiles('backend/pyproject.toml', 'executor/pyproject.toml', 'executor_manager/pyproject.toml', 'shared/pyproject.toml') }}
+          key: ${{ runner.os }}-python-3.11-e2e-${{ hashFiles('backend/pyproject.toml', 'backend/uv.lock', 'shared/pyproject.toml', 'shared/uv.lock') }}
           restore-keys: |
-            ${{ runner.os }}-python-
+            ${{ runner.os }}-python-3.11-e2e-
+            ${{ runner.os }}-python-3.11-
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -75,6 +75,15 @@ jobs:
           node-version: "20"
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
+
+      - name: Cache frontend node_modules
+        id: frontend-node-modules-cache
+        uses: actions/cache@v4
+        with:
+          path: frontend/node_modules
+          key: ${{ runner.os }}-node-20-frontend-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-20-frontend-
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -86,6 +95,7 @@ jobs:
 
       # Install dependencies in parallel
       - name: Install shared module
+        if: steps.python-cache.outputs.cache-hit != 'true'
         working-directory: ./shared
         run: |
           uv venv --allow-existing
@@ -93,30 +103,15 @@ jobs:
           uv pip install -e .
 
       - name: Install backend dependencies
+        if: steps.python-cache.outputs.cache-hit != 'true'
         working-directory: ./backend
         run: |
           uv sync
           source .venv/bin/activate
           uv pip install -e ../shared
 
-      - name: Install executor manager dependencies
-        working-directory: ./executor_manager
-        run: |
-          uv sync
-          source .venv/bin/activate
-          uv pip install -e ../shared
-
-      - name: Install executor dependencies
-        working-directory: ./executor
-        run: |
-          uv sync
-          source .venv/bin/activate
-          uv pip install -e ../shared
-
-      - name: Install Claude Code CLI
-        run: npm install -g @anthropic-ai/claude-code@2.1.142
-
       - name: Install frontend dependencies
+        if: steps.frontend-node-modules-cache.outputs.cache-hit != 'true'
         working-directory: ./frontend
         run: npm ci
 
@@ -138,6 +133,307 @@ jobs:
             ${{ runner.os }}-nextjs-e2e-
 
       # Cache Playwright browsers
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('frontend/package-lock.json') }}
+
+      - name: Install Playwright browsers
+        working-directory: ./frontend
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Install Playwright dependencies (cached)
+        working-directory: ./frontend
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      - name: Run database migrations
+        working-directory: ./backend
+        env:
+          DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
+        run: |
+          source .venv/bin/activate
+          alembic upgrade head
+
+      - name: Start backend server
+        working-directory: ./backend
+        env:
+          DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
+          REDIS_URL: redis://localhost:6379/0
+          EXECUTOR_MANAGER_URL: http://localhost:8001
+          SECRET_KEY: test-secret-key-for-ci-testing
+          ALGORITHM: HS256
+          ENVIRONMENT: development
+          DB_AUTO_MIGRATE: "false"
+          INIT_DATA_ENABLED: "true"
+        run: |
+          source .venv/bin/activate
+          nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > backend.log 2>&1 &
+          echo $! > backend.pid
+
+      - name: Start Chat Shell server
+        working-directory: ./backend
+        env:
+          CHAT_SHELL_MODE: http
+          CHAT_SHELL_STORAGE_TYPE: remote
+          CHAT_SHELL_REMOTE_STORAGE_URL: http://localhost:8000/api/internal
+          CHAT_SHELL_REMOTE_STORAGE_TOKEN: ""
+          EXECUTOR_MANAGER_URL: http://localhost:8001
+        run: |
+          source .venv/bin/activate
+          nohup python -m uvicorn chat_shell.main:app --host 0.0.0.0 --port 8100 > chat_shell.log 2>&1 &
+          echo $! > chat_shell.pid
+
+      - name: Start frontend dev server
+        working-directory: ./frontend
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+          NEXT_TELEMETRY_DISABLED: 1
+          RUNTIME_INTERNAL_API_URL: http://localhost:8000
+          RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
+        run: |
+          nohup npm run dev > next-dev.log 2>&1 &
+          echo $! > next-dev.pid
+
+      - name: Start Mock Model Server
+        working-directory: ./frontend
+        run: |
+          npx tsx e2e/utils/mock-model-server.ts > mock-model-server.log 2>&1 &
+          echo $! > mock-server.pid
+
+      - name: Wait for services
+        run: |
+          wait_for_url() {
+            local url="$1"
+            for i in {1..120}; do
+              if curl -sf "$url" >/dev/null; then
+                return 0
+              fi
+              sleep 1
+            done
+            return 1
+          }
+
+          wait_for_url http://localhost:8000/api/docs \
+            && wait_for_url http://localhost:8100/health \
+            && wait_for_url http://localhost:3000 \
+            && wait_for_url http://localhost:9999/health \
+            || (cat backend/backend.log && cat backend/chat_shell.log && cat frontend/mock-model-server.log && exit 1)
+
+      - name: Verify backend is running
+        run: |
+          curl -f http://localhost:8000/api/docs > /dev/null 2>&1 || (cat backend/backend.log && exit 1)
+
+      - name: Verify Chat Shell is running
+        run: |
+          curl -f http://localhost:8100/health > /dev/null 2>&1 || (cat backend/chat_shell.log && exit 1)
+
+      - name: Run E2E tests (Sharded)
+        working-directory: ./frontend
+        env:
+          E2E_BASE_URL: http://localhost:3000
+          E2E_API_URL: http://localhost:8000
+          MOCK_MODEL_SERVER_URL: http://localhost:9999
+          E2E_SHARD_INDEX: ${{ matrix.shardIndex }}
+          CI: true
+        run: |
+          npx playwright test --project=chromium --project=api \
+            --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
+
+      - name: Stop Mock Model Server
+        if: always()
+        working-directory: ./frontend
+        run: |
+          if [ -f mock-server.pid ]; then
+            kill $(cat mock-server.pid) 2>/dev/null || true
+            rm mock-server.pid
+          fi
+
+      - name: Stop frontend dev server
+        if: always()
+        working-directory: ./frontend
+        run: |
+          if [ -f next-dev.pid ]; then
+            kill $(cat next-dev.pid) 2>/dev/null || true
+            rm next-dev.pid
+          fi
+
+      - name: Stop Chat Shell server
+        if: always()
+        working-directory: ./backend
+        run: |
+          if [ -f chat_shell.pid ]; then
+            kill $(cat chat_shell.pid) 2>/dev/null || true
+            rm chat_shell.pid
+          fi
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: blob-report-${{ matrix.shardIndex }}
+          path: frontend/blob-report/
+          retention-days: 14
+
+      - name: Upload test traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces-${{ matrix.shardIndex }}
+          path: frontend/test-results/
+          retention-days: 7
+
+      - name: Upload backend logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-logs-${{ matrix.shardIndex }}
+          path: |
+            backend/backend.log
+            backend/chat_shell.log
+            frontend/next-dev.log
+            frontend/mock-model-server.log
+          retention-days: 7
+
+  executor-e2e-tests:
+    name: Executor E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: test123
+          MYSQL_DATABASE: wegent_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Cache Python packages
+        id: executor-python-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/uv
+            backend/.venv
+            executor/.venv
+            executor_manager/.venv
+            shared/.venv
+          key: ${{ runner.os }}-python-3.11-executor-e2e-${{ hashFiles('backend/pyproject.toml', 'backend/uv.lock', 'executor/pyproject.toml', 'executor/uv.lock', 'executor_manager/pyproject.toml', 'executor_manager/uv.lock', 'shared/pyproject.toml', 'shared/uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-python-3.11-executor-e2e-
+            ${{ runner.os }}-python-3.11-
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Cache frontend node_modules
+        id: frontend-node-modules-cache
+        uses: actions/cache@v4
+        with:
+          path: frontend/node_modules
+          key: ${{ runner.os }}-node-20-frontend-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-20-frontend-
+
+      - name: Configure npm global cache path
+        run: |
+          mkdir -p ~/.npm-global/bin
+          npm config set prefix ~/.npm-global
+          echo "$HOME/.npm-global/bin" >> "$GITHUB_PATH"
+
+      - name: Cache Claude Code CLI
+        id: claude-code-cli-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm-global
+          key: ${{ runner.os }}-node-20-claude-code-cli-2.1.142
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install shared module
+        if: steps.executor-python-cache.outputs.cache-hit != 'true'
+        working-directory: ./shared
+        run: |
+          uv venv --allow-existing
+          source .venv/bin/activate
+          uv pip install -e .
+
+      - name: Install backend dependencies
+        if: steps.executor-python-cache.outputs.cache-hit != 'true'
+        working-directory: ./backend
+        run: |
+          uv sync
+          source .venv/bin/activate
+          uv pip install -e ../shared
+
+      - name: Install executor manager dependencies
+        if: steps.executor-python-cache.outputs.cache-hit != 'true'
+        working-directory: ./executor_manager
+        run: |
+          uv sync
+          source .venv/bin/activate
+          uv pip install -e ../shared
+
+      - name: Install executor dependencies
+        if: steps.executor-python-cache.outputs.cache-hit != 'true'
+        working-directory: ./executor
+        run: |
+          uv sync
+          source .venv/bin/activate
+          uv pip install -e ../shared
+
+      - name: Install Claude Code CLI
+        if: steps.claude-code-cli-cache.outputs.cache-hit != 'true'
+        run: npm install -g @anthropic-ai/claude-code@2.1.142
+
+      - name: Install frontend dependencies
+        if: steps.frontend-node-modules-cache.outputs.cache-hit != 'true'
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: Cache Next.js build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ./frontend/.next/cache
+          key: ${{ runner.os }}-nextjs-e2e-${{ hashFiles('./frontend/package-lock.json') }}-${{ hashFiles('./frontend/src/**/*.[jt]s', './frontend/src/**/*.[jt]sx') }}
+          restore-keys: |
+            ${{ runner.os }}-nextjs-e2e-${{ hashFiles('./frontend/package-lock.json') }}-
+            ${{ runner.os }}-nextjs-e2e-
+
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         id: playwright-cache
@@ -205,20 +501,16 @@ jobs:
           nohup python -m uvicorn chat_shell.main:app --host 0.0.0.0 --port 8100 > chat_shell.log 2>&1 &
           echo $! > chat_shell.pid
 
-      - name: Build frontend
+      - name: Start frontend dev server
         working-directory: ./frontend
         env:
           NEXT_PUBLIC_API_URL: http://localhost:8000
           NEXT_TELEMETRY_DISABLED: 1
-        run: npm run build
-
-      - name: Start frontend server
-        working-directory: ./frontend
-        env:
           RUNTIME_INTERNAL_API_URL: http://localhost:8000
           RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
         run: |
-          npm start &
+          nohup npm run dev > next-dev.log 2>&1 &
+          echo $! > next-dev.pid
 
       - name: Start Mock Model Server
         working-directory: ./frontend
@@ -226,7 +518,7 @@ jobs:
           npx tsx e2e/utils/mock-model-server.ts > mock-model-server.log 2>&1 &
           echo $! > mock-server.pid
 
-      - name: Build ClaudeCode Executor Image
+      - name: Build ClaudeCode Source Executor Image
         run: |
           docker build \
             -t wegent/e2e-claudecode-executor:latest \
@@ -241,8 +533,8 @@ jobs:
           DEVICE_NAME: E2E ClaudeCode Device
           DEVICE_TYPE: local
           BIND_SHELL: claudecode
-          WEGENT_EXECUTOR_HOME: ${{ runner.temp }}/wegent-executor-${{ matrix.shardIndex }}
-          LOCAL_WORKSPACE_ROOT: ${{ runner.temp }}/wegent-workspace-${{ matrix.shardIndex }}
+          WEGENT_EXECUTOR_HOME: ${{ runner.temp }}/wegent-executor
+          LOCAL_WORKSPACE_ROOT: ${{ runner.temp }}/wegent-workspace
           LOCAL_HEARTBEAT_INTERVAL: "5"
           LOG_LEVEL: info
           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
@@ -293,7 +585,7 @@ jobs:
           EXECUTOR_MANAGER_CALLBACK_URL: http://localhost:8001/executor-manager/callback
           DOCKER_HOST_ADDR: localhost
           NETWORK: bridge
-          SERVICE_POOL: e2e-shard-${{ matrix.shardIndex }}
+          SERVICE_POOL: e2e-executor
           OTEL_ENABLED: "false"
         run: |
           source .venv/bin/activate
@@ -328,19 +620,18 @@ jobs:
         run: |
           curl -f http://localhost:8100/health > /dev/null 2>&1 || (cat backend/chat_shell.log && exit 1)
 
-      - name: Run E2E tests (Sharded)
+      - name: Run Executor E2E tests
         working-directory: ./frontend
         env:
           E2E_BASE_URL: http://localhost:3000
           E2E_API_URL: http://localhost:8000
+          E2E_USE_ISOLATED_USERS: "false"
           MOCK_MODEL_SERVER_URL: http://localhost:9999
           E2E_LOCAL_CLAUDE_MODEL_SERVER_URL: http://localhost:9999
           E2E_DEVICE_ID: e2e-claudecode-device
           E2E_SHARD_INDEX: ${{ matrix.shardIndex }}
           CI: true
-        run: |
-          npx playwright test --project=chromium --project=api \
-            --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
+        run: npx playwright test --project=executor-chromium
 
       - name: Stop Local ClaudeCode Executor
         if: always()
@@ -348,6 +639,15 @@ jobs:
           if [ -f executor/local-executor.pid ]; then
             kill $(cat executor/local-executor.pid) 2>/dev/null || true
             rm executor/local-executor.pid
+          fi
+
+      - name: Stop frontend dev server
+        if: always()
+        working-directory: ./frontend
+        run: |
+          if [ -f next-dev.pid ]; then
+            kill $(cat next-dev.pid) 2>/dev/null || true
+            rm next-dev.pid
           fi
 
       - name: Stop Executor Manager
@@ -382,39 +682,40 @@ jobs:
             rm chat_shell.pid
           fi
 
-      - name: Upload test results
+      - name: Upload executor test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: blob-report-${{ matrix.shardIndex }}
+          name: blob-report-executor
           path: frontend/blob-report/
           retention-days: 14
 
-      - name: Upload test traces
+      - name: Upload executor test traces
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-traces-${{ matrix.shardIndex }}
+          name: playwright-traces-executor
           path: frontend/test-results/
           retention-days: 7
 
-      - name: Upload backend logs
+      - name: Upload executor logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: backend-logs-${{ matrix.shardIndex }}
+          name: backend-logs-executor
           path: |
             backend/backend.log
             backend/chat_shell.log
+            frontend/next-dev.log
             frontend/mock-model-server.log
             executor/local-executor.log
             executor_manager/executor_manager.log
           retention-days: 7
 
-  # Merge test reports from all shards
+  # Merge test reports from all E2E jobs
   merge-reports:
     name: Merge Test Reports
-    needs: e2e-tests
+    needs: [e2e-tests, executor-e2e-tests]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -426,6 +727,15 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Cache frontend node_modules
+        id: frontend-node-modules-cache
+        uses: actions/cache@v4
+        with:
+          path: frontend/node_modules
+          key: ${{ runner.os }}-node-20-frontend-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-20-frontend-
+
       - name: Download all blob reports
         uses: actions/download-artifact@v4
         with:
@@ -434,6 +744,7 @@ jobs:
           merge-multiple: true
 
       - name: Install frontend dependencies
+        if: steps.frontend-node-modules-cache.outputs.cache-hit != 'true'
         working-directory: ./frontend
         run: npm ci
 
