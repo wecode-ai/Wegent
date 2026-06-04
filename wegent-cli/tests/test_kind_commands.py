@@ -74,6 +74,63 @@ def test_kind_get_named_resource_outputs_resource():
     client.get_kind.assert_called_once_with("team", "default", "agent")
 
 
+def test_kind_get_json_with_extra_argument_outputs_error_envelope():
+    client = MagicMock()
+
+    result = invoke_with_client(
+        ["kind", "get", "ghost", "name", "extra", "--json"],
+        client,
+    )
+
+    assert result.exit_code != 0
+    error_text = result.stderr or result.output
+    assert not error_text.startswith("Usage:")
+    payload = load_error_payload(result)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_arguments"
+    client.get_kind.assert_not_called()
+    client.list_kind.assert_not_called()
+
+
+def test_kind_get_json_with_unknown_option_outputs_error_envelope():
+    client = MagicMock()
+
+    result = invoke_with_client(["kind", "get", "--unknown", "--json"], client)
+
+    assert result.exit_code != 0
+    error_text = result.stderr or result.output
+    assert not error_text.startswith("Usage:")
+    payload = load_error_payload(result)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_arguments"
+    client.get_kind.assert_not_called()
+    client.list_kind.assert_not_called()
+
+
+def test_kind_unknown_subcommand_json_outputs_error_envelope():
+    client = MagicMock()
+
+    result = invoke_with_client(["kind", "nope", "--json"], client)
+
+    assert result.exit_code != 0
+    error_text = result.stderr or result.output
+    assert not error_text.startswith("Usage:")
+    payload = load_error_payload(result)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_arguments"
+
+
+def test_kind_unknown_subcommand_without_json_uses_click_error_text():
+    client = MagicMock()
+
+    result = invoke_with_client(["kind", "nope"], client)
+
+    assert result.exit_code != 0
+    error_text = result.stderr or result.output
+    assert error_text.startswith("Usage:")
+    assert "No such command" in error_text
+
+
 def test_kind_describe_is_alias_for_named_get():
     client = MagicMock()
     client.get_kind.return_value = {"kind": "Team", "metadata": {"name": "agent"}}
