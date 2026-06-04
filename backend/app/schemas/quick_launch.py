@@ -5,10 +5,12 @@
 from collections.abc import Sequence
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 MAX_QUICK_PHRASES = 6
 MAX_QUICK_PHRASE_LENGTH = 120
+MAX_INPUT_PRESETS = 6
+MAX_INPUT_PRESET_PROMPT_LENGTH = 2000
 
 
 def normalize_quick_phrases(
@@ -58,7 +60,113 @@ class QuickPhraseMixin(BaseModel):
         return phrases
 
 
-class QuickLaunchFunctionConfig(QuickPhraseMixin):
+def _preset_id_from_index(index: int) -> str:
+    return f"preset_{index + 1}"
+
+
+def input_presets_from_phrases(
+    phrases: Sequence[object] | None,
+) -> list["QuickLaunchInputPreset"]:
+    return [
+        QuickLaunchInputPreset(
+            id=_preset_id_from_index(index),
+            title=phrase,
+            prompt=phrase,
+        )
+        for index, phrase in enumerate(normalize_quick_phrases(phrases))
+    ]
+
+
+class QuickLaunchInputOptions(BaseModel):
+    enable_deep_thinking: Optional[bool] = None
+    enable_clarification: Optional[bool] = None
+    force_override: Optional[bool] = None
+    selected_skill_names: list[str] = Field(default_factory=list)
+
+    @field_validator("selected_skill_names", mode="before")
+    @classmethod
+    def validate_selected_skill_names(cls, value: object) -> list[str]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError("selected_skill_names must be a list")
+
+        names: list[str] = []
+        for index, item in enumerate(value):
+            if not isinstance(item, str):
+                raise ValueError(
+                    f"selected_skill_names[{index}] must be a string, got {item!r}"
+                )
+            trimmed = item.strip()
+            if trimmed and trimmed not in names:
+                names.append(trimmed)
+        return names
+
+
+class QuickLaunchInputPreset(BaseModel):
+    id: str = Field(..., min_length=1)
+    title: str = Field(..., min_length=1)
+    prompt: Optional[str] = None
+    options: QuickLaunchInputOptions = Field(default_factory=QuickLaunchInputOptions)
+
+    @field_validator("id", "title", mode="before")
+    @classmethod
+    def trim_required_text(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+    @field_validator("prompt", mode="before")
+    @classmethod
+    def normalize_prompt(cls, value: object) -> Optional[str]:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("prompt must be a string")
+        prompt = value.strip()
+        if len(prompt) > MAX_INPUT_PRESET_PROMPT_LENGTH:
+            raise ValueError(
+                f"input preset prompt must be at most "
+                f"{MAX_INPUT_PRESET_PROMPT_LENGTH} characters"
+            )
+        return prompt or None
+
+
+class InputPresetMixin(BaseModel):
+    input_presets: list[QuickLaunchInputPreset] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_quick_phrases_to_input_presets(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        if value.get("input_presets"):
+            return value
+        quick_phrases = value.get("quick_phrases")
+        if not quick_phrases:
+            return value
+
+        migrated = dict(value)
+        migrated["input_presets"] = [
+            preset.model_dump() for preset in input_presets_from_phrases(quick_phrases)
+        ]
+        return migrated
+
+    @field_validator("input_presets", mode="before")
+    @classmethod
+    def validate_input_presets(cls, value: object) -> list[object]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError("input_presets must be a list")
+        if len(value) > MAX_INPUT_PRESETS:
+            raise ValueError(
+                f"input_presets supports at most {MAX_INPUT_PRESETS} items"
+            )
+        return value
+
+
+class QuickLaunchFunctionConfig(InputPresetMixin):
     id: str = Field(..., min_length=1)
     title: str = Field(..., min_length=1)
     description: Optional[str] = None
@@ -73,7 +181,7 @@ class QuickLaunchFunctionResponse(QuickLaunchFunctionConfig):
     name: str
 
 
-class QuickLaunchFavoriteAgent(QuickPhraseMixin):
+class QuickLaunchFavoriteAgent(QuickPhraseMixin, InputPresetMixin):
     type: Literal["favorite_agent"] = "favorite_agent"
     id: int
     team_id: int

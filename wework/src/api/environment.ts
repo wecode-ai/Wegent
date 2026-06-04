@@ -16,6 +16,7 @@ const EMPTY_ENVIRONMENT_INFO: EnvironmentInfo = {
   executionTarget: 'local',
 }
 const DEFAULT_DIFF_BASE_REFS = ['main', 'origin/main', 'master', 'origin/master']
+const INVALID_BRANCH_CHARACTERS = new Set([' ', '~', '^', ':', '?', '*', '[', '\\', ']'])
 
 function outputAsString(output: DeviceCommandResponse['stdout']): string {
   return Array.isArray(output) ? output.join('\n') : output
@@ -29,6 +30,30 @@ function workspacePath(project: ProjectWithTasks): string | undefined {
 function executionDeviceId(project: ProjectWithTasks): string | undefined {
   const config = project.config
   return config?.execution?.deviceId || config?.device_id
+}
+
+function validateBranchName(branchName: string): void {
+  const components = branchName.split('/')
+  const invalidComponent = components.some(
+    component => !component || component.startsWith('.') || component.endsWith('.lock'),
+  )
+  const invalidCharacter = Array.from(branchName).some(character => {
+    const code = character.charCodeAt(0)
+    return code <= 31 || code === 127 || INVALID_BRANCH_CHARACTERS.has(character)
+  })
+
+  if (
+    branchName === '@' ||
+    branchName.startsWith('-') ||
+    branchName.endsWith('.') ||
+    branchName.includes('..') ||
+    branchName.includes('@{') ||
+    branchName.includes('//') ||
+    invalidCharacter ||
+    invalidComponent
+  ) {
+    throw new Error('Invalid branch name')
+  }
 }
 
 export function parseGitShortStat(value: string): Pick<EnvironmentInfo, 'additions' | 'deletions'> {
@@ -222,6 +247,71 @@ export async function commitProjectChanges(
   })
   await runGitCommand(api, deviceId, 'git_commit', path, {
     args: ['-m', trimmedMessage],
+    timeoutSeconds: 30,
+    maxOutputBytes: 8192,
+  })
+}
+
+export async function listProjectBranches(
+  api: DeviceCommandApi,
+  project: ProjectWithTasks | null,
+): Promise<string[]> {
+  if (!project) {
+    throw new Error('Project is required')
+  }
+
+  const { deviceId, path } = commandContext(project)
+  const output = await runGitCommand(api, deviceId, 'git_branch_list', path, {
+    timeoutSeconds: 15,
+    maxOutputBytes: 1024 * 64,
+  })
+
+  return output
+    .split('\n')
+    .map(branch => branch.trim())
+    .filter(Boolean)
+    .sort((left, right) => left.localeCompare(right))
+}
+
+export async function checkoutProjectBranch(
+  api: DeviceCommandApi,
+  project: ProjectWithTasks | null,
+  branchName: string,
+): Promise<void> {
+  const trimmedBranch = branchName.trim()
+  if (!trimmedBranch) {
+    throw new Error('Branch name is required')
+  }
+  validateBranchName(trimmedBranch)
+  if (!project) {
+    throw new Error('Project is required')
+  }
+
+  const { deviceId, path } = commandContext(project)
+  await runGitCommand(api, deviceId, 'git_checkout', path, {
+    args: [trimmedBranch],
+    timeoutSeconds: 30,
+    maxOutputBytes: 8192,
+  })
+}
+
+export async function createAndCheckoutProjectBranch(
+  api: DeviceCommandApi,
+  project: ProjectWithTasks | null,
+  branchName: string,
+): Promise<void> {
+  const trimmedBranch = branchName.trim()
+  if (!trimmedBranch) {
+    throw new Error('Branch name is required')
+  }
+  validateBranchName(trimmedBranch)
+  if (!project) {
+    throw new Error('Project is required')
+  }
+
+  const { deviceId, path } = commandContext(project)
+  await runGitCommand(api, deviceId, 'git_checkout_new', path, {
+    args: [trimmedBranch],
     timeoutSeconds: 30,
     maxOutputBytes: 8192,
   })

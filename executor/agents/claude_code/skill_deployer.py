@@ -144,6 +144,7 @@ def download_and_deploy_skills(
             auth_token=auth_token,
             team_namespace=team_namespace,
             skills_dir=skills_dir,
+            task_id=task_data.task_id or None,
         )
 
         # Get deployment options from strategy

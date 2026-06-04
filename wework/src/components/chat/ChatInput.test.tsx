@@ -451,7 +451,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('local-skill-chip-env-context')).toHaveTextContent('Env Context')
   })
 
-  test('does not delete a selected local skill mention as one unit', async () => {
+  test('deletes local skill mention space before deleting the mention with Backspace', async () => {
     const skill: LocalDeviceSkill = {
       name: 'env-context',
       description: 'Use when environment facts are needed',
@@ -478,9 +478,14 @@ describe('ChatInput', () => {
       '[$env-context](skill:///Users/crystal/.codex/skills/env-context/SKILL.md)',
     )
     expect(screen.getByTestId('local-skill-chip-env-context')).toBeInTheDocument()
+
+    await userEvent.keyboard('{Backspace}')
+
+    expect(screen.getByTestId('chat-message-input')).toHaveValue('')
+    expect(screen.queryByTestId('local-skill-chip-env-context')).not.toBeInTheDocument()
   })
 
-  test('converts a selected local skill mention to visible text before deleting inside it', async () => {
+  test('deletes a selected local skill mention as one unit with Delete', async () => {
     const skill: LocalDeviceSkill = {
       name: 'brainstorming',
       description: 'Use before creative work',
@@ -505,9 +510,10 @@ describe('ChatInput', () => {
       expect(input).toHaveFocus()
     })
 
-    await userEvent.keyboard('{Backspace}{Backspace}')
+    input.setSelectionRange(0, 0)
+    fireEvent.keyDown(input, { key: 'Delete' })
 
-    expect(input).toHaveValue('Superpowers: Brainstormin')
+    expect(input).toHaveValue('')
     expect(screen.queryByText(/\[\$brainstorming]/)).not.toBeInTheDocument()
     expect(screen.queryByTestId('local-skill-chip-brainstorming')).not.toBeInTheDocument()
   })
@@ -859,7 +865,9 @@ describe('ChatInput', () => {
           region: 'overseas',
           modelLabel: 'gpt-5.5',
           sortOrder: 10,
-          controls: ['speed'],
+          controls: {
+            speed: true,
+          },
         },
       },
     }
@@ -874,7 +882,7 @@ describe('ChatInput', () => {
         projectChat={projectChatControls({
           models: [model],
           selectedModel: model,
-          selectedModelOptions: { reasoning: 'high', speed: 'standard' },
+          selectedModelOptions: { reasoning: 'high', speed: 'fast' },
           setSelectedModel,
         })}
       />,
@@ -886,19 +894,47 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-selector-submenu')).toBeInTheDocument()
     expect(screen.getByTestId('model-family-gpt')).toBeInTheDocument()
     expect(screen.getByTestId('model-control-reasoning-high')).toBeInTheDocument()
-    expect(screen.getByTestId('model-control-speed-fast')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-trigger-speed')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-control-speed-fast')).not.toBeInTheDocument()
     expect(screen.queryByTestId('model-option-default')).not.toBeInTheDocument()
-    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('海外:gpt-5.5 High')
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent(
+      '海外:gpt-5.5 High ⚡',
+    )
     const modelOption = screen.getByTestId('model-option-overseas-gpt-5.5')
-    expect(modelOption).toHaveTextContent('海外:gpt-5.5')
+    expect(modelOption).toHaveTextContent('海外:gpt-5.5 ⚡')
+    expect(modelOption).not.toHaveTextContent('快速')
     expect(modelOption).not.toHaveTextContent('High')
     expect(modelOption.querySelectorAll('span')).toHaveLength(1)
     expect(
       screen
         .getByTestId('model-control-reasoning-high')
         .compareDocumentPosition(screen.getByTestId('model-family-gpt')) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
+      Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy()
+
+    await userEvent.hover(screen.getByTestId('model-control-trigger-speed'))
+
+    expect(screen.getByTestId('model-control-submenu-speed')).toBeInTheDocument()
+    expect(screen.getByTestId('model-family-gpt')).not.toHaveClass('bg-muted')
+    expect(screen.getByTestId('model-control-trigger-speed')).toHaveClass('bg-muted')
+    expect(screen.getByTestId('model-control-speed-standard')).toHaveTextContent(
+      '标准',
+    )
+    expect(screen.getByTestId('model-control-speed-standard')).toHaveTextContent(
+      '默认速度',
+    )
+    expect(screen.getByTestId('model-control-speed-fast')).toHaveTextContent('⚡ 快速')
+    expect(screen.getByTestId('model-control-speed-fast')).toHaveTextContent(
+      '1.5 倍速度，消耗增加',
+    )
+
+    await userEvent.hover(screen.getByTestId('model-family-gpt'))
+    expect(screen.getByTestId('model-family-gpt')).toHaveClass('bg-muted')
+    expect(screen.getByTestId('model-control-trigger-speed')).not.toHaveClass('bg-muted')
+
+    await userEvent.hover(screen.getByTestId('model-control-reasoning-high'))
+    expect(screen.getByTestId('model-family-gpt')).not.toHaveClass('bg-muted')
+    expect(screen.getByTestId('model-control-trigger-speed')).not.toHaveClass('bg-muted')
 
     await userEvent.click(screen.getByTestId('model-option-overseas-gpt-5.5'))
 
@@ -1150,7 +1186,9 @@ describe('ChatInput', () => {
           region: 'overseas',
           modelLabel: 'gpt-5.5',
           sortOrder: 20,
-          controls: ['speed'],
+          controls: {
+            speed: true,
+          },
         },
       },
     }

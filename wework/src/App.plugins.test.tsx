@@ -70,8 +70,12 @@ const workbenchValue: WorkbenchContextValue = {
   getDeviceHomeDirectory: vi.fn(),
   getProjectWorkspaceRoot: vi.fn(),
   listDeviceDirectories: vi.fn(),
+  createDeviceDirectory: vi.fn(),
   loadEnvironmentInfo: vi.fn(),
   commitEnvironmentChanges: vi.fn(),
+  listEnvironmentBranches: vi.fn(),
+  checkoutEnvironmentBranch: vi.fn(),
+  createEnvironmentBranch: vi.fn(),
   setInput: vi.fn(),
   sendCurrentInput: vi.fn(),
 }

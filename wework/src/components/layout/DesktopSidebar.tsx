@@ -28,9 +28,12 @@ import type {
   ProjectTask,
   ProjectWithTasks,
   Task,
+  TaskDetail,
+  TaskListResponse,
   User as UserProfile,
 } from '@/types/api'
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
+import { DesktopSearchDialog } from './DesktopSearchDialog'
 import { useResizableSidebar } from './useResizableSidebar'
 
 interface DesktopSidebarProps {
@@ -49,6 +52,8 @@ interface DesktopSidebarProps {
   onSelectProject: (projectId: number) => void
   onStartNewProjectChat: (projectId: number) => void
   onOpenTask: (taskId: number, projectId?: number) => void
+  onSearchTasks?: (query: string) => Promise<TaskListResponse>
+  onSearchTaskDetail?: (taskId: number) => Promise<TaskDetail>
   onRememberExecutionDevice?: (deviceId: string) => void
   onOpenPlugins: () => void
   onRefreshDevices?: () => Promise<void>
@@ -63,6 +68,7 @@ interface DesktopSidebarProps {
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onGetProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
+  onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
   onOpenSettings: () => void
   onLogout: () => void
 }
@@ -496,6 +502,8 @@ export function DesktopSidebar({
   onSelectProject,
   onStartNewProjectChat,
   onOpenTask,
+  onSearchTasks,
+  onSearchTaskDetail,
   onRememberExecutionDevice,
   onOpenPlugins,
   onRefreshDevices,
@@ -510,6 +518,7 @@ export function DesktopSidebar({
   onGetDeviceHomeDirectory,
   onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
+  onCreateDeviceDirectory,
   onOpenSettings,
   onLogout,
 }: DesktopSidebarProps) {
@@ -522,12 +531,28 @@ export function DesktopSidebar({
   const [renamingTask, setRenamingTask] = useState<{ id: number; title: string } | null>(null)
   const [projectsExpanded, setProjectsExpanded] = useState(true)
   const [chatsExpanded, setChatsExpanded] = useState(true)
+  const [searchDialogOpen, setSearchDialogOpen] = useState(false)
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<number>>(new Set())
   const [expandedTaskListIds, setExpandedTaskListIds] = useState<Set<number>>(new Set())
   const sortedRecentTasks = useMemo(
     () => sortTasksByTime(recentTasks).filter(task => !task.project_id),
     [recentTasks]
   )
+  const currentProjectWithTask = useMemo(
+    () =>
+      currentTaskId
+        ? projects.find(project =>
+            project.tasks?.some(task => task.task_id === currentTaskId),
+          )
+        : undefined,
+    [currentTaskId, projects],
+  )
+  const currentProjectTaskIndex = useMemo(() => {
+    if (!currentProjectWithTask || !currentTaskId) return -1
+    return sortProjectTasks(currentProjectWithTask.tasks).findIndex(
+      task => task.task_id === currentTaskId,
+    )
+  }, [currentProjectWithTask, currentTaskId])
 
   const handleToggleProject = (projectId: number) => {
     const shouldExpand = !expandedProjectIds.has(projectId)
@@ -585,6 +610,54 @@ export function DesktopSidebar({
     }
   }, [settingsMenuOpen])
 
+  useEffect(() => {
+    if (!currentTaskId) return
+
+    const timer = window.setTimeout(() => {
+      if (currentProjectWithTask) {
+        setProjectsExpanded(true)
+        setExpandedProjectIds(previous => {
+          if (previous.has(currentProjectWithTask.id)) return previous
+          return new Set([...previous, currentProjectWithTask.id])
+        })
+        if (currentProjectTaskIndex >= INITIAL_PROJECT_CHAT_COUNT) {
+          setExpandedTaskListIds(previous => {
+            if (previous.has(currentProjectWithTask.id)) return previous
+            return new Set([...previous, currentProjectWithTask.id])
+          })
+        }
+        return
+      }
+
+      if (sortedRecentTasks.some(task => task.id === currentTaskId)) {
+        setChatsExpanded(true)
+      }
+    }, 0)
+
+    return () => window.clearTimeout(timer)
+  }, [
+    currentProjectTaskIndex,
+    currentProjectWithTask,
+    currentTaskId,
+    sortedRecentTasks,
+  ])
+
+  useEffect(() => {
+    if (!currentTaskId) return
+
+    const taskRow =
+      document.querySelector(`[data-testid="project-chat-row-${currentTaskId}"]`) ??
+      document.querySelector(`[data-testid="history-task-row-${currentTaskId}"]`)
+
+    taskRow?.scrollIntoView({ block: 'nearest' })
+  }, [
+    chatsExpanded,
+    currentTaskId,
+    expandedProjectIds,
+    expandedTaskListIds,
+    projectsExpanded,
+  ])
+
   return (
     <aside
       className="relative flex shrink-0 flex-col border-r border-border/70 bg-[rgb(var(--color-sidebar))] px-4 py-4 shadow-[inset_-1px_0_0_rgb(var(--color-border))] backdrop-blur-xl backdrop-saturate-150"
@@ -613,7 +686,7 @@ export function DesktopSidebar({
           icon={Search}
           label={t('workbench.search', '搜索')}
           testId="search-button"
-          onClick={() => {}}
+          onClick={() => setSearchDialogOpen(true)}
         />
         <SidebarButton
           icon={Sparkles}
@@ -785,6 +858,16 @@ export function DesktopSidebar({
         aria-label={t('workbench.resize_sidebar', '调整侧边栏宽度')}
       />
 
+      <DesktopSearchDialog
+        open={searchDialogOpen}
+        projects={projects}
+        recentTasks={recentTasks}
+        onOpenChange={setSearchDialogOpen}
+        onOpenTask={onOpenTask}
+        onSearchTasks={onSearchTasks}
+        onSearchTaskDetail={onSearchTaskDetail}
+      />
+
       <ProjectCreateDialog
         open={projectCreateMode !== null}
         mode={projectCreateMode ?? 'scratch'}
@@ -796,6 +879,7 @@ export function DesktopSidebar({
         onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
         onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
         onListDeviceDirectories={onListDeviceDirectories}
+        onCreateDeviceDirectory={onCreateDeviceDirectory}
       />
       <TextInputDialog
         open={renamingProject !== null}

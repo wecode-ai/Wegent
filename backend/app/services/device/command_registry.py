@@ -222,8 +222,14 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
         command="ls -a -p",
         post_processor="directory_list",
     ),
+    "mkdir_p": LocalDeviceCommandDefinition(command="mkdir -p"),
     "git_clone": LocalDeviceCommandDefinition(command="git clone"),
     "git_branch": LocalDeviceCommandDefinition(command="git branch --show-current"),
+    "git_branch_list": LocalDeviceCommandDefinition(
+        command="git branch --format=%(refname:short)"
+    ),
+    "git_checkout": LocalDeviceCommandDefinition(command="git checkout"),
+    "git_checkout_new": LocalDeviceCommandDefinition(command="git checkout -b"),
     "git_diff_shortstat": LocalDeviceCommandDefinition(command="git diff --shortstat"),
     "git_branch_diff_shortstat": LocalDeviceCommandDefinition(
         command=GIT_BRANCH_DIFF_SHORTSTAT_COMMAND

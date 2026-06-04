@@ -50,6 +50,17 @@ describe('REST adapters', () => {
     expect(client.get).toHaveBeenCalledWith('/tasks/8?client_origin=wework')
   })
 
+  test('searches conversation tasks in the wework client origin', async () => {
+    const client = mockClient()
+    vi.mocked(client.get).mockResolvedValueOnce({ total: 0, items: [] })
+
+    await createTaskApi(client).searchTasks('胡云鹏', { limit: 30 })
+
+    expect(client.get).toHaveBeenCalledWith(
+      '/tasks/wework/conversation-search?keyword=%E8%83%A1%E4%BA%91%E9%B9%8F&page=1&limit=30',
+    )
+  })
+
   test('picks default team for wework first, then code and chat', async () => {
     const client = mockClient()
     vi.mocked(client.get).mockResolvedValueOnce({
@@ -249,6 +260,52 @@ describe('REST adapters', () => {
       2,
       '/devices/device-1/commands',
       expect.objectContaining({ command_key: 'project_workspace_root' }),
+    )
+  })
+
+  test('creates a directory through the device command API', async () => {
+    const client = mockClient()
+    vi.mocked(client.post).mockResolvedValueOnce({
+      success: true,
+      stdout: '',
+      stderr: '',
+    })
+
+    const api = createDeviceApi(client)
+
+    await expect(api.createDirectory('device-1', '  /home/ubuntu/new-app  ')).resolves.toBeUndefined()
+
+    expect(client.post).toHaveBeenCalledWith(
+      '/devices/device-1/commands',
+      expect.objectContaining({
+        command_key: 'mkdir_p',
+        args: ['/home/ubuntu/new-app'],
+      }),
+    )
+  })
+
+  test('rejects blank directory paths before calling the device command API', async () => {
+    const client = mockClient()
+    const api = createDeviceApi(client)
+
+    await expect(api.createDirectory('device-1', '   ')).rejects.toThrow(
+      'Directory path is required',
+    )
+    expect(client.post).not.toHaveBeenCalled()
+  })
+
+  test('throws backend command errors when directory creation fails', async () => {
+    const client = mockClient()
+    vi.mocked(client.post).mockResolvedValueOnce({
+      success: false,
+      stdout: '',
+      stderr: 'mkdir failed',
+    })
+
+    const api = createDeviceApi(client)
+
+    await expect(api.createDirectory('device-1', '/home/ubuntu/new-app')).rejects.toThrow(
+      'mkdir failed',
     )
   })
 

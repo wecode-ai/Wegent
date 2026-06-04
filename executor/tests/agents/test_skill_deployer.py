@@ -4,9 +4,12 @@
 
 """Tests for skill deployment resolution strategy."""
 
+from types import SimpleNamespace
+
 from executor.agents.claude_code.skill_deployer import (
     build_skill_emphasis_prompt,
     collect_skill_names_for_deployment,
+    download_and_deploy_skills,
     resolve_skill_download_map,
 )
 from shared.models.execution import ExecutionRequest
@@ -99,3 +102,61 @@ def test_coordinate_mode_collects_member_bot_skills_for_deployment():
         "request-skill",
         "preload-skill",
     }
+
+
+def test_download_and_deploy_skills_passes_task_id_for_shared_skill_auth(
+    monkeypatch,
+):
+    captured = {}
+
+    class FakeSkillDownloader:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def download_and_deploy(self, **kwargs):
+            captured["download_options"] = kwargs
+            return SimpleNamespace(
+                success_count=1,
+                total_count=1,
+                skills_dir="/tmp/skills",
+            )
+
+    class FakeModeStrategy:
+        def get_skills_directory(self, config_dir=None):
+            return "/tmp/skills"
+
+        def get_skills_deployment_options(self):
+            return {"clear_cache": True, "skip_existing": False}
+
+    monkeypatch.setattr(
+        "executor.services.api_client.SkillDownloader",
+        FakeSkillDownloader,
+    )
+
+    task_data = ExecutionRequest(
+        task_id=5258563,
+        auth_token="token",
+        team_namespace="default",
+        skill_refs={
+            "private-skill": {
+                "skill_id": 251069,
+                "namespace": "default",
+                "is_public": False,
+            }
+        },
+    )
+
+    download_and_deploy_skills(
+        bot_config={"skills": ["private-skill"]},
+        task_data=task_data,
+        mode_strategy=FakeModeStrategy(),
+    )
+
+    assert captured["task_id"] == 5258563
+    assert captured["auth_token"] == "token"
+    assert captured["team_namespace"] == "default"
+    assert captured["skills_dir"] == "/tmp/skills"
+    assert (
+        captured["download_options"]["resolved_skill_map"]["private-skill"]["skill_id"]
+        == 251069
+    )

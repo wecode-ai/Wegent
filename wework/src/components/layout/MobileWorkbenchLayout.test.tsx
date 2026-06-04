@@ -147,7 +147,9 @@ describe('MobileWorkbenchLayout', () => {
           region: 'overseas',
           modelLabel: 'gpt-5.5',
           sortOrder: 10,
-          controls: ['speed'],
+          controls: {
+            speed: true,
+          },
         },
       },
     }

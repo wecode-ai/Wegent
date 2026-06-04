@@ -131,6 +131,26 @@ export function createDeviceApi(client: HttpClient) {
       return getSkillArrayOutput(response)
     },
 
+    async createDirectory(deviceId: string, path: string): Promise<void> {
+      const normalizedPath = path.trim()
+      if (!normalizedPath) {
+        throw new Error('Directory path is required')
+      }
+
+      const response = await client.post<DeviceCommandResponse>(
+        `/devices/${encodeURIComponent(deviceId)}/commands`,
+        {
+          command_key: 'mkdir_p',
+          args: [normalizedPath],
+          timeout_seconds: 15,
+          max_output_bytes: 4096,
+        },
+      )
+      if (!response.success) {
+        throw new Error(response.error || response.stderr || 'Failed to create directory')
+      }
+    },
+
     executeCommand(
       deviceId: string,
       data: {

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
@@ -46,6 +46,7 @@ describe('ProjectCreateDialog', () => {
           onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
           onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
           onListDeviceDirectories={vi.fn().mockResolvedValue([])}
+          onCreateDeviceDirectory={vi.fn()}
         />
       )
     }
@@ -77,11 +78,142 @@ describe('ProjectCreateDialog', () => {
         onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
         onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
         onListDeviceDirectories={vi.fn().mockResolvedValue([])}
+        onCreateDeviceDirectory={vi.fn()}
       />,
     )
 
     fireEvent.keyDown(document, { key: 'Escape' })
 
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  test('keeps the dialog open and shows an error when project creation fails', async () => {
+    const onClose = vi.fn()
+    const onCreateProject = vi.fn().mockRejectedValue(new Error('create failed'))
+
+    render(
+      <ProjectCreateDialog
+        open
+        mode="scratch"
+        devices={devices}
+        preferredDeviceId="local-device"
+        onClose={onClose}
+        onCreateProject={onCreateProject}
+        onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
+        onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
+        onListDeviceDirectories={vi.fn().mockResolvedValue([])}
+        onCreateDeviceDirectory={vi.fn()}
+      />,
+    )
+
+    await userEvent.type(screen.getByTestId('project-name-input'), 'demo')
+    await userEvent.click(screen.getByTestId('create-project-button'))
+
+    await waitFor(() => expect(screen.getByTestId('project-create-error')).toHaveTextContent('create failed'))
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  test('filters parent directory entries when the path is typed partially', async () => {
+    const onListDeviceDirectories = vi.fn((_: string, path: string) =>
+      Promise.resolve(path === '/home/user/repo' ? ['src'] : ['Desktop', 'Downloads', 'repo']),
+    )
+
+    render(
+      <ProjectCreateDialog
+        open
+        mode="existing"
+        devices={devices}
+        preferredDeviceId="local-device"
+        onClose={vi.fn()}
+        onCreateProject={vi.fn()}
+        onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
+        onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
+        onListDeviceDirectories={onListDeviceDirectories}
+        onCreateDeviceDirectory={vi.fn()}
+      />,
+    )
+
+    const pathInput = await screen.findByTestId('project-directory-path-input')
+    await waitFor(() => expect(pathInput).toHaveValue('/home/user'))
+    expect(await screen.findByText('repo')).toBeInTheDocument()
+
+    await userEvent.clear(pathInput)
+    await userEvent.type(pathInput, '/home/user/D')
+
+    await waitFor(() => expect(screen.getByText('Desktop')).toBeInTheDocument())
+    expect(screen.getByText('Downloads')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('repo')).not.toBeInTheDocument())
+    expect(onListDeviceDirectories).not.toHaveBeenCalledWith('local-device', '/home/user/D')
+  })
+
+  test('opens the only fuzzy path match when Enter is pressed', async () => {
+    const onListDeviceDirectories = vi.fn((_: string, path: string) =>
+      Promise.resolve(path === '/home/user/repo' ? ['src'] : ['repo']),
+    )
+
+    render(
+      <ProjectCreateDialog
+        open
+        mode="existing"
+        devices={devices}
+        preferredDeviceId="local-device"
+        onClose={vi.fn()}
+        onCreateProject={vi.fn()}
+        onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
+        onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
+        onListDeviceDirectories={onListDeviceDirectories}
+        onCreateDeviceDirectory={vi.fn()}
+      />,
+    )
+
+    const pathInput = await screen.findByTestId('project-directory-path-input')
+    await waitFor(() => expect(pathInput).toHaveValue('/home/user'))
+
+    await userEvent.clear(pathInput)
+    await userEvent.type(pathInput, '/home/user/re{Enter}')
+
+    await waitFor(() => expect(pathInput).toHaveValue('/home/user/repo'))
+    await waitFor(() =>
+      expect(onListDeviceDirectories).toHaveBeenCalledWith('local-device', '/home/user/repo'),
+    )
+    expect(await screen.findByText('src')).toBeInTheDocument()
+  })
+
+  test('creates a folder and refreshes into the new directory', async () => {
+    const onCreateDeviceDirectory = vi.fn().mockResolvedValue(undefined)
+    const onListDeviceDirectories = vi.fn((_: string, path: string) =>
+      Promise.resolve(path === '/home/user/new-app' ? ['src'] : []),
+    )
+
+    render(
+      <ProjectCreateDialog
+        open
+        mode="existing"
+        devices={devices}
+        preferredDeviceId="local-device"
+        onClose={vi.fn()}
+        onCreateProject={vi.fn()}
+        onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
+        onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
+        onListDeviceDirectories={onListDeviceDirectories}
+        onCreateDeviceDirectory={onCreateDeviceDirectory}
+      />,
+    )
+
+    const pathInput = await screen.findByTestId('project-directory-path-input')
+    await waitFor(() => expect(pathInput).toHaveValue('/home/user'))
+
+    await userEvent.click(screen.getByTestId('open-create-folder-button'))
+    await userEvent.type(screen.getByTestId('create-folder-name-input'), 'new-app')
+    await userEvent.click(screen.getByTestId('confirm-create-folder-button'))
+
+    await waitFor(() =>
+      expect(onCreateDeviceDirectory).toHaveBeenCalledWith('local-device', '/home/user/new-app'),
+    )
+    await waitFor(() =>
+      expect(onListDeviceDirectories).toHaveBeenCalledWith('local-device', '/home/user/new-app'),
+    )
+    expect(pathInput).toHaveValue('/home/user/new-app')
+    expect(await screen.findByText('src')).toBeInTheDocument()
   })
 })

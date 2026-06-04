@@ -6,7 +6,13 @@ import type {
   WorkbenchState,
 } from '@/types/workbench'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
-import type { ArchivedTaskListResponse, CreateProjectRequest, ProjectWithTasks } from '@/types/api'
+import type {
+  ArchivedTaskListResponse,
+  CreateProjectRequest,
+  ProjectWithTasks,
+  TaskDetail,
+  TaskListResponse,
+} from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import { DesktopSidebar } from './DesktopSidebar'
 import { DesktopWorkbenchMain } from './DesktopWorkbenchMain'
@@ -27,6 +33,8 @@ interface DesktopWorkbenchLayoutProps {
   onSelectProject: (projectId: number | null) => void
   onStartNewProjectChat: (projectId: number) => void
   onOpenTask: (taskId: number, projectId?: number) => void
+  onSearchTasks?: (query: string) => Promise<TaskListResponse>
+  onSearchTaskDetail?: (taskId: number) => Promise<TaskDetail>
   onRememberExecutionDevice?: (deviceId: string) => void
   onRefreshDevices?: () => Promise<void>
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
@@ -44,10 +52,20 @@ interface DesktopWorkbenchLayoutProps {
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onGetProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
+  onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
   onLoadEnvironmentInfo: (project: ProjectWithTasks | null) => Promise<EnvironmentInfo>
   onCommitEnvironmentChanges: (
     project: ProjectWithTasks | null,
     message: string,
+  ) => Promise<void>
+  onListEnvironmentBranches: (project: ProjectWithTasks | null) => Promise<string[]>
+  onCheckoutEnvironmentBranch: (
+    project: ProjectWithTasks | null,
+    branchName: string,
+  ) => Promise<void>
+  onCreateEnvironmentBranch: (
+    project: ProjectWithTasks | null,
+    branchName: string,
   ) => Promise<void>
   onInputChange: (value: string) => void
   onSend: () => void
@@ -75,6 +93,8 @@ export function DesktopWorkbenchLayout({
   onSelectProject,
   onStartNewProjectChat,
   onOpenTask,
+  onSearchTasks,
+  onSearchTaskDetail,
   onRememberExecutionDevice,
   onRefreshDevices,
   onCreateProject,
@@ -92,8 +112,12 @@ export function DesktopWorkbenchLayout({
   onGetDeviceHomeDirectory,
   onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
+  onCreateDeviceDirectory,
   onLoadEnvironmentInfo,
   onCommitEnvironmentChanges,
+  onListEnvironmentBranches,
+  onCheckoutEnvironmentBranch,
+  onCreateEnvironmentBranch,
   onInputChange,
   onSend,
   isResponseStreaming = false,
@@ -169,6 +193,16 @@ export function DesktopWorkbenchLayout({
     await refreshEnvironmentInfo()
   }
 
+  async function handleCheckoutEnvironmentBranch(branchName: string) {
+    await onCheckoutEnvironmentBranch(environmentProject, branchName)
+    await refreshEnvironmentInfo()
+  }
+
+  async function handleCreateEnvironmentBranch(branchName: string) {
+    await onCreateEnvironmentBranch(environmentProject, branchName)
+    await refreshEnvironmentInfo()
+  }
+
   return (
     <div className="flex h-screen overflow-hidden bg-background text-text-primary">
       {!settingsOpen && !sidebarCollapsed && (
@@ -191,6 +225,8 @@ export function DesktopWorkbenchLayout({
           onSelectProject={onSelectProject}
           onStartNewProjectChat={onStartNewProjectChat}
           onOpenTask={onOpenTask}
+          onSearchTasks={onSearchTasks}
+          onSearchTaskDetail={onSearchTaskDetail}
           onRememberExecutionDevice={onRememberExecutionDevice}
           onOpenPlugins={onOpenPlugins}
           onRefreshDevices={onRefreshDevices}
@@ -205,6 +241,7 @@ export function DesktopWorkbenchLayout({
           onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
           onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
           onListDeviceDirectories={onListDeviceDirectories}
+          onCreateDeviceDirectory={onCreateDeviceDirectory}
           onOpenSettings={() => setSettingsOpen(true)}
           onLogout={onLogout}
         />
@@ -234,6 +271,9 @@ export function DesktopWorkbenchLayout({
           environmentInfo={environmentInfo}
           onRefreshEnvironmentInfo={refreshEnvironmentInfo}
           onCommitEnvironmentChanges={handleCommitEnvironmentChanges}
+          onListEnvironmentBranches={() => onListEnvironmentBranches(environmentProject)}
+          onCheckoutEnvironmentBranch={handleCheckoutEnvironmentBranch}
+          onCreateEnvironmentBranch={handleCreateEnvironmentBranch}
           onExpandSidebar={() => setSidebarCollapsed(false)}
           onInputChange={onInputChange}
           onSend={onSend}

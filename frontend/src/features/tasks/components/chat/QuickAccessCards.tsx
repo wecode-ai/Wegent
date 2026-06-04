@@ -22,7 +22,9 @@ import {
   type SelectableTeam,
 } from '../selector/team-selector-utils'
 import { useTeamFavorites } from '../selector/useTeamFavorites'
+import type { QuickLaunchIntent } from './quick-launch/launch-intent'
 import { QuickLaunchPanel } from './quick-launch/quick-launch-panel'
+import type { QuickPresetSelection } from './quick-launch/types'
 
 // Small button width (compact size for more/quick create buttons)
 const SMALL_BUTTON_WIDTH = 72
@@ -32,6 +34,7 @@ interface QuickAccessCardsProps {
   selectedTeam: Team | null
   onTeamSelect: (team: Team) => void
   onPhraseSelect?: (phrase: string) => void
+  onPresetSelect?: (selection: QuickPresetSelection) => void
   currentMode: 'chat' | 'code' | 'knowledge' | 'task' | 'video' | 'image'
   isLoading?: boolean
   isTeamsLoading?: boolean
@@ -39,6 +42,8 @@ interface QuickAccessCardsProps {
   onRefreshTeams?: () => Promise<Team[]>
   showWizardButton?: boolean
   defaultTeam?: Team | null
+  launchIntent?: QuickLaunchIntent | null
+  onLaunchIntentConsumed?: () => void
 }
 
 export function QuickAccessCards({
@@ -46,6 +51,7 @@ export function QuickAccessCards({
   selectedTeam,
   onTeamSelect,
   onPhraseSelect,
+  onPresetSelect,
   currentMode,
   isLoading,
   isTeamsLoading: _isTeamsLoading,
@@ -53,6 +59,8 @@ export function QuickAccessCards({
   onRefreshTeams: _onRefreshTeams,
   showWizardButton: _showWizardButton = false,
   defaultTeam,
+  launchIntent,
+  onLaunchIntentConsumed,
 }: QuickAccessCardsProps) {
   const { t } = useTranslation('common')
   const { toast } = useToast()
@@ -503,10 +511,18 @@ export function QuickAccessCards({
         teams={teams}
         selectedTeam={selectedTeam}
         onTeamSelect={onTeamSelect}
-        onPhraseSelect={onPhraseSelect ?? (() => undefined)}
+        onPresetSelect={
+          onPresetSelect ??
+          (selection => {
+            const prompt = selection.preset.prompt ?? selection.preset.title
+            onPhraseSelect?.(prompt)
+          })
+        }
         currentMode={currentMode}
         isLoading={isLoading || isQuickAccessLoading}
         defaultTeam={defaultTeam}
+        launchIntent={launchIntent}
+        onLaunchIntentConsumed={onLaunchIntentConsumed}
         renderMoreButton={renderMoreButton}
         renderQuickCreateCard={renderQuickCreateCard}
       />
