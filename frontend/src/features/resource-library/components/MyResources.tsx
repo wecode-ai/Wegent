@@ -4,10 +4,10 @@
 
 'use client'
 
-import { useCallback, useEffect, useState, type ComponentType } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ComponentType } from 'react'
 import dynamic from 'next/dynamic'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
-import { Building2, Check, ChevronDown, Globe2, Layers3, UserRound } from 'lucide-react'
+import { Building2, Check, ChevronDown, Globe2, Layers3, Search, UserRound } from 'lucide-react'
 
 import { listGroups } from '@/apis/groups'
 import { Button } from '@/components/ui/button'
@@ -17,6 +17,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown'
+import { Input } from '@/components/ui/input'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { Group } from '@/types/group'
@@ -132,6 +133,28 @@ function getGroupDisplayName(group: Group): string {
   return group.display_name || group.name
 }
 
+const groupNameCollator = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: 'base',
+})
+
+function compareGroupsByDisplayName(left: Group, right: Group): number {
+  const displayNameResult = groupNameCollator.compare(
+    getGroupDisplayName(left),
+    getGroupDisplayName(right)
+  )
+
+  if (displayNameResult !== 0) {
+    return displayNameResult
+  }
+
+  return groupNameCollator.compare(left.name, right.name)
+}
+
+function getGroupSearchText(group: Group): string {
+  return `${getGroupDisplayName(group)} ${group.name}`.toLowerCase()
+}
+
 function useResourceLibraryTranslation() {
   const { t: tBase } = useTranslation('resource-library')
   return (key: string, options?: Record<string, unknown>) =>
@@ -189,6 +212,8 @@ function ResourceSourceFilterControls({
   onGroupSourceChange: (groupName: string | null) => void
 }) {
   const t = useResourceLibraryTranslation()
+  const [isGroupMenuOpen, setIsGroupMenuOpen] = useState(false)
+  const [groupSearchQuery, setGroupSearchQuery] = useState('')
   const regularOptions: Array<{
     value: ManagedResourceSourceFilter
     label: string
@@ -201,6 +226,17 @@ function ResourceSourceFilterControls({
   const selectedGroupLabel = selectedGroupInfo ? getGroupDisplayName(selectedGroupInfo) : null
   const groupButtonLabel =
     value === 'group' ? selectedGroupLabel || t('sources.all_groups') : t('sources.group')
+  const sortedGroups = useMemo(() => [...groups].sort(compareGroupsByDisplayName), [groups])
+  const normalizedGroupSearchQuery = groupSearchQuery.trim().toLowerCase()
+  const filteredGroups = useMemo(() => {
+    if (!normalizedGroupSearchQuery) {
+      return sortedGroups
+    }
+
+    return sortedGroups.filter(group =>
+      getGroupSearchText(group).includes(normalizedGroupSearchQuery)
+    )
+  }, [normalizedGroupSearchQuery, sortedGroups])
 
   return (
     <div
@@ -228,7 +264,15 @@ function ResourceSourceFilterControls({
             </Button>
           )
         })}
-        <DropdownMenu>
+        <DropdownMenu
+          open={isGroupMenuOpen}
+          onOpenChange={open => {
+            setIsGroupMenuOpen(open)
+            if (!open) {
+              setGroupSearchQuery('')
+            }
+          }}
+        >
           <DropdownMenuTrigger asChild>
             <Button
               type="button"
@@ -252,56 +296,84 @@ function ResourceSourceFilterControls({
           <DropdownMenuContent
             align="start"
             sideOffset={6}
-            className="max-h-[320px] min-w-[220px] max-w-[min(320px,calc(100vw-2rem))] overflow-y-auto"
+            className="flex max-h-[320px] min-w-[220px] max-w-[min(320px,calc(100vw-2rem))] flex-col overflow-hidden"
           >
-            <DropdownMenuItem
-              className={cn(
-                'min-h-11 gap-2 lg:min-h-9',
-                value === 'group' &&
-                  !selectedGroup &&
-                  'bg-primary/10 text-primary focus:text-primary'
-              )}
-              data-testid="resource-source-all-groups-option"
-              onClick={() => onGroupSourceChange(null)}
+            <div
+              className="border-b border-border p-1 pb-2"
+              onKeyDown={event => event.stopPropagation()}
             >
-              <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
-                {value === 'group' && !selectedGroup && <Check className="h-4 w-4" aria-hidden />}
-              </span>
-              <span className="truncate">{t('sources.all_groups')}</span>
-            </DropdownMenuItem>
-            {groups.length === 0 ? (
+              <div className="relative">
+                <Search
+                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
+                  aria-hidden
+                />
+                <Input
+                  value={groupSearchQuery}
+                  onChange={event => setGroupSearchQuery(event.target.value)}
+                  placeholder={t('search.groups_placeholder')}
+                  data-testid="resource-source-group-search-input"
+                  className="h-9 bg-base pl-9"
+                />
+              </div>
+            </div>
+            <div className="min-h-0 overflow-y-auto pt-1">
               <DropdownMenuItem
-                disabled
-                className="min-h-11 text-text-muted lg:min-h-9"
-                data-testid="resource-source-group-empty-option"
+                className={cn(
+                  'min-h-11 gap-2 lg:min-h-9',
+                  value === 'group' &&
+                    !selectedGroup &&
+                    'bg-primary/10 text-primary focus:text-primary'
+                )}
+                data-testid="resource-source-all-groups-option"
+                onClick={() => onGroupSourceChange(null)}
               >
-                {t('states.no_groups')}
+                <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
+                  {value === 'group' && !selectedGroup && <Check className="h-4 w-4" aria-hidden />}
+                </span>
+                <span className="truncate">{t('sources.all_groups')}</span>
               </DropdownMenuItem>
-            ) : (
-              groups.map(group => {
-                const isSelected = value === 'group' && selectedGroup === group.name
-                const displayName = getGroupDisplayName(group)
+              {groups.length === 0 ? (
+                <DropdownMenuItem
+                  disabled
+                  className="min-h-11 text-text-muted lg:min-h-9"
+                  data-testid="resource-source-group-empty-option"
+                >
+                  {t('states.no_groups')}
+                </DropdownMenuItem>
+              ) : filteredGroups.length === 0 ? (
+                <DropdownMenuItem
+                  disabled
+                  className="min-h-11 text-text-muted lg:min-h-9"
+                  data-testid="resource-source-group-no-match-option"
+                >
+                  {t('search.groups_empty')}
+                </DropdownMenuItem>
+              ) : (
+                filteredGroups.map(group => {
+                  const isSelected = value === 'group' && selectedGroup === group.name
+                  const displayName = getGroupDisplayName(group)
 
-                return (
-                  <DropdownMenuItem
-                    key={group.id}
-                    className={cn(
-                      'min-h-11 gap-2 lg:min-h-9',
-                      isSelected && 'bg-primary/10 text-primary focus:text-primary'
-                    )}
-                    data-testid={`resource-source-group-option-${group.id}`}
-                    onClick={() => onGroupSourceChange(group.name)}
-                  >
-                    <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
-                      {isSelected && <Check className="h-4 w-4" aria-hidden />}
-                    </span>
-                    <span className="truncate" title={displayName}>
-                      {displayName}
-                    </span>
-                  </DropdownMenuItem>
-                )
-              })
-            )}
+                  return (
+                    <DropdownMenuItem
+                      key={group.id}
+                      className={cn(
+                        'min-h-11 gap-2 lg:min-h-9',
+                        isSelected && 'bg-primary/10 text-primary focus:text-primary'
+                      )}
+                      data-testid={`resource-source-group-option-${group.id}`}
+                      onClick={() => onGroupSourceChange(group.name)}
+                    >
+                      <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
+                        {isSelected && <Check className="h-4 w-4" aria-hidden />}
+                      </span>
+                      <span className="truncate" title={displayName}>
+                        {displayName}
+                      </span>
+                    </DropdownMenuItem>
+                  )
+                })
+              )}
+            </div>
           </DropdownMenuContent>
         </DropdownMenu>
         <Button
