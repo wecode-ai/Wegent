@@ -150,6 +150,8 @@
     "open_project_desktop": "打开项目桌面",
     "project_tool_requires_project": "请选择项目后使用",
     "project_tool_start_failed": "启动失败",
+    "project_session_unavailable": "会话已失效，请重新打开工具",
+    "project_tool_unavailable": "暂不可用",
     "back_to_workspace_tools": "返回工具",
     "project_terminal_frame_title": "项目终端",
     "scroll_to_bottom": "下拉到底",

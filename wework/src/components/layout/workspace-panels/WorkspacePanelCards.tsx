@@ -1,10 +1,10 @@
 import { Code2, Loader2, Monitor, Plus, SquareTerminal, X } from 'lucide-react'
 import { useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import { createDeviceApi } from '@/api/devices'
 import { createHttpClient } from '@/api/http'
 import { createProjectApi } from '@/api/projects'
 import { getRuntimeConfig } from '@/config/runtime'
+import { useTranslation } from '@/hooks/useTranslation'
 import { buildVncPageUrl } from '@/lib/vnc'
 import type { ProjectDeviceSessionResponse, ProjectWithTasks } from '@/types/api'
 
@@ -14,6 +14,35 @@ interface WorkspacePanelCardsProps {
 }
 
 type WorkspaceTool = 'terminal' | 'ide' | 'desktop'
+
+const SESSION_PROBE_QUERY_KEY = '__wegent_probe'
+
+type WorkspaceToolAvailability = Record<WorkspaceTool, boolean>
+
+interface WorkspaceToolAvailabilityState {
+  projectKey: string
+  tools: WorkspaceToolAvailability
+}
+
+interface WorkspaceToolErrorState {
+  projectKey: string
+  message: string | null
+}
+
+class SessionUrlUnavailableError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'SessionUrlUnavailableError'
+  }
+}
+
+function createAvailableTools(): WorkspaceToolAvailability {
+  return {
+    terminal: true,
+    ide: true,
+    desktop: true,
+  }
+}
 
 function getProjectDeviceId(project: ProjectWithTasks | null): string | undefined {
   return project?.config?.execution?.deviceId ?? project?.config?.device_id
@@ -39,30 +68,96 @@ function toEmbeddedSessionUrl(url: string): string {
   }
 }
 
+function toSessionProbeUrl(url: string): string {
+  try {
+    const parsed = new URL(url)
+    parsed.searchParams.set(SESSION_PROBE_QUERY_KEY, '1')
+    return parsed.toString()
+  } catch {
+    const separator = url.includes('?') ? '&' : '?'
+    return `${url}${separator}${SESSION_PROBE_QUERY_KEY}=1`
+  }
+}
+
+async function probeSessionUrl(url: string): Promise<void> {
+  const response = await fetch(toSessionProbeUrl(url), {
+    cache: 'no-store',
+    credentials: 'omit',
+    method: 'GET',
+  })
+  if (!response.ok) {
+    throw new SessionUrlUnavailableError(await response.text())
+  }
+}
+
 export function WorkspacePanelCards({ currentProject, onRequestClose }: WorkspacePanelCardsProps) {
   const { t } = useTranslation('common')
   const [terminalSessions, setTerminalSessions] = useState<ProjectDeviceSessionResponse[]>([])
   const [activeTerminalSessionId, setActiveTerminalSessionId] = useState<string | null>(null)
   const [loadingTool, setLoadingTool] = useState<WorkspaceTool | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [toolAvailability, setToolAvailability] = useState<WorkspaceToolAvailabilityState>(
+    () => ({
+      projectKey: '',
+      tools: createAvailableTools(),
+    }),
+  )
+  const [toolError, setToolError] = useState<WorkspaceToolErrorState>({
+    projectKey: '',
+    message: null,
+  })
   const projectDeviceId = getProjectDeviceId(currentProject)
+  const projectKey = currentProject ? `${currentProject.id}:${projectDeviceId ?? ''}` : ''
+  const availableTools =
+    toolAvailability.projectKey === projectKey
+      ? toolAvailability.tools
+      : createAvailableTools()
+  const error = toolError.projectKey === projectKey ? toolError.message : null
   const toolsDisabled = !currentProject || Boolean(loadingTool)
   const activeTerminalSession =
     terminalSessions.find(session => session.session_id === activeTerminalSessionId) ??
     terminalSessions[0] ??
     null
 
+  const markToolUnavailable = (tool: WorkspaceTool) => {
+    setToolAvailability(state => {
+      const tools = state.projectKey === projectKey ? state.tools : createAvailableTools()
+      if (!tools[tool]) {
+        return state.projectKey === projectKey ? state : { projectKey, tools }
+      }
+      return {
+        projectKey,
+        tools: { ...tools, [tool]: false },
+      }
+    })
+  }
+
+  const setProjectError = (message: string | null) => {
+    setToolError({ projectKey, message })
+  }
+
+  const getSessionStartErrorMessage = (errorValue: unknown): string => {
+    if (errorValue instanceof SessionUrlUnavailableError) {
+      return t('workbench.project_session_unavailable', '会话已失效，请重新打开工具')
+    }
+    return t('workbench.project_tool_start_failed', '启动失败')
+  }
+
   const startTerminalSession = async () => {
-    if (!currentProject || loadingTool) return
+    if (!currentProject || loadingTool || !availableTools.terminal) return
     setLoadingTool('terminal')
-    setError(null)
+    setProjectError(null)
     try {
       const session = await createProjectSessionApi().startTerminalSession(currentProject.id)
+      if (!session.url) {
+        throw new SessionUrlUnavailableError('Terminal session URL is missing')
+      }
+      await probeSessionUrl(session.url)
       setTerminalSessions(sessions => [...sessions, session])
       setActiveTerminalSessionId(session.session_id)
     } catch (e) {
       console.error('Failed to start project terminal:', e)
-      setError(t('workbench.project_tool_start_failed', '启动失败'))
+      markToolUnavailable('terminal')
+      setProjectError(getSessionStartErrorMessage(e))
     } finally {
       setLoadingTool(null)
     }
@@ -90,19 +185,22 @@ export function WorkspacePanelCards({ currentProject, onRequestClose }: Workspac
   }
 
   const handleIdeClick = async () => {
-    if (!currentProject || loadingTool) return
+    if (!currentProject || loadingTool || !availableTools.ide) return
     setLoadingTool('ide')
-    setError(null)
+    setProjectError(null)
     let shouldClosePanel = false
     try {
       const session = await createProjectSessionApi().startCodeServerSession(currentProject.id)
-      if (session.url) {
-        window.open(session.url, '_blank', 'noopener')
-        shouldClosePanel = true
+      if (!session.url) {
+        throw new SessionUrlUnavailableError('IDE session URL is missing')
       }
+      await probeSessionUrl(session.url)
+      window.open(session.url, '_blank', 'noopener')
+      shouldClosePanel = true
     } catch (e) {
       console.error('Failed to start project IDE:', e)
-      setError(t('workbench.project_tool_start_failed', '启动失败'))
+      markToolUnavailable('ide')
+      setProjectError(getSessionStartErrorMessage(e))
     } finally {
       setLoadingTool(null)
       if (shouldClosePanel) {
@@ -112,17 +210,21 @@ export function WorkspacePanelCards({ currentProject, onRequestClose }: Workspac
   }
 
   const handleDesktopClick = async () => {
-    if (!projectDeviceId || loadingTool) return
+    if (!projectDeviceId || loadingTool || !availableTools.desktop) return
     setLoadingTool('desktop')
-    setError(null)
+    setProjectError(null)
     let shouldClosePanel = false
     try {
       const config = await createDeviceSessionApi().getVncConfig(projectDeviceId)
+      if (!config.sandbox_id) {
+        throw new Error('Desktop sandbox ID is missing')
+      }
       window.open(buildVncPageUrl(projectDeviceId, config.sandbox_id), '_blank', 'noopener')
       shouldClosePanel = true
     } catch (e) {
       console.error('Failed to open project desktop:', e)
-      setError(t('workbench.project_tool_start_failed', '启动失败'))
+      markToolUnavailable('desktop')
+      setProjectError(t('workbench.project_tool_start_failed', '启动失败'))
     } finally {
       setLoadingTool(null)
       if (shouldClosePanel) {
@@ -214,7 +316,7 @@ export function WorkspacePanelCards({ currentProject, onRequestClose }: Workspac
           type="button"
           data-testid="workspace-terminal-card"
           onClick={handleTerminalClick}
-          disabled={toolsDisabled}
+          disabled={toolsDisabled || !availableTools.terminal}
           className="flex min-h-[132px] flex-col items-center justify-center rounded-lg bg-surface text-center hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
         >
           {loadingTool === 'terminal' ? (
@@ -226,14 +328,16 @@ export function WorkspacePanelCards({ currentProject, onRequestClose }: Workspac
             {t('workbench.terminal', '终端')}
           </span>
           <span className="mt-2 text-[13px] leading-[18px] text-text-secondary">
-            {t('workbench.start_shell', '启动交互式 shell')}
+            {availableTools.terminal
+              ? t('workbench.start_shell', '启动交互式 shell')
+              : t('workbench.project_tool_unavailable', '暂不可用')}
           </span>
         </button>
         <button
           type="button"
           data-testid="workspace-ide-card"
           onClick={handleIdeClick}
-          disabled={toolsDisabled}
+          disabled={toolsDisabled || !availableTools.ide}
           className="flex min-h-[132px] flex-col items-center justify-center rounded-lg bg-surface text-center hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
         >
           {loadingTool === 'ide' ? (
@@ -245,14 +349,16 @@ export function WorkspacePanelCards({ currentProject, onRequestClose }: Workspac
             {t('workbench.ide', 'IDE')}
           </span>
           <span className="mt-2 text-[13px] leading-[18px] text-text-secondary">
-            {t('workbench.open_project_ide', '打开项目 IDE')}
+            {availableTools.ide
+              ? t('workbench.open_project_ide', '打开项目 IDE')
+              : t('workbench.project_tool_unavailable', '暂不可用')}
           </span>
         </button>
         <button
           type="button"
           data-testid="workspace-desktop-card"
           onClick={handleDesktopClick}
-          disabled={toolsDisabled || !projectDeviceId}
+          disabled={toolsDisabled || !projectDeviceId || !availableTools.desktop}
           className="flex min-h-[132px] flex-col items-center justify-center rounded-lg bg-surface text-center hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
         >
           {loadingTool === 'desktop' ? (
@@ -264,7 +370,9 @@ export function WorkspacePanelCards({ currentProject, onRequestClose }: Workspac
             {t('workbench.desktop', '桌面')}
           </span>
           <span className="mt-2 text-[13px] leading-[18px] text-text-secondary">
-            {t('workbench.open_project_desktop', '打开项目桌面')}
+            {availableTools.desktop
+              ? t('workbench.open_project_desktop', '打开项目桌面')
+              : t('workbench.project_tool_unavailable', '暂不可用')}
           </span>
         </button>
       </div>

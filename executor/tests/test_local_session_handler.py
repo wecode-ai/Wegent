@@ -160,6 +160,49 @@ def test_session_gateway_authorizes_terminal_session_path_without_cookies():
 
 
 @pytest.mark.asyncio
+async def test_session_gateway_returns_actionable_message_for_missing_session():
+    """Missing session pages should tell users how to recover."""
+    from executor.modes.local.session_handler import SessionGateway
+
+    gateway = SessionGateway({})
+    request = SimpleNamespace(
+        path="/s/missing-session/",
+        query={},
+        query_string="",
+        cookies={},
+        headers={},
+    )
+
+    response = await gateway._handle_request(request)
+
+    assert response.status == 404
+    assert b"session is no longer available" in response.body
+    assert b"Return to Wegent" in response.body
+    assert b"open it again from the workspace tools" in response.body
+
+
+@pytest.mark.asyncio
+async def test_session_gateway_probe_returns_no_content_for_valid_session():
+    """Session URL probes should validate a session without proxying upstream."""
+    from executor.modes.local.session_handler import SessionGateway
+
+    session = _local_session("code-1", "code_server")
+    gateway = SessionGateway({session.session_id: session})
+    request = SimpleNamespace(
+        path="/s/code-1/",
+        query={"token": "secret", "__wegent_probe": "1"},
+        query_string="token=secret&__wegent_probe=1",
+        cookies={},
+        headers={},
+    )
+
+    response = await gateway._handle_request(request)
+
+    assert response.status == 204
+    assert response.headers["Access-Control-Allow-Origin"] == "*"
+
+
+@pytest.mark.asyncio
 async def test_session_gateway_logs_in_to_code_server_with_configured_password(
     monkeypatch,
 ):
