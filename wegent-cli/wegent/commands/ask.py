@@ -45,6 +45,21 @@ def _default_team_model(default_teams: Any, mode: str) -> str:
     return f"{namespace}#{name}"
 
 
+def _has_configured_value(value: Any) -> bool:
+    return isinstance(value, str) and bool(value)
+
+
+def _raise_if_api_key_only_default_lookup(client: WegentClient, mode: str) -> None:
+    token = getattr(client, "token", None)
+    api_key = getattr(client, "api_key", None)
+    if _has_configured_value(api_key) and not _has_configured_value(token):
+        raise CliError(
+            "model_required_for_api_key_auth",
+            "Provide --model when authenticating with an API key; default team lookup requires a Bearer token",
+            {"mode": mode},
+        )
+
+
 def _build_payload(
     client: WegentClient,
     prompt: str,
@@ -55,6 +70,7 @@ def _build_payload(
     resolved_model = model
     if resolved_model is None:
         selected_mode = mode or get_mode()
+        _raise_if_api_key_only_default_lookup(client, selected_mode)
         resolved_model = _default_team_model(client.get_default_teams(), selected_mode)
 
     payload: dict[str, Any] = {"model": resolved_model, "input": prompt}

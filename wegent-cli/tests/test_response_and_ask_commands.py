@@ -102,6 +102,22 @@ def test_response_create_json_missing_model_returns_error_without_client_call():
     client.create_response.assert_not_called()
 
 
+def test_response_create_rejects_streaming_payload_before_client_call():
+    client = MagicMock()
+
+    result = invoke_with_client(
+        ["response", "create", "--input", "-", "--json"],
+        client,
+        input_text='{"model": "default#wegent-chat", "input": "hello", "stream": true}',
+    )
+
+    assert result.exit_code != 0
+    payload = load_payload(result)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "unsupported_streaming"
+    client.create_response.assert_not_called()
+
+
 def test_response_get_cancel_delete_use_expected_client_methods():
     client = MagicMock()
     client.get_response.return_value = {"id": "resp_123", "status": "completed"}
@@ -182,6 +198,21 @@ def test_ask_uses_explicit_model_without_default_lookup():
             "tools": [{"type": "wegent_chat_bot"}],
         }
     )
+
+
+def test_ask_requires_model_for_api_key_only_default_team_resolution():
+    client = MagicMock()
+    client.token = None
+    client.api_key = "test-api-key"
+
+    result = invoke_with_client(["ask", "hello", "--json"], client)
+
+    assert result.exit_code != 0
+    payload = load_payload(result)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "model_required_for_api_key_auth"
+    client.get_default_teams.assert_not_called()
+    client.create_response.assert_not_called()
 
 
 def test_ask_uses_fresh_default_tools_for_each_payload():

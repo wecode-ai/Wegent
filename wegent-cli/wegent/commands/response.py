@@ -39,6 +39,12 @@ def _response_payload(input_path: str, model: str | None) -> dict[str, Any]:
             "missing_model",
             "Response payload must include a model or --model must be provided",
         )
+    if payload.get("stream") is True:
+        raise CliError(
+            "unsupported_streaming",
+            "Streaming responses are not supported by this CLI command yet",
+            {"stream": True},
+        )
     return payload
 
 

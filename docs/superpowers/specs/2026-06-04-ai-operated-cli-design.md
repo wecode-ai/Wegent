@@ -76,7 +76,7 @@ wegent response cancel resp_123 --json
 wegent response delete resp_123 --json
 ```
 
-`response create` sends the request body to `POST /api/v1/responses`. It supports `stream`, `background`, `previous_response_id`, `tools`, `reasoning`, `attachment_ids`, and Wegent-specific options through JSON input.
+`response create` sends the request body to `POST /api/v1/responses`. It passes through non-streaming options such as `background`, `previous_response_id`, `tools`, `reasoning`, `attachment_ids`, and Wegent-specific fields through JSON input. Payloads with `"stream": true` are rejected with `unsupported_streaming` until the CLI has an explicit server-sent events output mode.
 
 ### `wegent ask`
 
@@ -99,6 +99,8 @@ Model selection rules:
 3. Select the default team matching `--mode`; default mode is `chat`.
 4. Convert `{ "name": "wegent-chat", "namespace": "default" }` to `default#wegent-chat`.
 5. If no default team is configured for the requested mode, return a structured error.
+
+API key authentication is valid for explicit-model Responses API calls. `ask` without `--model` requires a Bearer token because `/api/users/default-teams` uses user authentication.
 
 By default, `ask` includes:
 
@@ -137,6 +139,7 @@ Authentication headers:
 - Use `Authorization: Bearer <token>` when `token` is configured.
 - Use `X-API-Key: <api_key>` when `api_key` is configured and no token is configured.
 - If both are configured, prefer Bearer token for consistency with current CLI login behavior.
+- If only an API key is configured, `ask` must include `--model` so it can skip default team lookup.
 
 ## JSON Protocol
 

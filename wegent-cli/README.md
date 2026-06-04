@@ -45,6 +45,9 @@ Supported environment variables:
 
 When both `WEGENT_TOKEN` and `WEGENT_API_KEY` are set, the Bearer token is
 preferred and sent as `Authorization: Bearer ...`.
+API key authentication can call `/api/v1/responses` when the model is explicit.
+`ask` without `--model` reads the default team endpoint, which requires a
+Bearer token.
 
 You can also save common settings:
 
@@ -97,6 +100,12 @@ default team for `--mode` or `WEGENT_MODE`, and sends the model as
 `namespace#team`. By default, `ask` includes Wegent chat tools; pass
 `--no-tools` to omit them.
 
+If you authenticate with only `WEGENT_API_KEY`, pass `--model` explicitly:
+
+```bash
+wegent ask "Summarize the current task status" --model default#coding-agent --json
+```
+
 ## Responses API
 
 Create a response from a JSON or YAML file:
@@ -112,6 +121,11 @@ JSON
 wegent response create --input response.json --json
 wegent response create --input response.json --model default#review-agent --json
 ```
+
+Structured payload fields are passed through to the backend, except
+`"stream": true`. Streaming responses are currently rejected with
+`unsupported_streaming` because this CLI command emits stable JSON/YAML
+responses, not server-sent events.
 
 Manage responses by id:
 
