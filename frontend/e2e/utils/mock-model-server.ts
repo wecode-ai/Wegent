@@ -1,7 +1,7 @@
 /**
  * Mock Model Server for E2E Testing
  *
- * This server simulates an OpenAI-compatible API endpoint to:
+ * This server simulates OpenAI-compatible and Anthropic-compatible API endpoints to:
  * 1. Capture requests sent by the backend
  * 2. Verify the image_url format in vision messages
  * 3. Return mock streaming responses
@@ -35,9 +35,10 @@ interface VisionMessage {
       }>
 }
 
-interface ChatCompletionRequest {
-  model: string
-  messages: VisionMessage[]
+interface ModelRequest {
+  model?: string
+  messages?: VisionMessage[]
+  system?: unknown
   stream?: boolean
   tools?: unknown[]
 }
@@ -109,12 +110,31 @@ function verifyImageUrlInMessage(message: VisionMessage): {
   }
 }
 
-function getRequestText(request: ChatCompletionRequest | null): string {
-  if (!request?.messages) {
+function extractText(value: unknown): string {
+  if (typeof value === 'string') {
+    return value
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(item => extractText(item)).join(' ')
+  }
+
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>
+    return ['body', 'messages', 'system', 'input', 'content', 'text', 'prompt']
+      .map(key => extractText(obj[key]))
+      .join(' ')
+  }
+
+  return ''
+}
+
+function getRequestText(request: ModelRequest | null): string {
+  if (!request) {
     return ''
   }
 
-  return request.messages
+  const messageText = (request.messages || [])
     .map(message => {
       if (typeof message.content === 'string') {
         return message.content
@@ -134,11 +154,38 @@ function getRequestText(request: ChatCompletionRequest | null): string {
       return ''
     })
     .join(' ')
+
+  return [extractText(request.system), messageText].join(' ')
 }
 
-function findStreamRule(request: ChatCompletionRequest | null): StreamRule | undefined {
+function findStreamRule(request: ModelRequest | null): StreamRule | undefined {
   const requestText = getRequestText(request)
-  return streamRules.find(rule => requestText.includes(rule.matchText))
+  return streamRules
+    .filter(rule => requestText.includes(rule.matchText))
+    .sort((left, right) => right.matchText.length - left.matchText.length)[0]
+}
+
+function extractContextToken(text: string): string | null {
+  return text.match(/CTX_[A-Z0-9_]+/)?.[0] || null
+}
+
+function buildContextAwareResponseContent(request: ModelRequest | null): string {
+  const requestText = getRequestText(request)
+  const token = extractContextToken(requestText)
+  const asksForPreviousToken =
+    /previous turn|previous message|previous code turn|previous device turn|what context token|what .*token|上轮|上一轮|上一次|刚才/i.test(
+      requestText
+    )
+
+  if (asksForPreviousToken) {
+    return token ? `Mock model resumed with ${token}` : 'MISSING_CONTEXT'
+  }
+
+  if (token) {
+    return `Mock model remembered ${token}`
+  }
+
+  return DEFAULT_RESPONSE_CONTENT
 }
 
 function parseJsonBody<T>(body: string): T | null {
@@ -216,6 +263,118 @@ function writeStreamingResponse(
   sendChunk()
 }
 
+function writeAnthropicSseEvent(res: http.ServerResponse, event: string, data: unknown): void {
+  res.write(`event: ${event}\n`)
+  res.write(`data: ${JSON.stringify(data)}\n\n`)
+}
+
+function writeAnthropicStreamingResponse(
+  res: http.ServerResponse,
+  content: string,
+  model: string,
+  chunkDelayMs: number,
+  doneDelayMs: number
+): void {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  })
+
+  writeAnthropicSseEvent(res, 'message_start', {
+    type: 'message_start',
+    message: {
+      id: `msg_${Date.now()}`,
+      type: 'message',
+      role: 'assistant',
+      model,
+      content: [],
+      stop_reason: null,
+      stop_sequence: null,
+      usage: {
+        input_tokens: 100,
+        output_tokens: 0,
+      },
+    },
+  })
+  writeAnthropicSseEvent(res, 'content_block_start', {
+    type: 'content_block_start',
+    index: 0,
+    content_block: {
+      type: 'text',
+      text: '',
+    },
+  })
+
+  const chunks = content.split(' ')
+  let index = 0
+
+  const sendChunk = () => {
+    if (index < chunks.length) {
+      const text = index === 0 ? chunks[index] : ' ' + chunks[index]
+      writeAnthropicSseEvent(res, 'content_block_delta', {
+        type: 'content_block_delta',
+        index: 0,
+        delta: {
+          type: 'text_delta',
+          text,
+        },
+      })
+      index++
+      setTimeout(sendChunk, chunkDelayMs)
+      return
+    }
+
+    setTimeout(() => {
+      writeAnthropicSseEvent(res, 'content_block_stop', {
+        type: 'content_block_stop',
+        index: 0,
+      })
+      writeAnthropicSseEvent(res, 'message_delta', {
+        type: 'message_delta',
+        delta: {
+          stop_reason: 'end_turn',
+          stop_sequence: null,
+        },
+        usage: {
+          output_tokens: Math.max(1, chunks.length),
+        },
+      })
+      writeAnthropicSseEvent(res, 'message_stop', {
+        type: 'message_stop',
+      })
+      res.end()
+    }, doneDelayMs)
+  }
+
+  sendChunk()
+}
+
+function writeAnthropicJsonResponse(
+  res: http.ServerResponse,
+  content: string,
+  model: string
+): void {
+  writeJson(res, 200, {
+    id: `msg_${Date.now()}`,
+    type: 'message',
+    role: 'assistant',
+    model,
+    content: [
+      {
+        type: 'text',
+        text: content,
+      },
+    ],
+    stop_reason: 'end_turn',
+    stop_sequence: null,
+    usage: {
+      input_tokens: 100,
+      output_tokens: Math.max(1, content.split(' ').length),
+    },
+  })
+}
+
 /**
  * Create the mock HTTP server
  */
@@ -230,7 +389,7 @@ const server = http.createServer((req, res) => {
     const timestamp = new Date().toISOString()
 
     // Parse request body
-    const parsedBody = parseJsonBody<ChatCompletionRequest>(body)
+    const parsedBody = parseJsonBody<ModelRequest>(body)
     if (body && !parsedBody) {
       console.error(`[${timestamp}] Failed to parse request body`)
     }
@@ -272,7 +431,8 @@ const server = http.createServer((req, res) => {
     // Handle different endpoints
     if (req.url?.includes('/chat/completions')) {
       const streamRule = findStreamRule(parsedBody)
-      const responseContent = streamRule?.responseContent || DEFAULT_RESPONSE_CONTENT
+      const responseContent =
+        streamRule?.responseContent || buildContextAwareResponseContent(parsedBody)
 
       // Check if streaming is requested
       const isStreaming = parsedBody?.stream === true
@@ -317,6 +477,28 @@ const server = http.createServer((req, res) => {
             },
           })
         )
+      }
+    } else if (req.url?.includes('/messages/count_tokens')) {
+      writeJson(res, 200, {
+        input_tokens: Math.max(1, Math.ceil(getRequestText(parsedBody).length / 4)),
+      })
+    } else if (req.url?.includes('/messages')) {
+      const streamRule = findStreamRule(parsedBody)
+      const responseContent =
+        streamRule?.responseContent || buildContextAwareResponseContent(parsedBody)
+      const model = parsedBody?.model || 'mock-claude'
+      const isStreaming = parsedBody?.stream === true
+
+      if (isStreaming) {
+        writeAnthropicStreamingResponse(
+          res,
+          responseContent,
+          model,
+          streamRule?.chunkDelayMs ?? DEFAULT_CHUNK_DELAY_MS,
+          streamRule?.doneDelayMs ?? 0
+        )
+      } else {
+        writeAnthropicJsonResponse(res, responseContent, model)
       }
     } else if (req.url === '/captured-requests') {
       // Endpoint to retrieve captured requests
@@ -382,7 +564,8 @@ server.listen(PORT, () => {
 ║  Server running on: http://localhost:${PORT}                  ║
 ║                                                            ║
 ║  Endpoints:                                                ║
-║    POST /v1/chat/completions - Mock chat API               ║
+║    POST /v1/chat/completions - Mock OpenAI chat API        ║
+║    POST /v1/messages         - Mock Anthropic Messages API ║
 ║    GET  /captured-requests   - View captured requests      ║
 ║    POST /clear-requests      - Clear captured requests     ║
 ║    GET  /stream-rules        - View stream rules           ║

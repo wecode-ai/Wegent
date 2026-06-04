@@ -116,6 +116,28 @@ e2e/
 └── config/            # Test configuration
 ```
 
+## Agent Conversation Regression
+
+`tests/tasks/agent-conversation-regression.spec.ts` covers these backend-integrated task flows:
+
+- Normal mode Chat Shell dialogue and follow-up.
+- Normal mode ClaudeCode dialogue, follow-up, and executor session resume.
+- Coding mode ClaudeCode dialogue and follow-up.
+- Device mode ClaudeCode dialogue and follow-up through a local executor device.
+
+The regression runs in the existing GitHub Actions E2E workflow. It uses global setup authentication like the rest of `frontend/e2e`; no external Playwright auth-state secret is required.
+
+CI starts these support services:
+
+- `utils/mock-model-server.ts` receives real Chat Shell OpenAI-compatible requests and real ClaudeCode Anthropic Messages API requests, then records the second-turn prompt package.
+- A real `executor` local-mode process registers a ClaudeCode device through the Backend `/local-executor` Socket.IO namespace.
+
+Normal and coding ClaudeCode tests run through the actual executor-manager Docker path and the real `ClaudeCodeAgent` inside an executor container. Device mode runs through the actual Backend-to-local-executor WebSocket path and a real local-mode `ClaudeCodeAgent`. The model endpoint is the only mocked boundary, and the tests assert that the second-turn `/v1/messages` request received by the mock model server contains both the first-turn prompt and context token.
+
+CI builds `fixtures/claudecode-executor/Dockerfile`, starts a real `executor_manager` service on port `8001`, and starts a real local ClaudeCode executor process for device-mode coverage.
+
+For GitHub Actions, `executor_manager` runs directly on the runner and task containers use Docker bridge networking with normal port mappings. Keep `DOCKER_HOST_ADDR=localhost` so the runner can dispatch to mapped container ports. Use the runner's Docker bridge IP for container-to-runner URLs such as `TASK_API_DOMAIN`, `CALLBACK_HOST`, and the ClaudeCode mock model base URL.
+
 ## Page Object Model
 
 Tests use the Page Object Model pattern for better maintainability:
