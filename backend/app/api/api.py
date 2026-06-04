@@ -13,6 +13,7 @@ from app.api.endpoints import (
     groups,
     health,
     installed_mcps,
+    installed_plugins,
     knowledge,
     knowledge_open,
     knowledge_transfer,
@@ -222,6 +223,7 @@ api_router.include_router(
     mcp_providers.router, prefix="/mcp-providers", tags=["mcp-providers"]
 )
 api_router.include_router(installed_mcps.router, prefix="/mcps", tags=["mcps"])
+api_router.include_router(installed_plugins.router, prefix="/plugins", tags=["plugins"])
 api_router.include_router(
     local_executor.router, prefix="/local-executor", tags=["local-executor"]
 )

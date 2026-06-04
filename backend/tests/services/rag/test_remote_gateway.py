@@ -125,6 +125,11 @@ async def test_remote_gateway_query_posts_reference_mode_request(mocker) -> None
     spec = QueryRuntimeSpec(
         knowledge_base_ids=[1],
         query="release checklist",
+        search_hints={
+            "semantic_query": "How to verify the release checklist?",
+            "keywords": ["release", "checklist"],
+            "phrases": ["release checklist"],
+        },
         user_id=8,
         max_results=5,
         document_ids=[10, 11],
@@ -155,6 +160,11 @@ async def test_remote_gateway_query_posts_reference_mode_request(mocker) -> None
         "knowledge_base_ids": [1],
         "user_id": 8,
         "query": "release checklist",
+        "search_hints": {
+            "semantic_query": "How to verify the release checklist?",
+            "keywords": ["release", "checklist"],
+            "phrases": ["release checklist"],
+        },
         "max_results": 5,
         "document_ids": [10, 11],
         "metadata_condition": {
@@ -163,6 +173,67 @@ async def test_remote_gateway_query_posts_reference_mode_request(mocker) -> None
             "value": "kb",
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_remote_gateway_query_posts_runtime_overrides(mocker) -> None:
+    post_mock = mocker.patch(
+        "httpx.AsyncClient.post",
+        return_value=_build_response(
+            url="http://knowledge-runtime/internal/rag/query",
+            status_code=200,
+            json_body={
+                "records": [],
+                "total": 0,
+                "total_estimated_tokens": 0,
+            },
+        ),
+    )
+    gateway = RemoteRagGateway(base_url="http://knowledge-runtime")
+    spec = QueryRuntimeSpec(
+        knowledge_base_ids=[1],
+        query="release checklist",
+        search_hints={
+            "semantic_query": "How to verify the release checklist?",
+            "keywords": ["release", "checklist"],
+            "phrases": ["release checklist"],
+        },
+        user_id=8,
+        max_results=5,
+        knowledge_base_retrieval_overrides=[
+            {
+                "knowledge_base_id": 1,
+                "retrieval_config": {
+                    "top_k": 5,
+                    "score_threshold": 0.2,
+                    "retrieval_mode": "hybrid",
+                    "vector_weight": 0.8,
+                    "keyword_weight": 0.2,
+                },
+            }
+        ],
+    )
+
+    await gateway.query(spec)
+
+    _, kwargs = post_mock.await_args
+    assert kwargs["json"]["search_hints"] == {
+        "semantic_query": "How to verify the release checklist?",
+        "keywords": ["release", "checklist"],
+        "phrases": ["release checklist"],
+    }
+    assert kwargs["json"]["knowledge_base_retrieval_overrides"] == [
+        {
+            "knowledge_base_id": 1,
+            "retrieval_config": {
+                "top_k": 5,
+                "score_threshold": 0.2,
+                "retrieval_mode": "hybrid",
+                "vector_weight": 0.8,
+                "keyword_weight": 0.2,
+            },
+        }
+    ]
 
 
 @pytest.mark.asyncio

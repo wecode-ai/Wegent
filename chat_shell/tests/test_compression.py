@@ -116,6 +116,36 @@ class TestTokenCounter:
         assert not counter.is_over_limit(messages, 1000)
         assert counter.is_over_limit(messages, 1)
 
+    def test_count_text_with_special_token_literal(self):
+        """Text containing literal '<|endoftext|>' must not raise an error.
+
+        tiktoken treats '<|endoftext|>' as a special token and raises by default
+        when it appears as plain text.  disallowed_special=() disables this check
+        so that content fetched from external sources (e.g. the Qwen3 Embedding
+        paper) is counted without crashing the token counter.
+        """
+        counter = TokenCounter(model_id="gpt-4")
+        text = "Input format: {Instruction} {Query}<|endoftext|>"
+        count = counter.count_text(text)
+        assert count > 0
+
+    def test_count_messages_with_special_token_literal(self):
+        """Message history containing literal '<|endoftext|>' must not raise."""
+        counter = TokenCounter(model_id="gpt-4")
+        messages = [
+            {"role": "user", "content": "Tell me about Qwen3 Reranker."},
+            {
+                "role": "assistant",
+                "content": (
+                    "The input format is: {Instruction} {Query}<|endoftext|>\n"
+                    "This is used as a separator in the embedding model."
+                ),
+            },
+            {"role": "user", "content": "What loss function is used?"},
+        ]
+        count = counter.count_messages(messages)
+        assert count > 0
+
 
 class TestModelContextConfig:
     """Tests for model context configuration."""

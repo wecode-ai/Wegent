@@ -4,7 +4,9 @@ export interface ModelControlOption {
   value: string
   label: string
   labelKey?: string
+  summaryLabel?: string
   description?: string
+  descriptionKey?: string
   order: number
 }
 
@@ -24,6 +26,19 @@ export interface ModelFamilyConfig {
   label: string
   order: number
   controls: ModelControlConfig[]
+}
+
+export type ModelCompatibilityFamily = string
+
+export interface ModelCompatibilitySource {
+  name?: string | null
+  displayName?: string | null
+  provider?: string | null
+  modelId?: string | null
+  config?: Record<string, unknown> | null
+  runtime?: {
+    family?: string | null
+  } | null
 }
 
 interface ModelUiMetadata {
@@ -99,6 +114,7 @@ export const MODEL_FAMILY_CONFIGS: ModelFamilyConfig[] = [
       {
         id: 'speed',
         label: 'Speed',
+        labelKey: 'workbench.speed',
         defaultValue: 'standard',
         placement: 'belowModels',
         scope: 'model',
@@ -106,14 +122,19 @@ export const MODEL_FAMILY_CONFIGS: ModelFamilyConfig[] = [
         options: [
           {
             value: 'standard',
-            label: 'Standard',
-            description: 'Default speed',
+            label: '标准',
+            labelKey: 'workbench.speed_standard',
+            description: '默认速度',
+            descriptionKey: 'workbench.speed_standard_description',
             order: 10,
           },
           {
             value: 'fast',
-            label: 'Fast',
-            description: '1.5x speed, increased usage',
+            label: '⚡ 快速',
+            labelKey: 'workbench.speed_fast',
+            summaryLabel: '⚡',
+            description: '1.5 倍速度，消耗增加',
+            descriptionKey: 'workbench.speed_fast_description',
             order: 20,
           },
         ],
@@ -141,6 +162,27 @@ function identityTextForModel(model: UnifiedModel): string {
     .filter(Boolean)
     .join(' ')
     .toLowerCase()
+}
+
+function normalizeCompatibilitySignal(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : ''
+}
+
+export function getModelCompatibilityFamily(
+  model?: ModelCompatibilitySource | null,
+): ModelCompatibilityFamily | null {
+  if (!model) return null
+  return normalizeCompatibilitySignal(model.runtime?.family) || null
+}
+
+export function areModelsProtocolCompatible(
+  currentModel?: ModelCompatibilitySource | null,
+  nextModel?: ModelCompatibilitySource | null,
+): boolean {
+  const currentFamily = getModelCompatibilityFamily(currentModel)
+  const nextFamily = getModelCompatibilityFamily(nextModel)
+  if (!currentFamily || !nextFamily) return false
+  return currentFamily === nextFamily
 }
 
 export function inferModelFamily(model: UnifiedModel): string {
@@ -179,7 +221,7 @@ function inferRegion(model: UnifiedModel): string | undefined {
   const explicit = getConfigUi(model).region
   if (typeof explicit === 'string' && explicit.trim()) return explicit.trim()
 
-  const text = [model.displayName, model.name].filter(Boolean).join(' ')
+  const text = [model.displayName, model.name, model.modelId].filter(Boolean).join(' ')
   if (text.includes('海外') || /overseas/i.test(text)) return 'overseas'
   if (text.includes('公网') || /public/i.test(text)) return 'public'
   if (text.includes('内网') || /intranet|internal/i.test(text)) return 'intranet'
@@ -243,6 +285,7 @@ export function getControlsForModel(model: UnifiedModel | null): ModelControlCon
 export function getModelDisplayLabel(
   model: UnifiedModel | null,
   options: ModelOptions = {},
+  resolveLabel?: LabelResolver,
 ): string {
   if (!model) return ''
 
@@ -256,7 +299,10 @@ export function getModelDisplayLabel(
       if (control.includeInLabel === 'whenNonDefault' && selected === control.defaultValue) {
         return ''
       }
-      return control.options.find(option => option.value === selected)?.label ?? ''
+      return resolveOptionSummaryLabel(
+        control.options.find(option => option.value === selected),
+        resolveLabel,
+      )
     })
     .filter(Boolean)
 
@@ -274,6 +320,14 @@ function resolveOptionLabel(
   return option.labelKey && resolveLabel
     ? resolveLabel(option.labelKey, option.label)
     : option.label
+}
+
+function resolveOptionSummaryLabel(
+  option: ModelControlOption | undefined,
+  resolveLabel?: LabelResolver,
+): string {
+  if (!option) return ''
+  return option.summaryLabel || resolveOptionLabel(option, resolveLabel)
 }
 
 export function getSelectedModelDisplayLabel(
@@ -299,7 +353,7 @@ export function getSelectedModelDisplayLabel(
       if (control.id !== 'reasoning' && control.includeInLabel === 'never') {
         return ''
       }
-      return resolveOptionLabel(
+      return resolveOptionSummaryLabel(
         control.options.find(option => option.value === selected),
         resolveLabel,
       )
@@ -332,6 +386,31 @@ export function normalizeModelOptions(
   )
 }
 
+function regionPriority(region?: string): number {
+  if (region === 'intranet') return 0
+  if (region === 'public') return 1
+  if (region === 'overseas') return 2
+  return 3
+}
+
+function extractVersionParts(label: string): number[] {
+  return [...label.matchAll(/\d+/g)].map(match => Number.parseInt(match[0], 10))
+}
+
+function compareVersionDesc(leftLabel: string, rightLabel: string): number {
+  const leftParts = extractVersionParts(leftLabel)
+  const rightParts = extractVersionParts(rightLabel)
+  const maxLength = Math.max(leftParts.length, rightParts.length)
+
+  for (let index = 0; index < maxLength; index += 1) {
+    const leftPart = leftParts[index] ?? 0
+    const rightPart = rightParts[index] ?? 0
+    if (leftPart !== rightPart) return rightPart - leftPart
+  }
+
+  return 0
+}
+
 export function groupModelsByFamily(models: UnifiedModel[]) {
   const groups = new Map<string, UnifiedModel[]>()
   for (const model of models) {
@@ -345,7 +424,12 @@ export function groupModelsByFamily(models: UnifiedModel[]) {
       models: [...familyModels].sort((a, b) => {
         const left = getModelUiMetadata(a)
         const right = getModelUiMetadata(b)
-        return left.sortOrder - right.sortOrder || left.modelLabel.localeCompare(right.modelLabel)
+        return (
+          regionPriority(left.region) - regionPriority(right.region) ||
+          compareVersionDesc(left.modelLabel, right.modelLabel) ||
+          left.sortOrder - right.sortOrder ||
+          left.modelLabel.localeCompare(right.modelLabel)
+        )
       }),
     }))
     .sort((a, b) => {

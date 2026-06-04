@@ -22,15 +22,10 @@ import {
   type SelectableTeam,
 } from '../selector/team-selector-utils'
 import { useTeamFavorites } from '../selector/useTeamFavorites'
+import type { QuickLaunchIntent } from './quick-launch/launch-intent'
+import { QuickLaunchPanel } from './quick-launch/quick-launch-panel'
+import type { QuickPresetSelection } from './quick-launch/types'
 
-// Container dimensions
-const CONTAINER_WIDTH = 880
-const CONTAINER_HEIGHT = 108
-
-// Card dimensions
-const CARD_WIDTH = 154
-// Maximum number of team cards to display before showing "More" button
-const MAX_TEAM_CARDS = 4
 // Small button width (compact size for more/quick create buttons)
 const SMALL_BUTTON_WIDTH = 72
 
@@ -38,6 +33,8 @@ interface QuickAccessCardsProps {
   teams: Team[]
   selectedTeam: Team | null
   onTeamSelect: (team: Team) => void
+  onPhraseSelect?: (phrase: string) => void
+  onPresetSelect?: (selection: QuickPresetSelection) => void
   currentMode: 'chat' | 'code' | 'knowledge' | 'task' | 'video' | 'image'
   isLoading?: boolean
   isTeamsLoading?: boolean
@@ -45,12 +42,16 @@ interface QuickAccessCardsProps {
   onRefreshTeams?: () => Promise<Team[]>
   showWizardButton?: boolean
   defaultTeam?: Team | null
+  launchIntent?: QuickLaunchIntent | null
+  onLaunchIntentConsumed?: () => void
 }
 
 export function QuickAccessCards({
   teams,
   selectedTeam,
   onTeamSelect,
+  onPhraseSelect,
+  onPresetSelect,
   currentMode,
   isLoading,
   isTeamsLoading: _isTeamsLoading,
@@ -58,13 +59,14 @@ export function QuickAccessCards({
   onRefreshTeams: _onRefreshTeams,
   showWizardButton: _showWizardButton = false,
   defaultTeam,
+  launchIntent,
+  onLaunchIntentConsumed,
 }: QuickAccessCardsProps) {
   const { t } = useTranslation('common')
   const { toast } = useToast()
   const [quickAccessTeams, setQuickAccessTeams] = useState<QuickAccessTeam[]>([])
   const [quickAccessResponse, setQuickAccessResponse] = useState<QuickAccessResponse | null>(null)
   const [isQuickAccessLoading, setIsQuickAccessLoading] = useState(true)
-  const [clickedTeamId, setClickedTeamId] = useState<number | null>(null)
   const [draggedTeamId, setDraggedTeamId] = useState<number | null>(null)
   const [dragOverTeamId, setDragOverTeamId] = useState<number | null>(null)
   const [createAgentOpen, setCreateAgentOpen] = useState(false)
@@ -143,8 +145,6 @@ export function QuickAccessCards({
     } as DisplayTeam
   })
 
-  // Limit display teams to MAX_TEAM_CARDS (4 teams)
-  const teamCardsToShow = displayTeams.slice(0, MAX_TEAM_CARDS)
   const quickAccessTeamIds = new Set(displayTeams.map(team => team.id))
   const hasTeamsOutsideQuickAccess = allSelectableTeams.some(
     team => !quickAccessTeamIds.has(team.id)
@@ -201,23 +201,6 @@ export function QuickAccessCards({
     setSearchQuery('')
   }
 
-  const handleTeamClick = useCallback(
-    (team: DisplayTeam) => {
-      if (isDragReorderingRef.current) return
-
-      setClickedTeamId(team.id)
-
-      setTimeout(() => {
-        onTeamSelect(team)
-      }, 150)
-
-      setTimeout(() => {
-        setClickedTeamId(null)
-      }, 300)
-    },
-    [onTeamSelect]
-  )
-
   const persistQuickAccessOrder = useCallback(
     async (orderedTeams: QuickAccessTeam[], previousTeams: QuickAccessTeam[]) => {
       try {
@@ -238,6 +221,7 @@ export function QuickAccessCards({
             quick_access: nextQuickAccess,
           },
         })
+        window.dispatchEvent(new Event('quick-access-updated'))
       } catch (error) {
         console.error('Failed to reorder quick access teams:', error)
         setQuickAccessTeams(previousTeams)
@@ -361,31 +345,6 @@ export function QuickAccessCards({
     }
   }, [_onRefreshTeams, onTeamSelect])
 
-  if (isLoading || isQuickAccessLoading) {
-    return (
-      <div className="flex flex-col items-center mt-6 w-full">
-        <div
-          className="flex items-center justify-start gap-3 overflow-hidden rounded-lg bg-base p-3 mx-auto"
-          style={{
-            width: CONTAINER_WIDTH,
-            height: CONTAINER_HEIGHT,
-          }}
-        >
-          {[1, 2, 3, 4, 5].map(i => (
-            <div
-              key={i}
-              className="rounded-[20px] bg-base border border-border animate-pulse"
-              style={{
-                width: CARD_WIDTH,
-                height: 78,
-              }}
-            />
-          ))}
-        </div>
-      </div>
-    )
-  }
-
   if (teams.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center mt-8 mb-4">
@@ -407,78 +366,6 @@ export function QuickAccessCards({
   // Don't show quick access cards if no teams are available after filtering
   if (displayTeams.length === 0 && allSelectableTeams.length === 0) {
     return null
-  }
-
-  const renderTeamCard = (team: DisplayTeam) => {
-    const isSelected = selectedTeam?.id === team.id
-    const isClicked = clickedTeamId === team.id
-    const description = team.description || t('common:teams.no_description')
-    const displayName = getTeamDisplayName(team)
-    const isGroupTeam =
-      team.namespace && team.namespace !== 'default' && team.namespace !== 'community'
-
-    return (
-      <div
-        draggable
-        onClick={() => !isClicked && handleTeamClick(team)}
-        onDragStart={event => handleQuickAccessDragStart(event, team)}
-        onDragOver={event => handleQuickAccessDragOver(event, team)}
-        onDragLeave={() => setDragOverTeamId(null)}
-        onDrop={event => handleQuickAccessDrop(event, team)}
-        onDragEnd={handleQuickAccessDragEnd}
-        data-testid={`quick-access-team-${team.name}`}
-        className={`
-          group relative flex flex-col justify-center
-          cursor-grab active:cursor-grabbing transition-all duration-200
-          ${
-            isSelected
-              ? 'border-l-[3px] border-l-primary border-y border-r border-border bg-primary/5'
-              : 'border border-border bg-base'
-          }
-          ${isClicked ? 'clicking-card' : ''}
-          ${isClicked ? 'pointer-events-none' : ''}
-          ${draggedTeamId === team.id ? 'opacity-60' : ''}
-          ${dragOverTeamId === team.id ? 'ring-2 ring-primary/40' : ''}
-          ${!isSelected ? 'hover:shadow-[0_2px_12px_0_rgba(0,0,0,0.1)]' : ''}
-        `}
-        style={{
-          width: CARD_WIDTH,
-          height: 78,
-          padding: '8px 12px',
-          borderRadius: 20,
-          flexShrink: 0,
-          flexGrow: 0,
-        }}
-      >
-        {/* Group namespace badge in top-right corner */}
-        {isGroupTeam && (
-          <span
-            className="absolute top-2 right-2 text-[9px] text-primary/60 leading-none max-w-[60px] truncate"
-            title={team.namespace ?? undefined}
-          >
-            {team.namespace}
-          </span>
-        )}
-
-        <div className="mb-1 w-full">
-          <span
-            className={`block text-[15px] font-semibold leading-5 truncate ${
-              isSelected ? 'text-primary' : 'text-text-primary'
-            }`}
-            title={displayName}
-          >
-            {displayName}
-          </span>
-        </div>
-
-        <p
-          className="text-xs text-text-muted leading-[18px] line-clamp-1 w-full truncate"
-          title={description}
-        >
-          {description}
-        </p>
-      </div>
-    )
   }
 
   const renderQuickCreateCard = () => {
@@ -620,49 +507,25 @@ export function QuickAccessCards({
 
   return (
     <>
-      <style jsx>{`
-        @keyframes pulse-glow {
-          0% {
-            box-shadow: 0 0 0 0 rgba(20, 184, 166, 0.4);
-          }
-          50% {
-            box-shadow: 0 0 0 6px rgba(20, 184, 166, 0);
-          }
-          100% {
-            box-shadow: 0 0 0 0 rgba(20, 184, 166, 0);
-          }
+      <QuickLaunchPanel
+        teams={teams}
+        selectedTeam={selectedTeam}
+        onTeamSelect={onTeamSelect}
+        onPresetSelect={
+          onPresetSelect ??
+          (selection => {
+            const prompt = selection.preset.prompt ?? selection.preset.title
+            onPhraseSelect?.(prompt)
+          })
         }
-
-        @keyframes scale-bounce {
-          0% {
-            transform: scale(1);
-          }
-          50% {
-            transform: scale(0.97);
-          }
-          100% {
-            transform: scale(1);
-          }
-        }
-
-        .clicking-card {
-          animation:
-            pulse-glow 0.3s ease-out,
-            scale-bounce 0.3s ease-out;
-        }
-      `}</style>
-
-      <div
-        className="w-full max-w-[820px] mx-auto flex flex-wrap items-center justify-center gap-3 mt-6"
-        data-tour="quick-access-cards"
-        data-testid="quick-access-cards"
-      >
-        {teamCardsToShow.map(team => (
-          <div key={team.id}>{renderTeamCard(team)}</div>
-        ))}
-        {renderMoreButton()}
-        {renderQuickCreateCard()}
-      </div>
+        currentMode={currentMode}
+        isLoading={isLoading || isQuickAccessLoading}
+        defaultTeam={defaultTeam}
+        launchIntent={launchIntent}
+        onLaunchIntentConsumed={onLaunchIntentConsumed}
+        renderMoreButton={renderMoreButton}
+        renderQuickCreateCard={renderQuickCreateCard}
+      />
 
       {createAgentOpen && (
         <TeamEditDialog

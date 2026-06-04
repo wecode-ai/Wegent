@@ -78,7 +78,7 @@ export function useConsistencyWatcher({
     const wasConnected = wasConnectedRef.current
 
     if (isConnected) {
-      const hasPendingSocketRecovery = getMachine()?.getState().status === 'waiting_socket'
+      const hasPendingSocketRecovery = getMachine()?.getState().phase === 'waiting_socket'
       if (!wasConnected && (hasConnectedOnceRef.current || hasPendingSocketRecovery)) {
         void verifyCurrentTask('websocket-reconnect')
       }

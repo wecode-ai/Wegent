@@ -113,6 +113,8 @@ class StreamingState:
     # Silent exit state
     is_silent_exit: bool = False
     silent_exit_reason: str = ""
+    is_deferred_user_input: bool = False
+    deferred_user_input_tool_use_id: Optional[str] = None
 
     # Truncation state (when model output reaches max_token limit)
     is_truncated: bool = False
@@ -197,6 +199,12 @@ class StreamingState:
             result["silent_exit"] = True
             if self.silent_exit_reason:
                 result["silent_exit_reason"] = self.silent_exit_reason
+        if self.is_deferred_user_input:
+            result["deferred_user_input"] = True
+            if self.deferred_user_input_tool_use_id:
+                result["deferred_user_input_tool_use_id"] = (
+                    self.deferred_user_input_tool_use_id
+                )
         # Include truncation flag if set
         if self.is_truncated:
             result["truncated"] = True
@@ -405,14 +413,23 @@ class StreamingCore:
             self.state.is_truncated,
         )
 
+        stop_reason = (
+            "tool_deferred" if self.state.is_deferred_user_input else "end_turn"
+        )
+
         # Emit done event via ResponsesAPIEmitter
         # Pass all result fields through extra_fields so they are included
         # in the response.completed event and persisted to the DB.
         await self.emitter.done(
             content=result.get("value", ""),
+            stop_reason=stop_reason,
             sources=result.get("sources"),
             silent_exit=result.get("silent_exit"),
             silent_exit_reason=result.get("silent_exit_reason"),
+            deferred_user_input=result.get("deferred_user_input"),
+            deferred_user_input_tool_use_id=result.get(
+                "deferred_user_input_tool_use_id"
+            ),
             loaded_skills=result.get("loaded_skills"),
             messages_chain=result.get("messages_chain"),
             reasoning_content=result.get("reasoning_content"),

@@ -85,7 +85,7 @@ metadata:
   namespace: default
 spec:
   skills:
-    - interactive-form-question
+    - interactive
   systemPrompt: |
     You are an experienced Software Requirements Analyst specializing in requirement specification clarification. Your goal is to help users refine vague requirements into clear, actionable development tasks through structured questioning.
 
@@ -130,7 +130,7 @@ spec:
     - The final prompt should be comprehensive and actionable
     - Always include the `## ✅ Final Requirement Prompt` heading for proper frontend rendering
 
-    > For detailed `interactive_form_question` tool parameters and examples, refer to the interactive-form-question skill instructions loaded in your context.
+    > For detailed `interactive_form_question` tool parameters and examples, refer to the interactive skill instructions loaded in your context.
 status:
   state: Available
 ---
@@ -337,7 +337,7 @@ spec:
     - mermaid-diagram
     - sandbox
     - ui-links
-    - interactive-form-question
+    - interactive
   systemPrompt: |
     You are Wegent, a helpful, harmless, and honest AI assistant.
 
@@ -1276,6 +1276,84 @@ spec:
       prompt: ""
   collaborationModel: solo
   bind_mode:
+    - task
+  workflow:
+    mode: solo
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Ghost
+metadata:
+  name: skill-creator-ghost
+  displayName: Skill Creator
+  namespace: default
+spec:
+  mcpServers: {}
+  skills:
+    - skill-creator
+    - interactive
+    - ui-links
+  systemPrompt: |
+    You are Wegent Skill Creator, a specialist agent for creating, validating, packaging, and publishing Wegent Skills.
+
+    Always follow the official skill-creator Skill instructions. Use the skill-creator scripts instead of hand-rolling packaging or upload logic.
+
+    ## Workflow
+
+    1. Understand whether the user wants to create a new Skill or update an existing Skill.
+    2. Use `interactive_form_question` whenever you need requirements, examples, publish destination choices, or overwrite confirmation. Do not present choice lists as plain text when an interactive form can be used.
+    3. Create or update the Skill directory and keep only files that directly support the Skill.
+    4. Run `quick_validate.py` before offering to publish.
+    5. Before publishing, run `list_publish_targets.sh` from the skill-creator scripts to discover the personal Skill library and manageable group namespaces.
+    6. Present the upload target through `interactive_form_question`.
+    7. Publish with `publish_skill.sh <skill_path> <skill_name> <namespace>`.
+    8. If the target namespace already has the same Skill name, ask for overwrite confirmation through `interactive_form_question`; only retry with `--overwrite` after explicit confirmation.
+    9. After publishing succeeds, report the Skill ID, namespace, and whether it was created or updated. Include `[Open Settings](wegent://open/settings)`.
+
+    ## Publishing Rules
+
+    - Default to the user's personal Skill library (`default`) when the user has no preference.
+    - Offer group namespaces only when `list_publish_targets.sh` returns them.
+    - Allow a custom namespace when the user asks for one or selects the custom option.
+    - Do not stop at a `.skill` package or ask the user to manually upload through Settings when publishing authentication is available.
+    - Let the backend reject unauthorized namespaces; do not claim upload success until `publish_skill.sh` succeeds.
+    - Do not publish public/system Skills. This agent only publishes to the current user's personal or group Skill library.
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Bot
+metadata:
+  name: skill-creator-bot
+  namespace: default
+spec:
+  ghostRef:
+    name: skill-creator-ghost
+    namespace: default
+  shellRef:
+    name: ClaudeCode
+    namespace: default
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Team
+metadata:
+  name: skill-creator-team
+  displayName: Skill Creator
+  namespace: default
+spec:
+  description: Creates, validates, packages, and publishes Wegent Skills with an interactive upload target selection flow.
+  members:
+    - role: leader
+      botRef:
+        name: skill-creator-bot
+        namespace: default
+      prompt: ""
+  collaborationModel: solo
+  bind_mode:
+    - chat
     - task
   workflow:
     mode: solo

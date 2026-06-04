@@ -8,7 +8,7 @@ import {
   Server,
   Sparkles,
 } from 'lucide-react'
-import { useTranslation } from 'react-i18next'
+import { useTranslation } from '@/hooks/useTranslation'
 import type { MCPProviderInfo, MCPServer } from '@/types/api'
 import { McpProviderBlock } from './McpManagementSections'
 
@@ -71,11 +71,13 @@ export function CatalogSection({
   onRequestUninstall: (item: CatalogItem) => void
 }) {
   return (
-    <section className="space-y-5">
-      <div className="border-b border-border pb-3">
-        <h2 className="text-lg font-semibold">{title}</h2>
+    <section>
+      <div className="border-b border-[#ececf0] pb-3">
+        <h2 className="text-lg font-semibold tracking-normal text-[#111114]">
+          {title}
+        </h2>
       </div>
-      <div className="grid grid-cols-2 gap-x-14 gap-y-4">
+      <div className="grid grid-cols-1 gap-x-16 sm:grid-cols-2">
         {items.map((item) => (
           <CatalogCard
             key={item.id}
@@ -125,7 +127,9 @@ export function InstalledMcpCatalog({
   if (items.length === 0) {
     return (
       <div className="flex min-h-[220px] flex-col items-center justify-center gap-4 text-sm font-semibold">
-        <span>{t('workbench.plugins_no_installed_mcps', '暂无已安装 MCP')}</span>
+        <span>
+          {t('workbench.plugins_no_installed_mcps', '暂无已安装 MCP')}
+        </span>
         <button
           type="button"
           className="h-9 rounded-xl bg-surface px-4 text-sm font-semibold hover:bg-muted"
@@ -138,23 +142,23 @@ export function InstalledMcpCatalog({
   }
 
   return (
-    <section className="grid grid-cols-2 gap-x-14 gap-y-4">
+    <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-x-14 sm:gap-y-4">
       {items.map((item) => (
         <article
           key={`${item.id ?? item.name}-${item.serverType}`}
-          className="group flex min-h-[74px] items-center gap-4 rounded-lg px-3 py-2 hover:bg-surface"
+          className="group flex min-h-[84px] items-center gap-3 rounded-2xl border border-border/70 bg-background px-3 py-3 shadow-sm hover:bg-surface sm:min-h-[74px] sm:gap-4 sm:rounded-lg sm:border-0 sm:bg-transparent sm:py-2 sm:shadow-none"
         >
           <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
             <Globe className="h-6 w-6" />
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-2">
-              <h3 className="truncate text-[15px] font-semibold leading-5">
+              <h3 className="truncate text-base font-semibold leading-5 sm:text-[15px]">
                 {item.name}
               </h3>
-          <ProtocolDot protocol={item.serverType} />
+              <ProtocolDot protocol={item.serverType} />
             </div>
-            <p className="mt-1 truncate text-sm leading-5 text-text-secondary">
+            <p className="mt-1 max-h-10 overflow-hidden text-sm leading-5 text-text-secondary sm:truncate">
               {item.description}
             </p>
           </div>
@@ -164,7 +168,7 @@ export function InstalledMcpCatalog({
                 ? t('workbench.plugins_enabled', '已启用')
                 : t('workbench.plugins_disabled', '已停用')
             }
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-text-muted"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-text-muted sm:h-8 sm:w-8 sm:rounded-lg"
           >
             <Check className="h-4 w-4" />
           </span>
@@ -296,7 +300,12 @@ export function McpMarketplaceCatalog({
   if (availableProviders.length === 0) {
     return (
       <div className="flex min-h-[220px] flex-col items-center justify-center gap-4 text-sm font-semibold">
-        <span>{t('workbench.plugins_no_configured_mcp_providers', '暂无已配置的 MCP 供应商')}</span>
+        <span>
+          {t(
+            'workbench.plugins_no_configured_mcp_providers',
+            '暂无已配置的 MCP 供应商',
+          )}
+        </span>
         <button
           type="button"
           className="h-9 rounded-xl bg-surface px-4 text-sm font-semibold hover:bg-muted"
@@ -308,7 +317,10 @@ export function McpMarketplaceCatalog({
     )
   }
 
-  if (!hasServers && availableProviders.some((provider) => providerLoadingByKey[provider.key])) {
+  if (
+    !hasServers &&
+    availableProviders.some((provider) => providerLoadingByKey[provider.key])
+  ) {
     return (
       <div className="flex min-h-[220px] items-center justify-center gap-2 text-sm font-semibold text-text-secondary">
         <Loader2 className="h-4 w-4 animate-spin" />
@@ -323,7 +335,10 @@ export function McpMarketplaceCatalog({
         <span>{t('workbench.plugins_no_mcp_results', '找不到匹配的 MCP')}</span>
         {Object.values(providerErrors).filter(Boolean).length > 0 && (
           <span className="text-xs text-text-muted">
-            {t('workbench.plugins_provider_partial_error', '部分技能来源暂不可用')}
+            {t(
+              'workbench.plugins_provider_partial_error',
+              '部分技能来源暂不可用',
+            )}
           </span>
         )}
       </div>
@@ -331,20 +346,22 @@ export function McpMarketplaceCatalog({
   }
 
   return (
-    <section className="space-y-12">
+    <section className="space-y-6 sm:space-y-12">
       {availableProviders.map((provider) => {
         const servers = providerServers[provider.key] ?? []
         if (servers.length === 0) return null
 
         return (
-          <section key={provider.key} className="space-y-5">
-            <div className="border-b border-border pb-3">
-              <h2 className="text-lg font-semibold">
+          <section key={provider.key} className="space-y-3 sm:space-y-5">
+            <div className="border-b border-border pb-2 sm:pb-3">
+              <h2 className="text-base font-semibold sm:text-lg">
                 {providerDisplayName(provider)}
               </h2>
-              <p className="mt-1 text-xs text-text-muted">{provider.description}</p>
+              <p className="mt-1 text-xs text-text-muted">
+                {provider.description}
+              </p>
             </div>
-            <div className="grid grid-cols-2 gap-x-14 gap-y-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-x-14 sm:gap-y-4">
               {servers.map((server) => (
                 <McpMarketplaceCard
                   key={server.id}
@@ -383,18 +400,18 @@ function McpMarketplaceCard({
   const installed = server.installState === 'installed'
 
   return (
-    <article className="group flex min-h-[74px] items-center gap-4 rounded-lg px-3 py-2 hover:bg-surface">
+    <article className="group flex min-h-[84px] items-center gap-3 rounded-2xl border border-border/70 bg-background px-3 py-3 shadow-sm hover:bg-surface sm:min-h-[74px] sm:gap-4 sm:rounded-lg sm:border-0 sm:bg-transparent sm:py-2 sm:shadow-none">
       <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
         <Server className="h-6 w-6" />
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
-          <h3 className="truncate text-[15px] font-semibold leading-5">
+          <h3 className="truncate text-base font-semibold leading-5 sm:text-[15px]">
             {server.name}
           </h3>
           <ProtocolDot protocol={server.type} />
         </div>
-        <p className="mt-1 truncate text-sm leading-5 text-text-secondary">
+        <p className="mt-1 max-h-10 overflow-hidden text-sm leading-5 text-text-secondary sm:truncate">
           {server.description}
         </p>
       </div>
@@ -405,7 +422,7 @@ function McpMarketplaceCard({
           data-testid={`mcp-market-uninstall-${server.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`}
           onClick={onRequestUninstall}
           disabled={!server.installedMcpId}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-text-muted hover:bg-surface hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-text-muted hover:bg-surface hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40 sm:h-8 sm:w-8 sm:rounded-lg"
         >
           <Check className="h-4 w-4" />
         </button>
@@ -415,7 +432,7 @@ function McpMarketplaceCard({
           aria-label={installLabel}
           data-testid={`mcp-market-install-${server.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`}
           onClick={onInstall}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-surface hover:bg-muted"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-surface hover:bg-muted sm:h-8 sm:w-8 sm:rounded-lg"
         >
           <Plus className="h-4 w-4" />
         </button>
@@ -458,20 +475,20 @@ function CatalogCard({
   const canUpdate = item.installState === 'update_available'
 
   return (
-    <article className="group flex min-h-[74px] items-center gap-4 rounded-lg px-3 py-2 hover:bg-surface">
+    <article className="group grid min-h-[72px] grid-cols-[44px_minmax(0,1fr)_44px] items-center gap-3 border-b border-border py-2.5">
       <div
         className={[
-          'flex h-12 w-12 shrink-0 items-center justify-center rounded-xl',
+          'flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-black/10 shadow-[0_8px_20px_rgba(15,23,42,0.08)]',
           item.iconClassName,
         ].join(' ')}
       >
-        <Icon className="h-6 w-6" />
+        <Icon className="h-5 w-5" />
       </div>
       <div className="min-w-0 flex-1">
-        <h3 className="truncate text-[15px] font-semibold leading-5">
+        <h3 className="truncate text-sm font-semibold leading-5 text-text-primary">
           {item.name}
         </h3>
-        <p className="mt-1 truncate text-sm leading-5 text-text-secondary">
+        <p className="mt-0.5 truncate text-[13px] leading-[18px] text-text-secondary">
           {item.description}
         </p>
       </div>
@@ -483,7 +500,7 @@ function CatalogCard({
               aria-label={updateLabel}
               data-testid={`system-skill-update-${item.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`}
               onClick={() => onInstall(item)}
-              className="flex h-8 w-8 items-center justify-center rounded-lg bg-surface text-text-primary hover:bg-muted"
+              className="flex h-11 w-11 items-center justify-center rounded-lg border border-border bg-surface text-text-primary hover:bg-muted"
             >
               <RefreshCw className="h-4 w-4" />
             </button>
@@ -493,8 +510,8 @@ function CatalogCard({
             aria-label={item.enabled ? enabledLabel : uninstallLabel}
             data-testid={`system-skill-uninstall-${item.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`}
             onClick={() => onRequestUninstall(item)}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted hover:bg-surface hover:text-text-primary"
-            disabled={item.sourceType === 'personal' && !item.personalSkillId}
+            className="flex h-11 w-11 items-center justify-center rounded-lg text-text-muted hover:bg-muted hover:text-text-primary"
+            disabled={!item.installedSkillId}
           >
             <Check className="h-4 w-4" />
           </button>
@@ -505,7 +522,7 @@ function CatalogCard({
           aria-label={installLabel}
           data-testid={`system-skill-install-${item.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`}
           onClick={() => onInstall(item)}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-surface hover:bg-muted"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-border bg-surface hover:bg-muted"
         >
           <Plus className="h-4 w-4" />
         </button>
@@ -534,12 +551,12 @@ export function ConfirmUninstallDialog({
   onConfirm: () => void
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 px-4">
+    <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/20 px-4">
       <section
         role="dialog"
         aria-modal="true"
         aria-labelledby="uninstall-skill-dialog-title"
-        className="w-full max-w-[360px] rounded-2xl bg-base p-5 shadow-xl"
+        className="w-full max-w-[360px] rounded-2xl bg-background p-5 shadow-xl"
       >
         <h2
           id="uninstall-skill-dialog-title"

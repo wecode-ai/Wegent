@@ -27,7 +27,7 @@ import {
   SkillRequestPayload,
   SkillResponsePayload,
 } from '@/types/socket'
-import type { TaskDetailSubtask, Team, TaskType } from '@/types/api'
+import type { InteractiveFormAnswerPayload, TaskDetailSubtask, Team, TaskType } from '@/types/api'
 import type { MessageBlock } from '../components/message/thinking/types'
 import { generateMessageId, TaskStateMachine } from '../state'
 import type { TaskStateMachineDeps, UnifiedMessage } from '../state'
@@ -108,6 +108,8 @@ export interface ChatMessageRequest {
     /** Model name for video/image generation */
     model?: string
   }
+  /** Structured answer for a deferred interactive form tool call */
+  interactive_form_answer?: InteractiveFormAnswerPayload
 }
 
 export interface MessageSyncer {
@@ -417,6 +419,7 @@ export function useMessageSyncer({
         content,
         tool_output,
         tool_input,
+        render_payload,
         argument_status,
         status,
       } = data
@@ -436,6 +439,7 @@ export function useMessageSyncer({
         ...(content !== undefined && { content }),
         ...(tool_output !== undefined && { tool_output }),
         ...(tool_input !== undefined && { tool_input }),
+        ...(render_payload !== undefined && { render_payload }),
         ...(argument_status !== undefined && { argument_status }),
         ...(mappedStatus !== undefined && { status: mappedStatus }),
       }
@@ -716,6 +720,7 @@ export function useMessageSyncer({
         additional_skills: request.additional_skills,
         action: request.action,
         generate_params: request.generate_params,
+        interactive_form_answer: request.interactive_form_answer,
       }
 
       try {
@@ -760,6 +765,8 @@ export function useMessageSyncer({
           onTaskIdResolved(realTaskId, immediateTaskId)
         }
 
+        machine.markSendAccepted()
+
         // Join the task room
         if (realTaskId !== immediateTaskId && realTaskId > 0) {
           await joinTask(realTaskId)
@@ -796,7 +803,7 @@ export function useMessageSyncer({
       machine.setStopping(true)
       try {
         const state = machine.getState()
-        let subtaskId = state.streamingSubtaskId
+        let subtaskId = state.runtime.activeStreamSubtaskId
 
         // Find running subtask from backup if needed
         let runningSubtask: TaskDetailSubtask | undefined

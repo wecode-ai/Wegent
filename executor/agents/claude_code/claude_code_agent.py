@@ -12,6 +12,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+from claude_agent_sdk.types import ResultMessage
 
 from executor.agents.agno.thinking_step_manager import ThinkingStepManager
 from executor.agents.base import Agent
@@ -25,6 +26,12 @@ from executor.agents.claude_code.config_manager import (
     create_claude_model_config,
     extract_claude_options,
     get_claude_config_dir,
+)
+from executor.agents.claude_code.deferred_mcp_proxy import (
+    build_interactive_form_answer_payload,
+    create_interactive_form_answer_query,
+    install_deferred_mcp_proxy_hook,
+    is_interactive_form_tool,
 )
 from executor.agents.claude_code.git_operations import (
     add_to_git_exclude,
@@ -72,7 +79,6 @@ from shared.models.responses_api_emitter import ResponsesAPIEmitter
 from shared.models.task import ExecutionResult, ThinkingStep
 from shared.status import TaskStatus
 from shared.telemetry.decorators import add_span_event, trace_async
-from shared.utils import git_util
 
 logger = setup_logger("claude_code_agent")
 
@@ -518,42 +524,13 @@ class ClaudeCodeAgent(Agent):
                 workspace_source = "local_path"
                 project_path = standalone_path
 
-        if not workspace_source:
-            return
-        if not project_id and not project_path:
-            return
-
-        if project_path:
-            project_path = os.path.expanduser(str(project_path))
-            if not os.path.isabs(project_path):
-                project_path = os.path.join(config.get_workspace_root(), project_path)
-        elif project_id and workspace_source == "git" and self.task_data.git_url:
-            repo_name = git_util.get_repo_name_from_url(self.task_data.git_url)
-            safe_repo_name = repo_name.replace("/", "_").replace("\\", "_")
-            project_path = os.path.join(
-                config.get_workspace_root(),
-                "projects",
-                str(project_id),
-                safe_repo_name,
-            )
-
+        project_path = self.prepare_project_workspace_path()
         if not project_path:
             return
 
-        if workspace_source == "local_path":
-            os.makedirs(project_path, exist_ok=True)
-        else:
-            parent_dir = os.path.dirname(project_path)
-            if parent_dir:
-                os.makedirs(parent_dir, exist_ok=True)
-
-        self.project_path = project_path
         self.options["cwd"] = project_path
         SessionManager.set_task_session_root(
             self.task_id, os.path.join(config.WEGENT_EXECUTOR_HOME, "sessions")
-        )
-        logger.info(
-            "Using project workspace path for task %s: %s", self.task_id, project_path
         )
 
     def _coordinate_mode_workspace_path(self) -> Optional[str]:
@@ -878,7 +855,26 @@ class ClaudeCodeAgent(Agent):
                 f"Sending query with prompt (length: {prompt_length}) for session_id: {self.session_id}"
             )
 
-            if is_vision_prompt(prompt):
+            interactive_form_answer = getattr(
+                self.task_data, "interactive_form_answer", None
+            )
+            interactive_form_payload = build_interactive_form_answer_payload(
+                interactive_form_answer
+            )
+
+            if interactive_form_payload:
+                logger.info(
+                    "Sending interactive form answer as tool_result for tool_use_id=%s",
+                    interactive_form_payload["tool_use_id"],
+                )
+                await self._drain_answered_interactive_form_resume_result(
+                    interactive_form_payload
+                )
+                await self.client.query(
+                    create_interactive_form_answer_query(interactive_form_answer),
+                    session_id=self.session_id,
+                )
+            elif is_vision_prompt(prompt):
                 # Save images to disk before sending to SDK
                 saved_paths = save_vision_images(prompt, task_id=self.task_id)
                 if saved_paths:
@@ -911,6 +907,8 @@ class ClaudeCodeAgent(Agent):
                 self.thinking_manager,
                 self.task_state_manager,
                 session_id=self.session_id,
+                mcp_servers=self.options.get("mcp_servers")
+                or self.options.get("mcpServers"),
             )
 
             # Task completed or failed
@@ -938,6 +936,60 @@ class ClaudeCodeAgent(Agent):
 
         except Exception as e:
             return self._handle_execution_error(e, "async execution")
+
+    async def _drain_answered_interactive_form_resume_result(
+        self, interactive_form_payload: dict[str, Any]
+    ) -> None:
+        """Ignore the stale deferred form result emitted immediately after resume."""
+        if not self.options.get("resume") or not self.client:
+            return
+
+        expected_tool_use_id = interactive_form_payload["tool_use_id"]
+
+        async def _read_resume_result() -> ResultMessage | None:
+            async for message in self.client.receive_response():
+                if isinstance(message, ResultMessage):
+                    return message
+                logger.info(
+                    "Ignoring non-result message while draining answered form resume: %s",
+                    type(message).__name__,
+                )
+            return None
+
+        try:
+            result_message = await asyncio.wait_for(_read_resume_result(), timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.info(
+                "No stale deferred form result emitted after resume for tool_use_id=%s",
+                expected_tool_use_id,
+            )
+            return
+
+        if not result_message:
+            return
+
+        deferred_tool_use = getattr(result_message, "deferred_tool_use", None)
+        if (
+            result_message.stop_reason in {"tool_deferred", "tool_deferred_unavailable"}
+            and deferred_tool_use
+            and deferred_tool_use.id == expected_tool_use_id
+            and is_interactive_form_tool(deferred_tool_use.name)
+        ):
+            logger.info(
+                "Drained resume-emitted answered interactive form defer: "
+                "tool_use_id=%s, stop_reason=%s",
+                expected_tool_use_id,
+                result_message.stop_reason,
+            )
+            return
+
+        logger.warning(
+            "Unexpected result while draining answered interactive form resume: "
+            "expected_tool_use_id=%s, stop_reason=%s, deferred_tool_use=%s",
+            expected_tool_use_id,
+            result_message.stop_reason,
+            deferred_tool_use,
+        )
 
     async def _create_and_connect_client(self) -> None:
         """
@@ -1006,6 +1058,7 @@ class ClaudeCodeAgent(Agent):
         self.options = prepare_options_for_windows(
             self.options, self._get_claude_config_dir()
         )
+        self.options = install_deferred_mcp_proxy_hook(self.options)
 
         # Add stderr callback to capture CLI stderr output
         self.options["stderr"] = self._stderr_callback

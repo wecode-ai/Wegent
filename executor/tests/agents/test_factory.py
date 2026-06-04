@@ -8,6 +8,7 @@ import pytest
 
 from executor.agents.agno.agno_agent import AgnoAgent
 from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
+from executor.agents.codex import CodeXAgent
 from executor.agents.dify.dify_agent import DifyAgent
 from executor.agents.factory import AgentFactory
 from shared.models.execution import ExecutionRequest
@@ -129,8 +130,37 @@ class TestAgentFactory:
     def test_agents_registry(self):
         """Test that agents registry contains expected agents"""
         assert "claudecode" in AgentFactory._agents
+        assert "codex" in AgentFactory._agents
         assert "agno" in AgentFactory._agents
         assert "dify" in AgentFactory._agents
         assert AgentFactory._agents["claudecode"] == ClaudeCodeAgent
+        assert AgentFactory._agents["codex"] == CodeXAgent
         assert AgentFactory._agents["agno"] == AgnoAgent
         assert AgentFactory._agents["dify"] == DifyAgent
+
+    def test_get_code_agent_routes_claude_to_claudecode(self, task_data, mock_emitter):
+        """Claude models keep using the stable ClaudeCodeAgent path."""
+        task_data.model_config = {
+            "model": "claude",
+            "model_id": "claude-3-5-sonnet-20241022",
+        }
+
+        agent = AgentFactory.get_code_agent(task_data, mock_emitter)
+
+        assert isinstance(agent, ClaudeCodeAgent)
+
+    def test_get_code_agent_routes_openai_responses_to_codex(
+        self, task_data, mock_emitter
+    ):
+        """OpenAI Responses models use CodeXAgent."""
+        task_data.model_config = {
+            "model": "openai",
+            "model_id": "gpt-5.5",
+            "api_format": "responses",
+            "base_url": "http://127.0.0.1:3456/v1",
+            "api_key": "token",
+        }
+
+        agent = AgentFactory.get_code_agent(task_data, mock_emitter)
+
+        assert isinstance(agent, CodeXAgent)

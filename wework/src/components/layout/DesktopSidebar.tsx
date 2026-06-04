@@ -1,9 +1,7 @@
 import {
   Archive,
   ChevronDown,
-  ChevronLeft,
   ChevronRight,
-  Clock,
   Edit3,
   Folder,
   FolderPlus,
@@ -13,7 +11,6 @@ import {
   Search,
   Settings,
   Sparkles,
-  Workflow,
   X,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -28,9 +25,13 @@ import type {
   ProjectTask,
   ProjectWithTasks,
   Task,
+  TaskDetail,
+  TaskListResponse,
   User as UserProfile,
 } from '@/types/api'
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
+import { DesktopSearchDialog } from './DesktopSearchDialog'
+import { DesktopWindowControls } from './DesktopWindowControls'
 import { useResizableSidebar } from './useResizableSidebar'
 
 interface DesktopSidebarProps {
@@ -49,6 +50,8 @@ interface DesktopSidebarProps {
   onSelectProject: (projectId: number) => void
   onStartNewProjectChat: (projectId: number) => void
   onOpenTask: (taskId: number, projectId?: number) => void
+  onSearchTasks?: (query: string) => Promise<TaskListResponse>
+  onSearchTaskDetail?: (taskId: number) => Promise<TaskDetail>
   onRememberExecutionDevice?: (deviceId: string) => void
   onOpenPlugins: () => void
   onRefreshDevices?: () => Promise<void>
@@ -63,6 +66,7 @@ interface DesktopSidebarProps {
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onGetProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
+  onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
   onOpenSettings: () => void
   onLogout: () => void
 }
@@ -88,11 +92,13 @@ function SidebarButton({
       data-testid={testId}
       onClick={onClick}
       className={[
-        'flex h-8 w-full items-center gap-3 rounded-md px-3 text-left text-sm font-medium',
-        selected ? 'bg-[#cfd1d4] text-[#222]' : 'text-[#333] hover:bg-white/70',
+        'flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] font-medium leading-[18px]',
+        selected
+          ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
+          : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]',
       ].join(' ')}
     >
-      <Icon className="h-4 w-4 text-[#555]" />
+      <Icon className="h-4 w-4 text-[rgb(var(--color-sidebar-text-secondary))]" />
       <span>{label}</span>
     </button>
   )
@@ -119,7 +125,7 @@ function SidebarSectionHeader({
   const iconVisibilityClass = 'opacity-0 group-hover/section:opacity-100'
 
   return (
-    <div className="group/section mb-3 flex h-8 items-center justify-between px-3">
+    <div className="group/section mb-2 flex h-7 items-center justify-between px-2.5">
       <button
         type="button"
         data-testid={toggleTestId}
@@ -127,10 +133,12 @@ function SidebarSectionHeader({
         aria-expanded={expanded}
         className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md text-left"
       >
-        <span className="truncate text-sm font-semibold text-[#8a8a8a]">{title}</span>
+        <span className="truncate text-[13px] font-semibold leading-[18px] text-[rgb(var(--color-sidebar-text-muted))]">
+          {title}
+        </span>
         <ToggleIcon
           data-testid={iconTestId}
-          className={`h-4 w-4 shrink-0 text-[#8a8a8a] transition-opacity ${iconVisibilityClass}`}
+          className={`h-4 w-4 shrink-0 text-[rgb(var(--color-sidebar-text-muted))] transition-opacity ${iconVisibilityClass}`}
         />
       </button>
       <div className="flex items-center opacity-0 transition-opacity group-hover/section:opacity-100 focus-within:opacity-100">
@@ -204,8 +212,10 @@ function ProjectTaskRow({
     <div
       data-testid={`project-chat-row-${task.task_id}`}
       className={[
-        'group/task ml-5 flex h-8 items-center rounded-md pl-3 pr-1 text-sm',
-        selected ? 'bg-white text-text-primary' : 'text-text-secondary hover:bg-white/70',
+        'group/task flex h-8 items-center rounded-md pl-10 pr-0.5 text-[13px] leading-[18px]',
+        selected
+          ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
+          : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]',
       ].join(' ')}
     >
       <button
@@ -216,7 +226,7 @@ function ProjectTaskRow({
       >
         {title}
       </button>
-      <div className="relative ml-2 flex h-7 w-7 shrink-0 items-center justify-center">
+      <div className="relative ml-2 flex h-7 w-8 shrink-0 items-center justify-end">
         {running ? (
           <Loader2
             data-testid={`project-chat-spinner-${task.task_id}`}
@@ -225,7 +235,7 @@ function ProjectTaskRow({
         ) : (
           <span
             data-testid={`project-chat-time-${task.task_id}`}
-            className="text-xs text-[#8a8a8a] transition-opacity group-hover/task:opacity-0 focus-within:opacity-0"
+            className="text-xs text-[rgb(var(--color-sidebar-text-muted))] transition-opacity group-hover/task:opacity-0 focus-within:opacity-0"
           >
             {formatRelativeSidebarTime(getProjectTaskTime(task))}
           </span>
@@ -300,16 +310,16 @@ function ProjectItem({
     <div data-testid="project-item" className="space-y-0.5">
       <div
         data-testid={`project-row-${project.id}`}
-        className="group/project flex h-9 items-center gap-1 rounded-md pl-3 pr-1 text-sm text-text-secondary hover:bg-white/70"
+        className="group/project flex h-8 items-center gap-1 rounded-md pl-2.5 pr-1 text-[13px] leading-[18px] text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
       >
         <button
           type="button"
           data-testid="project-item-button"
           onClick={() => onToggleProject(project.id)}
           aria-expanded={expanded}
-          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+          className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
         >
-          <Folder className="h-4 w-4 shrink-0" />
+          <Folder className="h-3.5 w-3.5 shrink-0 text-[rgb(var(--color-sidebar-text-secondary))]" />
           <span className="truncate">{project.name}</span>
         </button>
         {!expanded && projectRunning && (
@@ -351,7 +361,7 @@ function ProjectItem({
               event.stopPropagation()
               onStartNewProjectChat(project.id)
             }}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-[#606368] hover:bg-white/80 hover:text-[#2d2d2d]"
+            className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
             aria-label={t('workbench.new_project_chat', '新建项目对话')}
           >
             <MessageSquarePlus className="h-4 w-4" />
@@ -361,7 +371,7 @@ function ProjectItem({
       {expanded && (
         <div className="space-y-0.5">
           {tasks.length === 0 ? (
-            <div className="ml-5 rounded-md px-3 py-1.5 text-xs text-[#8a8a8a]">
+            <div className="ml-10 rounded-md px-2 py-1.5 text-xs text-[rgb(var(--color-sidebar-text-muted))]">
               {t('workbench.no_chats', '暂无会话')}
             </div>
           ) : (
@@ -383,7 +393,7 @@ function ProjectItem({
               type="button"
               data-testid={`project-task-limit-toggle-${project.id}`}
               onClick={() => onToggleTaskLimit(project.id)}
-              className="ml-5 h-8 rounded-md px-3 text-left text-xs font-medium text-[#606368] hover:bg-white/70 hover:text-[#2d2d2d]"
+              className="ml-10 h-8 rounded-md px-2 text-left text-xs font-medium text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
             >
               {showAllTasks
                 ? t('workbench.show_less', '收起')
@@ -416,11 +426,12 @@ function RecentTaskRow({
     <div
       data-testid={`history-task-row-${task.id}`}
       className={[
-        'group/task flex h-9 items-center gap-2 rounded-md pl-3 pr-1 text-sm',
-        selected ? 'bg-white text-text-primary' : 'text-text-secondary hover:bg-white/70',
+        'group/task flex h-8 items-center rounded-md pl-3 pr-0.5 text-[13px] leading-[18px]',
+        selected
+          ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
+          : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]',
       ].join(' ')}
     >
-      <Clock className="h-4 w-4 shrink-0" />
       <button
         type="button"
         data-testid="history-task-button"
@@ -429,7 +440,7 @@ function RecentTaskRow({
       >
         {task.title}
       </button>
-      <div className="relative flex h-7 w-7 shrink-0 items-center justify-center">
+      <div className="relative ml-2 flex h-7 w-8 shrink-0 items-center justify-end">
         {running ? (
           <Loader2
             data-testid={`history-task-spinner-${task.id}`}
@@ -438,7 +449,7 @@ function RecentTaskRow({
         ) : (
           <span
             data-testid={`history-task-time-${task.id}`}
-            className="text-xs text-[#8a8a8a] transition-opacity group-hover/task:opacity-0 focus-within:opacity-0"
+            className="text-xs text-[rgb(var(--color-sidebar-text-muted))] transition-opacity group-hover/task:opacity-0 focus-within:opacity-0"
           >
             {formatRelativeSidebarTime(task.updated_at || task.created_at)}
           </span>
@@ -485,9 +496,10 @@ export function DesktopSidebar({
   onCollapse,
   onNewChat,
   onStartStandaloneChat,
-  onSelectProject,
   onStartNewProjectChat,
   onOpenTask,
+  onSearchTasks,
+  onSearchTaskDetail,
   onRememberExecutionDevice,
   onOpenPlugins,
   onRefreshDevices,
@@ -502,6 +514,7 @@ export function DesktopSidebar({
   onGetDeviceHomeDirectory,
   onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
+  onCreateDeviceDirectory,
   onOpenSettings,
   onLogout,
 }: DesktopSidebarProps) {
@@ -514,15 +527,30 @@ export function DesktopSidebar({
   const [renamingTask, setRenamingTask] = useState<{ id: number; title: string } | null>(null)
   const [projectsExpanded, setProjectsExpanded] = useState(true)
   const [chatsExpanded, setChatsExpanded] = useState(true)
+  const [searchDialogOpen, setSearchDialogOpen] = useState(false)
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<number>>(new Set())
   const [expandedTaskListIds, setExpandedTaskListIds] = useState<Set<number>>(new Set())
   const sortedRecentTasks = useMemo(
     () => sortTasksByTime(recentTasks).filter(task => !task.project_id),
     [recentTasks]
   )
+  const currentProjectWithTask = useMemo(
+    () =>
+      currentTaskId
+        ? projects.find(project =>
+            project.tasks?.some(task => task.task_id === currentTaskId),
+          )
+        : undefined,
+    [currentTaskId, projects],
+  )
+  const currentProjectTaskIndex = useMemo(() => {
+    if (!currentProjectWithTask || !currentTaskId) return -1
+    return sortProjectTasks(currentProjectWithTask.tasks).findIndex(
+      task => task.task_id === currentTaskId,
+    )
+  }, [currentProjectWithTask, currentTaskId])
 
   const handleToggleProject = (projectId: number) => {
-    const shouldExpand = !expandedProjectIds.has(projectId)
     setExpandedProjectIds(previous => {
       const next = new Set(previous)
       if (next.has(projectId)) {
@@ -532,9 +560,6 @@ export function DesktopSidebar({
       }
       return next
     })
-    if (shouldExpand) {
-      onSelectProject(projectId)
-    }
   }
 
   const handleToggleProjectTaskLimit = (projectId: number) => {
@@ -577,21 +602,64 @@ export function DesktopSidebar({
     }
   }, [settingsMenuOpen])
 
+  useEffect(() => {
+    if (!currentTaskId) return
+
+    const timer = window.setTimeout(() => {
+      if (currentProjectWithTask) {
+        setProjectsExpanded(true)
+        setExpandedProjectIds(previous => {
+          if (previous.has(currentProjectWithTask.id)) return previous
+          return new Set([...previous, currentProjectWithTask.id])
+        })
+        if (currentProjectTaskIndex >= INITIAL_PROJECT_CHAT_COUNT) {
+          setExpandedTaskListIds(previous => {
+            if (previous.has(currentProjectWithTask.id)) return previous
+            return new Set([...previous, currentProjectWithTask.id])
+          })
+        }
+        return
+      }
+
+      if (sortedRecentTasks.some(task => task.id === currentTaskId)) {
+        setChatsExpanded(true)
+      }
+    }, 0)
+
+    return () => window.clearTimeout(timer)
+  }, [
+    currentProjectTaskIndex,
+    currentProjectWithTask,
+    currentTaskId,
+    sortedRecentTasks,
+  ])
+
+  useEffect(() => {
+    if (!currentTaskId) return
+
+    const taskRow =
+      document.querySelector(`[data-testid="project-chat-row-${currentTaskId}"]`) ??
+      document.querySelector(`[data-testid="history-task-row-${currentTaskId}"]`)
+
+    taskRow?.scrollIntoView({ block: 'nearest' })
+  }, [
+    chatsExpanded,
+    currentTaskId,
+    expandedProjectIds,
+    expandedTaskListIds,
+    projectsExpanded,
+  ])
+
   return (
     <aside
-      className="relative flex shrink-0 flex-col bg-[#d9dadd] px-4 py-4"
+      className="relative flex shrink-0 flex-col border-r border-border/70 bg-[rgb(var(--color-sidebar))] px-1.5 py-4 shadow-[inset_-1px_0_0_rgb(var(--color-border))] backdrop-blur-xl backdrop-saturate-150"
       style={{ width: sidebarWidth }}
     >
-      <div className="mb-1 flex justify-end">
-        <button
-          type="button"
-          data-testid="collapse-sidebar-button"
-          onClick={onCollapse}
-          className="flex h-8 w-8 items-center justify-center rounded-md text-[#555] hover:bg-white/70"
-          aria-label={t('workbench.collapse_sidebar', '收起侧边栏')}
-        >
-          <ChevronLeft className="h-4 w-4" />
-        </button>
+      <div className="-mt-2 mb-4 flex h-8 items-center">
+        <DesktopWindowControls
+          sidebarCollapsed={false}
+          onToggleSidebar={onCollapse}
+        />
       </div>
 
       <nav className="space-y-0.5">
@@ -605,7 +673,7 @@ export function DesktopSidebar({
           icon={Search}
           label={t('workbench.search', '搜索')}
           testId="search-button"
-          onClick={() => {}}
+          onClick={() => setSearchDialogOpen(true)}
         />
         <SidebarButton
           icon={Sparkles}
@@ -614,18 +682,11 @@ export function DesktopSidebar({
           selected={activeItem === 'plugins'}
           onClick={onOpenPlugins}
         />
-        <SidebarButton
-          icon={Workflow}
-          label={t('workbench.automation', '自动化')}
-          testId="automation-button"
-          selected={activeItem === 'automation'}
-          onClick={() => {}}
-        />
       </nav>
 
       <div
         data-testid="sidebar-worklists-scroll"
-        className="mt-8 min-h-0 flex-1 overflow-y-auto pr-1"
+        className="scrollbar-none mt-8 min-h-0 flex-1 overflow-y-auto"
       >
         <section>
           <SidebarSectionHeader
@@ -688,7 +749,7 @@ export function DesktopSidebar({
                   onOpenTask={onOpenTask}
                   onArchiveTask={onArchiveTask}
                   onRenameTask={task =>
-                    setRenamingTask({ id: task.task_id, title: getProjectTaskTitle(task) })
+                  setRenamingTask({ id: task.task_id, title: getProjectTaskTitle(task) })
                   }
                 />
               ))}
@@ -722,7 +783,7 @@ export function DesktopSidebar({
               type="button"
               data-testid="chats-new-conversation-button"
               onClick={onStartStandaloneChat}
-              className="flex h-7 w-7 items-center justify-center rounded-md text-[#606368] hover:bg-white/80 hover:text-[#2d2d2d]"
+              className="flex h-7 w-7 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
               aria-label={t('workbench.new_chat', '新对话')}
             >
               <MessageSquarePlus className="h-4 w-4" />
@@ -751,7 +812,7 @@ export function DesktopSidebar({
           type="button"
           data-testid="settings-button"
           onClick={() => setSettingsMenuOpen(open => !open)}
-          className="flex h-10 shrink-0 items-center gap-3 rounded-md px-3 text-sm font-medium text-[#333] hover:bg-white/70"
+          className="flex h-9 w-full shrink-0 items-center gap-2 rounded-md px-2 text-left text-[13px] font-medium leading-[18px] text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
           aria-expanded={settingsMenuOpen}
         >
           <Settings className="h-4 w-4" />
@@ -777,6 +838,16 @@ export function DesktopSidebar({
         aria-label={t('workbench.resize_sidebar', '调整侧边栏宽度')}
       />
 
+      <DesktopSearchDialog
+        open={searchDialogOpen}
+        projects={projects}
+        recentTasks={recentTasks}
+        onOpenChange={setSearchDialogOpen}
+        onOpenTask={onOpenTask}
+        onSearchTasks={onSearchTasks}
+        onSearchTaskDetail={onSearchTaskDetail}
+      />
+
       <ProjectCreateDialog
         open={projectCreateMode !== null}
         mode={projectCreateMode ?? 'scratch'}
@@ -788,6 +859,7 @@ export function DesktopSidebar({
         onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
         onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
         onListDeviceDirectories={onListDeviceDirectories}
+        onCreateDeviceDirectory={onCreateDeviceDirectory}
       />
       <TextInputDialog
         open={renamingProject !== null}

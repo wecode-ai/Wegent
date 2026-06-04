@@ -45,7 +45,7 @@ class ShutdownManager:
     def __init__(self):
         self._shutting_down: bool = False
         self._shutdown_event: asyncio.Event = asyncio.Event()
-        self._active_streams: Set[str] = set()
+        self._active_streams: dict[str, Optional[asyncio.Event]] = {}
         self._lock: asyncio.Lock = asyncio.Lock()
         self._shutdown_start_time: Optional[float] = None
 
@@ -67,7 +67,7 @@ class ShutdownManager:
 
     def get_active_streams(self) -> Set[str]:
         """Get a copy of active stream IDs."""
-        return self._active_streams.copy()
+        return set(self._active_streams.keys())
 
     async def initiate_shutdown(self) -> None:
         """
@@ -89,7 +89,9 @@ class ShutdownManager:
                 len(self._active_streams),
             )
 
-    async def register_stream(self, request_id: str) -> bool:
+    async def register_stream(
+        self, request_id: str, cancel_event: Optional[asyncio.Event] = None
+    ) -> bool:
         """
         Register a new streaming request.
 
@@ -99,6 +101,7 @@ class ShutdownManager:
 
         Args:
             request_id: The request ID for the stream
+            cancel_event: Optional event used to cancel the stream during shutdown
 
         Returns:
             bool: True if registered, False if shutdown and should reject
@@ -108,7 +111,7 @@ class ShutdownManager:
             if self._shutting_down and len(self._active_streams) == 0:
                 self._shutdown_event.clear()
 
-            self._active_streams.add(request_id)
+            self._active_streams[request_id] = cancel_event
             if self._shutting_down:
                 logger.info(
                     "Registered stream during shutdown: request_id=%s, active_count=%d",
@@ -131,7 +134,7 @@ class ShutdownManager:
             request_id: The request ID to unregister
         """
         async with self._lock:
-            self._active_streams.discard(request_id)
+            self._active_streams.pop(request_id, None)
             logger.debug(
                 "Unregistered stream: request_id=%s, active_count=%d",
                 request_id,
@@ -172,28 +175,31 @@ class ShutdownManager:
             logger.warning(
                 "Timeout waiting for streams. %d streams still active: %s",
                 remaining,
-                list(self._active_streams),
+                list(self._active_streams.keys()),
             )
             return False
 
-    async def cancel_all_streams(self, cancel_events: dict[str, asyncio.Event]) -> int:
+    async def cancel_all_streams(
+        self, cancel_events: Optional[dict[str, asyncio.Event]] = None
+    ) -> int:
         """
         Cancel all active streaming requests.
 
         This is called when timeout is reached and we need to force shutdown.
 
         Args:
-            cancel_events: Dict mapping request_id to cancel Event
+            cancel_events: Optional fallback dict mapping request_id to cancel Event
 
         Returns:
             int: Number of streams that were cancelled
         """
         cancelled_count = 0
         streams_to_cancel = self._active_streams.copy()
+        fallback_events = cancel_events or {}
 
-        for request_id in streams_to_cancel:
+        for request_id, registered_event in streams_to_cancel.items():
             try:
-                cancel_event = cancel_events.get(request_id)
+                cancel_event = registered_event or fallback_events.get(request_id)
                 if cancel_event:
                     cancel_event.set()
                     cancelled_count += 1

@@ -26,6 +26,13 @@ branch_labels = None
 depends_on = None
 
 
+def _index_exists(table_name: str, index_name: str) -> bool:
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    indexes = [idx["name"] for idx in inspector.get_indexes(table_name)]
+    return index_name in indexes
+
+
 def upgrade() -> None:
     conn = op.get_bind()
     inspector = sa.inspect(conn)
@@ -118,11 +125,12 @@ def upgrade() -> None:
             )
 
     # Step 6: Add index for entity-type queries
-    op.create_index(
-        "idx_resource_members_entity",
-        "resource_members",
-        ["entity_type", "entity_id", "resource_type", "status"],
-    )
+    if not _index_exists("resource_members", "idx_resource_members_entity"):
+        op.create_index(
+            "idx_resource_members_entity",
+            "resource_members",
+            ["entity_type", "entity_id", "resource_type", "status"],
+        )
 
 
 def downgrade() -> None:
@@ -130,7 +138,8 @@ def downgrade() -> None:
     dialect = conn.dialect.name
 
     # Drop entity index
-    op.drop_index("idx_resource_members_entity", table_name="resource_members")
+    if _index_exists("resource_members", "idx_resource_members_entity"):
+        op.drop_index("idx_resource_members_entity", table_name="resource_members")
 
     # Drop new unique constraint, restore old one
     if dialect == "mysql":

@@ -1279,18 +1279,40 @@ compute_derived_urls
 # Create PID directory
 mkdir -p "$PID_DIR"
 
+get_port_listener_pids() {
+    local port=$1
+    local pids=""
+
+    if command -v lsof >/dev/null 2>&1; then
+        pids=$(lsof -Pi :"$port" -sTCP:LISTEN -t 2>/dev/null | sort -u || true)
+    fi
+
+    if [ -z "$pids" ] && command -v ss >/dev/null 2>&1; then
+        pids=$(ss -H -lntp "sport = :$port" 2>/dev/null | sed -nE 's/.*pid=([0-9]+).*/\1/p' | sort -u || true)
+    fi
+
+    if [ -n "$pids" ]; then
+        echo "$pids"
+    fi
+}
+
+is_port_listening() {
+    local port=$1
+    [ -n "$(get_port_listener_pids "$port")" ]
+}
+
 # Check if port is in use
 check_port() {
     local port=$1
     local service=$2
-    if lsof -Pi :$port -sTCP:LISTEN -t >/dev/null 2>&1; then
+    if is_port_listening "$port"; then
         # Port in use - check if it's our own process
         if [ -n "$service" ] && [ -f "$PID_DIR/$service.pid" ]; then
             local our_pid
             our_pid=$(cat "$PID_DIR/$service.pid" 2>/dev/null)
-            local port_pid
-            port_pid=$(lsof -Pi :$port -sTCP:LISTEN -t 2>/dev/null | head -1)
-            if [ -n "$our_pid" ] && [ "$our_pid" = "$port_pid" ]; then
+            local port_pids
+            port_pids=$(get_port_listener_pids "$port")
+            if [ -n "$our_pid" ] && grep -qx "$our_pid" <<< "$port_pids"; then
                 return 0
             fi
         fi
@@ -1553,7 +1575,7 @@ stop_services() {
                 fi
 
                 # Check if port is still occupied (child processes may still be using it)
-                if lsof -Pi :$port -sTCP:LISTEN -t >/dev/null 2>&1; then
+                if is_port_listening "$port"; then
                     all_stopped=false
                     service_stopped=false
                 fi
@@ -1596,7 +1618,7 @@ stop_services() {
             fi
 
             # Force kill any processes still occupying the port
-            local pids=$(lsof -Pi :$port -sTCP:LISTEN -t 2>/dev/null | tr '\n' ' ')
+            local pids=$(get_port_listener_pids "$port" | tr '\n' ' ')
             if [ -n "$pids" ]; then
                 echo -e "  ${YELLOW}Force killing processes on port $port after graceful timeout${NC}"
                 echo "$pids" | xargs kill -9 2>/dev/null || true
@@ -1616,7 +1638,7 @@ stop_services() {
     # Skip this in graceful mode to allow services to shutdown cleanly
     if [ "$graceful" != "true" ]; then
         for port in "${service_ports[@]}"; do
-            local pids=$(lsof -Pi :$port -sTCP:LISTEN -t 2>/dev/null | tr '\n' ' ')
+            local pids=$(get_port_listener_pids "$port" | tr '\n' ' ')
             if [ -n "$pids" ]; then
                 echo -e "  Force killing processes on port $port: $pids"
                 echo "$pids" | xargs kill -9 2>/dev/null || true
@@ -1634,7 +1656,7 @@ stop_services() {
         while [ $port_wait_time -lt $max_port_wait ]; do
             all_ports_free=true
             for port in "${service_ports[@]}"; do
-                if lsof -Pi :$port -sTCP:LISTEN -t >/dev/null 2>&1; then
+                if is_port_listening "$port"; then
                     all_ports_free=false
                     break
                 fi
@@ -1656,7 +1678,7 @@ stop_services() {
     # Verify all ports are free
     local ports_freed=1
     for port in "${service_ports[@]}"; do
-        if lsof -Pi :$port -sTCP:LISTEN -t >/dev/null 2>&1; then
+        if is_port_listening "$port"; then
             ports_freed=0
             echo -e "  ${RED}✗${NC} Port $port still in use"
         fi
@@ -1666,7 +1688,8 @@ stop_services() {
         echo -e "${GREEN}Services stopped: ${services[*]}${NC}"
     else
         echo -e "${YELLOW}Some ports could not be freed. You may need to kill processes manually:${NC}"
-        echo -e "  ${BLUE}lsof -i :PORT${NC} && ${BLUE}kill -9 PID${NC}"
+        echo -e "  ${BLUE}lsof -i :PORT${NC} or ${BLUE}ss -lntp 'sport = :PORT'${NC}"
+        echo -e "  ${BLUE}kill -9 PID${NC}"
     fi
 }
 # Show service status
@@ -1691,7 +1714,7 @@ show_status() {
             fi
         else
             # Check if port is in use
-            if lsof -Pi :$port -sTCP:LISTEN -t >/dev/null 2>&1; then
+            if is_port_listening "$port"; then
                 echo -e "  ${YELLOW}●${NC} $service (port $port in use)"
             else
                 echo -e "  ${RED}●${NC} $service (not running)"
@@ -2016,12 +2039,15 @@ start_services() {
     # 1. Start Backend
     if [ "$start_backend" = true ]; then
         # EXECUTOR_MANAGER_URL: URL for backend to call executor_manager
+        # BACKEND_INTERNAL_URL: URL passed into task runtime configs such as MCP
+        # server URLs. Use TASK_API_DOMAIN so Docker executor containers can
+        # reach the host backend instead of receiving localhost.
         # CHAT_SHELL_URL: URL for backend to call chat_shell service
         # LOG_LEVEL: Application log level (DEBUG enables debug logging)
         # --reload-dir: Watch shared module for changes (editable dependency)
         # --reload-exclude: Exclude .venv and __pycache__ to reduce CPU usage
         start_service "backend" "backend" \
-            "export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=http://localhost:$BACKEND_PORT && export LOG_LEVEL=DEBUG && source .venv/bin/activate && uvicorn app.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $BACKEND_PORT --log-level debug" \
+            "export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=$TASK_API_DOMAIN && export LOG_LEVEL=DEBUG && source .venv/bin/activate && uvicorn app.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $BACKEND_PORT --log-level debug" \
             "$BACKEND_PORT"
     fi
 
@@ -2108,6 +2134,7 @@ start_services() {
 
         export VITE_API_PROXY_TARGET=http://localhost:$BACKEND_PORT
         export VITE_SOCKET_PROXY_TARGET=$WEGENT_SOCKET_URL
+        export VITE_SOCKET_BASE_URL=$WEGENT_SOCKET_URL
 
         local wework_cmd="npm run dev -- --host 0.0.0.0 --port $WEWORK_PORT"
 

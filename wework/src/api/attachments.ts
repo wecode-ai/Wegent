@@ -3,36 +3,13 @@ import { getRuntimeConfig } from '@/config/runtime'
 
 export const MAX_FILE_SIZE = 100 * 1024 * 1024
 
-export const SUPPORTED_EXTENSIONS = [
-  '.pdf',
-  '.doc',
-  '.docx',
-  '.ppt',
-  '.pptx',
-  '.xls',
-  '.xlsx',
-  '.csv',
-  '.xmind',
-  '.txt',
-  '.md',
-  '.html',
-  '.htm',
-  '.html5',
-  '.jpg',
-  '.jpeg',
-  '.png',
-  '.gif',
-  '.bmp',
-  '.webp',
-]
-
 export function isValidFileSize(size: number): boolean {
   return size <= MAX_FILE_SIZE
 }
 
-export function isSupportedExtension(fileName: string): boolean {
-  const lowerName = fileName.toLowerCase()
-  return SUPPORTED_EXTENSIONS.some(extension => lowerName.endsWith(extension))
+function getFileExtension(fileName: string): string {
+  const dotIndex = fileName.lastIndexOf('.')
+  return dotIndex >= 0 ? fileName.substring(dotIndex) : ''
 }
 
 export function uploadAttachment(
@@ -71,7 +48,7 @@ export function uploadAttachment(
             error_message: response.error_message,
             error_code: response.error_code,
             subtask_id: null,
-            file_extension: file.name.substring(file.name.lastIndexOf('.')),
+            file_extension: getFileExtension(file.name),
             created_at: new Date().toISOString(),
           })
         } catch {

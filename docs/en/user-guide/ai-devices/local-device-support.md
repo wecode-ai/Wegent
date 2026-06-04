@@ -86,6 +86,20 @@ curl -fL -o wegent-executor \
 chmod +x wegent-executor
 ```
 
+#### Use Device-Local CLI Configuration
+
+By default, the executor uses the Claude/Codex model and provider configuration issued by Wegent. If a device already has local Codex CLI login or provider configuration, set this environment variable to let Codex use the device-local configuration:
+
+```bash
+WEGENT_LOCAL_CLI_CONFIG_RUNTIMES=codex
+```
+
+When the variable is empty or unset, all runtimes keep using the system-issued configuration. The currently supported value is:
+
+- `codex`: Codex uses device-local configuration, and Wegent no longer injects the Codex provider.
+
+This setting only affects the current device, which is useful when different devices should mix system-issued configuration and local Codex CLI configuration differently. Claude keeps using Wegent-issued configuration.
+
 ### Building a Device Image
 
 The repository provides `docker/device/Dockerfile` for cloud device or local device base images. The image installs `code-server`, the `weiboplat.wecoder-agent` extension, Claude Code CLI, `ttyd`, Node.js 22, Python, Git, and copies `executor/dist/wegent-executor` to `/app/executor` and `~/.wegent-executor/bin/wegent-executor`.
@@ -121,14 +135,22 @@ docker run -d --platform linux/amd64 \
   wegent-device:linux-amd64
 ```
 
-By default, the device image only starts `wegent-executor` and the interactive session gateway. Backend resolves the project-bound local device and project path from the project ID, then calls:
+By default, the device image only starts `wegent-executor` and the interactive session gateway. Note that Wework currently exposes project connection tools only for cloud devices. Local devices can be bound to projects and execute AI tasks, but they do not support the project toolbar Terminal, IDE/code-server, or Desktop VNC/VPN entries.
 
 - `POST /api/projects/{project_id}/terminal`: starts a writable ttyd in the project path and returns a short-token URL.
 - `POST /api/projects/{project_id}/code-server`: returns a short-token code-server URL. The code-server process inside the device image runs with a fixed password, and the session gateway logs in server-side so the browser does not see the code-server login page or password.
 
-Both entrypoints are exposed under the `/s/{session_id}/` path on `DEVICE_PUBLIC_BASE_URL`. Each terminal or code-server session has an isolated path, so a user can open multiple projects at the same time or open multiple terminal/code-server sessions for one project. Terminal sessions are created dynamically on the device and the matching ttyd process is cleaned up when the browser disconnects. Code-server is a persistent in-container process, and the gateway opens the requested project path through it. To keep the legacy fixed `8080` code-server and `7681` ttyd entrypoints, add `-e START_DEVICE_UI=1` and map those ports at container runtime.
+These project session APIs are for cloud-device project connections. If the project is bound to a local device, Backend rejects terminal and code-server session startup. Cloud-device URLs include a short-lived session token and are exposed through the device-side session gateway. Each terminal or code-server session has an isolated path, so a user can open multiple projects at the same time or open multiple terminal/code-server sessions for one project. Terminal sessions are created dynamically on the device and the matching ttyd process is cleaned up when the browser disconnects. Code-server is a persistent in-container process, and the gateway opens the requested project path through it. To keep the legacy fixed `8080` code-server and `7681` ttyd entrypoints, add `-e START_DEVICE_UI=1` and map those ports at container runtime.
 
 When a project configures `workspace.localPath` or `workspace.checkoutPath`, the device creates that directory before starting terminal or code-server.
+
+### Standalone Chat Workspaces
+
+When a chat has no selected project but is bound to an online device, executor-side independent Chats workspaces are currently disabled by default. To enable them, set `WEGENT_EXECUTOR_STANDALONE_CHATS_ENABLED=true` in the device runtime environment.
+
+Once enabled, the first task runs in a temporary task directory. After the response finishes, the Executor generates a dated directory name from the response summary and moves the temporary directory into the Chats workspace tree. The default root is `~/.wecode/wegent-executor/workspace/chats`. To use another location, set `WEGENT_EXECUTOR_CHATS_DIR` in the device runtime environment. Backend stores the final path in the task metadata label `standaloneChatWorkspacePath`, so continuing the conversation or opening it from history reuses the same directory.
+
+Project chats do not use this path. They continue to use the project's configured `workspace.localPath` or `workspace.checkoutPath`.
 
 #### Installing a Specific Version
 
@@ -219,6 +241,21 @@ You can dynamically choose execution location:
 
 Simply change the device selection before sending each message.
 
+### Using Local Devices in Projects
+
+When creating a project, you can select an online or busy ClaudeCode local device. After the project is created, AI tasks execute on that local device and use the project's configured local path or checkout path.
+
+Local devices do not support cloud connection capabilities in the project toolbar:
+
+| Feature | Local Device Support |
+|---------|----------------------|
+| **Terminal** | Not supported |
+| **IDE/code-server** | Not supported |
+| **Desktop VNC/VPN** | Not supported |
+| **CPU/MEM/Disk monitoring** | Not supported |
+
+When a project is bound to a local device, the workspace toolbar hides Terminal, IDE, and Desktop entries and shows a local-device capability notice. Choose a cloud device when you need those connection and monitoring capabilities.
+
 ### Setting Default Device
 
 1. Open device list in the selector
@@ -237,11 +274,13 @@ Access your devices through:
 2. **Settings Page**: Go to **Settings** → **Connections** to view connectable devices
 3. **API**: `GET /devices` for programmatic access
 
-### Managing Cloud Devices
+### Managing Connection Devices
 
-The **Settings** → **Connections** page lists Claude Code cloud devices that the current account can connect to. It only shows devices with `device_type=cloud` and `bind_shell=claudecode`, and displays online status, executor version, CPU, memory, and disk usage.
+The **Settings** → **Connections** page lists ClaudeCode devices that the current account can connect to, including cloud devices and local devices. It only shows devices with `bind_shell=claudecode`, grouped by cloud devices and local devices.
 
-When no cloud device exists, click **Add** to create one. After the create request returns, the page keeps a "cloud device creating" notice visible. Initialization usually takes 2-3 minutes, and the device appears in the list automatically when it comes online.
+Cloud devices display online status, executor version, CPU, memory, and disk usage. When no cloud device exists, click **Add** to create one. After the create request returns, the page keeps a "cloud device creating" notice visible. Initialization usually takes 2-3 minutes, and the device appears in the list automatically when it comes online.
+
+Local devices display device name, online status, and executor version. They do not show CPU, MEM, or disk monitoring data or the resource monitoring note, and they do not show cloud-only actions such as Terminal, IDE, Desktop VNC/VPN, restart, or cloud-resource deletion. Offline local devices show a delete entry for removing the device registration. If the device reconnects, it automatically registers again.
 
 Online cloud devices can open interactive sessions directly:
 
@@ -269,7 +308,7 @@ Each device shows:
 | **Name** | Device hostname (e.g., "Darwin - MacBook-Pro.local") |
 | **Status** | Online/Offline indicator |
 | **Version** | Executor version, when available |
-| **Resource Usage** | CPU, memory, and disk usage, when reported by the device |
+| **Resource Usage** | CPU, memory, and disk usage for cloud devices only |
 | **Slots** | Concurrent task capacity (X/5) |
 | **Default** | Star indicator if set as default |
 

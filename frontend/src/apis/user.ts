@@ -9,11 +9,12 @@
 
 import type {
   GitInfo,
+  QuickAccessResponse,
+  QuickLaunchResponse,
   User,
   UserPreferences,
-  QuickAccessResponse,
-  WelcomeConfigResponse,
   DefaultTeamsResponse,
+  WelcomeConfigResponse,
 } from '@/types/api'
 import type { NotificationChannelInfo } from '@/types/subscription'
 
@@ -178,6 +179,10 @@ export const userApis = {
 
   async getQuickAccess(): Promise<QuickAccessResponse> {
     return apiClient.get('/users/quick-access')
+  },
+
+  async getQuickLaunch(): Promise<QuickLaunchResponse> {
+    return apiClient.get('/users/quick-launch')
   },
 
   async getWelcomeConfig(): Promise<WelcomeConfigResponse> {

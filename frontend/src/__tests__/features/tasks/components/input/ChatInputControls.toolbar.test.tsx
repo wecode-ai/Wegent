@@ -174,7 +174,6 @@ function createProps(): ChatInputControlsProps {
     },
     onFileSelect: jest.fn(),
     onAttachmentRemove: jest.fn(),
-    isLoading: false,
     isStreaming: false,
     isStopping: false,
     hasMessages: false,

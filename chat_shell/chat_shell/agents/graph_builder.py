@@ -44,6 +44,7 @@ from ..llm_logging import log_llm_response_event as _log_llm_response_event
 from ..tools.argument_stream import ToolCallStreamTracker
 from ..tools.base import ToolRegistry
 from ..tools.builtin.silent_exit import SilentExitException
+from ..tools.deferred_input import DeferredUserInputExit
 
 logger = logging.getLogger(__name__)
 
@@ -579,9 +580,9 @@ class LangGraphAgentBuilder:
 
             return final_state, all_events
 
-        except SilentExitException:
+        except (SilentExitException, DeferredUserInputExit):
             logger.info(
-                "[collect_final_state_from_events] SilentExitException caught, re-raising for caller to handle"
+                "[collect_final_state_from_events] silent/deferred exit caught, re-raising for caller to handle"
             )
             raise
 
@@ -1606,11 +1607,11 @@ class LangGraphAgentBuilder:
             ):
                 yield token
 
-        except SilentExitException:
+        except (SilentExitException, DeferredUserInputExit):
             # Silent exit requested by tool - re-raise to be handled by caller
             # This is not an error, just a signal to terminate silently
             logger.info(
-                "[stream_tokens] SilentExitException caught, re-raising for caller to handle"
+                "[stream_tokens] silent/deferred exit caught, re-raising for caller to handle"
             )
             # Persist partial messages chain before re-raising
             if _collected_state_messages:

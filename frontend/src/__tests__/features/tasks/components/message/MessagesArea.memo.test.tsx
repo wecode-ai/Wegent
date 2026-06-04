@@ -6,6 +6,7 @@ import React from 'react'
 import { act, render, screen } from '@testing-library/react'
 import MessagesArea from '@/features/tasks/components/message/MessagesArea'
 import type { DisplayMessage } from '@/features/tasks/presentation/useMessagePresenter'
+import type { TaskStateSnapshot } from '@/features/tasks/state'
 
 const messageBubbleRenderSpy = jest.fn()
 
@@ -35,18 +36,53 @@ let mockTaskSession = {
   refreshTasks: jest.fn(),
   selectTask: jest.fn(),
   cleanupMessagesAfterEdit: jest.fn(),
-  taskState: null as {
-    taskId: number
-    status: string
-    error?: string | null
-    runtime?: {
-      phase?: string
-      joinedRoom?: boolean
-      activeStreamSubtaskId?: number | null
-      recoveryReason?: string
-      recoveryError?: string
-    }
-  } | null,
+  taskState: null as TaskStateSnapshot | null,
+}
+
+const createTaskStateSnapshot = (
+  overrides: Partial<Omit<TaskStateSnapshot, 'runtime' | 'derived'>> & {
+    runtime?: Partial<TaskStateSnapshot['runtime']>
+    derived?: Partial<TaskStateSnapshot['derived']>
+  } = {}
+): TaskStateSnapshot => {
+  const taskId = overrides.taskId ?? 707
+  const base: TaskStateSnapshot = {
+    taskId,
+    phase: 'ready',
+    messages: new Map(),
+    error: null,
+    isStopping: false,
+    runtime: {
+      taskId,
+      phase: 'unknown',
+      joinedRoom: false,
+      localStreamCursor: 0,
+    },
+    derived: {
+      isExecutionActive: false,
+      isTerminal: false,
+      isStreaming: false,
+      shouldJoinRoom: false,
+      canSendMessage: true,
+      canQueueMessage: false,
+      canCancelTask: false,
+      blocksQueuedDispatch: false,
+    },
+  }
+
+  return {
+    ...base,
+    ...overrides,
+    runtime: {
+      ...base.runtime,
+      ...overrides.runtime,
+      taskId: overrides.runtime?.taskId ?? taskId,
+    },
+    derived: {
+      ...base.derived,
+      ...overrides.derived,
+    },
+  }
 }
 
 jest.mock('@/features/tasks/components/message/MessageBubble', () => ({
@@ -189,16 +225,23 @@ describe('MessagesArea memoization', () => {
     mockTaskSession = {
       ...mockTaskSession,
       selectedTaskDetail: { id: 707, title: 'Task 707', status: 'RUNNING' },
-      taskState: {
+      taskState: createTaskStateSnapshot({
         taskId: 707,
-        status: 'syncing',
+        phase: 'syncing',
         runtime: {
           phase: 'syncing',
           joinedRoom: true,
           activeStreamSubtaskId: 88,
           recoveryReason: 'task-selected',
         },
-      },
+        derived: {
+          isExecutionActive: true,
+          isStreaming: true,
+          canQueueMessage: true,
+          canCancelTask: true,
+          blocksQueuedDispatch: true,
+        },
+      }),
     }
 
     render(
@@ -222,16 +265,18 @@ describe('MessagesArea memoization', () => {
     mockTaskSession = {
       ...mockTaskSession,
       selectedTaskDetail: { id: 707, title: 'Task 707', status: 'COMPLETED' },
-      taskState: {
+      taskState: createTaskStateSnapshot({
         taskId: 707,
-        status: 'ready',
+        phase: 'ready',
         runtime: {
           phase: 'terminal',
           joinedRoom: false,
-          activeStreamSubtaskId: null,
           recoveryReason: 'task-selected',
         },
-      },
+        derived: {
+          isTerminal: true,
+        },
+      }),
     }
 
     render(

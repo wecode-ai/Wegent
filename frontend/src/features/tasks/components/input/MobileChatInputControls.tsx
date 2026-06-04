@@ -84,9 +84,7 @@ export interface MobileChatInputControlsProps {
   onFileSelect: (files: File | File[]) => void
 
   // State flags
-  isLoading: boolean
   isStreaming: boolean
-  isAwaitingResponseStart?: boolean
   isStopping: boolean
   hasMessages: boolean
   shouldHideChatInput: boolean
@@ -101,7 +99,6 @@ export interface MobileChatInputControlsProps {
   // Actions
   onStopStream: () => void
   onCancelTask?: () => void
-  isCancelling?: boolean
   onSendMessage: () => void
   onSendGuidance?: () => void
 
@@ -152,9 +149,7 @@ export function MobileChatInputControls({
   selectedContexts,
   setSelectedContexts,
   onFileSelect,
-  isLoading,
   isStreaming,
-  isAwaitingResponseStart = false,
   isStopping,
   hasMessages,
   shouldHideChatInput,
@@ -167,7 +162,6 @@ export function MobileChatInputControls({
   canCancelTask,
   onStopStream,
   onCancelTask,
-  isCancelling = false,
   onSendMessage,
   onSendGuidance,
   hasNoTeams = false,
@@ -213,9 +207,7 @@ export function MobileChatInputControls({
   // Render send button based on state
   const renderSendButton = () => {
     const sendState = getChatSendState({
-      isLoading,
       isStreaming,
-      isAwaitingResponseStart,
       isStopping,
       isModelSelectionRequired,
       isAttachmentReadyToSend,
@@ -249,10 +241,6 @@ export function MobileChatInputControls({
     )
 
     const renderCancelTaskAction = () => {
-      if (isCancelling) {
-        return renderStoppingAction()
-      }
-
       return (
         <ActionButton
           onClick={onCancelTask}
@@ -291,7 +279,7 @@ export function MobileChatInputControls({
           <SendButton
             onClick={onSendMessage}
             disabled={sendState.isPrimaryDisabled}
-            isLoading={isLoading}
+            isLoading={false}
             ariaLabel="Queue message"
             compact
           />
@@ -303,7 +291,7 @@ export function MobileChatInputControls({
       <SendButton
         onClick={onSendMessage}
         disabled={sendState.isPrimaryDisabled}
-        isLoading={isLoading}
+        isLoading={false}
         compact
       />
     )
@@ -343,7 +331,7 @@ export function MobileChatInputControls({
                 {showAttachmentAction && (
                   <AttachmentButton
                     onFileSelect={onFileSelect}
-                    disabled={isLoading || isStreaming}
+                    disabled={isStreaming}
                     triggerVariant="menu-item"
                   />
                 )}
@@ -363,7 +351,7 @@ export function MobileChatInputControls({
                     selectedSkillNames={selectedSkillNames}
                     onToggleSkill={onToggleSkill}
                     isChatShell={isChatShell(selectedTeam)}
-                    disabled={isLoading || isStreaming}
+                    disabled={isStreaming}
                     readOnly={hasMessages}
                     triggerVariant="menu-item"
                   />
@@ -376,7 +364,7 @@ export function MobileChatInputControls({
               <MobileClarificationToggle
                 enabled={enableClarification}
                 onToggle={setEnableClarification}
-                disabled={isLoading || isStreaming}
+                disabled={isStreaming}
               />
             )}
 
@@ -385,7 +373,7 @@ export function MobileChatInputControls({
               <MobileCorrectionModeToggle
                 enabled={enableCorrectionMode}
                 onToggle={onCorrectionModeToggle}
-                disabled={isLoading || isStreaming}
+                disabled={isStreaming}
                 correctionModelName={correctionModelName}
                 taskId={selectedTaskDetail?.id ?? null}
               />
@@ -439,8 +427,8 @@ export function MobileChatInputControls({
               selectedTeam={selectedTeamForDisplay}
               teams={filteredTeams}
               onTeamSelect={onTeamChange}
-              disabled={isLoading || isStreaming}
-              isLoading={isLoading}
+              disabled={isStreaming}
+              isLoading={false}
               hideTriggerIcon={false}
             />
           </div>
@@ -455,11 +443,7 @@ export function MobileChatInputControls({
               forceOverride={forceOverride}
               setForceOverride={setForceOverride}
               selectedTeam={selectedTeam}
-              disabled={
-                isLoading ||
-                isStreaming ||
-                (hasMessages && !canSwitchModelAfterMessages(selectedTeam))
-              }
+              disabled={isStreaming || (hasMessages && !canSwitchModelAfterMessages(selectedTeam))}
               teamId={teamId}
               taskId={taskId}
               taskModelId={taskModelId}

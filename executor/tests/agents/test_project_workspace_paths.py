@@ -9,7 +9,12 @@ from executor.agents.base import Agent
 from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
 from executor.agents.claude_code.session_manager import SessionManager
 from executor.agents.claude_code.skill_deployer import setup_coordinate_mode
+from executor.agents.codex.codex_agent import CodeXAgent
 from shared.models.execution import ExecutionRequest
+
+
+def _enable_standalone_chats(monkeypatch):
+    monkeypatch.setenv("WEGENT_EXECUTOR_STANDALONE_CHATS_ENABLED", "true")
 
 
 def test_git_project_path_uses_project_workspace_root_when_project_id_present():
@@ -139,6 +144,7 @@ def test_initial_standalone_chat_prepares_request_named_cwd(tmp_path, monkeypatc
     agent._claude_config_dir = str(task_dir / ".claude")
 
     executor_home = tmp_path / ".wegent-executor"
+    _enable_standalone_chats(monkeypatch)
     monkeypatch.setenv("WEGENT_EXECUTOR_CHATS_DIR", str(chats_root))
     with (
         patch(
@@ -173,6 +179,31 @@ def test_initial_standalone_chat_prepares_request_named_cwd(tmp_path, monkeypatc
     set_session_root.assert_called_once_with(1003, str(executor_home / "sessions"))
 
 
+async def test_codex_pre_execute_uses_project_workspace_path(tmp_path):
+    project_path = tmp_path / "workspace" / "projects" / "hello"
+    request = ExecutionRequest(
+        task_id=1546,
+        subtask_id=1970,
+        workspace_source="local_path",
+        project_workspace_path=str(project_path),
+        model_config={
+            "model": "openai",
+            "model_id": "gpt-5.5",
+            "base_url": "https://copilot.weibo.com/v1",
+            "api_key": "token",
+            "api_format": "responses",
+        },
+    )
+    agent = CodeXAgent(request, MagicMock())
+
+    status, error = await agent.pre_execute()
+
+    assert error is None
+    assert agent.project_path == str(project_path)
+    assert project_path.exists()
+    assert status.name == "SUCCESS"
+
+
 def test_initial_standalone_chat_coordinate_mode_keeps_claude_out_of_chat_dir(
     tmp_path,
     monkeypatch,
@@ -200,6 +231,7 @@ def test_initial_standalone_chat_coordinate_mode_keeps_claude_out_of_chat_dir(
     agent._claude_config_dir = str(task_dir / ".claude")
 
     executor_home = tmp_path / ".wegent-executor"
+    _enable_standalone_chats(monkeypatch)
     monkeypatch.setenv("WEGENT_EXECUTOR_CHATS_DIR", str(chats_root))
     with (
         patch(

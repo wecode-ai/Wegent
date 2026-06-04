@@ -16,6 +16,28 @@ from app.services.execution.request_builder import TaskRequestBuilder
 from shared.models.execution import ExecutionRequest
 
 
+class TestClarificationSkillInjection:
+    """Tests for clarification-mode preload skill injection."""
+
+    def test_injects_interactive_skill(self):
+        result = TaskRequestBuilder._inject_clarification_skill([])
+
+        assert result == [
+            {
+                "name": "interactive",
+                "namespace": "default",
+                "is_public": True,
+            }
+        ]
+
+    def test_does_not_duplicate_interactive_skill(self):
+        preload_skills = ["interactive"]
+
+        result = TaskRequestBuilder._inject_clarification_skill(preload_skills)
+
+        assert result == preload_skills
+
+
 class TestExtractSkillMcpToList:
     """Tests for _extract_skill_mcp_to_list static method."""
 

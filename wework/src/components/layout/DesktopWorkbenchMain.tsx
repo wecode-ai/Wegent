@@ -1,4 +1,4 @@
-import { Bot, ChevronRight } from 'lucide-react'
+import { Bot } from 'lucide-react'
 import { useState } from 'react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type {
@@ -7,9 +7,13 @@ import type {
 } from '@/components/chat/ChatInput'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { ProjectWithTasks, Task } from '@/types/api'
+import type { DeviceInfo, ProjectWithTasks, Task } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
-import type { WorkbenchMessage } from '@/types/workbench'
+import type {
+  GuidanceWorkbenchMessage,
+  QueuedWorkbenchMessage,
+  WorkbenchMessage,
+} from '@/types/workbench'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
 import { RightWorkspacePanel } from './workspace-panels/RightWorkspacePanel'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
@@ -17,14 +21,22 @@ import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
 const DESKTOP_COMPOSER_FRAME_CLASS =
   'mx-auto w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100vw-4rem)]'
 const DESKTOP_FLOATING_COMPOSER_CLASS =
-  'pointer-events-none absolute bottom-4 left-1/2 z-50 w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100%_-_3rem)] -translate-x-1/2'
+  'pointer-events-none absolute bottom-4 left-1/2 z-chrome w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100%_-_3rem)] -translate-x-1/2'
+const DESKTOP_FLOATING_COMPOSER_BACKDROP_CLASS =
+  'pointer-events-none absolute inset-x-0 bottom-0 z-10 h-56 bg-gradient-to-t from-background via-background to-transparent'
+const DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS =
+  'bottom-36 z-popover bg-background/95 shadow-md'
+const DESKTOP_QUEUED_SCROLL_TO_BOTTOM_BUTTON_CLASS =
+  'bottom-64 z-popover bg-background/95 shadow-md'
 
 interface DesktopWorkbenchMainProps {
-  sidebarCollapsed: boolean
   isBootstrapping: boolean
   currentTask: Task | null
   currentProject: ProjectWithTasks | null
+  devices: DeviceInfo[]
   messages: WorkbenchMessage[]
+  queuedMessages: QueuedWorkbenchMessage[]
+  guidanceMessages: GuidanceWorkbenchMessage[]
   projectChat: ProjectChatControls
   projectWork: ProjectWorkControls
   input: string
@@ -32,17 +44,27 @@ interface DesktopWorkbenchMainProps {
   environmentInfo: EnvironmentInfo
   onRefreshEnvironmentInfo: () => Promise<void>
   onCommitEnvironmentChanges: (message: string) => Promise<void>
-  onExpandSidebar: () => void
+  onListEnvironmentBranches: () => Promise<string[]>
+  onCheckoutEnvironmentBranch: (branchName: string) => Promise<void>
+  onCreateEnvironmentBranch: (branchName: string) => Promise<void>
   onInputChange: (value: string) => void
   onSend: () => void
+  isResponseStreaming: boolean
+  onPauseResponse: () => void
+  onCancelQueuedMessage: (id: string) => void
+  onSendQueuedAsGuidance: (id: string) => void
+  onEditQueuedMessage: (id: string) => void
+  onCancelGuidanceMessage: (id: string) => void
 }
 
 export function DesktopWorkbenchMain({
-  sidebarCollapsed,
   isBootstrapping,
   currentTask,
   currentProject,
+  devices,
   messages,
+  queuedMessages,
+  guidanceMessages,
   projectChat,
   projectWork,
   input,
@@ -50,14 +72,23 @@ export function DesktopWorkbenchMain({
   environmentInfo,
   onRefreshEnvironmentInfo,
   onCommitEnvironmentChanges,
-  onExpandSidebar,
+  onListEnvironmentBranches,
+  onCheckoutEnvironmentBranch,
+  onCreateEnvironmentBranch,
   onInputChange,
   onSend,
+  isResponseStreaming,
+  onPauseResponse,
+  onCancelQueuedMessage,
+  onSendQueuedAsGuidance,
+  onEditQueuedMessage,
+  onCancelGuidanceMessage,
 }: DesktopWorkbenchMainProps) {
   const { t } = useTranslation('common')
   const [rightPanelOpen, setRightPanelOpen] = useState(false)
   const [bottomPanelOpen, setBottomPanelOpen] = useState(false)
   const hasConversation = messages.length > 0 || currentTask
+  const hasQueuedComposerRows = queuedMessages.length > 0 || guidanceMessages.length > 0
   const emptyTitle = currentProject
     ? t('workbench.project_empty_title', {
         defaultValue: `我们应该在 ${currentProject.name} 中构建什么？`,
@@ -68,17 +99,6 @@ export function DesktopWorkbenchMain({
   return (
     <main className="relative flex min-w-0 flex-1 overflow-hidden">
       <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-        {sidebarCollapsed && (
-          <button
-            type="button"
-            data-testid="expand-sidebar-button"
-            onClick={onExpandSidebar}
-            className="absolute left-4 top-4 z-10 flex h-9 w-9 items-center justify-center rounded-md bg-surface text-[#555] hover:bg-muted"
-            aria-label={t('workbench.expand_sidebar', '展开侧边栏')}
-          >
-            <ChevronRight className="h-4 w-4" />
-          </button>
-        )}
         {isBootstrapping ? (
           <div
             className="flex flex-1"
@@ -91,7 +111,16 @@ export function DesktopWorkbenchMain({
               conversationKey={currentTask?.id ?? null}
               className="h-full"
               scrollTestId="desktop-chat-scroll"
-              scrollerClassName="pb-40"
+              scrollerClassName={hasQueuedComposerRows ? 'pb-72' : 'pb-52'}
+              scrollButtonClassName={
+                hasQueuedComposerRows
+                  ? DESKTOP_QUEUED_SCROLL_TO_BOTTOM_BUTTON_CLASS
+                  : DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS
+              }
+            />
+            <div
+              className={DESKTOP_FLOATING_COMPOSER_BACKDROP_CLASS}
+              data-testid="desktop-floating-composer-backdrop"
             />
             <div
               className={DESKTOP_FLOATING_COMPOSER_CLASS}
@@ -111,6 +140,14 @@ export function DesktopWorkbenchMain({
                   projectChat={projectChat}
                   projectWork={projectWork}
                   showProjectWorkBar={false}
+                  queuedMessages={queuedMessages}
+                  guidanceMessages={guidanceMessages}
+                  isStreaming={isResponseStreaming}
+                  onPause={onPauseResponse}
+                  onCancelQueuedMessage={onCancelQueuedMessage}
+                  onSendQueuedAsGuidance={onSendQueuedAsGuidance}
+                  onEditQueuedMessage={onEditQueuedMessage}
+                  onCancelGuidanceMessage={onCancelGuidanceMessage}
                 />
               </div>
             </div>
@@ -124,7 +161,7 @@ export function DesktopWorkbenchMain({
               <div className="mb-7 flex justify-center">
                 <Bot className="h-7 w-7 text-text-muted" />
               </div>
-              <h1 className="mb-10 text-center text-[34px] font-medium tracking-normal">
+              <h1 className="mb-9 text-center text-[28px] font-medium leading-9 tracking-normal">
                 {emptyTitle}
               </h1>
               <ChatInput
@@ -136,6 +173,14 @@ export function DesktopWorkbenchMain({
                 variant="desktop"
                 projectChat={projectChat}
                 projectWork={projectWork}
+                queuedMessages={queuedMessages}
+                guidanceMessages={guidanceMessages}
+                isStreaming={isResponseStreaming}
+                onPause={onPauseResponse}
+                onCancelQueuedMessage={onCancelQueuedMessage}
+                onSendQueuedAsGuidance={onSendQueuedAsGuidance}
+                onEditQueuedMessage={onEditQueuedMessage}
+                onCancelGuidanceMessage={onCancelGuidanceMessage}
               />
             </div>
           </div>
@@ -143,6 +188,7 @@ export function DesktopWorkbenchMain({
         {bottomPanelOpen && (
           <BottomWorkspacePanel
             currentProject={currentProject}
+            devices={devices}
             onRequestClose={() => setBottomPanelOpen(false)}
           />
         )}
@@ -151,6 +197,9 @@ export function DesktopWorkbenchMain({
         environmentInfo={environmentInfo}
         onRefreshEnvironmentInfo={onRefreshEnvironmentInfo}
         onCommitEnvironmentChanges={onCommitEnvironmentChanges}
+        onListEnvironmentBranches={onListEnvironmentBranches}
+        onCheckoutEnvironmentBranch={onCheckoutEnvironmentBranch}
+        onCreateEnvironmentBranch={onCreateEnvironmentBranch}
         rightPanelOpen={rightPanelOpen}
         bottomPanelOpen={bottomPanelOpen}
         onToggleRightPanel={() => setRightPanelOpen((open) => !open)}
@@ -159,6 +208,7 @@ export function DesktopWorkbenchMain({
       {rightPanelOpen && (
         <RightWorkspacePanel
           currentProject={currentProject}
+          devices={devices}
           onRequestClose={() => setRightPanelOpen(false)}
         />
       )}

@@ -19,8 +19,8 @@ import { TaskStateMachine } from '../state'
 import type {
   SyncOptions,
   TaskRecoveryReason,
-  TaskStateData,
   TaskStateMachineDeps,
+  TaskStateSnapshot,
   UnifiedMessage,
 } from '../state'
 import { useConsistencyWatcher } from './consistencyWatcher'
@@ -37,12 +37,13 @@ export type TaskSession = Omit<
   'writeSelectedTask' | 'resetSelectedTaskState' | 'prepareSelectedTaskState'
 > &
   MessageSession & {
-    taskState: TaskStateData | null
+    currentTaskId: number | null
+    taskState: TaskStateSnapshot | null
     messages: Map<string, UnifiedMessage>
     isStreaming: boolean
     streamingSubtaskIds: number[]
-    runtime: TaskStateData['runtime'] | null
-    derived: TaskStateData['derived'] | null
+    runtime: TaskStateSnapshot['runtime'] | null
+    derived: TaskStateSnapshot['derived'] | null
     selectTask: (task: Task | null) => void
     stopStream: (
       taskId?: number,
@@ -77,7 +78,7 @@ export function TaskSessionProvider({ children }: { children: ReactNode }) {
     isSocketConnected?: MessageSyncer['isSocketConnected']
   }>({})
   const resetMessageSessionRef = useRef<(() => void) | null>(null)
-  const [taskState, setTaskState] = useState<TaskStateData | null>(null)
+  const [taskState, setTaskState] = useState<TaskStateSnapshot | null>(null)
 
   const disposeMachine = useCallback(() => {
     unsubscribeMachineRef.current?.()
@@ -132,9 +133,10 @@ export function TaskSessionProvider({ children }: { children: ReactNode }) {
     (realTaskId: number, previousTaskId: number) => {
       if (realTaskId === previousTaskId) return
       writeSelectedTask({ id: realTaskId } as Task)
+      void pullTaskDetail(realTaskId)
       setTaskState(machineRef.current?.getState() ?? null)
     },
-    [writeSelectedTask]
+    [pullTaskDetail, writeSelectedTask]
   )
 
   const messageSyncer = useMessageSyncer({
@@ -223,8 +225,8 @@ export function TaskSessionProvider({ children }: { children: ReactNode }) {
     if (!taskState) return []
 
     const subtaskIds = new Set<number>()
-    if (taskState.streamingSubtaskId !== null) {
-      subtaskIds.add(taskState.streamingSubtaskId)
+    if (taskState.runtime.activeStreamSubtaskId !== undefined) {
+      subtaskIds.add(taskState.runtime.activeStreamSubtaskId)
     }
 
     taskState.messages.forEach(message => {
@@ -236,6 +238,10 @@ export function TaskSessionProvider({ children }: { children: ReactNode }) {
     return Array.from(subtaskIds)
   }, [taskState])
 
+  const currentTaskId = useMemo(() => {
+    return selectedTask?.id && selectedTask.id > 0 ? selectedTask.id : null
+  }, [selectedTask?.id])
+
   const value = useMemo<TaskSession>(() => {
     const {
       writeSelectedTask: _writeSelectedTask,
@@ -246,13 +252,14 @@ export function TaskSessionProvider({ children }: { children: ReactNode }) {
 
     return {
       ...publicTaskPuller,
+      currentTaskId,
       selectTask,
       sendMessage: messageSyncer.sendMessage,
       stopStream,
       cleanupMessagesAfterEdit: messageSyncer.cleanupMessagesAfterEdit,
       taskState,
       messages: taskState?.messages ?? new Map<string, UnifiedMessage>(),
-      isStreaming: taskState?.status === 'streaming' || streamingSubtaskIds.length > 0,
+      isStreaming: taskState?.derived.isStreaming || streamingSubtaskIds.length > 0,
       streamingSubtaskIds,
       runtime: taskState?.runtime ?? null,
       derived: taskState?.derived ?? null,
@@ -260,6 +267,7 @@ export function TaskSessionProvider({ children }: { children: ReactNode }) {
       setMessageSyncOptions,
     }
   }, [
+    currentTaskId,
     messageSyncer,
     recoverCurrentTask,
     selectTask,

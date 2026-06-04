@@ -157,6 +157,36 @@ describe('TaskStateMachine', () => {
     consoleInfoSpy.mockRestore()
   })
 
+  it('keeps pending socket recovery when terminal task detail arrives before socket connect', async () => {
+    const joinTask = jest.fn().mockResolvedValue({ subtasks: [] })
+    let connected = false
+
+    const machine = new TaskStateMachine(100, {
+      joinTask,
+      isConnected: () => connected,
+    })
+
+    await machine.recover({ force: true, reason: 'task-selected' })
+    expect(machine.getState().phase).toBe('waiting_socket')
+
+    machine.loadTask({
+      id: 100,
+      status: 'COMPLETED',
+      updated_at: '2026-06-01T10:00:00.000Z',
+    })
+
+    expect(machine.getState().phase).toBe('waiting_socket')
+    expect(joinTask).not.toHaveBeenCalled()
+
+    connected = true
+    await machine.handleSocketConnected('websocket-reconnect')
+
+    expect(joinTask).toHaveBeenCalledWith(100, {
+      forceRefresh: true,
+      afterMessageId: undefined,
+    })
+  })
+
   it('refreshes timestamp when the same AI message receives a new chat:error event', () => {
     const nowSpy = jest.spyOn(Date, 'now').mockReturnValueOnce(1000).mockReturnValueOnce(2000)
 
@@ -221,6 +251,51 @@ describe('TaskStateMachine', () => {
     expect(state.derived.canQueueMessage).toBe(true)
   })
 
+  it('marks runtime as running when a send is accepted before chat start', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.markSendAccepted('2026-05-31T10:00:00.000Z')
+
+    const state = machine.getState()
+    expect(state.phase).toBe('ready')
+    expect(state.runtime).toMatchObject({
+      taskId: 100,
+      taskStatus: 'RUNNING',
+      phase: 'running',
+      lastStatusUpdatedAt: '2026-05-31T10:00:00.000Z',
+    })
+    expect(state.derived).toMatchObject({
+      isExecutionActive: true,
+      blocksQueuedDispatch: true,
+      canCancelTask: true,
+    })
+  })
+
+  it('send accepted clears old terminal markers for follow-up sends', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('COMPLETED', '2026-05-31T10:00:00.000Z')
+    machine.markSendAccepted('2026-05-31T10:01:00.000Z')
+    machine.syncTaskDetail({
+      id: 100,
+      status: 'COMPLETED',
+      updated_at: '2026-05-31T10:00:00.000Z',
+    })
+
+    const state = machine.getState()
+    expect(state.runtime.taskStatus).toBe('RUNNING')
+    expect(state.runtime.phase).toBe('running')
+    expect(state.runtime.hasTerminalStatus).toBe(false)
+    expect(state.runtime.lastTerminalStatusUpdatedAt).toBeUndefined()
+    expect(state.derived.isTerminal).toBe(false)
+  })
+
   it('terminal task status clears streaming runtime and unblocks queued dispatch', () => {
     const machine = new TaskStateMachine(100, {
       joinTask: jest.fn(),
@@ -234,8 +309,8 @@ describe('TaskStateMachine', () => {
 
     const state = machine.getState()
     const message = state.messages.get('ai-42')
-    expect(state.status).toBe('ready')
-    expect(state.streamingSubtaskId).toBeNull()
+    expect(state.phase).toBe('ready')
+    expect(state.runtime.activeStreamSubtaskId).toBeUndefined()
     expect(state.isStopping).toBe(false)
     expect(state.runtime).toMatchObject({
       taskStatus: 'COMPLETED',
@@ -355,7 +430,7 @@ describe('TaskStateMachine', () => {
     await recoverPromise
 
     const state = machine.getState()
-    expect(state.status).toBe('ready')
+    expect(state.phase).toBe('ready')
     expect(state.runtime.phase).toBe('terminal')
     expect(state.runtime.joinedRoom).toBe(true)
     expect(state.messages.get('ai-42')?.content).toBe('done')
@@ -560,7 +635,7 @@ describe('TaskStateMachine', () => {
 
     const state = machine.getState()
     const message = state.messages.get('ai-42')
-    expect(state.status).toBe('streaming')
+    expect(state.phase).toBe('streaming')
     expect(state.runtime.phase).toBe('streaming')
     expect(message?.status).toBe('streaming')
     expect(message?.content).toBe('partial')
@@ -580,8 +655,8 @@ describe('TaskStateMachine', () => {
     machine.handleChatStart(42, 'Chat', 7)
 
     const state = machine.getState()
-    expect(state.status).toBe('ready')
-    expect(state.streamingSubtaskId).toBeNull()
+    expect(state.phase).toBe('ready')
+    expect(state.runtime.activeStreamSubtaskId).toBeUndefined()
     expect(state.runtime.phase).toBe('terminal')
     expect(state.runtime.activeStreamSubtaskId).toBeUndefined()
     expect(state.derived.isTerminal).toBe(true)
@@ -600,8 +675,8 @@ describe('TaskStateMachine', () => {
     machine.handleChatStart(43, 'Chat', 8)
 
     const state = machine.getState()
-    expect(state.status).toBe('streaming')
-    expect(state.streamingSubtaskId).toBe(43)
+    expect(state.phase).toBe('streaming')
+    expect(state.runtime.activeStreamSubtaskId).toBe(43)
     expect(state.runtime.taskStatus).toBe('RUNNING')
     expect(state.runtime.phase).toBe('streaming')
     expect(state.runtime.activeStreamSubtaskId).toBe(43)
@@ -625,7 +700,7 @@ describe('TaskStateMachine', () => {
     })
 
     const state = machine.getState()
-    expect(state.status).toBe('streaming')
+    expect(state.phase).toBe('streaming')
     expect(state.runtime.taskStatus).toBe('RUNNING')
     expect(state.runtime.phase).toBe('streaming')
     expect(state.runtime.activeStreamSubtaskId).toBe(43)
@@ -646,7 +721,7 @@ describe('TaskStateMachine', () => {
     })
 
     const state = machine.getState()
-    expect(state.status).toBe('streaming')
+    expect(state.phase).toBe('streaming')
     expect(state.runtime.taskStatus).toBe('RUNNING')
     expect(state.runtime.phase).toBe('streaming')
     expect(state.runtime.activeStreamSubtaskId).toBe(43)
@@ -668,7 +743,7 @@ describe('TaskStateMachine', () => {
     machine.handleChatDone(43, 'follow-up done')
 
     const state = machine.getState()
-    expect(state.status).toBe('ready')
+    expect(state.phase).toBe('ready')
     expect(state.runtime.taskStatus).toBe('COMPLETED')
     expect(state.runtime.phase).toBe('terminal')
     expect(state.runtime.activeStreamSubtaskId).toBeUndefined()
@@ -691,7 +766,7 @@ describe('TaskStateMachine', () => {
     machine.handleChatError(43, 'follow-up failed', 8, 'transport')
 
     const state = machine.getState()
-    expect(state.status).toBe('error')
+    expect(state.phase).toBe('error')
     expect(state.runtime.taskStatus).toBe('FAILED')
     expect(state.runtime.phase).toBe('terminal')
     expect(state.runtime.activeStreamSubtaskId).toBeUndefined()
@@ -714,7 +789,7 @@ describe('TaskStateMachine', () => {
     machine.handleChatCancelled(43)
 
     const state = machine.getState()
-    expect(state.status).toBe('ready')
+    expect(state.phase).toBe('ready')
     expect(state.runtime.taskStatus).toBe('CANCELLED')
     expect(state.runtime.phase).toBe('terminal')
     expect(state.runtime.activeStreamSubtaskId).toBeUndefined()
@@ -734,8 +809,8 @@ describe('TaskStateMachine', () => {
     machine.handleChatDone(42, 'old done')
 
     const state = machine.getState()
-    expect(state.status).toBe('streaming')
-    expect(state.streamingSubtaskId).toBe(43)
+    expect(state.phase).toBe('streaming')
+    expect(state.runtime.activeStreamSubtaskId).toBe(43)
     expect(state.runtime.phase).toBe('streaming')
     expect(state.runtime.activeStreamSubtaskId).toBe(43)
     expect(state.derived.isStreaming).toBe(true)
@@ -787,10 +862,10 @@ describe('TaskStateMachine', () => {
     machine.handleTaskStatus('COMPLETED', '2026-05-31T10:01:00.000Z')
 
     const state = machine.getState()
-    expect(state.status).toBe('ready')
+    expect(state.phase).toBe('ready')
     expect(state.runtime.taskStatus).toBe('COMPLETED')
     expect(state.runtime.phase).toBe('terminal')
-    expect(state.streamingSubtaskId).toBeNull()
+    expect(state.runtime.activeStreamSubtaskId).toBeUndefined()
   })
 
   it('keeps follow-up stream active when old chat error arrives late', () => {
@@ -806,8 +881,8 @@ describe('TaskStateMachine', () => {
     machine.handleChatError(42, 'old error', 7, 'transport')
 
     const state = machine.getState()
-    expect(state.status).toBe('streaming')
-    expect(state.streamingSubtaskId).toBe(43)
+    expect(state.phase).toBe('streaming')
+    expect(state.runtime.activeStreamSubtaskId).toBe(43)
     expect(state.runtime.phase).toBe('streaming')
     expect(state.runtime.activeStreamSubtaskId).toBe(43)
     expect(state.error).toBeNull()
@@ -826,14 +901,14 @@ describe('TaskStateMachine', () => {
     machine.handleChatCancelled(42)
 
     const state = machine.getState()
-    expect(state.status).toBe('streaming')
-    expect(state.streamingSubtaskId).toBe(43)
+    expect(state.phase).toBe('streaming')
+    expect(state.runtime.activeStreamSubtaskId).toBe(43)
     expect(state.runtime.phase).toBe('streaming')
     expect(state.runtime.activeStreamSubtaskId).toBe(43)
     expect(state.derived.isStreaming).toBe(true)
   })
 
-  it('chat done ends the active stream but does not force terminal lifecycle', () => {
+  it('chat done ends the active stream and completes the task runtime', () => {
     const machine = new TaskStateMachine(100, {
       joinTask: jest.fn(),
       isConnected: () => true,
@@ -844,13 +919,14 @@ describe('TaskStateMachine', () => {
     machine.handleChatDone(42, 'done')
 
     const state = machine.getState()
-    expect(state.status).toBe('ready')
-    expect(state.runtime.taskStatus).toBe('RUNNING')
-    expect(state.runtime.phase).toBe('running')
-    expect(state.derived.blocksQueuedDispatch).toBe(true)
+    expect(state.phase).toBe('ready')
+    expect(state.runtime.taskStatus).toBe('COMPLETED')
+    expect(state.runtime.phase).toBe('terminal')
+    expect(state.derived.blocksQueuedDispatch).toBe(false)
+    expect(state.derived.canCancelTask).toBe(false)
   })
 
-  it('chat error ends the active stream runtime without forcing terminal lifecycle', () => {
+  it('chat error ends the active stream and fails the task runtime', () => {
     const machine = new TaskStateMachine(100, {
       joinTask: jest.fn(),
       isConnected: () => true,
@@ -861,16 +937,17 @@ describe('TaskStateMachine', () => {
     machine.handleChatError(42, 'network error', 7, 'transport')
 
     const state = machine.getState()
-    expect(state.status).toBe('error')
-    expect(state.streamingSubtaskId).toBeNull()
-    expect(state.runtime.taskStatus).toBe('RUNNING')
-    expect(state.runtime.phase).toBe('running')
+    expect(state.phase).toBe('error')
+    expect(state.runtime.activeStreamSubtaskId).toBeUndefined()
+    expect(state.runtime.taskStatus).toBe('FAILED')
+    expect(state.runtime.phase).toBe('terminal')
     expect(state.runtime.activeStreamSubtaskId).toBeUndefined()
     expect(state.derived.isStreaming).toBe(false)
-    expect(state.derived.blocksQueuedDispatch).toBe(true)
+    expect(state.derived.blocksQueuedDispatch).toBe(false)
+    expect(state.derived.canCancelTask).toBe(false)
   })
 
-  it('chat cancelled ends the active stream runtime without forcing terminal lifecycle', () => {
+  it('chat cancelled ends the active stream and cancels the task runtime', () => {
     const machine = new TaskStateMachine(100, {
       joinTask: jest.fn(),
       isConnected: () => true,
@@ -881,13 +958,35 @@ describe('TaskStateMachine', () => {
     machine.handleChatCancelled(42)
 
     const state = machine.getState()
-    expect(state.status).toBe('ready')
-    expect(state.streamingSubtaskId).toBeNull()
-    expect(state.runtime.taskStatus).toBe('RUNNING')
-    expect(state.runtime.phase).toBe('running')
+    expect(state.phase).toBe('ready')
+    expect(state.runtime.activeStreamSubtaskId).toBeUndefined()
+    expect(state.runtime.taskStatus).toBe('CANCELLED')
+    expect(state.runtime.phase).toBe('terminal')
     expect(state.runtime.activeStreamSubtaskId).toBeUndefined()
     expect(state.derived.isStreaming).toBe(false)
-    expect(state.derived.blocksQueuedDispatch).toBe(true)
+    expect(state.derived.blocksQueuedDispatch).toBe(false)
+    expect(state.derived.canCancelTask).toBe(false)
+  })
+
+  it('ignores stale running snapshots after chat done completed the runtime', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: jest.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('RUNNING', '2026-05-31T10:00:00.000Z')
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.handleChatDone(42, 'done')
+    machine.syncTaskDetail({
+      id: 100,
+      status: 'RUNNING',
+      updated_at: '2026-05-31T10:02:00.000Z',
+    })
+
+    const state = machine.getState()
+    expect(state.runtime.taskStatus).toBe('COMPLETED')
+    expect(state.runtime.phase).toBe('terminal')
+    expect(state.derived.blocksQueuedDispatch).toBe(false)
   })
 
   it('checkHealth joins when server has an active stream and local room is not joined', async () => {
@@ -986,6 +1085,287 @@ describe('TaskStateMachine', () => {
     consoleInfoSpy.mockRestore()
   })
 
+  it('does not synthesize interactive form blocks from messages_chain on refresh', async () => {
+    const actions = createRuntimeActions({
+      verifyRuntime: jest.fn().mockResolvedValue({
+        task_id: 42,
+        task_status: 'COMPLETED',
+        status_updated_at: '2026-06-01T10:00:10',
+        active_stream: null,
+      }),
+      joinTask: jest.fn().mockResolvedValue({
+        subtasks: [
+          {
+            id: 77,
+            task_id: 42,
+            team_id: 1,
+            title: 'waiting',
+            bot_ids: [],
+            role: 'TEAM',
+            message_id: 2,
+            parent_id: 1,
+            prompt: '',
+            executor_namespace: '',
+            executor_name: '',
+            status: 'COMPLETED',
+            progress: 100,
+            batch: 0,
+            result: {
+              value: '请回答上面的几个问题',
+              deferred_user_input: true,
+              deferred_user_input_tool_use_id: 'tool_77',
+              messages_chain: [
+                {
+                  role: 'assistant',
+                  content: '',
+                  tool_calls: [
+                    {
+                      id: 'tool_77',
+                      type: 'function',
+                      function: {
+                        name: 'interactive_form_question',
+                        arguments: JSON.stringify({
+                          questions: [
+                            {
+                              id: 'genre',
+                              question: '你想写什么类型的小说？',
+                              input_type: 'choice',
+                              options: [{ label: '玄幻/仙侠', value: 'fantasy' }],
+                            },
+                          ],
+                        }),
+                      },
+                    },
+                  ],
+                },
+                {
+                  role: 'tool',
+                  tool_call_id: 'tool_77',
+                  name: 'interactive_form_question',
+                  content: JSON.stringify({
+                    __deferred_user_input__: true,
+                    status: 'waiting_for_user_response',
+                  }),
+                },
+              ],
+            },
+            error_message: '',
+            user_id: 1,
+            created_at: '2026-06-01T10:00:05.000Z',
+            updated_at: '2026-06-01T10:00:10.000Z',
+            completed_at: '2026-06-01T10:00:10.000Z',
+            bots: [],
+          },
+        ],
+      }),
+    })
+    const machine = new TaskStateMachine(42, actions)
+
+    machine.loadTask({
+      id: 42,
+      status: 'COMPLETED',
+      updated_at: '2026-06-01T10:00:10',
+    })
+    await machine.checkHealth('page-visible')
+
+    expect(machine.getState().messages.get('ai-77')?.result?.blocks ?? []).toHaveLength(0)
+  })
+
+  it('does not recover persisted interactive form when render payload is missing', async () => {
+    const deferredText = JSON.stringify({
+      __silent_exit__: true,
+      __deferred_user_input__: true,
+      success: true,
+      status: 'waiting_for_user_response',
+    })
+    const toolOutput = [{ type: 'text', text: deferredText, id: 'lc_1266' }]
+    const actions = createRuntimeActions({
+      verifyRuntime: jest.fn().mockResolvedValue({
+        task_id: 793,
+        task_status: 'COMPLETED',
+        status_updated_at: '2026-06-03T20:34:56',
+        active_stream: null,
+      }),
+      joinTask: jest.fn().mockResolvedValue({
+        subtasks: [
+          {
+            id: 1266,
+            task_id: 793,
+            team_id: 31,
+            title: 'Assistant response',
+            bot_ids: [],
+            role: 'ASSISTANT',
+            message_id: 2,
+            parent_id: 1,
+            prompt: '',
+            executor_namespace: '',
+            executor_name: '',
+            status: 'COMPLETED',
+            progress: 100,
+            batch: 0,
+            result: {
+              value: '我已经发出了第一个澄清表单，请回答这些问题',
+              blocks: [
+                {
+                  id: 'tool_1266',
+                  type: 'tool',
+                  status: 'done',
+                  tool_name:
+                    'interactive_wegent-interactive-form-question_interactive_form_question',
+                  tool_use_id: 'tool_1266',
+                  tool_input: {
+                    questions: [
+                      {
+                        id: 'novel_genre',
+                        question: '你想写什么类型的小说？',
+                        input_type: 'choice',
+                        required: true,
+                        options: [{ label: '科幻', value: 'sci_fi' }],
+                      },
+                    ],
+                  },
+                  tool_output: toolOutput,
+                },
+              ],
+              stop_reason: 'end_turn',
+              deferred_user_input: null,
+              deferred_user_input_tool_use_id: null,
+              messages_chain: [
+                {
+                  role: 'assistant',
+                  content: '',
+                  tool_calls: [
+                    {
+                      id: 'tool_1266',
+                      type: 'function',
+                      function: {
+                        name: 'interactive_wegent-interactive-form-question_interactive_form_question',
+                        arguments: JSON.stringify({
+                          questions: [
+                            {
+                              id: 'novel_genre',
+                              question: '你想写什么类型的小说？',
+                              input_type: 'choice',
+                              required: true,
+                              options: [{ label: '科幻', value: 'sci_fi' }],
+                            },
+                          ],
+                        }),
+                      },
+                    },
+                  ],
+                },
+                {
+                  role: 'tool',
+                  tool_call_id: 'tool_1266',
+                  name: 'interactive_wegent-interactive-form-question_interactive_form_question',
+                  content: JSON.stringify(toolOutput),
+                },
+              ],
+            },
+            error_message: '',
+            user_id: 1,
+            created_at: '2026-06-03T20:34:40.000Z',
+            updated_at: '2026-06-03T20:34:56.000Z',
+            completed_at: '2026-06-03T20:34:56.000Z',
+            bots: [],
+          },
+        ],
+      }),
+    })
+    const machine = new TaskStateMachine(793, actions)
+
+    machine.loadTask({
+      id: 793,
+      status: 'COMPLETED',
+      updated_at: '2026-06-03T20:34:56',
+    })
+    await machine.checkHealth('page-visible')
+
+    const blocks = machine.getState().messages.get('ai-1266')?.result?.blocks ?? []
+    expect(blocks).toEqual([
+      expect.objectContaining({
+        id: 'tool_1266',
+        type: 'tool',
+        tool_use_id: 'tool_1266',
+        status: 'done',
+      }),
+    ])
+    expect(blocks[0]).toMatchObject({
+      id: 'tool_1266',
+      type: 'tool',
+      tool_use_id: 'tool_1266',
+      status: 'done',
+    })
+    expect(blocks[0]).not.toHaveProperty('render_payload')
+  })
+
+  it('checkHealth resyncs the active stream message when chat done was missed', async () => {
+    const consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
+    const finalAssistantSubtask = {
+      id: 77,
+      task_id: 42,
+      team_id: 1,
+      title: 'done',
+      bot_ids: [],
+      role: 'TEAM',
+      message_id: 2,
+      parent_id: 1,
+      prompt: '',
+      executor_namespace: '',
+      executor_name: '',
+      status: 'COMPLETED',
+      progress: 100,
+      batch: 0,
+      result: { value: 'partial final answer' },
+      error_message: '',
+      user_id: 1,
+      created_at: '2026-06-01T10:00:05.000Z',
+      updated_at: '2026-06-01T10:00:10.000Z',
+      completed_at: '2026-06-01T10:00:10.000Z',
+      bots: [],
+    }
+    const actions = createRuntimeActions({
+      verifyRuntime: jest.fn().mockResolvedValue({
+        task_id: 42,
+        task_status: 'COMPLETED',
+        status_updated_at: '2026-06-01T10:00:10',
+        active_stream: null,
+      }),
+      joinTask: jest.fn().mockImplementation((_taskId, options) =>
+        Promise.resolve({
+          subtasks: options.afterMessageId === 1 ? [finalAssistantSubtask] : [],
+        })
+      ),
+    })
+    const machine = new TaskStateMachine(42, actions)
+
+    machine.handleTaskStatus('RUNNING', '2026-06-01T10:00:00')
+    machine.addUserMessage({
+      id: 'user-1',
+      type: 'user',
+      status: 'completed',
+      content: 'ask',
+      timestamp: Date.now(),
+      subtaskId: 1,
+      messageId: 1,
+    })
+    machine.handleChatStart(77, 'Chat', 2)
+    machine.handleChatChunk(77, 'partial')
+    await machine.checkHealth('page-visible')
+
+    expect(actions.joinTask).toHaveBeenCalledWith(42, {
+      forceRefresh: true,
+      afterMessageId: 1,
+    })
+    const message = machine.getState().messages.get('ai-77')
+    expect(message?.status).toBe('completed')
+    expect(message?.content).toBe('partial final answer')
+    expect(machine.getState().runtime.phase).toBe('terminal')
+
+    consoleInfoSpy.mockRestore()
+  })
+
   it('uses chat chunk offsets to ignore content already covered by cached recovery', async () => {
     const consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
     const actions = createRuntimeActions({
@@ -1068,7 +1448,7 @@ describe('TaskStateMachine', () => {
     const state = machine.getState()
     expect(state.runtime.taskStatus).toBe('COMPLETED')
     expect(state.runtime.phase).toBe('terminal')
-    expect(state.streamingSubtaskId).toBeNull()
+    expect(state.runtime.activeStreamSubtaskId).toBeUndefined()
     expect(state.derived.blocksQueuedDispatch).toBe(false)
   })
 })

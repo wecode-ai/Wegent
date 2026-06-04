@@ -21,8 +21,8 @@ import { supportsAttachments } from '../../service/attachmentService'
 export interface UseAttachmentUploadOptions {
   /** Currently selected team */
   team: Team | null
-  /** Whether the chat is loading */
-  isLoading: boolean
+  /** Whether a user message has been submitted and is waiting for runtime acknowledgement */
+  isSendPending: boolean
   /** Whether the chat is streaming */
   isStreaming: boolean
   /** Attachment state from useMultiAttachment */
@@ -74,7 +74,7 @@ export interface UseAttachmentUploadReturn {
  *   handleButtonFileSelect,
  * } = useAttachmentUpload({
  *   team: selectedTeam,
- *   isLoading,
+ *   isSendPending,
  *   isStreaming,
  *   attachmentState,
  *   onFileSelect: handleFileSelect,
@@ -84,7 +84,7 @@ export interface UseAttachmentUploadReturn {
  */
 export function useAttachmentUpload({
   team,
-  isLoading,
+  isSendPending,
   isStreaming,
   attachmentState: _attachmentState,
   onFileSelect,
@@ -97,8 +97,8 @@ export function useAttachmentUpload({
 
   // Check if upload interactions should be disabled
   const isUploadDisabled = useMemo(() => {
-    return isLoading || isStreaming
-  }, [isLoading, isStreaming])
+    return isSendPending || isStreaming
+  }, [isSendPending, isStreaming])
 
   // Drag enter handler
   const handleDragEnter = useCallback(

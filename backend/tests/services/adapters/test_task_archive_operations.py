@@ -11,11 +11,15 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.project import Project
+from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.task import TaskCreate
 from app.services import project_service
 from app.services.adapters.task_kinds import task_kinds_service
+from app.services.adapters.wework_conversation_search import (
+    search_wework_conversation_tasks,
+)
 from app.services.chat.standalone_workspace import (
     WORKSPACE_PATH_LABEL,
     WORKSPACE_SOURCE_LABEL,
@@ -165,6 +169,147 @@ def test_archive_task_hides_from_personal_list_and_preserves_timestamp(
     assert archived_items[0].title == "Build project UI"
     assert archived_items[0].project_name == "Wegent"
     assert archived_items[0].updated_at == original_updated_at
+
+
+def test_title_search_does_not_match_subtask_content(
+    test_db: Session,
+    test_user: User,
+):
+    task = _create_task(
+        test_db,
+        test_user.id,
+        7109,
+        "hi",
+        client_origin="wework",
+    )
+    test_db.add(
+        Subtask(
+            user_id=test_user.id,
+            task_id=task.id,
+            team_id=1,
+            title="assistant reply",
+            bot_ids=[],
+            prompt="ubuntu",
+            result={"value": "assistant reply"},
+            completed_at=datetime(2026, 5, 30, 8, 1, 0),
+        )
+    )
+    test_db.commit()
+
+    items, total = task_kinds_service.get_user_tasks_by_title_with_pagination(
+        db=test_db,
+        user_id=test_user.id,
+        title="ubuntu",
+        skip=0,
+        limit=10,
+    )
+
+    assert total == 0
+    assert items == []
+
+
+def test_conversation_search_matches_subtask_content_and_client_origin(
+    test_db: Session,
+    test_user: User,
+):
+    matched_task = _create_task(
+        test_db,
+        test_user.id,
+        7111,
+        "hi",
+        client_origin="wework",
+        updated_at=datetime(2026, 5, 30, 9, 0, 0),
+    )
+    _create_task(
+        test_db,
+        test_user.id,
+        7112,
+        "hi",
+        client_origin="frontend",
+        updated_at=datetime(2026, 5, 30, 10, 0, 0),
+    )
+    test_db.add_all(
+        [
+            Subtask(
+                user_id=test_user.id,
+                task_id=matched_task.id,
+                team_id=1,
+                title="assistant reply",
+                bot_ids=[],
+                prompt="请总结这个人",
+                result={"value": "这是关于胡云鹏的回复内容"},
+                completed_at=datetime(2026, 5, 30, 9, 1, 0),
+            ),
+            Subtask(
+                user_id=test_user.id,
+                task_id=7112,
+                team_id=1,
+                title="assistant reply",
+                bot_ids=[],
+                prompt="胡云鹏",
+                result={"value": "wrong client"},
+                completed_at=datetime(2026, 5, 30, 10, 1, 0),
+            ),
+        ]
+    )
+    test_db.commit()
+
+    items, total = search_wework_conversation_tasks(
+        db=test_db,
+        user_id=test_user.id,
+        keyword="胡云鹏",
+        skip=0,
+        limit=10,
+        client_origin="wework",
+    )
+
+    assert total == 1
+    assert [item["id"] for item in items] == [matched_task.id]
+
+
+def test_conversation_search_uses_database_text_match_before_result_fallback(
+    test_db: Session,
+    test_user: User,
+):
+    for index in range(12):
+        task = _create_task(
+            test_db,
+            test_user.id,
+            7120 + index,
+            f"chat {index}",
+            client_origin="wework",
+            updated_at=datetime(2026, 5, 30, 10, index, 0),
+        )
+        test_db.add(
+            Subtask(
+                user_id=test_user.id,
+                task_id=task.id,
+                team_id=1,
+                title="user message",
+                bot_ids=[],
+                prompt=f"ubuntu setup question {index}",
+                result={"value": "assistant reply"},
+                completed_at=datetime(2026, 5, 30, 10, index, 30),
+            )
+        )
+
+    test_db.commit()
+
+    with patch(
+        "app.services.adapters.wework_conversation_search._get_subtask_search_text",
+        side_effect=AssertionError("Python result fallback should not run"),
+    ):
+        items, total = search_wework_conversation_tasks(
+            db=test_db,
+            user_id=test_user.id,
+            keyword="ubuntu",
+            skip=0,
+            limit=10,
+            client_origin="wework",
+        )
+
+    assert total == 12
+    assert len(items) == 10
 
 
 def test_archive_all_and_project_archive_only_archive_chat_like_tasks(

@@ -104,6 +104,12 @@ class SystemSkillInstallRequest(BaseModel):
     tags: List[str] = Field(default_factory=list)
 
 
+class PersonalSkillInstallRequest(BaseModel):
+    """Request to install a user-owned Skill asset for the current user."""
+
+    skillId: int
+
+
 class SystemSkillUpdateInstalledRequest(BaseModel):
     """Request to update installed skill runtime state."""
 

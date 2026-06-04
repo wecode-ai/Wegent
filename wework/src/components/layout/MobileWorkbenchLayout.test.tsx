@@ -1,7 +1,11 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, test, vi } from 'vitest'
+import { useState, type ReactNode } from 'react'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+import type { UnifiedModel } from '@/types/api'
 import { MobileWorkbenchLayout } from './MobileWorkbenchLayout'
+
+const originalInnerWidth = window.innerWidth
 
 const baseState = {
   user: { id: 1, user_name: 'MI', email: 'mi@example.com' },
@@ -58,6 +62,24 @@ const baseProjectChat = {
 }
 
 describe('MobileWorkbenchLayout', () => {
+  afterEach(() => {
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      writable: true,
+      value: originalInnerWidth,
+    })
+    window.dispatchEvent(new Event('resize'))
+  })
+
+  function renderAtMobileWidth(ui: ReactNode) {
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      writable: true,
+      value: 400,
+    })
+    return render(ui)
+  }
+
   test('uses the project selector instead of a static project work shortcut', async () => {
     const onSelectProject = vi.fn()
 
@@ -82,7 +104,7 @@ describe('MobileWorkbenchLayout', () => {
   })
 
   test('does not show the user avatar on the mobile empty chat page', () => {
-    render(
+    renderAtMobileWidth(
       <MobileWorkbenchLayout
         state={baseState}
         messages={[]}
@@ -95,9 +117,9 @@ describe('MobileWorkbenchLayout', () => {
     )
 
     expect(screen.queryByText('MI')).not.toBeInTheDocument()
-    expect(screen.getByTestId('mobile-empty-header')).toHaveClass('bg-base/95')
+    expect(screen.getByTestId('mobile-empty-header')).toHaveClass('bg-background/95')
     expect(screen.getByTestId('open-mobile-drawer-button')).toHaveClass(
-      'h-10',
+      'h-11',
       'text-text-primary',
     )
     expect(screen.getByTestId('open-mobile-drawer-button')).not.toHaveClass(
@@ -110,8 +132,179 @@ describe('MobileWorkbenchLayout', () => {
       'px-4',
       'pt-3',
     )
+    expect(screen.getByTestId('mobile-empty-chat-input-dock').className).not.toMatch(
+      /\bz-(?:modal|critical)\b/,
+    )
+    expect(screen.getByTestId('mobile-empty-state-content')).toHaveClass(
+      'items-center',
+      'gap-6',
+    )
+    expect(screen.getByTestId('mobile-empty-state-content').parentElement).toHaveClass(
+      'items-center',
+      'justify-center',
+    )
     expect(screen.getByTestId('compact-input-pill')).toHaveClass('min-h-[52px]')
     expect(screen.getByTestId('add-context-button')).toHaveClass('h-[52px]')
+  })
+
+  test('uses a bottom sheet for the mobile model picker', async () => {
+    const gptModel: UnifiedModel = {
+      name: 'overseas-gpt-5.5',
+      type: 'user',
+      displayName: '海外:gpt-5.5',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.5',
+          sortOrder: 10,
+          controls: {
+            speed: true,
+          },
+        },
+      },
+    }
+    const claudeModel: UnifiedModel = {
+      name: 'claude-sonnet',
+      type: 'user',
+      displayName: 'Claude Sonnet',
+      config: {
+        ui: {
+          family: 'claude',
+          modelLabel: 'Claude Sonnet',
+          sortOrder: 10,
+        },
+      },
+    }
+    const setSelectedModel = vi.fn()
+
+    renderAtMobileWidth(
+      <MobileWorkbenchLayout
+        state={baseState}
+        messages={[]}
+        projectChat={{
+          ...baseProjectChat,
+          models: [claudeModel, gptModel],
+          selectedModel: gptModel,
+          selectedModelOptions: { reasoning: 'high', speed: 'standard' },
+          setSelectedModel,
+        }}
+        onSelectProject={vi.fn()}
+        onOpenTask={vi.fn()}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+
+    expect(screen.getByTestId('model-selector-menu')).toHaveAttribute(
+      'data-mobile',
+      'true',
+    )
+    expect(screen.getByTestId('model-selector-menu')).toHaveAttribute(
+      'aria-modal',
+      'true',
+    )
+    expect(screen.getByTestId('model-selector-menu')).toHaveAttribute(
+      'aria-labelledby',
+      'model-selector-mobile-title',
+    )
+    expect(screen.getByTestId('model-selector-menu')).toHaveClass('h-[82dvh]')
+    expect(screen.getByTestId('model-selector-menu').closest('.fixed')).toHaveClass(
+      'z-modal',
+    )
+    expect(screen.getByTestId('model-selector-confirm-button').parentElement).toHaveClass(
+      'shrink-0',
+    )
+    expect(screen.getByTestId('model-selector-confirm-button').parentElement).not.toHaveClass(
+      'absolute',
+    )
+    expect(screen.getByTestId('model-selector-search-input')).toHaveClass(
+      'text-base',
+      'leading-5',
+    )
+    expect(screen.getByTestId('model-selector-model-list')).toHaveClass(
+      'overflow-y-auto',
+      'scrollbar-none',
+    )
+    expect(screen.getByTestId('model-control-reasoning-high')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-reasoning-high')).toHaveClass(
+      'h-11',
+      'min-w-[44px]',
+    )
+    expect(screen.getByTestId('model-control-speed-fast')).toBeInTheDocument()
+    expect(screen.getByTestId('model-family-claude')).toHaveClass(
+      'h-11',
+      'min-w-[44px]',
+    )
+
+    await userEvent.click(screen.getByTestId('model-family-claude'))
+    await userEvent.click(screen.getByTestId('model-option-claude-sonnet'))
+
+    expect(setSelectedModel).toHaveBeenCalledWith(claudeModel)
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('model-selector-confirm-button'))
+
+    expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
+  })
+
+  test('updates mobile reasoning controls without closing the model picker', async () => {
+    const gptModel: UnifiedModel = {
+      name: 'overseas-gpt-5.5',
+      type: 'user',
+      displayName: '海外:gpt-5.5',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.5',
+          sortOrder: 10,
+        },
+      },
+    }
+
+    function Harness() {
+      const [selectedModelOptions, setSelectedModelOptions] = useState({
+        reasoning: 'high',
+      })
+
+      return (
+        <MobileWorkbenchLayout
+          state={baseState}
+          messages={[]}
+          projectChat={{
+            ...baseProjectChat,
+            models: [gptModel],
+            selectedModel: gptModel,
+            selectedModelOptions,
+            setSelectedModelOption: (optionId, value) =>
+              setSelectedModelOptions(current => ({
+                ...current,
+                [optionId]: value,
+              })),
+          }}
+          onSelectProject={vi.fn()}
+          onOpenTask={vi.fn()}
+          onInputChange={vi.fn()}
+          onSend={vi.fn()}
+        />
+      )
+    }
+
+    renderAtMobileWidth(<Harness />)
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.click(screen.getByTestId('model-control-reasoning-medium'))
+
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-reasoning-medium')).toHaveClass(
+      'bg-[#1f2933]',
+    )
+    expect(screen.getByTestId('model-control-reasoning-high')).toHaveClass(
+      'bg-surface',
+    )
   })
 
   test('shows the selected project in the mobile empty project selector', () => {
@@ -175,11 +368,13 @@ describe('MobileWorkbenchLayout', () => {
       'absolute',
       'bottom-0',
       'pointer-events-none',
+      'z-chrome',
     )
     expect(screen.getByTestId('mobile-conversation-header')).toHaveClass(
       'absolute',
-      'bg-base/95',
+      'bg-background/95',
       'backdrop-blur',
+      'z-chrome',
     )
     expect(screen.getByTestId('mobile-conversation-header')).toHaveClass('gap-2')
     expect(screen.getByTestId('open-mobile-drawer-button').closest('header')).toHaveClass(
@@ -211,6 +406,15 @@ describe('MobileWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
 
+    const mobileDrawer = screen.getByText('Wework').closest('.fixed')
+    expect(mobileDrawer).toHaveStyle({
+      backgroundColor: 'rgb(var(--color-mobile-drawer))',
+    })
+    expect(mobileDrawer).toHaveClass(
+      'z-critical',
+      'backdrop-blur-3xl',
+      'backdrop-saturate-150',
+    )
     expect(screen.getByText('项目')).toBeInTheDocument()
     expect(screen.queryByText('图片')).not.toBeInTheDocument()
     expect(screen.queryByText('编码')).not.toBeInTheDocument()
@@ -221,6 +425,10 @@ describe('MobileWorkbenchLayout', () => {
       'placeholder',
       '搜索',
     )
+    expect(screen.getByTestId('mobile-search-input')).toHaveClass(
+      'text-base',
+      'leading-5',
+    )
     expect(screen.getByText('github_wegent')).toBeInTheDocument()
     expect(screen.queryByText('项目任务')).not.toBeInTheDocument()
     expect(screen.getByTestId('mobile-project-item-button')).toHaveAttribute(
@@ -228,14 +436,14 @@ describe('MobileWorkbenchLayout', () => {
       'false',
     )
     expect(screen.getByTestId('mobile-project-item-button')).toHaveClass(
-      'text-text-primary',
+      'text-[rgb(var(--color-sidebar-text-primary))]',
     )
     expect(screen.getByText('远程连接 Claude Code')).toBeInTheDocument()
     expect(screen.getByTestId('mobile-recent-task-button')).toHaveClass(
-      'text-text-primary',
+      'text-[rgb(var(--color-sidebar-text-primary))]',
     )
     expect(screen.getByTestId('mobile-settings-button')).toHaveClass(
-      'text-text-primary',
+      'text-[rgb(var(--color-sidebar-text-primary))]',
     )
     expect(screen.getByTestId('mobile-drawer-scroll')).toHaveClass('overflow-y-auto')
   })
@@ -282,6 +490,51 @@ describe('MobileWorkbenchLayout', () => {
     expect(screen.queryByTestId('mobile-standalone-new-chat-button')).not.toBeInTheDocument()
     expect(onStartStandaloneChat).not.toHaveBeenCalled()
     expect(onOpenPlugins).not.toHaveBeenCalled()
+  })
+
+  test('shows more project tasks from the mobile drawer', async () => {
+    const stateWithManyProjectTasks = {
+      ...baseState,
+      projects: [
+        {
+          ...baseState.projects[0],
+          tasks: Array.from({ length: 5 }, (_, index) => ({
+            id: index + 1,
+            task_id: index + 1,
+            task_title: `项目任务 ${index + 1}`,
+            task_status: 'COMPLETED',
+            created_at: `2026-05-2${index}T00:00:00.000Z`,
+          })),
+        },
+      ],
+    }
+
+    render(
+      <MobileWorkbenchLayout
+        state={stateWithManyProjectTasks}
+        messages={[]}
+        onSelectProject={vi.fn()}
+        onOpenTask={vi.fn()}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
+    await userEvent.click(screen.getByText('github_wegent'))
+
+    expect(screen.getAllByTestId('mobile-project-task-button')).toHaveLength(4)
+    expect(screen.queryByText('项目任务 1')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('mobile-project-task-limit-toggle-1'))
+
+    expect(screen.getAllByTestId('mobile-project-task-button')).toHaveLength(5)
+    expect(screen.getByText('项目任务 1')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('mobile-project-task-limit-toggle-1'))
+
+    expect(screen.getAllByTestId('mobile-project-task-button')).toHaveLength(4)
+    expect(screen.queryByText('项目任务 1')).not.toBeInTheDocument()
   })
 
   test('opens a mobile-specific settings page with plugins inside settings', async () => {

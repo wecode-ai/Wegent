@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
 import '@/app/tasks/tasks.css'
@@ -73,7 +73,9 @@ export default function Page() {
           isSidebarCollapsed={isCollapsed}
         />
         <div className="min-h-0 flex-1 overflow-hidden">
-          <ResourceLibraryPage />
+          <Suspense fallback={null}>
+            <ResourceLibraryPage />
+          </Suspense>
         </div>
       </div>
     </div>

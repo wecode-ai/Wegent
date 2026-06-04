@@ -93,6 +93,9 @@ export function MobileDrawer({
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<number>>(
     () => new Set(),
   )
+  const [expandedTaskProjectIds, setExpandedTaskProjectIds] = useState<Set<number>>(
+    () => new Set(),
+  )
   const standaloneRecentTasks = useMemo(
     () => sortTasksByTime(recentTasks).filter(task => !task.project_id),
     [recentTasks],
@@ -118,19 +121,34 @@ export function MobileDrawer({
     onSelectProject(projectId)
   }
 
+  const toggleProjectTaskLimit = (projectId: number) => {
+    setExpandedTaskProjectIds(previous => {
+      const next = new Set(previous)
+      if (next.has(projectId)) {
+        next.delete(projectId)
+      } else {
+        next.add(projectId)
+      }
+      return next
+    })
+  }
+
   return (
-    <div className="fixed inset-0 z-50 flex h-dvh flex-col bg-[#d9dadd] px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(22px,env(safe-area-inset-top))] text-text-primary">
+    <div
+      className="fixed inset-0 z-critical isolate flex h-dvh flex-col overflow-hidden px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(22px,env(safe-area-inset-top))] text-[rgb(var(--color-sidebar-text-primary))] backdrop-blur-3xl backdrop-saturate-150"
+      style={{ backgroundColor: 'rgb(var(--color-mobile-drawer))' }}
+    >
       <header className="flex shrink-0 items-center justify-between gap-4">
         <h1 className="text-3xl font-semibold tracking-normal">{t('workbench.brand', 'Wework')}</h1>
-        <div className="flex items-center gap-2 rounded-full bg-white/35 px-3 py-2">
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#9b59b6] text-sm font-medium text-white">
+        <div className="flex items-center gap-2 rounded-full bg-[rgb(var(--color-sidebar-hover))] px-3 py-2">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-sm font-medium text-primary-contrast">
             {user?.user_name?.slice(0, 2).toUpperCase() || t('workbench.user_fallback', '我')}
           </div>
           <button
             type="button"
             data-testid="close-mobile-drawer-button"
             onClick={onClose}
-            className="flex h-11 min-w-[44px] items-center justify-center rounded-full hover:bg-white/70"
+            className="flex h-11 min-w-[44px] items-center justify-center rounded-full text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-active))]"
             aria-label={t('workbench.close_menu', '关闭菜单')}
           >
             <X className="h-6 w-6" />
@@ -139,23 +157,28 @@ export function MobileDrawer({
       </header>
 
       <div className="relative mt-7 shrink-0">
-        <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#686d75]" />
+        <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[rgb(var(--color-sidebar-text-secondary))]" />
         <input
           data-testid="mobile-search-input"
           type="search"
           placeholder={t('workbench.search', '搜索')}
-          className="h-12 w-full rounded-2xl border-0 bg-white/70 pl-12 pr-4 text-base font-medium text-text-primary outline-none placeholder:text-[#686d75] focus:bg-white"
+          className="h-12 w-full rounded-2xl border border-border/60 bg-surface/85 pl-12 pr-4 text-base font-medium leading-5 text-text-primary outline-none placeholder:text-[rgb(var(--color-sidebar-text-muted))] focus:bg-surface"
         />
       </div>
 
       <div className="mt-7 min-h-0 flex-1 overflow-y-auto pr-1" data-testid="mobile-drawer-scroll">
         <section>
-          <h2 className="mb-3 px-1 text-sm font-semibold text-text-muted">
+          <h2 className="mb-3 px-1 text-sm font-semibold text-[rgb(var(--color-sidebar-text-muted))]">
             {t('workbench.projects', '项目')}
           </h2>
           <div className="space-y-1">
             {projects.map(project => {
-              const tasks = sortProjectTasks(project.tasks).slice(0, PROJECT_TASK_LIMIT)
+              const sortedTasks = sortProjectTasks(project.tasks)
+              const showAllTasks = expandedTaskProjectIds.has(project.id)
+              const tasks = showAllTasks
+                ? sortedTasks
+                : sortedTasks.slice(0, PROJECT_TASK_LIMIT)
+              const hasMoreTasks = sortedTasks.length > PROJECT_TASK_LIMIT
               const selected = currentProjectId === project.id
               const expanded = expandedProjectIds.has(project.id)
               const ExpandIcon = expanded ? ChevronDown : ChevronRight
@@ -168,17 +191,17 @@ export function MobileDrawer({
                     onClick={() => toggleProject(project.id)}
                     aria-expanded={expanded}
                     className={[
-                      'flex h-11 min-w-[44px] w-full items-center gap-3 rounded-xl px-3 text-left text-base font-medium',
+                      'flex h-11 min-w-[44px] w-full items-center gap-3 rounded-xl px-3 text-left text-sm font-medium',
                       selected
-                        ? 'bg-white text-text-primary'
-                        : 'text-text-primary hover:bg-white/70',
+                        ? 'bg-[rgb(var(--color-sidebar-active))] text-[rgb(var(--color-sidebar-text-primary))]'
+                        : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]',
                     ].join(' ')}
                   >
-                    <Folder className="h-5 w-5 shrink-0 text-text-secondary" />
+                    <Folder className="h-5 w-5 shrink-0 text-[rgb(var(--color-sidebar-text-secondary))]" />
                     <span className="min-w-0 flex-1 truncate">{project.name}</span>
                     <ExpandIcon
                       data-testid={`mobile-project-collapse-icon-${project.id}`}
-                      className="h-4 w-4 shrink-0 text-text-muted"
+                      className="h-4 w-4 shrink-0 text-[rgb(var(--color-sidebar-text-muted))]"
                     />
                   </button>
                   {expanded && tasks.length > 0 && (
@@ -195,10 +218,10 @@ export function MobileDrawer({
                               onClose()
                             }}
                             className={[
-                              'flex h-9 min-w-[44px] w-full items-center rounded-lg px-2 text-left text-sm',
+                              'flex h-11 min-w-[44px] w-full items-center rounded-lg px-2 text-left text-[13px]',
                               currentTaskId === task.task_id
-                                ? 'bg-white text-text-primary'
-                                : 'text-text-secondary hover:bg-white/70',
+                                ? 'bg-[rgb(var(--color-sidebar-active))] text-[rgb(var(--color-sidebar-text-primary))]'
+                                : 'text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]',
                             ].join(' ')}
                           >
                             <span className="min-w-0 flex-1 truncate">
@@ -207,13 +230,25 @@ export function MobileDrawer({
                             {running ? (
                               <Loader2 className="ml-2 h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
                             ) : (
-                              <span className="ml-2 shrink-0 text-xs text-text-muted">
+                              <span className="ml-2 shrink-0 text-xs text-[rgb(var(--color-sidebar-text-muted))]">
                                 {formatRelativeTime(getProjectTaskTime(task))}
                               </span>
                             )}
                           </button>
                         )
                       })}
+                      {hasMoreTasks && (
+                        <button
+                          type="button"
+                          data-testid={`mobile-project-task-limit-toggle-${project.id}`}
+                          onClick={() => toggleProjectTaskLimit(project.id)}
+                          className="flex h-11 min-w-[44px] w-full items-center rounded-lg px-2 text-left text-[13px] font-medium text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
+                        >
+                          {showAllTasks
+                            ? t('workbench.show_less', '收起')
+                            : t('workbench.show_more', '显示更多')}
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -224,7 +259,7 @@ export function MobileDrawer({
 
         <section className="mt-7 pb-24">
           <div className="mb-3 flex items-center justify-between px-1">
-            <h2 className="text-sm font-semibold text-text-muted">
+            <h2 className="text-sm font-semibold text-[rgb(var(--color-sidebar-text-muted))]">
               {t('workbench.history', '对话')}
             </h2>
           </div>
@@ -241,19 +276,19 @@ export function MobileDrawer({
                     onClose()
                   }}
                   className={[
-                    'flex h-11 min-w-[44px] w-full items-center gap-3 rounded-xl px-3 text-left text-base',
+                    'flex h-11 min-w-[44px] w-full items-center gap-3 rounded-xl px-3 text-left text-sm',
                     currentTaskId === task.id && !currentProjectId
-                      ? 'bg-white text-text-primary'
-                      : 'text-text-primary hover:bg-white/70',
+                      ? 'bg-[rgb(var(--color-sidebar-active))] text-[rgb(var(--color-sidebar-text-primary))]'
+                      : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]',
                   ].join(' ')}
                 >
                   {running ? (
                     <Loader2 className="h-5 w-5 shrink-0 animate-spin text-primary" />
                   ) : (
-                    <Clock className="h-5 w-5 shrink-0 text-text-secondary" />
+                    <Clock className="h-5 w-5 shrink-0 text-[rgb(var(--color-sidebar-text-secondary))]" />
                   )}
                   <span className="min-w-0 flex-1 truncate">{task.title}</span>
-                  <span className="shrink-0 text-sm text-text-muted">
+                  <span className="shrink-0 text-sm text-[rgb(var(--color-sidebar-text-muted))]">
                     {formatRelativeTime(task.updated_at || task.created_at)}
                   </span>
                 </button>
@@ -263,14 +298,14 @@ export function MobileDrawer({
         </section>
       </div>
 
-      <footer className="mt-3 shrink-0 border-t border-black/5 pt-3">
+      <footer className="mt-3 shrink-0 border-t border-border/60 pt-3">
         <button
           type="button"
           data-testid="mobile-settings-button"
           onClick={() => closeAfter(onOpenSettings)}
-          className="flex h-11 min-w-[44px] items-center gap-3 rounded-xl px-3 text-base font-medium text-text-primary hover:bg-white/70"
+          className="flex h-11 min-w-[44px] items-center gap-3 rounded-xl px-3 text-sm font-medium text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
         >
-          <Settings className="h-5 w-5 text-text-secondary" />
+          <Settings className="h-5 w-5 text-[rgb(var(--color-sidebar-text-secondary))]" />
           {t('workbench.settings', '设置')}
         </button>
       </footer>
@@ -278,7 +313,7 @@ export function MobileDrawer({
         type="button"
         data-testid="mobile-new-chat-button"
         onClick={() => closeAfter(onNewChat ?? onStartStandaloneChat)}
-        className="absolute bottom-[max(28px,env(safe-area-inset-bottom))] right-5 z-10 flex h-16 w-16 items-center justify-center rounded-full bg-[#26394f] text-white shadow-[0_14px_36px_rgba(38,57,79,0.28)] hover:bg-[#1f3044]"
+        className="absolute bottom-[max(28px,env(safe-area-inset-bottom))] right-5 z-10 flex h-16 w-16 items-center justify-center rounded-full bg-primary text-primary-contrast shadow-[0_14px_36px_rgba(20,184,166,0.24)] hover:opacity-90"
         aria-label={t('workbench.new_chat', '新对话')}
       >
         <Plus className="h-7 w-7" />

@@ -88,7 +88,7 @@ export function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-base px-6 py-12">
+    <div className="flex min-h-screen items-center justify-center bg-background px-6 py-12">
       <div className="w-full max-w-md">
         <div className="mb-8 text-center">
           <h1 className="text-3xl font-semibold text-text-primary">
@@ -109,7 +109,7 @@ export function LoginPage() {
                   id="user_name"
                   name="user_name"
                   data-testid="login-username-input"
-                  className="mt-2 h-11 w-full rounded-lg border border-border bg-base px-3 text-sm text-text-primary outline-none focus:border-text-secondary"
+                  className="mt-2 h-11 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-text-secondary"
                   value={formData.user_name}
                   autoComplete="username"
                   onChange={event =>
@@ -127,7 +127,7 @@ export function LoginPage() {
                     name="password"
                     data-testid="login-password-input"
                     type={showPassword ? 'text' : 'password'}
-                    className="h-11 w-full rounded-lg border border-border bg-base px-3 pr-11 text-sm text-text-primary outline-none focus:border-text-secondary"
+                    className="h-11 w-full rounded-lg border border-border bg-background px-3 pr-11 text-sm text-text-primary outline-none focus:border-text-secondary"
                     value={formData.password}
                     autoComplete="current-password"
                     onChange={event =>
@@ -149,7 +149,7 @@ export function LoginPage() {
               <button
                 type="submit"
                 data-testid="login-submit-button"
-                className="h-11 w-full rounded-lg bg-text-primary text-sm font-semibold text-base shadow-sm disabled:opacity-60"
+                className="h-11 w-full rounded-lg bg-text-primary text-sm font-semibold text-white shadow-sm disabled:opacity-60"
                 disabled={isSubmitting}
               >
                 {isSubmitting
@@ -171,7 +171,7 @@ export function LoginPage() {
             <button
               type="button"
               data-testid="oidc-login-button"
-              className="h-11 w-full rounded-lg border border-border bg-base text-sm font-semibold text-text-primary hover:bg-muted"
+              className="h-11 w-full rounded-lg border border-border bg-background text-sm font-semibold text-text-primary hover:bg-muted"
               onClick={handleOidcLogin}
             >
               {config.oidcLoginText || t('workbench.oidc_login', '使用 OpenID Connect 登录')}

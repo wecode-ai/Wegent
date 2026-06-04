@@ -1,4 +1,4 @@
-import type { DeviceCommandResponse } from '@/types/api'
+import type { DeviceCommandResponse, LocalDeviceSkill } from '@/types/api'
 import type {
   CloudDeviceResponse,
   CloudDeviceMetricsResponse,
@@ -13,6 +13,51 @@ import type { HttpClient } from './http'
 function getCommandText(response: DeviceCommandResponse): string {
   const output = Array.isArray(response.stdout) ? response.stdout.join('\n') : response.stdout
   return output.trim()
+}
+
+function getStringArrayOutput(response: DeviceCommandResponse): string[] {
+  if (!Array.isArray(response.stdout)) return []
+  return response.stdout.filter((item): item is string => typeof item === 'string')
+}
+
+function getSkillArrayOutput(response: DeviceCommandResponse): LocalDeviceSkill[] {
+  const stdout =
+    typeof response.stdout === 'string'
+      ? parseJsonOutput(response.stdout)
+      : response.stdout
+  if (!Array.isArray(stdout)) return []
+  const skills = stdout.filter(
+    (item): item is LocalDeviceSkill =>
+      typeof item === 'object' &&
+      item !== null &&
+      'name' in item &&
+      'path' in item,
+  )
+  return sortSkillsByName(dedupeSkillsByName(skills))
+}
+
+function parseJsonOutput(output: string): unknown {
+  try {
+    return JSON.parse(output)
+  } catch {
+    return output
+  }
+}
+
+function dedupeSkillsByName(skills: LocalDeviceSkill[]): LocalDeviceSkill[] {
+  const seen = new Set<string>()
+  return skills.filter(skill => {
+    const key = skill.name.trim().toLowerCase()
+    if (!key || seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function sortSkillsByName(skills: LocalDeviceSkill[]): LocalDeviceSkill[] {
+  return [...skills].sort((left, right) =>
+    left.name.localeCompare(right.name, undefined, { sensitivity: 'base' }),
+  )
 }
 
 export function createDeviceApi(client: HttpClient) {
@@ -68,7 +113,42 @@ export function createDeviceApi(client: HttpClient) {
       if (!response.success) {
         throw new Error(response.error || response.stderr || 'Failed to list directories')
       }
-      return Array.isArray(response.stdout) ? response.stdout : []
+      return getStringArrayOutput(response)
+    },
+
+    async listSkills(deviceId: string): Promise<LocalDeviceSkill[]> {
+      const response = await client.post<DeviceCommandResponse>(
+        `/devices/${encodeURIComponent(deviceId)}/commands`,
+        {
+          command_key: 'ls_skills',
+          timeout_seconds: 15,
+          max_output_bytes: 1024 * 256,
+        },
+      )
+      if (!response.success) {
+        throw new Error(response.error || response.stderr || 'Failed to list skills')
+      }
+      return getSkillArrayOutput(response)
+    },
+
+    async createDirectory(deviceId: string, path: string): Promise<void> {
+      const normalizedPath = path.trim()
+      if (!normalizedPath) {
+        throw new Error('Directory path is required')
+      }
+
+      const response = await client.post<DeviceCommandResponse>(
+        `/devices/${encodeURIComponent(deviceId)}/commands`,
+        {
+          command_key: 'mkdir_p',
+          args: [normalizedPath],
+          timeout_seconds: 15,
+          max_output_bytes: 4096,
+        },
+      )
+      if (!response.success) {
+        throw new Error(response.error || response.stderr || 'Failed to create directory')
+      }
     },
 
     executeCommand(
@@ -114,6 +194,12 @@ export function createDeviceApi(client: HttpClient) {
     async deleteCloudDevice(deviceId: string): Promise<{ message: string }> {
       return client.delete<{ message: string }>(
         `/cloud-devices/${encodeURIComponent(deviceId)}`,
+      )
+    },
+
+    async deleteDevice(deviceId: string): Promise<{ message: string }> {
+      return client.delete<{ message: string }>(
+        `/devices/${encodeURIComponent(deviceId)}`,
       )
     },
 

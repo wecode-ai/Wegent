@@ -128,6 +128,8 @@ class ResponsesAPIResponse(TypedDict, total=False):
     sources: List[Any]
     silent_exit: bool
     silent_exit_reason: str
+    deferred_user_input: bool
+    deferred_user_input_tool_use_id: str
 
 
 # ============================================================
@@ -1076,6 +1078,23 @@ class ResponsesAPIEventBuilder:
     # ============================================================
     # Reasoning Events
     # ============================================================
+
+    def reasoning_delta(self, delta: str) -> dict:
+        """Create response.reasoning_summary_text.delta event.
+
+        Args:
+            delta: Reasoning/thinking text delta
+
+        Returns:
+            Event data dictionary
+        """
+        return {
+            "type": ResponsesAPIStreamEvents.REASONING_SUMMARY_TEXT_DELTA.value,
+            "item_id": self.item_id,
+            "output_index": self.output_index,
+            "content_index": self.content_index,
+            "delta": delta,
+        }
 
     def reasoning(self, content: str) -> dict:
         """Create response.reasoning_summary_part.added event.

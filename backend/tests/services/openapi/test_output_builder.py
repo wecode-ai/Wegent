@@ -344,12 +344,14 @@ def test_build_response_output_restores_mcp_call_output_from_blocks():
                     "type": "tool",
                     "tool_use_id": "call_mcp_2",
                     "tool_name": "interactive_form_question",
-                    "tool_input": {"ask_id": "ask_108"},
+                    "tool_input": {
+                        "questions": [{"id": "exp_id", "question": "Enter exp id"}],
+                    },
                     "tool_output": (
                         '{"pending_user_input": true, '
                         '"pending_user_input_payload": {'
                         '"type": "interactive_form_question", '
-                        '"ask_id": "ask_108", '
+                        '"tool_use_id": "call_mcp_2", '
                         '"submit_mode": "new_response", '
                         '"submit_format": "markdown_message"}}'
                     ),
@@ -365,8 +367,8 @@ def test_build_response_output_restores_mcp_call_output_from_blocks():
 
     assert len(output) == 1
     assert output[0].type == "mcp_call"
-    assert output[0].output["pending_user_input"] is True
-    assert output[0].output["pending_user_input_payload"]["ask_id"] == "ask_108"
+    assert "pending_user_input" not in output[0].output
+    assert "pending_user_input_payload" not in output[0].output
 
 
 def test_extract_pending_user_input_state_from_tool_blocks():
@@ -379,12 +381,14 @@ def test_extract_pending_user_input_state_from_tool_blocks():
                     "type": "tool",
                     "tool_use_id": "call_mcp_3",
                     "tool_name": "interactive_form_question",
-                    "tool_input": {"ask_id": "ask_109"},
+                    "tool_input": {
+                        "questions": [{"id": "exp_id", "question": "Enter exp id"}],
+                    },
                     "tool_output": {
                         "pending_user_input": True,
                         "pending_user_input_payload": {
                             "type": "interactive_form_question",
-                            "ask_id": "ask_109",
+                            "tool_use_id": "call_mcp_3",
                         },
                     },
                     "tool_protocol": "mcp_call",
@@ -397,11 +401,8 @@ def test_extract_pending_user_input_state_from_tool_blocks():
 
     pending_user_input, payload = extract_pending_user_input_state([subtask])
 
-    assert pending_user_input is True
-    assert payload == {
-        "type": "interactive_form_question",
-        "ask_id": "ask_109",
-    }
+    assert pending_user_input is False
+    assert payload is None
 
 
 def test_extract_pending_user_input_state_rebuilds_minimal_payload_from_fallback():
@@ -415,12 +416,11 @@ def test_extract_pending_user_input_state_rebuilds_minimal_payload_from_fallback
                     "tool_use_id": "call_mcp_4",
                     "tool_name": "interactive_form_question",
                     "tool_input": {
-                        "ask_id": "ask_110",
                         "questions": [{"id": "exp_id", "question": "Enter exp id"}],
                     },
                     "tool_output": {
                         "pending_user_input": True,
-                        "ask_id": "ask_110",
+                        "tool_use_id": "call_mcp_4",
                     },
                     "tool_protocol": "mcp_call",
                     "server_label": "interactive-form",
@@ -432,9 +432,5 @@ def test_extract_pending_user_input_state_rebuilds_minimal_payload_from_fallback
 
     pending_user_input, payload = extract_pending_user_input_state([subtask])
 
-    assert pending_user_input is True
-    assert payload == {
-        "ask_id": "ask_110",
-        "questions": [{"id": "exp_id", "question": "Enter exp id"}],
-        "type": "interactive_form_question",
-    }
+    assert pending_user_input is False
+    assert payload is None

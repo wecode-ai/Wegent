@@ -97,12 +97,12 @@ export function SkillUploadDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 px-4">
+    <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/20 px-4">
       <section
         role="dialog"
         aria-modal="true"
         aria-label={t('workbench.plugins_skill_upload_title', '上传技能')}
-        className="w-full max-w-[620px] rounded-2xl bg-base p-5 shadow-xl"
+        className="w-full max-w-[620px] rounded-2xl bg-background p-5 shadow-xl"
       >
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -185,7 +185,7 @@ export function SkillUploadDialog({
               <input
                 value={skillName}
                 data-testid="skill-upload-name-input"
-                className="mt-2 h-10 w-full rounded-xl border border-border bg-base px-3 text-sm text-text-primary outline-none focus:border-primary"
+                className="mt-2 h-10 w-full rounded-xl border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-primary"
                 disabled={isUploading}
                 onChange={(event) => setSkillName(event.target.value)}
               />

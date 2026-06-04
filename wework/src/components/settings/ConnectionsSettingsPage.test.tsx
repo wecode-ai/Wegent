@@ -3,10 +3,12 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ConnectionsSettingsPage } from './ConnectionsSettingsPage'
 import { createDeviceApi } from '@/api/devices'
+import { AppearanceProvider } from '@/features/appearance'
 import type { DeviceInfo } from '@/types/devices'
 
 vi.mock('@/config/runtime', () => ({
-  getRuntimeConfig: () => ({ apiBaseUrl: '/api' }),
+  getRuntimeConfig: () => ({ appBasePath: '', apiBaseUrl: '/api' }),
+  stripAppBasePath: (path: string) => path,
 }))
 
 vi.mock('@/api/http', () => ({
@@ -36,6 +38,18 @@ function cloudDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   }
 }
 
+function localDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
+  return cloudDevice({
+    id: 2,
+    device_id: 'local-device',
+    name: 'Local Claude Device',
+    device_type: 'local',
+    bind_shell: 'claudecode',
+    cloud_config: undefined,
+    ...overrides,
+  })
+}
+
 describe('ConnectionsSettingsPage', () => {
   const api = {
     getAllDevices: vi.fn(),
@@ -45,6 +59,7 @@ describe('ConnectionsSettingsPage', () => {
     renameDevice: vi.fn(),
     restartCloudDevice: vi.fn(),
     deleteCloudDevice: vi.fn(),
+    deleteDevice: vi.fn(),
     getMetrics: vi.fn(),
     getMetricsHistory: vi.fn(),
     getVncConfig: vi.fn(),
@@ -52,6 +67,7 @@ describe('ConnectionsSettingsPage', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    window.history.pushState({}, '', '/')
     api.getMetrics.mockResolvedValue({
       cpu_usage: 42,
       memory_usage: 68,
@@ -86,14 +102,46 @@ describe('ConnectionsSettingsPage', () => {
     await userEvent.click(await screen.findByTestId('connection-add-device-button'))
     const createDialog = screen.getByTestId('add-cloud-device-dialog')
     expect(createDialog.querySelector('.text-\\[\\#0d9488\\]')).toBeNull()
-    expect(screen.getByTestId('add-cloud-device-confirm')).toHaveClass('bg-[#409eff]')
+    expect(createDialog).toHaveClass('bg-popover')
+    expect(screen.getByTestId('add-cloud-device-confirm')).toHaveClass('bg-primary')
     await userEvent.click(screen.getByTestId('add-cloud-device-confirm'))
 
     await waitFor(() => expect(api.createCloudDevice).toHaveBeenCalledTimes(1))
     const creatingNotice = screen.getByText(
       '云设备创建中，初始化约需 2-3 分钟，完成后将自动出现在列表中',
     )
-    expect(creatingNotice).toHaveClass('text-[#2563eb]')
+    expect(creatingNotice).toHaveClass('text-primary')
+  })
+
+  test('opens appearance settings from desktop settings navigation', async () => {
+    api.getAllDevices.mockResolvedValue([])
+
+    render(
+      <AppearanceProvider>
+        <ConnectionsSettingsPage onBack={vi.fn()} />
+      </AppearanceProvider>,
+    )
+
+    await userEvent.click(screen.getByTestId('settings-nav-appearance'))
+
+    expect(screen.getByTestId('appearance-settings-page')).toBeInTheDocument()
+    expect(screen.getByTestId('appearance-mode-system')).toBeInTheDocument()
+  })
+
+  test('opens appearance settings from the browser path on reload', () => {
+    api.getAllDevices.mockResolvedValue([])
+    window.history.pushState({}, '', '/settings/appearance')
+
+    render(
+      <AppearanceProvider>
+        <ConnectionsSettingsPage onBack={vi.fn()} />
+      </AppearanceProvider>,
+    )
+
+    expect(screen.getByTestId('appearance-settings-page')).toBeInTheDocument()
+    expect(screen.getByTestId('settings-nav-appearance')).toHaveClass(
+      'bg-[rgb(var(--color-sidebar-active))]',
+    )
   })
 
   test('keeps uncommon cloud device actions in a compact more menu with confirmation', async () => {
@@ -122,7 +170,8 @@ describe('ConnectionsSettingsPage', () => {
     const restartDialog = screen.getByTestId('confirm-restart-device-dialog')
     const restartConfirmButton = screen.getByTestId('confirm-restart-device-button')
     expect(restartDialog.querySelector('.text-\\[\\#0d9488\\]')).toBeNull()
-    expect(restartConfirmButton).toHaveClass('bg-[#2d2d2d]')
+    expect(restartDialog).toHaveClass('bg-popover')
+    expect(restartConfirmButton).toHaveClass('bg-text-primary', 'text-background')
     await userEvent.click(restartConfirmButton)
 
     await userEvent.click(moreButton)
@@ -134,7 +183,7 @@ describe('ConnectionsSettingsPage', () => {
     expect(api.deleteCloudDevice).toHaveBeenCalledWith('device-1')
   })
 
-  test('only lists cloud Claude Code devices', async () => {
+  test('lists local and cloud Claude Code devices while excluding unsupported shells', async () => {
     api.getAllDevices.mockResolvedValue([
       cloudDevice({
         device_id: 'cloud-claude',
@@ -148,18 +197,79 @@ describe('ConnectionsSettingsPage', () => {
         device_type: 'cloud',
         bind_shell: 'openclaw',
       }),
-      cloudDevice({
+      localDevice({
         device_id: 'local-claude',
         name: 'Local Claude Device',
-        device_type: 'local',
-        bind_shell: 'claudecode',
       }),
     ])
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
     expect(await screen.findByText('Cloud Claude Device')).toBeInTheDocument()
+    expect(screen.getByText('Local Claude Device')).toBeInTheDocument()
     expect(screen.queryByText('Cloud OpenClaw Device')).not.toBeInTheDocument()
-    expect(screen.queryByText('Local Claude Device')).not.toBeInTheDocument()
+  })
+
+  test('uses theme-aware surfaces for device cards and controls', async () => {
+    api.getAllDevices.mockResolvedValue([cloudDevice()])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    const deviceCard = await screen.findByTestId('connection-device-device-1')
+    const terminalButton = screen.getByTestId('connection-terminal-button-device-1')
+    const moreButton = screen.getByTestId('connection-more-button-device-1')
+
+    expect(deviceCard).toHaveClass('bg-surface', 'border-border')
+    expect(deviceCard).not.toHaveClass('bg-white')
+    expect(terminalButton).toHaveClass('bg-background', 'text-text-primary')
+    expect(moreButton).toHaveClass('bg-background', 'text-text-secondary')
+  })
+
+  test('hides cloud-only actions and metrics for local devices', async () => {
+    api.getAllDevices.mockResolvedValue([
+      localDevice({
+        device_id: 'local-claude',
+        name: 'Local Claude Device',
+      }),
+    ])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    expect(await screen.findByTestId('connection-device-local-claude')).toBeInTheDocument()
+    expect(screen.getByText('Local Claude Device')).toBeInTheDocument()
+    expect(screen.queryByTestId('connection-terminal-button-local-claude')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('connection-code-server-button-local-claude')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('connection-vnc-button-local-claude')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('connection-more-button-local-claude')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('connection-delete-button-local-claude')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('device-metrics')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('connection-scale-wiki')).not.toBeInTheDocument()
+    expect(api.getMetrics).not.toHaveBeenCalled()
+  })
+
+  test('allows deleting offline local device registrations', async () => {
+    api.getAllDevices.mockResolvedValue([
+      localDevice({
+        device_id: 'offline-local',
+        name: 'Offline Local Device',
+        status: 'offline',
+      }),
+    ])
+    api.deleteDevice.mockResolvedValue({ message: 'deleted' })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    expect(await screen.findByTestId('connection-device-offline-local')).toBeInTheDocument()
+    expect(screen.queryByTestId('connection-more-button-offline-local')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('connection-delete-button-offline-local'))
+    expect(screen.getByTestId('confirm-delete-device-dialog')).toHaveTextContent('删除本地设备')
+    expect(screen.getByTestId('confirm-delete-device-dialog')).toHaveTextContent(
+      '本地设备注册记录',
+    )
+    await userEvent.click(screen.getByTestId('confirm-delete-device-button'))
+
+    await waitFor(() => expect(api.deleteDevice).toHaveBeenCalledWith('offline-local'))
+    expect(api.deleteCloudDevice).not.toHaveBeenCalled()
   })
 })

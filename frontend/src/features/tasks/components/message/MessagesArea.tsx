@@ -6,7 +6,13 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import { useTaskSession } from '@/features/tasks/session/TaskSession'
-import type { TaskDetail, Team, GitRepoInfo, GitBranch } from '@/types/api'
+import type {
+  TaskDetail,
+  Team,
+  GitRepoInfo,
+  GitBranch,
+  InteractiveFormAnswerPayload,
+} from '@/types/api'
 import {
   Share2,
   FileText,
@@ -65,6 +71,10 @@ import type { UnifiedModel } from '@/apis/models'
 import { TaskRuntimeGlyph } from './TaskRuntimeGlyph'
 import { MessageLoadingStage } from './MessageLoadingStage'
 
+type SendMessageOptions = {
+  interactiveFormAnswer?: InteractiveFormAnswerPayload
+}
+
 /**
  * Component to render a streaming message with typewriter effect.
  */
@@ -76,7 +86,7 @@ interface StreamingMessageBubbleProps {
   selectedBranch?: GitBranch | null
   theme: 'light' | 'dark'
   t: (key: string) => string
-  onSendMessage?: (content: string) => void
+  onSendMessage?: (content: string, options?: SendMessageOptions) => void
   index: number
   isGroupChat?: boolean
   isPendingConfirmation?: boolean
@@ -171,7 +181,7 @@ interface MessagesAreaProps {
   selectedBranch?: GitBranch | null
   onShareButtonRender?: (button: React.ReactNode) => void
   onContentChange?: () => void
-  onSendMessage?: (content: string) => void
+  onSendMessage?: (content: string, options?: SendMessageOptions) => void
   /** Callback for sending message with a specific model override (used for regenerate) */
   onSendMessageWithModel?: (
     content: string,
@@ -1137,9 +1147,14 @@ function MessagesArea({
   // Handle ask_user_question form submission - send the pre-formatted message as a new conversation
   // AskUserForm already formats the message with question text and option labels
   const handleAskUserSubmit = useCallback(
-    (_askId: string, formattedMessage: string) => {
+    (_toolUseId: string, formattedMessage: string, answer: InteractiveFormAnswerPayload) => {
       if (!onSendMessage) return
-      onSendMessage(formattedMessage)
+      onSendMessage(formattedMessage, {
+        interactiveFormAnswer: {
+          ...answer,
+          message: formattedMessage,
+        },
+      })
     },
     [onSendMessage]
   )
@@ -1156,14 +1171,14 @@ function MessagesArea({
 
   const isSyncingMessages =
     messages.length === 0 &&
-    (taskState?.status === 'waiting_socket' ||
-      taskState?.status === 'joining' ||
-      taskState?.status === 'syncing')
+    (taskState?.phase === 'waiting_socket' ||
+      taskState?.phase === 'joining' ||
+      taskState?.phase === 'syncing')
 
   const showRuntimeWatermark =
     taskState !== null &&
     !isSyncingMessages &&
-    (messages.length === 0 || taskState.status === 'error')
+    (messages.length === 0 || taskState.phase === 'error')
 
   return (
     <div

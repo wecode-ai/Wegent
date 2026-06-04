@@ -251,7 +251,7 @@ The `SkillToolRegistry` (`chat_shell/chat_shell/skills/registry.py`) manages:
 CREATE TABLE skill_binaries (
     id INT PRIMARY KEY AUTO_INCREMENT,
     kind_id INT NOT NULL,              -- References kinds.id
-    binary_data LONGBLOB NOT NULL,     -- ZIP package content
+    binary_data MEDIUMBLOB NOT NULL,   -- ZIP package content, supports the 10MB upload limit
     file_size INT NOT NULL,            -- File size in bytes
     file_hash VARCHAR(64) NOT NULL,    -- SHA256 hash
     created_at DATETIME,

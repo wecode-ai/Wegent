@@ -41,3 +41,26 @@ def test_update_team_persists_display_name_in_metadata(test_db, test_user):
     test_db.refresh(team)
     assert result["displayName"] == "Spec Dev Team"
     assert team.json["metadata"]["displayName"] == "Spec Dev Team"
+
+
+def test_update_team_persists_quick_phrases_in_spec(test_db, test_user):
+    team = _create_team_kind(test_db, test_user.id)
+
+    result = team_kinds_service.update_with_user(
+        test_db,
+        team_id=team.id,
+        obj_in=TeamUpdate(
+            quick_phrases=["  帮我创建一个 xxx 的 PPT  ", "", "把这份大纲整理成 PPT"]
+        ),
+        user_id=test_user.id,
+    )
+
+    test_db.refresh(team)
+    assert result["quick_phrases"] == [
+        "帮我创建一个 xxx 的 PPT",
+        "把这份大纲整理成 PPT",
+    ]
+    assert team.json["spec"]["quick_phrases"] == [
+        "帮我创建一个 xxx 的 PPT",
+        "把这份大纲整理成 PPT",
+    ]

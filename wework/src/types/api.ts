@@ -122,7 +122,7 @@ export interface Task {
   is_group_chat?: boolean
   model_id?: string | null
   force_override_bot_model_type?: ModelType | null
-  model_options?: Record<string, string> | null
+  model_options?: Record<string, unknown> | null
   requested_skills?: SkillRef[]
 }
 
@@ -170,10 +170,21 @@ export interface DeviceCommandRequest {
   max_output_bytes?: number
 }
 
+export interface LocalDeviceSkill {
+  name: string
+  description: string
+  short_description?: string | null
+  path: string
+  source: 'claude' | 'codex' | string
+  origin?: 'local' | 'wegent' | string
+  plugin_name?: string | null
+  mtime?: number
+}
+
 export interface DeviceCommandResponse {
   success: boolean
   exit_code?: number | null
-  stdout: string | string[]
+  stdout: string | string[] | LocalDeviceSkill[]
   stderr: string
   error?: string
   duration?: number
@@ -187,6 +198,9 @@ export interface TaskContextData {
   context_type: 'attachment' | 'knowledge_base'
   name: string
   status: string
+  file_extension?: string
+  file_size?: number
+  mime_type?: string
 }
 
 export interface Subtask {
@@ -200,6 +214,7 @@ export interface Subtask {
   created_at: string
   updated_at?: string
   contexts?: TaskContextData[]
+  attachments?: Attachment[]
   sender_user_name?: string
 }
 
@@ -249,6 +264,32 @@ export interface ChatSendPayload {
 export interface ChatSendAck {
   success?: boolean
   task_id?: number
+  error?: string
+}
+
+export interface ChatGuidePayload {
+  task_id: number
+  subtask_id: number
+  team_id: number
+  message: string
+  guidance?: string
+  client_guidance_id?: string
+}
+
+export interface ChatGuideAck {
+  success?: boolean
+  guidance_id?: string
+  error?: string
+}
+
+export interface ChatCancelPayload {
+  subtask_id: number
+  partial_content?: string
+  shell_type?: string
+}
+
+export interface ChatCancelAck {
+  success?: boolean
   error?: string
 }
 
@@ -551,6 +592,90 @@ export interface InstalledMCPInstallRequest {
   sourcePayload?: Record<string, unknown> | null
 }
 
+export type PluginInstallState =
+  | 'not_installed'
+  | 'installed'
+  | 'update_available'
+  | 'unavailable'
+  | 'failed'
+  | 'uninstalled'
+
+export interface PluginSkillComponent {
+  name: string
+  description: string
+  path: string
+}
+
+export interface PluginPathComponent {
+  name: string
+  path: string
+}
+
+export interface PluginMCPComponent {
+  name: string
+  server: Record<string, unknown>
+}
+
+export interface InstalledPluginComponents {
+  skills: PluginSkillComponent[]
+  commands: PluginPathComponent[]
+  agents: PluginPathComponent[]
+  hooks: PluginPathComponent[]
+  mcps: PluginMCPComponent[]
+  lsps: PluginPathComponent[]
+  monitors: PluginPathComponent[]
+  bins: PluginPathComponent[]
+  settings?: Record<string, unknown> | null
+}
+
+export interface InstalledPluginSource {
+  type: 'upload' | 'marketplace' | 'local'
+  providerKey: string
+  pluginKey: string
+  catalogItemId?: string | null
+  marketplace?: string | null
+}
+
+export interface InstalledPluginPackageRef {
+  storageKey: string
+  checksum: string
+  sizeBytes: number
+}
+
+export interface InstalledPlugin {
+  apiVersion: string
+  kind: 'InstalledPlugin'
+  metadata: Record<string, unknown>
+  spec: {
+    source: InstalledPluginSource
+    displayName: string
+    description: string
+    version?: string | null
+    author?: string | null
+    installState: PluginInstallState
+    enabled: boolean
+    componentStates?: Record<string, boolean>
+    manifest: Record<string, unknown>
+    components: InstalledPluginComponents
+    packageRef?: InstalledPluginPackageRef | null
+    sourcePayload?: Record<string, unknown> | null
+  }
+  status: {
+    state: string
+  }
+}
+
+export interface InstalledPluginListResponse {
+  items: InstalledPlugin[]
+}
+
+export interface InstalledPluginUpdateRequest {
+  enabled?: boolean
+  componentStates?: Record<string, boolean>
+  displayName?: string
+  description?: string
+}
+
 export type ChatBlockType = 'text' | 'tool' | 'thinking' | 'error' | 'guidance'
 
 export interface ChatBlock {
@@ -581,7 +706,42 @@ export interface ChatBlockUpdatedPayload {
   status?: ChatBlock['status'] | 'running'
 }
 
+export interface ChatGuidanceQueuedPayload {
+  task_id: number
+  subtask_id: number
+  team_id?: number
+  user_id?: number
+  guidance_id: string
+  client_guidance_id?: string
+  message?: string
+  content?: string
+  created_at?: string
+}
+
+export interface ChatGuidanceAppliedPayload {
+  task_id: number
+  subtask_id: number
+  guidance_id: string
+  client_guidance_id?: string
+  applied_at: string
+}
+
+export interface ChatGuidanceExpiredPayload {
+  task_id: number
+  subtask_id: number
+  guidance_ids: string[]
+}
+
 export type ModelOptions = Record<string, string>
+
+export type ModelCompatibilityDisabledReason =
+  | 'missing_current_runtime_family'
+  | 'missing_target_runtime_family'
+  | 'runtime_family_mismatch'
+
+export interface ModelRuntime {
+  family?: string | null
+}
 
 export interface UnifiedModel {
   name: string
@@ -591,7 +751,10 @@ export interface UnifiedModel {
   modelId?: string | null
   namespace?: string
   config?: Record<string, unknown>
+  runtime?: ModelRuntime | null
   isActive?: boolean
+  compatibilityDisabled?: boolean
+  compatibilityDisabledReason?: ModelCompatibilityDisabledReason
 }
 
 export interface UnifiedModelListResponse {

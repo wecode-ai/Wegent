@@ -15,6 +15,10 @@ import time
 from typing import Any, Callable
 
 from chat_shell.services.streaming.core import should_display_tool_details
+from chat_shell.tools.deferred_input import (
+    DeferredUserInputExit,
+    is_deferred_user_input_result,
+)
 from shared.models import ResponsesAPIEmitter
 from shared.telemetry.context.large_data import log_large_attribute
 from shared.telemetry.decorators import add_span_event
@@ -283,6 +287,20 @@ def _handle_tool_end(
 
     # Check for MCP silent_exit marker in tool output
     _check_silent_exit_marker(state, tool_name, serializable_output)
+    is_deferred_user_input = False
+    if is_deferred_user_input_result(serializable_output):
+        is_deferred_user_input = True
+        state.is_deferred_user_input = True
+        state.deferred_user_input_tool_use_id = tool_use_id
+        state.is_silent_exit = True
+        state.silent_exit_reason = "waiting_for_user_input"
+        add_span_event(
+            "deferred_user_input_detected",
+            attributes={
+                "tool.name": tool_name,
+                "tool_use_id": tool_use_id,
+            },
+        )
 
     # Process tool output and extract sources for knowledge base citations
     sources = _extract_sources(tool_name, serializable_output)
@@ -363,6 +381,9 @@ def _handle_tool_end(
             error=error,
         )
     )
+
+    if is_deferred_user_input:
+        raise DeferredUserInputExit()
 
 
 def _get_tool_instance(agent_builder: Any, tool_name: str) -> Any:

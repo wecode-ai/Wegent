@@ -364,25 +364,24 @@ class LocalRunner:
                 f"Task {task_id} is not currently running, attempting to cleanup client"
             )
 
-        # Always try to cleanup ClaudeCode client for this task_id
+        # Always try to cleanup lingering code-agent clients for this task_id
         try:
-            from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
+            from executor.agents.factory import AgentFactory
 
             logger.info(
-                f"[Runner] About to call cleanup_task_clients for task_id={task_id}"
+                f"[Runner] About to cleanup code-agent clients for task_id={task_id}"
             )
-            # Cleanup any lingering client for this task_id
-            cleaned = await ClaudeCodeAgent.cleanup_task_clients(task_id)
+            cleaned = await AgentFactory.cleanup_task_clients(task_id)
             logger.info(f"[Runner] cleanup_task_clients returned: cleaned={cleaned}")
             if cleaned > 0:
                 logger.info(
-                    f"Cleaned up {cleaned} ClaudeCode client(s) for task {task_id}"
+                    f"Cleaned up {cleaned} code-agent client(s) for task {task_id}"
                 )
             else:
-                logger.info(f"No ClaudeCode clients found for task {task_id}")
+                logger.info(f"No code-agent clients found for task {task_id}")
         except Exception as e:
             logger.error(
-                f"Error cleaning up ClaudeCode clients for task {task_id}: {e}",
+                f"Error cleaning up code-agent clients for task {task_id}: {e}",
                 exc_info=True,
             )
 
@@ -476,11 +475,11 @@ class LocalRunner:
             self._running_tasks.pop(task_id, None)
 
     async def _on_client_created(self, task_id: int) -> None:
-        """Callback for when Claude client is created (sends heartbeat update)."""
+        """Callback for when a code-agent client is created."""
         try:
             await self.websocket_client.send_heartbeat()
             logger.info(
-                f"[TaskStart] Sent heartbeat after Claude client created for task {task_id}"
+                f"[TaskStart] Sent heartbeat after code-agent client created for task {task_id}"
             )
         except Exception as e:
             logger.warning(f"[TaskStart] Failed to send heartbeat: {e}")
@@ -537,13 +536,13 @@ class LocalRunner:
         subtask_id = task_data.subtask_id
         logger.info(f"Executing task: task_id={task_id}, subtask_id={subtask_id}")
 
-        from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
+        from executor.agents.factory import AgentFactory
 
         # Create WebSocket emitter for local mode
         ws_emitter = self._create_emitter(task_id, subtask_id)
 
         # Create and initialize agent with WebSocket emitter
-        agent = ClaudeCodeAgent(task_data, emitter=ws_emitter)
+        agent = AgentFactory.get_code_agent(task_data, emitter=ws_emitter)
 
         # Register agent in running tasks
         if task_id in self._running_tasks:
@@ -570,7 +569,7 @@ class LocalRunner:
             await ws_emitter.error(error_msg, "pre_execute_error")
             return
 
-        # Execute the task (Claude client will be created inside, triggering heartbeat callback)
+        # Execute the task (agent client creation triggers heartbeat callback)
         result = await agent.execute_async()
         logger.info(f"Task execution completed: task_id={task_id}")
 

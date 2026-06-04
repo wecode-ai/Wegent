@@ -65,6 +65,62 @@ class TestBuildExecutionRequestUserSubtaskId:
                     mock_builder.build.assert_called_once()
                     mock_process_contexts.assert_awaited_once()
 
+    async def test_propagates_interactive_form_answer_to_execution_request(self):
+        """Deferred form answers must reach executors as structured data."""
+        from app.services.chat.trigger import unified as trigger_unified
+
+        mock_db = MagicMock()
+
+        request_from_builder = ExecutionRequest(task_id=1, subtask_id=2)
+        mock_builder = MagicMock()
+        mock_builder.build.return_value = request_from_builder
+        payload = SimpleNamespace(
+            enable_web_search=False,
+            enable_clarification=False,
+            additional_skills=None,
+            interactive_form_answer=SimpleNamespace(
+                model_dump=lambda mode="json": {
+                    "type": "interactive_form_question",
+                    "tool_use_id": "tool-1",
+                    "answers": {"language": "python"},
+                    "message": "selected python",
+                }
+            ),
+            generate_params=None,
+        )
+
+        with patch.object(trigger_unified, "SessionLocal", return_value=mock_db):
+            with patch(
+                "app.services.execution.TaskRequestBuilder", return_value=mock_builder
+            ):
+                task = MagicMock()
+                task.id = 1
+                task.json = {}
+
+                assistant_subtask = MagicMock()
+                assistant_subtask.id = 2
+
+                team = MagicMock()
+                user = MagicMock()
+                user.id = 7
+
+                result = await trigger_unified.build_execution_request(
+                    task=task,
+                    assistant_subtask=assistant_subtask,
+                    team=team,
+                    user=user,
+                    message="hello",
+                    payload=payload,
+                    user_subtask_id=None,
+                )
+
+                assert result.interactive_form_answer == {
+                    "type": "interactive_form_question",
+                    "tool_use_id": "tool-1",
+                    "answers": {"language": "python"},
+                    "message": "selected python",
+                }
+
     async def test_device_execution_keeps_sandbox_path_in_context_processing(self):
         """Device-routed tasks should keep sandbox path placeholders for executor rewrite."""
         from app.services.chat.trigger import unified as trigger_unified
