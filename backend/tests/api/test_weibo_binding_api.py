@@ -60,6 +60,13 @@ async def test_http_resolver_parses_weibo_auth_response(
         "app.services.weibo_account_binding.WEIBO_SUB_UID_RESOLVE_URL",
         resolver_url,
     )
+    monkeypatch.setattr(
+        "app.services.weibo_account_binding.auth_headers",
+        lambda uid, headers=None: {
+            **(headers or {}),
+            "Authorization": f"TAuth2 uid={uid}",
+        },
+    )
     httpx_mock.add_response(
         method="POST",
         url=resolver_url,
@@ -82,6 +89,7 @@ async def test_http_resolver_parses_weibo_auth_response(
     )
     request = httpx_mock.get_requests()[0]
     assert request.headers["cookie"] == "SUB=fake-sub"
+    assert request.headers["authorization"] == "TAuth2 uid=5186027114"
 
 
 @pytest.mark.api
@@ -94,6 +102,13 @@ async def test_http_resolver_requires_user_payload(
     monkeypatch.setattr(
         "app.services.weibo_account_binding.WEIBO_SUB_UID_RESOLVE_URL",
         resolver_url,
+    )
+    monkeypatch.setattr(
+        "app.services.weibo_account_binding.auth_headers",
+        lambda uid, headers=None: {
+            **(headers or {}),
+            "Authorization": f"TAuth2 uid={uid}",
+        },
     )
     httpx_mock.add_response(
         method="POST",
