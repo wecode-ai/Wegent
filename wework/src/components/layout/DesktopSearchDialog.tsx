@@ -328,7 +328,7 @@ export function DesktopSearchDialog({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 bg-black/10 px-4 pt-[18vh]"
+      className="fixed inset-0 z-critical bg-black/10 px-4 pt-[18vh]"
       onMouseDown={event => {
         if (event.target === event.currentTarget) {
           closeDialog()

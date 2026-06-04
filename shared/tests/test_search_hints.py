@@ -37,7 +37,10 @@ def test_search_hints_reject_overlong_term() -> None:
 
 
 def test_normalize_helpers_are_stable() -> None:
-    assert normalize_search_text("  红包   520 发送   金额 规则  ") == "红包 520 发送 金额 规则"
+    assert (
+        normalize_search_text("  红包   520 发送   金额 规则  ")
+        == "红包 520 发送 金额 规则"
+    )
     assert normalize_search_terms([" release ", "", "checklist", "release"]) == [
         "release",
         "checklist",

@@ -160,6 +160,12 @@ def skill_origin(name, plugin_key, manifest):
     return "wegent" if is_managed(manifest.get("skills", {}).get(name)) else "local"
 
 
+def truncate(text, max_len=300):
+    if not text or len(text) <= max_len:
+        return text
+    return text[: max_len - 1].rstrip() + "…"
+
+
 def skill_metadata(skill_file, source, source_kind, manifest):
     stat = skill_file.stat()
     frontmatter = read_frontmatter(skill_file)
@@ -169,7 +175,7 @@ def skill_metadata(skill_file, source, source_kind, manifest):
     )
     metadata = {
         "name": name,
-        "description": frontmatter_field(frontmatter, "description") or "",
+        "description": truncate(frontmatter_field(frontmatter, "description") or ""),
         "short_description": nested_metadata_field(frontmatter, "short-description")
         or frontmatter_field(frontmatter, "short-description"),
         "path": str(skill_file),
@@ -185,6 +191,7 @@ def skill_metadata(skill_file, source, source_kind, manifest):
 manifest = read_json_file(Path.home() / ".wegent-executor" / "capabilities.json")
 skills = []
 seen_paths = set()
+seen_names = set()
 for root, source, pattern, source_kind in SKILL_SOURCES:
     if not root.is_dir():
         continue
@@ -193,8 +200,13 @@ for root, source, pattern, source_kind in SKILL_SOURCES:
         if key in seen_paths:
             continue
         try:
-            skills.append(skill_metadata(skill_file, source, source_kind, manifest))
+            metadata = skill_metadata(skill_file, source, source_kind, manifest)
+            name = metadata.get("name", "")
+            if name in seen_names:
+                continue
+            skills.append(metadata)
             seen_paths.add(key)
+            seen_names.add(name)
         except OSError:
             continue
 

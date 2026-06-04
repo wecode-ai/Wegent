@@ -397,7 +397,7 @@ function ProjectCreateDialogContent({
       : t('workbench.project_create_title', '新建项目')
 
   return createPortal(
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/35 px-4">
+    <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4">
       <div
         data-testid="project-create-dialog"
         className="w-full max-w-[560px] rounded-lg border border-[#d8d8d8] bg-white p-6 shadow-2xl"

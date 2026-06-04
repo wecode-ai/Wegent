@@ -27,6 +27,14 @@ export default {
       borderRadius: {
         DEFAULT: 'var(--radius)',
       },
+      zIndex: {
+        chrome: 'var(--z-chrome)',
+        popover: 'var(--z-popover)',
+        modal: 'var(--z-modal)',
+        critical: 'var(--z-critical)',
+        system: 'var(--z-system)',
+        'system-popover': 'var(--z-system-popover)',
+      },
     },
   },
   plugins: [],
