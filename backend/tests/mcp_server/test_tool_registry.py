@@ -4,8 +4,9 @@
 
 """Tests for MCP tool registry."""
 
+import inspect
 import json
-from typing import Optional
+from typing import List, Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,6 +14,7 @@ from pydantic import BaseModel
 
 from app.mcp_server.context import MCPRequestContext, get_mcp_context, set_mcp_context
 from app.mcp_server.tool_registry import (
+    _param_def_to_python_type,
     _serialize_result,
     _set_function_signature,
 )
@@ -65,7 +67,6 @@ class TestSetFunctionSignature:
 
     def test_sets_signature(self):
         """Test that function signature is set correctly."""
-        import inspect
 
         def test_func(**kwargs):
             pass
@@ -89,6 +90,79 @@ class TestSetFunctionSignature:
 
         count_param = sig.parameters["count"]
         assert count_param.default == 10
+
+    def test_array_param_with_items_uses_typed_list(self):
+        """Array params that carry items must produce a List[T] annotation.
+
+        Gemini rejects bare ``{"type": "array"}`` without ``items``.  By using
+        a typed ``List[T]`` annotation, FastMCP emits a schema that includes
+        ``items``, which satisfies Gemini's strict validation.
+        """
+
+        def test_func(**kwargs):
+            pass
+
+        params = [
+            {
+                "name": "questions",
+                "type": "array",
+                "items": {"type": "object"},
+                "required": True,
+            }
+        ]
+        _set_function_signature(test_func, params)
+
+        sig = inspect.signature(test_func)
+        annotation = sig.parameters["questions"].annotation
+        assert annotation == List[dict]
+
+    def test_array_param_without_items_defaults_to_list_str(self):
+        """Bare array params (no items) fall back to List[str] for Gemini compatibility."""
+
+        def test_func(**kwargs):
+            pass
+
+        params = [{"name": "tags", "type": "array", "required": True}]
+        _set_function_signature(test_func, params)
+
+        sig = inspect.signature(test_func)
+        assert sig.parameters["tags"].annotation == List[str]
+
+
+class TestParamDefToPythonType:
+    """Tests for _param_def_to_python_type — the core of the Gemini items fix."""
+
+    def test_array_with_object_items_returns_list_dict(self):
+        param = {"type": "array", "items": {"type": "object"}}
+        assert _param_def_to_python_type(param) == List[dict]
+
+    def test_array_with_string_items_returns_list_str(self):
+        param = {"type": "array", "items": {"type": "string"}}
+        assert _param_def_to_python_type(param) == List[str]
+
+    def test_array_with_integer_items_returns_list_int(self):
+        param = {"type": "array", "items": {"type": "integer"}}
+        assert _param_def_to_python_type(param) == List[int]
+
+    def test_array_without_items_defaults_to_list_str(self):
+        """Missing items field falls back to List[str] rather than bare list."""
+        param = {"type": "array"}
+        assert _param_def_to_python_type(param) == List[str]
+
+    def test_string_type(self):
+        assert _param_def_to_python_type({"type": "string"}) is str
+
+    def test_integer_type(self):
+        assert _param_def_to_python_type({"type": "integer"}) is int
+
+    def test_boolean_type(self):
+        assert _param_def_to_python_type({"type": "boolean"}) is bool
+
+    def test_object_type(self):
+        assert _param_def_to_python_type({"type": "object"}) is dict
+
+    def test_unknown_type_defaults_to_str(self):
+        assert _param_def_to_python_type({"type": "unknown_type"}) is str
 
 
 class TestMCPContext:
