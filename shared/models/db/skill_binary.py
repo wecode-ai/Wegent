@@ -28,8 +28,8 @@ class SkillBinary(Base):
     binary_data = Column(SkillBinaryDataType, nullable=False)  # ZIP package binary data
     file_size = Column(Integer, nullable=False)  # File size in bytes
     file_hash = Column(String(64), nullable=False)  # SHA256 hash
-    type = Column(String(32), nullable=True)  # Empty value means Skill package
-    file_name = Column(String(255), nullable=True)
+    type = Column(String(32), nullable=False, default="")  # Empty value means Skill
+    file_name = Column(String(255), nullable=False, default="")
     created_at = Column(DateTime, default=datetime.now)
 
     __table_args__ = (

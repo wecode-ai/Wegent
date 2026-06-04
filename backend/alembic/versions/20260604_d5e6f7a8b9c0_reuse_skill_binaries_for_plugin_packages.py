@@ -33,12 +33,14 @@ def upgrade() -> None:
     _add_column_if_missing(
         bind,
         "skill_binaries",
-        sa.Column("type", sa.String(length=32), nullable=True),
+        sa.Column("type", sa.String(length=32), nullable=False, server_default=""),
     )
     _add_column_if_missing(
         bind,
         "skill_binaries",
-        sa.Column("file_name", sa.String(length=255), nullable=True),
+        sa.Column(
+            "file_name", sa.String(length=255), nullable=False, server_default=""
+        ),
     )
     _migrate_existing_package_rows(bind)
     _migrate_existing_files(bind)
@@ -80,7 +82,7 @@ def _migrate_existing_package_rows(bind) -> None:
             binary_data=row.binary_data,
             file_size=row.file_size,
             file_hash=row.file_hash,
-            file_name=row.file_name,
+            file_name=row.file_name or "",
         )
 
 
@@ -166,7 +168,7 @@ def _upsert_plugin_binary(
         "file_size": file_size,
         "file_hash": file_hash,
         "type": "plugin",
-        "file_name": file_name,
+        "file_name": file_name or "",
     }
     if existing:
         bind.execute(
