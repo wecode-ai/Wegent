@@ -11,8 +11,8 @@ describe('mock model E2E observability', () => {
     expect(mockServer).toContain('Mock response content:')
   })
 
-  it('uploads E2E service logs even when tests pass', () => {
-    expect(workflow).toMatch(/- name: Upload backend logs\s+if: always\(\)/)
-    expect(workflow).toMatch(/- name: Upload executor logs\s+if: always\(\)/)
+  it('uploads E2E service logs only when tests fail', () => {
+    expect(workflow).toMatch(/- name: Upload backend logs\s+if: failure\(\)/)
+    expect(workflow).toMatch(/- name: Upload executor logs\s+if: failure\(\)/)
   })
 })

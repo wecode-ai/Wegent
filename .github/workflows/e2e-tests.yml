@@ -281,7 +281,7 @@ jobs:
           retention-days: 7
 
       - name: Upload backend logs
-        if: always()
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: backend-logs-${{ matrix.shardIndex }}
@@ -692,7 +692,7 @@ jobs:
           retention-days: 7
 
       - name: Upload executor logs
-        if: always()
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: backend-logs-executor
