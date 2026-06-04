@@ -273,7 +273,10 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         if obj_in.preferences is not None:
             # Merge with existing preferences or set new ones
             existing_prefs = json.loads(user.preferences) if user.preferences else {}
-            new_prefs = obj_in.preferences.model_dump()
+            new_prefs = obj_in.preferences.model_dump(exclude_unset=True)
+            # Weibo binding is managed by dedicated binding endpoints, not by the
+            # generic preferences update path.
+            new_prefs.pop("weibo_binding", None)
 
             # Check if default_execution_target is changing
             old_default_target = existing_prefs.get("default_execution_target")

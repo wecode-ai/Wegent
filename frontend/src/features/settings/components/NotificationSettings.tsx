@@ -21,6 +21,7 @@ import { Label } from '@/components/ui/label'
 import { useUser } from '@/features/common/UserContext'
 import { userApis, type FeatureFlags } from '@/apis/user'
 import type { UserPreferences } from '@/types/api'
+import WeiboBindingSettings from './WeiboBindingSettings'
 
 export default function NotificationSettings() {
   const { t } = useTranslation()
@@ -202,6 +203,8 @@ export default function NotificationSettings() {
         </h2>
         <p className="text-sm text-text-muted">{t('common:notifications.enable_description')}</p>
       </div>
+
+      <WeiboBindingSettings />
 
       <div className="flex items-center justify-between p-4 bg-base border border-border rounded-lg">
         <div className="flex-1">
