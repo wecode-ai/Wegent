@@ -492,6 +492,15 @@ def test_build_public_query_runtime_spec_uses_resolved_owner_scope():
         current_user_id=9,
     )
     assert spec.knowledge_base_configs[0].index_owner_user_id == 7
+    assert len(spec.knowledge_base_retrieval_overrides) == 1
+    assert spec.knowledge_base_retrieval_overrides[0].knowledge_base_id == 7
+    assert spec.knowledge_base_retrieval_overrides[0].retrieval_config == (
+        RuntimeRetrievalConfig(
+            top_k=5,
+            score_threshold=0.7,
+            retrieval_mode="vector",
+        )
+    )
 
 
 def test_build_query_runtime_spec_uses_resolved_owner_scope_for_rag_route() -> None:

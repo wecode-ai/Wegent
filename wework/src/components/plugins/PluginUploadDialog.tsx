@@ -45,7 +45,7 @@ export function PluginUploadDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4">
+    <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4">
       <form
         className="w-full max-w-[480px] rounded-2xl border border-border bg-background p-5 shadow-xl"
         onSubmit={(event) => {

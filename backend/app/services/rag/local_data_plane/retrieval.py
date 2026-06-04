@@ -45,6 +45,7 @@ async def query_local(
     budget = spec.direct_injection_budget or DEFAULT_DIRECT_INJECTION_BUDGET
     return await service.retrieve_with_routing(
         query=spec.query,
+        search_hints=spec.search_hints,
         knowledge_base_ids=spec.knowledge_base_ids,
         db=db,
         max_results=spec.max_results,

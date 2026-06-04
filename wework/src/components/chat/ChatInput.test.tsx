@@ -176,7 +176,7 @@ describe('ChatInput', () => {
 
     const form = screen.getByTestId('chat-message-input').closest('form')
 
-    expect(form).toHaveClass('items-end')
+    expect(form).toHaveClass('items-center')
     expect(screen.getByTestId('add-context-button')).toHaveClass(
       'h-[52px]',
       'w-[52px]',
@@ -184,16 +184,27 @@ describe('ChatInput', () => {
     )
     expect(screen.getByTestId('compact-input-pill')).toHaveClass('min-h-[52px]')
     expect(screen.getByTestId('chat-message-input')).toHaveClass(
+      'm-0',
+      'block',
+      'h-[52px]',
+      'box-border',
       'py-[14px]',
+      'pl-5',
+      'pr-[104px]',
       'scrollbar-none',
     )
     expect(screen.getByTestId('send-message-button')).toHaveClass(
       'absolute',
-      'bottom-1',
-      'right-1',
+      'bottom-[4px]',
+      'right-[4px]',
+      'z-popover',
       'h-11',
       'w-11',
       'rounded-[22px]',
+    )
+    expect(screen.getByTestId('send-message-button')).not.toHaveClass(
+      'top-1/2',
+      '-translate-y-1/2',
     )
   })
 
@@ -213,8 +224,9 @@ describe('ChatInput', () => {
 
     expect(screen.getByTestId('pause-response-button')).toHaveClass(
       'absolute',
-      'bottom-1',
-      'right-1',
+      'bottom-[4px]',
+      'right-[4px]',
+      'z-popover',
       'h-11',
       'w-11',
     )
@@ -232,10 +244,37 @@ describe('ChatInput', () => {
     await userEvent.type(screen.getByTestId('chat-message-input'), 'hello')
 
     expect(screen.queryByTestId('voice-input-button')).not.toBeInTheDocument()
-    expect(screen.getByTestId('compact-input-pill')).toHaveClass('pr-14')
+    expect(screen.getByTestId('chat-message-input')).toHaveClass('pr-16')
     expect(screen.getByTestId('send-message-button')).toHaveClass(
-      'bottom-1',
-      'right-1',
+      'bottom-[4px]',
+      'right-[4px]',
+      'z-popover',
+    )
+    expect(screen.getByTestId('send-message-button')).not.toHaveClass(
+      'top-1/2',
+      '-translate-y-1/2',
+    )
+  })
+
+  test('keeps the compact send button anchored to the bottom for multiline input', async () => {
+    render(<ControlledChatInput />)
+
+    await userEvent.type(
+      screen.getByTestId('chat-message-input'),
+      'first line{shift>}{enter}{/shift}second line',
+    )
+
+    expect(screen.getByTestId('chat-message-input')).toHaveValue(
+      'first line\nsecond line',
+    )
+    expect(screen.getByTestId('send-message-button')).toHaveClass(
+      'bottom-[4px]',
+      'right-[4px]',
+      'z-popover',
+    )
+    expect(screen.getByTestId('send-message-button')).not.toHaveClass(
+      'top-1/2',
+      '-translate-y-1/2',
     )
   })
 
@@ -262,7 +301,7 @@ describe('ChatInput', () => {
     })
     expect(screen.getByTestId('local-skill-autocomplete')).toHaveClass(
       'bottom-[calc(100%+1rem)]',
-      'z-[80]',
+      'z-popover',
       'bg-background',
       'left-[-1rem]',
       'right-[-3.5rem]',
@@ -637,6 +676,10 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('add-context-button'))
 
+    expect(screen.getByTestId('mobile-context-sheet-backdrop')).toHaveClass('z-critical')
+    expect(screen.getByTestId('compact-input-pill').className).not.toMatch(
+      /\bz-(?:chrome|modal|critical)\b/,
+    )
     expect(screen.getByTestId('mobile-context-sheet')).toBeInTheDocument()
     expect(screen.getByTestId('mobile-take-photo-button')).toHaveTextContent('拍照')
     expect(screen.getByTestId('mobile-upload-image-button')).toHaveTextContent('上传文件')
@@ -812,6 +855,7 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('expand-input-button'))
 
     expect(screen.getByTestId('fullscreen-input-sheet')).toBeInTheDocument()
+    expect(screen.getByTestId('fullscreen-input-sheet')).toHaveClass('z-critical')
     expect(screen.queryByText('编辑消息')).not.toBeInTheDocument()
     expect(screen.getByTestId('collapse-input-button')).toHaveClass(
       'absolute',

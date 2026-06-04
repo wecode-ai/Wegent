@@ -97,7 +97,7 @@ export function SkillUploadDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 px-4">
+    <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/20 px-4">
       <section
         role="dialog"
         aria-modal="true"

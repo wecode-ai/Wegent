@@ -15,10 +15,11 @@ import { createSkillApi } from '@/api/skills'
 import { createTaskApi } from '@/api/tasks'
 import { createTeamApi } from '@/api/teams'
 import { createUserApi } from '@/api/users'
-import { getRuntimeConfig } from '@/config/runtime'
+import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import { createChatStream } from '@/stream/chatStream'
 import { createSocketClient } from '@/stream/socketClient'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
+import { buildTaskRoute, navigateTo, parseTaskRoute } from '@/lib/navigation'
 import type {
   Attachment,
   ArchivedTaskListResponse,
@@ -180,6 +181,14 @@ function createDefaultServices(): WorkbenchServices {
   }
 }
 
+function getCurrentAppPath(): string {
+  return stripAppBasePath(window.location.pathname)
+}
+
+function getTaskRouteKey(taskId: number, projectId?: number): string {
+  return `${projectId ?? 0}:${taskId}`
+}
+
 interface SubtaskResult {
   value?: string
   blocks?: unknown[]
@@ -295,6 +304,28 @@ function getLastProjectStorageKey(userId: number) {
   return `wework.lastProjectId.${userId}`
 }
 
+function readTaskIdFromUrl(): number | null {
+  if (typeof window === 'undefined') return null
+  const params = new URLSearchParams(window.location.search)
+  const value = params.get('taskId') || params.get('task_id') || params.get('taskid')
+  if (!value) return null
+  const taskId = Number(value)
+  return Number.isFinite(taskId) && taskId > 0 ? taskId : null
+}
+
+function writeTaskIdToUrl(taskId: number | null) {
+  if (typeof window === 'undefined') return
+  const url = new URL(window.location.href)
+  url.searchParams.delete('task_id')
+  url.searchParams.delete('taskid')
+  if (taskId) {
+    url.searchParams.set('taskId', String(taskId))
+  } else {
+    url.searchParams.delete('taskId')
+  }
+  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
+}
+
 function readLastProjectId(userId: number): number | null {
   try {
     const value = window.localStorage.getItem(getLastProjectStorageKey(userId))
@@ -397,10 +428,13 @@ export function WorkbenchProvider({
   const [queuedSends, setQueuedSends] = useState<QueuedWorkbenchSend[]>([])
   const [guidanceMessages, setGuidanceMessages] = useState<GuidanceWorkbenchMessage[]>([])
   const [isAwaitingAssistantStart, setIsAwaitingAssistantStart] = useState(false)
+  const [routePath, setRoutePath] = useState(getCurrentAppPath)
   const guidanceSendInFlightRef = useRef(false)
   const localSkillsCacheRef = useRef<
     Map<string, { expiresAt: number; skills: LocalDeviceSkill[] }>
   >(new Map())
+  const handledTaskRouteRef = useRef<string | null>(null)
+  const urlTaskOpenAttemptRef = useRef<number | null>(null)
   const isOptionsLocked = Boolean(state.currentTask)
   const currentUser = state.user ?? user
   const activeDeviceId =
@@ -431,6 +465,12 @@ export function WorkbenchProvider({
     },
     [currentUser.preferences, resolvedServices.userApi, state.currentTask]
   )
+  useEffect(() => {
+    const handlePopState = () => setRoutePath(getCurrentAppPath())
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
+
   const modelSelection = useWorkbenchModels({
     api: resolvedServices.modelApi,
     locked: false,
@@ -666,6 +706,7 @@ export function WorkbenchProvider({
 
   const selectProject = useCallback(
     (projectId: number | null) => {
+      writeTaskIdToUrl(null)
       if (projectId === null) {
         dispatch({
           type: 'project_cleared',
@@ -678,6 +719,8 @@ export function WorkbenchProvider({
         dispatchMessages({ type: 'reset', messages: [] })
         setQueuedSends([])
         setGuidanceMessages([])
+        handledTaskRouteRef.current = null
+        navigateTo('/')
         return
       }
       const project = state.projects.find(item => item.id === projectId)
@@ -687,6 +730,8 @@ export function WorkbenchProvider({
         dispatchMessages({ type: 'reset', messages: [] })
         setQueuedSends([])
         setGuidanceMessages([])
+        handledTaskRouteRef.current = null
+        navigateTo('/')
       }
     },
     [state.devices, state.projects, state.standaloneDeviceId, user]
@@ -694,6 +739,7 @@ export function WorkbenchProvider({
 
   const selectStandaloneDevice = useCallback(
     (deviceId: string | null) => {
+      writeTaskIdToUrl(null)
       const standaloneDeviceId = getPreferredStandaloneDeviceId(
         state.devices,
         deviceId ?? user.preferences?.default_execution_target ?? state.standaloneDeviceId
@@ -708,6 +754,8 @@ export function WorkbenchProvider({
       dispatchMessages({ type: 'reset', messages: [] })
       setQueuedSends([])
       setGuidanceMessages([])
+      handledTaskRouteRef.current = null
+      navigateTo('/')
     },
     [
       rememberExecutionDevice,
@@ -718,6 +766,7 @@ export function WorkbenchProvider({
   )
 
   const startNewChat = useCallback(() => {
+    writeTaskIdToUrl(null)
     const lastProjectId = readLastProjectId(user.id)
     const project = lastProjectId
       ? state.projects.find(item => item.id === lastProjectId)
@@ -737,9 +786,12 @@ export function WorkbenchProvider({
     dispatchMessages({ type: 'reset', messages: [] })
     setQueuedSends([])
     setGuidanceMessages([])
+    handledTaskRouteRef.current = null
+    navigateTo('/')
   }, [state.devices, state.projects, state.standaloneDeviceId, user])
 
   const startStandaloneChat = useCallback(() => {
+    writeTaskIdToUrl(null)
     dispatch({
       type: 'project_cleared',
       standaloneDeviceId: getRememberedStandaloneDeviceId(
@@ -751,6 +803,8 @@ export function WorkbenchProvider({
     dispatchMessages({ type: 'reset', messages: [] })
     setQueuedSends([])
     setGuidanceMessages([])
+    handledTaskRouteRef.current = null
+    navigateTo('/')
   }, [state.devices, state.standaloneDeviceId, user])
 
   const startNewProjectChat = useCallback(
@@ -798,7 +852,12 @@ export function WorkbenchProvider({
       })
       setQueuedSends([])
       setGuidanceMessages([])
+      writeTaskIdToUrl(taskId)
       await resolvedServices.chatStream.joinTask(taskId)
+      const routeProjectId =
+        resolvedProjectId && resolvedProjectId > 0 ? resolvedProjectId : undefined
+      handledTaskRouteRef.current = getTaskRouteKey(taskId, routeProjectId)
+      navigateTo(buildTaskRoute({ taskId, projectId: routeProjectId }))
     },
     [
       resolvedServices,
@@ -815,12 +874,59 @@ export function WorkbenchProvider({
     [resolvedServices]
   )
 
+  useEffect(() => {
+    if (state.isBootstrapping) return
+
+    const taskRoute = parseTaskRoute(routePath)
+    if (!taskRoute) return
+
+    const routeKey = getTaskRouteKey(taskRoute.taskId, taskRoute.projectId)
+    if (handledTaskRouteRef.current === routeKey) return
+
+    if (
+      state.currentTask?.id === taskRoute.taskId &&
+      (taskRoute.projectId === undefined ||
+        state.currentTask.project_id === taskRoute.projectId)
+    ) {
+      handledTaskRouteRef.current = routeKey
+      return
+    }
+
+    handledTaskRouteRef.current = routeKey
+    void openTask(taskRoute.taskId, taskRoute.projectId)
+  }, [
+    openTask,
+    routePath,
+    state.currentTask?.id,
+    state.currentTask?.project_id,
+    state.isBootstrapping,
+  ])
+
   const searchTasks = useCallback(
     (query: string) =>
       resolvedServices.taskApi.searchTasks?.(query, { limit: 30 }) ??
       Promise.resolve({ total: 0, items: [] }),
     [resolvedServices]
   )
+
+  useEffect(() => {
+    if (state.isBootstrapping) return
+    const taskId = readTaskIdFromUrl()
+    if (!taskId || state.currentTask?.id === taskId) return
+    if (urlTaskOpenAttemptRef.current === taskId) return
+
+    urlTaskOpenAttemptRef.current = taskId
+    void openTask(taskId).catch(error => {
+      dispatch({
+        type: 'error_set',
+        error: error instanceof Error ? error.message : '会话加载失败',
+      })
+      writeTaskIdToUrl(null)
+      if (urlTaskOpenAttemptRef.current === taskId) {
+        urlTaskOpenAttemptRef.current = null
+      }
+    })
+  }, [openTask, state.currentTask?.id, state.isBootstrapping])
 
   const setInput = useCallback((input: string) => {
     dispatch({ type: 'input_changed', input })
@@ -863,6 +969,7 @@ export function WorkbenchProvider({
   const archiveAllChats = useCallback(async () => {
     await resolvedServices.taskApi.archiveAllChats()
     if (!state.currentProject && (!state.currentTask || !state.currentTask.project_id)) {
+      writeTaskIdToUrl(null)
       dispatch({ type: 'current_task_cleared' })
       dispatchMessages({ type: 'reset', messages: [] })
     }
@@ -872,6 +979,7 @@ export function WorkbenchProvider({
   const archiveAllProjectChats = useCallback(async () => {
     await resolvedServices.projectApi.archiveAllProjectChats()
     if (state.currentProject || (state.currentTask?.project_id ?? 0) > 0) {
+      writeTaskIdToUrl(null)
       dispatch({ type: 'current_task_cleared' })
       dispatchMessages({ type: 'reset', messages: [] })
     }
@@ -881,6 +989,7 @@ export function WorkbenchProvider({
   const archiveProjectChats = useCallback(
     async (projectId: number) => {
       await resolvedServices.projectApi.archiveProjectChats(projectId)
+      writeTaskIdToUrl(null)
       dispatch({ type: 'current_task_cleared' })
       dispatchMessages({ type: 'reset', messages: [] })
       await refreshWorkLists()
@@ -892,6 +1001,7 @@ export function WorkbenchProvider({
     async (taskId: number) => {
       await resolvedServices.taskApi.archiveTask(taskId)
       if (state.currentTask?.id === taskId) {
+        writeTaskIdToUrl(null)
         dispatch({ type: 'current_task_cleared' })
         dispatchMessages({ type: 'reset', messages: [] })
       }
@@ -924,9 +1034,14 @@ export function WorkbenchProvider({
   const deleteTask = useCallback(
     async (taskId: number) => {
       await resolvedServices.taskApi.deleteTask(taskId)
+      if (state.currentTask?.id === taskId) {
+        writeTaskIdToUrl(null)
+        dispatch({ type: 'current_task_cleared' })
+        dispatchMessages({ type: 'reset', messages: [] })
+      }
       await refreshWorkLists()
     },
-    [refreshWorkLists, resolvedServices]
+    [refreshWorkLists, resolvedServices, state.currentTask?.id]
   )
 
   const deleteArchivedTasks = useCallback(async () => {
@@ -1104,6 +1219,7 @@ export function WorkbenchProvider({
       }
 
       if (!state.currentTask && ack.task_id) {
+        writeTaskIdToUrl(ack.task_id)
         const projectId = state.currentProject?.id ?? 0
         const openedTask: Task = {
           id: ack.task_id,

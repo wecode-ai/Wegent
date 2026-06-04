@@ -12,7 +12,7 @@ Supported retrieval modes:
 """
 
 import logging
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import Any, Callable, ClassVar, Dict, List, Optional
 
 from elasticsearch import Elasticsearch, helpers
 from elasticsearch.helpers.vectorstore._async.strategies import (
@@ -31,6 +31,11 @@ from llama_index.vector_stores.elasticsearch import ElasticsearchStore
 from knowledge_engine.retrieval.filters import (
     filter_chunk_records,
     parse_metadata_filters,
+)
+from knowledge_engine.retrieval.search_hints import (
+    ResolvedSearchQueries,
+    format_sparse_query_for_elasticsearch,
+    resolve_search_queries,
 )
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
@@ -54,6 +59,9 @@ class ElasticsearchBackend(BaseStorageBackend):
 
     # Class-level constant defining supported retrieval methods
     SUPPORTED_RETRIEVAL_METHODS: ClassVar[List[str]] = ["vector", "keyword", "hybrid"]
+    TEXT_FIELD: ClassVar[str] = "content"
+    PHRASE_HINT_BOOST: ClassVar[float] = 3.0
+    KEYWORD_HINT_BOOST: ClassVar[float] = 1.0
 
     # Uses default INDEX_PREFIX = "index" from base class
 
@@ -242,29 +250,38 @@ class ElasticsearchBackend(BaseStorageBackend):
         filters = self._build_metadata_filters(knowledge_id, metadata_condition)
 
         # Determine query mode and parameters
+        resolved_queries = resolve_search_queries(query, retrieval_setting)
+        custom_query = self._build_search_hints_custom_query(
+            resolved_queries=resolved_queries,
+            retrieval_mode=retrieval_mode,
+        )
         if retrieval_mode == "keyword":
             # Pure BM25 keyword search - no embedding needed
             query_mode = VectorStoreQueryMode.TEXT_SEARCH
             query_embedding = None
+            query_str = format_sparse_query_for_elasticsearch(resolved_queries)
             alpha = None
         elif retrieval_mode == "hybrid":
             # Hybrid search - needs embedding
             # alpha: 0 = pure keyword, 1 = pure vector, default 0.7 (70% vector)
             query_mode = VectorStoreQueryMode.HYBRID
-            query_embedding = embed_model.get_query_embedding(query)
-            # Convert vector_weight to alpha (they have the same meaning)
-            alpha = retrieval_setting.get(
-                "alpha", retrieval_setting.get("vector_weight", 0.7)
+            query_embedding = embed_model.get_query_embedding(
+                resolved_queries.dense_query
             )
+            query_str = format_sparse_query_for_elasticsearch(resolved_queries)
+            alpha = self._resolve_hybrid_alpha(retrieval_setting)
         else:
             # Default: Pure vector search
             query_mode = VectorStoreQueryMode.DEFAULT
-            query_embedding = embed_model.get_query_embedding(query)
+            query_embedding = embed_model.get_query_embedding(
+                resolved_queries.dense_query
+            )
+            query_str = resolved_queries.dense_query
             alpha = None
 
         # Create VectorStoreQuery
         vs_query = VectorStoreQuery(
-            query_str=query,
+            query_str=query_str,
             query_embedding=query_embedding,
             similarity_top_k=top_k,
             mode=query_mode,
@@ -272,11 +289,113 @@ class ElasticsearchBackend(BaseStorageBackend):
             alpha=alpha,
         )
 
+        logger.info(
+            "[Elasticsearch] retrieve: index=%s, mode=%s, query_mode=%s, top_k=%s, score_threshold=%s, alpha=%s, hints_applied=%s, phrase_count=%s, keyword_count=%s, dense_query=%s, sparse_query=%s",
+            index_name,
+            retrieval_mode,
+            query_mode,
+            top_k,
+            score_threshold,
+            alpha,
+            custom_query is not None,
+            len(resolved_queries.phrases),
+            len(resolved_queries.keywords),
+            resolved_queries.dense_query,
+            query_str,
+        )
+
         # Execute query
-        result = vector_store.query(vs_query)
+        result = vector_store.query(vs_query, custom_query=custom_query)
+
+        logger.info(
+            "[Elasticsearch] query result: index=%s, nodes_count=%d, top_scores=%s",
+            index_name,
+            len(result.nodes) if result.nodes else 0,
+            result.similarities[:5] if result.similarities else None,
+        )
 
         # Process results
         return self._process_query_results(result, score_threshold)
+
+    def _resolve_hybrid_alpha(self, retrieval_setting: Dict[str, Any]) -> float:
+        """Resolve the hybrid alpha from the configured retrieval weights."""
+        vector_weight = retrieval_setting.get("vector_weight")
+        keyword_weight = retrieval_setting.get("keyword_weight")
+
+        if vector_weight is not None and keyword_weight is not None:
+            total = vector_weight + keyword_weight
+            if total > 0:
+                return vector_weight / total
+
+        if vector_weight is not None:
+            return float(vector_weight)
+
+        if keyword_weight is not None:
+            return max(0.0, 1.0 - float(keyword_weight))
+
+        return float(retrieval_setting.get("alpha", 0.7))
+
+    def _build_search_hints_custom_query(
+        self,
+        *,
+        resolved_queries: ResolvedSearchQueries,
+        retrieval_mode: str,
+    ) -> Callable[[Dict[str, Any], Any], Dict[str, Any]] | None:
+        if retrieval_mode not in {"keyword", "hybrid"}:
+            return None
+
+        should_clauses = self._build_search_hint_should_clauses(resolved_queries)
+        if not should_clauses:
+            return None
+
+        def custom_query(
+            query_body: Dict[str, Any],
+            _: Any,
+        ) -> Dict[str, Any]:
+            bool_query = query_body.get("query", {}).get("bool", {})
+            filter_clauses = list(bool_query.get("filter", []))
+
+            query_body["query"] = {
+                "bool": {
+                    "should": should_clauses,
+                    "minimum_should_match": 1,
+                    "filter": filter_clauses,
+                }
+            }
+            return query_body
+
+        return custom_query
+
+    def _build_search_hint_should_clauses(
+        self, resolved_queries: ResolvedSearchQueries
+    ) -> List[Dict[str, Any]]:
+        should_clauses: List[Dict[str, Any]] = []
+
+        for phrase in resolved_queries.phrases:
+            should_clauses.append(
+                {
+                    "match_phrase": {
+                        self.TEXT_FIELD: {
+                            "query": phrase,
+                            "boost": self.PHRASE_HINT_BOOST,
+                        }
+                    }
+                }
+            )
+
+        for keyword in resolved_queries.keywords:
+            should_clauses.append(
+                {
+                    "match": {
+                        self.TEXT_FIELD: {
+                            "query": keyword,
+                            "boost": self.KEYWORD_HINT_BOOST,
+                        }
+                    }
+                }
+            )
+
+        return should_clauses
 
     def _build_metadata_filters(
         self, knowledge_id: str, metadata_condition: Optional[Dict[str, Any]] = None

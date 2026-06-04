@@ -62,7 +62,7 @@ export function ProjectChatComposer({
   const canSend = (value.trim().length > 0 || attachments.length > 0) && !disabled
 
   return (
-    <div className="relative z-[60] w-full rounded-[28px] bg-surface shadow-[0_16px_44px_rgba(0,0,0,0.08)]">
+    <div className="relative w-full rounded-[28px] bg-surface shadow-[0_16px_44px_rgba(0,0,0,0.08)]">
       <form
         className="flex min-h-[112px] w-full flex-col rounded-[28px] border border-border bg-background pb-2 pl-4 pr-2 pt-3.5"
         onSubmit={event => {

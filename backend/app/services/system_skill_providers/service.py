@@ -19,6 +19,7 @@ from app.schemas.system_skills import (
     InstalledSkillRef,
     InstalledSkillSource,
     InstalledSkillSpec,
+    PersonalSkillInstallRequest,
     SystemSkillCatalogItem,
     SystemSkillInstallRequest,
     SystemSkillListResponse,
@@ -150,6 +151,7 @@ class SystemSkillProviderService:
         existing_installed = self._find_installed_skill(
             db,
             user_id=user_id,
+            source_type="system",
             provider_key=request.providerKey,
             skill_key=request.skillKey,
         )
@@ -162,15 +164,7 @@ class SystemSkillProviderService:
                 self._get_spec(existing_installed).get("enabled"),
                 self._get_spec(existing_installed).get("installState"),
             )
-            existing_spec = self._get_spec(existing_installed)
-            existing_spec["enabled"] = True
-            existing_spec["installState"] = "installed"
-            existing_installed.json["spec"] = existing_spec
-            existing_installed.is_active = True
-            flag_modified(existing_installed, "json")
-            db.commit()
-            db.refresh(existing_installed)
-            return self._kind_to_installed_skill(existing_installed)
+            return self._reactivate_installed_skill(db, existing_installed)
 
         skill = self._find_skill(db, user_id=user_id, skill_key=request.skillKey)
         if not skill:
@@ -212,6 +206,39 @@ class SystemSkillProviderService:
         db.refresh(installed)
         return self._kind_to_installed_skill(installed)
 
+    def install_personal_skill(
+        self,
+        *,
+        db: Session,
+        user_id: int,
+        request: PersonalSkillInstallRequest,
+    ) -> InstalledSkill:
+        skill = self._find_personal_skill_by_id(
+            db,
+            user_id=user_id,
+            skill_id=request.skillId,
+        )
+        if not skill:
+            raise HTTPException(status_code=404, detail="Skill not found")
+
+        existing_installed = self._find_installed_skill(
+            db,
+            user_id=user_id,
+            source_type="personal",
+            skill_key=skill.name,
+        )
+        if existing_installed:
+            return self._reactivate_installed_skill(db, existing_installed)
+
+        installed = self._create_personal_installed_skill(
+            user_id=user_id,
+            skill=skill,
+        )
+        db.add(installed)
+        db.commit()
+        db.refresh(installed)
+        return self._kind_to_installed_skill(installed)
+
     def list_installed_system_skills(
         self, *, db: Session, user_id: int
     ) -> InstalledSkillListResponse:
@@ -225,11 +252,7 @@ class SystemSkillProviderService:
             .order_by(Kind.created_at.desc())
             .all()
         )
-        items = [
-            self._kind_to_installed_skill(row)
-            for row in rows
-            if self._get_spec(row).get("source", {}).get("type") == "system"
-        ]
+        items = [self._kind_to_installed_skill(row) for row in rows]
         return InstalledSkillListResponse(items=items)
 
     def update_installed_system_skill(
@@ -438,20 +461,54 @@ class SystemSkillProviderService:
             .first()
         )
 
+    def _reactivate_installed_skill(
+        self,
+        db: Session,
+        installed: Kind,
+    ) -> InstalledSkill:
+        existing_spec = self._get_spec(installed)
+        existing_spec["enabled"] = True
+        existing_spec["installState"] = "installed"
+        installed.json["spec"] = existing_spec
+        installed.is_active = True
+        flag_modified(installed, "json")
+        db.commit()
+        db.refresh(installed)
+        return self._kind_to_installed_skill(installed)
+
+    def _find_personal_skill_by_id(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        skill_id: int,
+    ) -> Optional[Kind]:
+        return (
+            db.query(Kind)
+            .filter(
+                Kind.id == skill_id,
+                Kind.user_id == user_id,
+                Kind.kind == "Skill",
+                Kind.namespace == "default",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
     def _find_installed_skill(
         self,
         db: Session,
         *,
         user_id: int,
-        provider_key: str,
+        source_type: str,
         skill_key: str,
+        provider_key: Optional[str] = None,
     ) -> Optional[Kind]:
         rows = (
             db.query(Kind)
             .filter(
                 Kind.user_id == user_id,
                 Kind.kind == "InstalledSkill",
-                Kind.is_active == True,
             )
             .all()
         )
@@ -459,7 +516,8 @@ class SystemSkillProviderService:
             source = self._get_spec(row).get("source", {})
             if (
                 isinstance(source, dict)
-                and source.get("providerKey") == provider_key
+                and source.get("type") == source_type
+                and (provider_key is None or source.get("providerKey") == provider_key)
                 and source.get("skillKey") == skill_key
             ):
                 return row
@@ -510,6 +568,49 @@ class SystemSkillProviderService:
                         "sourceSkillKey": source_skill_key,
                         "author": request.author,
                         "tags": request.tags,
+                    },
+                },
+                "status": {"state": "Available"},
+            },
+            is_active=True,
+        )
+
+    def _create_personal_installed_skill(self, *, user_id: int, skill: Kind) -> Kind:
+        metadata = skill.json.get("metadata", {})
+        spec = skill.json.get("spec", {})
+        skill_name = metadata.get("name") or skill.name
+        display_name = spec.get("displayName") or skill_name
+        name = f"personal-{skill_name}"
+        return Kind(
+            user_id=user_id,
+            kind="InstalledSkill",
+            name=name[:100],
+            namespace="default",
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "InstalledSkill",
+                "metadata": {"name": name[:100], "namespace": "default"},
+                "spec": {
+                    "source": {
+                        "type": "personal",
+                        "skillKey": skill_name,
+                        "catalogItemId": f"personal/{skill.id}",
+                    },
+                    "skillRef": {
+                        "kind": "Skill",
+                        "name": skill.name,
+                        "namespace": skill.namespace,
+                        "user_id": skill.user_id,
+                    },
+                    "displayName": display_name,
+                    "description": spec.get("description", ""),
+                    "version": spec.get("version"),
+                    "installState": "installed",
+                    "enabled": True,
+                    "sourcePayload": {
+                        "skillId": skill.id,
+                        "author": spec.get("author"),
+                        "tags": spec.get("tags", []),
                     },
                 },
                 "status": {"state": "Available"},

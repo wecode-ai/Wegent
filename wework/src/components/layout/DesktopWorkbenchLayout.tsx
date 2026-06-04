@@ -14,8 +14,12 @@ import type {
   TaskListResponse,
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
+import { stripAppBasePath } from '@/config/runtime'
+import { isSettingsRoute, navigateTo } from '@/lib/navigation'
 import { DesktopSidebar } from './DesktopSidebar'
 import { DesktopWorkbenchMain } from './DesktopWorkbenchMain'
+import { DesktopWindowControls } from './DesktopWindowControls'
+import { useDesktopSidebarCollapsed } from './useDesktopSidebarCollapsed'
 import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
 
 interface DesktopWorkbenchLayoutProps {
@@ -128,8 +132,11 @@ export function DesktopWorkbenchLayout({
   onCancelGuidanceMessage = () => {},
   onLogout,
 }: DesktopWorkbenchLayoutProps) {
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
+  const { sidebarCollapsed, setSidebarCollapsed } =
+    useDesktopSidebarCollapsed()
+  const [settingsOpen, setSettingsOpen] = useState(() =>
+    isSettingsRoute(stripAppBasePath(window.location.pathname))
+  )
   const [environmentInfo, setEnvironmentInfo] = useState<EnvironmentInfo>({
     additions: '+0',
     deletions: '-0',
@@ -168,6 +175,14 @@ export function DesktopWorkbenchLayout({
   }, [environmentProject, onLoadEnvironmentInfo])
 
   useEffect(() => {
+    const handlePopState = () => {
+      setSettingsOpen(isSettingsRoute(stripAppBasePath(window.location.pathname)))
+    }
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
+
+  useEffect(() => {
     const nextCompletedIds = new Set(
       messages
         .filter(message => message.role === 'assistant' && message.status === 'done')
@@ -204,7 +219,7 @@ export function DesktopWorkbenchLayout({
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background text-text-primary">
+    <div className="relative flex h-screen overflow-hidden bg-background text-text-primary">
       {!settingsOpen && !sidebarCollapsed && (
         <DesktopSidebar
           user={state.user}
@@ -242,14 +257,28 @@ export function DesktopWorkbenchLayout({
           onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
           onListDeviceDirectories={onListDeviceDirectories}
           onCreateDeviceDirectory={onCreateDeviceDirectory}
-          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenSettings={() => {
+            setSettingsOpen(true)
+            navigateTo('/settings')
+          }}
           onLogout={onLogout}
+        />
+      )}
+      {!settingsOpen && sidebarCollapsed && (
+        <DesktopWindowControls
+          sidebarCollapsed
+          onToggleSidebar={() => setSidebarCollapsed(false)}
+          onNewChat={onNewChat}
+          className="absolute left-4 top-2 z-chrome"
         />
       )}
 
       {settingsOpen ? (
         <ConnectionsSettingsPage
-          onBack={() => setSettingsOpen(false)}
+          onBack={() => {
+            setSettingsOpen(false)
+            navigateTo('/')
+          }}
           onListArchivedTasks={onListArchivedTasks}
           onUnarchiveTask={onUnarchiveTask}
           onDeleteTask={onDeleteTask}
@@ -257,10 +286,10 @@ export function DesktopWorkbenchLayout({
         />
       ) : (
         <DesktopWorkbenchMain
-          sidebarCollapsed={sidebarCollapsed}
           isBootstrapping={state.isBootstrapping}
           currentTask={state.currentTask}
           currentProject={state.currentProject}
+          devices={state.devices}
           messages={messages}
           queuedMessages={queuedMessages}
           guidanceMessages={guidanceMessages}
@@ -274,7 +303,6 @@ export function DesktopWorkbenchLayout({
           onListEnvironmentBranches={() => onListEnvironmentBranches(environmentProject)}
           onCheckoutEnvironmentBranch={handleCheckoutEnvironmentBranch}
           onCreateEnvironmentBranch={handleCreateEnvironmentBranch}
-          onExpandSidebar={() => setSidebarCollapsed(false)}
           onInputChange={onInputChange}
           onSend={onSend}
           isResponseStreaming={isResponseStreaming}
