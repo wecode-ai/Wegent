@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Textarea } from '@/components/ui/textarea'
 import {
   Select,
   SelectContent,
@@ -75,6 +76,7 @@ export interface RetrieverFormData {
   rollingStep: string
   prefix: string
   enabledRetrievalMethods: RetrievalMethodType[]
+  storageExtJson: string
 }
 
 export const defaultFormData: RetrieverFormData = {
@@ -91,6 +93,7 @@ export const defaultFormData: RetrieverFormData = {
   rollingStep: '5000',
   prefix: 'wegent',
   enabledRetrievalMethods: ['vector', 'keyword', 'hybrid'],
+  storageExtJson: '',
 }
 
 interface RetrieverFormFieldsProps {
@@ -395,6 +398,22 @@ export const RetrieverFormFields: React.FC<RetrieverFormFieldsProps> = ({
           )}
         </div>
         <p className="text-xs text-text-muted">{t('common:retrievers.retrieval_methods_hint')}</p>
+      </div>
+
+      {/* Storage Extension JSON */}
+      <div className="space-y-2">
+        <Label htmlFor="storageExtJson" className="text-sm font-medium">
+          {t('common:retrievers.extension_json')}
+        </Label>
+        <Textarea
+          id="storageExtJson"
+          data-testid="retriever-ext-json-input"
+          value={formData.storageExtJson}
+          onChange={e => setFormData(prev => ({ ...prev, storageExtJson: e.target.value }))}
+          placeholder={t('common:retrievers.extension_json_placeholder')}
+          className="min-h-[140px] bg-base font-mono text-xs"
+        />
+        <p className="text-xs text-text-muted">{t('common:retrievers.extension_json_hint')}</p>
       </div>
     </div>
   )

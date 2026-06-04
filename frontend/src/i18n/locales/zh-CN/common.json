@@ -751,6 +751,10 @@
     "retrieval_method_vector": "向量检索",
     "retrieval_method_keyword": "全文检索",
     "retrieval_method_hybrid": "混合检索",
+    "extension_json": "扩展 JSON",
+    "extension_json_placeholder": "{\n  \"hybrid_ranker\": \"WeightedRanker\"\n}",
+    "extension_json_hint": "可选高级存储配置，必须是 JSON 对象，保存后会写入 storageConfig.ext。",
+    "extension_json_invalid": "扩展 JSON 必须是合法的 JSON 对象",
     "errors": {
       "load_retrievers_failed": "加载检索引擎列表失败",
       "create_failed": "创建检索引擎失败",

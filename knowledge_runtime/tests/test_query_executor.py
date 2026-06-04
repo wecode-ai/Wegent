@@ -7,10 +7,11 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from knowledge_runtime.services.config_resolver import QueryConfig
 from knowledge_runtime.services.query_executor import QueryExecutor
+
 from shared.models import (
+    RemoteKnowledgeBaseRetrievalOverride,
     RemoteQueryRequest,
     RemoteQueryResponse,
     RuntimeEmbeddingModelConfig,
@@ -62,6 +63,176 @@ class TestQueryExecutor:
     """Tests for QueryExecutor."""
 
     @pytest.mark.asyncio
+    async def test_execute_uses_planned_backend_query(self, query_request) -> None:
+        mock_storage_backend = MagicMock()
+        mock_embed_model = MagicMock()
+        mock_kb_executor = MagicMock()
+        mock_kb_executor.execute = AsyncMock(return_value={"records": []})
+
+        with (
+            patch(
+                "knowledge_runtime.services.query_executor.create_storage_backend_from_runtime_config",
+                return_value=mock_storage_backend,
+            ),
+            patch(
+                "knowledge_runtime.services.query_executor.create_embedding_model_from_runtime_config",
+                return_value=mock_embed_model,
+            ),
+            patch(
+                "knowledge_runtime.services.query_executor.KnowledgeQueryExecutor",
+                return_value=mock_kb_executor,
+            ),
+        ):
+            query_request.query = "  红包   520 发送   金额 规则 "
+            query_request.knowledge_base_ids = [1]
+            executor = QueryExecutor(db=MagicMock())
+            config = _make_query_config(1)
+            executor._config_resolver.resolve_query_config = MagicMock(
+                return_value=config
+            )
+
+            await executor.execute(query_request)
+
+        mock_kb_executor.execute.assert_awaited_once_with(
+            knowledge_id="1",
+            query="红包 520 发送 金额 规则",
+            query_plan={
+                "dense_query": "红包 520 发送 金额 规则",
+                "sparse_query": "红包 520 发送 金额 规则",
+                "keywords": [],
+                "phrases": [],
+                "hint_source": "fallback",
+            },
+            retrieval_config=config.retrieval_config,
+            metadata_condition=None,
+            user_id=7,
+        )
+
+    @pytest.mark.asyncio
+    async def test_execute_passes_search_hints_to_knowledge_engine(
+        self, query_request
+    ) -> None:
+        mock_storage_backend = MagicMock()
+        mock_embed_model = MagicMock()
+        mock_kb_executor = MagicMock()
+        mock_kb_executor.execute = AsyncMock(return_value={"records": []})
+
+        with (
+            patch(
+                "knowledge_runtime.services.query_executor.create_storage_backend_from_runtime_config",
+                return_value=mock_storage_backend,
+            ),
+            patch(
+                "knowledge_runtime.services.query_executor.create_embedding_model_from_runtime_config",
+                return_value=mock_embed_model,
+            ),
+            patch(
+                "knowledge_runtime.services.query_executor.KnowledgeQueryExecutor",
+                return_value=mock_kb_executor,
+            ),
+        ):
+            query_request.search_hints = {
+                "semantic_query": "How to verify the release checklist?",
+                "keywords": ["release", "checklist"],
+                "phrases": ["release checklist"],
+            }
+            query_request.knowledge_base_ids = [1]
+            executor = QueryExecutor(db=MagicMock())
+            config = _make_query_config(1)
+            executor._config_resolver.resolve_query_config = MagicMock(
+                return_value=config
+            )
+
+            await executor.execute(query_request)
+
+        mock_kb_executor.execute.assert_awaited_once_with(
+            knowledge_id="1",
+            query="test query",
+            query_plan={
+                "dense_query": "How to verify the release checklist?",
+                "sparse_query": "release checklist release checklist",
+                "keywords": ["release", "checklist"],
+                "phrases": ["release checklist"],
+                "hint_source": "explicit_hints",
+            },
+            retrieval_config=config.retrieval_config,
+            metadata_condition=None,
+            user_id=7,
+        )
+
+    @pytest.mark.asyncio
+    async def test_execute_combines_document_ids_into_metadata_condition(
+        self, query_request
+    ) -> None:
+        mock_storage_backend = MagicMock()
+        mock_embed_model = MagicMock()
+        mock_kb_executor = MagicMock()
+        mock_kb_executor.execute = AsyncMock(return_value={"records": []})
+
+        with (
+            patch(
+                "knowledge_runtime.services.query_executor.create_storage_backend_from_runtime_config",
+                return_value=mock_storage_backend,
+            ),
+            patch(
+                "knowledge_runtime.services.query_executor.create_embedding_model_from_runtime_config",
+                return_value=mock_embed_model,
+            ),
+            patch(
+                "knowledge_runtime.services.query_executor.KnowledgeQueryExecutor",
+                return_value=mock_kb_executor,
+            ),
+        ):
+            query_request.knowledge_base_ids = [1]
+            query_request.document_ids = [10, 11]
+            query_request.metadata_condition = {
+                "operator": "and",
+                "conditions": [{"key": "source", "operator": "==", "value": "kb"}],
+            }
+            executor = QueryExecutor(db=MagicMock())
+            config = _make_query_config(1)
+            executor._config_resolver.resolve_query_config = MagicMock(
+                return_value=config
+            )
+
+            await executor.execute(query_request)
+
+        mock_kb_executor.execute.assert_awaited_once_with(
+            knowledge_id="1",
+            query="test query",
+            query_plan={
+                "dense_query": "test query",
+                "sparse_query": "test query",
+                "keywords": [],
+                "phrases": [],
+                "hint_source": "fallback",
+            },
+            retrieval_config=config.retrieval_config,
+            metadata_condition={
+                "operator": "and",
+                "conditions": [
+                    {
+                        "operator": "and",
+                        "conditions": [
+                            {
+                                "key": "doc_ref",
+                                "operator": "in",
+                                "value": ["10", "11"],
+                            }
+                        ],
+                    },
+                    {
+                        "operator": "and",
+                        "conditions": [
+                            {"key": "source", "operator": "==", "value": "kb"}
+                        ],
+                    },
+                ],
+            },
+            user_id=7,
+        )
+
+    @pytest.mark.asyncio
     async def test_execute_returns_aggregated_results(self, query_request) -> None:
         """Test that execute returns aggregated results from all KBs."""
         mock_storage_backend = MagicMock()
@@ -110,6 +281,112 @@ class TestQueryExecutor:
         assert isinstance(result, RemoteQueryResponse)
         assert result.total == 2  # 1 from each KB
         assert len(result.records) == 2
+
+    @pytest.mark.asyncio
+    async def test_execute_applies_request_retrieval_override(
+        self, query_request
+    ) -> None:
+        mock_storage_backend = MagicMock()
+        mock_embed_model = MagicMock()
+        mock_kb_executor = MagicMock()
+        mock_kb_executor.execute = AsyncMock(return_value={"records": []})
+
+        with (
+            patch(
+                "knowledge_runtime.services.query_executor.create_storage_backend_from_runtime_config",
+                return_value=mock_storage_backend,
+            ),
+            patch(
+                "knowledge_runtime.services.query_executor.create_embedding_model_from_runtime_config",
+                return_value=mock_embed_model,
+            ),
+            patch(
+                "knowledge_runtime.services.query_executor.KnowledgeQueryExecutor",
+                return_value=mock_kb_executor,
+            ),
+        ):
+            executor = QueryExecutor(db=MagicMock())
+            executor._config_resolver.resolve_query_config = MagicMock(
+                return_value=_make_query_config(1)
+            )
+            query_request.knowledge_base_ids = [1]
+            query_request.knowledge_base_retrieval_overrides = [
+                RemoteKnowledgeBaseRetrievalOverride(
+                    knowledge_base_id=1,
+                    retrieval_config=RuntimeRetrievalConfig(
+                        top_k=9,
+                        score_threshold=0.2,
+                        retrieval_mode="hybrid",
+                        vector_weight=0.8,
+                        keyword_weight=0.2,
+                    ),
+                )
+            ]
+
+            await executor.execute(query_request)
+
+        mock_kb_executor.execute.assert_awaited_once_with(
+            knowledge_id="1",
+            query="test query",
+            query_plan={
+                "dense_query": "test query",
+                "sparse_query": "test query",
+                "keywords": [],
+                "phrases": [],
+                "hint_source": "fallback",
+            },
+            retrieval_config=RuntimeRetrievalConfig(
+                top_k=9,
+                score_threshold=0.2,
+                retrieval_mode="hybrid",
+                vector_weight=0.8,
+                keyword_weight=0.2,
+            ),
+            metadata_condition=None,
+            user_id=7,
+        )
+
+    @pytest.mark.asyncio
+    async def test_execute_rejects_duplicate_retrieval_overrides(
+        self, query_request
+    ) -> None:
+        executor = QueryExecutor(db=MagicMock())
+        query_request.knowledge_base_ids = [1]
+        query_request.knowledge_base_retrieval_overrides = [
+            RemoteKnowledgeBaseRetrievalOverride(
+                knowledge_base_id=1,
+                retrieval_config=RuntimeRetrievalConfig(top_k=5),
+            ),
+            RemoteKnowledgeBaseRetrievalOverride(
+                knowledge_base_id=1,
+                retrieval_config=RuntimeRetrievalConfig(top_k=6),
+            ),
+        ]
+
+        with pytest.raises(
+            ValueError,
+            match="duplicate knowledge_base_id",
+        ):
+            await executor.execute(query_request)
+
+    @pytest.mark.asyncio
+    async def test_execute_rejects_unknown_retrieval_override_kb_id(
+        self, query_request
+    ) -> None:
+        executor = QueryExecutor(db=MagicMock())
+        query_request.knowledge_base_ids = [1]
+        query_request.knowledge_base_retrieval_overrides = [
+            RemoteKnowledgeBaseRetrievalOverride(
+                knowledge_base_id=999,
+                retrieval_config=RuntimeRetrievalConfig(top_k=5),
+            )
+        ]
+
+        with pytest.raises(
+            ValueError,
+            match="unknown knowledge_base_id",
+        ):
+            await executor.execute(query_request)
 
     @pytest.mark.asyncio
     async def test_execute_sorts_by_score_descending(self, query_request) -> None:
