@@ -29,6 +29,16 @@ def _emit_error(error: CliError, json_output: bool) -> None:
     raise SystemExit(error.exit_code)
 
 
+def _is_streaming_enabled(value: Any) -> bool:
+    if value is True:
+        return True
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value == 1
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "on", "t", "true", "y", "yes"}
+    return False
+
+
 def _response_payload(input_path: str, model: str | None) -> dict[str, Any]:
     loaded = load_structured_input(input_path)
     payload = dict(loaded) if isinstance(loaded, dict) else {"input": loaded}
@@ -39,7 +49,7 @@ def _response_payload(input_path: str, model: str | None) -> dict[str, Any]:
             "missing_model",
             "Response payload must include a model or --model must be provided",
         )
-    if payload.get("stream") is True:
+    if _is_streaming_enabled(payload.get("stream")):
         raise CliError(
             "unsupported_streaming",
             "Streaming responses are not supported by this CLI command yet",

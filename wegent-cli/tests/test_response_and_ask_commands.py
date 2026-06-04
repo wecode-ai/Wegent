@@ -118,6 +118,70 @@ def test_response_create_rejects_streaming_payload_before_client_call():
     client.create_response.assert_not_called()
 
 
+def test_response_create_rejects_string_truthy_streaming_payload():
+    client = MagicMock()
+
+    result = invoke_with_client(
+        ["response", "create", "--input", "-", "--json"],
+        client,
+        input_text='{"model": "default#wegent-chat", "input": "hello", "stream": "true"}',
+    )
+
+    assert result.exit_code != 0
+    payload = load_payload(result)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "unsupported_streaming"
+    client.create_response.assert_not_called()
+
+
+def test_response_create_rejects_yaml_truthy_streaming_payload():
+    client = MagicMock()
+
+    result = invoke_with_client(
+        ["response", "create", "--input", "-", "--json"],
+        client,
+        input_text=("model: default#wegent-chat\n" "input: hello\n" "stream: yes\n"),
+    )
+
+    assert result.exit_code != 0
+    payload = load_payload(result)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "unsupported_streaming"
+    client.create_response.assert_not_called()
+
+
+def test_response_create_rejects_numeric_truthy_streaming_payload():
+    client = MagicMock()
+
+    result = invoke_with_client(
+        ["response", "create", "--input", "-", "--json"],
+        client,
+        input_text='{"model": "default#wegent-chat", "input": "hello", "stream": 1}',
+    )
+
+    assert result.exit_code != 0
+    payload = load_payload(result)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "unsupported_streaming"
+    client.create_response.assert_not_called()
+
+
+def test_response_create_allows_explicit_non_streaming_payload():
+    client = MagicMock()
+    client.create_response.return_value = {"id": "resp_1"}
+
+    result = invoke_with_client(
+        ["response", "create", "--input", "-", "--json"],
+        client,
+        input_text='{"model": "default#wegent-chat", "input": "hello", "stream": false}',
+    )
+
+    assert result.exit_code == 0
+    client.create_response.assert_called_once_with(
+        {"model": "default#wegent-chat", "input": "hello", "stream": False}
+    )
+
+
 def test_response_get_cancel_delete_use_expected_client_methods():
     client = MagicMock()
     client.get_response.return_value = {"id": "resp_123", "status": "completed"}
