@@ -12,7 +12,7 @@ export default function IntegrationsPage() {
   const { t } = useTranslation()
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-testid="settings-integrations-page">
       {/* Page header */}
       <div>
         <h2 className="text-xl font-semibold text-text-primary mb-1">
