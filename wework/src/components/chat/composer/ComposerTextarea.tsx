@@ -151,7 +151,6 @@ function findExpandedSelectionDeletionRange(
 }
 
 function findBackspaceSkillMentionDeletionRange(
-  value: string,
   cursor: number,
   mentions: SkillMention[],
 ): SkillMentionDeletionRange | null {
@@ -512,7 +511,6 @@ export function ComposerTextarea({
         ) ??
         (selectionStart === selectionEnd && event.key === 'Backspace'
           ? findBackspaceSkillMentionDeletionRange(
-              value,
               selectionStart,
               validSkillMentions,
             )
