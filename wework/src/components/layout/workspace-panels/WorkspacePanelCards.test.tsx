@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { createDeviceApi } from '@/api/devices'
 import { createProjectApi } from '@/api/projects'
 import { WorkspacePanelCards } from './WorkspacePanelCards'
+import type { DeviceInfo } from '@/types/api'
 
 vi.mock('@/config/runtime', () => ({
   getRuntimeConfig: () => ({ apiBaseUrl: '/api' }),
@@ -42,6 +43,30 @@ const project = {
   tasks: [],
 }
 
+const cloudDevices: DeviceInfo[] = [
+  {
+    id: 1,
+    device_id: 'device-1',
+    name: 'Cloud Device',
+    status: 'online',
+    is_default: false,
+    device_type: 'cloud',
+    bind_shell: 'claudecode',
+  },
+]
+
+const localDevices: DeviceInfo[] = [
+  {
+    id: 2,
+    device_id: 'device-1',
+    name: 'Local Device',
+    status: 'online',
+    is_default: false,
+    device_type: 'local',
+    bind_shell: 'claudecode',
+  },
+]
+
 describe('WorkspacePanelCards', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -76,7 +101,7 @@ describe('WorkspacePanelCards', () => {
   })
 
   test('renders terminal, IDE, and desktop project tools', () => {
-    render(<WorkspacePanelCards currentProject={project} />)
+    render(<WorkspacePanelCards currentProject={project} devices={cloudDevices} />)
 
     expect(screen.queryByTestId('workspace-browser-card')).not.toBeInTheDocument()
     expect(screen.getByTestId('workspace-terminal-card')).toHaveTextContent('终端')
@@ -86,7 +111,7 @@ describe('WorkspacePanelCards', () => {
 
   test('embeds the project terminal in the workspace panel', async () => {
     const api = createProjectApiMock()
-    render(<WorkspacePanelCards currentProject={project} />)
+    render(<WorkspacePanelCards currentProject={project} devices={cloudDevices} />)
 
     await userEvent.click(screen.getByTestId('workspace-terminal-card'))
 
@@ -110,7 +135,7 @@ describe('WorkspacePanelCards', () => {
 
   test('creates and switches to a new project terminal tab', async () => {
     const api = createProjectApiMock()
-    render(<WorkspacePanelCards currentProject={project} />)
+    render(<WorkspacePanelCards currentProject={project} devices={cloudDevices} />)
 
     await userEvent.click(screen.getByTestId('workspace-terminal-card'))
     await waitFor(() =>
@@ -144,7 +169,13 @@ describe('WorkspacePanelCards', () => {
   test('opens the project IDE in a new page', async () => {
     const api = createProjectApiMock()
     const onRequestClose = vi.fn()
-    render(<WorkspacePanelCards currentProject={project} onRequestClose={onRequestClose} />)
+    render(
+      <WorkspacePanelCards
+        currentProject={project}
+        devices={cloudDevices}
+        onRequestClose={onRequestClose}
+      />,
+    )
 
     await userEvent.click(screen.getByTestId('workspace-ide-card'))
 
@@ -168,7 +199,13 @@ describe('WorkspacePanelCards', () => {
 
   test('opens the project desktop using the cloud device VNC page', async () => {
     const onRequestClose = vi.fn()
-    render(<WorkspacePanelCards currentProject={project} onRequestClose={onRequestClose} />)
+    render(
+      <WorkspacePanelCards
+        currentProject={project}
+        devices={cloudDevices}
+        onRequestClose={onRequestClose}
+      />,
+    )
 
     await userEvent.click(screen.getByTestId('workspace-desktop-card'))
 
@@ -186,6 +223,17 @@ describe('WorkspacePanelCards', () => {
       'noopener',
     )
     expect(onRequestClose).toHaveBeenCalledTimes(1)
+  })
+
+  test('does not show cloud-only project tools for local devices', () => {
+    render(<WorkspacePanelCards currentProject={project} devices={localDevices} />)
+
+    expect(screen.queryByTestId('workspace-terminal-card')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-ide-card')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-desktop-card')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-local-device-limited-tools')).toHaveTextContent(
+      'workbench.local_device_limited_tools_title',
+    )
   })
 
   test('marks terminal as unavailable when session probing fails', async () => {
