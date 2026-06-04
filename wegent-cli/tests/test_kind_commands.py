@@ -200,6 +200,23 @@ def test_kind_delete_reads_stdin_json():
     )
 
 
+def test_kind_delete_json_rejects_name_and_input_conflict():
+    client = MagicMock()
+
+    result = invoke_with_client(
+        ["kind", "delete", "ghost", "g", "--input", "-", "--json"],
+        client,
+        input_text='[{"kind": "Ghost", "metadata": {"name": "g"}}]',
+    )
+
+    assert result.exit_code != 0
+    payload = load_error_payload(result)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_arguments"
+    client.delete_kind.assert_not_called()
+    client.delete_kinds.assert_not_called()
+
+
 def test_kind_delete_reads_multi_document_yaml_from_stdin():
     client = MagicMock()
     client.delete_kinds.return_value = {"success": True, "results": []}

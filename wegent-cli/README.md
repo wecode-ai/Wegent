@@ -64,80 +64,57 @@ export WEGENT_TOKEN=YOUR_TOKEN
 
 ```bash
 # List all resources of a kind
-wegent get ghosts
-wegent get bots
-wegent get tasks
+wegent kind get ghosts
+wegent kind get bots
+wegent kind get tasks
 
 # Get specific resource
-wegent get ghost my-ghost
-wegent get bot my-bot
+wegent kind get ghost my-ghost
+wegent kind get bot my-bot
 
 # Output formats
-wegent get ghosts -o yaml
-wegent get ghosts -o json
-
-# Filter by name
-wegent get tasks --filter test
+wegent kind get ghosts
+wegent kind get ghosts --json
 
 # Specify namespace
-wegent get bots -n production
+wegent kind get bots -n production
 ```
 
 ### Describe Resources
 
 ```bash
 # Show detailed information
-wegent describe ghost my-ghost
-wegent describe task task-001
-```
-
-### Create Resources
-
-```bash
-# Create with default template
-wegent create ghost my-ghost
-wegent create bot my-bot -n production
-
-# Preview template without creating
-wegent create team my-team --dry-run
+wegent kind describe ghost my-ghost
+wegent kind describe task task-001
 ```
 
 ### Apply Resources
 
 ```bash
 # Apply from file
-wegent apply -f ghost.yaml
+wegent kind apply --file ghost.yaml
 
-# Apply multiple files
-wegent apply -f ghost.yaml -f bot.yaml
+# Apply from stdin
+cat resources.yaml | wegent kind apply --input -
 
-# Apply all YAML files in directory
-wegent apply -f ./resources/
+# Output JSON envelope
+wegent kind apply --file ghost.yaml --json
 
 # Override namespace
-wegent apply -f bot.yaml -n production
+wegent kind apply --file bot.yaml -n production
 ```
 
 ### Delete Resources
 
 ```bash
 # Delete specific resource
-wegent delete ghost my-ghost
+wegent kind delete ghost my-ghost
 
-# Delete from file
-wegent delete -f ghost.yaml
+# Delete from structured input
+wegent kind delete --input ghost.yaml
 
-# Delete all resources of a kind
-wegent delete bots --all
-
-# Skip confirmation
-wegent delete ghost my-ghost -y
-```
-
-### List Resource Types
-
-```bash
-wegent api-resources
+# Output JSON envelope
+wegent kind delete ghost my-ghost --json
 ```
 
 ## Resource Types
@@ -151,7 +128,6 @@ wegent api-resources
 | team       | te        | Group of bots                    |
 | workspace  | ws        | Git repository configuration     |
 | task       | ta        | Execution task                   |
-| skill      | sk        | Reusable AI skill                |
 
 ## Resource YAML Examples
 

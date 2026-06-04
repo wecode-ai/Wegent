@@ -207,6 +207,12 @@ def delete_cmd(
     client = _client(ctx)
     ns = _namespace(namespace)
     try:
+        if input_path and (kind or name):
+            raise CliError(
+                "invalid_arguments",
+                "Provide either <kind> <name> or --input, not both",
+            )
+
         if input_path:
             resources = _load_resource_input(input_path)
             _emit(client.delete_kinds(ns, resources), json_output)
