@@ -31,11 +31,23 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     ls_dirs_definition = resolve_local_device_command(
         "ls_dirs", settings.LOCAL_DEVICE_COMMANDS
     )
+    mkdir_definition = resolve_local_device_command(
+        "mkdir_p", settings.LOCAL_DEVICE_COMMANDS
+    )
     git_clone_definition = resolve_local_device_command(
         "git_clone", settings.LOCAL_DEVICE_COMMANDS
     )
     git_branch_definition = resolve_local_device_command(
         "git_branch", settings.LOCAL_DEVICE_COMMANDS
+    )
+    git_branch_list_definition = resolve_local_device_command(
+        "git_branch_list", settings.LOCAL_DEVICE_COMMANDS
+    )
+    git_checkout_definition = resolve_local_device_command(
+        "git_checkout", settings.LOCAL_DEVICE_COMMANDS
+    )
+    git_checkout_new_definition = resolve_local_device_command(
+        "git_checkout_new", settings.LOCAL_DEVICE_COMMANDS
     )
     git_diff_shortstat_definition = resolve_local_device_command(
         "git_diff_shortstat", settings.LOCAL_DEVICE_COMMANDS
@@ -72,12 +84,24 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert ls_dirs_definition is not None
     assert ls_dirs_definition.command == "ls -a -p"
     assert ls_dirs_definition.post_processor == "directory_list"
+    assert mkdir_definition is not None
+    assert mkdir_definition.command == "mkdir -p"
+    assert mkdir_definition.post_processor is None
     assert git_clone_definition is not None
     assert git_clone_definition.command == "git clone"
     assert git_clone_definition.post_processor is None
     assert git_branch_definition is not None
     assert git_branch_definition.command == "git branch --show-current"
     assert git_branch_definition.post_processor is None
+    assert git_branch_list_definition is not None
+    assert git_branch_list_definition.command == "git branch --format=%(refname:short)"
+    assert git_branch_list_definition.post_processor is None
+    assert git_checkout_definition is not None
+    assert git_checkout_definition.command == "git checkout"
+    assert git_checkout_definition.post_processor is None
+    assert git_checkout_new_definition is not None
+    assert git_checkout_new_definition.command == "git checkout -b"
+    assert git_checkout_new_definition.post_processor is None
     assert git_diff_shortstat_definition is not None
     assert git_diff_shortstat_definition.command == "git diff --shortstat"
     assert git_diff_shortstat_definition.post_processor is None

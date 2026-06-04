@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { createDeviceApi } from '@/api/devices'
-import { commitProjectChanges, loadProjectEnvironment } from '@/api/environment'
+import {
+  checkoutProjectBranch,
+  commitProjectChanges,
+  createAndCheckoutProjectBranch,
+  listProjectBranches,
+  loadProjectEnvironment,
+} from '@/api/environment'
 import { createHttpClient } from '@/api/http'
 import { createModelApi } from '@/api/models'
 import { createProjectApi } from '@/api/projects'
@@ -126,10 +132,20 @@ export interface WorkbenchContextValue {
   getDeviceHomeDirectory: (deviceId: string) => Promise<string>
   getProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   listDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
+  createDeviceDirectory: (deviceId: string, path: string) => Promise<void>
   loadEnvironmentInfo: (project: ProjectWithTasks | null) => Promise<EnvironmentInfo>
   commitEnvironmentChanges: (
     project: ProjectWithTasks | null,
     message: string,
+  ) => Promise<void>
+  listEnvironmentBranches: (project: ProjectWithTasks | null) => Promise<string[]>
+  checkoutEnvironmentBranch: (
+    project: ProjectWithTasks | null,
+    branchName: string,
+  ) => Promise<void>
+  createEnvironmentBranch: (
+    project: ProjectWithTasks | null,
+    branchName: string,
   ) => Promise<void>
   setInput: (input: string) => void
   sendCurrentInput: () => Promise<void>
@@ -923,6 +939,12 @@ export function WorkbenchProvider({
     [resolvedServices]
   )
 
+  const createDeviceDirectory = useCallback(
+    (deviceId: string, path: string) =>
+      resolvedServices.deviceApi.createDirectory(deviceId, path),
+    [resolvedServices]
+  )
+
   const loadEnvironmentInfo = useCallback(
     (project: ProjectWithTasks | null) =>
       loadProjectEnvironment(resolvedServices.deviceApi, project),
@@ -932,6 +954,24 @@ export function WorkbenchProvider({
   const commitEnvironmentChanges = useCallback(
     (project: ProjectWithTasks | null, message: string) =>
       commitProjectChanges(resolvedServices.deviceApi, project, message),
+    [resolvedServices]
+  )
+
+  const listEnvironmentBranches = useCallback(
+    (project: ProjectWithTasks | null) =>
+      listProjectBranches(resolvedServices.deviceApi, project),
+    [resolvedServices]
+  )
+
+  const checkoutEnvironmentBranch = useCallback(
+    (project: ProjectWithTasks | null, branchName: string) =>
+      checkoutProjectBranch(resolvedServices.deviceApi, project, branchName),
+    [resolvedServices]
+  )
+
+  const createEnvironmentBranch = useCallback(
+    (project: ProjectWithTasks | null, branchName: string) =>
+      createAndCheckoutProjectBranch(resolvedServices.deviceApi, project, branchName),
     [resolvedServices]
   )
 
@@ -1023,8 +1063,19 @@ export function WorkbenchProvider({
         },
       })
 
-      const ack = await resolvedServices.chatStream.sendMessage(payload)
-      dispatch({ type: 'sending_finished' })
+      let ack
+      try {
+        ack = await resolvedServices.chatStream.sendMessage(payload)
+      } catch (error) {
+        setIsAwaitingAssistantStart(false)
+        dispatch({
+          type: 'error_set',
+          error: error instanceof Error ? error.message : '发送失败',
+        })
+        return false
+      } finally {
+        dispatch({ type: 'sending_finished' })
+      }
 
       if (ack.error || ack.success === false) {
         setIsAwaitingAssistantStart(false)
@@ -1255,35 +1306,34 @@ export function WorkbenchProvider({
         )
       )
 
-      const cancelAck = await resolvedServices.chatStream.cancelStream({
-        subtask_id: activeSubtaskId,
-        partial_content: activeAssistantMessage.content,
-        shell_type: activeAssistantMessage.shellType,
-      })
-
-      if (cancelAck.error || cancelAck.success === false) {
-        setQueuedSends(items =>
-          items.map(queued =>
-            queued.id === id
-              ? {
-                  ...queued,
-                  status: 'failed',
-                  error: normalizeGuidanceError(cancelAck.error ?? '取消当前回复失败'),
-                }
-              : queued
-            )
-        )
-        guidanceSendInFlightRef.current = false
-        return
-      }
-
-      dispatchMessages({
-        type: 'assistant_done',
-        subtaskId: activeSubtaskId,
-        content: activeAssistantMessage.content,
-      })
-
       try {
+        const cancelAck = await resolvedServices.chatStream.cancelStream({
+          subtask_id: activeSubtaskId,
+          partial_content: activeAssistantMessage.content,
+          shell_type: activeAssistantMessage.shellType,
+        })
+
+        if (cancelAck.error || cancelAck.success === false) {
+          setQueuedSends(items =>
+            items.map(queued =>
+              queued.id === id
+                ? {
+                    ...queued,
+                    status: 'failed',
+                    error: normalizeGuidanceError(cancelAck.error ?? '取消当前回复失败'),
+                  }
+                : queued
+            )
+          )
+          return
+        }
+
+        dispatchMessages({
+          type: 'assistant_done',
+          subtaskId: activeSubtaskId,
+          content: activeAssistantMessage.content,
+        })
+
         const sent = await sendPreparedMessage(
           item.content,
           item.payload,
@@ -1303,6 +1353,20 @@ export function WorkbenchProvider({
                   : queued
               )
             : items.filter(queued => queued.id !== id)
+        )
+      } catch (error) {
+        setQueuedSends(items =>
+          items.map(queued =>
+            queued.id === id
+              ? {
+                  ...queued,
+                  status: 'failed',
+                  error: normalizeGuidanceError(
+                    error instanceof Error ? error.message : '取消当前回复失败',
+                  ),
+                }
+              : queued
+          )
         )
       } finally {
         guidanceSendInFlightRef.current = false
@@ -1405,8 +1469,12 @@ export function WorkbenchProvider({
     getDeviceHomeDirectory,
     getProjectWorkspaceRoot,
     listDeviceDirectories,
+    createDeviceDirectory,
     loadEnvironmentInfo,
     commitEnvironmentChanges,
+    listEnvironmentBranches,
+    checkoutEnvironmentBranch,
+    createEnvironmentBranch,
     setInput,
     sendCurrentInput,
     pauseCurrentResponse,

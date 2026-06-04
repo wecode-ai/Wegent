@@ -68,6 +68,7 @@ interface DesktopSidebarProps {
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onGetProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
+  onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
   onOpenSettings: () => void
   onLogout: () => void
 }
@@ -517,6 +518,7 @@ export function DesktopSidebar({
   onGetDeviceHomeDirectory,
   onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
+  onCreateDeviceDirectory,
   onOpenSettings,
   onLogout,
 }: DesktopSidebarProps) {
@@ -877,6 +879,7 @@ export function DesktopSidebar({
         onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
         onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
         onListDeviceDirectories={onListDeviceDirectories}
+        onCreateDeviceDirectory={onCreateDeviceDirectory}
       />
       <TextInputDialog
         open={renamingProject !== null}
