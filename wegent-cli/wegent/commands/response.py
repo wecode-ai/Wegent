@@ -32,7 +32,7 @@ def _emit_error(error: CliError, json_output: bool) -> None:
 def _is_streaming_enabled(value: Any) -> bool:
     if value is True:
         return True
-    if isinstance(value, int) and not isinstance(value, bool):
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
         return value == 1
     if isinstance(value, str):
         return value.strip().lower() in {"1", "on", "t", "true", "y", "yes"}

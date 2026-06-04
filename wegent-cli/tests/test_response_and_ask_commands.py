@@ -166,6 +166,22 @@ def test_response_create_rejects_numeric_truthy_streaming_payload():
     client.create_response.assert_not_called()
 
 
+def test_response_create_rejects_float_truthy_streaming_payload():
+    client = MagicMock()
+
+    result = invoke_with_client(
+        ["response", "create", "--input", "-", "--json"],
+        client,
+        input_text='{"model": "default#wegent-chat", "input": "hello", "stream": 1.0}',
+    )
+
+    assert result.exit_code != 0
+    payload = load_payload(result)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "unsupported_streaming"
+    client.create_response.assert_not_called()
+
+
 def test_response_create_allows_explicit_non_streaming_payload():
     client = MagicMock()
     client.create_response.return_value = {"id": "resp_1"}
