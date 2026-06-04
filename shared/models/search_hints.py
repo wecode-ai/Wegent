@@ -13,6 +13,7 @@ MAX_SEARCH_HINT_TERM_LENGTH = 100
 MAX_SEARCH_HINT_KEYWORDS = 20
 MAX_SEARCH_HINT_PHRASES = 10
 
+
 def normalize_search_text(value: str | None) -> str:
     """Normalize free-form query text into a single-space representation."""
 
@@ -72,6 +73,8 @@ class SearchHints(BaseModel):
                     f"search hint terms must be at most {MAX_SEARCH_HINT_TERM_LENGTH} characters"
                 )
         return normalized
+
+
 def coerce_search_hints(
     search_hints: SearchHints | dict[str, object] | None,
 ) -> SearchHints | None:

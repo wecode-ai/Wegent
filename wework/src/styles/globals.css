@@ -27,6 +27,12 @@
   --font-code: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   --appearance-contrast: 50;
   --radius: 0.5rem;
+  --z-chrome: 20;
+  --z-popover: 40;
+  --z-modal: 80;
+  --z-critical: 100;
+  --z-system: 1000;
+  --z-system-popover: 1010;
 }
 
 [data-theme='dark'] {
@@ -112,6 +118,30 @@ button:disabled {
 
   .local-skill-caret {
     animation: local-skill-caret-blink 1s step-end infinite;
+  }
+
+  .z-chrome {
+    z-index: var(--z-chrome);
+  }
+
+  .z-popover {
+    z-index: var(--z-popover);
+  }
+
+  .z-modal {
+    z-index: var(--z-modal);
+  }
+
+  .z-critical {
+    z-index: var(--z-critical);
+  }
+
+  .z-system {
+    z-index: var(--z-system);
+  }
+
+  .z-system-popover {
+    z-index: var(--z-system-popover);
   }
 
   .scrollbar-none {

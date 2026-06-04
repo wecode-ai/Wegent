@@ -284,7 +284,7 @@ export function EnvironmentInfoPopover({
       {open && (
         <div
           data-testid="environment-info-popover"
-          className="fixed right-6 top-[76px] z-[1000] w-[340px] max-w-[calc(100vw-2rem)] rounded-2xl border border-border bg-[#fcfcfc] px-5 py-5 text-text-primary shadow-[0_18px_44px_rgba(0,0,0,0.24)] backdrop-blur-3xl backdrop-saturate-150"
+          className="fixed right-6 top-[76px] z-system w-[340px] max-w-[calc(100vw-2rem)] rounded-2xl border border-border bg-background px-5 py-5 text-text-primary shadow-[0_18px_44px_rgba(0,0,0,0.24)] backdrop-blur-3xl backdrop-saturate-150"
         >
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-[13px] font-medium text-text-primary">
@@ -359,7 +359,7 @@ export function EnvironmentInfoPopover({
             {branchMenuOpen && (
               <div
                 data-testid="environment-branch-menu"
-                className="absolute right-[calc(100%-44px)] top-[116px] z-[1010] w-[320px] rounded-2xl border border-border bg-background px-3 py-3 text-text-primary shadow-[0_18px_44px_rgba(0,0,0,0.18)]"
+                className="absolute right-[calc(100%-44px)] top-[116px] z-system-popover w-[320px] rounded-2xl border border-border bg-background px-3 py-3 text-text-primary shadow-[0_18px_44px_rgba(0,0,0,0.18)]"
               >
                 <label className="flex h-9 items-center gap-2 rounded-lg px-2 text-text-muted">
                   <Search className="h-4 w-4 shrink-0" />

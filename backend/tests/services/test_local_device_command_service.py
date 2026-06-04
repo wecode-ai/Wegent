@@ -253,6 +253,25 @@ def test_json_post_processor_reports_parse_failure():
     assert "Failed to parse command JSON output" in processed["error"]
 
 
+def test_json_post_processor_reports_truncated_output():
+    """json post processor should fail early when stdout was truncated."""
+    from app.services.device.command_post_processor import apply_command_post_processor
+
+    result = {
+        "success": True,
+        "exit_code": 0,
+        "stdout": '[{"name": "skill-a", "description": "very long',
+        "stderr": "",
+        "duration": 0.5,
+        "stdout_truncated": True,
+    }
+
+    processed = apply_command_post_processor(result, "json")
+
+    assert processed["success"] is False
+    assert "truncated" in processed["error"]
+
+
 def test_ls_skills_command_parses_yaml_block_description(tmp_path):
     """ls_skills should parse YAML block scalars without keeping the marker."""
     from app.services.device.command_registry import LS_SKILLS_SCRIPT

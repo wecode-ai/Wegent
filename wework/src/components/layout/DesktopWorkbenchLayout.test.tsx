@@ -297,7 +297,7 @@ describe('DesktopWorkbenchLayout', () => {
       'pointer-events-none',
       'absolute',
       'bottom-0',
-      'z-40',
+      'z-10',
       'from-background',
     )
     expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass(
@@ -305,7 +305,7 @@ describe('DesktopWorkbenchLayout', () => {
       'absolute',
       'bottom-4',
       'left-1/2',
-      'z-50',
+      'z-chrome',
       '-translate-x-1/2',
     )
     expect(screen.getByTestId('desktop-floating-composer-card')).toHaveClass(
@@ -349,7 +349,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByTestId('scroll-to-bottom-button')).toHaveClass(
       'bottom-36',
-      'z-[60]',
+      'z-popover',
     )
   })
 
@@ -383,24 +383,24 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('restores and stores sidebar width in localStorage', () => {
-    localStorage.setItem('wework.desktop.sidebar.width', '320')
+    localStorage.setItem('wework.desktop.sidebar.width', '230')
 
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
-    expect(document.querySelector('aside')).toHaveStyle({ width: '320px' })
+    expect(document.querySelector('aside')).toHaveStyle({ width: '230px' })
 
     fireEvent.pointerDown(screen.getByTestId('sidebar-resize-handle'))
-    fireEvent.pointerMove(document, { clientX: 360 })
+    fireEvent.pointerMove(document, { clientX: 235 })
     fireEvent.pointerUp(document)
 
-    expect(document.querySelector('aside')).toHaveStyle({ width: '360px' })
-    expect(localStorage.getItem('wework.desktop.sidebar.width')).toBe('360')
+    expect(document.querySelector('aside')).toHaveStyle({ width: '235px' })
+    expect(localStorage.getItem('wework.desktop.sidebar.width')).toBe('235')
   })
 
   test('uses the selected sidebar width as the default', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
-    expect(document.querySelector('aside')).toHaveStyle({ width: '320px' })
+    expect(document.querySelector('aside')).toHaveStyle({ width: '220px' })
   })
 
   test('collapses and expands the sidebar', async () => {
@@ -464,6 +464,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('search-button'))
 
     const dialog = screen.getByTestId('desktop-search-dialog')
+    expect(dialog.closest('.fixed')).toHaveClass('z-critical')
     expect(dialog).toBeInTheDocument()
     expect(screen.getByTestId('desktop-search-input')).toHaveFocus()
     expect(within(dialog).getByText('近期对话')).toBeInTheDocument()
@@ -1348,7 +1349,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
     expect(screen.getByTestId('environment-info-popover')).toHaveClass(
       'w-[340px]',
-      'bg-[#fcfcfc]',
+      'bg-background',
       'text-text-primary',
       'border-border',
       'backdrop-blur-3xl',

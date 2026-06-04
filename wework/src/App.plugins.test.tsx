@@ -219,7 +219,65 @@ function mockSystemSkillsFetch() {
         },
         status: { state: 'Available' },
       },
+      {
+        apiVersion: 'agent.wecode.io/v1',
+        kind: 'InstalledSkill',
+        metadata: {
+          name: 'personal-excel-helper',
+          namespace: 'default',
+          labels: { id: '88' },
+        },
+        spec: {
+          source: {
+            type: 'personal',
+            skillKey: 'excel-helper',
+            catalogItemId: 'personal/77',
+          },
+          skillRef: {
+            kind: 'Skill',
+            name: 'excel-helper',
+            namespace: 'default',
+            user_id: 1,
+          },
+          displayName: 'Excel Helper',
+          description: 'Analyze Excel workbooks',
+          version: '1.0.0',
+          installState: 'installed',
+          enabled: true,
+          sourcePayload: null,
+        },
+        status: { state: 'Available' },
+      },
     ],
+  }
+  const installedUploadedPersonalSkill = {
+    apiVersion: 'agent.wecode.io/v1',
+    kind: 'InstalledSkill',
+    metadata: {
+      name: 'personal-zip-helper',
+      namespace: 'default',
+      labels: { id: '89' },
+    },
+    spec: {
+      source: {
+        type: 'personal',
+        skillKey: 'zip-helper',
+        catalogItemId: 'personal/78',
+      },
+      skillRef: {
+        kind: 'Skill',
+        name: 'zip-helper',
+        namespace: 'default',
+        user_id: 1,
+      },
+      displayName: 'zip-helper',
+      description: 'Uploaded helper',
+      version: '1.0.0',
+      installState: 'installed',
+      enabled: true,
+      sourcePayload: null,
+    },
+    status: { state: 'Available' },
   }
   const personalSkillsResponse = {
     items: [
@@ -402,6 +460,8 @@ function mockSystemSkillsFetch() {
         payload = uploadedPersonalSkill
       } else if (url.includes('/v1/kinds/skills')) {
         payload = personalSkillsResponse
+      } else if (url.includes('/system-skills/install/personal')) {
+        payload = installedUploadedPersonalSkill
       } else if (url.includes('/system-skills/installed')) {
         payload = init?.method === 'PUT' ? installedSkillsResponse.items[0] : installedSkillsResponse
       } else if (url.includes('/system-skills/providers')) {
@@ -444,7 +504,7 @@ describe('App plugins route', () => {
       'true',
     )
     expect(screen.getByRole('tab', { name: 'MCP' })).toBeInTheDocument()
-    expect(screen.getByText('让 Codex 按你的方式工作')).toBeInTheDocument()
+    expect(screen.getByText('让 Wework 按你的方式工作')).toBeInTheDocument()
   })
 
   test('renders the plugins page on direct /plugins visit', async () => {
@@ -499,6 +559,33 @@ describe('App plugins route', () => {
 
     expect(screen.getByTestId('open-mobile-drawer-button')).toBeInTheDocument()
     expect(screen.queryByTestId('collapse-sidebar-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('plugins-create-button')).toHaveClass(
+      'h-11',
+      'w-11',
+    )
+    expect(await screen.findByText('wehot')).toBeInTheDocument()
+  })
+
+  test('closes mobile settings when opening plugins from the settings menu', async () => {
+    mockViewport.isMobile = true
+    window.history.pushState({}, '', '/plugins')
+
+    render(<App />)
+
+    expect(await screen.findByText('wehot')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
+    await userEvent.click(screen.getByTestId('mobile-settings-button'))
+
+    expect(screen.getByTestId('mobile-settings-page')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('mobile-settings-plugins-button'))
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('mobile-settings-page')).not.toBeInTheDocument(),
+    )
+    expect(window.location.pathname).toBe('/plugins')
+    expect(screen.getByTestId('open-mobile-drawer-button')).toBeInTheDocument()
     expect(await screen.findByText('wehot')).toBeInTheDocument()
   })
 
@@ -725,7 +812,7 @@ describe('App plugins route', () => {
     )
   })
 
-  test('shows and deletes personal skills from management page', async () => {
+  test('shows and uninstalls personal skills from management page', async () => {
     window.history.pushState({}, '', '/plugins/manage')
 
     render(<App />)
@@ -733,23 +820,23 @@ describe('App plugins route', () => {
     await userEvent.click(await screen.findByRole('tab', { name: '技能 2' }))
     expect(await screen.findByText('Excel Helper')).toBeInTheDocument()
     expect(screen.getByText('Analyze Excel workbooks')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('installed-skill-toggle-77'))
+    await userEvent.click(screen.getByTestId('installed-skill-toggle-88'))
 
     expect(fetch).toHaveBeenCalledWith(
-      '/api/v1/kinds/skills/77/enabled',
+      '/api/system-skills/installed/88',
       expect.objectContaining({
         method: 'PUT',
         body: JSON.stringify({ enabled: false }),
       }),
     )
 
-    await userEvent.click(screen.getByTestId('installed-skill-uninstall-77'))
+    await userEvent.click(screen.getByTestId('installed-skill-uninstall-88'))
 
     await waitFor(() =>
       expect(screen.queryByText('Excel Helper')).not.toBeInTheDocument(),
     )
     expect(fetch).toHaveBeenCalledWith(
-      '/api/v1/kinds/skills/77',
+      '/api/system-skills/installed/88',
       expect.objectContaining({ method: 'DELETE' }),
     )
   })
@@ -780,6 +867,13 @@ describe('App plugins route', () => {
       expect.objectContaining({
         method: 'POST',
         body: expect.any(FormData),
+      }),
+    )
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/system-skills/install/personal',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ skillId: 78 }),
       }),
     )
   })
