@@ -53,6 +53,21 @@ def test_auth_headers_use_api_key_when_token_missing():
     assert "Authorization" not in client.headers()
 
 
+def test_auth_headers_omitted_token_defaults_from_config_when_api_key_explicit(
+    monkeypatch,
+):
+    monkeypatch.setattr("wegent.client.get_token", lambda: "configured-token")
+    monkeypatch.setattr("wegent.client.get_api_key", lambda: "configured-api-key")
+    client = WegentClient(
+        server="http://backend",
+        api_key="explicit-key",
+        session=DummySession(make_response()),
+    )
+
+    assert client.headers()["Authorization"] == "Bearer configured-token"
+    assert "X-API-Key" not in client.headers()
+
+
 def test_normalize_kind_accepts_aliases_and_plurals():
     client = WegentClient(server="http://backend")
 

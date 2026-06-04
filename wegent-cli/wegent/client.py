@@ -1,6 +1,6 @@
 """HTTP client for Wegent Backend APIs."""
 
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import requests
 
@@ -31,6 +31,8 @@ KIND_ALIASES = {
     "sk": "skill",
 }
 
+_OMITTED = object()
+
 
 class APIError(Exception):
     """Legacy API error kept for command modules pending replacement."""
@@ -47,16 +49,16 @@ class WegentClient:
     def __init__(
         self,
         server: Optional[str] = None,
-        token: Optional[str] = None,
-        api_key: Optional[str] = None,
+        token: Optional[str] | object = _OMITTED,
+        api_key: Optional[str] | object = _OMITTED,
         timeout: int = 30,
         session: Optional[requests.Session] = None,
     ):
         self.server = (server or get_server()).rstrip("/")
-        self.token = (
-            None if token is None and api_key is not None else token or get_token()
+        self.token = get_token() if token is _OMITTED else cast(Optional[str], token)
+        self.api_key = (
+            get_api_key() if api_key is _OMITTED else cast(Optional[str], api_key)
         )
-        self.api_key = api_key if api_key is not None else get_api_key()
         self.timeout = timeout
         self.session = session or requests.Session()
 
