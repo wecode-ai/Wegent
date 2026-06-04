@@ -1039,7 +1039,6 @@ def get_main_event_loop() -> Optional[asyncio.AbstractEventLoop]:
         The main event loop or None if not initialized
     """
     return _main_event_loop
-    return _main_event_loop
 
 
 def init_ws_emitter(sio: socketio.AsyncServer) -> WebSocketEmitter:

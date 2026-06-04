@@ -350,4 +350,3 @@ def get_team_shell_type(db: Session, team: Kind) -> str:
 
     shell_crd = Shell.model_validate(shell.json)
     return shell_crd.spec.shellType
-    return True
