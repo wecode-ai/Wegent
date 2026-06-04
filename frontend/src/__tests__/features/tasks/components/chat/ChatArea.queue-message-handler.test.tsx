@@ -37,7 +37,8 @@ const mockSetTaskInputMessage = jest.fn()
 
 jest.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
-  useRouter: () => ({ push: jest.fn() }),
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+  usePathname: () => '/chat',
 }))
 
 jest.mock('@/features/inbox', () => ({

@@ -695,7 +695,7 @@ export interface QuickLaunchFunction {
   name: string
   enabled: boolean
   order: number
-  quick_phrases: string[]
+  input_presets: QuickLaunchInputPreset[]
 }
 
 export interface QuickLaunchFavoriteAgent {
@@ -709,11 +709,26 @@ export interface QuickLaunchFavoriteAgent {
   recommended_mode?: 'chat' | 'code' | 'both'
   agent_type?: string | null
   quick_phrases: string[]
+  input_presets: QuickLaunchInputPreset[]
 }
 
 export interface QuickLaunchResponse {
   system_functions: QuickLaunchFunction[]
   favorite_agents: QuickLaunchFavoriteAgent[]
+}
+
+export interface QuickLaunchInputOptions {
+  enable_deep_thinking?: boolean | null
+  enable_clarification?: boolean | null
+  force_override?: boolean | null
+  selected_skill_names?: string[]
+}
+
+export interface QuickLaunchInputPreset {
+  id: string
+  title: string
+  prompt?: string | null
+  options?: QuickLaunchInputOptions | null
 }
 
 // Welcome Config Types (Slogan & Tips)

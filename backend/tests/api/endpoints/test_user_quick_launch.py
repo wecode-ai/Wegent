@@ -39,7 +39,19 @@ async def test_quick_launch_returns_system_functions_and_favorite_agents(monkeyp
                     "id": "create_ppt",
                     "title": "创建 PPT",
                     "team_id": 101,
-                    "quick_phrases": ["帮我创建一个 xxx 的 PPT"],
+                    "input_presets": [
+                        {
+                            "id": "roadmap",
+                            "title": "产品路线图",
+                            "prompt": "帮我创建一个 xxx 的 PPT",
+                            "options": {
+                                "enable_deep_thinking": False,
+                                "enable_clarification": True,
+                                "force_override": True,
+                                "selected_skill_names": ["ppt"],
+                            },
+                        }
+                    ],
                     "enabled": True,
                     "order": 10,
                 },
@@ -96,7 +108,24 @@ async def test_quick_launch_returns_system_functions_and_favorite_agents(monkeyp
     assert [function.id for function in response.system_functions] == ["create_ppt"]
     assert response.system_functions[0].team_id == 101
     assert response.system_functions[0].name == "team-101"
-    assert response.system_functions[0].quick_phrases == ["帮我创建一个 xxx 的 PPT"]
+    assert response.system_functions[0].input_presets[0].id == "roadmap"
+    assert (
+        response.system_functions[0].input_presets[0].prompt
+        == "帮我创建一个 xxx 的 PPT"
+    )
+    assert (
+        response.system_functions[0].input_presets[0].options.enable_deep_thinking
+        is False
+    )
+    assert (
+        response.system_functions[0].input_presets[0].options.enable_clarification
+        is True
+    )
+    assert response.system_functions[0].input_presets[0].options.force_override is True
+    assert response.system_functions[0].input_presets[
+        0
+    ].options.selected_skill_names == ["ppt"]
     assert response.favorite_agents[0].team_id == 202
     assert response.favorite_agents[0].title == "Team 202"
     assert response.favorite_agents[0].quick_phrases == ["agent phrase 202"]
+    assert response.favorite_agents[0].input_presets[0].prompt == "agent phrase 202"
