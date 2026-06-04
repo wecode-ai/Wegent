@@ -3,7 +3,7 @@ from unittest.mock import Mock
 import pytest
 import requests
 
-from wegent.client import APIError, KIND_ALIASES, KIND_TO_PATH, VALID_KINDS, WegentClient
+from wegent.client import APIError, WegentClient
 from wegent.errors import EXIT_API_ERROR, EXIT_AUTH_ERROR, EXIT_NETWORK_ERROR, CliError
 
 

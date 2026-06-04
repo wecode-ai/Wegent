@@ -112,12 +112,6 @@ class TestCreateCommand:
         assert "Ghost" in result.output
         assert "test-ghost" in result.output
 
-    def test_create_invalid_kind(self, runner, mock_client):
-        """Test create with invalid kind."""
-        result = runner.invoke(cli, ["create", "invalidkind", "test", "--dry-run"])
-        assert result.exit_code == 1
-        assert "Invalid kind" in result.output
-
     def test_create_invalid_kind_uses_real_client_error(self, runner):
         """Test invalid kind remains compatible with legacy ValueError handling."""
         result = runner.invoke(cli, ["create", "invalidkind", "test", "--dry-run"])
