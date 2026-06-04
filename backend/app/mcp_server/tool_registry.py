@@ -216,10 +216,13 @@ def _param_def_to_python_type(param: Dict[str, Any]) -> type:
     """
     json_type = param.get("type", "string")
     if json_type == "array":
-        items_type = _json_type_to_python_type(
-            param.get("items", {}).get("type", "string")
-        )
-        return List[items_type]
+        items = param.get("items", {})
+        if isinstance(items, dict):
+            # Recurse so nested arrays (e.g. List[List[int]]) preserve full typing.
+            item_py_type = _param_def_to_python_type(items)
+        else:
+            item_py_type = str
+        return List[item_py_type]
     return _json_type_to_python_type(json_type)
 
 

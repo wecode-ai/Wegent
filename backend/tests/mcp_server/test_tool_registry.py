@@ -164,6 +164,23 @@ class TestParamDefToPythonType:
     def test_unknown_type_defaults_to_str(self):
         assert _param_def_to_python_type({"type": "unknown_type"}) is str
 
+    def test_nested_array_preserves_inner_type(self):
+        """Nested arrays must recurse so List[List[int]] is produced correctly.
+
+        Without recursion, items.type="array" maps to bare `list` and the
+        result degrades to List[list], losing the inner element type.
+        """
+        param = {
+            "type": "array",
+            "items": {"type": "array", "items": {"type": "integer"}},
+        }
+        assert _param_def_to_python_type(param) == List[List[int]]
+
+    def test_malformed_items_value_defaults_to_list_str(self):
+        """Non-dict items value (malformed schema) falls back to List[str]."""
+        param = {"type": "array", "items": "bad_value"}
+        assert _param_def_to_python_type(param) == List[str]
+
 
 class TestMCPContext:
     """Tests for MCP context management."""
