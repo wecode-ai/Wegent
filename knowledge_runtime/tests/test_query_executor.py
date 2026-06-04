@@ -161,6 +161,78 @@ class TestQueryExecutor:
         )
 
     @pytest.mark.asyncio
+    async def test_execute_combines_document_ids_into_metadata_condition(
+        self, query_request
+    ) -> None:
+        mock_storage_backend = MagicMock()
+        mock_embed_model = MagicMock()
+        mock_kb_executor = MagicMock()
+        mock_kb_executor.execute = AsyncMock(return_value={"records": []})
+
+        with (
+            patch(
+                "knowledge_runtime.services.query_executor.create_storage_backend_from_runtime_config",
+                return_value=mock_storage_backend,
+            ),
+            patch(
+                "knowledge_runtime.services.query_executor.create_embedding_model_from_runtime_config",
+                return_value=mock_embed_model,
+            ),
+            patch(
+                "knowledge_runtime.services.query_executor.KnowledgeQueryExecutor",
+                return_value=mock_kb_executor,
+            ),
+        ):
+            query_request.knowledge_base_ids = [1]
+            query_request.document_ids = [10, 11]
+            query_request.metadata_condition = {
+                "operator": "and",
+                "conditions": [{"key": "source", "operator": "==", "value": "kb"}],
+            }
+            executor = QueryExecutor(db=MagicMock())
+            config = _make_query_config(1)
+            executor._config_resolver.resolve_query_config = MagicMock(
+                return_value=config
+            )
+
+            await executor.execute(query_request)
+
+        mock_kb_executor.execute.assert_awaited_once_with(
+            knowledge_id="1",
+            query="test query",
+            query_plan={
+                "dense_query": "test query",
+                "sparse_query": "test query",
+                "keywords": [],
+                "phrases": [],
+                "hint_source": "fallback",
+            },
+            retrieval_config=config.retrieval_config,
+            metadata_condition={
+                "operator": "and",
+                "conditions": [
+                    {
+                        "operator": "and",
+                        "conditions": [
+                            {
+                                "key": "doc_ref",
+                                "operator": "in",
+                                "value": ["10", "11"],
+                            }
+                        ],
+                    },
+                    {
+                        "operator": "and",
+                        "conditions": [
+                            {"key": "source", "operator": "==", "value": "kb"}
+                        ],
+                    },
+                ],
+            },
+            user_id=7,
+        )
+
+    @pytest.mark.asyncio
     async def test_execute_returns_aggregated_results(self, query_request) -> None:
         """Test that execute returns aggregated results from all KBs."""
         mock_storage_backend = MagicMock()

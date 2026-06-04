@@ -281,10 +281,9 @@ export function RetrievalTestDialog({
     return (
       testConfig.retrieval_mode !== (dbConfig.retrieval_mode ?? 'vector') ||
       testConfig.score_threshold !== (dbConfig.score_threshold ?? 0.7) ||
-      testConfig.top_k !== (dbConfig.top_k ?? 5) ||
-      Boolean(searchHintsText.trim())
+      testConfig.top_k !== (dbConfig.top_k ?? 5)
     )
-  }, [searchHintsText, testConfig, knowledgeBase.retrieval_config])
+  }, [testConfig, knowledgeBase.retrieval_config])
 
   const hasSearchHints = searchHintsText.trim().length > 0
 

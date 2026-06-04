@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -27,13 +26,10 @@ class QueryPlan:
     keywords: list[str] = field(default_factory=list)
     phrases: list[str] = field(default_factory=list)
     hint_source: HintSource = "fallback"
-    structured_spans: list[str] = field(default_factory=list)
 
 
 class QueryPlanner:
     """Build a retrieval plan from the raw query and optional search hints."""
-
-    _STRUCTURED_TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_./-]*")
 
     def plan(
         self,
@@ -41,7 +37,6 @@ class QueryPlanner:
         search_hints: SearchHints | dict[str, Any] | None = None,
     ) -> QueryPlan:
         resolved = build_search_hint_plan(query, search_hints)
-        structured_spans = self._extract_structured_spans(resolved.normalized_query)
 
         return QueryPlan(
             original_query=query,
@@ -51,12 +46,4 @@ class QueryPlanner:
             keywords=resolved.keywords,
             phrases=resolved.phrases,
             hint_source=resolved.hint_source,
-            structured_spans=structured_spans,
         )
-
-    def _extract_structured_spans(self, query: str) -> list[str]:
-        spans: list[str] = []
-        for token in self._STRUCTURED_TOKEN_RE.findall(query):
-            if "_" in token or any(ch.isupper() for ch in token):
-                spans.append(token)
-        return spans

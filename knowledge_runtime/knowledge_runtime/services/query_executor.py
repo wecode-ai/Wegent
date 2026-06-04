@@ -182,7 +182,10 @@ class QueryExecutor:
                 "hint_source": plan.hint_source,
             },
             retrieval_config=config.retrieval_config,
-            metadata_condition=request.metadata_condition,
+            metadata_condition=self._combine_metadata_conditions(
+                self._build_document_filter(request.document_ids),
+                request.metadata_condition,
+            ),
             user_id=config.index_owner_user_id,
         )
 
@@ -226,6 +229,36 @@ class QueryExecutor:
                 )
             overrides_by_kb_id[override.knowledge_base_id] = override
         return overrides_by_kb_id
+
+    @staticmethod
+    def _build_document_filter(document_ids: list[int] | None) -> dict[str, Any] | None:
+        if not document_ids:
+            return None
+
+        return {
+            "operator": "and",
+            "conditions": [
+                {
+                    "key": "doc_ref",
+                    "operator": "in",
+                    "value": [str(doc_id) for doc_id in document_ids],
+                }
+            ],
+        }
+
+    @staticmethod
+    def _combine_metadata_conditions(
+        *conditions: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        normalized_conditions = [condition for condition in conditions if condition]
+        if not normalized_conditions:
+            return None
+        if len(normalized_conditions) == 1:
+            return normalized_conditions[0]
+        return {
+            "operator": "and",
+            "conditions": normalized_conditions,
+        }
 
     def _extract_document_id(self, record: dict[str, Any]) -> int | None:
         """Extract document ID from record metadata."""

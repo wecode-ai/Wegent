@@ -23,14 +23,6 @@ def test_plan_uncertain_case_falls_back_to_keyword_bundle() -> None:
     assert plan.hint_source == "fallback"
 
 
-def test_plan_preserves_structured_spans() -> None:
-    plan = QueryPlanner().plan("MCP 工具 添加 服务器 ghost spec mcpServers")
-
-    assert "MCP" in plan.structured_spans
-    assert "mcpServers" in plan.structured_spans
-    assert plan.dense_query == "MCP 工具 添加 服务器 ghost spec mcpServers"
-
-
 def test_plan_uses_explicit_hints_for_dense_and_sparse_queries() -> None:
     plan = QueryPlanner().plan(
         "抖音 小红书 夸克 搜索业务 重要指标 对比",

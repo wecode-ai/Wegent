@@ -16,6 +16,7 @@ Note on non-vector retrieval support:
 - Future enhancement: Add BM42/hybrid search support when upgrading Qdrant integration
 """
 
+import logging
 from typing import Any, ClassVar, Dict, List, Optional
 
 from llama_index.core import StorageContext, VectorStoreIndex
@@ -33,8 +34,11 @@ from knowledge_engine.retrieval.filters import (
     filter_chunk_records,
     parse_metadata_filters,
 )
+from knowledge_engine.retrieval.search_hints import resolve_search_queries
 from knowledge_engine.storage.base import BaseStorageBackend
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
+
+logger = logging.getLogger(__name__)
 
 
 class QdrantBackend(BaseStorageBackend):
@@ -201,16 +205,27 @@ class QdrantBackend(BaseStorageBackend):
         # Build metadata filters
         filters = self._build_metadata_filters(knowledge_id, metadata_condition)
 
+        resolved_queries = resolve_search_queries(query, retrieval_setting)
+
         # Generate query embedding
-        query_embedding = embed_model.get_query_embedding(query)
+        query_embedding = embed_model.get_query_embedding(resolved_queries.dense_query)
 
         # Create VectorStoreQuery (vector mode only)
         vs_query = VectorStoreQuery(
-            query_str=query,
+            query_str=resolved_queries.dense_query,
             query_embedding=query_embedding,
             similarity_top_k=top_k,
             mode=VectorStoreQueryMode.DEFAULT,
             filters=filters,
+        )
+
+        logger.info(
+            "[Qdrant] retrieve: collection=%s, mode=%s, top_k=%s, score_threshold=%s, dense_query=%s",
+            collection_name,
+            retrieval_mode,
+            top_k,
+            score_threshold,
+            resolved_queries.dense_query,
         )
 
         # Execute query
