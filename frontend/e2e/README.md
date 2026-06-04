@@ -125,7 +125,7 @@ e2e/
 - Coding mode ClaudeCode dialogue and follow-up.
 - Device mode ClaudeCode dialogue and follow-up through a local executor device.
 
-The regression runs in the existing GitHub Actions E2E workflow. It uses global setup authentication like the rest of `frontend/e2e`; no external Playwright auth-state secret is required.
+The regression runs in the dedicated `executor-e2e-tests` GitHub Actions job. Ordinary sharded E2E jobs skip this spec so they do not install executor dependencies, build executor images, or start executor-manager.
 
 CI starts these support services:
 
@@ -134,7 +134,7 @@ CI starts these support services:
 
 Normal and coding ClaudeCode tests run through the actual executor-manager Docker path and the real `ClaudeCodeAgent` inside an executor container. Device mode runs through the actual Backend-to-local-executor WebSocket path and a real local-mode `ClaudeCodeAgent`. The model endpoint is the only mocked boundary, and the tests assert that the second-turn `/v1/messages` request received by the mock model server contains both the first-turn prompt and context token.
 
-CI builds `fixtures/claudecode-executor/Dockerfile`, starts a real `executor_manager` service on port `8001`, and starts a real local ClaudeCode executor process for device-mode coverage.
+The executor job builds `fixtures/claudecode-executor/Dockerfile`, starts a real `executor_manager` service on port `8001`, and starts a real local ClaudeCode executor process for device-mode coverage. The fixture image runs executor from source via `python -m executor.main`; it does not build a PyInstaller executor binary.
 
 For GitHub Actions, `executor_manager` runs directly on the runner and task containers use Docker bridge networking with normal port mappings. Keep `DOCKER_HOST_ADDR=localhost` so the runner can dispatch to mapped container ports. Use the runner's Docker bridge IP for container-to-runner URLs such as `TASK_API_DOMAIN`, `CALLBACK_HOST`, and the ClaudeCode mock model base URL.
 
@@ -195,6 +195,20 @@ E2E tests run automatically in GitHub Actions:
 - Nightly scheduled runs
 
 See [`.github/workflows/e2e-tests.yml`](../../.github/workflows/e2e-tests.yml) for configuration.
+
+### Sharded CI Users
+
+The CI workflow runs Playwright tests across multiple shards. Each shard uses an
+isolated E2E admin and regular user to reduce cross-shard data interference:
+
+- `E2E_SHARD_INDEX=1` uses `e2e-admin-shard-1` and `e2e-user-shard-1`
+- `E2E_SHARD_INDEX=2` uses `e2e-admin-shard-2` and `e2e-user-shard-2`
+- Local runs without `E2E_SHARD_INDEX` use `e2e-admin-local` and `e2e-user-local`
+
+`global-setup.ts` provisions these users with the bootstrap admin account, logs in
+through the backend API, and writes Playwright `storageState` for browser tests.
+Set `E2E_USE_ISOLATED_USERS=false` to fall back to the bootstrap admin user when
+debugging against an environment where creating users is not desirable.
 
 ## Troubleshooting
 
