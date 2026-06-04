@@ -1,5 +1,5 @@
 import { Bot, Menu } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type {
   ProjectChatControls,
@@ -8,7 +8,9 @@ import type {
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
 import { ProjectWorkBar } from '@/components/chat/composer/ProjectWorkBar'
 import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
+import { stripAppBasePath } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
+import { isSettingsRoute, navigateTo } from '@/lib/navigation'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import type {
   ArchivedTaskListResponse,
@@ -100,7 +102,9 @@ export function MobileWorkbenchLayout({
 }: MobileWorkbenchLayoutProps) {
   const { t } = useTranslation('common')
   const [drawerOpen, setDrawerOpen] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(() =>
+    isSettingsRoute(stripAppBasePath(window.location.pathname))
+  )
   const hasConversation = messages.length > 0 || state.currentTask
   const effectiveProjectChat = projectChat ?? {
     models: [],
@@ -126,10 +130,21 @@ export function MobileWorkbenchLayout({
     onSelectStandaloneDevice: () => {},
   }
 
+  useEffect(() => {
+    const handlePopState = () => {
+      setSettingsOpen(isSettingsRoute(stripAppBasePath(window.location.pathname)))
+    }
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
+
   if (settingsOpen) {
     return (
       <MobileSettingsPage
-        onBack={() => setSettingsOpen(false)}
+        onBack={() => {
+          setSettingsOpen(false)
+          navigateTo('/')
+        }}
         onOpenPlugins={onOpenPlugins}
       />
     )
@@ -311,7 +326,10 @@ export function MobileWorkbenchLayout({
         onClose={() => setDrawerOpen(false)}
         onNewChat={onNewChat}
         onStartStandaloneChat={onStartStandaloneChat}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={() => {
+          setSettingsOpen(true)
+          navigateTo('/settings')
+        }}
         onSelectProject={onSelectProject}
         onOpenTask={onOpenTask}
       />
