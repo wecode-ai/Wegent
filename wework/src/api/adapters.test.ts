@@ -263,6 +263,52 @@ describe('REST adapters', () => {
     )
   })
 
+  test('creates a directory through the device command API', async () => {
+    const client = mockClient()
+    vi.mocked(client.post).mockResolvedValueOnce({
+      success: true,
+      stdout: '',
+      stderr: '',
+    })
+
+    const api = createDeviceApi(client)
+
+    await expect(api.createDirectory('device-1', '  /home/ubuntu/new-app  ')).resolves.toBeUndefined()
+
+    expect(client.post).toHaveBeenCalledWith(
+      '/devices/device-1/commands',
+      expect.objectContaining({
+        command_key: 'mkdir_p',
+        args: ['/home/ubuntu/new-app'],
+      }),
+    )
+  })
+
+  test('rejects blank directory paths before calling the device command API', async () => {
+    const client = mockClient()
+    const api = createDeviceApi(client)
+
+    await expect(api.createDirectory('device-1', '   ')).rejects.toThrow(
+      'Directory path is required',
+    )
+    expect(client.post).not.toHaveBeenCalled()
+  })
+
+  test('throws backend command errors when directory creation fails', async () => {
+    const client = mockClient()
+    vi.mocked(client.post).mockResolvedValueOnce({
+      success: false,
+      stdout: '',
+      stderr: 'mkdir failed',
+    })
+
+    const api = createDeviceApi(client)
+
+    await expect(api.createDirectory('device-1', '/home/ubuntu/new-app')).rejects.toThrow(
+      'mkdir failed',
+    )
+  })
+
   test('loads local device skills through the device command API', async () => {
     const client = mockClient()
     const skills = [
