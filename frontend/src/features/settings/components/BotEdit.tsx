@@ -59,6 +59,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { adaptMcpConfigForAgent, isValidAgentType } from '../utils/mcpTypeAdapter'
 import { buildSkillRefsFromSelection } from '../utils/skillRefResolver'
 import { filterVisibleSkills } from '@/utils/skillVisibility'
+import { shellSupportsPreloadSkills } from './team-edit/simple-team-edit-utils'
 
 /** Agent types supported by the system */
 export type AgentType = 'ClaudeCode' | 'Agno' | 'Dify'
@@ -354,12 +355,10 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     return shellType === 'ClaudeCode' || shellType === 'Chat'
   }, [agentName, shells])
 
-  // Check if current agent supports preload skills (Chat only)
+  // Check if current agent supports preload skills
   const supportsPreloadSkills = useMemo(() => {
     const selectedShell = shells.find(s => s.name === agentName)
-    const shellType = selectedShell?.shellType || agentName
-    // Preload skills are only supported for Chat shell type
-    return shellType === 'Chat'
+    return shellSupportsPreloadSkills(selectedShell || { name: agentName })
   }, [agentName, shells])
 
   // Filter skills based on current shell type
