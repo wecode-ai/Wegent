@@ -37,7 +37,10 @@ def load_config(config_file: Path = CONFIG_FILE) -> dict[str, Any]:
 
     if config_file.exists():
         with config_file.open("r", encoding="utf-8") as file_obj:
-            file_config = yaml.safe_load(file_obj) or {}
+            try:
+                file_config = yaml.safe_load(file_obj) or {}
+            except yaml.YAMLError:
+                file_config = {}
             if not isinstance(file_config, dict):
                 file_config = {}
             config.update(file_config)
