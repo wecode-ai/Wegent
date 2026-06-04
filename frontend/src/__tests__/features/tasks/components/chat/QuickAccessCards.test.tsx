@@ -10,6 +10,14 @@ import { userApis } from '@/apis/user'
 import { QuickAccessCards } from '@/features/tasks/components/chat/QuickAccessCards'
 import type { QuickAccessResponse, QuickLaunchResponse, Team } from '@/types/api'
 
+const routerPush = jest.fn()
+
+jest.mock('next/navigation', () => ({
+  useRouter: () => ({
+    push: routerPush,
+  }),
+}))
+
 jest.mock('@/apis/user', () => ({
   userApis: {
     getQuickAccess: jest.fn(),
@@ -92,6 +100,17 @@ const makeQuickLaunchFavoriteAgent = (
   name,
   title,
   quick_phrases: [],
+  input_presets: [],
+})
+
+const makeInputPreset = (
+  prompt: string,
+  overrides: Partial<QuickLaunchResponse['system_functions'][number]['input_presets'][number]> = {}
+): QuickLaunchResponse['system_functions'][number]['input_presets'][number] => ({
+  id: overrides.id ?? `preset_${prompt}`,
+  title: overrides.title ?? prompt,
+  prompt,
+  options: overrides.options,
 })
 
 const renderQuickAccessCards = (
@@ -115,6 +134,8 @@ const renderQuickAccessCards = (
 describe('QuickAccessCards', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    routerPush.mockClear()
+    sessionStorage.clear()
     mockGetQuickLaunch.mockResolvedValue({
       system_functions: [],
       favorite_agents: [],
@@ -158,6 +179,7 @@ describe('QuickAccessCards', () => {
           name: 'system-team',
           title: 'System Team Display',
           quick_phrases: [],
+          input_presets: [],
         },
         {
           type: 'favorite_agent',
@@ -166,6 +188,7 @@ describe('QuickAccessCards', () => {
           name: 'favorite-team',
           title: 'Favorite Team Display',
           quick_phrases: [],
+          input_presets: [],
         },
       ],
     } satisfies QuickLaunchResponse)
@@ -217,7 +240,7 @@ describe('QuickAccessCards', () => {
           name: 'system-team',
           enabled: true,
           order: 10,
-          quick_phrases: ['帮我创建一个 xxx 的 PPT'],
+          input_presets: [makeInputPreset('帮我创建一个 xxx 的 PPT')],
         },
       ],
       favorite_agents: [
@@ -228,6 +251,7 @@ describe('QuickAccessCards', () => {
           name: 'favorite-team',
           title: 'Favorite Team Display',
           quick_phrases: ['帮我生成周报'],
+          input_presets: [makeInputPreset('帮我生成周报')],
         },
       ],
     } satisfies QuickLaunchResponse)
@@ -265,7 +289,10 @@ describe('QuickAccessCards', () => {
           name: 'system-team',
           enabled: true,
           order: 10,
-          quick_phrases: ['帮我创建一个 xxx 的 PPT', '把这份大纲整理成 PPT'],
+          input_presets: [
+            makeInputPreset('帮我创建一个 xxx 的 PPT'),
+            makeInputPreset('把这份大纲整理成 PPT'),
+          ],
         },
       ],
       favorite_agents: [],
@@ -304,7 +331,7 @@ describe('QuickAccessCards', () => {
           name: 'system-team',
           enabled: true,
           order: 10,
-          quick_phrases: ['帮我创建一个 xxx 的 PPT'],
+          input_presets: [makeInputPreset('帮我创建一个 xxx 的 PPT')],
         },
       ],
       favorite_agents: [],
@@ -354,7 +381,11 @@ describe('QuickAccessCards', () => {
           name: 'system-team',
           enabled: true,
           order: 10,
-          quick_phrases: ['第一句', '第二句', '第三句'],
+          input_presets: [
+            makeInputPreset('第一句'),
+            makeInputPreset('第二句'),
+            makeInputPreset('第三句'),
+          ],
         },
       ],
       favorite_agents: [],
@@ -393,7 +424,7 @@ describe('QuickAccessCards', () => {
           name: 'system-team',
           enabled: true,
           order: 10,
-          quick_phrases: [],
+          input_presets: [],
         },
       ],
       favorite_agents: [],
@@ -420,6 +451,143 @@ describe('QuickAccessCards', () => {
     )
   })
 
+  test('routes code-only system functions to the code page with the target team selected', async () => {
+    const onTeamSelect = jest.fn()
+    mockGetQuickLaunch.mockResolvedValueOnce({
+      system_functions: [
+        {
+          type: 'system_function',
+          id: 'code_review',
+          title: 'Code Review',
+          team_id: 7,
+          name: 'coding-agent',
+          enabled: true,
+          order: 10,
+          input_presets: [],
+        },
+      ],
+      favorite_agents: [],
+    } satisfies QuickLaunchResponse)
+
+    render(
+      <QuickAccessCards
+        teams={[
+          makeTeam({ id: 2, name: 'chat-agent', bind_mode: ['chat'] }),
+          makeTeam({ id: 7, name: 'coding-agent', bind_mode: ['code'] }),
+        ]}
+        selectedTeam={null}
+        onTeamSelect={onTeamSelect}
+        currentMode="chat"
+      />
+    )
+
+    fireEvent.click(await screen.findByText('Code Review'))
+
+    expect(onTeamSelect).not.toHaveBeenCalled()
+    expect(routerPush).toHaveBeenCalledWith('/code?teamId=7&quickLauncher=system%3Acode_review')
+  })
+
+  test('routes code-only system function quick phrases to the code page with prefilled input', async () => {
+    const onTeamSelect = jest.fn()
+    const onPhraseSelect = jest.fn()
+    mockGetQuickLaunch.mockResolvedValueOnce({
+      system_functions: [
+        {
+          type: 'system_function',
+          id: 'code_review',
+          title: 'Code Review',
+          team_id: 7,
+          name: 'coding-agent',
+          enabled: true,
+          order: 10,
+          input_presets: [makeInputPreset('Review this change')],
+        },
+      ],
+      favorite_agents: [],
+    } satisfies QuickLaunchResponse)
+
+    render(
+      <QuickAccessCards
+        teams={[
+          makeTeam({ id: 2, name: 'chat-agent', bind_mode: ['chat'] }),
+          makeTeam({ id: 7, name: 'coding-agent', bind_mode: ['code'] }),
+        ]}
+        selectedTeam={null}
+        onTeamSelect={onTeamSelect}
+        onPhraseSelect={onPhraseSelect}
+        currentMode="chat"
+      />
+    )
+
+    fireEvent.click(await screen.findByText('Code Review'))
+
+    expect(onTeamSelect).not.toHaveBeenCalled()
+    expect(onPhraseSelect).not.toHaveBeenCalled()
+    expect(sessionStorage.getItem('pendingTaskPrompt')).toBeNull()
+    expect(routerPush).toHaveBeenCalledWith(
+      '/code?teamId=7&quickLauncher=system%3Acode_review&showPresets=1'
+    )
+  })
+
+  test('restores a cross-page system function preset list from launch intent', async () => {
+    const onTeamSelect = jest.fn()
+    const onPresetSelect = jest.fn()
+    const onLaunchIntentConsumed = jest.fn()
+    const preset = makeInputPreset('Review this change', {
+      id: 'review',
+      title: 'Review change',
+      options: {
+        enable_deep_thinking: false,
+        enable_clarification: true,
+        force_override: true,
+        selected_skill_names: ['code-review'],
+      },
+    })
+    mockGetQuickLaunch.mockResolvedValueOnce({
+      system_functions: [
+        {
+          type: 'system_function',
+          id: 'code_review',
+          title: 'Code Review',
+          team_id: 7,
+          name: 'coding-agent',
+          enabled: true,
+          order: 10,
+          input_presets: [preset],
+        },
+      ],
+      favorite_agents: [],
+    } satisfies QuickLaunchResponse)
+
+    render(
+      <QuickAccessCards
+        teams={[makeTeam({ id: 7, name: 'coding-agent', bind_mode: ['code'] })]}
+        selectedTeam={null}
+        onTeamSelect={onTeamSelect}
+        onPresetSelect={onPresetSelect}
+        currentMode="code"
+        launchIntent={{
+          teamId: 7,
+          launcherKey: 'system:code_review',
+          showPresets: true,
+        }}
+        onLaunchIntentConsumed={onLaunchIntentConsumed}
+      />
+    )
+
+    expect(await screen.findByTestId('quick-phrase-list')).toBeInTheDocument()
+    expect(screen.getByTestId('quick-phrase-back')).toHaveTextContent('Code Review')
+    expect(onTeamSelect).toHaveBeenCalledWith(expect.objectContaining({ id: 7 }))
+    expect(onLaunchIntentConsumed).toHaveBeenCalled()
+
+    fireEvent.click(screen.getByText('Review change'))
+
+    expect(onPresetSelect).toHaveBeenCalledWith({
+      launcher: expect.objectContaining({ key: 'system:code_review' }),
+      preset,
+    })
+  })
+
   test('does not preselect a launcher from the initial selected team', async () => {
     mockGetQuickLaunch.mockResolvedValueOnce({
       system_functions: [
@@ -431,7 +599,7 @@ describe('QuickAccessCards', () => {
           name: 'system-team',
           enabled: true,
           order: 10,
-          quick_phrases: [],
+          input_presets: [],
         },
       ],
       favorite_agents: [],

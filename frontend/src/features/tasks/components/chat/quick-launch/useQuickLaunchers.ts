@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { userApis } from '@/apis/user'
-import type { QuickLaunchResponse, TaskType, Team } from '@/types/api'
-import { filterTeamsByMode } from '../../selector/team-selector-utils'
-import type { QuickLauncher } from './types'
+import type { QuickLaunchInputPreset, QuickLaunchResponse, TaskType, Team } from '@/types/api'
+import { filterTeamsByMode, getTeamTargetPage } from '../../selector/team-selector-utils'
+import type { QuickInputPreset, QuickLauncher } from './types'
 
 interface UseQuickLaunchersOptions {
   teams: Team[]
@@ -14,6 +14,33 @@ interface UseQuickLaunchersOptions {
 
 function findTeam(teams: Team[], teamId: number) {
   return teams.find(team => team.id === teamId) || null
+}
+
+function presetsFromPhrases(phrases: string[] | undefined): QuickInputPreset[] {
+  return (phrases ?? [])
+    .map(phrase => phrase.trim())
+    .filter(Boolean)
+    .map((phrase, index) => ({
+      id: `preset_${index + 1}`,
+      title: phrase,
+      prompt: phrase,
+    }))
+}
+
+function normalizeInputPresets(
+  inputPresets: QuickLaunchInputPreset[] | undefined,
+  fallbackPhrases?: string[]
+): QuickInputPreset[] {
+  if (inputPresets && inputPresets.length > 0) {
+    return inputPresets.map(preset => ({
+      id: preset.id,
+      title: preset.title,
+      prompt: preset.prompt,
+      options: preset.options,
+    }))
+  }
+
+  return presetsFromPhrases(fallbackPhrases)
 }
 
 export function useQuickLaunchers({ teams, currentMode, defaultTeam }: UseQuickLaunchersOptions) {
@@ -44,7 +71,7 @@ export function useQuickLaunchers({ teams, currentMode, defaultTeam }: UseQuickL
     const launchers: QuickLauncher[] = []
 
     for (const item of data?.system_functions ?? []) {
-      const team = findTeam(filteredTeams, item.team_id)
+      const team = findTeam(teams, item.team_id)
       if (!team) continue
 
       launchers.push({
@@ -54,12 +81,13 @@ export function useQuickLaunchers({ teams, currentMode, defaultTeam }: UseQuickL
         description: item.description,
         icon: item.icon,
         team,
-        quickPhrases: item.quick_phrases ?? [],
+        targetPage: getTeamTargetPage(team, currentMode),
+        inputPresets: normalizeInputPresets(item.input_presets),
       })
     }
 
     return launchers
-  }, [data?.system_functions, filteredTeams])
+  }, [currentMode, data?.system_functions, teams])
 
   const favoriteLaunchers = useMemo<QuickLauncher[]>(() => {
     const launchers: QuickLauncher[] = []
@@ -75,12 +103,16 @@ export function useQuickLaunchers({ teams, currentMode, defaultTeam }: UseQuickL
         description: item.description,
         icon: item.icon,
         team,
-        quickPhrases: item.quick_phrases ?? team.quick_phrases ?? [],
+        targetPage: getTeamTargetPage(team, currentMode),
+        inputPresets: normalizeInputPresets(
+          item.input_presets,
+          item.quick_phrases ?? team.quick_phrases
+        ),
       })
     }
 
     return launchers
-  }, [data?.favorite_agents, defaultTeam?.id, filteredTeams])
+  }, [currentMode, data?.favorite_agents, defaultTeam?.id, filteredTeams])
 
   return {
     isLoading,
