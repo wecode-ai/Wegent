@@ -147,7 +147,7 @@ export function CompactChatComposer({
               type="button"
               data-testid="expand-input-button"
               onClick={() => setFullscreenInputOpen(true)}
-              className="absolute right-2 top-2 z-popover flex h-8 w-8 items-center justify-center rounded-full text-text-secondary hover:bg-muted"
+              className="absolute right-2 top-2 z-popover flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-muted"
               aria-label={t('workbench.expand_input', '展开输入框')}
             >
               <Maximize2 className="h-4 w-4" />
@@ -157,7 +157,7 @@ export function CompactChatComposer({
             <button
               type="button"
               data-testid="voice-input-button"
-              className="absolute bottom-[6px] right-14 z-popover flex h-10 w-10 items-center justify-center rounded-full p-0 text-text-secondary hover:bg-muted"
+              className="absolute bottom-[6px] right-14 z-popover flex h-11 w-11 items-center justify-center rounded-full p-0 text-text-secondary hover:bg-muted"
               aria-label={t('workbench.voice_input', '语音输入')}
             >
               <Mic className="h-5 w-5" />
@@ -229,7 +229,7 @@ export function CompactChatComposer({
               type="button"
               data-testid="collapse-input-button"
               onClick={() => setFullscreenInputOpen(false)}
-              className="absolute right-3 top-3 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-background/90 text-text-secondary shadow-sm hover:bg-muted"
+              className="absolute right-3 top-3 z-popover flex h-11 w-11 items-center justify-center rounded-full bg-background/90 text-text-secondary shadow-sm hover:bg-muted"
               aria-label={t('workbench.collapse_input', '折叠输入框')}
             >
               <Minimize2 className="h-5 w-5" />

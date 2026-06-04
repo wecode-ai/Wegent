@@ -218,7 +218,7 @@ export function MobileDrawer({
                               onClose()
                             }}
                             className={[
-                              'flex h-9 min-w-[44px] w-full items-center rounded-lg px-2 text-left text-[13px]',
+                              'flex h-11 min-w-[44px] w-full items-center rounded-lg px-2 text-left text-[13px]',
                               currentTaskId === task.task_id
                                 ? 'bg-[rgb(var(--color-sidebar-active))] text-[rgb(var(--color-sidebar-text-primary))]'
                                 : 'text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]',
@@ -242,7 +242,7 @@ export function MobileDrawer({
                           type="button"
                           data-testid={`mobile-project-task-limit-toggle-${project.id}`}
                           onClick={() => toggleProjectTaskLimit(project.id)}
-                          className="flex h-9 min-w-[44px] w-full items-center rounded-lg px-2 text-left text-[13px] font-medium text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
+                          className="flex h-11 min-w-[44px] w-full items-center rounded-lg px-2 text-left text-[13px] font-medium text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
                         >
                           {showAllTasks
                             ? t('workbench.show_less', '收起')

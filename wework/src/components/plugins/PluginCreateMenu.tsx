@@ -49,10 +49,10 @@ export function PluginCreateMenu({
         aria-expanded={isOpen}
         aria-label={compact ? t('workbench.plugins_create', '创建') : undefined}
         className={[
-          'flex min-w-[44px] items-center justify-center gap-2 text-text-primary transition-colors',
+          'flex min-w-[44px] items-center justify-center text-text-primary transition-colors',
           compact
-            ? 'h-11 w-11 rounded-xl bg-surface px-0 text-sm font-semibold hover:bg-muted'
-            : 'h-8 rounded-lg bg-[#f5f5f6] px-2.5 text-[13px] font-medium leading-[18px] hover:bg-[#eeeeef]',
+            ? 'h-11 w-11 gap-0 rounded-xl bg-surface px-0 text-sm font-semibold hover:bg-muted'
+            : 'h-8 gap-1.5 rounded-lg bg-surface px-2.5 text-[13px] font-medium leading-[18px] hover:bg-muted',
         ].join(' ')}
         onClick={onToggle}
       >
@@ -68,12 +68,12 @@ export function PluginCreateMenu({
       {isOpen && (
         <div
           data-testid="plugins-create-menu"
-          className="absolute right-0 top-11 z-popover isolate w-40 overflow-hidden rounded-xl border border-border bg-[rgb(var(--color-popover))] p-1 text-text-primary shadow-2xl ring-1 ring-border"
+          className="absolute right-0 top-8 z-popover isolate w-40 overflow-hidden rounded-xl border border-border bg-[rgb(var(--color-popover))] p-1 text-text-primary shadow-2xl ring-1 ring-border"
         >
           <button
             type="button"
             data-testid="plugins-create-skill-option"
-            className="flex h-9 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-semibold text-text-primary hover:bg-surface"
+            className="flex h-11 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-semibold text-text-primary hover:bg-surface"
             onClick={onCreateSkill}
           >
             <Sparkles className="h-4 w-4 text-indigo-500" />
@@ -82,7 +82,7 @@ export function PluginCreateMenu({
           <button
             type="button"
             data-testid="plugins-create-mcp-option"
-            className="flex h-9 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-semibold text-text-primary hover:bg-surface"
+            className="flex h-11 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-semibold text-text-primary hover:bg-surface"
             onClick={onCreateMcp}
           >
             <Server className="h-4 w-4 text-primary" />
@@ -92,7 +92,7 @@ export function PluginCreateMenu({
             <button
               type="button"
               data-testid="plugins-create-plugin-option"
-              className="flex h-9 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-semibold text-text-primary hover:bg-surface"
+              className="flex h-11 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-semibold text-text-primary hover:bg-surface"
               onClick={onCreatePlugin}
             >
               <Boxes className="h-4 w-4 text-violet-500" />

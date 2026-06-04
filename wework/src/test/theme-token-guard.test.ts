@@ -31,9 +31,12 @@ const zIndexGuardedFiles = [
   'components/chat/composer/ProjectChatComposer.tsx',
   'components/chat/composer/ComposerTextarea.tsx',
   'components/layout/DesktopSearchDialog.tsx',
+  'components/layout/DesktopWorkbenchLayout.tsx',
   'components/layout/DesktopWorkbenchMain.tsx',
   'components/layout/MobileDrawer.tsx',
   'components/layout/MobileWorkbenchLayout.tsx',
+  'pages/PluginManagementPage.tsx',
+  'pages/PluginsPage.tsx',
 ]
 
 const forbiddenGlobalZIndexClasses = [

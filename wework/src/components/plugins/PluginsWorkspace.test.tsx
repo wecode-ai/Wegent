@@ -4,6 +4,10 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { PluginsWorkspace } from './PluginsWorkspace'
 
+async function openSkillsTab() {
+  await userEvent.click(screen.getByRole('tab', { name: '技能' }))
+}
+
 function createSkillZipFile(name: string, rootSkillMd = false): File {
   const encoder = new TextEncoder()
   const fileName = rootSkillMd ? 'SKILL.md' : `${name}/SKILL.md`
@@ -400,14 +404,13 @@ describe('PluginsWorkspace', () => {
   test('uses readable theme tokens for the selected catalog tab', async () => {
     render(<PluginsWorkspace />)
 
+    await openSkillsTab()
     const skillsTab = screen.getByRole('tab', { name: '技能' })
 
     expect(skillsTab).toHaveAttribute('aria-selected', 'true')
     expect(skillsTab).toHaveClass(
-      'bg-popover',
+      'bg-background',
       'text-text-primary',
-      'max-sm:bg-text-primary',
-      'max-sm:text-white',
     )
     expect(await screen.findByText('Weibo Skill 1')).toBeInTheDocument()
   })
@@ -415,10 +418,11 @@ describe('PluginsWorkspace', () => {
   test('filters skills and shows the empty state for unmatched search', async () => {
     render(<PluginsWorkspace />)
 
+    await openSkillsTab()
     expect(await screen.findByText('Weibo Skill 1')).toBeInTheDocument()
     expect(screen.getByTestId('plugins-search-input')).toHaveClass(
       'h-11',
-      'min-h-[44px]',
+      'w-full',
     )
 
     await userEvent.type(
@@ -433,38 +437,36 @@ describe('PluginsWorkspace', () => {
   test('uses a readable single-column mobile catalog layout', async () => {
     render(<PluginsWorkspace />)
 
+    await openSkillsTab()
     expect(await screen.findByText('Weibo Skill 1')).toBeInTheDocument()
     expect(screen.getByTestId('plugins-workspace')).toHaveClass(
-      'pt-16',
-      'sm:py-5',
+      'bg-background',
+      'text-text-primary',
     )
-    expect(screen.getByRole('tablist')).toHaveClass('w-full', 'sm:w-fit')
+    expect(screen.getByRole('tablist')).toHaveClass('w-full', 'md:w-fit')
     expect(screen.getByRole('tab', { name: '技能' })).toHaveClass(
-      'h-9',
+      'h-7',
       'flex-1',
-      'bg-popover',
-      'max-sm:bg-text-primary',
-      'max-sm:text-white',
+      'bg-background',
+      'text-text-primary',
     )
     expect(screen.getByTestId('plugins-search-input')).toHaveClass(
-      'text-base',
-      'sm:text-sm',
+      'text-[13px]',
+      'leading-[18px]',
     )
     expect(screen.getByTestId('plugins-mobile-section-filter')).toHaveClass(
-      'sm:hidden',
+      'md:hidden',
     )
     expect(screen.getByTestId('plugins-section-filter')).toHaveClass(
       'hidden',
-      'sm:block',
+      'md:block',
     )
 
     const catalogCard = screen.getByText('Weibo Skill 1').closest('article')
-    expect(catalogCard).toHaveClass('rounded-2xl', 'border', 'sm:rounded-lg')
+    expect(catalogCard).toHaveClass('grid', 'min-h-[72px]', 'border-b')
     expect(catalogCard?.querySelector('button')).toHaveClass(
       'h-11',
       'w-11',
-      'sm:h-8',
-      'sm:w-8',
     )
 
     const catalogGrid = screen
@@ -477,6 +479,7 @@ describe('PluginsWorkspace', () => {
   test('shows personal skills and uploads a personal skill zip', async () => {
     render(<PluginsWorkspace />)
 
+    await openSkillsTab()
     expect(await screen.findByText('Excel Helper')).toBeInTheDocument()
 
     await userEvent.selectOptions(
@@ -611,6 +614,7 @@ describe('PluginsWorkspace', () => {
   test('places system pagination before the personal skills section', async () => {
     render(<PluginsWorkspace />)
 
+    await openSkillsTab()
     expect(await screen.findByText('Weibo Skill 1')).toBeInTheDocument()
     expect(await screen.findByText('Excel Helper')).toBeInTheDocument()
 
@@ -682,6 +686,7 @@ describe('PluginsWorkspace', () => {
   test('loads the next system skill page from the backend', async () => {
     render(<PluginsWorkspace />)
 
+    await openSkillsTab()
     expect(await screen.findByText('Weibo Skill 1')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('system-skills-next-page-button'))
@@ -696,6 +701,7 @@ describe('PluginsWorkspace', () => {
   test('installs a system skill from the marketplace', async () => {
     render(<PluginsWorkspace />)
 
+    await openSkillsTab()
     expect(await screen.findByText('Weibo Skill 1')).toBeInTheDocument()
 
     await userEvent.click(
@@ -717,6 +723,7 @@ describe('PluginsWorkspace', () => {
   test('shows personal skills as uninstalled until explicitly installed', async () => {
     render(<PluginsWorkspace />)
 
+    await openSkillsTab()
     expect(await screen.findByText('Excel Helper')).toBeInTheDocument()
     expect(
       screen.getByTestId('system-skill-install-personal-excel-helper'),
@@ -747,6 +754,7 @@ describe('PluginsWorkspace', () => {
 
     render(<PluginsWorkspace />)
 
+    await openSkillsTab()
     expect(await screen.findByText('Weibo Skill 1')).toBeInTheDocument()
     expect(
       screen.queryByTestId('system-skill-install--weibo-page-1'),
@@ -779,6 +787,7 @@ describe('PluginsWorkspace', () => {
 
     render(<PluginsWorkspace />)
 
+    await openSkillsTab()
     expect(await screen.findByText('Weibo Skill 1')).toBeInTheDocument()
 
     await userEvent.click(

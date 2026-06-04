@@ -5,14 +5,22 @@ const SIDEBAR_COLLAPSED_STORAGE_KEY = 'wework.desktop.sidebar.collapsed'
 function readStoredSidebarCollapsed(): boolean {
   if (typeof window === 'undefined') return false
 
-  return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === 'true'
+  try {
+    return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === 'true'
+  } catch {
+    return false
+  }
 }
 
 function storeSidebarCollapsed(collapsed: boolean) {
-  window.localStorage.setItem(
-    SIDEBAR_COLLAPSED_STORAGE_KEY,
-    collapsed ? 'true' : 'false',
-  )
+  try {
+    window.localStorage.setItem(
+      SIDEBAR_COLLAPSED_STORAGE_KEY,
+      collapsed ? 'true' : 'false',
+    )
+  } catch {
+    // Keep the in-memory collapsed state when browser storage is unavailable.
+  }
 }
 
 export function useDesktopSidebarCollapsed() {

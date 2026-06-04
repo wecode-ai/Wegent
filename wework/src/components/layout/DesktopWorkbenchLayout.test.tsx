@@ -349,7 +349,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByTestId('scroll-to-bottom-button')).toHaveClass(
       'bottom-36',
-      'z-[60]',
+      'z-popover',
     )
   })
 

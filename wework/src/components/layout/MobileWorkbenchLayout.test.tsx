@@ -119,7 +119,7 @@ describe('MobileWorkbenchLayout', () => {
     expect(screen.queryByText('MI')).not.toBeInTheDocument()
     expect(screen.getByTestId('mobile-empty-header')).toHaveClass('bg-background/95')
     expect(screen.getByTestId('open-mobile-drawer-button')).toHaveClass(
-      'h-10',
+      'h-11',
       'text-text-primary',
     )
     expect(screen.getByTestId('open-mobile-drawer-button')).not.toHaveClass(

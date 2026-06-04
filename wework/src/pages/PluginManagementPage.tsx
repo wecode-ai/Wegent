@@ -139,16 +139,16 @@ export function PluginManagementPage() {
           sidebarCollapsed
           onToggleSidebar={() => setSidebarCollapsed(false)}
           onNewChat={handleNewChat}
-          className="absolute left-4 top-2 z-50"
+          className="absolute left-4 top-2 z-chrome"
         />
       ) : (
         <>
-          <header className="pointer-events-none absolute left-5 top-[max(8px,env(safe-area-inset-top))] z-50 flex h-8 items-center">
+          <header className="pointer-events-none absolute left-5 top-[max(8px,env(safe-area-inset-top))] z-chrome flex h-11 items-center">
             <button
               type="button"
               data-testid="open-mobile-drawer-button"
               onClick={() => setDrawerOpen(true)}
-              className="pointer-events-auto flex h-8 min-w-[44px] items-center justify-center rounded-lg bg-[#f6f6f7] text-[#111114] transition-colors hover:bg-[#eeeeef]"
+              className="pointer-events-auto flex h-11 min-w-[44px] items-center justify-center rounded-lg bg-surface text-text-primary transition-colors hover:bg-muted"
               aria-label={t('workbench.open_menu', '打开菜单')}
             >
               <Menu className="h-5 w-5" />

@@ -475,7 +475,7 @@ function CatalogCard({
   const canUpdate = item.installState === 'update_available'
 
   return (
-    <article className="group grid min-h-[72px] grid-cols-[44px_minmax(0,1fr)_40px] items-center gap-3 border-b border-[#ececf0] py-2.5">
+    <article className="group grid min-h-[72px] grid-cols-[44px_minmax(0,1fr)_44px] items-center gap-3 border-b border-border py-2.5">
       <div
         className={[
           'flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-black/10 shadow-[0_8px_20px_rgba(15,23,42,0.08)]',
@@ -485,10 +485,10 @@ function CatalogCard({
         <Icon className="h-5 w-5" />
       </div>
       <div className="min-w-0 flex-1">
-        <h3 className="truncate text-sm font-semibold leading-5 text-[#111114]">
+        <h3 className="truncate text-sm font-semibold leading-5 text-text-primary">
           {item.name}
         </h3>
-        <p className="mt-0.5 truncate text-[13px] leading-[18px] text-[#656973]">
+        <p className="mt-0.5 truncate text-[13px] leading-[18px] text-text-secondary">
           {item.description}
         </p>
       </div>
@@ -500,7 +500,7 @@ function CatalogCard({
               aria-label={updateLabel}
               data-testid={`system-skill-update-${item.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`}
               onClick={() => onInstall(item)}
-              className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#e3e3e8] bg-[#fafafa] text-[#1e1f24] hover:bg-[#f1f1f3]"
+              className="flex h-11 w-11 items-center justify-center rounded-lg border border-border bg-surface text-text-primary hover:bg-muted"
             >
               <RefreshCw className="h-4 w-4" />
             </button>
@@ -510,7 +510,7 @@ function CatalogCard({
             aria-label={item.enabled ? enabledLabel : uninstallLabel}
             data-testid={`system-skill-uninstall-${item.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`}
             onClick={() => onRequestUninstall(item)}
-            className="flex h-9 w-9 items-center justify-center rounded-lg text-[#9ca0a8] hover:bg-[#f6f6f7] hover:text-[#1e1f24]"
+            className="flex h-11 w-11 items-center justify-center rounded-lg text-text-muted hover:bg-muted hover:text-text-primary"
             disabled={!item.installedSkillId}
           >
             <Check className="h-4 w-4" />
@@ -522,7 +522,7 @@ function CatalogCard({
           aria-label={installLabel}
           data-testid={`system-skill-install-${item.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`}
           onClick={() => onInstall(item)}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#e3e3e8] bg-[#fafafa] hover:bg-[#f1f1f3]"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-border bg-surface hover:bg-muted"
         >
           <Plus className="h-4 w-4" />
         </button>

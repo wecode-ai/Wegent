@@ -820,7 +820,7 @@ export function PluginManagementWorkspace({
           </div>
         ) : activeTab === 'apps' ? (
           <div className={emptyStateClassName()}>
-            {t('workbench.plugin_management_tab_apps', '应用')} 1
+            {t('workbench.plugin_management_tab_apps', '应用')}
           </div>
         ) : activeTab === 'mcp' ? (
           <div className="space-y-9">
@@ -869,7 +869,7 @@ export function PluginManagementWorkspace({
               ))
             ) : (
               <div className={emptyStateClassName()}>
-                {t('workbench.plugins_no_search_results', '找不到匹配的技能')}
+                {t('workbench.plugins_no_mcp_results', '找不到匹配的 MCP')}
               </div>
             )}
           </div>

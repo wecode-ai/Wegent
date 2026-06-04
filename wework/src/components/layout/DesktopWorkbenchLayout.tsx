@@ -254,7 +254,7 @@ export function DesktopWorkbenchLayout({
           sidebarCollapsed
           onToggleSidebar={() => setSidebarCollapsed(false)}
           onNewChat={onNewChat}
-          className="absolute left-4 top-2 z-50"
+          className="absolute left-4 top-2 z-chrome"
         />
       )}
 

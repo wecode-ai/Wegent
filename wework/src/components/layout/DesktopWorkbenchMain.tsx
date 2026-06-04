@@ -25,9 +25,9 @@ const DESKTOP_FLOATING_COMPOSER_CLASS =
 const DESKTOP_FLOATING_COMPOSER_BACKDROP_CLASS =
   'pointer-events-none absolute inset-x-0 bottom-0 z-10 h-56 bg-gradient-to-t from-background via-background to-transparent'
 const DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS =
-  'bottom-36 z-[60] bg-background/95 shadow-md'
+  'bottom-36 z-popover bg-background/95 shadow-md'
 const DESKTOP_QUEUED_SCROLL_TO_BOTTOM_BUTTON_CLASS =
-  'bottom-64 z-[60] bg-background/95 shadow-md'
+  'bottom-64 z-popover bg-background/95 shadow-md'
 
 interface DesktopWorkbenchMainProps {
   isBootstrapping: boolean

@@ -159,7 +159,7 @@ export function MobileWorkbenchLayout({
                 type="button"
                 data-testid="open-mobile-drawer-button"
                 onClick={() => setDrawerOpen(true)}
-                className="pointer-events-auto flex h-10 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
+                className="pointer-events-auto flex h-11 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
                 aria-label={t('workbench.open_menu', '打开菜单')}
               >
                 <Menu className="h-5 w-5" />
@@ -181,7 +181,7 @@ export function MobileWorkbenchLayout({
                   <div className="h-10 w-32" data-testid="model-selector-loading" />
                 )}
               </div>
-              <div className="h-10 min-w-[44px]" />
+              <div className="h-11 min-w-[44px]" />
             </header>
             <ScrollableMessageArea
               messages={messages}
@@ -227,7 +227,7 @@ export function MobileWorkbenchLayout({
                 type="button"
                 data-testid="open-mobile-drawer-button"
                 onClick={() => setDrawerOpen(true)}
-                className="flex h-10 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
+                className="flex h-11 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
                 aria-label={t('workbench.open_menu', '打开菜单')}
               >
                 <Menu className="h-5 w-5" />
@@ -249,7 +249,7 @@ export function MobileWorkbenchLayout({
                   <div className="h-10 w-32" data-testid="model-selector-loading" />
                 )}
               </div>
-              <div className="h-10 min-w-[44px]" />
+              <div className="h-11 min-w-[44px]" />
             </header>
 
             <section className="flex min-h-0 flex-1 items-center justify-center px-5 pb-6">
