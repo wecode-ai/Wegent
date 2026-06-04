@@ -276,6 +276,26 @@ def test_kind_apply_json_comment_only_input_outputs_error_envelope():
     client.apply_kinds.assert_not_called()
 
 
+def test_kind_apply_json_empty_input_outputs_invalid_input():
+    client = MagicMock()
+
+    result = invoke_with_client(
+        ["kind", "apply", "--input", "-", "--json"],
+        client,
+        input_text="",
+    )
+
+    assert result.exit_code != 0
+    payload = load_error_payload(result)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_input"
+    assert (
+        payload["error"]["message"]
+        == "Kind input must include at least one resource object"
+    )
+    client.apply_kinds.assert_not_called()
+
+
 def test_kind_apply_json_separator_only_input_outputs_error_envelope():
     client = MagicMock()
 
@@ -383,6 +403,27 @@ def test_kind_delete_json_rejects_scalar_resource_entries():
     assert payload["success"] is False
     assert payload["error"]["code"] == "invalid_input"
     assert payload["error"]["message"] == "Kind resource entries must be objects"
+    client.delete_kinds.assert_not_called()
+    client.delete_kind.assert_not_called()
+
+
+def test_kind_delete_json_whitespace_only_input_outputs_invalid_input():
+    client = MagicMock()
+
+    result = invoke_with_client(
+        ["kind", "delete", "--input", "-", "--json"],
+        client,
+        input_text="  \n\t\n",
+    )
+
+    assert result.exit_code != 0
+    payload = load_error_payload(result)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_input"
+    assert (
+        payload["error"]["message"]
+        == "Kind input must include at least one resource object"
+    )
     client.delete_kinds.assert_not_called()
     client.delete_kind.assert_not_called()
 

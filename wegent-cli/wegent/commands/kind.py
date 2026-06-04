@@ -84,8 +84,10 @@ def _read_input_text(source: str) -> str:
             ) from exc
 
     if not text.strip():
-        label = "stdin" if source == "-" else source
-        raise CliError("empty_input", f"No input received from {label}")
+        raise CliError(
+            "invalid_input",
+            "Kind input must include at least one resource object",
+        )
 
     return text
 
