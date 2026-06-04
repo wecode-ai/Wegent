@@ -499,7 +499,6 @@ export function DesktopSidebar({
   onCollapse,
   onNewChat,
   onStartStandaloneChat,
-  onSelectProject,
   onStartNewProjectChat,
   onOpenTask,
   onSearchTasks,
@@ -555,7 +554,6 @@ export function DesktopSidebar({
   }, [currentProjectWithTask, currentTaskId])
 
   const handleToggleProject = (projectId: number) => {
-    const shouldExpand = !expandedProjectIds.has(projectId)
     setExpandedProjectIds(previous => {
       const next = new Set(previous)
       if (next.has(projectId)) {
@@ -565,9 +563,6 @@ export function DesktopSidebar({
       }
       return next
     })
-    if (shouldExpand) {
-      onSelectProject(projectId)
-    }
   }
 
   const handleToggleProjectTaskLimit = (projectId: number) => {
