@@ -372,9 +372,11 @@ wework-web:
       changes:
         - wework/**/*
         - wecode/docker/wework/**/*
+      when: manual
     - changes:
       - wework/**/*
       - wecode/docker/wework/**/*
+      when: manual
 
 trigger_update_wework_web:
     stage: production
