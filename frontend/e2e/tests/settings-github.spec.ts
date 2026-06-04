@@ -50,7 +50,9 @@ test.describe('Settings - Git Integration', () => {
 
     await addTokenButton.click()
 
-    await expect(page.getByRole('dialog')).toBeVisible({ timeout: INTEGRATIONS_READY_TIMEOUT })
+    await expect(page.getByTestId('git-token-dialog-content')).toBeVisible({
+      timeout: INTEGRATIONS_READY_TIMEOUT,
+    })
     await expect(page.getByRole('heading', { name: /Add Git Token|新增 Git 令牌/ })).toBeVisible()
   })
 })
