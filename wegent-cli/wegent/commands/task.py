@@ -9,7 +9,7 @@ from ..errors import CliError
 from ..io import load_structured_input
 from ..output import dumps_json, dumps_yaml, error_envelope, success_envelope
 
-ASSISTANT_OUTPUT_FIELDS = ("content", "response", "text", "output")
+ASSISTANT_OUTPUT_FIELDS = ("value", "content", "response", "text", "output")
 
 
 def _client(ctx: click.Context) -> WegentClient:
@@ -50,10 +50,17 @@ def _first_output_value(data: dict[str, Any]) -> str | None:
 
 
 def _assistant_message(subtask: Any) -> str | None:
-    if not isinstance(subtask, dict) or subtask.get("role") != "assistant":
+    if not isinstance(subtask, dict):
+        return None
+
+    role = subtask.get("role")
+    if str(role).lower() != "assistant":
         return None
 
     result = subtask.get("result")
+    if isinstance(result, str) and result.strip():
+        return result
+
     if isinstance(result, dict):
         message = _first_output_value(result)
         if message is not None:

@@ -92,6 +92,26 @@ def test_task_result_extracts_assistant_outputs():
     client.get_task.assert_called_once_with(123)
 
 
+def test_task_result_extracts_backend_assistant_value():
+    client = MagicMock()
+    task = {
+        "id": 123,
+        "status": "COMPLETED",
+        "subtasks": [
+            {"role": "USER", "result": {"value": "ignore me"}},
+            {"role": "ASSISTANT", "result": {"value": "final answer"}},
+        ],
+    }
+    client.get_task.return_value = task
+
+    result = invoke_with_client(["task", "result", "123", "--json"], client)
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["data"]["status"] == "COMPLETED"
+    assert payload["data"]["messages"] == ["final answer"]
+
+
 def test_task_cancel_uses_cancel_endpoint():
     client = MagicMock()
     client.cancel_task.return_value = {"id": 123, "status": "cancelled"}
@@ -168,3 +188,19 @@ def test_task_result_extracts_top_level_assistant_content_fallback():
 
     assert result.exit_code == 0
     assert json.loads(result.output)["data"]["messages"] == ["top text"]
+
+
+def test_task_result_extracts_string_result():
+    client = MagicMock()
+    client.get_task.return_value = {
+        "id": 123,
+        "status": "success",
+        "subtasks": [
+            {"role": "ASSISTANT", "result": "direct answer"},
+        ],
+    }
+
+    result = invoke_with_client(["task", "result", "123", "--json"], client)
+
+    assert result.exit_code == 0
+    assert json.loads(result.output)["data"]["messages"] == ["direct answer"]
