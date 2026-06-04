@@ -9,6 +9,16 @@ import userEvent from '@testing-library/user-event'
 import { listGroups } from '@/apis/groups'
 import { MyResources } from '@/features/resource-library/components/MyResources'
 
+const mockReplace = jest.fn()
+
+jest.mock('next/navigation', () => ({
+  usePathname: () => '/resource-library',
+  useRouter: () => ({
+    replace: mockReplace,
+  }),
+  useSearchParams: () => new URLSearchParams(window.location.search),
+}))
+
 jest.mock('@/apis/groups', () => ({
   listGroups: jest.fn(),
 }))
@@ -133,6 +143,7 @@ async function openGroupMenu() {
 describe('MyResources', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    window.history.replaceState({}, '', '/resource-library')
     mockListGroups.mockResolvedValue({
       items: [
         {
@@ -223,6 +234,33 @@ describe('MyResources', () => {
     expect(await screen.findByTestId('retriever-resource-manager')).toHaveAttribute(
       'data-scope',
       'all'
+    )
+  })
+
+  it('opens the managed resource type from the URL query', async () => {
+    window.history.replaceState({}, '', '/resource-library?tab=mine&type=skill&scope=personal')
+
+    render(<MyResources />)
+
+    expect(await screen.findByTestId('skill-resource-manager')).toHaveAttribute(
+      'data-scope',
+      'personal'
+    )
+    expect(screen.getByTestId('managed-resource-skill-tab')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+  })
+
+  it('updates the URL query when switching managed resource types', async () => {
+    window.history.replaceState({}, '', '/resource-library?tab=mine&type=agent&scope=personal')
+    render(<MyResources />)
+
+    fireEvent.click(await screen.findByTestId('managed-resource-skill-tab'))
+
+    expect(mockReplace).toHaveBeenCalledWith(
+      '/resource-library?tab=mine&type=skill&scope=personal',
+      { scroll: false }
     )
   })
 
