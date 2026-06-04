@@ -14,11 +14,13 @@ from ..output import (
     success_envelope,
 )
 
-DEFAULT_TOOLS = [{"type": "wegent_chat_bot"}]
-
 
 def _client(ctx: click.Context) -> WegentClient:
     return ctx.obj["client"]
+
+
+def _default_tools() -> list[dict[str, str]]:
+    return [{"type": "wegent_chat_bot"}]
 
 
 def _emit_error(error: CliError, json_output: bool) -> None:
@@ -57,7 +59,7 @@ def _build_payload(
 
     payload: dict[str, Any] = {"model": resolved_model, "input": prompt}
     if include_tools:
-        payload["tools"] = DEFAULT_TOOLS
+        payload["tools"] = _default_tools()
     return payload
 
 

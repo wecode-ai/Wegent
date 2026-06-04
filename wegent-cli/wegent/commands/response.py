@@ -31,7 +31,7 @@ def _emit_error(error: CliError, json_output: bool) -> None:
 
 def _response_payload(input_path: str, model: str | None) -> dict[str, Any]:
     loaded = load_structured_input(input_path)
-    payload = loaded if isinstance(loaded, dict) else {"input": loaded}
+    payload = dict(loaded) if isinstance(loaded, dict) else {"input": loaded}
     if model is not None:
         payload["model"] = model
     if not payload.get("model"):

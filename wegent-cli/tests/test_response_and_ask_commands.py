@@ -57,6 +57,35 @@ def test_response_create_reads_stdin_payload_and_sets_model():
     )
 
 
+def test_response_create_does_not_mutate_loaded_payload_when_overriding_model():
+    client = MagicMock()
+    client.create_response.return_value = {"id": "resp_1"}
+    loaded_payload = {"input": "hello", "model": "default#original"}
+
+    with patch(
+        "wegent.commands.response.load_structured_input",
+        return_value=loaded_payload,
+    ):
+        result = invoke_with_client(
+            [
+                "response",
+                "create",
+                "--input",
+                "payload.json",
+                "--model",
+                "default#override",
+                "--json",
+            ],
+            client,
+        )
+
+    assert result.exit_code == 0
+    assert loaded_payload == {"input": "hello", "model": "default#original"}
+    client.create_response.assert_called_once_with(
+        {"input": "hello", "model": "default#override"}
+    )
+
+
 def test_response_create_json_missing_model_returns_error_without_client_call():
     client = MagicMock()
 
@@ -116,6 +145,22 @@ def test_response_subcommand_json_renders_client_error_envelope():
     assert payload["error"]["message"] == "backend failed"
 
 
+def test_response_subcommand_non_json_renders_plain_error():
+    client = MagicMock()
+    client.get_response.side_effect = CliError(
+        "api_error",
+        "backend failed",
+        {"status_code": 500},
+        EXIT_API_ERROR,
+    )
+
+    result = invoke_with_client(["response", "get", "resp_123"], client)
+
+    assert result.exit_code == EXIT_API_ERROR
+    assert result.stderr == "Error: backend failed\n"
+    assert not result.stderr.lstrip().startswith("{")
+
+
 def test_ask_uses_explicit_model_without_default_lookup():
     client = MagicMock()
     client.create_response.return_value = assistant_response()
@@ -137,6 +182,34 @@ def test_ask_uses_explicit_model_without_default_lookup():
             "tools": [{"type": "wegent_chat_bot"}],
         }
     )
+
+
+def test_ask_uses_fresh_default_tools_for_each_payload():
+    client = MagicMock()
+    call_count = 0
+
+    def create_response(payload):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            payload["tools"][0]["type"] = "mutated"
+        return assistant_response()
+
+    client.create_response.side_effect = create_response
+
+    first_result = invoke_with_client(
+        ["ask", "first", "--model", "custom#team"], client
+    )
+    second_result = invoke_with_client(
+        ["ask", "second", "--model", "custom#team"],
+        client,
+    )
+
+    assert first_result.exit_code == 0
+    assert second_result.exit_code == 0
+    assert client.create_response.call_args_list[1].args[0]["tools"] == [
+        {"type": "wegent_chat_bot"}
+    ]
 
 
 def test_ask_resolves_default_team_by_mode():
@@ -205,6 +278,18 @@ def test_ask_returns_json_error_when_default_team_missing():
     assert payload["success"] is False
     assert payload["error"]["code"] == "default_team_not_configured"
     assert payload["error"]["details"] == {"mode": "chat"}
+    client.create_response.assert_not_called()
+
+
+def test_ask_non_json_default_team_missing_renders_plain_error():
+    client = MagicMock()
+    client.get_default_teams.return_value = {"chat": None}
+
+    result = invoke_with_client(["ask", "hello", "--mode", "chat"], client)
+
+    assert result.exit_code != 0
+    assert result.stderr.startswith("Error: No default team configured for mode: chat")
+    assert not result.stderr.lstrip().startswith("{")
     client.create_response.assert_not_called()
 
 
