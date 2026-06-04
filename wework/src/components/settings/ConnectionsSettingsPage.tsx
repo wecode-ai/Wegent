@@ -9,6 +9,7 @@ import {
   Globe2,
   Loader2,
   MoreHorizontal,
+  Monitor,
   Pencil,
   Plus,
   RotateCcw,
@@ -23,7 +24,6 @@ import { createHttpClient } from '@/api/http'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
-import { buildVncPageUrl } from '@/lib/vnc'
 import {
   isClaudeCodeDevice,
   isCloudDevice,
@@ -168,80 +168,6 @@ function createSettingsDeviceApi() {
   return createDeviceApi(createHttpClient({ baseUrl: apiBaseUrl }))
 }
 
-function formatMetricPercent(value: number | null | undefined): string {
-  if (value === null || value === undefined) return '--%'
-  if (value < 1) return '<1%'
-  return `${Math.round(value)}%`
-}
-
-function DeviceMetrics({ deviceId }: { deviceId: string }) {
-  const [metrics, setMetrics] = useState<CloudDeviceMetricsResponse | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-
-    createSettingsDeviceApi()
-      .getMetrics(deviceId)
-      .then(data => {
-        if (!cancelled) setMetrics(data)
-      })
-      .catch(() => {
-        if (!cancelled) setMetrics(null)
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [deviceId])
-
-  return (
-    <div
-      data-testid="device-metrics"
-      className="flex flex-wrap items-center gap-3 text-xs text-text-secondary"
-    >
-      <span className="inline-flex items-center gap-1">
-        <span>CPU</span>
-        <span>{formatMetricPercent(metrics?.cpu_usage)}</span>
-      </span>
-      <span className="inline-flex items-center gap-1">
-        <span>MEM</span>
-        <span>{formatMetricPercent(metrics?.memory_usage)}</span>
-      </span>
-      <span className="inline-flex items-center gap-1">
-        <span>磁盘</span>
-        <span>{formatMetricPercent(metrics?.disk_usage)}</span>
-      </span>
-    </div>
-  )
-}
-
-function VncDesktopButton({ deviceId }: { deviceId: string }) {
-  const [loading, setLoading] = useState(false)
-
-  const handleClick = useCallback(async () => {
-    if (loading) return
-    setLoading(true)
-    try {
-      const config = await createSettingsDeviceApi().getVncConfig(deviceId)
-      window.open(buildVncPageUrl(deviceId, config.sandbox_id), '_blank', 'noopener')
-    } catch (e) {
-      console.error('Failed to open device desktop:', e)
-    } finally {
-      setLoading(false)
-    }
-  }, [deviceId, loading])
-
-  return (
-    <DeviceActionButton
-      testId={`connection-vnc-button-${deviceId}`}
-      icon={Monitor}
-      label="桌面"
-      onClick={handleClick}
-      disabled={loading}
-    />
-  )
-}
-
 type ConfirmDeviceAction = 'restart' | 'delete'
 
 function ConfirmDeviceActionDialog({
@@ -348,9 +274,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
       if (device.status !== 'online') return
       setSessionLoading(type)
       try {
-        const { apiBaseUrl } = getRuntimeConfig()
-        const client = createHttpClient({ baseUrl: apiBaseUrl })
-        const deviceApi = createDeviceApi(client)
+        const deviceApi = createSettingsDeviceApi()
         const result =
           type === 'terminal'
             ? await deviceApi.startTerminal(device.device_id)
@@ -386,10 +310,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
     }
     setSaving(true)
     try {
-      const { apiBaseUrl } = getRuntimeConfig()
-      const client = createHttpClient({ baseUrl: apiBaseUrl })
-      const deviceApi = createDeviceApi(client)
-      await deviceApi.renameDevice(device.device_id, trimmed)
+      await createSettingsDeviceApi().renameDevice(device.device_id, trimmed)
       setEditing(false)
       onChanged()
     } catch (e) {
@@ -402,10 +323,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
   const handleRestartDevice = async () => {
     setRestarting(true)
     try {
-      const { apiBaseUrl } = getRuntimeConfig()
-      const client = createHttpClient({ baseUrl: apiBaseUrl })
-      const deviceApi = createDeviceApi(client)
-      await deviceApi.restartCloudDevice(device.device_id)
+      await createSettingsDeviceApi().restartCloudDevice(device.device_id)
       setConfirmAction(null)
       onChanged()
     } catch (e) {
@@ -418,9 +336,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
   const handleDeleteDevice = async () => {
     setDeleting(true)
     try {
-      const { apiBaseUrl } = getRuntimeConfig()
-      const client = createHttpClient({ baseUrl: apiBaseUrl })
-      const deviceApi = createDeviceApi(client)
+      const deviceApi = createSettingsDeviceApi()
       if (isCloudDevice(device)) {
         await deviceApi.deleteCloudDevice(device.device_id)
       } else {
@@ -668,10 +584,7 @@ function ConnectionsDeviceSettingsPage() {
 
   const fetchDevices = useCallback(async () => {
     try {
-      const { apiBaseUrl } = getRuntimeConfig()
-      const client = createHttpClient({ baseUrl: apiBaseUrl })
-      const deviceApi = createDeviceApi(client)
-      const allDevices = await deviceApi.getAllDevices()
+      const allDevices = await createSettingsDeviceApi().getAllDevices()
       const claudeCodeDevices = allDevices.filter(isClaudeCodeDevice)
       setDevices(claudeCodeDevices)
       if (claudeCodeDevices.some(isCloudDevice)) {
