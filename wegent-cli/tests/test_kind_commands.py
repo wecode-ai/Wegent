@@ -256,6 +256,63 @@ def test_kind_apply_json_invalid_structured_input_outputs_error_envelope():
     client.apply_kinds.assert_not_called()
 
 
+def test_kind_apply_json_comment_only_input_outputs_error_envelope():
+    client = MagicMock()
+
+    result = invoke_with_client(
+        ["kind", "apply", "--input", "-", "--json"],
+        client,
+        input_text="# comment only\n",
+    )
+
+    assert result.exit_code != 0
+    payload = load_error_payload(result)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_input"
+    assert (
+        payload["error"]["message"]
+        == "Kind input must include at least one resource object"
+    )
+    client.apply_kinds.assert_not_called()
+
+
+def test_kind_apply_json_separator_only_input_outputs_error_envelope():
+    client = MagicMock()
+
+    result = invoke_with_client(
+        ["kind", "apply", "--input", "-", "--json"],
+        client,
+        input_text="---\n---\n",
+    )
+
+    assert result.exit_code != 0
+    payload = load_error_payload(result)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_input"
+    assert (
+        payload["error"]["message"]
+        == "Kind input must include at least one resource object"
+    )
+    client.apply_kinds.assert_not_called()
+
+
+def test_kind_apply_json_rejects_scalar_resource_entries():
+    client = MagicMock()
+
+    result = invoke_with_client(
+        ["kind", "apply", "--input", "-", "--json"],
+        client,
+        input_text='["bad"]',
+    )
+
+    assert result.exit_code != 0
+    payload = load_error_payload(result)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_input"
+    assert payload["error"]["message"] == "Kind resource entries must be objects"
+    client.apply_kinds.assert_not_called()
+
+
 def test_kind_delete_named_resource():
     client = MagicMock()
     client.delete_kind.return_value = {"message": "deleted"}
@@ -310,6 +367,24 @@ def test_kind_delete_json_without_name_outputs_error_envelope():
     assert payload["error"]["code"] == "invalid_arguments"
     client.delete_kind.assert_not_called()
     client.delete_kinds.assert_not_called()
+
+
+def test_kind_delete_json_rejects_scalar_resource_entries():
+    client = MagicMock()
+
+    result = invoke_with_client(
+        ["kind", "delete", "--input", "-", "--json"],
+        client,
+        input_text="[1]",
+    )
+
+    assert result.exit_code != 0
+    payload = load_error_payload(result)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_input"
+    assert payload["error"]["message"] == "Kind resource entries must be objects"
+    client.delete_kinds.assert_not_called()
+    client.delete_kind.assert_not_called()
 
 
 def test_kind_delete_reads_multi_document_yaml_from_stdin():

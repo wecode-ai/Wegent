@@ -16,16 +16,30 @@ from ..output import dumps_json, dumps_yaml, error_envelope, success_envelope
 
 def _as_resource_list(data: Any) -> list[Any]:
     if isinstance(data, list):
-        return data
+        return _validate_resource_list(data)
     if isinstance(data, dict):
         items = data.get("items")
         if isinstance(items, list):
-            return items
-        return [data]
+            return _validate_resource_list(items)
+        return _validate_resource_list([data])
     raise CliError(
         "invalid_input",
         "Kind input must be an object, an items object, or a list",
     )
+
+
+def _validate_resource_list(resources: list[Any]) -> list[Any]:
+    if not resources:
+        raise CliError(
+            "invalid_input",
+            "Kind input must include at least one resource object",
+        )
+    if any(not isinstance(resource, dict) for resource in resources):
+        raise CliError(
+            "invalid_input",
+            "Kind resource entries must be objects",
+        )
+    return resources
 
 
 def _emit(data: Any, json_output: bool) -> None:
@@ -98,7 +112,7 @@ def _load_resource_input(source: str) -> list[Any]:
     resources: list[Any] = []
     for document in documents:
         resources.extend(_as_resource_list(document))
-    return resources
+    return _validate_resource_list(resources)
 
 
 def _client(ctx: click.Context) -> WegentClient:
