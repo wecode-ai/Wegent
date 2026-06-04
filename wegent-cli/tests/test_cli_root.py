@@ -5,6 +5,18 @@ from click.testing import CliRunner
 from wegent.cli import cli
 
 
+def test_masked_config_merges_defaults_and_masks_set_secrets():
+    from wegent.commands.config import _masked_config
+
+    payload = _masked_config({"server": "http://backend", "token": "secret-token"})
+
+    assert payload["server"] == "http://backend"
+    assert payload["namespace"] == "default"
+    assert payload["mode"] == "chat"
+    assert payload["token"] == "****"
+    assert payload["api_key"] is None
+
+
 def test_help_shows_new_command_groups():
     result = CliRunner().invoke(cli, ["--help"])
 

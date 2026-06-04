@@ -4,7 +4,7 @@ from typing import Any
 
 import click
 
-from ..config import CONFIG_FILE, load_config, save_config
+from ..config import CONFIG_FILE, DEFAULT_CONFIG, load_config, save_config
 from ..output import dumps_json, success_envelope
 
 CONFIG_KEYS = ["server", "namespace", "token", "api_key", "mode"]
@@ -18,9 +18,14 @@ def _mask_secret(key: str, value: Any) -> Any:
     return value
 
 
-def _display_config(config: dict[str, Any]) -> dict[str, Any]:
-    """Return config values that are safe to print."""
-    return {key: _mask_secret(key, config.get(key)) for key in CONFIG_KEYS}
+def _masked_config(config: dict) -> dict:
+    """Return config merged with defaults and masked secrets."""
+    masked = DEFAULT_CONFIG.copy()
+    masked.update(config)
+    for key in SECRET_KEYS:
+        if masked.get(key):
+            masked[key] = "****"
+    return masked
 
 
 @click.group("config")
@@ -32,7 +37,7 @@ def config_cmd():
 @click.option("--json", "as_json", is_flag=True, help="Output JSON.")
 def config_view(as_json: bool):
     """View current configuration."""
-    config = _display_config(load_config(config_file=CONFIG_FILE))
+    config = _masked_config(load_config(config_file=CONFIG_FILE))
 
     if as_json:
         click.echo(dumps_json(success_envelope(config)))
