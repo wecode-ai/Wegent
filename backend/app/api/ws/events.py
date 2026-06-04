@@ -142,10 +142,9 @@ class InteractiveFormAnswerPayload(BaseModel):
         "interactive_form_question",
         description="Interactive form answer type",
     )
-    ask_id: str = Field(..., description="Rendered form ask ID")
-    tool_use_id: Optional[str] = Field(
-        None,
-        description="Deferred tool_use_id returned by Claude Code",
+    tool_use_id: str = Field(
+        ...,
+        description="Deferred tool call ID for the rendered form",
     )
     task_id: Optional[int] = Field(None, description="Task ID for the rendered form")
     subtask_id: Optional[int] = Field(
@@ -201,7 +200,7 @@ class ChatSendPayload(BaseModel):
     force_override_bot_model_type: Optional[str] = Field(
         None, description="Override model type"
     )
-    model_options: Optional[Dict[str, str]] = Field(
+    model_options: Optional[Dict[str, Any]] = Field(
         None,
         description="Model selection options, such as reasoning or speed.",
     )

@@ -50,6 +50,17 @@ describe('REST adapters', () => {
     expect(client.get).toHaveBeenCalledWith('/tasks/8?client_origin=wework')
   })
 
+  test('searches conversation tasks in the wework client origin', async () => {
+    const client = mockClient()
+    vi.mocked(client.get).mockResolvedValueOnce({ total: 0, items: [] })
+
+    await createTaskApi(client).searchTasks('胡云鹏', { limit: 30 })
+
+    expect(client.get).toHaveBeenCalledWith(
+      '/tasks/wework/conversation-search?keyword=%E8%83%A1%E4%BA%91%E9%B9%8F&page=1&limit=30',
+    )
+  })
+
   test('picks default team for wework first, then code and chat', async () => {
     const client = mockClient()
     vi.mocked(client.get).mockResolvedValueOnce({
@@ -107,6 +118,7 @@ describe('REST adapters', () => {
     })
     await api.updateInstalledSystemSkill(42, false)
     await api.uninstallInstalledSystemSkill(42)
+    await api.installPersonalSkill(77)
     await api.updatePersonalSkillEnabled(77, false)
 
     expect(client.post).toHaveBeenCalledWith('/system-skills/install', {
@@ -120,6 +132,9 @@ describe('REST adapters', () => {
     })
     expect(client.put).toHaveBeenCalledWith('/system-skills/installed/42', {
       enabled: false,
+    })
+    expect(client.post).toHaveBeenCalledWith('/system-skills/install/personal', {
+      skillId: 77,
     })
     expect(client.put).toHaveBeenCalledWith('/v1/kinds/skills/77/enabled', {
       enabled: false,
@@ -250,5 +265,118 @@ describe('REST adapters', () => {
       '/devices/device-1/commands',
       expect.objectContaining({ command_key: 'project_workspace_root' }),
     )
+  })
+
+  test('creates a directory through the device command API', async () => {
+    const client = mockClient()
+    vi.mocked(client.post).mockResolvedValueOnce({
+      success: true,
+      stdout: '',
+      stderr: '',
+    })
+
+    const api = createDeviceApi(client)
+
+    await expect(api.createDirectory('device-1', '  /home/ubuntu/new-app  ')).resolves.toBeUndefined()
+
+    expect(client.post).toHaveBeenCalledWith(
+      '/devices/device-1/commands',
+      expect.objectContaining({
+        command_key: 'mkdir_p',
+        args: ['/home/ubuntu/new-app'],
+      }),
+    )
+  })
+
+  test('rejects blank directory paths before calling the device command API', async () => {
+    const client = mockClient()
+    const api = createDeviceApi(client)
+
+    await expect(api.createDirectory('device-1', '   ')).rejects.toThrow(
+      'Directory path is required',
+    )
+    expect(client.post).not.toHaveBeenCalled()
+  })
+
+  test('throws backend command errors when directory creation fails', async () => {
+    const client = mockClient()
+    vi.mocked(client.post).mockResolvedValueOnce({
+      success: false,
+      stdout: '',
+      stderr: 'mkdir failed',
+    })
+
+    const api = createDeviceApi(client)
+
+    await expect(api.createDirectory('device-1', '/home/ubuntu/new-app')).rejects.toThrow(
+      'mkdir failed',
+    )
+  })
+
+  test('loads local device skills through the device command API', async () => {
+    const client = mockClient()
+    const skills = [
+      {
+        name: 'zeta',
+        description: 'Zeta skill',
+        path: '/Users/crystal/.codex/skills/zeta/SKILL.md',
+        source: 'codex',
+      },
+      {
+        name: 'Dws',
+        description: 'DingTalk skill from Claude',
+        path: '/Users/crystal/.claude/skills/dws/SKILL.md',
+        source: 'claude',
+      },
+      {
+        name: 'dws',
+        description: 'DingTalk skill from Codex',
+        path: '/Users/crystal/.codex/skills/dws/SKILL.md',
+        source: 'codex',
+      },
+      {
+        name: 'alpha',
+        description: 'Alpha skill',
+        path: '/Users/crystal/.codex/skills/alpha/SKILL.md',
+        source: 'codex',
+      },
+    ]
+    vi.mocked(client.post).mockResolvedValueOnce({
+      success: true,
+      stdout: skills,
+      stderr: '',
+    })
+
+    await expect(createDeviceApi(client).listSkills('device-1')).resolves.toEqual([
+      skills[3],
+      skills[1],
+      skills[0],
+    ])
+
+    expect(client.post).toHaveBeenCalledWith(
+      '/devices/device-1/commands',
+      expect.objectContaining({
+        command_key: 'ls_skills',
+      }),
+    )
+  })
+
+  test('loads local device skills from JSON command stdout', async () => {
+    const client = mockClient()
+    const skills = [
+      {
+        name: 'env-context',
+        description: 'Environment facts',
+        path: '/Users/crystal/.codex/skills/env-context/SKILL.md',
+        source: 'codex',
+      },
+    ]
+    vi.mocked(client.post).mockResolvedValueOnce({
+      success: true,
+      stdout: JSON.stringify(skills),
+      stderr: '',
+    })
+
+    await expect(createDeviceApi(client).listSkills('device-1')).resolves.toEqual(skills)
   })
 })

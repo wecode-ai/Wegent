@@ -57,6 +57,12 @@ interface TestConfig {
   top_k: number
 }
 
+interface SearchHints {
+  semantic_query?: string
+  keywords?: string[]
+  phrases?: string[]
+}
+
 export function RetrievalTestDialog({
   open,
   onOpenChange,
@@ -77,6 +83,7 @@ export function RetrievalTestDialog({
   // Retrieval methods supported by the retriever
   const [supportedMethods, setSupportedMethods] = useState<RetrievalMethodType[]>([])
   const [loadingMethods, setLoadingMethods] = useState(false)
+  const [isConfigPopoverOpen, setIsConfigPopoverOpen] = useState(false)
 
   // Test config - frontend only, overrides database config
   const [testConfig, setTestConfig] = useState<TestConfig>({
@@ -84,6 +91,8 @@ export function RetrievalTestDialog({
     score_threshold: 0.7,
     top_k: 5,
   })
+  const [searchHintsText, setSearchHintsText] = useState('')
+  const [isSearchHintsExpanded, setIsSearchHintsExpanded] = useState(false)
 
   const maxQueryLength = 200
 
@@ -165,6 +174,21 @@ export function RetrievalTestDialog({
     loadSupportedMethods()
   }, [open, hasRetrievalConfig, knowledgeBase.retrieval_config, loadingKb])
 
+  const parseSearchHints = useCallback(
+    (value: string): SearchHints | null => {
+      if (!value.trim()) {
+        return null
+      }
+
+      const parsed = JSON.parse(value) as SearchHints
+      if (parsed === null || Array.isArray(parsed) || typeof parsed !== 'object') {
+        throw new Error(t('knowledge:document.retrievalTest.searchHintsInvalid'))
+      }
+      return parsed
+    },
+    [t]
+  )
+
   const handleSearch = useCallback(async () => {
     if (!query.trim() || !hasRetrievalConfig) return
 
@@ -174,10 +198,12 @@ export function RetrievalTestDialog({
 
     try {
       const config = knowledgeBase.retrieval_config!
+      const searchHints = parseSearchHints(searchHintsText)
 
       // Build request using test config (overrides database config)
       const request = {
         query: query.trim(),
+        ...(searchHints ? { search_hints: searchHints } : {}),
         knowledge_id: String(knowledgeBase.id),
         retriever_ref: {
           name: config.retriever_name,
@@ -209,7 +235,7 @@ export function RetrievalTestDialog({
     } finally {
       setLoading(false)
     }
-  }, [query, knowledgeBase, hasRetrievalConfig, testConfig, t])
+  }, [query, knowledgeBase, hasRetrievalConfig, parseSearchHints, searchHintsText, testConfig, t])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -220,11 +246,14 @@ export function RetrievalTestDialog({
 
   const handleClose = () => {
     setQuery('')
+    setSearchHintsText('')
     setResults([])
     setError(null)
     setHasSearched(false)
     setExpandedIndex(null)
     setFullKnowledgeBase(null)
+    setIsConfigPopoverOpen(false)
+    setIsSearchHintsExpanded(false)
     onOpenChange(false)
   }
 
@@ -256,6 +285,8 @@ export function RetrievalTestDialog({
     )
   }, [testConfig, knowledgeBase.retrieval_config])
 
+  const hasSearchHints = searchHintsText.trim().length > 0
+
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col">
@@ -279,7 +310,7 @@ export function RetrievalTestDialog({
                 </span>
 
                 {/* Config Popover */}
-                <Popover>
+                <Popover open={isConfigPopoverOpen} onOpenChange={setIsConfigPopoverOpen}>
                   <PopoverTrigger asChild>
                     <Button
                       variant="ghost"
@@ -303,12 +334,17 @@ export function RetrievalTestDialog({
                       )}
                     </Button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-72 p-4" align="end">
-                    <div className="space-y-4">
-                      <div className="text-sm font-medium text-text-primary">
+                  <PopoverContent align="end" side="bottom" className="w-[360px] p-4">
+                    <div className="space-y-1 pb-3">
+                      <h3 className="text-sm font-semibold">
                         {t('knowledge:document.retrievalTest.configTitle')}
-                      </div>
+                      </h3>
+                      <p className="text-xs text-text-muted">
+                        {t('knowledge:document.retrievalTest.configHint')}
+                      </p>
+                    </div>
 
+                    <div className="space-y-5">
                       {/* Retrieval Mode */}
                       <div className="space-y-2">
                         <Label className="text-xs text-text-secondary">
@@ -320,7 +356,7 @@ export function RetrievalTestDialog({
                             setTestConfig(prev => ({ ...prev, retrieval_mode: value }))
                           }
                         >
-                          <SelectTrigger className="h-8 text-sm">
+                          <SelectTrigger className="h-9 text-sm">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -350,7 +386,7 @@ export function RetrievalTestDialog({
                               setTestConfig(prev => ({ ...prev, score_threshold: value }))
                             }
                           }}
-                          className="h-8 text-sm"
+                          className="h-9 text-sm"
                         />
                         <p className="text-[10px] text-text-muted">
                           {t('knowledge:document.retrieval.scoreThresholdHint')}
@@ -374,17 +410,12 @@ export function RetrievalTestDialog({
                               setTestConfig(prev => ({ ...prev, top_k: value }))
                             }
                           }}
-                          className="h-8 text-sm"
+                          className="h-9 text-sm"
                         />
                         <p className="text-[10px] text-text-muted">
                           {t('knowledge:document.retrieval.topKHint')}
                         </p>
                       </div>
-
-                      {/* Config hint */}
-                      <p className="text-[10px] text-text-muted border-t border-border pt-3">
-                        {t('knowledge:document.retrievalTest.configHint')}
-                      </p>
                     </div>
                   </PopoverContent>
                 </Popover>
@@ -399,6 +430,65 @@ export function RetrievalTestDialog({
                 className="border-0 focus-visible:ring-0 resize-none min-h-[200px]"
                 disabled={!hasRetrievalConfig}
               />
+
+              <div className="border-t border-border bg-surface/30 px-3 py-3">
+                <button
+                  type="button"
+                  className="flex w-full items-start justify-between gap-3 rounded-md text-left"
+                  onClick={() => setIsSearchHintsExpanded(prev => !prev)}
+                  aria-expanded={isSearchHintsExpanded}
+                  data-testid="retrieval-test-search-hints-toggle"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <Label className="cursor-pointer text-xs text-text-secondary">
+                        {t('knowledge:document.retrievalTest.searchHints')}
+                      </Label>
+                      {hasSearchHints && (
+                        <Badge variant="warning" className="h-4 px-1 text-[10px]">
+                          {t('knowledge:document.retrievalTest.modified')}
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="mt-1 text-[10px] text-text-muted">
+                      {t('knowledge:document.retrievalTest.searchHintsHint')}
+                    </p>
+                  </div>
+                  {isSearchHintsExpanded ? (
+                    <ChevronUp className="mt-0.5 h-4 w-4 flex-shrink-0 text-text-muted" />
+                  ) : (
+                    <ChevronDown className="mt-0.5 h-4 w-4 flex-shrink-0 text-text-muted" />
+                  )}
+                </button>
+
+                {isSearchHintsExpanded && (
+                  <div className="mt-3 space-y-2">
+                    <div className="flex items-center justify-end">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-11 min-w-[44px] px-3 text-xs"
+                        onClick={() =>
+                          setSearchHintsText(
+                            t('knowledge:document.retrievalTest.searchHintsPlaceholder')
+                          )
+                        }
+                        data-testid="retrieval-test-search-hints-example-button"
+                      >
+                        {t('knowledge:document.retrievalTest.searchHintsUseExample')}
+                      </Button>
+                    </div>
+                    <Textarea
+                      value={searchHintsText}
+                      onChange={e => setSearchHintsText(e.target.value)}
+                      placeholder={t('knowledge:document.retrievalTest.searchHintsPlaceholder')}
+                      className="min-h-[180px] max-h-[320px] overflow-y-auto resize-y border-border bg-base font-mono text-xs leading-5"
+                      data-testid="retrieval-test-search-hints-input"
+                    />
+                  </div>
+                )}
+              </div>
 
               {/* Footer with character count and search button */}
               <div className="flex items-center justify-between px-3 py-2 border-t border-border">

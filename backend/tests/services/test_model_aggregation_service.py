@@ -13,7 +13,13 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.user import User
-from app.services.model_aggregation_service import model_aggregation_service
+from app.services.adapters.public_model import ModelAdapter
+from app.services.model_aggregation_service import (
+    ModelType,
+    UnifiedModel,
+    build_model_runtime_family,
+    model_aggregation_service,
+)
 
 
 class TestModelAggregationService:
@@ -43,6 +49,85 @@ class TestModelAggregationService:
 
         assert info["model_group"] == "Primary Group"
         assert info["model_sub_group"] == "Secondary Group"
+        assert info["provider"] == "openai"
+
+    def test_unified_model_exposes_runtime_family_without_env(self):
+        """Test API model data exposes runtime family without sensitive env."""
+        unified = UnifiedModel(
+            name="openai-gpt-5.4",
+            model_type=ModelType.PUBLIC,
+            provider="openai",
+            model_id="gpt-5.4",
+            config={
+                "env": {
+                    "model": "openai",
+                    "model_id": "gpt-5.4",
+                    "api_key": "secret",
+                },
+                "protocol": "openai-responses",
+            },
+        )
+
+        model_dict = unified.to_dict()
+        full_model_dict = unified.to_full_dict()
+
+        assert model_dict["runtime"] == {"family": "openai.openai-responses"}
+        assert "env" not in model_dict["config"]
+        assert "env" not in full_model_dict["config"]
+        assert full_model_dict["runtime"] == {"family": "openai.openai-responses"}
+        assert full_model_dict["config"] == {"protocol": "openai-responses"}
+
+    def test_runtime_family_falls_back_to_provider_without_protocol(self):
+        """Test runtime family remains provider-only when spec.protocol is absent."""
+        assert (
+            build_model_runtime_family("openai", {"apiFormat": "responses"}) == "openai"
+        )
+        assert build_model_runtime_family(" Claude ", {"protocol": " claude "}) == (
+            "claude.claude"
+        )
+        assert (
+            build_model_runtime_family(None, {"protocol": "openai-responses"}) is None
+        )
+
+    def test_public_model_adapter_exposes_protocol_without_env(self):
+        """Test public model adapter preserves spec.protocol for runtime family."""
+        model_crd = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {
+                "name": "openai-gpt-5.4",
+                "namespace": "default",
+                "displayName": "海外:GPT5.4",
+            },
+            "spec": {
+                "protocol": "openai-responses",
+                "apiFormat": "responses",
+                "modelConfig": {
+                    "env": {
+                        "model": "openai",
+                        "model_id": "gpt-5.4",
+                        "api_key": "secret",
+                    }
+                },
+            },
+            "status": {"state": "Available"},
+        }
+        kind = Kind(
+            user_id=0,
+            kind="Model",
+            name="openai-gpt-5.4",
+            namespace="default",
+            json=model_crd,
+            is_active=True,
+        )
+
+        model_dict = ModelAdapter.to_model_dict(kind)
+
+        assert model_dict["provider"] == "openai"
+        assert model_dict["model_id"] == "gpt-5.4"
+        assert model_dict["config"]["protocol"] == "openai-responses"
+        assert model_dict["config"]["apiFormat"] == "responses"
+        assert model_dict["config"]["env"] == {}
 
     def _create_public_shell(
         self,

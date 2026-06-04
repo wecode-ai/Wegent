@@ -88,6 +88,20 @@ curl -fL -o wegent-executor \
 chmod +x wegent-executor
 ```
 
+#### 使用设备本机 CLI 配置
+
+默认情况下，executor 会使用 Wegent 下发的 Claude/Codex 模型和 provider 配置。如果某台设备已经在本机配置好了 Codex CLI 登录或 provider，可以通过环境变量让 Codex 使用本机配置：
+
+```bash
+WEGENT_LOCAL_CLI_CONFIG_RUNTIMES=codex
+```
+
+该变量为空或未设置时，所有 runtime 都继续使用系统下发配置。当前仅支持以下值：
+
+- `codex`：Codex 使用设备本机配置，不再注入 Wegent Codex provider。
+
+该配置只影响当前设备，适合不同设备分别使用系统下发配置或本机 Codex CLI 配置的场景。Claude 仍保持 Wegent 下发的配置行为。
+
 ### 构建设备镜像
 
 仓库提供 `docker/device/Dockerfile` 用于构建云设备或本地设备基础镜像。该镜像会安装 `code-server`、`weiboplat.wecoder-agent` 扩展、Claude Code CLI、`ttyd`、Node.js 22、Python、Git，并把 `executor/dist/wegent-executor` 放到 `/app/executor` 和 `~/.wegent-executor/bin/wegent-executor`。
@@ -131,6 +145,14 @@ docker run -d --platform linux/amd64 \
 两个入口都通过 `DEVICE_PUBLIC_BASE_URL` 下的 `/s/{session_id}/` 路径对外暴露；每个 terminal 或 code-server session 都有独立路径，因此同一用户可以同时打开多个项目，或在同一项目中打开多个 terminal/code-server。terminal 会话由设备侧动态创建，浏览器连接关闭后会销毁对应 ttyd 进程；code-server 是容器内持久进程，通过 gateway 按项目路径打开目录。若需要保留旧的固定 `8080` code-server 和 `7681` ttyd 入口，可在运行容器时添加 `-e START_DEVICE_UI=1` 并额外映射对应端口。
 
 如果项目配置了 `workspace.localPath` 或 `workspace.checkoutPath`，设备会在启动 terminal 或 code-server 前自动创建该目录。
+
+### 非项目会话工作区
+
+当聊天未选择项目但绑定到在线设备时，Executor 侧的独立 Chats 工作区功能当前默认关闭。如需启用，可在设备运行环境中设置 `WEGENT_EXECUTOR_STANDALONE_CHATS_ENABLED=true`。
+
+启用后，首轮任务先在临时任务目录中执行；回复完成后，Executor 会根据日期和回复摘要生成目录名，并把临时目录移动到 Chats 工作区树中。默认根目录为 `~/.wecode/wegent-executor/workspace/chats`。如需自定义位置，可在设备运行环境中设置 `WEGENT_EXECUTOR_CHATS_DIR`。Backend 会把最终路径写入任务元数据标签 `standaloneChatWorkspacePath`，后续继续该会话或打开历史会话时会复用同一目录。
+
+项目会话不使用此路径；项目会话仍然使用项目配置中的 `workspace.localPath` 或 `workspace.checkoutPath`。
 
 #### 安装指定版本
 

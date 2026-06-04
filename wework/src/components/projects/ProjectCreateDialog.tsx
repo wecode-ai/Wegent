@@ -1,4 +1,4 @@
-import { Check, ChevronLeft, Folder, X } from 'lucide-react'
+import { Check, ChevronLeft, Folder, FolderPlus, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
@@ -18,6 +18,7 @@ interface ProjectCreateDialogProps {
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onGetProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
+  onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
 }
 
 const FALLBACK_PROJECTS_ROOT = '~/.wecode/wegent-executor/workspace/projects'
@@ -86,6 +87,39 @@ function getParentPath(path: string): string {
   return `/${segments.slice(0, -1).join('/')}`
 }
 
+function getPathSearchParts(path: string): { parentPath: string; query: string } {
+  const trimmedPath = path.trim()
+  if (!trimmedPath || trimmedPath === '/') {
+    return { parentPath: '/', query: '' }
+  }
+
+  if (trimmedPath.endsWith('/')) {
+    return { parentPath: normalizePath(trimmedPath), query: '' }
+  }
+
+  const normalized = normalizePath(trimmedPath)
+  return {
+    parentPath: getParentPath(normalized),
+    query: basename(normalized),
+  }
+}
+
+function directoryMatchesQuery(directory: string, query: string): boolean {
+  const normalizedDirectory = directory.toLowerCase()
+  const normalizedQuery = query.trim().toLowerCase()
+  if (!normalizedQuery) return true
+  if (normalizedDirectory.includes(normalizedQuery)) return true
+
+  let queryIndex = 0
+  for (const character of normalizedDirectory) {
+    if (character === normalizedQuery[queryIndex]) {
+      queryIndex += 1
+      if (queryIndex === normalizedQuery.length) return true
+    }
+  }
+  return false
+}
+
 export function ProjectCreateDialog({
   open,
   mode,
@@ -97,6 +131,7 @@ export function ProjectCreateDialog({
   onGetDeviceHomeDirectory,
   onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
+  onCreateDeviceDirectory,
 }: ProjectCreateDialogProps) {
   if (!open) return null
 
@@ -112,6 +147,7 @@ export function ProjectCreateDialog({
       onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
       onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
       onListDeviceDirectories={onListDeviceDirectories}
+      onCreateDeviceDirectory={onCreateDeviceDirectory}
     />
   )
 }
@@ -126,6 +162,7 @@ function ProjectCreateDialogContent({
   onGetDeviceHomeDirectory,
   onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
+  onCreateDeviceDirectory,
 }: Omit<ProjectCreateDialogProps, 'open'>) {
   const { t } = useTranslation('common')
   const sortedDevices = useMemo(() => sortDevicesForProjectCreation(devices), [devices])
@@ -137,11 +174,18 @@ function ProjectCreateDialogContent({
   const [projectName, setProjectName] = useState('')
   const [projectRoot, setProjectRoot] = useState(FALLBACK_PROJECTS_ROOT)
   const [currentPath, setCurrentPath] = useState('')
+  const [pathInput, setPathInput] = useState('')
+  const [directoryQuery, setDirectoryQuery] = useState('')
   const [selectedPath, setSelectedPath] = useState('')
   const [directories, setDirectories] = useState<string[]>([])
   const [showHiddenDirectories, setShowHiddenDirectories] = useState(false)
   const [loadingDirectories, setLoadingDirectories] = useState(false)
   const [directoryError, setDirectoryError] = useState<string | null>(null)
+  const [newFolderOpen, setNewFolderOpen] = useState(false)
+  const [newFolderName, setNewFolderName] = useState('')
+  const [creatingDirectory, setCreatingDirectory] = useState(false)
+  const [createDirectoryError, setCreateDirectoryError] = useState<string | null>(null)
+  const [projectCreateError, setProjectCreateError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
@@ -175,11 +219,18 @@ function ProjectCreateDialogContent({
       try {
         const homePath = normalizePath(await onGetDeviceHomeDirectory(deviceId))
         if (!cancelled) {
-          setCurrentPath(homePath || '/')
+          const nextPath = homePath || '/'
+          setCurrentPath(nextPath)
+          setPathInput(nextPath)
+          setDirectoryQuery('')
+          setSelectedPath(nextPath)
         }
       } catch {
         if (!cancelled) {
           setCurrentPath('/')
+          setPathInput('/')
+          setDirectoryQuery('')
+          setSelectedPath('/')
         }
       }
     }
@@ -189,6 +240,21 @@ function ProjectCreateDialogContent({
       cancelled = true
     }
   }, [deviceId, mode, onGetDeviceHomeDirectory])
+
+  useEffect(() => {
+    if (mode !== 'existing') return
+    const normalizedInput = normalizePath(pathInput)
+    if (!normalizedInput) return
+    if (normalizedInput === currentPath && !directoryQuery) return
+
+    const timeoutId = window.setTimeout(() => {
+      const { parentPath, query } = getPathSearchParts(pathInput)
+      setCurrentPath(parentPath)
+      setDirectoryQuery(query)
+      setSelectedPath(normalizedInput)
+    }, 300)
+    return () => window.clearTimeout(timeoutId)
+  }, [currentPath, directoryQuery, mode, pathInput])
 
   useEffect(() => {
     if (mode !== 'existing' || !deviceId || !currentPath) return
@@ -227,11 +293,14 @@ function ProjectCreateDialogContent({
     [projectName, projectRoot],
   )
   const finalProjectName = mode === 'scratch' ? projectName.trim() : basename(selectedPath)
-  const finalPath = mode === 'scratch' ? scratchPath : selectedPath
+  const finalPath = mode === 'scratch' ? scratchPath : directoryQuery ? '' : selectedPath
   const canCreate = Boolean(deviceId && selectedDeviceUsable && finalProjectName && finalPath)
   const visibleDirectories = showHiddenDirectories
     ? directories
     : directories.filter(directory => !directory.startsWith('.'))
+  const filteredDirectories = visibleDirectories.filter(directory =>
+    directoryMatchesQuery(directory, directoryQuery),
+  )
 
   const handleDeviceChange = (nextDeviceId: string) => {
     setDeviceId(nextDeviceId)
@@ -240,14 +309,84 @@ function ProjectCreateDialogContent({
     }
     setProjectRoot(FALLBACK_PROJECTS_ROOT)
     setCurrentPath('')
+    setPathInput('')
+    setDirectoryQuery('')
     setSelectedPath('')
     setDirectories([])
     setDirectoryError(null)
+    setCreateDirectoryError(null)
+    setNewFolderName('')
+    setNewFolderOpen(false)
+  }
+
+  const handleBrowsePath = (path: string) => {
+    const normalized = normalizePath(path) || '/'
+    setCurrentPath(normalized)
+    setPathInput(normalized)
+    setDirectoryQuery('')
+    setSelectedPath(normalized)
+  }
+
+  const handleConfirmPathInput = () => {
+    const normalized = normalizePath(pathInput) || '/'
+    if (normalized === currentPath) {
+      handleBrowsePath(normalized)
+      return
+    }
+
+    const { parentPath, query } = getPathSearchParts(pathInput)
+    const matchingDirectories =
+      parentPath === currentPath
+        ? visibleDirectories.filter(directory => directoryMatchesQuery(directory, query))
+        : []
+
+    if (query && matchingDirectories.length === 1) {
+      handleBrowsePath(joinPath(parentPath, matchingDirectories[0]))
+      return
+    }
+
+    if (query) {
+      setCurrentPath(parentPath)
+      setDirectoryQuery(query)
+      setSelectedPath(normalized)
+      return
+    }
+
+    handleBrowsePath(parentPath)
   }
 
   const handleOpenDirectory = (path: string) => {
-    setSelectedPath(path)
-    setCurrentPath(path)
+    handleBrowsePath(path)
+  }
+
+  const handleCreateDirectory = async () => {
+    const folderName = newFolderName.trim()
+    if (!deviceId || !currentPath || !folderName) return
+
+    if (folderName.includes('/')) {
+      setCreateDirectoryError(
+        t('workbench.project_create_folder_name_error', '文件夹名称不能包含 /'),
+      )
+      return
+    }
+
+    const nextPath = joinPath(currentPath, folderName)
+    setCreatingDirectory(true)
+    setCreateDirectoryError(null)
+    try {
+      await onCreateDeviceDirectory(deviceId, nextPath)
+      setNewFolderName('')
+      setNewFolderOpen(false)
+      handleBrowsePath(nextPath)
+    } catch (error) {
+      setCreateDirectoryError(
+        error instanceof Error
+          ? error.message
+          : t('workbench.project_create_folder_failed', '新建文件夹失败'),
+      )
+    } finally {
+      setCreatingDirectory(false)
+    }
   }
 
   useEscapeKey(onClose)
@@ -258,7 +397,7 @@ function ProjectCreateDialogContent({
       : t('workbench.project_create_title', '新建项目')
 
   return createPortal(
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/35 px-4">
+    <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4">
       <div
         data-testid="project-create-dialog"
         className="w-full max-w-[560px] rounded-lg border border-[#d8d8d8] bg-white p-6 shadow-2xl"
@@ -318,7 +457,10 @@ function ProjectCreateDialogContent({
             <input
               data-testid="project-name-input"
               value={projectName}
-              onChange={event => setProjectName(event.target.value)}
+              onChange={event => {
+                setProjectName(event.target.value)
+                setProjectCreateError(null)
+              }}
               placeholder={t('workbench.project_name_placeholder', '输入项目名称')}
               className="mt-2 h-10 w-full rounded-lg border border-[#d8d8d8] px-3 text-[13px] outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20"
             />
@@ -341,17 +483,89 @@ function ProjectCreateDialogContent({
               </label>
             </div>
             <div className="mt-2 rounded-lg border border-[#d8d8d8]">
-              <div className="flex h-10 items-center border-b border-[#e5e5e5] px-3">
-                <span className="min-w-0 truncate font-mono text-[13px] text-[#3c4043]">
-                  {currentPath || t('workbench.project_directory_loading', '正在加载目录...')}
-                </span>
+              <div className="flex items-center gap-2 border-b border-[#e5e5e5] px-3 py-2">
+                <input
+                  data-testid="project-directory-path-input"
+                  value={pathInput}
+                  onChange={event => setPathInput(event.target.value)}
+                  onBlur={handleConfirmPathInput}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault()
+                      handleConfirmPathInput()
+                    }
+                  }}
+                  className="h-8 min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1 font-mono text-[13px] text-[#3c4043] outline-none focus:border-[#14b8a6] focus:bg-white focus:ring-2 focus:ring-[#14b8a6]/20"
+                  placeholder={t('workbench.project_directory_loading', '正在加载目录...')}
+                />
+                <button
+                  type="button"
+                  data-testid="open-create-folder-button"
+                  onClick={() => {
+                    setNewFolderOpen(open => !open)
+                    setCreateDirectoryError(null)
+                  }}
+                  className="flex h-11 min-w-[44px] shrink-0 items-center gap-1 rounded-md px-2 text-xs font-medium text-[#0f766e] hover:bg-[#e5f6f4]"
+                >
+                  <FolderPlus className="h-4 w-4" />
+                  {t('workbench.project_create_folder', '新建文件夹')}
+                </button>
               </div>
+              {newFolderOpen && (
+                <div className="flex items-center gap-2 border-b border-[#e5e5e5] px-3 py-2">
+                  <input
+                    data-testid="create-folder-name-input"
+                    value={newFolderName}
+                    onChange={event => {
+                      setNewFolderName(event.target.value)
+                      setCreateDirectoryError(null)
+                    }}
+                    onKeyDown={event => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault()
+                        void handleCreateDirectory()
+                      }
+                    }}
+                    className="h-8 min-w-0 flex-1 rounded-md border border-[#d8d8d8] px-2 text-[13px] outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20"
+                    placeholder={t('workbench.project_create_folder_placeholder', '输入文件夹名称')}
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    data-testid="cancel-create-folder-button"
+                    onClick={() => {
+                      setNewFolderOpen(false)
+                      setNewFolderName('')
+                      setCreateDirectoryError(null)
+                    }}
+                    className="h-11 min-w-[44px] rounded-md border border-[#d8d8d8] px-2 text-xs font-medium text-[#3c4043] hover:bg-[#f7f7f8]"
+                  >
+                    {t('workbench.cancel', '取消')}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="confirm-create-folder-button"
+                    disabled={!newFolderName.trim() || creatingDirectory}
+                    onClick={() => void handleCreateDirectory()}
+                    className="h-11 min-w-[44px] rounded-md bg-[#14b8a6] px-2 text-xs font-medium text-white hover:bg-[#0f9f93] disabled:opacity-50"
+                  >
+                    {creatingDirectory
+                      ? t('workbench.project_creating_folder', '创建中')
+                      : t('workbench.project_create_folder_confirm', '创建')}
+                  </button>
+                </div>
+              )}
+              {createDirectoryError && (
+                <p className="border-b border-[#e5e5e5] px-3 py-2 text-xs text-[#c44]">
+                  {createDirectoryError}
+                </p>
+              )}
               <div data-testid="project-directory-tree" className="max-h-[320px] overflow-auto p-2">
                 {currentPath && currentPath !== '/' && (
                   <button
                     type="button"
                     data-testid="directory-parent-button"
-                    onClick={() => setCurrentPath(getParentPath(currentPath))}
+                    onClick={() => handleBrowsePath(getParentPath(currentPath))}
                     className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] text-[#3c4043] hover:bg-[#f1f3f4]"
                   >
                     <ChevronLeft className="h-4 w-4" />
@@ -368,7 +582,7 @@ function ProjectCreateDialogContent({
                 )}
                 {!loadingDirectories &&
                   !directoryError &&
-                  visibleDirectories.map(directory => {
+                  filteredDirectories.map(directory => {
                     const childPath = joinPath(currentPath, directory)
                     const selected = selectedPath === childPath
                     return (
@@ -391,7 +605,7 @@ function ProjectCreateDialogContent({
                       </button>
                     )
                   })}
-                {!loadingDirectories && !directoryError && visibleDirectories.length === 0 && (
+                {!loadingDirectories && !directoryError && filteredDirectories.length === 0 && (
                   <p className="px-2 py-8 text-center text-[13px] text-[#8a8f98]">
                     {t('workbench.project_directory_empty', '当前目录下没有子目录')}
                   </p>
@@ -399,6 +613,12 @@ function ProjectCreateDialogContent({
               </div>
             </div>
           </>
+        )}
+
+        {projectCreateError && (
+          <p data-testid="project-create-error" className="mt-4 text-xs text-[#c44]">
+            {projectCreateError}
+          </p>
         )}
 
         <div className="mt-7 flex justify-end gap-3">
@@ -416,6 +636,7 @@ function ProjectCreateDialogContent({
             disabled={!canCreate || submitting}
             onClick={async () => {
               setSubmitting(true)
+              setProjectCreateError(null)
               try {
                 await onCreateProject({
                   name: finalProjectName,
@@ -433,6 +654,12 @@ function ProjectCreateDialogContent({
                   },
                 })
                 onClose()
+              } catch (error) {
+                setProjectCreateError(
+                  error instanceof Error
+                    ? error.message
+                    : t('workbench.project_create_failed', '项目创建失败'),
+                )
               } finally {
                 setSubmitting(false)
               }

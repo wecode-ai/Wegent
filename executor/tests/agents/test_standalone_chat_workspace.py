@@ -8,6 +8,10 @@ from types import SimpleNamespace
 from executor.agents.claude_code import standalone_chat_workspace as workspace
 
 
+def _enable_standalone_chats(monkeypatch):
+    monkeypatch.setenv("WEGENT_EXECUTOR_STANDALONE_CHATS_ENABLED", "true")
+
+
 def test_slugify_response_uses_alphanumeric_words():
     assert workspace.slugify_response("Hello, Codex 2026!") == "hello-codex-2026"
     assert workspace.slugify_response("只有中文") == "new-chat"
@@ -25,6 +29,44 @@ def test_prompt_text_for_workspace_extracts_text_blocks():
     ]
 
     assert workspace.prompt_text_for_workspace(prompt) == "hello-new-wework\nrun pwd"
+
+
+def test_standalone_chat_workspace_is_disabled_by_default(tmp_path, monkeypatch):
+    chats_root = tmp_path / "chats"
+    task_data = SimpleNamespace(
+        task_id=120,
+        project_id=None,
+        project_workspace_path=None,
+        git_url=None,
+    )
+
+    monkeypatch.delenv("WEGENT_EXECUTOR_STANDALONE_CHATS_ENABLED", raising=False)
+    monkeypatch.setenv("WEGENT_EXECUTOR_CHATS_DIR", str(chats_root))
+
+    result = workspace.prepare_standalone_chat_workspace(task_data, "hello")
+
+    assert result is None
+    assert not chats_root.exists()
+
+
+def test_disabled_standalone_chat_workspace_does_not_return_prepared_path(
+    tmp_path,
+    monkeypatch,
+):
+    workspace_path = tmp_path / "chats" / "2026-05-29" / "hello"
+    workspace_path.mkdir(parents=True)
+    task_data = SimpleNamespace(
+        task_id=121,
+        project_id=None,
+        project_workspace_path=str(workspace_path),
+        git_url=None,
+    )
+
+    monkeypatch.delenv("WEGENT_EXECUTOR_STANDALONE_CHATS_ENABLED", raising=False)
+
+    result = workspace.finalize_standalone_chat_workspace(task_data, "response")
+
+    assert result is None
 
 
 def test_prepare_standalone_chat_workspace_uses_request_text_before_execution(
@@ -45,6 +87,7 @@ def test_prepare_standalone_chat_workspace_uses_request_text_before_execution(
         git_url=None,
     )
 
+    _enable_standalone_chats(monkeypatch)
     monkeypatch.setenv("WEGENT_EXECUTOR_CHATS_DIR", str(chats_root))
     monkeypatch.setattr(
         workspace.config, "get_workspace_root", lambda: str(workspace_root)
@@ -73,6 +116,7 @@ def test_finalize_returns_prepared_standalone_workspace_path(tmp_path, monkeypat
         git_url=None,
     )
 
+    _enable_standalone_chats(monkeypatch)
     monkeypatch.setattr(workspace.config, "WEGENT_EXECUTOR_HOME", str(executor_home))
 
     result = workspace.finalize_standalone_chat_workspace(
@@ -101,6 +145,7 @@ def test_finalize_standalone_chat_workspace_moves_initial_task_workspace(
         git_url=None,
     )
 
+    _enable_standalone_chats(monkeypatch)
     monkeypatch.setenv("WEGENT_EXECUTOR_CHATS_DIR", str(chats_root))
     monkeypatch.setattr(
         workspace.config, "get_workspace_root", lambda: str(workspace_root)
@@ -140,6 +185,7 @@ def test_finalize_standalone_chat_workspace_keeps_existing_session_root(
         git_url=None,
     )
 
+    _enable_standalone_chats(monkeypatch)
     monkeypatch.setenv("WEGENT_EXECUTOR_CHATS_DIR", str(chats_root))
     monkeypatch.setattr(
         workspace.config, "get_workspace_root", lambda: str(workspace_root)
@@ -168,6 +214,7 @@ def test_finalize_standalone_chat_workspace_adds_duplicate_suffix(
         git_url=None,
     )
 
+    _enable_standalone_chats(monkeypatch)
     monkeypatch.setenv("WEGENT_EXECUTOR_CHATS_DIR", str(chats_root))
     monkeypatch.setattr(
         workspace.config, "get_workspace_root", lambda: str(workspace_root)
@@ -196,6 +243,7 @@ def test_duplicate_suffix_counts_toward_twenty_character_limit(
         git_url=None,
     )
 
+    _enable_standalone_chats(monkeypatch)
     monkeypatch.setenv("WEGENT_EXECUTOR_CHATS_DIR", str(chats_root))
     monkeypatch.setattr(
         workspace.config, "get_workspace_root", lambda: str(workspace_root)

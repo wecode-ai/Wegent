@@ -16,6 +16,8 @@ export type {
   QuickLaunchFunctionConfig,
   QuickLaunchFunctionsResponse,
   QuickLaunchFunctionsUpdate,
+  QuickLaunchInputOptions,
+  QuickLaunchInputPreset,
 } from './admin-quick-launch'
 export type {
   SigningKey,

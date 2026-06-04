@@ -103,7 +103,7 @@ export function ProjectWorkBar({
           <div
             data-testid="project-work-menu"
             className={cn(
-              'absolute bottom-[52px] left-0 z-40 max-h-72 w-80 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+              'absolute bottom-[52px] left-0 z-popover max-h-72 w-80 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
               menuClassName,
             )}
           >
@@ -208,7 +208,7 @@ export function ProjectWorkBar({
                       <span className="min-w-0 flex-1 truncate">
                         {device.name || device.device_id}
                       </span>
-                      <span className={online ? 'text-primary' : 'text-text-muted'}>
+                      <span className={online ? 'text-text-secondary' : 'text-text-muted'}>
                         {getDeviceStatusLabel(device)}
                       </span>
                       {selected && online && (

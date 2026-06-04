@@ -122,7 +122,7 @@ export interface Task {
   is_group_chat?: boolean
   model_id?: string | null
   force_override_bot_model_type?: ModelType | null
-  model_options?: Record<string, string> | null
+  model_options?: Record<string, unknown> | null
   requested_skills?: SkillRef[]
 }
 
@@ -170,10 +170,21 @@ export interface DeviceCommandRequest {
   max_output_bytes?: number
 }
 
+export interface LocalDeviceSkill {
+  name: string
+  description: string
+  short_description?: string | null
+  path: string
+  source: 'claude' | 'codex' | string
+  origin?: 'local' | 'wegent' | string
+  plugin_name?: string | null
+  mtime?: number
+}
+
 export interface DeviceCommandResponse {
   success: boolean
   exit_code?: number | null
-  stdout: string | string[]
+  stdout: string | string[] | LocalDeviceSkill[]
   stderr: string
   error?: string
   duration?: number
@@ -187,6 +198,9 @@ export interface TaskContextData {
   context_type: 'attachment' | 'knowledge_base'
   name: string
   status: string
+  file_extension?: string
+  file_size?: number
+  mime_type?: string
 }
 
 export interface Subtask {
@@ -200,6 +214,7 @@ export interface Subtask {
   created_at: string
   updated_at?: string
   contexts?: TaskContextData[]
+  attachments?: Attachment[]
   sender_user_name?: string
 }
 
@@ -249,6 +264,32 @@ export interface ChatSendPayload {
 export interface ChatSendAck {
   success?: boolean
   task_id?: number
+  error?: string
+}
+
+export interface ChatGuidePayload {
+  task_id: number
+  subtask_id: number
+  team_id: number
+  message: string
+  guidance?: string
+  client_guidance_id?: string
+}
+
+export interface ChatGuideAck {
+  success?: boolean
+  guidance_id?: string
+  error?: string
+}
+
+export interface ChatCancelPayload {
+  subtask_id: number
+  partial_content?: string
+  shell_type?: string
+}
+
+export interface ChatCancelAck {
+  success?: boolean
   error?: string
 }
 
@@ -665,7 +706,42 @@ export interface ChatBlockUpdatedPayload {
   status?: ChatBlock['status'] | 'running'
 }
 
+export interface ChatGuidanceQueuedPayload {
+  task_id: number
+  subtask_id: number
+  team_id?: number
+  user_id?: number
+  guidance_id: string
+  client_guidance_id?: string
+  message?: string
+  content?: string
+  created_at?: string
+}
+
+export interface ChatGuidanceAppliedPayload {
+  task_id: number
+  subtask_id: number
+  guidance_id: string
+  client_guidance_id?: string
+  applied_at: string
+}
+
+export interface ChatGuidanceExpiredPayload {
+  task_id: number
+  subtask_id: number
+  guidance_ids: string[]
+}
+
 export type ModelOptions = Record<string, string>
+
+export type ModelCompatibilityDisabledReason =
+  | 'missing_current_runtime_family'
+  | 'missing_target_runtime_family'
+  | 'runtime_family_mismatch'
+
+export interface ModelRuntime {
+  family?: string | null
+}
 
 export interface UnifiedModel {
   name: string
@@ -675,7 +751,10 @@ export interface UnifiedModel {
   modelId?: string | null
   namespace?: string
   config?: Record<string, unknown>
+  runtime?: ModelRuntime | null
   isActive?: boolean
+  compatibilityDisabled?: boolean
+  compatibilityDisabledReason?: ModelCompatibilityDisabledReason
 }
 
 export interface UnifiedModelListResponse {

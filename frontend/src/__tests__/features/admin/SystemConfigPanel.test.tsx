@@ -44,8 +44,17 @@ const tMock = (key: string) => {
     'system_config.quick_launch_functions_version': 'System functions version',
     'system_config.quick_launch_function_title': 'Title',
     'system_config.quick_launch_function_description': 'Description',
-    'system_config.quick_launch_function_phrase_placeholder': 'Enter quick phrase',
-    'system_config.quick_launch_function_add_phrase': 'Add phrase',
+    'system_config.quick_launch_function_presets': 'Input presets',
+    'system_config.quick_launch_function_add_preset': 'Add preset',
+    'system_config.quick_launch_function_preset_title': 'Preset title',
+    'system_config.quick_launch_function_preset_title_placeholder': 'Enter preset title',
+    'system_config.quick_launch_function_preset_prompt': 'Prompt',
+    'system_config.quick_launch_function_preset_prompt_placeholder': 'Enter prompt',
+    'system_config.quick_launch_function_preset_skills': 'Skills',
+    'system_config.quick_launch_function_preset_skills_placeholder': 'skill-a, skill-b',
+    'system_config.quick_launch_function_preset_deep_thinking': 'Deep thinking',
+    'system_config.quick_launch_function_preset_clarification': 'Clarification',
+    'system_config.quick_launch_function_preset_force_override': 'Force override',
     'system_config.quick_launch_function_add': 'Add system function',
     'system_config.quick_launch_function_empty': 'No system functions',
     'system_config.version': 'Version',
@@ -101,7 +110,19 @@ describe('SystemConfigPanel', () => {
           team_id: 42,
           enabled: true,
           order: 1,
-          quick_phrases: ['Help me create a product roadmap PPT'],
+          input_presets: [
+            {
+              id: 'roadmap',
+              title: 'Roadmap deck',
+              prompt: 'Help me create a product roadmap PPT',
+              options: {
+                enable_deep_thinking: true,
+                enable_clarification: false,
+                force_override: false,
+                selected_skill_names: ['slides'],
+              },
+            },
+          ],
         },
       ],
     })
@@ -138,9 +159,17 @@ describe('SystemConfigPanel', () => {
     fireEvent.change(screen.getByTestId('quick-launch-function-title-0'), {
       target: { value: 'Create Skill' },
     })
-    fireEvent.change(screen.getByTestId('quick-launch-function-phrase-0-0'), {
+    fireEvent.change(screen.getByTestId('quick-launch-function-preset-title-0-0'), {
+      target: { value: 'Skill builder' },
+    })
+    fireEvent.change(screen.getByTestId('quick-launch-function-preset-prompt-0-0'), {
       target: { value: 'Help me create a skill' },
     })
+    fireEvent.change(screen.getByTestId('quick-launch-function-preset-skills-0-0'), {
+      target: { value: 'skill-author, tests, skill-author' },
+    })
+    fireEvent.click(screen.getByTestId('quick-launch-function-preset-clarification-0-0'))
+    fireEvent.click(screen.getByTestId('quick-launch-function-preset-force-override-0-0'))
     fireEvent.click(screen.getByText('Save'))
 
     await waitFor(() => {
@@ -154,7 +183,19 @@ describe('SystemConfigPanel', () => {
             team_id: 42,
             enabled: true,
             order: 1,
-            quick_phrases: ['Help me create a skill'],
+            input_presets: [
+              {
+                id: 'roadmap',
+                title: 'Skill builder',
+                prompt: 'Help me create a skill',
+                options: {
+                  enable_deep_thinking: true,
+                  enable_clarification: true,
+                  force_override: true,
+                  selected_skill_names: ['skill-author', 'tests'],
+                },
+              },
+            ],
           },
         ],
       })
@@ -175,7 +216,14 @@ describe('SystemConfigPanel', () => {
           team_id: 42,
           enabled: true,
           order: 2,
-          quick_phrases: ['Help me create a skill'],
+          input_presets: [
+            {
+              id: 'skill',
+              title: 'Create skill',
+              prompt: 'Help me create a skill',
+              options: { selected_skill_names: [] },
+            },
+          ],
         },
       ],
     })

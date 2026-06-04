@@ -15,6 +15,9 @@ import logging
 from typing import Any, Optional
 
 from app.services.chat.webpage_ws_chat_emitter import WebPageSocketEmitter
+from app.services.execution.interactive_form_render import (
+    build_interactive_form_render_payload,
+)
 from shared.models import EventType, ExecutionEvent
 from shared.models.blocks import BlockStatus, create_tool_block
 
@@ -332,14 +335,19 @@ class WebSocketResultEmitter(BaseResultEmitter):
         if event.data and event.data.get("status") in ("error", "failed"):
             status = BlockStatus.ERROR
 
-        await ws_emitter.emit_block_updated(
-            task_id=event.task_id,
-            subtask_id=event.subtask_id,
-            block_id=event.tool_use_id or "",
-            tool_output=event.tool_output,
-            tool_input=event.tool_input,
-            status=status.value,
-        )
+        update_kwargs = {
+            "task_id": event.task_id,
+            "subtask_id": event.subtask_id,
+            "block_id": event.tool_use_id or "",
+            "tool_output": event.tool_output,
+            "tool_input": event.tool_input,
+            "status": status.value,
+        }
+        render_payload = build_interactive_form_render_payload(event)
+        if render_payload is not None:
+            update_kwargs["render_payload"] = render_payload
+
+        await ws_emitter.emit_block_updated(**update_kwargs)
         logger.debug(
             f"[WebSocketResultEmitter] chat:block_updated emitted: "
             f"task_id={event.task_id}, tool_use_id={event.tool_use_id}, status={status.value}"

@@ -119,7 +119,7 @@ describe('MobileWorkbenchLayout', () => {
     expect(screen.queryByText('MI')).not.toBeInTheDocument()
     expect(screen.getByTestId('mobile-empty-header')).toHaveClass('bg-background/95')
     expect(screen.getByTestId('open-mobile-drawer-button')).toHaveClass(
-      'h-10',
+      'h-11',
       'text-text-primary',
     )
     expect(screen.getByTestId('open-mobile-drawer-button')).not.toHaveClass(
@@ -131,6 +131,17 @@ describe('MobileWorkbenchLayout', () => {
     expect(screen.getByTestId('mobile-empty-chat-input-dock')).toHaveClass(
       'px-4',
       'pt-3',
+    )
+    expect(screen.getByTestId('mobile-empty-chat-input-dock').className).not.toMatch(
+      /\bz-(?:modal|critical)\b/,
+    )
+    expect(screen.getByTestId('mobile-empty-state-content')).toHaveClass(
+      'items-center',
+      'gap-6',
+    )
+    expect(screen.getByTestId('mobile-empty-state-content').parentElement).toHaveClass(
+      'items-center',
+      'justify-center',
     )
     expect(screen.getByTestId('compact-input-pill')).toHaveClass('min-h-[52px]')
     expect(screen.getByTestId('add-context-button')).toHaveClass('h-[52px]')
@@ -147,7 +158,9 @@ describe('MobileWorkbenchLayout', () => {
           region: 'overseas',
           modelLabel: 'gpt-5.5',
           sortOrder: 10,
-          controls: ['speed'],
+          controls: {
+            speed: true,
+          },
         },
       },
     }
@@ -198,7 +211,19 @@ describe('MobileWorkbenchLayout', () => {
       'model-selector-mobile-title',
     )
     expect(screen.getByTestId('model-selector-menu')).toHaveClass('h-[82dvh]')
-    expect(screen.getByTestId('model-selector-search-input')).toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-menu').closest('.fixed')).toHaveClass(
+      'z-modal',
+    )
+    expect(screen.getByTestId('model-selector-confirm-button').parentElement).toHaveClass(
+      'shrink-0',
+    )
+    expect(screen.getByTestId('model-selector-confirm-button').parentElement).not.toHaveClass(
+      'absolute',
+    )
+    expect(screen.getByTestId('model-selector-search-input')).toHaveClass(
+      'text-base',
+      'leading-5',
+    )
     expect(screen.getByTestId('model-selector-model-list')).toHaveClass(
       'overflow-y-auto',
       'scrollbar-none',
@@ -343,11 +368,13 @@ describe('MobileWorkbenchLayout', () => {
       'absolute',
       'bottom-0',
       'pointer-events-none',
+      'z-chrome',
     )
     expect(screen.getByTestId('mobile-conversation-header')).toHaveClass(
       'absolute',
       'bg-background/95',
       'backdrop-blur',
+      'z-chrome',
     )
     expect(screen.getByTestId('mobile-conversation-header')).toHaveClass('gap-2')
     expect(screen.getByTestId('open-mobile-drawer-button').closest('header')).toHaveClass(
@@ -379,6 +406,15 @@ describe('MobileWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
 
+    const mobileDrawer = screen.getByText('Wework').closest('.fixed')
+    expect(mobileDrawer).toHaveStyle({
+      backgroundColor: 'rgb(var(--color-mobile-drawer))',
+    })
+    expect(mobileDrawer).toHaveClass(
+      'z-critical',
+      'backdrop-blur-3xl',
+      'backdrop-saturate-150',
+    )
     expect(screen.getByText('项目')).toBeInTheDocument()
     expect(screen.queryByText('图片')).not.toBeInTheDocument()
     expect(screen.queryByText('编码')).not.toBeInTheDocument()
@@ -389,6 +425,10 @@ describe('MobileWorkbenchLayout', () => {
       'placeholder',
       '搜索',
     )
+    expect(screen.getByTestId('mobile-search-input')).toHaveClass(
+      'text-base',
+      'leading-5',
+    )
     expect(screen.getByText('github_wegent')).toBeInTheDocument()
     expect(screen.queryByText('项目任务')).not.toBeInTheDocument()
     expect(screen.getByTestId('mobile-project-item-button')).toHaveAttribute(
@@ -396,14 +436,14 @@ describe('MobileWorkbenchLayout', () => {
       'false',
     )
     expect(screen.getByTestId('mobile-project-item-button')).toHaveClass(
-      'text-text-primary',
+      'text-[rgb(var(--color-sidebar-text-primary))]',
     )
     expect(screen.getByText('远程连接 Claude Code')).toBeInTheDocument()
     expect(screen.getByTestId('mobile-recent-task-button')).toHaveClass(
-      'text-text-primary',
+      'text-[rgb(var(--color-sidebar-text-primary))]',
     )
     expect(screen.getByTestId('mobile-settings-button')).toHaveClass(
-      'text-text-primary',
+      'text-[rgb(var(--color-sidebar-text-primary))]',
     )
     expect(screen.getByTestId('mobile-drawer-scroll')).toHaveClass('overflow-y-auto')
   })
@@ -450,6 +490,51 @@ describe('MobileWorkbenchLayout', () => {
     expect(screen.queryByTestId('mobile-standalone-new-chat-button')).not.toBeInTheDocument()
     expect(onStartStandaloneChat).not.toHaveBeenCalled()
     expect(onOpenPlugins).not.toHaveBeenCalled()
+  })
+
+  test('shows more project tasks from the mobile drawer', async () => {
+    const stateWithManyProjectTasks = {
+      ...baseState,
+      projects: [
+        {
+          ...baseState.projects[0],
+          tasks: Array.from({ length: 5 }, (_, index) => ({
+            id: index + 1,
+            task_id: index + 1,
+            task_title: `项目任务 ${index + 1}`,
+            task_status: 'COMPLETED',
+            created_at: `2026-05-2${index}T00:00:00.000Z`,
+          })),
+        },
+      ],
+    }
+
+    render(
+      <MobileWorkbenchLayout
+        state={stateWithManyProjectTasks}
+        messages={[]}
+        onSelectProject={vi.fn()}
+        onOpenTask={vi.fn()}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
+    await userEvent.click(screen.getByText('github_wegent'))
+
+    expect(screen.getAllByTestId('mobile-project-task-button')).toHaveLength(4)
+    expect(screen.queryByText('项目任务 1')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('mobile-project-task-limit-toggle-1'))
+
+    expect(screen.getAllByTestId('mobile-project-task-button')).toHaveLength(5)
+    expect(screen.getByText('项目任务 1')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('mobile-project-task-limit-toggle-1'))
+
+    expect(screen.getAllByTestId('mobile-project-task-button')).toHaveLength(4)
+    expect(screen.queryByText('项目任务 1')).not.toBeInTheDocument()
   })
 
   test('opens a mobile-specific settings page with plugins inside settings', async () => {

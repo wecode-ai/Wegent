@@ -1,15 +1,30 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { WorkbenchMessage, WorkbenchState } from '@/types/workbench'
+import type {
+  GuidanceWorkbenchMessage,
+  QueuedWorkbenchMessage,
+  WorkbenchMessage,
+  WorkbenchState,
+} from '@/types/workbench'
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
-import type { ArchivedTaskListResponse, CreateProjectRequest, ProjectWithTasks } from '@/types/api'
+import type {
+  ArchivedTaskListResponse,
+  CreateProjectRequest,
+  ProjectWithTasks,
+  TaskDetail,
+  TaskListResponse,
+} from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import { DesktopSidebar } from './DesktopSidebar'
 import { DesktopWorkbenchMain } from './DesktopWorkbenchMain'
+import { DesktopWindowControls } from './DesktopWindowControls'
+import { useDesktopSidebarCollapsed } from './useDesktopSidebarCollapsed'
 import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
 
 interface DesktopWorkbenchLayoutProps {
   state: WorkbenchState
   messages: WorkbenchMessage[]
+  queuedMessages?: QueuedWorkbenchMessage[]
+  guidanceMessages?: GuidanceWorkbenchMessage[]
   runningTaskIds: Set<number>
   activeItem?: 'chat' | 'plugins' | 'automation'
   onNewChat: () => void
@@ -20,6 +35,8 @@ interface DesktopWorkbenchLayoutProps {
   onSelectProject: (projectId: number | null) => void
   onStartNewProjectChat: (projectId: number) => void
   onOpenTask: (taskId: number, projectId?: number) => void
+  onSearchTasks?: (query: string) => Promise<TaskListResponse>
+  onSearchTaskDetail?: (taskId: number) => Promise<TaskDetail>
   onRememberExecutionDevice?: (deviceId: string) => void
   onRefreshDevices?: () => Promise<void>
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
@@ -37,19 +54,37 @@ interface DesktopWorkbenchLayoutProps {
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onGetProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
+  onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
   onLoadEnvironmentInfo: (project: ProjectWithTasks | null) => Promise<EnvironmentInfo>
   onCommitEnvironmentChanges: (
     project: ProjectWithTasks | null,
     message: string,
   ) => Promise<void>
+  onListEnvironmentBranches: (project: ProjectWithTasks | null) => Promise<string[]>
+  onCheckoutEnvironmentBranch: (
+    project: ProjectWithTasks | null,
+    branchName: string,
+  ) => Promise<void>
+  onCreateEnvironmentBranch: (
+    project: ProjectWithTasks | null,
+    branchName: string,
+  ) => Promise<void>
   onInputChange: (value: string) => void
   onSend: () => void
+  isResponseStreaming?: boolean
+  onPauseResponse?: () => void
+  onCancelQueuedMessage?: (id: string) => void
+  onSendQueuedAsGuidance?: (id: string) => void
+  onEditQueuedMessage?: (id: string) => void
+  onCancelGuidanceMessage?: (id: string) => void
   onLogout: () => void
 }
 
 export function DesktopWorkbenchLayout({
   state,
   messages,
+  queuedMessages = [],
+  guidanceMessages = [],
   runningTaskIds,
   activeItem = 'chat',
   onNewChat,
@@ -60,6 +95,8 @@ export function DesktopWorkbenchLayout({
   onSelectProject,
   onStartNewProjectChat,
   onOpenTask,
+  onSearchTasks,
+  onSearchTaskDetail,
   onRememberExecutionDevice,
   onRefreshDevices,
   onCreateProject,
@@ -77,13 +114,24 @@ export function DesktopWorkbenchLayout({
   onGetDeviceHomeDirectory,
   onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
+  onCreateDeviceDirectory,
   onLoadEnvironmentInfo,
   onCommitEnvironmentChanges,
+  onListEnvironmentBranches,
+  onCheckoutEnvironmentBranch,
+  onCreateEnvironmentBranch,
   onInputChange,
   onSend,
+  isResponseStreaming = false,
+  onPauseResponse = () => {},
+  onCancelQueuedMessage = () => {},
+  onSendQueuedAsGuidance = () => {},
+  onEditQueuedMessage = () => {},
+  onCancelGuidanceMessage = () => {},
   onLogout,
 }: DesktopWorkbenchLayoutProps) {
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const { sidebarCollapsed, setSidebarCollapsed } =
+    useDesktopSidebarCollapsed()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [environmentInfo, setEnvironmentInfo] = useState<EnvironmentInfo>({
     additions: '+0',
@@ -148,8 +196,18 @@ export function DesktopWorkbenchLayout({
     await refreshEnvironmentInfo()
   }
 
+  async function handleCheckoutEnvironmentBranch(branchName: string) {
+    await onCheckoutEnvironmentBranch(environmentProject, branchName)
+    await refreshEnvironmentInfo()
+  }
+
+  async function handleCreateEnvironmentBranch(branchName: string) {
+    await onCreateEnvironmentBranch(environmentProject, branchName)
+    await refreshEnvironmentInfo()
+  }
+
   return (
-    <div className="flex h-screen overflow-hidden bg-background text-text-primary">
+    <div className="relative flex h-screen overflow-hidden bg-background text-text-primary">
       {!settingsOpen && !sidebarCollapsed && (
         <DesktopSidebar
           user={state.user}
@@ -170,6 +228,8 @@ export function DesktopWorkbenchLayout({
           onSelectProject={onSelectProject}
           onStartNewProjectChat={onStartNewProjectChat}
           onOpenTask={onOpenTask}
+          onSearchTasks={onSearchTasks}
+          onSearchTaskDetail={onSearchTaskDetail}
           onRememberExecutionDevice={onRememberExecutionDevice}
           onOpenPlugins={onOpenPlugins}
           onRefreshDevices={onRefreshDevices}
@@ -184,8 +244,17 @@ export function DesktopWorkbenchLayout({
           onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
           onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
           onListDeviceDirectories={onListDeviceDirectories}
+          onCreateDeviceDirectory={onCreateDeviceDirectory}
           onOpenSettings={() => setSettingsOpen(true)}
           onLogout={onLogout}
+        />
+      )}
+      {!settingsOpen && sidebarCollapsed && (
+        <DesktopWindowControls
+          sidebarCollapsed
+          onToggleSidebar={() => setSidebarCollapsed(false)}
+          onNewChat={onNewChat}
+          className="absolute left-4 top-2 z-chrome"
         />
       )}
 
@@ -199,11 +268,12 @@ export function DesktopWorkbenchLayout({
         />
       ) : (
         <DesktopWorkbenchMain
-          sidebarCollapsed={sidebarCollapsed}
           isBootstrapping={state.isBootstrapping}
           currentTask={state.currentTask}
           currentProject={state.currentProject}
           messages={messages}
+          queuedMessages={queuedMessages}
+          guidanceMessages={guidanceMessages}
           projectChat={projectChat}
           projectWork={projectWork}
           input={state.input}
@@ -211,9 +281,17 @@ export function DesktopWorkbenchLayout({
           environmentInfo={environmentInfo}
           onRefreshEnvironmentInfo={refreshEnvironmentInfo}
           onCommitEnvironmentChanges={handleCommitEnvironmentChanges}
-          onExpandSidebar={() => setSidebarCollapsed(false)}
+          onListEnvironmentBranches={() => onListEnvironmentBranches(environmentProject)}
+          onCheckoutEnvironmentBranch={handleCheckoutEnvironmentBranch}
+          onCreateEnvironmentBranch={handleCreateEnvironmentBranch}
           onInputChange={onInputChange}
           onSend={onSend}
+          isResponseStreaming={isResponseStreaming}
+          onPauseResponse={onPauseResponse}
+          onCancelQueuedMessage={onCancelQueuedMessage}
+          onSendQueuedAsGuidance={onSendQueuedAsGuidance}
+          onEditQueuedMessage={onEditQueuedMessage}
+          onCancelGuidanceMessage={onCancelGuidanceMessage}
         />
       )}
     </div>

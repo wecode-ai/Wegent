@@ -86,6 +86,20 @@ curl -fL -o wegent-executor \
 chmod +x wegent-executor
 ```
 
+#### Use Device-Local CLI Configuration
+
+By default, the executor uses the Claude/Codex model and provider configuration issued by Wegent. If a device already has local Codex CLI login or provider configuration, set this environment variable to let Codex use the device-local configuration:
+
+```bash
+WEGENT_LOCAL_CLI_CONFIG_RUNTIMES=codex
+```
+
+When the variable is empty or unset, all runtimes keep using the system-issued configuration. The currently supported value is:
+
+- `codex`: Codex uses device-local configuration, and Wegent no longer injects the Codex provider.
+
+This setting only affects the current device, which is useful when different devices should mix system-issued configuration and local Codex CLI configuration differently. Claude keeps using Wegent-issued configuration.
+
 ### Building a Device Image
 
 The repository provides `docker/device/Dockerfile` for cloud device or local device base images. The image installs `code-server`, the `weiboplat.wecoder-agent` extension, Claude Code CLI, `ttyd`, Node.js 22, Python, Git, and copies `executor/dist/wegent-executor` to `/app/executor` and `~/.wegent-executor/bin/wegent-executor`.
@@ -129,6 +143,14 @@ By default, the device image only starts `wegent-executor` and the interactive s
 Both entrypoints are exposed under the `/s/{session_id}/` path on `DEVICE_PUBLIC_BASE_URL`. Each terminal or code-server session has an isolated path, so a user can open multiple projects at the same time or open multiple terminal/code-server sessions for one project. Terminal sessions are created dynamically on the device and the matching ttyd process is cleaned up when the browser disconnects. Code-server is a persistent in-container process, and the gateway opens the requested project path through it. To keep the legacy fixed `8080` code-server and `7681` ttyd entrypoints, add `-e START_DEVICE_UI=1` and map those ports at container runtime.
 
 When a project configures `workspace.localPath` or `workspace.checkoutPath`, the device creates that directory before starting terminal or code-server.
+
+### Standalone Chat Workspaces
+
+When a chat has no selected project but is bound to an online device, executor-side independent Chats workspaces are currently disabled by default. To enable them, set `WEGENT_EXECUTOR_STANDALONE_CHATS_ENABLED=true` in the device runtime environment.
+
+Once enabled, the first task runs in a temporary task directory. After the response finishes, the Executor generates a dated directory name from the response summary and moves the temporary directory into the Chats workspace tree. The default root is `~/.wecode/wegent-executor/workspace/chats`. To use another location, set `WEGENT_EXECUTOR_CHATS_DIR` in the device runtime environment. Backend stores the final path in the task metadata label `standaloneChatWorkspacePath`, so continuing the conversation or opening it from history reuses the same directory.
+
+Project chats do not use this path. They continue to use the project's configured `workspace.localPath` or `workspace.checkoutPath`.
 
 #### Installing a Specific Version
 

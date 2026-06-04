@@ -6,7 +6,7 @@
 
 import React, { useEffect, useCallback, useMemo, useState, useRef } from 'react'
 import { Command, MessageSquareText, ShieldX, X } from 'lucide-react'
-import { useSearchParams } from 'next/navigation'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import MessagesArea from '../message/MessagesArea'
 import { QuickAccessCards } from './QuickAccessCards'
 import { SloganDisplay } from './SloganDisplay'
@@ -30,7 +30,6 @@ import type { InteractiveFormAnswerPayload, Team, SubtaskContextBrief, TaskType 
 import type { Model } from '../../hooks/useModelSelection'
 import type { ContextItem, QueueMessageContext } from '@/types/context'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useRouter } from 'next/navigation'
 import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { useOptionalTaskSession } from '@/features/tasks/session/TaskSession'
 import { Button } from '@/components/ui/button'
@@ -60,6 +59,12 @@ import {
   buildInteractiveFormCancellation,
   findPendingInteractiveForm,
 } from './interactiveFormPending'
+import {
+  parseQuickLaunchIntent,
+  removeQuickLaunchQueryParams,
+  type QuickLaunchIntent,
+} from './quick-launch/launch-intent'
+import type { QuickPresetSelection } from './quick-launch/types'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -169,6 +174,7 @@ function ChatAreaContent({
   const { t } = useTranslation('chat')
   const { toast } = useToast()
   const router = useRouter()
+  const pathname = usePathname()
   const chatStreamContext = useOptionalTaskSession()
 
   // Pipeline stage info state - shared between PipelineStageIndicator and MessagesArea
@@ -178,6 +184,7 @@ function ChatAreaContent({
   const [pendingReplacementMessage, setPendingReplacementMessage] = useState<string | null>(null)
   const [pendingReplacementOptions, setPendingReplacementOptions] =
     useState<SendMessageOptions | null>(null)
+  const [quickLaunchIntent, setQuickLaunchIntent] = useState<QuickLaunchIntent | null>(null)
   const [isPendingReplacementOpen, setIsPendingReplacementOpen] = useState(false)
   const [isPendingReplacementConfirming, setIsPendingReplacementConfirming] = useState(false)
   const [pendingFormReplacementMessage, setPendingFormReplacementMessage] = useState<string | null>(
@@ -370,10 +377,11 @@ function ChatAreaContent({
 
   // Get taskId from URL for team sync logic
   const searchParams = useSearchParams()
+  const searchParamsString = searchParams.toString()
   const taskIdFromUrl =
     searchParams.get('taskId') || searchParams.get('task_id') || searchParams.get('taskid')
   // Get teamId from URL for auto-selecting a specific team (e.g. after accepting a share invite)
-  const teamIdFromUrl = searchParams.get('teamId')
+  const teamIdFromUrl = searchParams.get('teamId') ?? quickLaunchIntent?.teamId.toString() ?? null
   // Get project info when in project context
   const projectIdFromUrl = searchParams.get('projectId')
   const { projects } = useProjectContext()
@@ -388,6 +396,18 @@ function ChatAreaContent({
       path: explicitPath || defaultPath,
     }
   }, [projectIdFromUrl, projects])
+
+  useEffect(() => {
+    const intent = parseQuickLaunchIntent(new URLSearchParams(searchParamsString))
+    if (!intent) {
+      return
+    }
+
+    setQuickLaunchIntent(intent)
+    const nextParams = removeQuickLaunchQueryParams(new URLSearchParams(searchParamsString))
+    const nextSearch = nextParams.toString()
+    router.replace(nextSearch ? `${pathname}?${nextSearch}` : pathname)
+  }, [pathname, router, searchParamsString])
 
   // Track initialization and last synced task for team selection
   const hasInitializedTeamRef = useRef(false)
@@ -805,6 +825,30 @@ function ChatAreaContent({
       applyQuickPhraseToInput(phrase)
     },
     [applyQuickPhraseToInput, chatState.taskInputMessage]
+  )
+
+  const handleQuickPresetSelect = useCallback(
+    ({ preset }: QuickPresetSelection) => {
+      const options = preset.options
+      if (options?.enable_deep_thinking !== undefined && options.enable_deep_thinking !== null) {
+        chatState.setEnableDeepThinking(options.enable_deep_thinking)
+      }
+      if (options?.enable_clarification !== undefined && options.enable_clarification !== null) {
+        chatState.setEnableClarification(options.enable_clarification)
+      }
+      if (options?.force_override !== undefined && options.force_override !== null) {
+        chatState.setForceOverride(options.force_override)
+      }
+      if (options?.selected_skill_names && options.selected_skill_names.length > 0) {
+        skillSelector.setSelectedSkillNames(options.selected_skill_names)
+      }
+
+      const prompt = preset.prompt?.trim()
+      if (prompt) {
+        handleQuickPhraseSelect(prompt)
+      }
+    },
+    [chatState, handleQuickPhraseSelect, skillSelector]
   )
 
   const handleConfirmQuickPhraseOverwrite = useCallback(() => {
@@ -1573,6 +1617,7 @@ function ChatAreaContent({
                   selectedTeam={chatState.selectedTeam}
                   onTeamSelect={handleTeamSelect}
                   onPhraseSelect={handleQuickPhraseSelect}
+                  onPresetSelect={handleQuickPresetSelect}
                   currentMode={taskType}
                   isLoading={isTeamsLoading}
                   isTeamsLoading={isTeamsLoading}
@@ -1580,6 +1625,8 @@ function ChatAreaContent({
                   onRefreshTeams={onRefreshTeams}
                   showWizardButton={taskType === 'chat'}
                   defaultTeam={chatState.defaultTeam}
+                  launchIntent={quickLaunchIntent}
+                  onLaunchIntentConsumed={() => setQuickLaunchIntent(null)}
                 />
               )}
             </div>

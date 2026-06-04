@@ -49,6 +49,13 @@ class ModelAdapter:
                         model_category_type = model_crd.spec.modelType.value
                     model_group = model_crd.spec.modelGroup
                     model_sub_group = model_crd.spec.modelSubGroup
+                    if model_crd.spec.protocol:
+                        config = {**config, "protocol": model_crd.spec.protocol}
+                    if model_crd.spec.apiFormat:
+                        config = {
+                            **config,
+                            "apiFormat": model_crd.spec.apiFormat.value,
+                        }
                     # Include type-specific config for non-LLM models
                     if model_category_type == "video":
                         if model_crd.spec.videoConfig:
@@ -58,8 +65,6 @@ class ModelAdapter:
                                     exclude_none=True
                                 ),
                             }
-                        if model_crd.spec.protocol:
-                            config = {**config, "protocol": model_crd.spec.protocol}
                 except Exception:
                     # Fallback for invalid CRD structure
                     config = kind.json

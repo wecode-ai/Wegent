@@ -1,5 +1,6 @@
 import type {
   DeviceInfo,
+  ModelSelectionConfig,
   ProjectTask,
   ProjectWithTasks,
   Task,
@@ -61,6 +62,10 @@ export type WorkbenchAction =
     }
   | { type: 'task_upserted'; task: Task }
   | { type: 'task_status_changed'; taskId: number; status: string }
+  | {
+      type: 'current_task_model_selection_changed'
+      selection: ModelSelectionConfig
+    }
   | { type: 'current_task_cleared' }
   | { type: 'input_changed'; input: string }
   | { type: 'sending_started' }
@@ -116,6 +121,17 @@ function upsertOpenedTask(state: WorkbenchState, task: Task): WorkbenchState {
   return {
     ...state,
     recentTasks: upsertTask(state.recentTasks, task.id, task, item => item.id),
+  }
+}
+
+function normalizeOpenedTaskProject(
+  task: Task,
+  project: ProjectWithTasks | null | undefined
+): Task {
+  if (project === undefined) return task
+  return {
+    ...task,
+    project_id: project?.id ?? 0,
   }
 }
 
@@ -230,15 +246,18 @@ export function workbenchReducer(
         standaloneDeviceId: action.standaloneDeviceId,
       }
     case 'task_opened':
-      return {
-        ...upsertOpenedTask(state, action.task),
-        currentProject:
-          action.project === undefined ? state.currentProject : action.project,
-        standaloneDeviceId:
-          action.project === null
-            ? action.standaloneDeviceId ?? action.task.device_id ?? state.standaloneDeviceId
-            : state.standaloneDeviceId,
-        currentTask: action.task,
+      {
+        const openedTask = normalizeOpenedTaskProject(action.task, action.project)
+        return {
+          ...upsertOpenedTask(state, openedTask),
+          currentProject:
+            action.project === undefined ? state.currentProject : action.project,
+          standaloneDeviceId:
+            action.project === null
+              ? action.standaloneDeviceId ?? openedTask.device_id ?? state.standaloneDeviceId
+              : state.standaloneDeviceId,
+          currentTask: openedTask,
+        }
       }
     case 'task_upserted':
       return upsertOpenedTask(
@@ -263,6 +282,18 @@ export function workbenchReducer(
               : task
           ),
         })),
+      }
+    case 'current_task_model_selection_changed':
+      return {
+        ...state,
+        currentTask: state.currentTask
+          ? {
+              ...state.currentTask,
+              model_id: action.selection.modelName,
+              force_override_bot_model_type: action.selection.modelType ?? null,
+              model_options: action.selection.options ?? {},
+            }
+          : state.currentTask,
       }
     case 'current_task_cleared':
       return { ...state, currentTask: null }

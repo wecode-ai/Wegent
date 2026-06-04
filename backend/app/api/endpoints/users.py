@@ -26,6 +26,7 @@ from app.schemas.quick_launch import (
     QuickLaunchFunctionConfig,
     QuickLaunchFunctionResponse,
     QuickLaunchResponse,
+    input_presets_from_phrases,
     normalize_quick_phrases,
 )
 from app.schemas.subscription import NotificationChannelInfo
@@ -373,6 +374,7 @@ def _build_favorite_agent(team_id: int) -> Optional[QuickLaunchFavoriteAgent]:
         recommended_mode=spec.get("recommended_mode", "both"),
         agent_type=team_data.get("agent_type"),
         quick_phrases=normalize_quick_phrases(spec.get("quick_phrases")),
+        input_presets=input_presets_from_phrases(spec.get("quick_phrases")),
     )
 
 

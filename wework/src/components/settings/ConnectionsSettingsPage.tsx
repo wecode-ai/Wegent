@@ -1,6 +1,7 @@
 import {
   ArrowLeft,
   Archive,
+  Palette,
   BookOpen,
   Check,
   Cloud,
@@ -26,6 +27,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { buildVncPageUrl } from '@/lib/vnc'
 import type { ArchivedTask } from '@/types/api'
 import type { CloudDeviceMetricsResponse, DeviceInfo } from '@/types/devices'
+import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
 import { AddCloudDeviceDialog } from './AddCloudDeviceDialog'
 
 interface ConnectionsSettingsPageProps {
@@ -49,6 +51,12 @@ const settingsNavItems: SettingsNavItem[] = [
     icon: Globe2,
     label: 'settings_nav_connections',
     fallback: '连接',
+  },
+  {
+    key: 'appearance',
+    icon: Palette,
+    label: 'settings_nav_appearance',
+    fallback: '外观',
   },
   { key: 'projects', icon: Folder, label: 'settings_nav_projects', fallback: '项目' },
   {
@@ -253,7 +261,7 @@ function ConfirmDeviceActionDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/35"
+      className="fixed inset-0 z-modal flex items-center justify-center bg-black/35"
       onClick={e => {
         if (!loading && e.target === e.currentTarget) onCancel()
       }}
@@ -567,10 +575,10 @@ function DeviceSection({
   return (
     <section className="space-y-2.5">
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 text-[#5f6368]">
+        <div className="flex items-center gap-2 text-text-secondary">
           <Cloud className="h-3.5 w-3.5" />
           <h2 className="text-sm font-medium">{title}</h2>
-          <span className="text-xs text-[#8a8f98]">({devices.length})</span>
+          <span className="text-xs text-text-muted">({devices.length})</span>
         </div>
       </div>
       <div className="space-y-3">
@@ -579,15 +587,15 @@ function DeviceSection({
         ))}
         <div
           data-testid="connection-scale-wiki"
-          className="rounded-lg border border-[#e6e6e6] bg-[#fafafa] px-4 py-3"
+          className="rounded-lg border border-border bg-surface px-4 py-3"
         >
           <div className="flex items-start gap-3">
-            <BookOpen className="mt-0.5 h-4 w-4 shrink-0 text-[#5f6368]" />
+            <BookOpen className="mt-0.5 h-4 w-4 shrink-0 text-text-secondary" />
             <div className="min-w-0">
-              <h3 className="text-sm font-semibold text-[#2d2d2d]">
+              <h3 className="text-sm font-semibold text-text-primary">
                 {t('workbench.connection_scale_wiki_title', '说明')}
               </h3>
-              <p className="mt-1 text-xs leading-5 text-[#6b6f76]">
+              <p className="mt-1 text-xs leading-5 text-text-secondary">
                 {t(
                   'workbench.connection_scale_wiki_desc',
                   '当 CPU、MEM 或磁盘持续超过 80% 时，建议扩容云设备规格或清理工作区缓存。',
@@ -635,11 +643,11 @@ function ConnectionsDeviceSettingsPage() {
   return (
     <>
       <div className="mx-auto w-full max-w-[760px]">
-        <h1 className="text-xl font-semibold tracking-normal text-[#111]">
+        <h1 className="text-xl font-semibold tracking-normal text-text-primary">
           {t('workbench.connections_title', '连接')}
         </h1>
 
-        <div className="mt-9 flex border-b border-[#e5e5e5]">
+        <div className="mt-9 flex border-b border-border">
           {[t('workbench.connections_tab_this_mac', '连接设备')].map((tab, index) => (
             <button
               key={tab}
@@ -648,8 +656,8 @@ function ConnectionsDeviceSettingsPage() {
               className={[
                 'h-10 px-6 text-sm font-medium',
                 index === 0
-                  ? 'border-b border-[#111] text-[#111]'
-                  : 'text-[#606368] hover:text-[#111]',
+                  ? 'border-b border-text-primary text-text-primary'
+                  : 'text-text-secondary hover:text-text-primary',
               ].join(' ')}
             >
               {tab}
@@ -658,9 +666,9 @@ function ConnectionsDeviceSettingsPage() {
         </div>
 
         <section className="mt-6 space-y-5">
-          <div className="rounded-lg border border-[#e2e2e2] p-5">
+          <div className="rounded-lg border border-border bg-background p-5">
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-[#2d2d2d]">
+              <h2 className="text-sm font-semibold text-text-primary">
                 {t('workbench.connections_authorized_devices', '可连接的设备')}
               </h2>
               {!loading && devices.length === 0 && (
@@ -669,7 +677,7 @@ function ConnectionsDeviceSettingsPage() {
                   data-testid="connection-add-device-button"
                   onClick={() => setAddDialogOpen(true)}
                   disabled={creating}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-full bg-[#f5f5f5] px-3 text-sm text-[#2d2d2d] hover:bg-[#ececec] disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex h-8 items-center gap-1.5 rounded-full bg-surface px-3 text-sm text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Plus className="h-4 w-4" />
                   {t('workbench.connection_add', '添加')}
@@ -679,15 +687,15 @@ function ConnectionsDeviceSettingsPage() {
 
             <div className="space-y-5">
               {creating && (
-                <div className="flex items-center gap-2 rounded-lg bg-[#eff6ff] px-3 py-2.5 text-xs text-[#2563eb]">
+                <div className="flex items-center gap-2 rounded-lg bg-primary/10 px-3 py-2.5 text-xs text-primary">
                   <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[#409eff]" />
                   云设备创建中，初始化约需 2-3 分钟，完成后将自动出现在列表中
                 </div>
               )}
               {loading ? (
-                <div className="py-8 text-center text-sm text-[#6b6f76]">加载中...</div>
+                <div className="py-8 text-center text-sm text-text-secondary">加载中...</div>
               ) : devices.length === 0 ? (
-                <div className="py-8 text-center text-sm text-[#6b6f76]">暂无云设备</div>
+                <div className="py-8 text-center text-sm text-text-secondary">暂无云设备</div>
               ) : (
                 <DeviceSection
                   title={t('workbench.connection_cloud_devices', '云设备')}
@@ -728,6 +736,7 @@ function ArchivedChatsSettingsPage({
   onDeleteTask,
   onDeleteArchivedTasks,
 }: Required<Omit<ConnectionsSettingsPageProps, 'onBack'>>) {
+  const { t } = useTranslation('common')
   const [items, setItems] = useState<ArchivedTask[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -770,9 +779,14 @@ function ArchivedChatsSettingsPage({
   return (
     <div data-testid="archived-chats-settings" className="mx-auto w-full max-w-[860px]">
       <div className="flex items-center justify-between gap-4">
-        <h1 className="text-xl font-semibold tracking-normal text-[#111]">
-          Archived chats
-        </h1>
+        <div>
+          <h1 className="text-xl font-semibold tracking-normal text-text-primary">
+            {t('workbench.archived_chats_title', '已归档会话')}
+          </h1>
+          <p className="mt-2 text-sm text-text-secondary">
+            {t('workbench.archived_chats_subtitle', '查看、恢复或删除已归档的会话')}
+          </p>
+        </div>
         <button
           type="button"
           data-testid="delete-all-archived-chats-button"
@@ -781,17 +795,29 @@ function ArchivedChatsSettingsPage({
             await onDeleteArchivedTasks()
             await loadArchivedTasks()
           }}
-          className="h-9 rounded-full bg-[#fee2e2] px-3 text-sm font-medium text-[#b42318] hover:bg-[#fecaca] disabled:opacity-50"
+          className="h-9 rounded-full border border-red-500/20 bg-red-500/10 px-3 text-sm font-medium text-red-500 hover:bg-red-500/15 disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-text-muted"
         >
-          Delete all
+          {t('workbench.archived_chats_delete_all', '全部删除')}
         </button>
       </div>
 
-      <div className="mt-10 overflow-hidden rounded-lg border border-[#e2e2e2]">
-        {loading && <p className="px-5 py-6 text-sm text-[#8a8f98]">加载中...</p>}
+      <div className="mt-8 overflow-hidden rounded-lg border border-border bg-surface">
+        {loading && (
+          <p className="px-5 py-8 text-sm text-text-muted">
+            {t('common.loading', '加载中...')}
+          </p>
+        )}
         {!loading && error && <p className="px-5 py-6 text-sm text-[#c44]">{error}</p>}
         {!loading && !error && items.length === 0 && (
-          <p className="px-5 py-6 text-sm text-[#8a8f98]">暂无已归档会话</p>
+          <div className="flex min-h-[156px] flex-col items-center justify-center px-5 py-10 text-center">
+            <Archive className="mb-3 h-7 w-7 text-text-muted" />
+            <h2 className="text-sm font-semibold text-text-primary">
+              {t('workbench.archived_chats_empty_title', '暂无已归档会话')}
+            </h2>
+            <p className="mt-2 max-w-sm text-sm leading-6 text-text-secondary">
+              {t('workbench.archived_chats_empty_desc', '归档后的会话会显示在这里，方便之后恢复或清理。')}
+            </p>
+          </div>
         )}
         {!loading &&
           !error &&
@@ -799,13 +825,13 @@ function ArchivedChatsSettingsPage({
             <div
               key={item.id}
               data-testid="archived-chat-row"
-              className="flex min-h-[74px] items-center gap-4 border-b border-[#e8eaed] px-5 py-3 last:border-b-0"
+              className="flex min-h-[74px] items-center gap-4 border-b border-border bg-background px-5 py-3 last:border-b-0 hover:bg-muted"
             >
               <div className="min-w-0 flex-1">
-                <h2 className="truncate text-sm font-semibold text-[#202124]">
+                <h2 className="truncate text-sm font-semibold text-text-primary">
                   {item.title}
                 </h2>
-                <p className="mt-1 truncate text-sm text-[#6b6f76]">
+                <p className="mt-1 truncate text-sm text-text-secondary">
                   {formatArchivedDate(item.updated_at)}
                   {item.project_name ? ` · ${item.project_name}` : ''}
                 </p>
@@ -817,8 +843,8 @@ function ArchivedChatsSettingsPage({
                   await onDeleteTask(item.id)
                   await loadArchivedTasks()
                 }}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-[#777] hover:bg-[#f1f3f4] hover:text-[#b42318]"
-                aria-label="Delete archived chat"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-red-500/10 hover:text-red-500"
+                aria-label={t('workbench.archived_chats_delete_one', '删除归档会话')}
               >
                 <Trash2 className="h-4 w-4" />
               </button>
@@ -829,9 +855,9 @@ function ArchivedChatsSettingsPage({
                   await onUnarchiveTask(item.id)
                   await loadArchivedTasks()
                 }}
-                className="h-9 shrink-0 rounded-md bg-[#f1f3f4] px-3 text-sm font-medium text-[#3c4043] hover:bg-[#e8eaed]"
+                className="h-9 shrink-0 rounded-md bg-surface px-3 text-sm font-medium text-text-primary hover:bg-muted"
               >
-                Unarchive
+                {t('workbench.archived_chats_unarchive', '恢复')}
               </button>
             </div>
           ))}
@@ -853,14 +879,14 @@ export function ConnectionsSettingsPage({
   return (
     <div
       data-testid="wework-settings-page"
-      className="flex h-screen min-w-0 flex-1 overflow-hidden bg-white text-[#1f1f1f]"
+      className="flex h-screen min-w-0 flex-1 overflow-hidden bg-background text-text-primary"
     >
-      <aside className="flex w-[294px] shrink-0 flex-col bg-[#d6d0c5] px-3 py-4">
+      <aside className="flex w-[294px] shrink-0 flex-col bg-[rgb(var(--color-sidebar))] px-3 py-4 backdrop-blur-xl">
         <button
           type="button"
           data-testid="settings-back-button"
           onClick={onBack}
-          className="mb-4 flex h-9 items-center gap-2 rounded-md px-2 text-sm text-[#777] hover:bg-black/5"
+          className="mb-4 flex h-9 items-center gap-2 rounded-md px-2 text-sm text-text-secondary hover:bg-[rgb(var(--color-sidebar-hover))]"
         >
           <ArrowLeft className="h-4 w-4" />
           {t('workbench.settings_back_to_app', '返回')}
@@ -876,8 +902,8 @@ export function ConnectionsSettingsPage({
               className={[
                 'flex min-h-[31px] w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm font-medium',
                 activeNav === item.key
-                  ? 'bg-black/5 text-[#202124]'
-                  : 'text-[#202124] hover:bg-black/5',
+                  ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
+                  : 'text-text-primary hover:bg-[rgb(var(--color-sidebar-hover))]',
               ].join(' ')}
             >
               <item.icon className="h-4 w-4 shrink-0" />
@@ -889,7 +915,7 @@ export function ConnectionsSettingsPage({
         </nav>
       </aside>
 
-      <main className="min-w-0 flex-1 overflow-auto bg-white px-8 py-16">
+      <main className="min-w-0 flex-1 overflow-auto bg-background px-8 py-16">
         {activeNav === 'archived-chats' ? (
           <ArchivedChatsSettingsPage
             onListArchivedTasks={onListArchivedTasks}
@@ -897,6 +923,8 @@ export function ConnectionsSettingsPage({
             onDeleteTask={onDeleteTask}
             onDeleteArchivedTasks={onDeleteArchivedTasks}
           />
+        ) : activeNav === 'appearance' ? (
+          <AppearanceSettingsPage />
         ) : (
           <ConnectionsDeviceSettingsPage />
         )}

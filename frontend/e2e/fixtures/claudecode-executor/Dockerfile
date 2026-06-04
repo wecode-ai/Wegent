@@ -11,7 +11,7 @@ RUN cd /app/src/shared \
     && uv pip install --system --no-cache -r pyproject.toml \
     && uv pip install --system --no-cache --no-deps openai-codex==0.1.0b2 \
     && npm install -g @anthropic-ai/claude-code@2.1.142 \
-    && npm cache clean --force
+    && npm cache clean --force \
     && printf '#!/bin/sh\nexec python -m executor.main "$@"\n' > /app/executor \
     && chmod +x /app/executor
 

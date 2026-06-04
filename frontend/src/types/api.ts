@@ -540,9 +540,8 @@ export interface AskUserQuestion {
 
 export interface AskUserFormData {
   type: 'interactive_form_question'
-  ask_id: string
-  /** Tool use ID from Claude (UUID format) - used as fallback for answer submission */
-  tool_use_id?: string | null
+  /** Tool call ID used to submit the deferred form answer. */
+  tool_use_id: string
   task_id: number
   subtask_id: number
   /** All questions to render. A single-question form uses a one-item array. */
@@ -556,8 +555,7 @@ export interface AskUserFormData {
 
 export interface InteractiveFormAnswerPayload {
   type: 'interactive_form_question'
-  ask_id: string
-  tool_use_id?: string | null
+  tool_use_id: string
   task_id?: number | null
   subtask_id?: number | null
   success?: boolean
@@ -567,9 +565,7 @@ export interface InteractiveFormAnswerPayload {
 }
 
 export interface AskUserAnswer {
-  ask_id: string
-  /** Tool use ID for fallback lookup when ask_id doesn't match */
-  tool_use_id?: string | null
+  tool_use_id: string
   /** Single-question answer */
   answer?: string | string[]
   /** Multi-question answers: {question_id: value_or_list} */
@@ -699,7 +695,7 @@ export interface QuickLaunchFunction {
   name: string
   enabled: boolean
   order: number
-  quick_phrases: string[]
+  input_presets: QuickLaunchInputPreset[]
 }
 
 export interface QuickLaunchFavoriteAgent {
@@ -713,11 +709,26 @@ export interface QuickLaunchFavoriteAgent {
   recommended_mode?: 'chat' | 'code' | 'both'
   agent_type?: string | null
   quick_phrases: string[]
+  input_presets: QuickLaunchInputPreset[]
 }
 
 export interface QuickLaunchResponse {
   system_functions: QuickLaunchFunction[]
   favorite_agents: QuickLaunchFavoriteAgent[]
+}
+
+export interface QuickLaunchInputOptions {
+  enable_deep_thinking?: boolean | null
+  enable_clarification?: boolean | null
+  force_override?: boolean | null
+  selected_skill_names?: string[]
+}
+
+export interface QuickLaunchInputPreset {
+  id: string
+  title: string
+  prompt?: string | null
+  options?: QuickLaunchInputOptions | null
 }
 
 // Welcome Config Types (Slogan & Tips)

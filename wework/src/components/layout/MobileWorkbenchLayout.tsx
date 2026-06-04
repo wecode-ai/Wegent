@@ -16,12 +16,19 @@ import type {
   ProjectWithTasks,
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
-import type { WorkbenchMessage, WorkbenchState } from '@/types/workbench'
+import type {
+  GuidanceWorkbenchMessage,
+  QueuedWorkbenchMessage,
+  WorkbenchMessage,
+  WorkbenchState,
+} from '@/types/workbench'
 import { MobileDrawer } from './MobileDrawer'
 
 interface MobileWorkbenchLayoutProps {
   state: WorkbenchState
   messages: WorkbenchMessage[]
+  queuedMessages?: QueuedWorkbenchMessage[]
+  guidanceMessages?: GuidanceWorkbenchMessage[]
   runningTaskIds?: Set<number>
   activeItem?: 'chat' | 'plugins' | 'automation'
   onNewChat?: () => void
@@ -59,12 +66,20 @@ interface MobileWorkbenchLayoutProps {
   ) => Promise<void>
   onInputChange: (value: string) => void
   onSend: () => void
+  isResponseStreaming?: boolean
+  onPauseResponse?: () => void
+  onCancelQueuedMessage?: (id: string) => void
+  onSendQueuedAsGuidance?: (id: string) => void
+  onEditQueuedMessage?: (id: string) => void
+  onCancelGuidanceMessage?: (id: string) => void
   onLogout: () => void
 }
 
 export function MobileWorkbenchLayout({
   state,
   messages,
+  queuedMessages = [],
+  guidanceMessages = [],
   runningTaskIds,
   activeItem,
   onNewChat,
@@ -76,6 +91,12 @@ export function MobileWorkbenchLayout({
   onOpenTask,
   onInputChange,
   onSend,
+  isResponseStreaming = false,
+  onPauseResponse = () => {},
+  onCancelQueuedMessage = () => {},
+  onSendQueuedAsGuidance = () => {},
+  onEditQueuedMessage = () => {},
+  onCancelGuidanceMessage = () => {},
 }: MobileWorkbenchLayoutProps) {
   const { t } = useTranslation('common')
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -132,13 +153,13 @@ export function MobileWorkbenchLayout({
           <div className="relative min-h-0 flex-1 overflow-hidden">
             <header
               data-testid="mobile-conversation-header"
-              className="pointer-events-none absolute left-0 right-0 top-0 z-20 flex min-h-[56px] items-center gap-2 border-b border-border/60 bg-background/95 px-3 pb-2 pt-[max(6px,env(safe-area-inset-top))] backdrop-blur"
+              className="pointer-events-none absolute left-0 right-0 top-0 z-chrome flex min-h-[56px] items-center gap-2 border-b border-border/60 bg-background/95 px-3 pb-2 pt-[max(6px,env(safe-area-inset-top))] backdrop-blur"
             >
               <button
                 type="button"
                 data-testid="open-mobile-drawer-button"
                 onClick={() => setDrawerOpen(true)}
-                className="pointer-events-auto flex h-10 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
+                className="pointer-events-auto flex h-11 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
                 aria-label={t('workbench.open_menu', '打开菜单')}
               >
                 <Menu className="h-5 w-5" />
@@ -149,7 +170,7 @@ export function MobileWorkbenchLayout({
                     models={effectiveProjectChat.models}
                     selectedModel={effectiveProjectChat.selectedModel}
                     selectedModelOptions={effectiveProjectChat.selectedModelOptions}
-                    disabled={effectiveProjectChat.isOptionsLocked}
+                    disabled={false}
                     onSelectModel={effectiveProjectChat.setSelectedModel}
                     onSelectModelOption={effectiveProjectChat.setSelectedModelOption}
                     menuPlacement="below"
@@ -160,7 +181,7 @@ export function MobileWorkbenchLayout({
                   <div className="h-10 w-32" data-testid="model-selector-loading" />
                 )}
               </div>
-              <div className="h-10 min-w-[44px]" />
+              <div className="h-11 min-w-[44px]" />
             </header>
             <ScrollableMessageArea
               messages={messages}
@@ -170,7 +191,7 @@ export function MobileWorkbenchLayout({
             />
             <div
               data-testid="mobile-chat-input-dock"
-              className="pointer-events-none absolute bottom-0 left-0 right-0 z-20 px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3"
+              className="pointer-events-none absolute bottom-0 left-0 right-0 z-chrome px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3"
             >
               <div className="pointer-events-auto">
                 <ChatInput
@@ -184,6 +205,14 @@ export function MobileWorkbenchLayout({
                   )}
                   projectChat={projectChat}
                   projectWork={projectWork}
+                  queuedMessages={queuedMessages}
+                  guidanceMessages={guidanceMessages}
+                  isStreaming={isResponseStreaming}
+                  onPause={onPauseResponse}
+                  onCancelQueuedMessage={onCancelQueuedMessage}
+                  onSendQueuedAsGuidance={onSendQueuedAsGuidance}
+                  onEditQueuedMessage={onEditQueuedMessage}
+                  onCancelGuidanceMessage={onCancelGuidanceMessage}
                 />
               </div>
             </div>
@@ -198,7 +227,7 @@ export function MobileWorkbenchLayout({
                 type="button"
                 data-testid="open-mobile-drawer-button"
                 onClick={() => setDrawerOpen(true)}
-                className="flex h-10 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
+                className="flex h-11 min-w-[44px] items-center justify-center rounded-full text-text-primary hover:bg-surface"
                 aria-label={t('workbench.open_menu', '打开菜单')}
               >
                 <Menu className="h-5 w-5" />
@@ -209,7 +238,7 @@ export function MobileWorkbenchLayout({
                     models={effectiveProjectChat.models}
                     selectedModel={effectiveProjectChat.selectedModel}
                     selectedModelOptions={effectiveProjectChat.selectedModelOptions}
-                    disabled={effectiveProjectChat.isOptionsLocked}
+                    disabled={false}
                     onSelectModel={effectiveProjectChat.setSelectedModel}
                     onSelectModelOption={effectiveProjectChat.setSelectedModelOption}
                     menuPlacement="below"
@@ -220,23 +249,26 @@ export function MobileWorkbenchLayout({
                   <div className="h-10 w-32" data-testid="model-selector-loading" />
                 )}
               </div>
-              <div className="h-10 min-w-[44px]" />
+              <div className="h-11 min-w-[44px]" />
             </header>
 
-            <section className="flex min-h-0 flex-1 flex-col justify-end px-5 pb-32">
-              <div className="mb-10 flex justify-center">
+            <section className="flex min-h-0 flex-1 items-center justify-center px-5 pb-6">
+              <div
+                data-testid="mobile-empty-state-content"
+                className="flex w-full max-w-[360px] flex-col items-center gap-6"
+              >
                 <Bot className="h-8 w-8 text-text-muted" />
+                <h1 className="text-center text-2xl font-semibold tracking-normal">
+                  {emptyTitle}
+                </h1>
+                <ProjectWorkBar
+                  {...effectiveProjectWork}
+                  className="min-h-0 justify-center px-0"
+                  buttonClassName="bg-surface px-4 text-text-primary"
+                  menuClassName="left-1/2 w-[min(20rem,calc(100vw-2.5rem))] -translate-x-1/2"
+                  emptyLabel={t('workbench.select_project', '选择项目')}
+                />
               </div>
-              <h1 className="mb-8 text-center text-2xl font-semibold tracking-normal">
-                {emptyTitle}
-              </h1>
-              <ProjectWorkBar
-                {...effectiveProjectWork}
-                className="mb-5 min-h-0 justify-center px-0"
-                buttonClassName="bg-surface px-4 text-text-primary"
-                menuClassName="left-1/2 w-[min(20rem,calc(100vw-2.5rem))] -translate-x-1/2"
-                emptyLabel={t('workbench.select_project', '选择项目')}
-              />
             </section>
             <div
               data-testid="mobile-empty-chat-input-dock"
@@ -253,6 +285,14 @@ export function MobileWorkbenchLayout({
                 )}
                 projectChat={projectChat}
                 projectWork={projectWork}
+                queuedMessages={queuedMessages}
+                guidanceMessages={guidanceMessages}
+                isStreaming={isResponseStreaming}
+                onPause={onPauseResponse}
+                onCancelQueuedMessage={onCancelQueuedMessage}
+                onSendQueuedAsGuidance={onSendQueuedAsGuidance}
+                onEditQueuedMessage={onEditQueuedMessage}
+                onCancelGuidanceMessage={onCancelGuidanceMessage}
               />
             </div>
           </div>

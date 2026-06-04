@@ -9,6 +9,9 @@ interface WorkspacePanelActionsProps {
   environmentInfo: EnvironmentInfo
   onRefreshEnvironmentInfo: () => Promise<void>
   onCommitEnvironmentChanges: (message: string) => Promise<void>
+  onListEnvironmentBranches: () => Promise<string[]>
+  onCheckoutEnvironmentBranch: (branchName: string) => Promise<void>
+  onCreateEnvironmentBranch: (branchName: string) => Promise<void>
   rightPanelOpen: boolean
   bottomPanelOpen: boolean
   onToggleRightPanel: () => void
@@ -19,6 +22,9 @@ export function WorkspacePanelActions({
   environmentInfo,
   onRefreshEnvironmentInfo,
   onCommitEnvironmentChanges,
+  onListEnvironmentBranches,
+  onCheckoutEnvironmentBranch,
+  onCreateEnvironmentBranch,
   rightPanelOpen,
   bottomPanelOpen,
   onToggleRightPanel,
@@ -27,11 +33,14 @@ export function WorkspacePanelActions({
   const { t } = useTranslation('common')
 
   return (
-    <div className="absolute right-5 top-1 z-50 flex items-center gap-3">
+    <div className="absolute right-5 top-1 z-chrome flex items-center gap-3">
       <EnvironmentInfoPopover
         info={environmentInfo}
         onRefresh={onRefreshEnvironmentInfo}
         onCommitChanges={onCommitEnvironmentChanges}
+        onListBranches={onListEnvironmentBranches}
+        onCheckoutBranch={onCheckoutEnvironmentBranch}
+        onCreateBranch={onCreateEnvironmentBranch}
       />
       <button
         type="button"

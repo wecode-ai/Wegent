@@ -12,6 +12,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+from claude_agent_sdk.types import ResultMessage
 
 from executor.agents.agno.thinking_step_manager import ThinkingStepManager
 from executor.agents.base import Agent
@@ -27,7 +28,10 @@ from executor.agents.claude_code.config_manager import (
     get_claude_config_dir,
 )
 from executor.agents.claude_code.deferred_mcp_proxy import (
+    build_interactive_form_answer_payload,
+    create_interactive_form_answer_query,
     install_deferred_mcp_proxy_hook,
+    is_interactive_form_tool,
 )
 from executor.agents.claude_code.git_operations import (
     add_to_git_exclude,
@@ -851,7 +855,26 @@ class ClaudeCodeAgent(Agent):
                 f"Sending query with prompt (length: {prompt_length}) for session_id: {self.session_id}"
             )
 
-            if is_vision_prompt(prompt):
+            interactive_form_answer = getattr(
+                self.task_data, "interactive_form_answer", None
+            )
+            interactive_form_payload = build_interactive_form_answer_payload(
+                interactive_form_answer
+            )
+
+            if interactive_form_payload:
+                logger.info(
+                    "Sending interactive form answer as tool_result for tool_use_id=%s",
+                    interactive_form_payload["tool_use_id"],
+                )
+                await self._drain_answered_interactive_form_resume_result(
+                    interactive_form_payload
+                )
+                await self.client.query(
+                    create_interactive_form_answer_query(interactive_form_answer),
+                    session_id=self.session_id,
+                )
+            elif is_vision_prompt(prompt):
                 # Save images to disk before sending to SDK
                 saved_paths = save_vision_images(prompt, task_id=self.task_id)
                 if saved_paths:
@@ -913,6 +936,60 @@ class ClaudeCodeAgent(Agent):
 
         except Exception as e:
             return self._handle_execution_error(e, "async execution")
+
+    async def _drain_answered_interactive_form_resume_result(
+        self, interactive_form_payload: dict[str, Any]
+    ) -> None:
+        """Ignore the stale deferred form result emitted immediately after resume."""
+        if not self.options.get("resume") or not self.client:
+            return
+
+        expected_tool_use_id = interactive_form_payload["tool_use_id"]
+
+        async def _read_resume_result() -> ResultMessage | None:
+            async for message in self.client.receive_response():
+                if isinstance(message, ResultMessage):
+                    return message
+                logger.info(
+                    "Ignoring non-result message while draining answered form resume: %s",
+                    type(message).__name__,
+                )
+            return None
+
+        try:
+            result_message = await asyncio.wait_for(_read_resume_result(), timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.info(
+                "No stale deferred form result emitted after resume for tool_use_id=%s",
+                expected_tool_use_id,
+            )
+            return
+
+        if not result_message:
+            return
+
+        deferred_tool_use = getattr(result_message, "deferred_tool_use", None)
+        if (
+            result_message.stop_reason in {"tool_deferred", "tool_deferred_unavailable"}
+            and deferred_tool_use
+            and deferred_tool_use.id == expected_tool_use_id
+            and is_interactive_form_tool(deferred_tool_use.name)
+        ):
+            logger.info(
+                "Drained resume-emitted answered interactive form defer: "
+                "tool_use_id=%s, stop_reason=%s",
+                expected_tool_use_id,
+                result_message.stop_reason,
+            )
+            return
+
+        logger.warning(
+            "Unexpected result while draining answered interactive form resume: "
+            "expected_tool_use_id=%s, stop_reason=%s, deferred_tool_use=%s",
+            expected_tool_use_id,
+            result_message.stop_reason,
+            deferred_tool_use,
+        )
 
     async def _create_and_connect_client(self) -> None:
         """

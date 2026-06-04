@@ -45,8 +45,9 @@ const makeLauncher = (overrides: Partial<QuickLauncher>): QuickLauncher => ({
   type: 'system_function',
   key: 'system:create_ppt',
   title: 'Create PPT',
-  quickPhrases: [],
+  inputPresets: [],
   team: makeTeam(),
+  targetPage: 'chat',
   ...overrides,
 })
 
