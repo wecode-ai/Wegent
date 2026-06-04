@@ -6,6 +6,31 @@
     "installed": "Accepted",
     "published": "Published by me"
   },
+  "discover": {
+    "title": "Resource Market",
+    "description": "Browse published Agent and Skill descriptions from your teams. Accept a share to add it to your resource list.",
+    "assistant": {
+      "action": "Discover Assistant",
+      "title": "Discover Assistant",
+      "agent_badge": "Agent",
+      "description": "This is a real Agent that helps you clarify a task and choose suitable resources through chat.",
+      "callout_title": "Not sure what to search for?",
+      "callout_description": "Tell the Discover Assistant what you want to accomplish and it will narrow the market down for you.",
+      "empty_title": "Ask the Discover Assistant",
+      "empty_description": "Describe your task, use case, or current blocker. It will chat with you as an Agent and help decide which resource to accept.",
+      "loading": "Loading Discover Assistant",
+      "unavailable_title": "Discover Assistant is not initialized",
+      "unavailable_description": "No Discover Assistant Agent is available yet. Initialize public resources before using it.",
+      "prompts": {
+        "weekly_report": "Find an assistant for weekly reports",
+        "code_review": "Find a code review assistant",
+        "doc_summary": "Find a document summary skill"
+      }
+    },
+    "card": {
+      "no_tags": "No tags"
+    }
+  },
   "filters": {
     "all": "All",
     "agent": "Agent",

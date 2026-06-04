@@ -5,6 +5,7 @@
 import apiClient from '@/apis/client'
 import type {
   ResourceLibraryCreateListingRequest,
+  ResourceLibraryDiscoveryConfig,
   ResourceLibraryInstallApiRequest,
   ResourceLibraryInstallRequest,
   ResourceLibraryInstall,
@@ -63,6 +64,10 @@ function toInstallApiRequest(
 }
 
 export const resourceLibraryApi = {
+  getDiscoveryConfig(): Promise<ResourceLibraryDiscoveryConfig> {
+    return apiClient.get(`${RESOURCE_LIBRARY_BASE_PATH}/discovery-config`)
+  },
+
   listListings(
     params?: ResourceLibraryListListingsParams
   ): Promise<ResourceLibraryListResponse<ResourceLibraryListing>> {

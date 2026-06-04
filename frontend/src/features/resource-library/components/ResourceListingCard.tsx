@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { Bot, Code2, Eye, UserPlus } from 'lucide-react'
+import { Bot, Code2, Eye, TrendingUp, UserPlus } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -40,12 +40,12 @@ export function ResourceListingCard({
 
   return (
     <Card
-      className="flex min-h-[220px] flex-col gap-4 p-4"
+      className="group flex min-h-[248px] flex-col overflow-hidden bg-base p-4 transition-colors hover:border-primary/40 hover:bg-hover sm:p-5"
       data-testid={`resource-listing-card-${listing.id}`}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-base text-text-secondary">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-surface text-text-secondary group-hover:text-primary">
             <TypeIcon className="h-5 w-5" aria-hidden="true" />
           </div>
           <div className="min-w-0">
@@ -58,30 +58,34 @@ export function ResourceListingCard({
             </div>
           </div>
         </div>
+        {listing.install_count > 0 && (
+          <div className="flex shrink-0 items-center gap-1 rounded-md bg-surface px-2 py-1 text-xs text-text-muted">
+            <TrendingUp className="h-3.5 w-3.5" aria-hidden="true" />
+            {listing.install_count}
+          </div>
+        )}
       </div>
 
-      <p className="line-clamp-2 min-h-[40px] text-sm text-text-secondary">
+      <p className="mt-4 line-clamp-2 min-h-[40px] text-sm text-text-secondary">
         {listing.description || listing.name}
       </p>
 
-      {listing.tags.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {listing.tags.slice(0, 3).map(tag => (
+      <div className="mt-4 flex flex-wrap gap-2">
+        {listing.tags.length > 0 ? (
+          listing.tags.slice(0, 3).map(tag => (
             <Badge key={tag} variant="secondary">
               {tag}
             </Badge>
-          ))}
-        </div>
-      )}
+          ))
+        ) : (
+          <span className="text-xs text-text-muted">{t('discover.card.no_tags')}</span>
+        )}
+      </div>
 
-      <div className="mt-auto flex flex-col gap-3">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-text-muted">
-          <span>
-            {t('fields.install_count')}: {listing.install_count}
-          </span>
-          <span>
-            {t('fields.updated_at')}: {formatUTCDate(listing.updated_at)}
-          </span>
+      <div className="mt-auto pt-5">
+        <div className="mb-3 flex items-center justify-between gap-3 text-xs text-text-muted">
+          <span>{t('fields.updated_at')}</span>
+          <span className="truncate">{formatUTCDate(listing.updated_at)}</span>
         </div>
 
         <div className="flex items-center gap-2">

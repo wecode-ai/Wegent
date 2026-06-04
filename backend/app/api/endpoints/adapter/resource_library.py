@@ -14,6 +14,7 @@ from app.core import security
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.resource_library import (
+    ResourceLibraryDiscoveryConfigResponse,
     ResourceLibraryInstallCreate,
     ResourceLibraryInstallListResponse,
     ResourceLibraryInstallResponse,
@@ -24,6 +25,7 @@ from app.schemas.resource_library import (
     ResourceLibraryVersionResponse,
 )
 from app.services.resource_library import resource_library_service
+from app.services.resource_library.discovery import resource_library_discovery_service
 
 router = APIRouter()
 
@@ -105,6 +107,17 @@ def _install_response(
             "installed_at": install.installed_at,
             "updated_at": install.updated_at,
         }
+    )
+
+
+@router.get("/discovery-config", response_model=ResourceLibraryDiscoveryConfigResponse)
+def get_resource_library_discovery_config(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    _ = current_user
+    return ResourceLibraryDiscoveryConfigResponse.model_validate(
+        resource_library_discovery_service.get_page_config(db)
     )
 
 

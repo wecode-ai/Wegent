@@ -70,6 +70,22 @@ export interface ResourceLibraryListResponse<T> {
   limit?: number
 }
 
+export interface ResourceLibraryKnowledgeBaseRef {
+  id?: number | null
+  name?: string | null
+  namespace?: string | null
+}
+
+export interface ResourceLibraryTeamRef {
+  name: string
+  namespace: string
+}
+
+export interface ResourceLibraryDiscoveryConfig {
+  knowledge_base_ref?: ResourceLibraryKnowledgeBaseRef | null
+  assistant_team_ref: ResourceLibraryTeamRef
+}
+
 export interface ResourceLibraryCreateListingRequest {
   resource_type: ResourceLibraryResourceType
   source_id: number

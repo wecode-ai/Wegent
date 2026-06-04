@@ -6,15 +6,22 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
-import { RefreshCw, Search } from 'lucide-react'
+import { RefreshCw, Search, Sparkles } from 'lucide-react'
 
 import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import { ResourceManagementLayout } from '@/features/settings/components/resource-management/ResourceManagementLayout'
+import { useTeamContext } from '@/contexts/TeamContext'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { ResourceLibraryListing, ResourceLibraryTypeFilter } from '../types'
+import type {
+  ResourceLibraryDiscoveryConfig,
+  ResourceLibraryListing,
+  ResourceLibraryTypeFilter,
+} from '../types'
+import { DiscoverAssistantDrawer } from './DiscoverAssistantDrawer'
 import { ResourceDetailDrawer } from './ResourceDetailDrawer'
 import { ResourceListingCard } from './ResourceListingCard'
 
@@ -28,6 +35,7 @@ const RESOURCE_LIBRARY_PAGE_SIZE = 50
 export function DiscoverResources({ resourceType, toolbarStart }: DiscoverResourcesProps) {
   const { t } = useTranslation('resource-library')
   const { toast } = useToast()
+  const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
   const [listings, setListings] = useState<ResourceLibraryListing[]>([])
   const [searchInput, setSearchInput] = useState('')
   const [keyword, setKeyword] = useState('')
@@ -36,6 +44,10 @@ export function DiscoverResources({ resourceType, toolbarStart }: DiscoverResour
   const [selectedListing, setSelectedListing] = useState<ResourceLibraryListing | null>(null)
   const [isDetailOpen, setIsDetailOpen] = useState(false)
   const [isDetailLoading, setIsDetailLoading] = useState(false)
+  const [isAssistantOpen, setIsAssistantOpen] = useState(false)
+  const [discoveryConfig, setDiscoveryConfig] = useState<ResourceLibraryDiscoveryConfig | null>(
+    null
+  )
   const [installingIds, setInstallingIds] = useState<Set<number>>(() => new Set())
 
   const loadListings = useCallback(async () => {
@@ -59,6 +71,27 @@ export function DiscoverResources({ resourceType, toolbarStart }: DiscoverResour
   useEffect(() => {
     void loadListings()
   }, [loadListings])
+
+  useEffect(() => {
+    let isMounted = true
+
+    void resourceLibraryApi
+      .getDiscoveryConfig()
+      .then(config => {
+        if (isMounted) {
+          setDiscoveryConfig(config)
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setDiscoveryConfig(null)
+        }
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
 
   const markInstalling = (listingId: number, installing: boolean) => {
     setInstallingIds(previous => {
@@ -98,6 +131,21 @@ export function DiscoverResources({ resourceType, toolbarStart }: DiscoverResour
   const handleSearch = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setKeyword(searchInput.trim())
+  }
+
+  const openAssistant = (prompt = '') => {
+    const trimmedPrompt = prompt.trim()
+    if (typeof window !== 'undefined') {
+      if (trimmedPrompt) {
+        sessionStorage.setItem(
+          'pendingTaskPrompt',
+          JSON.stringify({ prompt: trimmedPrompt, timestamp: Date.now() })
+        )
+      } else {
+        sessionStorage.removeItem('pendingTaskPrompt')
+      }
+    }
+    setIsAssistantOpen(true)
   }
 
   const handleViewDetails = async (listing: ResourceLibraryListing) => {
@@ -145,72 +193,146 @@ export function DiscoverResources({ resourceType, toolbarStart }: DiscoverResour
 
   return (
     <div className="flex flex-col gap-4" data-testid="discover-resources">
-      <form
-        className="flex w-full flex-col gap-2 md:flex-row md:items-center md:justify-between"
-        onSubmit={handleSearch}
-        data-testid="discover-resources-toolbar"
+      <ResourceManagementLayout
+        title={t('discover.title')}
+        description={t('discover.description')}
+        actions={
+          <div className="flex w-full flex-col gap-2 lg:w-auto lg:flex-row lg:items-center">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 min-w-[44px] px-4 md:h-10"
+              onClick={() => openAssistant()}
+              data-testid="open-discover-assistant-button"
+            >
+              <Sparkles className="h-4 w-4" aria-hidden="true" />
+              {t('discover.assistant.action')}
+            </Button>
+            <form
+              className="flex w-full flex-col gap-2 sm:w-auto sm:min-w-[420px] sm:flex-row"
+              onSubmit={handleSearch}
+              data-testid="discover-resources-toolbar"
+            >
+              <Input
+                value={searchInput}
+                onChange={event => setSearchInput(event.target.value)}
+                placeholder={t('search.placeholder')}
+                className="h-11 flex-1 sm:h-10"
+                data-testid="resource-library-search-input"
+              />
+              <Button
+                type="submit"
+                variant="outline"
+                className="h-11 min-w-[44px] px-4 sm:w-auto md:h-10"
+                aria-label={t('actions.search')}
+                data-testid="resource-library-search-button"
+              >
+                <Search className="h-4 w-4" aria-hidden="true" />
+                {t('actions.search')}
+              </Button>
+            </form>
+          </div>
+        }
+        filters={
+          toolbarStart ? (
+            <div
+              className="flex min-w-0 flex-wrap items-center gap-2"
+              data-testid="discover-type-filter"
+            >
+              {toolbarStart}
+            </div>
+          ) : null
+        }
+        data-testid="resource-market-section"
       >
-        {toolbarStart && (
-          <div className="flex flex-wrap items-center gap-2 md:min-w-0">{toolbarStart}</div>
+        <div
+          className="rounded-lg border border-border bg-surface p-4"
+          data-testid="discover-assistant-callout"
+        >
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-base text-primary">
+              <Sparkles className="h-5 w-5" aria-hidden="true" />
+            </div>
+            <div className="min-w-0">
+              <h3 className="text-sm font-semibold text-text-primary">
+                {t('discover.assistant.callout_title')}
+              </h3>
+              <p className="mt-1 text-sm text-text-secondary">
+                {t('discover.assistant.callout_description')}
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {[
+                  t('discover.assistant.prompts.weekly_report'),
+                  t('discover.assistant.prompts.code_review'),
+                  t('discover.assistant.prompts.doc_summary'),
+                ].map(prompt => (
+                  <Button
+                    key={prompt}
+                    type="button"
+                    variant="outline"
+                    className="h-9 px-3"
+                    onClick={() => openAssistant(prompt)}
+                  >
+                    {prompt}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {isLoading ? (
+          <div
+            className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"
+            aria-label={t('states.loading')}
+          >
+            {Array.from({ length: 6 }).map((_, index) => (
+              <Skeleton key={index} className="h-[248px] rounded-lg" />
+            ))}
+          </div>
+        ) : hasError ? (
+          <div className="flex min-h-[260px] flex-col items-center justify-center gap-3 rounded-lg border border-border bg-surface p-6 text-center">
+            <p className="text-sm text-text-secondary">{t('states.error')}</p>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 min-w-[44px]"
+              onClick={() => void loadListings()}
+            >
+              <RefreshCw className="h-4 w-4" aria-hidden="true" />
+              {t('actions.retry')}
+            </Button>
+          </div>
+        ) : listings.length === 0 ? (
+          <div className="flex min-h-[260px] items-center justify-center rounded-lg border border-border bg-surface p-6 text-sm text-text-secondary">
+            {t('states.empty')}
+          </div>
+        ) : (
+          <div
+            className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"
+            data-testid="resource-library-list"
+          >
+            {listings.map(listing => (
+              <ResourceListingCard
+                key={listing.id}
+                listing={listing}
+                isInstalling={installingIds.has(listing.id)}
+                onInstall={handleInstall}
+                onViewDetails={handleViewDetails}
+              />
+            ))}
+          </div>
         )}
+      </ResourceManagementLayout>
 
-        <div className="flex flex-col gap-2 sm:flex-row md:ml-auto md:w-full md:min-w-[320px] md:max-w-xl md:flex-none">
-          <Input
-            value={searchInput}
-            onChange={event => setSearchInput(event.target.value)}
-            placeholder={t('search.placeholder')}
-            className="h-11 flex-1 sm:h-10"
-            data-testid="resource-library-search-input"
-          />
-          <Button
-            type="submit"
-            variant="outline"
-            className="h-11 min-w-[44px] px-4 sm:w-auto md:h-10"
-            aria-label={t('actions.search')}
-            data-testid="resource-library-search-button"
-          >
-            <Search className="h-4 w-4" aria-hidden="true" />
-            {t('actions.search')}
-          </Button>
-        </div>
-      </form>
-
-      {isLoading ? (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3" aria-label={t('states.loading')}>
-          {Array.from({ length: 6 }).map((_, index) => (
-            <Skeleton key={index} className="h-[220px] rounded-lg" />
-          ))}
-        </div>
-      ) : hasError ? (
-        <div className="flex min-h-[260px] flex-col items-center justify-center gap-3 rounded-lg border border-border bg-surface p-6 text-center">
-          <p className="text-sm text-text-secondary">{t('states.error')}</p>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-11 min-w-[44px]"
-            onClick={() => void loadListings()}
-          >
-            <RefreshCw className="h-4 w-4" aria-hidden="true" />
-            {t('actions.retry')}
-          </Button>
-        </div>
-      ) : listings.length === 0 ? (
-        <div className="flex min-h-[260px] items-center justify-center rounded-lg border border-border bg-surface p-6 text-sm text-text-secondary">
-          {t('states.empty')}
-        </div>
-      ) : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {listings.map(listing => (
-            <ResourceListingCard
-              key={listing.id}
-              listing={listing}
-              isInstalling={installingIds.has(listing.id)}
-              onInstall={handleInstall}
-              onViewDetails={handleViewDetails}
-            />
-          ))}
-        </div>
-      )}
+      <DiscoverAssistantDrawer
+        open={isAssistantOpen}
+        teams={teams}
+        isTeamsLoading={isTeamsLoading}
+        assistantTeamRef={discoveryConfig?.assistant_team_ref ?? null}
+        onOpenChange={setIsAssistantOpen}
+        onRefreshTeams={refreshTeams}
+      />
 
       <ResourceDetailDrawer
         open={isDetailOpen}

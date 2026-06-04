@@ -32,6 +32,11 @@ Create and manage knowledge bases, implement RAG (Retrieval-Augmented Generation
 - [Knowledge Base Guide](./ai-knowledge/knowledge-base-guide.md) - Complete guide to using knowledge bases
 - [Configuring Retrievers](./ai-knowledge/configuring-retrievers.md) - Configure RAG retrieval backends
 
+### 🧭 [Resource Library](./resource-library/README.md)
+Publish, discover, and accept reusable Agents and Skills.
+
+- [Resource Library Overview](./resource-library/README.md) - Use Discover, Mine, publishing, and Discover Assistant
+
 ### 🖥️ [AI Devices](./ai-devices/README.md)
 Manage local devices, enable local AI capabilities.
 

@@ -11,9 +11,26 @@ import { DiscoverResources } from '@/features/resource-library/components/Discov
 import type { ResourceLibraryListing } from '@/features/resource-library/types'
 
 const mockToast = jest.fn()
+const mockRefreshTeams = jest.fn()
+const mockDiscoverAssistantTeam = {
+  id: 100,
+  name: 'resource-discovery-assistant',
+  displayName: '发现助手',
+  namespace: 'default',
+  description: 'Helps users discover resources',
+  bots: [],
+  workflow: { mode: 'solo' },
+  is_active: true,
+  user_id: 0,
+  created_at: '2026-05-27T00:00:00',
+  updated_at: '2026-05-27T00:00:00',
+}
+let mockTeams = [mockDiscoverAssistantTeam]
+let mockIsTeamsLoading = false
 
 jest.mock('@/apis/resourceLibrary', () => ({
   resourceLibraryApi: {
+    getDiscoveryConfig: jest.fn(),
     listListings: jest.fn(),
     getListing: jest.fn(),
     installListing: jest.fn(),
@@ -24,6 +41,40 @@ jest.mock('@/hooks/use-toast', () => ({
   useToast: () => ({
     toast: mockToast,
   }),
+}))
+
+jest.mock('@/contexts/TeamContext', () => ({
+  useTeamContext: () => ({
+    teams: mockTeams,
+    isTeamsLoading: mockIsTeamsLoading,
+    refreshTeams: mockRefreshTeams,
+  }),
+}))
+
+jest.mock('@/features/tasks/components/chat', () => ({
+  ChatArea: ({
+    selectedTeamForNewTask,
+    hideSelectors,
+    showRepositorySelector,
+    taskType,
+    emptyStateContent,
+  }: {
+    selectedTeamForNewTask?: { name: string } | null
+    hideSelectors?: boolean
+    showRepositorySelector?: boolean
+    taskType?: string
+    emptyStateContent?: ReactNode
+  }) => (
+    <div
+      data-testid="discover-assistant-chat-area"
+      data-team-name={selectedTeamForNewTask?.name ?? ''}
+      data-hide-selectors={String(Boolean(hideSelectors))}
+      data-show-repository-selector={String(Boolean(showRepositorySelector))}
+      data-task-type={taskType}
+    >
+      {emptyStateContent}
+    </div>
+  ),
 }))
 
 jest.mock('@/components/ui/drawer', () => ({
@@ -52,6 +103,27 @@ jest.mock('@/hooks/useTranslation', () => ({
         'actions.details': '详情',
         'actions.retry': '重试',
         'actions.search': '搜索',
+        'discover.card.no_tags': '暂无标签',
+        'discover.description': '浏览团队发布的智能体和技能说明，接受分享后即可进入你的资源列表。',
+        'discover.assistant.action': '发现助手',
+        'discover.assistant.agent_badge': 'Agent',
+        'discover.assistant.callout_description':
+          '告诉发现助手你想完成的任务，它会帮你缩小范围并推荐资源。',
+        'discover.assistant.callout_title': '不确定该找什么？',
+        'discover.assistant.description':
+          '这是一个实际智能体，会通过聊天帮你梳理任务并选择合适资源。',
+        'discover.assistant.empty_description':
+          '输入你要完成的任务、使用场景或现有问题，它会以智能体对话的方式帮你判断该接受哪个资源。',
+        'discover.assistant.empty_title': '让发现助手帮你找资源',
+        'discover.assistant.loading': '正在加载发现助手',
+        'discover.assistant.prompts.code_review': '找代码评审助手',
+        'discover.assistant.prompts.doc_summary': '找文档总结技能',
+        'discover.assistant.prompts.weekly_report': '帮我找能写周报的助手',
+        'discover.assistant.title': '发现助手',
+        'discover.assistant.unavailable_description':
+          '系统还没有可用的发现助手智能体，请先初始化公开资源后再使用。',
+        'discover.assistant.unavailable_title': '发现助手未初始化',
+        'discover.title': '资源市场',
         'fields.install_count': '接受次数',
         'fields.publisher': '发布者',
         'fields.updated_at': '更新时间',
@@ -60,6 +132,7 @@ jest.mock('@/hooks/useTranslation', () => ({
         'states.empty': '暂无资源',
         'states.error': '加载失败',
         'messages.install_success': '已接受分享',
+        title: '资源库',
       }
 
       return translations[key] ?? key
@@ -98,6 +171,20 @@ function createListing(overrides: Partial<ResourceLibraryListing> = {}): Resourc
 describe('DiscoverResources', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    sessionStorage.clear()
+    mockTeams = [mockDiscoverAssistantTeam]
+    mockIsTeamsLoading = false
+    mockResourceLibraryApi.getDiscoveryConfig.mockResolvedValue({
+      knowledge_base_ref: {
+        id: 12,
+        name: '资源库',
+        namespace: 'company',
+      },
+      assistant_team_ref: {
+        name: 'resource-discovery-assistant',
+        namespace: 'default',
+      },
+    })
     mockResourceLibraryApi.listListings.mockResolvedValue({
       items: [createListing()],
       total: 1,
@@ -132,7 +219,7 @@ describe('DiscoverResources', () => {
     expect(screen.getByRole('button', { name: '接受分享 Doc Summary' })).toBeEnabled()
   })
 
-  it('renders custom toolbar controls beside discover search', async () => {
+  it('renders resource type controls in the market filter bar', async () => {
     render(
       <DiscoverResources
         resourceType="all"
@@ -140,13 +227,14 @@ describe('DiscoverResources', () => {
       />
     )
 
+    const filterBar = screen.getByTestId('resource-page-filter-bar')
     const toolbar = screen.getByTestId('discover-resources-toolbar')
-    expect(within(toolbar).getByTestId('resource-filter-slot')).toBeInTheDocument()
+    expect(within(filterBar).getByTestId('resource-filter-slot')).toBeInTheDocument()
     expect(within(toolbar).getByTestId('resource-library-search-input')).toBeInTheDocument()
     expect(await screen.findByText('Doc Summary')).toBeInTheDocument()
   })
 
-  it('keeps desktop search controls aligned to the right side of the toolbar', async () => {
+  it('keeps discover search in the resource section actions', async () => {
     render(
       <DiscoverResources
         resourceType="all"
@@ -154,18 +242,73 @@ describe('DiscoverResources', () => {
       />
     )
 
-    const searchInput = screen.getByTestId('resource-library-search-input')
-    const searchControls = searchInput.closest('div')
+    const headerActions = screen.getByTestId('resource-page-header-actions')
     const toolbar = screen.getByTestId('discover-resources-toolbar')
 
+    expect(screen.getByTestId('resource-market-section')).toBeInTheDocument()
+    expect(within(headerActions).getByTestId('open-discover-assistant-button')).toBeInTheDocument()
+    expect(within(headerActions).getByTestId('discover-resources-toolbar')).toBeInTheDocument()
     expect(toolbar).toHaveClass('w-full')
-    expect(toolbar).toHaveClass('md:flex-row')
-    expect(toolbar).toHaveClass('md:justify-between')
-    expect(searchControls).toHaveClass('md:ml-auto')
-    expect(searchControls).toHaveClass('md:flex-none')
-    expect(searchControls).toHaveClass('md:max-w-xl')
-    expect(searchControls).not.toHaveClass('lg:flex-1')
+    expect(toolbar).toHaveClass('sm:min-w-[420px]')
+    expect(toolbar).toHaveClass('sm:flex-row')
+    expect(toolbar).not.toHaveClass('rounded-lg')
+    expect(toolbar).not.toHaveClass('bg-surface')
     expect(await screen.findByText('Doc Summary')).toBeInTheDocument()
+  })
+
+  it('opens discover assistant as the actual ChatArea agent', async () => {
+    const docSummary = createListing({
+      id: 1,
+      display_name: '文档总结',
+      description: '总结文档和知识库内容',
+      tags: ['文档', '总结'],
+      install_count: 1,
+    })
+    const codeReview = createListing({
+      id: 2,
+      resource_type: 'agent',
+      name: 'code-review',
+      display_name: '代码评审',
+      description: '检查代码变更',
+      tags: ['代码'],
+      install_count: 9,
+    })
+    mockResourceLibraryApi.listListings.mockResolvedValue({
+      items: [docSummary, codeReview],
+      total: 2,
+    })
+    mockResourceLibraryApi.getListing.mockResolvedValue(docSummary)
+
+    render(<DiscoverResources resourceType="all" />)
+
+    expect(await screen.findByText('文档总结')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('open-discover-assistant-button'))
+
+    const assistant = await screen.findByTestId('discover-assistant-drawer')
+    expect(within(assistant).getByText('发现助手')).toBeInTheDocument()
+
+    const chatArea = within(assistant).getByTestId('discover-assistant-chat-area')
+    expect(chatArea).toHaveAttribute('data-team-name', 'resource-discovery-assistant')
+    expect(chatArea).toHaveAttribute('data-hide-selectors', 'true')
+    expect(chatArea).toHaveAttribute('data-show-repository-selector', 'false')
+    expect(chatArea).toHaveAttribute('data-task-type', 'chat')
+    expect(within(chatArea).getByTestId('discover-assistant-empty-state')).toHaveTextContent(
+      '让发现助手帮你找资源'
+    )
+  })
+
+  it('opens discover assistant from a quick prompt and preloads the chat input', async () => {
+    render(<DiscoverResources resourceType="all" />)
+
+    expect(await screen.findByText('Doc Summary')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '找文档总结技能' }))
+
+    const pendingPrompt = JSON.parse(sessionStorage.getItem('pendingTaskPrompt') ?? '{}')
+    expect(pendingPrompt.prompt).toBe('找文档总结技能')
+    expect(await screen.findByTestId('discover-assistant-chat-area')).toHaveAttribute(
+      'data-team-name',
+      'resource-discovery-assistant'
+    )
   })
 
   it('opens listing details and installs from the drawer', async () => {

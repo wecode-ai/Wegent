@@ -150,6 +150,7 @@ frontend/src/
 │   ├── devices/     # Device management (new)
 │   ├── feed/        # Discovery and subscriptions
 │   ├── knowledge/   # Knowledge base management
+│   ├── resource-library/ # Resource discovery and publishing
 │   ├── settings/    # Agent configuration
 │   └── tasks/       # Core task functionality
 ├── components/      # Shared components
@@ -165,6 +166,7 @@ frontend/src/
 | **tasks** | Task creation, chat, group chat, workbench |
 | **devices** | Local device management, executor guide |
 | **knowledge** | Knowledge base, documents, permissions |
+| **resource-library** | Discovering, publishing, accepting reusable resources, and Discover Assistant |
 | **settings** | Agent, model, shell, skill configuration |
 | **feed** | Subscription market, trigger management |
 
@@ -212,6 +214,7 @@ frontend/src/
 ├── /tasks           # Task resource management
 ├── /devices         # Device management (new)
 ├── /knowledge       # Knowledge base management
+├── /resource-library # Resource publishing, discovery, and acceptance
 ├── /groups          # Organization/group management
 ├── /share           # Share link management
 └── /admin           # Admin operations (user management, public models)

@@ -82,6 +82,22 @@ class ResourceLibraryListResponse(BaseModel):
     limit: Optional[int] = None
 
 
+class ResourceLibraryKnowledgeBaseRef(BaseModel):
+    id: Optional[int] = None
+    name: Optional[str] = None
+    namespace: Optional[str] = None
+
+
+class ResourceLibraryTeamRef(BaseModel):
+    name: str
+    namespace: str = "default"
+
+
+class ResourceLibraryDiscoveryConfigResponse(BaseModel):
+    knowledge_base_ref: Optional[ResourceLibraryKnowledgeBaseRef] = None
+    assistant_team_ref: ResourceLibraryTeamRef
+
+
 class ResourceLibraryInstallResponse(BaseModel):
     id: int
     listing_id: int

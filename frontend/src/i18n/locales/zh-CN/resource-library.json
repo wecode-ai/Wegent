@@ -6,6 +6,31 @@
     "installed": "已接受",
     "published": "我发布的"
   },
+  "discover": {
+    "title": "资源市场",
+    "description": "浏览团队发布的智能体和技能说明，接受分享后即可进入你的资源列表。",
+    "assistant": {
+      "action": "发现助手",
+      "title": "发现助手",
+      "agent_badge": "Agent",
+      "description": "这是一个实际智能体，会通过聊天帮你梳理任务并选择合适资源。",
+      "callout_title": "不确定该找什么？",
+      "callout_description": "告诉发现助手你想完成的任务，它会帮你缩小范围并推荐资源。",
+      "empty_title": "让发现助手帮你找资源",
+      "empty_description": "输入你要完成的任务、使用场景或现有问题，它会以智能体对话的方式帮你判断该接受哪个资源。",
+      "loading": "正在加载发现助手",
+      "unavailable_title": "发现助手未初始化",
+      "unavailable_description": "系统还没有可用的发现助手智能体，请先初始化公开资源后再使用。",
+      "prompts": {
+        "weekly_report": "帮我找能写周报的助手",
+        "code_review": "找代码评审助手",
+        "doc_summary": "找文档总结技能"
+      }
+    },
+    "card": {
+      "no_tags": "暂无标签"
+    }
+  },
   "filters": {
     "all": "全部",
     "agent": "智能体",

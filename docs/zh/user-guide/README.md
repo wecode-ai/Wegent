@@ -32,6 +32,11 @@
 - [知识库使用指南](./ai-knowledge/knowledge-base-guide.md) - 知识库的完整使用指南
 - [配置检索器](./ai-knowledge/configuring-retrievers.md) - 配置 RAG 检索后端
 
+### 🧭 [资源库](./resource-library/README.md)
+发布、发现和接受可复用的智能体与技能资源。
+
+- [资源库概述](./resource-library/README.md) - 使用发现页、我的资源、发布资源和发现助手
+
 ### 🖥️ [AI 设备](./ai-devices/README.md)
 管理本地设备，实现本地化 AI 能力。
 

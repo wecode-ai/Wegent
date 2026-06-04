@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Optional
@@ -40,6 +41,8 @@ SHARE_RESOURCE_TYPE_BY_RESOURCE_TYPE = {
     RESOURCE_TYPE_AGENT: ResourceType.TEAM.value,
     RESOURCE_TYPE_SKILL: "Skill",
 }
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -109,6 +112,7 @@ class ResourceLibraryService:
         db.add(listing)
         db.commit()
         db.refresh(listing)
+        self._sync_discovery_listing(db, listing)
         return listing
 
     def create_version(
@@ -145,6 +149,7 @@ class ResourceLibraryService:
         flag_modified(listing, "json")
         db.commit()
         db.refresh(listing)
+        self._sync_discovery_listing(db, listing)
         return self.get_current_version(db, listing)
 
     def list_listings(
@@ -375,6 +380,7 @@ class ResourceLibraryService:
         flag_modified(listing, "json")
         db.commit()
         db.refresh(listing)
+        self._remove_discovery_listing(db, listing)
         return listing
 
     def upgrade_install(
@@ -411,6 +417,36 @@ class ResourceLibraryService:
         db.commit()
         db.refresh(member)
         return self._install_record(db, listing=listing, user_id=user_id, member=member)
+
+    def _sync_discovery_listing(self, db: Session, listing: Kind) -> None:
+        try:
+            from app.services.resource_library.discovery import (
+                resource_library_discovery_service,
+            )
+
+            resource_library_discovery_service.sync_listing(db, listing)
+        except Exception as exc:
+            logger.warning(
+                "Failed to sync Resource Library listing %s to discovery KB: %s",
+                listing.id,
+                exc,
+                exc_info=True,
+            )
+
+    def _remove_discovery_listing(self, db: Session, listing: Kind) -> None:
+        try:
+            from app.services.resource_library.discovery import (
+                resource_library_discovery_service,
+            )
+
+            resource_library_discovery_service.remove_listing_document(db, listing)
+        except Exception as exc:
+            logger.warning(
+                "Failed to remove Resource Library listing %s from discovery KB: %s",
+                listing.id,
+                exc,
+                exc_info=True,
+            )
 
     def _query_listings(self, db: Session):
         return (

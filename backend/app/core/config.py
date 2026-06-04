@@ -438,6 +438,13 @@ class Settings(BaseSettings):
         False  # Force re-initialize YAML resources (delete and recreate)
     )
 
+    # Resource Library discovery knowledge base configuration.
+    # The KB should be an organization-level knowledge base so it is visible in
+    # the normal Knowledge UI and searchable by the Discover Assistant.
+    RESOURCE_LIBRARY_DISCOVERY_KB_NAME: str = "资源库"
+    RESOURCE_LIBRARY_DISCOVERY_KB_NAMESPACE: str = ""
+    RESOURCE_LIBRARY_DISCOVERY_SYNC_ENABLED: bool = True
+
     # default header
     EXECUTOR_ENV: str = '{"DEFAULT_HEADERS":{"user":"${task_data.user.name}"}}'
 
