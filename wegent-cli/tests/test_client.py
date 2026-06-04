@@ -155,6 +155,34 @@ def test_request_maps_timeout_error():
     assert exc_info.value.exit_code == EXIT_NETWORK_ERROR
 
 
+def test_request_maps_generic_request_error():
+    session = DummySession(side_effect=requests.exceptions.RequestException("boom"))
+    client = WegentClient(server="http://backend", session=session)
+
+    with pytest.raises(CliError) as exc_info:
+        client.request("GET", "/tasks/1")
+
+    assert exc_info.value.code == "network_error"
+    assert exc_info.value.exit_code == EXIT_NETWORK_ERROR
+    assert exc_info.value.details["server"] == "http://backend"
+
+
+def test_request_returns_empty_dict_for_204_success():
+    session = DummySession(make_response(status_code=204))
+    client = WegentClient(server="http://backend", session=session)
+
+    assert client.request("DELETE", "/tasks/1") == {}
+
+
+def test_request_returns_empty_dict_for_non_json_success():
+    response = make_response(status_code=200, text="not json")
+    response.json.side_effect = ValueError()
+    session = DummySession(response)
+    client = WegentClient(server="http://backend", session=session)
+
+    assert client.request("GET", "/tasks/1") == {}
+
+
 def test_api_error_export_is_preserved_for_legacy_command_imports():
     assert issubclass(APIError, Exception)
 

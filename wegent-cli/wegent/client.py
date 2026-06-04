@@ -43,6 +43,10 @@ class APIError(Exception):
         super().__init__(f"API Error {status_code}: {message}")
 
 
+class InvalidKindError(CliError, ValueError):
+    """Invalid kind error compatible with new and legacy command handlers."""
+
+
 class WegentClient:
     """Authenticated client for Wegent Backend APIs."""
 
@@ -101,6 +105,13 @@ class WegentClient:
                 {"server": self.server},
                 EXIT_NETWORK_ERROR,
             ) from exc
+        except requests.exceptions.RequestException as exc:
+            raise CliError(
+                "network_error",
+                f"Request failed: {exc}",
+                {"server": self.server, "error": str(exc)},
+                EXIT_NETWORK_ERROR,
+            ) from exc
 
         if response.status_code >= 400:
             message = self._extract_error_message(response)
@@ -148,7 +159,7 @@ class WegentClient:
         if normalized.endswith("s") and normalized[:-1] in VALID_KINDS:
             normalized = normalized[:-1]
         if normalized not in VALID_KINDS:
-            raise CliError(
+            raise InvalidKindError(
                 "invalid_kind",
                 f"Invalid kind: {kind}. Valid kinds: {', '.join(VALID_KINDS)}",
                 {"kind": kind, "valid_kinds": VALID_KINDS},
