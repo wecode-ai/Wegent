@@ -47,6 +47,19 @@ def test_kind_get_json_renders_client_error_envelope():
     assert payload["error"]["message"] == "backend failed"
 
 
+def test_kind_get_json_without_kind_outputs_error_envelope():
+    client = MagicMock()
+
+    result = invoke_with_client(["kind", "get", "--json"], client)
+
+    assert result.exit_code != 0
+    payload = load_error_payload(result)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_arguments"
+    client.list_kind.assert_not_called()
+    client.get_kind.assert_not_called()
+
+
 def test_kind_get_named_resource_outputs_resource():
     client = MagicMock()
     client.get_kind.return_value = {"kind": "Team", "metadata": {"name": "agent"}}
@@ -69,6 +82,18 @@ def test_kind_describe_is_alias_for_named_get():
 
     assert result.exit_code == 0
     client.get_kind.assert_called_once_with("team", "default", "agent")
+
+
+def test_kind_describe_json_without_name_outputs_error_envelope():
+    client = MagicMock()
+
+    result = invoke_with_client(["kind", "describe", "ghost", "--json"], client)
+
+    assert result.exit_code != 0
+    payload = load_error_payload(result)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_arguments"
+    client.get_kind.assert_not_called()
 
 
 def test_kind_apply_reads_stdin_json():
@@ -208,6 +233,19 @@ def test_kind_delete_json_rejects_name_and_input_conflict():
         client,
         input_text='[{"kind": "Ghost", "metadata": {"name": "g"}}]',
     )
+
+    assert result.exit_code != 0
+    payload = load_error_payload(result)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_arguments"
+    client.delete_kind.assert_not_called()
+    client.delete_kinds.assert_not_called()
+
+
+def test_kind_delete_json_without_name_outputs_error_envelope():
+    client = MagicMock()
+
+    result = invoke_with_client(["kind", "delete", "ghost", "--json"], client)
 
     assert result.exit_code != 0
     payload = load_error_payload(result)

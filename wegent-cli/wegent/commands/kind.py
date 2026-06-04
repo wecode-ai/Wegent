@@ -115,19 +115,22 @@ def kind_cmd() -> None:
 
 
 @kind_cmd.command("get")
-@click.argument("kind")
+@click.argument("kind", required=False)
 @click.argument("name", required=False)
 @click.option("-n", "--namespace", default=None, help="Namespace")
 @click.option("--json", "json_output", is_flag=True, help="Output JSON envelope")
 @click.pass_context
 def get_cmd(
     ctx: click.Context,
-    kind: str,
+    kind: str | None,
     name: str | None,
     namespace: str | None,
     json_output: bool,
 ) -> None:
     """Get CRD resources."""
+    if not kind:
+        _usage_error("Provide <kind>", json_output)
+
     client = _client(ctx)
     ns = _namespace(namespace)
     try:
@@ -138,19 +141,22 @@ def get_cmd(
 
 
 @kind_cmd.command("describe")
-@click.argument("kind")
-@click.argument("name")
+@click.argument("kind", required=False)
+@click.argument("name", required=False)
 @click.option("-n", "--namespace", default=None, help="Namespace")
 @click.option("--json", "json_output", is_flag=True, help="Output JSON envelope")
 @click.pass_context
 def describe_cmd(
     ctx: click.Context,
-    kind: str,
-    name: str,
+    kind: str | None,
+    name: str | None,
     namespace: str | None,
     json_output: bool,
 ) -> None:
     """Describe a named CRD resource."""
+    if not kind or not name:
+        _usage_error("Provide <kind> <name>", json_output)
+
     client = _client(ctx)
     ns = _namespace(namespace)
     try:
