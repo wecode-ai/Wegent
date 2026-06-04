@@ -15,12 +15,10 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+  GroupedModelSelect,
+  type ModelCascadeLabels,
+  type SpecialModelOption,
+} from '@/components/model-select/ModelCascadeSelect'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import PromptFineTuneDialog from '@/features/prompt-tune/components/PromptFineTuneDialog'
@@ -36,6 +34,7 @@ import type { KnowledgeBaseDefaultRef, TaskType } from '@/types/api'
 import { TeamIconPicker } from '../teams/TeamIconPicker'
 import ExecutorModeSelector from './ExecutorModeSelector'
 import { SimpleConfigGroup, SimpleConfigRow } from './SimpleConfigLayout'
+import QuickPhraseEditor from './QuickPhraseEditor'
 import TeamBindModeCards from './TeamBindModeCards'
 import { parseModelSelectValue, toModelSelectValue } from './model-select-utils'
 import type { SimpleExecutorMode } from './simple-team-edit-utils'
@@ -47,6 +46,8 @@ interface SimpleTeamEditFormProps {
   setDisplayName: (value: string) => void
   description: string
   setDescription: (value: string) => void
+  quickPhrases: string[]
+  onQuickPhrasesChange: (value: string[]) => void
   bindMode: TaskType[]
   setBindMode: (value: TaskType[]) => void
   icon: string | null
@@ -135,6 +136,8 @@ export default function SimpleTeamEditForm({
   setDisplayName,
   description,
   setDescription,
+  quickPhrases,
+  onQuickPhrasesChange,
   bindMode,
   setBindMode,
   icon,
@@ -180,6 +183,35 @@ export default function SimpleTeamEditForm({
   const [promptFineTuneOpen, setPromptFineTuneOpen] = useState(false)
   const showRequiresWorkspace = bindMode.includes('code')
   const modelSelectValue = toModelSelectValue(modelName, modelType, modelNamespace)
+  const selectedModel = useMemo(
+    () =>
+      models.find(
+        model => toModelSelectValue(model.name, model.type, model.namespace) === modelSelectValue
+      ) ?? null,
+    [modelSelectValue, models]
+  )
+  const cascadeLabels: ModelCascadeLabels = useMemo(
+    () => ({
+      ungrouped: t('common:models.ungrouped', 'Ungrouped'),
+      uncategorized: t('common:models.uncategorized', 'Uncategorized'),
+      searchPlaceholder: t('common:models.search_models', 'Search models or groups...'),
+      searchResults: t('common:models.search_results', 'Search results'),
+      noModels: t('common:models.no_models', 'No models available'),
+      noMatch: t('common:models.no_match', 'No matching models'),
+      primaryGroups: t('common:models.primary_groups', 'Primary groups'),
+      secondaryGroups: t('common:models.secondary_groups', 'Secondary groups'),
+    }),
+    [t]
+  )
+  const noModelOption: SpecialModelOption[] = useMemo(
+    () => [
+      {
+        key: '__none__',
+        label: t('common:bot.no_model_binding'),
+      },
+    ],
+    [t]
+  )
   const togglePreloadSkill = (skillName: string, checked: boolean) => {
     if (checked) {
       onPreloadSkillsChange(Array.from(new Set([...preloadSkills, skillName])))
@@ -247,31 +279,37 @@ export default function SimpleTeamEditForm({
           </SimpleConfigRow>
 
           <SimpleConfigRow
+            label={t('settings:team.quick_phrases.label')}
+            description={t('settings:team.quick_phrases.description')}
+            align="start"
+          >
+            <QuickPhraseEditor value={quickPhrases} onChange={onQuickPhrasesChange} />
+          </SimpleConfigRow>
+
+          <SimpleConfigRow
             label={t('common:bot.agent_config')}
             description={t('settings:team.simple.core.model_description')}
           >
-            <Select
-              value={modelSelectValue}
-              onValueChange={value => onModelChange(parseModelSelectValue(value))}
+            <GroupedModelSelect
+              models={models}
+              selectedModel={selectedModel}
+              selectedSpecialKey={selectedModel ? null : '__none__'}
+              specialOptions={noModelOption}
+              labels={cascadeLabels}
+              onSelectModel={model =>
+                onModelChange({
+                  name: model.name,
+                  type: model.type,
+                  namespace: model.namespace || 'default',
+                })
+              }
+              onSelectSpecialOption={value => onModelChange(parseModelSelectValue(value))}
+              placeholder={t('common:bot.model_select')}
               disabled={loadingModels}
-            >
-              <SelectTrigger className="h-9 rounded-md bg-base" data-testid="simple-model-select">
-                <SelectValue placeholder={t('common:bot.model_select')} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">
-                  <span className="text-text-muted">{t('common:bot.no_model_binding')}</span>
-                </SelectItem>
-                {models.map(model => (
-                  <SelectItem
-                    key={`${model.name}:${model.type}:${model.namespace || 'default'}`}
-                    value={`${model.name}:${model.type}:${model.namespace || 'default'}`}
-                  >
-                    {model.displayName || model.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              dataTestId="simple-model-select"
+              triggerClassName="h-9 rounded-md bg-base"
+              getModelKey={model => `${model.name}:${model.type}:${model.namespace || 'default'}`}
+            />
           </SimpleConfigRow>
         </SimpleConfigGroup>
       </SimpleSection>

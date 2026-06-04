@@ -16,7 +16,7 @@ export function ToolBlockItem({ block }: ToolBlockItemProps) {
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="flex max-w-full items-center gap-1.5 text-[#666] hover:text-[#1a1a1a]"
+        className="flex max-w-full items-center gap-1.5 text-text-secondary hover:text-text-primary"
       >
         {icon}
         <span className="min-w-0 truncate">{label}</span>
@@ -114,7 +114,7 @@ function renderBlockDetail(block: ToolBlock) {
   const input = block.toolInput
   if (!input) return null
   return (
-    <pre className="max-h-32 max-w-full overflow-auto rounded-lg bg-[#f7f7f8] px-3 py-2 text-xs text-[#666]">
+    <pre className="max-h-32 max-w-full overflow-auto rounded-lg bg-code-bg px-3 py-2 text-xs text-text-secondary">
       {JSON.stringify(input, null, 2)}
     </pre>
   )
@@ -135,10 +135,10 @@ function BashBlockDetail({ block }: { block: ToolBlock }) {
   }
 
   return (
-    <div className="min-w-0 overflow-x-hidden rounded-lg bg-[#f7f7f8] px-4 py-3">
+    <div className="min-w-0 overflow-x-hidden rounded-lg bg-code-bg px-4 py-3">
       <div className="mb-2 flex items-center justify-between">
-        <span className="text-xs text-[#999]">Shell</span>
-        <button type="button" onClick={handleCopy} className="p-0.5 text-[#ccc] hover:text-[#999]">
+        <span className="text-xs text-text-muted">Shell</span>
+        <button type="button" onClick={handleCopy} className="p-0.5 text-text-muted hover:text-text-secondary">
           {copied ? (
             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
@@ -151,19 +151,19 @@ function BashBlockDetail({ block }: { block: ToolBlock }) {
         </button>
       </div>
       {command && (
-        <div className="overflow-x-auto font-mono text-xs leading-5 text-[#1a1a1a]">
-          <span className="text-[#999]">$ </span>{command}
+        <div className="overflow-x-auto font-mono text-xs leading-5 text-text-primary">
+          <span className="text-text-muted">$ </span>{command}
         </div>
       )}
       {outputText && (
-        <pre className="mt-1 max-h-48 max-w-full overflow-auto font-mono text-xs leading-5 text-[#666]">
+        <pre className="mt-1 max-h-48 max-w-full overflow-auto font-mono text-xs leading-5 text-text-secondary">
           {outputText.length > 2000 ? outputText.substring(0, 2000) + '...' : outputText}
         </pre>
       )}
       {(isDone || isError) && (
         <div className="mt-2 flex justify-end">
           {isDone && (
-            <span className="flex items-center gap-1 text-xs text-[#999]">
+            <span className="flex items-center gap-1 text-xs text-text-muted">
               <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
               </svg>
@@ -184,9 +184,9 @@ function FileWriteDetail({ block }: { block: ToolBlock }) {
   const content = getInputField(block, 'content', 'file_text')
   return (
     <div className="min-w-0 space-y-1 overflow-x-hidden">
-      {filePath && <p className="break-words text-xs text-[#999]">{filePath}</p>}
+      {filePath && <p className="break-words text-xs text-text-muted">{filePath}</p>}
       {content && (
-        <pre className="max-h-40 max-w-full overflow-auto rounded-lg bg-[#f7f7f8] px-3 py-2 text-xs leading-5 text-[#1a1a1a]">
+        <pre className="max-h-40 max-w-full overflow-auto rounded-lg bg-code-bg px-3 py-2 text-xs leading-5 text-text-primary">
           {content.length > 500 ? content.substring(0, 500) + '...' : content}
         </pre>
       )}
@@ -200,7 +200,7 @@ function FileEditDetail({ block }: { block: ToolBlock }) {
   const newStr = getInputField(block, 'new_string', 'new_str')
   return (
     <div className="min-w-0 space-y-1 overflow-x-hidden">
-      {filePath && <p className="break-words text-xs text-[#999]">{filePath}</p>}
+      {filePath && <p className="break-words text-xs text-text-muted">{filePath}</p>}
       {oldStr && (
         <pre className="max-h-24 max-w-full overflow-auto rounded-lg bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
           {oldStr.length > 300 ? oldStr.substring(0, 300) + '...' : oldStr}

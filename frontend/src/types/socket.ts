@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { TaskType } from './api'
+import type { InteractiveFormAnswerPayload, TaskType } from './api'
 
 /**
  * Socket.IO event types and payload definitions
@@ -151,6 +151,7 @@ export interface ChatSendPayload {
     /** Duration in seconds for video generation */
     duration?: number
   }
+  interactive_form_answer?: InteractiveFormAnswerPayload
 }
 
 export interface ChatCancelPayload {
@@ -232,6 +233,7 @@ export interface ChatBlock {
   tool_name?: string
   tool_input?: Record<string, unknown>
   tool_output?: unknown
+  render_payload?: unknown
   guidance_id?: string
   loop_index?: number
   applied_at?: string
@@ -334,6 +336,7 @@ export interface ChatBlockUpdatedPayload {
   content?: string
   tool_output?: unknown
   tool_input?: Record<string, unknown>
+  render_payload?: unknown
   argument_status?: 'streaming' | 'done'
   guidance_id?: string
   loop_index?: number
@@ -443,6 +446,7 @@ export interface TaskStatusPayload {
   task_id: number
   status: string
   progress?: number
+  updated_at?: string
   completed_at?: string
 }
 

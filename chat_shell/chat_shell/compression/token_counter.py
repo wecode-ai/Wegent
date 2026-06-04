@@ -92,30 +92,32 @@ def _count_tokens_for_messages(model_id: str, messages: list[dict[str, Any]]) ->
         # Count role tokens
         role = message.get("role", "")
         if role:
-            total_tokens += len(encoding.encode(role))
+            total_tokens += len(encoding.encode(role, disallowed_special=()))
 
         # Count content tokens
         content = message.get("content", "")
         if isinstance(content, str):
-            total_tokens += len(encoding.encode(content))
+            total_tokens += len(encoding.encode(content, disallowed_special=()))
         elif isinstance(content, list):
             # Multimodal content (text + images)
             for item in content:
                 if isinstance(item, dict):
                     if item.get("type") == "text":
                         text = item.get("text", "")
-                        total_tokens += len(encoding.encode(text))
+                        total_tokens += len(
+                            encoding.encode(text, disallowed_special=())
+                        )
                     elif item.get("type") == "image_url":
                         # Approximate image tokens (varies by resolution)
                         # OpenAI uses ~85 tokens for low-res, ~170 for high-res
                         total_tokens += 170
                 elif isinstance(item, str):
-                    total_tokens += len(encoding.encode(item))
+                    total_tokens += len(encoding.encode(item, disallowed_special=()))
 
         # Count name tokens if present
         name = message.get("name", "")
         if name:
-            total_tokens += len(encoding.encode(name))
+            total_tokens += len(encoding.encode(name, disallowed_special=()))
             total_tokens += 1  # Extra token for name field
 
         # Count tool_calls tokens if present
@@ -125,15 +127,23 @@ def _count_tokens_for_messages(model_id: str, messages: list[dict[str, Any]]) ->
                 # Function name
                 func_name = tool_call.get("function", {}).get("name", "")
                 if func_name:
-                    total_tokens += len(encoding.encode(func_name))
+                    total_tokens += len(
+                        encoding.encode(func_name, disallowed_special=())
+                    )
 
                 # Function arguments (JSON)
                 func_args = tool_call.get("function", {}).get("arguments", "")
                 if func_args:
                     if isinstance(func_args, str):
-                        total_tokens += len(encoding.encode(func_args))
+                        total_tokens += len(
+                            encoding.encode(func_args, disallowed_special=())
+                        )
                     else:
-                        total_tokens += len(encoding.encode(json.dumps(func_args)))
+                        total_tokens += len(
+                            encoding.encode(
+                                json.dumps(func_args), disallowed_special=()
+                            )
+                        )
 
     # Add 3 tokens for assistant reply priming
     total_tokens += 3
@@ -203,7 +213,7 @@ class TokenCounter:
         if not text:
             return 0
 
-        return len(self.encoding.encode(text))
+        return len(self.encoding.encode(text, disallowed_special=()))
 
     def count_image(self, image_data: dict[str, Any] | str) -> int:
         """Count tokens for an image.

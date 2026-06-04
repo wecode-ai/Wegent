@@ -171,6 +171,7 @@ export interface Team {
   recommended_mode?: 'chat' | 'code' | 'both' // Recommended usage mode (for QuickAccess)
   bind_mode?: TaskType[] // Allowed modes for this team
   icon?: string // Icon ID from preset icon library
+  quick_phrases?: string[] // Launcher phrases that prefill the chat input
   requires_workspace?: boolean // Whether this team requires a workspace/repository (null = auto-infer from shell)
   /** Modes this team is the default for (e.g., ['chat', 'code']) - computed from env config */
   default_for_modes?: string[]
@@ -315,6 +316,19 @@ export interface TaskDetail {
   device_id?: string | null // Device ID used for execution (for task history)
   preserve_executor?: boolean // Whether to preserve executor pod after task completion
   requested_skills?: SkillRef[] | null // User-selected skills for this task
+}
+
+export interface TaskRuntimeActiveStream {
+  subtask_id: number
+  cursor: number
+  last_activity_at?: string | null
+}
+
+export interface TaskRuntimeCheck {
+  task_id: number
+  task_status: TaskStatus
+  status_updated_at?: string | null
+  active_stream: TaskRuntimeActiveStream | null
 }
 
 /** Correction data stored in subtask.result.correction */
@@ -526,9 +540,8 @@ export interface AskUserQuestion {
 
 export interface AskUserFormData {
   type: 'interactive_form_question'
-  ask_id: string
-  /** Tool use ID from Claude (UUID format) - used as fallback for answer submission */
-  tool_use_id?: string | null
+  /** Tool call ID used to submit the deferred form answer. */
+  tool_use_id: string
   task_id: number
   subtask_id: number
   /** All questions to render. A single-question form uses a one-item array. */
@@ -540,10 +553,19 @@ export interface AskUserFormData {
   tool_output?: Record<string, unknown> | null
 }
 
+export interface InteractiveFormAnswerPayload {
+  type: 'interactive_form_question'
+  tool_use_id: string
+  task_id?: number | null
+  subtask_id?: number | null
+  success?: boolean
+  status?: 'answered' | 'cancelled'
+  answers: Record<string, string | string[]>
+  message?: string
+}
+
 export interface AskUserAnswer {
-  ask_id: string
-  /** Tool use ID for fallback lookup when ask_id doesn't match */
-  tool_use_id?: string | null
+  tool_use_id: string
   /** Single-question answer */
   answer?: string | string[]
   /** Multi-question answers: {question_id: value_or_list} */
@@ -661,6 +683,52 @@ export interface QuickAccessResponse {
   user_version: number | null
   show_system_recommended: boolean // True if user_version < system_version
   teams: QuickAccessTeam[]
+}
+
+export interface QuickLaunchFunction {
+  type: 'system_function'
+  id: string
+  title: string
+  description?: string | null
+  icon?: string | null
+  team_id: number
+  name: string
+  enabled: boolean
+  order: number
+  input_presets: QuickLaunchInputPreset[]
+}
+
+export interface QuickLaunchFavoriteAgent {
+  type: 'favorite_agent'
+  id: number
+  team_id: number
+  name: string
+  title: string
+  description?: string | null
+  icon?: string | null
+  recommended_mode?: 'chat' | 'code' | 'both'
+  agent_type?: string | null
+  quick_phrases: string[]
+  input_presets: QuickLaunchInputPreset[]
+}
+
+export interface QuickLaunchResponse {
+  system_functions: QuickLaunchFunction[]
+  favorite_agents: QuickLaunchFavoriteAgent[]
+}
+
+export interface QuickLaunchInputOptions {
+  enable_deep_thinking?: boolean | null
+  enable_clarification?: boolean | null
+  force_override?: boolean | null
+  selected_skill_names?: string[]
+}
+
+export interface QuickLaunchInputPreset {
+  id: string
+  title: string
+  prompt?: string | null
+  options?: QuickLaunchInputOptions | null
 }
 
 // Welcome Config Types (Slogan & Tips)

@@ -53,8 +53,24 @@ jest.mock('@/features/tasks/components/AttachmentButton', () => ({
 
 jest.mock('@/features/tasks/components/input/SendButton', () => ({
   __esModule: true,
-  default: ({ ariaLabel }: { ariaLabel?: string }) => (
-    <button type="button" aria-label={ariaLabel ?? 'Send message'}>
+  default: ({
+    ariaLabel,
+    disabled,
+    isLoading,
+    onClick,
+  }: {
+    ariaLabel?: string
+    disabled?: boolean
+    isLoading?: boolean
+    onClick?: () => void
+  }) => (
+    <button
+      type="button"
+      aria-label={ariaLabel ?? 'Send message'}
+      disabled={disabled || isLoading}
+      data-loading={isLoading ? 'true' : 'false'}
+      onClick={onClick}
+    >
       Send
     </button>
   ),
@@ -125,7 +141,6 @@ function createProps(): ChatInputControlsProps {
     },
     onFileSelect: jest.fn(),
     onAttachmentRemove: jest.fn(),
-    isLoading: false,
     isStreaming: false,
     isStopping: false,
     hasMessages: false,
@@ -135,20 +150,14 @@ function createProps(): ChatInputControlsProps {
     isModelSelectionRequired: false,
     isAttachmentReadyToSend: true,
     taskInputMessage: 'hello',
-    isSubtaskStreaming: false,
     onStopStream: jest.fn(),
     onSendMessage: jest.fn(),
   }
 }
 
 describe('ChatInputControls send state', () => {
-  it('shows stop action while waiting for stream start after send', () => {
-    render(
-      <ChatInputControls
-        {...createProps()}
-        {...({ isAwaitingResponseStart: true } as Partial<ChatInputControlsProps>)}
-      />
-    )
+  it('shows stop action while the runtime is active', () => {
+    render(<ChatInputControls {...createProps()} isStreaming />)
 
     expect(screen.getByRole('button', { name: 'Stop generating' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Send' })).not.toBeInTheDocument()
@@ -161,16 +170,31 @@ describe('ChatInputControls send state', () => {
     expect(screen.getByRole('button', { name: 'Queue message' })).toBeInTheDocument()
   })
 
-  it('shows a cancel task action for pending non-group tasks', () => {
-    const onCancelTask = jest.fn()
+  it('keeps queued send action available while the current stream is active', () => {
+    const onSendMessage = jest.fn()
 
     render(
       <ChatInputControls
         {...createProps()}
-        selectedTaskDetail={{ status: 'PENDING', is_group_chat: false } as never}
-        onCancelTask={onCancelTask}
+        isStreaming
+        canQueueMessage
+        onSendMessage={onSendMessage}
       />
     )
+
+    const queueButton = screen.getByRole('button', { name: 'Queue message' })
+    fireEvent.click(queueButton)
+
+    expect(screen.getByRole('button', { name: 'Stop generating' })).toBeInTheDocument()
+    expect(queueButton).toBeEnabled()
+    expect(queueButton).toHaveAttribute('data-loading', 'false')
+    expect(onSendMessage).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows a cancel task action when runtime allows cancellation', () => {
+    const onCancelTask = jest.fn()
+
+    render(<ChatInputControls {...createProps()} canCancelTask onCancelTask={onCancelTask} />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel task' }))
 
@@ -183,18 +207,33 @@ describe('getChatSendState', () => {
   it('allows queue send while streaming when input has content and queuing is available', () => {
     expect(
       getChatSendState({
-        isLoading: false,
         isStreaming: true,
-        isAwaitingResponseStart: false,
         isStopping: false,
         isModelSelectionRequired: false,
         isAttachmentReadyToSend: true,
         hasNoTeams: false,
         shouldHideChatInput: false,
         taskInputMessage: 'next question',
-        selectedTaskStatus: 'RUNNING',
-        isSubtaskStreaming: true,
-        isGroupChat: false,
+        canQueueMessage: true,
+      })
+    ).toEqual({
+      primaryAction: 'queue',
+      isPrimaryDisabled: false,
+      showStopAction: true,
+      showPendingAction: false,
+    })
+  })
+
+  it('allows queue send while the current stream is active', () => {
+    expect(
+      getChatSendState({
+        isStreaming: true,
+        isStopping: false,
+        isModelSelectionRequired: false,
+        isAttachmentReadyToSend: true,
+        hasNoTeams: false,
+        shouldHideChatInput: false,
+        taskInputMessage: 'next question',
         canQueueMessage: true,
       })
     ).toEqual({
@@ -208,18 +247,13 @@ describe('getChatSendState', () => {
   it('keeps stop as the only action while streaming with empty input', () => {
     expect(
       getChatSendState({
-        isLoading: false,
         isStreaming: true,
-        isAwaitingResponseStart: false,
         isStopping: false,
         isModelSelectionRequired: false,
         isAttachmentReadyToSend: true,
         hasNoTeams: false,
         shouldHideChatInput: false,
         taskInputMessage: '',
-        selectedTaskStatus: 'RUNNING',
-        isSubtaskStreaming: true,
-        isGroupChat: false,
         canQueueMessage: true,
       })
     ).toEqual({
@@ -233,18 +267,13 @@ describe('getChatSendState', () => {
   it('keeps stop as the only action while streaming with hidden empty input', () => {
     expect(
       getChatSendState({
-        isLoading: false,
         isStreaming: true,
-        isAwaitingResponseStart: false,
         isStopping: false,
         isModelSelectionRequired: false,
         isAttachmentReadyToSend: true,
         hasNoTeams: false,
         shouldHideChatInput: true,
         taskInputMessage: '',
-        selectedTaskStatus: 'RUNNING',
-        isSubtaskStreaming: true,
-        isGroupChat: false,
         canQueueMessage: true,
       })
     ).toEqual({
@@ -258,18 +287,13 @@ describe('getChatSendState', () => {
   it('uses normal send outside streaming', () => {
     expect(
       getChatSendState({
-        isLoading: false,
         isStreaming: false,
-        isAwaitingResponseStart: false,
         isStopping: false,
         isModelSelectionRequired: false,
         isAttachmentReadyToSend: true,
         hasNoTeams: false,
         shouldHideChatInput: false,
         taskInputMessage: 'hello',
-        selectedTaskStatus: undefined,
-        isSubtaskStreaming: false,
-        isGroupChat: false,
         canQueueMessage: false,
       })
     ).toEqual({
@@ -283,9 +307,7 @@ describe('getChatSendState', () => {
   it('allows normal send when the input only has ready attachments', () => {
     expect(
       getChatSendState({
-        isLoading: false,
         isStreaming: false,
-        isAwaitingResponseStart: false,
         isStopping: false,
         isModelSelectionRequired: false,
         isAttachmentReadyToSend: true,
@@ -293,9 +315,6 @@ describe('getChatSendState', () => {
         shouldHideChatInput: false,
         taskInputMessage: '',
         hasAttachments: true,
-        selectedTaskStatus: undefined,
-        isSubtaskStreaming: false,
-        isGroupChat: false,
         canQueueMessage: false,
       })
     ).toEqual({
@@ -306,22 +325,39 @@ describe('getChatSendState', () => {
     })
   })
 
-  it('uses cancel as the primary action for non-group pending task', () => {
+  it('uses normal send when runtime cannot cancel the task', () => {
     expect(
       getChatSendState({
-        isLoading: false,
         isStreaming: false,
-        isAwaitingResponseStart: false,
         isStopping: false,
         isModelSelectionRequired: false,
         isAttachmentReadyToSend: true,
         hasNoTeams: false,
         shouldHideChatInput: false,
         taskInputMessage: 'hello',
-        selectedTaskStatus: 'PENDING',
-        isSubtaskStreaming: false,
-        isGroupChat: false,
         canQueueMessage: false,
+        canCancelTask: false,
+      })
+    ).toEqual({
+      primaryAction: 'send',
+      isPrimaryDisabled: false,
+      showStopAction: false,
+      showPendingAction: false,
+    })
+  })
+
+  it('uses cancel as the primary action when runtime allows task cancellation', () => {
+    expect(
+      getChatSendState({
+        isStreaming: false,
+        isStopping: false,
+        isModelSelectionRequired: false,
+        isAttachmentReadyToSend: true,
+        hasNoTeams: false,
+        shouldHideChatInput: false,
+        taskInputMessage: 'hello',
+        canQueueMessage: false,
+        canCancelTask: true,
       })
     ).toEqual({
       primaryAction: 'cancel',
@@ -331,46 +367,16 @@ describe('getChatSendState', () => {
     })
   })
 
-  it('allows normal send for idle pending group chat', () => {
+  it('shows stop loading while stopping', () => {
     expect(
       getChatSendState({
-        isLoading: false,
         isStreaming: false,
-        isAwaitingResponseStart: false,
-        isStopping: false,
+        isStopping: true,
         isModelSelectionRequired: false,
         isAttachmentReadyToSend: true,
         hasNoTeams: false,
         shouldHideChatInput: false,
         taskInputMessage: 'hello',
-        selectedTaskStatus: 'PENDING',
-        isSubtaskStreaming: false,
-        isGroupChat: true,
-        canQueueMessage: false,
-      })
-    ).toEqual({
-      primaryAction: 'send',
-      isPrimaryDisabled: false,
-      showStopAction: false,
-      showPendingAction: false,
-    })
-  })
-
-  it('shows stop loading for cancelling task', () => {
-    expect(
-      getChatSendState({
-        isLoading: false,
-        isStreaming: false,
-        isAwaitingResponseStart: false,
-        isStopping: false,
-        isModelSelectionRequired: false,
-        isAttachmentReadyToSend: true,
-        hasNoTeams: false,
-        shouldHideChatInput: false,
-        taskInputMessage: 'hello',
-        selectedTaskStatus: 'CANCELLING',
-        isSubtaskStreaming: false,
-        isGroupChat: false,
         canQueueMessage: false,
       })
     ).toEqual({

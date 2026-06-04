@@ -17,6 +17,7 @@ export interface CreateTeamRequest {
   is_active?: boolean
   namespace?: string // Group namespace, defaults to 'default' for personal teams
   icon?: string // Icon ID from preset icon library
+  quick_phrases?: string[]
   requires_workspace?: boolean // Whether this team requires a workspace/repository (null = auto-infer from shell)
 }
 
@@ -80,7 +81,7 @@ export const teamApis = {
    * Get teams list
    * @param params - Pagination parameters
    * @param scope - Resource scope: 'personal', 'group', or 'all'
-   * @param groupName - Group name (required when scope is 'group')
+   * @param groupName - Optional group name. When omitted with group scope, all accessible groups are returned.
    */
   async getTeams(
     params?: PaginationParams,

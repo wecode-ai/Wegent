@@ -1,5 +1,6 @@
 import { X } from 'lucide-react'
 import { useState } from 'react'
+import { useEscapeKey } from '@/hooks/useEscapeKey'
 
 interface TextInputDialogProps {
   open: boolean
@@ -39,36 +40,39 @@ function TextInputDialogContent({
 
   const trimmedValue = value.trim()
 
+  useEscapeKey(onClose)
+
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/35 px-4">
+    <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4">
       <div className="w-full max-w-[420px] rounded-lg border border-[#d8d8d8] bg-white p-5 shadow-2xl">
         <div className="flex items-center justify-between gap-4">
-          <h2 className="text-lg font-semibold text-[#202124]">{title}</h2>
+          <h2 className="text-base font-semibold text-[#202124]">{title}</h2>
           <button
             type="button"
             data-testid={`${inputTestId}-close-button`}
             onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-md text-[#606368] hover:bg-[#f1f3f4]"
+            className="flex h-11 min-w-[44px] items-center justify-center rounded-md text-[#606368] hover:bg-[#f1f3f4]"
             aria-label={cancelLabel}
           >
             <X className="h-4 w-4" />
           </button>
         </div>
-        <label className="mt-5 block text-sm font-medium text-[#3c4043]">
+        <label className="mt-5 block text-[13px] font-medium leading-[18px] text-[#3c4043]">
           {label}
         </label>
         <input
           data-testid={inputTestId}
           value={value}
+          autoFocus
           onChange={event => setValue(event.target.value)}
-          className="mt-2 h-10 w-full rounded-md border border-[#d8d8d8] px-3 text-sm outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20"
+          className="mt-2 h-9 w-full rounded-md border border-[#d8d8d8] px-3 text-[13px] outline-none focus:border-[#14b8a6] focus:ring-2 focus:ring-[#14b8a6]/20"
         />
         <div className="mt-6 flex justify-end gap-2">
           <button
             type="button"
             data-testid={`${inputTestId}-cancel-button`}
             onClick={onClose}
-            className="h-9 rounded-md border border-[#d8d8d8] px-4 text-sm font-medium text-[#3c4043] hover:bg-[#f7f7f8]"
+            className="h-11 min-w-[44px] rounded-md border border-[#d8d8d8] px-4 text-[13px] font-medium leading-[18px] text-[#3c4043] hover:bg-[#f7f7f8]"
           >
             {cancelLabel}
           </button>
@@ -85,7 +89,7 @@ function TextInputDialogContent({
                 setSubmitting(false)
               }
             }}
-            className="h-9 rounded-md bg-[#14b8a6] px-4 text-sm font-medium text-white hover:bg-[#0f9f93] disabled:opacity-50"
+            className="h-11 min-w-[44px] rounded-md bg-[#14b8a6] px-4 text-[13px] font-medium leading-[18px] text-white hover:bg-[#0f9f93] disabled:opacity-50"
           >
             {confirmLabel}
           </button>

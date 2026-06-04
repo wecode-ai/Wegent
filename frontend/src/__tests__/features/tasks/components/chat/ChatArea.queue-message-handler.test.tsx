@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom'
-import { render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { TaskDetail } from '@/types/api'
 
 import { ChatArea } from '@/features/tasks/components/chat'
@@ -11,8 +11,6 @@ const mockChatInputCard = jest.fn((_props: Record<string, unknown>) => (
 const defaultStreamHandlers = {
   pendingTaskId: null,
   isStreaming: false,
-  isAwaitingResponseStart: false,
-  isSubtaskStreaming: false,
   canQueueMessage: false,
   queuedMessageCount: 0,
   queuedMessages: [] as Array<{
@@ -24,24 +22,23 @@ const defaultStreamHandlers = {
   cancelQueuedMessage: jest.fn(),
   isStopping: false,
   hasPendingUserMessage: false,
-  localPendingMessage: null,
   handleSendMessage: jest.fn(),
   handleSendMessageWithModel: jest.fn(),
   handleRetry: jest.fn(),
   handleCancelTask: jest.fn(),
   stopStream: jest.fn(),
   resetStreamingState: jest.fn(),
-  handleNewMessages: jest.fn(),
-  handleStreamComplete: jest.fn(),
-  isCancelling: false,
 }
 
 let streamHandlersMock = { ...defaultStreamHandlers }
 let selectedTaskDetailMock: TaskDetail | null = null
+let mockTaskInputMessage = ''
+const mockSetTaskInputMessage = jest.fn()
 
 jest.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
-  useRouter: () => ({ push: jest.fn() }),
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+  usePathname: () => '/chat',
 }))
 
 jest.mock('@/features/inbox', () => ({
@@ -70,8 +67,8 @@ jest.mock('@/features/tasks/components/chat/useChatAreaState', () => ({
     setSelectedBranch: jest.fn(),
     effectiveRequiresWorkspace: false,
     setRequiresWorkspaceOverride: jest.fn(),
-    taskInputMessage: '',
-    setTaskInputMessage: jest.fn(),
+    taskInputMessage: mockTaskInputMessage,
+    setTaskInputMessage: mockSetTaskInputMessage,
     setIsLoading: jest.fn(),
     isLoading: false,
     enableDeepThinking: false,
@@ -108,11 +105,20 @@ jest.mock('@/features/tasks/components/chat/useChatStreamHandlers', () => ({
   useChatStreamHandlers: () => streamHandlersMock,
 }))
 
-jest.mock('@/features/tasks/contexts/taskContext', () => ({
-  useTaskContext: () => ({
+jest.mock('@/features/tasks/session/TaskSession', () => ({
+  useTaskSession: () => ({
     selectedTaskDetail: selectedTaskDetailMock,
-    setSelectedTask: jest.fn(),
+    selectedTask: selectedTaskDetailMock,
+    selectTask: jest.fn(),
     accessDenied: false,
+    taskState: {
+      taskId: selectedTaskDetailMock?.id,
+      messages: new Map(),
+      runtime: { taskStatus: selectedTaskDetailMock?.status },
+    },
+  }),
+  useOptionalTaskSession: () => ({
+    sendMessage: jest.fn(),
   }),
 }))
 
@@ -124,10 +130,6 @@ jest.mock('@/features/projects/contexts/projectContext', () => ({
   }),
 }))
 
-jest.mock('@/features/tasks/hooks/useTaskStateMachine', () => ({
-  useTaskStateMachine: () => ({ state: { messages: new Map() } }),
-}))
-
 jest.mock(
   '@/features/tasks/components/message/MessagesArea',
   () =>
@@ -136,7 +138,17 @@ jest.mock(
     }
 )
 jest.mock('@/features/tasks/components/chat/QuickAccessCards', () => ({
-  QuickAccessCards: () => <div data-testid="quick-access-cards" />,
+  QuickAccessCards: (props: { onPhraseSelect: (phrase: string) => void }) => (
+    <div data-testid="quick-access-cards">
+      <button
+        type="button"
+        data-testid="quick-phrase-trigger"
+        onClick={() => props.onPhraseSelect('quick phrase')}
+      >
+        Quick phrase
+      </button>
+    </div>
+  ),
 }))
 jest.mock('@/features/tasks/components/chat/SloganDisplay', () => ({
   SloganDisplay: () => <div data-testid="slogan-display" />,
@@ -235,6 +247,8 @@ describe('ChatArea queue message handler mounting', () => {
   beforeEach(() => {
     streamHandlersMock = { ...defaultStreamHandlers }
     selectedTaskDetailMock = null
+    mockTaskInputMessage = ''
+    mockSetTaskInputMessage.mockClear()
     mockChatInputCard.mockClear()
   })
 
@@ -325,6 +339,89 @@ describe('ChatArea queue message handler mounting', () => {
 
     expect(mockChatInputCard).toHaveBeenCalledWith(
       expect.objectContaining({ canQueueMessage: false, canSubmit: false })
+    )
+  })
+
+  it('fills a quick phrase directly and requests focus at the end when input is empty', async () => {
+    render(<ChatArea teams={[]} isTeamsLoading={false} taskType="chat" showRepositorySelector />)
+
+    fireEvent.click(screen.getByTestId('quick-phrase-trigger'))
+
+    expect(mockSetTaskInputMessage).toHaveBeenCalledWith('quick phrase')
+    expect(screen.queryByText('quick_launch.overwrite_confirm_title')).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(mockChatInputCard).toHaveBeenLastCalledWith(
+        expect.objectContaining({ focusInputAtEndSignal: 1 })
+      )
+    })
+  })
+
+  it('asks before overwriting existing input with a quick phrase', async () => {
+    mockTaskInputMessage = 'existing input'
+
+    render(<ChatArea teams={[]} isTeamsLoading={false} taskType="chat" showRepositorySelector />)
+
+    fireEvent.click(screen.getByTestId('quick-phrase-trigger'))
+
+    expect(mockSetTaskInputMessage).not.toHaveBeenCalledWith('quick phrase')
+    expect(screen.getByText('quick_launch.overwrite_confirm_title')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('quick-phrase-overwrite-confirm'))
+
+    expect(mockSetTaskInputMessage).toHaveBeenCalledWith('quick phrase')
+    await waitFor(() => {
+      expect(mockChatInputCard).toHaveBeenLastCalledWith(
+        expect.objectContaining({ focusInputAtEndSignal: 1 })
+      )
+    })
+  })
+
+  it('submits to the stream handler for queueing when a pending task is already streaming', async () => {
+    const handleSendMessage = jest.fn().mockResolvedValue(undefined)
+    streamHandlersMock = {
+      ...defaultStreamHandlers,
+      isStreaming: true,
+      canQueueMessage: true,
+      handleSendMessage,
+    }
+    selectedTaskDetailMock = {
+      id: 42,
+      status: 'PENDING',
+      is_group_chat: false,
+      subtasks: [],
+    } as unknown as TaskDetail
+
+    render(<ChatArea teams={[]} isTeamsLoading={false} taskType="chat" showRepositorySelector />)
+
+    const latestProps = mockChatInputCard.mock.calls.at(-1)?.[0] as {
+      handleSendMessage: (message?: string) => Promise<void>
+    }
+
+    await act(async () => {
+      await latestProps.handleSendMessage('follow up while streaming')
+    })
+
+    expect(handleSendMessage).toHaveBeenCalledWith('follow up while streaming', undefined)
+  })
+
+  it('keeps submit available for queueing while a pending user message is in state', () => {
+    streamHandlersMock = {
+      ...defaultStreamHandlers,
+      isStreaming: true,
+      canQueueMessage: true,
+      hasPendingUserMessage: true,
+    }
+    selectedTaskDetailMock = {
+      id: 42,
+      status: 'RUNNING',
+      is_group_chat: false,
+      subtasks: [],
+    } as unknown as TaskDetail
+
+    render(<ChatArea teams={[]} isTeamsLoading={false} taskType="chat" showRepositorySelector />)
+
+    expect(mockChatInputCard).toHaveBeenCalledWith(
+      expect.objectContaining({ canQueueMessage: true, canSubmit: true })
     )
   })
 })

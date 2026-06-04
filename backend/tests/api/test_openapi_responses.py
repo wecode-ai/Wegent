@@ -260,8 +260,8 @@ def _assistant_subtask_with_pending_form(
     task_id: int,
     user_id: int,
     team_id: int,
-    ask_id: str,
 ) -> Subtask:
+    tool_use_id = f"call_mcp_{subtask_id}"
     return Subtask(
         id=subtask_id,
         user_id=user_id,
@@ -282,16 +282,20 @@ def _assistant_subtask_with_pending_form(
         result={
             "blocks": [
                 {
-                    "id": f"call_mcp_{subtask_id}",
+                    "id": tool_use_id,
                     "type": "tool",
-                    "tool_use_id": f"call_mcp_{subtask_id}",
+                    "tool_use_id": tool_use_id,
                     "tool_name": "interactive_form_question",
-                    "tool_input": {"ask_id": ask_id},
+                    "tool_input": {
+                        "questions": [
+                            {"id": "exp_id", "question": "Enter experiment id"}
+                        ],
+                    },
                     "tool_output": {
                         "pending_user_input": True,
                         "pending_user_input_payload": {
                             "type": "interactive_form_question",
-                            "ask_id": ask_id,
+                            "tool_use_id": tool_use_id,
                             "submit_mode": "new_response",
                             "submit_format": "markdown_message",
                         },
@@ -527,13 +531,13 @@ class TestOpenAPIResponsesCreate:
         assert "Invalid auto_delete_executor" in response.json()["detail"]
 
     @pytest.mark.asyncio
-    async def test_create_non_streaming_response_unified_sets_pending_user_input(
+    async def test_create_non_streaming_response_unified_omits_pending_user_input(
         self,
         test_db: Session,
         test_user: User,
         test_team: Kind,
     ):
-        """Queued non-streaming responses should expose pending interactive form state."""
+        """Queued non-streaming responses should not expose legacy pending form state."""
         setup = SimpleNamespace(
             task=SimpleNamespace(id=101, json={"metadata": {"labels": {}}}),
             task_id=101,
@@ -546,7 +550,6 @@ class TestOpenAPIResponsesCreate:
             task_id=101,
             user_id=test_user.id,
             team_id=test_team.id,
-            ask_id="ask_654",
         )
         query_db = MagicMock()
         query_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = [
@@ -596,10 +599,11 @@ class TestOpenAPIResponsesCreate:
             )
 
         assert response.status == "queued"
-        assert response.pending_user_input is True
-        assert response.pending_user_input_payload["ask_id"] == "ask_654"
+        assert response.pending_user_input is None
+        assert response.pending_user_input_payload is None
         assert response.output[0].type == "mcp_call"
-        assert response.output[0].output["pending_user_input"] is True
+        assert "pending_user_input" not in response.output[0].output
+        assert "pending_user_input_payload" not in response.output[0].output
 
     def test_filter_current_assistant_turn_only_returns_active_subtask(
         self,
@@ -1094,12 +1098,12 @@ class TestOpenAPIResponsesGet:
         assert data["output"][0]["type"] == "message"
         assert data["output"][0]["role"] == "assistant"
 
-    def test_task_to_response_object_sets_pending_user_input_from_subtasks(
+    def test_task_to_response_object_omits_pending_user_input_from_subtasks(
         self,
         test_user: User,
         test_team: Kind,
     ):
-        """GET /v1/responses/{id} should expose pending interactive form state."""
+        """GET /v1/responses/{id} should not expose legacy pending form state."""
         task_dict = {
             "id": 42,
             "status": "COMPLETED",
@@ -1110,7 +1114,6 @@ class TestOpenAPIResponsesGet:
             task_id=42,
             user_id=test_user.id,
             team_id=test_team.id,
-            ask_id="ask_204",
         )
 
         response = _task_to_response_object(
@@ -1120,12 +1123,13 @@ class TestOpenAPIResponsesGet:
         )
 
         assert response.status == "completed"
-        assert response.pending_user_input is True
-        assert response.pending_user_input_payload["ask_id"] == "ask_204"
+        assert response.pending_user_input is None
+        assert response.pending_user_input_payload is None
         assert response.output[0].type == "mcp_call"
-        assert response.output[0].output["pending_user_input"] is True
+        assert "pending_user_input" not in response.output[0].output
+        assert "pending_user_input_payload" not in response.output[0].output
 
-    def test_get_response_exposes_pending_user_input(
+    def test_get_response_omits_pending_user_input(
         self,
         test_client: TestClient,
         test_api_key,
@@ -1134,13 +1138,12 @@ class TestOpenAPIResponsesGet:
         test_team: Kind,
         test_task: TaskResource,
     ):
-        """GET endpoint should serialize pending interactive form state."""
+        """GET endpoint should omit legacy pending interactive form state."""
         assistant_subtask = _assistant_subtask_with_pending_form(
             subtask_id=304,
             task_id=test_task.id,
             user_id=test_user.id,
             team_id=test_team.id,
-            ask_id="ask_304",
         )
         assistant_subtask.message_id = 1
         test_db.add(assistant_subtask)
@@ -1153,10 +1156,11 @@ class TestOpenAPIResponsesGet:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["pending_user_input"] is True
-        assert data["pending_user_input_payload"]["ask_id"] == "ask_304"
+        assert data["pending_user_input"] is None
+        assert data["pending_user_input_payload"] is None
         assert data["output"][0]["type"] == "mcp_call"
-        assert data["output"][0]["output"]["pending_user_input"] is True
+        assert "pending_user_input" not in data["output"][0]["output"]
+        assert "pending_user_input_payload" not in data["output"][0]["output"]
 
     def test_task_to_response_object_ignores_stale_pending_state_from_earlier_turn(
         self,
@@ -1174,7 +1178,6 @@ class TestOpenAPIResponsesGet:
             task_id=43,
             user_id=test_user.id,
             team_id=test_team.id,
-            ask_id="ask_205",
         )
         current_assistant = Subtask(
             user_id=test_user.id,
@@ -1222,7 +1225,6 @@ class TestOpenAPIResponsesGet:
             task_id=test_task.id,
             user_id=test_user.id,
             team_id=test_team.id,
-            ask_id="ask_305",
         )
         stale_assistant.message_id = 1
         current_assistant = Subtask(

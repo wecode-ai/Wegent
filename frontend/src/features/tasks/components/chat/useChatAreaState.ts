@@ -19,7 +19,7 @@ import { useMultiAttachment } from '@/hooks/useMultiAttachment'
 import { userApis } from '@/apis/user'
 import { correctionApis } from '@/apis/correction'
 import { saveLastRepo } from '@/utils/userPreferences'
-import { useTaskContext } from '../../contexts/taskContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { teamRequiresWorkspace } from '../../service/messageService'
 
@@ -29,7 +29,10 @@ type WelcomeItemWithMode = {
   mode?: string
 }
 
-function getWelcomeItemsForMode<T extends WelcomeItemWithMode>(items: T[], taskType: TaskType): T[] {
+function getWelcomeItemsForMode<T extends WelcomeItemWithMode>(
+  items: T[],
+  taskType: TaskType
+): T[] {
   const getMatchedItems = (mode: TaskType) =>
     items.filter(item => {
       const itemMode = item.mode || 'both'
@@ -107,10 +110,6 @@ export interface ChatAreaState {
   taskInputMessage: string
   setTaskInputMessage: (message: string) => void
 
-  // Loading state
-  isLoading: boolean
-  setIsLoading: (value: boolean) => void
-
   // Deep thinking state
   enableDeepThinking: boolean
   setEnableDeepThinking: (value: boolean) => void
@@ -184,7 +183,7 @@ export interface ChatAreaState {
  * Manages all the state for the ChatArea component, including:
  * - Team, repository, branch, and model selection
  * - Input message and attachment state
- * - Loading and toggle states (deep thinking, clarification)
+ * - Toggle states (deep thinking, clarification)
  * - External API parameters (for Dify teams)
  * - Welcome config and random slogan/tip
  * - UI state (mobile, quota visibility)
@@ -203,7 +202,7 @@ export function useChatAreaState({
   // because it's automatically bound to the task on creation
   const shouldShowInitialKbInContexts = taskType !== 'knowledge'
 
-  const { selectedTaskDetail } = useTaskContext()
+  const { selectedTaskDetail } = useTaskSession()
 
   // Pre-load team preference from localStorage to use as initial value
   const initialTeamIdRef = useRef<number | null>(null)
@@ -228,7 +227,6 @@ export function useChatAreaState({
 
   // Input state
   const [taskInputMessage, setTaskInputMessage] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
 
   // Toggle states
   const [enableDeepThinking, setEnableDeepThinking] = useState(true)
@@ -590,10 +588,6 @@ export function useChatAreaState({
     // Input state
     taskInputMessage,
     setTaskInputMessage,
-
-    // Loading state
-    isLoading,
-    setIsLoading,
 
     // Deep thinking state
     enableDeepThinking,

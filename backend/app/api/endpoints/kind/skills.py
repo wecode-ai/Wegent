@@ -12,9 +12,20 @@ import zipfile
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Query,
+    Security,
+    UploadFile,
+    status,
+)
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -32,11 +43,93 @@ from app.schemas.kind import (
     Skill,
     SkillList,
 )
+from app.schemas.namespace import GroupRole
+from app.schemas.skill_binding import (
+    SkillAvailability,
+    SkillBindingResponse,
+    SkillBindingUpdateRequest,
+)
 from app.services.adapters.public_skill import public_skill_service
 from app.services.adapters.skill_kinds import skill_kinds_service
+from app.services.auth import verify_skill_identity_token
 from app.services.git_skill import git_skill_service
+from app.services.group_permission import check_group_permission
+from app.services.skill_binding_service import skill_binding_service
 
 router = APIRouter()
+
+
+def _extract_bearer_token(authorization: str, oauth2_token: Optional[str]) -> str:
+    """Extract a bearer token from FastAPI auth sources."""
+    if authorization.startswith("Bearer "):
+        return authorization[7:]
+    return oauth2_token or ""
+
+
+def _get_current_user_or_skill_identity(
+    db: Session = Depends(get_db),
+    oauth2_token: Optional[str] = Security(security.oauth2_scheme_optional),
+    authorization: str = Header(default="", include_in_schema=False),
+) -> User:
+    """
+    Authenticate Skill package publishing requests.
+
+    Supports the normal user JWT used by Settings and the skill runtime identity
+    token used by Skill scripts. It intentionally does not accept generic task
+    auth tokens.
+    """
+    token = _extract_bearer_token(authorization, oauth2_token)
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing authentication token")
+
+    try:
+        return security.get_current_user(token=token, db=db)
+    except HTTPException as jwt_error:
+        token_info = verify_skill_identity_token(token)
+        if not token_info:
+            raise jwt_error
+
+    user = db.query(User).filter(User.id == token_info.user_id).first()
+    if not user or not user.is_active or user.user_name != token_info.user_name:
+        raise HTTPException(status_code=401, detail="Could not validate credentials")
+
+    return user
+
+
+def _get_current_user_or_skill_query_identity(
+    db: Session = Depends(get_db),
+    oauth2_token: Optional[str] = Security(security.oauth2_scheme_optional),
+    x_api_key_security: Optional[str] = Security(security.api_key_header_optional),
+    authorization: str = Header(default="", include_in_schema=False),
+    x_api_key: str = Header(
+        default="",
+        alias="X-API-Key",
+        include_in_schema=False,
+    ),
+) -> User:
+    """Authenticate Skill read requests, including runtime Skill identity tokens."""
+    try:
+        return security.get_current_user_jwt_apikey_tasktoken(
+            db=db,
+            oauth2_token=oauth2_token,
+            x_api_key_security=x_api_key_security,
+            authorization=authorization,
+            x_api_key=x_api_key,
+        )
+    except HTTPException as auth_error:
+        token = _extract_bearer_token(authorization, oauth2_token)
+        if not token:
+            raise auth_error
+
+        token_info = verify_skill_identity_token(token)
+        if not token_info:
+            raise auth_error
+
+    user = db.query(User).filter(User.id == token_info.user_id).first()
+    if not user or not user.is_active or user.user_name != token_info.user_name:
+        raise HTTPException(status_code=401, detail="Could not validate credentials")
+
+    return user
 
 
 def _resolve_manageable_skill(
@@ -123,12 +216,6 @@ class PublicSkillUpdate(BaseModel):
         return str(v)
 
 
-class SkillEnabledUpdate(BaseModel):
-    """Schema for updating a Skill enabled state."""
-
-    enabled: bool
-
-
 class InvokeSkillRequest(BaseModel):
     """Schema for invoking a skill"""
 
@@ -166,6 +253,7 @@ class UnifiedSkillResponse(BaseModel):
     is_active: bool
     is_public: bool
     user_id: int  # ID of the user who uploaded this skill
+    availability: SkillAvailability = Field(default_factory=SkillAvailability)
     source: Optional[SkillSourceResponse] = (
         None  # Source information for git-imported skills
     )
@@ -202,7 +290,7 @@ async def upload_skill(
     file: UploadFile = File(..., description="Skill ZIP package (max 10MB)"),
     name: str = Form(..., description="Skill name (unique)"),
     namespace: str = Form("default", description="Namespace"),
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(_get_current_user_or_skill_identity),
     db: Session = Depends(get_db),
 ):
     """
@@ -269,7 +357,7 @@ def list_skills(
         description="Task ID for task-based authorization. "
         "If provided, also searches skills owned by the task owner.",
     ),
-    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
+    current_user: User = Depends(_get_current_user_or_skill_query_identity),
     db: Session = Depends(get_db),
 ):
     """
@@ -550,7 +638,16 @@ def list_public_skills(
     db: Session = Depends(get_db),
 ):
     """List all public (system-level) skills."""
-    return public_skill_service.get_skills(db, skip=skip, limit=limit)
+    user_default_skill_ids = skill_binding_service.list_user_default_skill_ids(
+        db, current_user.id
+    )
+    skills = public_skill_service.get_skills(db, skip=skip, limit=limit)
+    for skill in skills:
+        skill["availability"] = {
+            "in_my_default": skill["id"] in user_default_skill_ids,
+            "agent_builtin": False,
+        }
+    return skills
 
 
 @router.post("/public", response_model=Dict[str, Any], status_code=201)
@@ -646,6 +743,7 @@ async def upload_public_skill(
         file_content=file_content,
         file_name=file.filename,
         user_id=0,  # Public skill
+        add_to_user_default=False,
     )
 
     # Convert to dict format for consistency with other public skill endpoints
@@ -989,6 +1087,9 @@ def list_unified_skills(
 
     user_skills = []
     user_skill_names = set()
+    user_default_skill_ids = skill_binding_service.list_user_default_skill_ids(
+        db, current_user.id
+    )
 
     # Build optimized query based on scope
     if scope == "personal":
@@ -1006,6 +1107,15 @@ def list_unified_skills(
         )
     elif scope == "group":
         if group_name:
+            has_group_access = current_user.role == "admin" or check_group_permission(
+                db, current_user.id, group_name, GroupRole.Reporter
+            )
+            if not has_group_access:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You don't have permission to view this group's skills",
+                )
+
             # Group scope with specific group: query ALL skills in that namespace
             skill_kinds = (
                 db.query(Kind)
@@ -1092,6 +1202,10 @@ def list_unified_skills(
                     "is_active": True,
                     "is_public": False,
                     "user_id": kind.user_id,
+                    "availability": {
+                        "in_my_default": kind.id in user_default_skill_ids,
+                        "agent_builtin": False,
+                    },
                     "source": source_info,
                     "created_at": kind.created_at,
                     "updated_at": kind.updated_at,
@@ -1130,6 +1244,10 @@ def list_unified_skills(
                     "is_active": True,
                     "is_public": True,
                     "user_id": kind.user_id,
+                    "availability": {
+                        "in_my_default": kind.id in user_default_skill_ids,
+                        "agent_builtin": False,
+                    },
                     "source": None,
                     "created_at": kind.created_at,
                     "updated_at": kind.updated_at,
@@ -1190,6 +1308,72 @@ def invoke_skill(
         raise HTTPException(400, f"Skill '{request.skill_name}' has no prompt content")
 
     return InvokeSkillResponse(prompt=skill_crd.spec.prompt)
+
+
+# ============================================================================
+# Skill Binding Endpoints
+# NOTE: Static routes must be defined BEFORE dynamic routes like /{skill_id}
+# ============================================================================
+
+
+@router.get("/bindings/me", response_model=List[SkillBindingResponse])
+def list_my_default_skill_bindings(
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List Skills that are enabled by default for the current user."""
+    bindings = skill_binding_service.list_user_default_bindings(db, current_user.id)
+    return [skill_binding_service.to_response(binding) for binding in bindings]
+
+
+@router.post("/{skill_id}/bindings/me", response_model=SkillBindingResponse)
+def add_skill_to_my_default(
+    skill_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Enable a Skill by default for the current user."""
+    binding = skill_binding_service.add_user_default_skill(
+        db,
+        user_id=current_user.id,
+        skill_id=skill_id,
+        created_by=current_user.id,
+    )
+    return skill_binding_service.to_response(binding)
+
+
+@router.patch("/{skill_id}/bindings/me", response_model=SkillBindingResponse)
+def update_my_default_skill_binding(
+    skill_id: int,
+    request: SkillBindingUpdateRequest,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Update exception rules for a Skill automatically enabled for the current user."""
+    skill_binding_service.get_accessible_skill(db, skill_id, current_user.id)
+    binding = skill_binding_service.update_user_default_skill_exceptions(
+        db,
+        user_id=current_user.id,
+        skill_id=skill_id,
+        exceptions=request.exceptions,
+        force_preload=request.force_preload,
+    )
+    return skill_binding_service.to_response(binding)
+
+
+@router.delete("/{skill_id}/bindings/me", status_code=status.HTTP_204_NO_CONTENT)
+def remove_skill_from_my_default(
+    skill_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Disable a Skill by default for the current user."""
+    skill_binding_service.remove_user_default_skill(
+        db,
+        user_id=current_user.id,
+        skill_id=skill_id,
+    )
+    return None
 
 
 # ============================================================================
@@ -1429,34 +1613,11 @@ def update_skill_from_git(
     return result
 
 
-@router.put("/{skill_id}/enabled", response_model=Skill)
-def update_skill_enabled(
-    skill_id: int,
-    data: SkillEnabledUpdate,
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Update a Skill enabled state without replacing its ZIP package."""
-    skill_kind = _resolve_manageable_skill(
-        db=db,
-        skill_id=skill_id,
-        current_user=current_user,
-        action="update",
-    )
-
-    return skill_kinds_service.update_skill_enabled(
-        db=db,
-        skill_id=skill_id,
-        user_id=skill_kind.user_id,
-        enabled=data.enabled,
-    )
-
-
 @router.put("/{skill_id}", response_model=Skill)
 async def update_skill(
     skill_id: int,
     file: UploadFile = File(..., description="New Skill ZIP package (max 10MB)"),
-    current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(_get_current_user_or_skill_identity),
     db: Session = Depends(get_db),
 ):
     """

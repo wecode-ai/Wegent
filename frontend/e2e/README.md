@@ -116,6 +116,28 @@ e2e/
 └── config/            # Test configuration
 ```
 
+## Agent Conversation Regression
+
+`tests/tasks/agent-conversation-regression.spec.ts` covers these backend-integrated task flows:
+
+- Normal mode Chat Shell dialogue and follow-up.
+- Normal mode ClaudeCode dialogue, follow-up, and executor session resume.
+- Coding mode ClaudeCode dialogue and follow-up.
+- Device mode ClaudeCode dialogue and follow-up through a local executor device.
+
+The regression runs in the dedicated `executor-e2e-tests` GitHub Actions job. Ordinary sharded E2E jobs skip this spec so they do not install executor dependencies, build executor images, or start executor-manager. It uses global setup authentication like the rest of `frontend/e2e`; no external Playwright auth-state secret is required.
+
+CI starts these support services:
+
+- `utils/mock-model-server.ts` receives real Chat Shell OpenAI-compatible requests and real ClaudeCode Anthropic Messages API requests, then records the second-turn prompt package.
+- A real `executor` local-mode process registers a ClaudeCode device through the Backend `/local-executor` Socket.IO namespace.
+
+Normal and coding ClaudeCode tests run through the actual executor-manager Docker path and the real `ClaudeCodeAgent` inside an executor container. Device mode runs through the actual Backend-to-local-executor WebSocket path and a real local-mode `ClaudeCodeAgent`. The model endpoint is the only mocked boundary, and the tests assert that the second-turn `/v1/messages` request received by the mock model server contains both the first-turn prompt and context token.
+
+The executor job builds `fixtures/claudecode-executor/Dockerfile`, starts a real `executor_manager` service on port `8001`, and starts a real local ClaudeCode executor process for device-mode coverage. The fixture image runs executor from source via `/workspace/src/executor/main.py`; it does not build a PyInstaller executor binary. Source files live under `/workspace/src` because executor-manager mounts the extracted `/app/executor` entrypoint volume at `/app` for custom base images.
+
+For GitHub Actions, `executor_manager` runs directly on the runner and task containers use Docker bridge networking with normal port mappings. Keep `DOCKER_HOST_ADDR=localhost` so the runner can dispatch to mapped container ports. Use the runner's Docker bridge IP for container-to-runner URLs such as `TASK_API_DOMAIN`, `CALLBACK_HOST`, and the ClaudeCode mock model base URL.
+
 ## Page Object Model
 
 Tests use the Page Object Model pattern for better maintainability:
@@ -173,6 +195,32 @@ E2E tests run automatically in GitHub Actions:
 - Nightly scheduled runs
 
 See [`.github/workflows/e2e-tests.yml`](../../.github/workflows/e2e-tests.yml) for configuration.
+
+CI starts the frontend with `npm run dev` instead of `npm run build && npm start`
+so E2E jobs do not spend time on a production Next.js build. This keeps E2E
+focused on browser/API behavior; production build failures need separate build
+coverage outside this workflow.
+
+The workflow caches Python virtualenvs, frontend `node_modules`, Playwright
+browsers, and the executor job's Claude Code CLI. Dependency install steps are
+skipped only on exact cache hits; partial restore-key matches still run install
+commands to reconcile dependencies before saving a fresh cache.
+
+### Sharded CI Users
+
+The CI workflow runs Playwright tests across multiple shards. Each shard uses an
+isolated E2E admin and regular user to reduce cross-shard data interference:
+
+- `E2E_SHARD_INDEX=1` uses `e2e-admin-shard-1` and `e2e-user-shard-1`
+- `E2E_SHARD_INDEX=2` uses `e2e-admin-shard-2` and `e2e-user-shard-2`
+- `E2E_SHARD_INDEX=3` uses `e2e-admin-shard-3` and `e2e-user-shard-3`
+- `E2E_SHARD_INDEX=4` uses `e2e-admin-shard-4` and `e2e-user-shard-4`
+- Local runs without `E2E_SHARD_INDEX` use `e2e-admin-local` and `e2e-user-local`
+
+`global-setup.ts` provisions these users with the bootstrap admin account, logs in
+through the backend API, and writes Playwright `storageState` for browser tests.
+Set `E2E_USE_ISOLATED_USERS=false` to fall back to the bootstrap admin user when
+debugging against an environment where creating users is not desirable.
 
 ## Troubleshooting
 

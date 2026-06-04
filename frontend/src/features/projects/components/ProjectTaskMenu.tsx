@@ -30,7 +30,7 @@ import {
 import { useProjectContext } from '../contexts/projectContext'
 import { ProjectCreateDialog } from './ProjectCreateDialog'
 import { taskApis } from '@/apis/tasks'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { useRouter } from 'next/navigation'
 import { canImportOrdinaryTaskToProject } from '../utils/projectClassification'
 
@@ -51,7 +51,7 @@ export function ProjectTaskMenu({
   const { t: tProjects } = useTranslation('projects')
   const router = useRouter()
   const { projects, addTaskToProject, removeTaskFromProject } = useProjectContext()
-  const { setSelectedTask, refreshTasks } = useTaskContext()
+  const { selectTask, refreshTasks } = useTaskSession()
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
 
   // Filter out the current project from the list
@@ -100,7 +100,7 @@ export function ProjectTaskMenu({
       removeTaskFromProject(projectId, taskId).catch(() => {
         // Ignore error since task is already deleted, just updating local state
       })
-      setSelectedTask(null)
+      selectTask(null)
       if (typeof window !== 'undefined') {
         const url = new URL(window.location.href)
         url.searchParams.delete('taskId')

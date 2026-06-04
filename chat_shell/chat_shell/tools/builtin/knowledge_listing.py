@@ -105,6 +105,21 @@ def _get_backend_url() -> str:
     return getattr(settings, "BACKEND_API_URL", "http://localhost:8000")
 
 
+def _build_backend_post_kwargs(data: dict[str, Any], auth_token: str = "") -> dict:
+    """Build HTTP POST kwargs, omitting empty headers for cleaner call semantics."""
+    from chat_shell.core.config import settings
+
+    headers = {}
+    service_token = getattr(settings, "INTERNAL_SERVICE_TOKEN", "") or auth_token
+    if service_token:
+        headers["Authorization"] = f"Bearer {service_token}"
+
+    kwargs = {"json": data}
+    if headers:
+        kwargs["headers"] = headers
+    return kwargs
+
+
 # ============== kb_ls Tool ==============
 
 
@@ -284,18 +299,13 @@ class KbLsTool(BaseTool):
 
         try:
             add_span_event("http_request_started")
-            from chat_shell.core.config import settings
-
-            headers = {}
-            auth_token = getattr(settings, "INTERNAL_SERVICE_TOKEN", "") or self.auth_token
-            if auth_token:
-                headers["Authorization"] = f"Bearer {auth_token}"
 
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     f"{backend_url}/api/internal/rag/list-docs",
-                    json={"knowledge_base_id": knowledge_base_id},
-                    headers=headers,
+                    **_build_backend_post_kwargs(
+                        {"knowledge_base_id": knowledge_base_id}, self.auth_token
+                    ),
                 )
 
                 if response.status_code != 200:
@@ -545,18 +555,11 @@ class KbHeadTool(BaseTool):
             }
 
         add_span_event("http_request_started")
-        from chat_shell.core.config import settings
-
-        headers = {}
-        auth_token = getattr(settings, "INTERNAL_SERVICE_TOKEN", "") or self.auth_token
-        if auth_token:
-            headers["Authorization"] = f"Bearer {auth_token}"
 
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
                 f"{backend_url}/api/internal/rag/read-docs",
-                json=request_data,
-                headers=headers,
+                **_build_backend_post_kwargs(request_data, self.auth_token),
             )
 
             if response.status_code != 200:

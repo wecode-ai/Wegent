@@ -1,11 +1,11 @@
 import {
   ArrowLeft,
   Archive,
+  Palette,
   BookOpen,
   Check,
   Cloud,
   Code2,
-  Folder,
   Globe2,
   Loader2,
   Monitor,
@@ -21,11 +21,20 @@ import type { ComponentType } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createDeviceApi } from '@/api/devices'
 import { createHttpClient } from '@/api/http'
-import { getRuntimeConfig } from '@/config/runtime'
+import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
+import { navigateTo } from '@/lib/navigation'
 import { buildVncPageUrl } from '@/lib/vnc'
+import {
+  isClaudeCodeDevice,
+  isCloudDevice,
+  supportsCloudLifecycleActions,
+  supportsCloudSessions,
+  supportsDeviceMetrics,
+} from '@/lib/device-capabilities'
 import type { ArchivedTask } from '@/types/api'
 import type { CloudDeviceMetricsResponse, DeviceInfo } from '@/types/devices'
+import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
 import { AddCloudDeviceDialog } from './AddCloudDeviceDialog'
 
 interface ConnectionsSettingsPageProps {
@@ -50,7 +59,12 @@ const settingsNavItems: SettingsNavItem[] = [
     label: 'settings_nav_connections',
     fallback: '连接',
   },
-  { key: 'projects', icon: Folder, label: 'settings_nav_projects', fallback: '项目' },
+  {
+    key: 'appearance',
+    icon: Palette,
+    label: 'settings_nav_appearance',
+    fallback: '外观',
+  },
   {
     key: 'archived-chats',
     icon: Archive,
@@ -62,19 +76,30 @@ const settingsNavItems: SettingsNavItem[] = [
 const emptyArchivedTasks = async () => ({ items: [], total: 0 })
 const noopArchivedAction = async () => undefined
 
+function getSettingsNavFromPath(path: string): string {
+  const normalizedPath = stripAppBasePath(path)
+  const match = normalizedPath.match(/^\/settings\/([^/]+)$/)
+  if (!match) return 'connections'
+  return settingsNavItems.some(item => item.key === match[1])
+    ? match[1]
+    : 'connections'
+}
+
+function getSettingsNavPath(key: string): string {
+  return key === 'connections' ? '/settings' : `/settings/${key}`
+}
+
 function StatusPill({ status }: { status: DeviceInfo['status'] }) {
   const isOnline = status === 'online'
 
   return (
     <span
       className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] ${
-        isOnline
-          ? 'bg-[#eff6ff] text-[#2563eb]'
-          : 'bg-[#f3f4f6] text-[#9ca3af]'
+        isOnline ? 'bg-primary/10 text-primary' : 'bg-muted text-text-muted'
       }`}
     >
       <span
-        className={`h-1.5 w-1.5 rounded-full ${isOnline ? 'bg-[#409eff]' : 'bg-[#d1d5db]'}`}
+        className={`h-1.5 w-1.5 rounded-full ${isOnline ? 'bg-primary' : 'bg-text-muted'}`}
         aria-hidden="true"
       />
       {isOnline ? '在线' : '离线'}
@@ -101,7 +126,7 @@ function DeviceActionButton({
       data-testid={testId}
       onClick={onClick}
       disabled={disabled}
-      className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[#dedede] bg-white px-2.5 text-xs font-medium text-[#3c4043] hover:bg-[#f7f7f8] disabled:cursor-not-allowed disabled:opacity-50"
+      className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
     >
       <Icon className="h-3.5 w-3.5" />
       <span>{label}</span>
@@ -130,7 +155,7 @@ function DeviceIconActionButton({
       title={label}
       onClick={onClick}
       disabled={disabled}
-      className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[#dedede] bg-white text-[#6b6f76] hover:bg-[#f7f7f8] hover:text-[#3c4043] disabled:cursor-not-allowed disabled:opacity-50"
+      className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
     >
       <Icon className="h-3.5 w-3.5" />
     </button>
@@ -171,7 +196,7 @@ function DeviceMetrics({ deviceId }: { deviceId: string }) {
   return (
     <div
       data-testid="device-metrics"
-      className="flex flex-wrap items-center gap-3 text-xs text-[#6b6f76]"
+      className="flex flex-wrap items-center gap-3 text-xs text-text-secondary"
     >
       <span className="inline-flex items-center gap-1">
         <span>CPU</span>
@@ -232,10 +257,13 @@ function ConfirmDeviceActionDialog({
   onConfirm: () => void
 }) {
   const isDelete = action === 'delete'
+  const isCloud = isCloudDevice(device)
   const Icon = isDelete ? Trash2 : RotateCcw
-  const title = isDelete ? '删除云设备' : '重启云设备'
+  const title = isDelete ? (isCloud ? '删除云设备' : '删除本地设备') : '重启云设备'
   const description = isDelete
-    ? `将删除 ${device.name}，相关云设备资源会被释放。`
+    ? isCloud
+      ? `将删除 ${device.name}，相关云设备资源会被释放。`
+      : `将删除 ${device.name} 的本地设备注册记录。设备重新连接后会自动重新注册。`
     : `将重启 ${device.name}，设备会短暂离线，进行中的连接可能中断。`
   const confirmLabel = isDelete ? '确认删除' : '确认重启'
   const dialogTestId = isDelete
@@ -245,22 +273,22 @@ function ConfirmDeviceActionDialog({
     ? 'confirm-delete-device-button'
     : 'confirm-restart-device-button'
   const iconClassName = isDelete
-    ? 'bg-[#fef2f2] text-[#dc2626]'
-    : 'bg-[#f7f7f8] text-[#5f6368]'
+    ? 'bg-red-500/10 text-red-500'
+    : 'bg-muted text-text-secondary'
   const confirmClassName = isDelete
-    ? 'bg-[#dc2626] hover:bg-[#b91c1c]'
-    : 'bg-[#2d2d2d] hover:bg-[#111]'
+    ? 'bg-red-600 text-white hover:bg-red-700'
+    : 'bg-text-primary text-background hover:opacity-90'
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/35"
+      className="fixed inset-0 z-modal flex items-center justify-center bg-black/35"
       onClick={e => {
         if (!loading && e.target === e.currentTarget) onCancel()
       }}
     >
       <div
         data-testid={dialogTestId}
-        className="w-[420px] rounded-lg border border-[#e2e2e2] bg-white p-5 shadow-[0_18px_50px_rgba(0,0,0,0.16)]"
+        className="w-[420px] rounded-lg border border-border bg-popover p-5 shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-start gap-3">
@@ -270,8 +298,8 @@ function ConfirmDeviceActionDialog({
             <Icon className="h-4 w-4" />
           </div>
           <div className="min-w-0 flex-1">
-            <h2 className="text-sm font-semibold text-[#111]">{title}</h2>
-            <p className="mt-1.5 text-xs leading-5 text-[#6b6f76]">
+            <h2 className="text-sm font-semibold text-text-primary">{title}</h2>
+            <p className="mt-1.5 text-xs leading-5 text-text-secondary">
               {description}
             </p>
           </div>
@@ -282,7 +310,7 @@ function ConfirmDeviceActionDialog({
             data-testid="cancel-delete-device-button"
             onClick={onCancel}
             disabled={loading}
-            className="h-8 rounded-md px-3 text-sm text-[#3c4043] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-50"
+            className="h-8 rounded-md px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
           >
             取消
           </button>
@@ -291,7 +319,7 @@ function ConfirmDeviceActionDialog({
             data-testid={confirmTestId}
             onClick={onConfirm}
             disabled={loading}
-            className={`inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50 ${confirmClassName}`}
+            className={`inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50 ${confirmClassName}`}
           >
             {loading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             {confirmLabel}
@@ -392,7 +420,11 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
       const { apiBaseUrl } = getRuntimeConfig()
       const client = createHttpClient({ baseUrl: apiBaseUrl })
       const deviceApi = createDeviceApi(client)
-      await deviceApi.deleteCloudDevice(device.device_id)
+      if (isCloudDevice(device)) {
+        await deviceApi.deleteCloudDevice(device.device_id)
+      } else {
+        await deviceApi.deleteDevice(device.device_id)
+      }
       setConfirmAction(null)
       onChanged()
     } catch (e) {
@@ -421,12 +453,16 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
   }
 
   const isOnline = device.status === 'online'
+  const isCloud = isCloudDevice(device)
+  const canUseCloudSessions = supportsCloudSessions(device)
+  const canUseCloudLifecycleActions = supportsCloudLifecycleActions(device)
+  const canDeleteOfflineLocalDevice = !isCloud && device.status === 'offline'
 
   return (
     <>
       <div
         data-testid={`connection-device-${device.device_id}`}
-        className="rounded-lg border border-[#e2e2e2] bg-white p-3"
+        className="rounded-lg border border-border bg-surface p-3"
       >
         <div className="flex items-center justify-between gap-4">
           <div className="flex min-w-0 items-center gap-2">
@@ -442,20 +478,20 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
                     if (e.key === 'Escape') handleCancelEdit()
                   }}
                   disabled={saving}
-                  className="h-6 w-48 rounded border border-[#409eff] bg-white px-1.5 text-sm text-[#2d2d2d] outline-none"
+                  className="h-6 w-48 rounded border border-primary bg-background px-1.5 text-sm text-text-primary outline-none"
                 />
                 <button
                   type="button"
                   onClick={handleSaveEdit}
                   disabled={saving}
-                  className="rounded p-0.5 text-[#409eff] hover:bg-[#eef6ff]"
+                  className="rounded p-0.5 text-primary hover:bg-primary/10"
                 >
                   <Check className="h-3.5 w-3.5" />
                 </button>
                 <button
                   type="button"
                   onClick={handleCancelEdit}
-                  className="rounded p-0.5 text-[#999] hover:bg-[#f5f5f5]"
+                  className="rounded p-0.5 text-text-muted hover:bg-muted hover:text-text-primary"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
@@ -463,7 +499,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
             ) : (
               <div className="group flex items-center gap-1.5">
                 <h3
-                  className="cursor-pointer truncate text-sm font-semibold text-[#2d2d2d]"
+                  className="cursor-pointer truncate text-sm font-semibold text-text-primary"
                   onClick={handleStartEdit}
                   title="点击修改名称"
                 >
@@ -472,72 +508,87 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
                 <button
                   type="button"
                   onClick={handleStartEdit}
-                  className="rounded p-0.5 text-[#bbb] opacity-0 transition-opacity group-hover:opacity-100 hover:text-[#666]"
+                  className="rounded p-0.5 text-text-muted opacity-0 transition-opacity group-hover:opacity-100 hover:text-text-secondary"
                 >
                   <Pencil className="h-3 w-3" />
                 </button>
               </div>
             )}
-            <span className="shrink-0 rounded-full bg-[#f7f7f8] px-2 py-0.5 text-xs text-[#6b6f76]">
+            <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-text-secondary">
               {device.executor_version ? `v${device.executor_version}` : '-'}
             </span>
             <StatusPill status={device.status} />
           </div>
 
           <div className="flex shrink-0 gap-2">
-            <DeviceActionButton
-              testId={`connection-terminal-button-${device.device_id}`}
-              icon={Terminal}
-              label="终端"
-              onClick={() => handleStartSession('terminal')}
-              disabled={!isOnline || sessionLoading === 'terminal'}
-            />
-            <DeviceActionButton
-              testId={`connection-code-server-button-${device.device_id}`}
-              icon={Code2}
-              label="IDE"
-              onClick={() => handleStartSession('code-server')}
-              disabled={!isOnline || sessionLoading === 'code-server'}
-            />
-            <VncDesktopButton deviceId={device.device_id} />
-            <div ref={actionMenuRef} className="relative">
+            {canUseCloudSessions && (
+              <>
+                <DeviceActionButton
+                  testId={`connection-terminal-button-${device.device_id}`}
+                  icon={Terminal}
+                  label="终端"
+                  onClick={() => handleStartSession('terminal')}
+                  disabled={!isOnline || sessionLoading === 'terminal'}
+                />
+                <DeviceActionButton
+                  testId={`connection-code-server-button-${device.device_id}`}
+                  icon={Code2}
+                  label="IDE"
+                  onClick={() => handleStartSession('code-server')}
+                  disabled={!isOnline || sessionLoading === 'code-server'}
+                />
+                <VncDesktopButton deviceId={device.device_id} />
+              </>
+            )}
+            {canUseCloudLifecycleActions && (
+              <div ref={actionMenuRef} className="relative">
+                <DeviceIconActionButton
+                  testId={`connection-more-button-${device.device_id}`}
+                  icon={MoreHorizontal}
+                  label="更多操作"
+                  onClick={() => setActionMenuOpen(open => !open)}
+                  disabled={restarting || deleting}
+                />
+                {actionMenuOpen && (
+                  <div
+                    data-testid={`connection-more-menu-${device.device_id}`}
+                    className="absolute right-0 top-9 z-20 w-32 overflow-hidden rounded-md border border-border bg-popover py-1 shadow-[0_8px_24px_rgba(0,0,0,0.22)]"
+                  >
+                    <button
+                      type="button"
+                      data-testid={`connection-restart-menu-item-${device.device_id}`}
+                      onClick={() => openConfirmAction('restart')}
+                      className="flex h-8 w-full items-center gap-2 px-2.5 text-left text-xs text-text-primary hover:bg-muted"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                      <span>重启设备</span>
+                    </button>
+                    <button
+                      type="button"
+                      data-testid={`connection-delete-menu-item-${device.device_id}`}
+                      onClick={() => openConfirmAction('delete')}
+                      className="flex h-8 w-full items-center gap-2 px-2.5 text-left text-xs text-red-500 hover:bg-red-500/10"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      <span>删除设备</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+            {canDeleteOfflineLocalDevice && (
               <DeviceIconActionButton
-                testId={`connection-more-button-${device.device_id}`}
-                icon={MoreHorizontal}
-                label="更多操作"
-                onClick={() => setActionMenuOpen(open => !open)}
-                disabled={restarting || deleting}
+                testId={`connection-delete-button-${device.device_id}`}
+                icon={Trash2}
+                label="删除设备"
+                onClick={() => setConfirmAction('delete')}
+                disabled={deleting}
               />
-              {actionMenuOpen && (
-                <div
-                  data-testid={`connection-more-menu-${device.device_id}`}
-                  className="absolute right-0 top-9 z-20 w-32 overflow-hidden rounded-md border border-[#dedede] bg-white py-1 shadow-[0_8px_24px_rgba(0,0,0,0.12)]"
-                >
-                  <button
-                    type="button"
-                    data-testid={`connection-restart-menu-item-${device.device_id}`}
-                    onClick={() => openConfirmAction('restart')}
-                    className="flex h-8 w-full items-center gap-2 px-2.5 text-left text-xs text-[#3c4043] hover:bg-[#f7f7f8]"
-                  >
-                    <RotateCcw className="h-3.5 w-3.5" />
-                    <span>重启设备</span>
-                  </button>
-                  <button
-                    type="button"
-                    data-testid={`connection-delete-menu-item-${device.device_id}`}
-                    onClick={() => openConfirmAction('delete')}
-                    className="flex h-8 w-full items-center gap-2 px-2.5 text-left text-xs text-[#dc2626] hover:bg-[#fef2f2]"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    <span>删除设备</span>
-                  </button>
-                </div>
-              )}
-            </div>
+            )}
           </div>
         </div>
 
-        <DeviceMetrics deviceId={device.device_id} />
+        {supportsDeviceMetrics(device) && <DeviceMetrics deviceId={device.device_id} />}
       </div>
 
       {confirmAction && (
@@ -557,45 +608,51 @@ function DeviceSection({
   title,
   devices,
   onChanged,
+  icon: Icon,
+  showScaleWiki = false,
 }: {
   title: string
   devices: DeviceInfo[]
   onChanged: () => void
+  icon: ComponentType<{ className?: string }>
+  showScaleWiki?: boolean
 }) {
   const { t } = useTranslation('common')
 
   return (
     <section className="space-y-2.5">
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 text-[#5f6368]">
-          <Cloud className="h-3.5 w-3.5" />
+        <div className="flex items-center gap-2 text-text-secondary">
+          <Icon className="h-3.5 w-3.5" />
           <h2 className="text-sm font-medium">{title}</h2>
-          <span className="text-xs text-[#8a8f98]">({devices.length})</span>
+          <span className="text-xs text-text-muted">({devices.length})</span>
         </div>
       </div>
       <div className="space-y-3">
         {devices.map(device => (
           <DeviceCard key={device.device_id} device={device} onChanged={onChanged} />
         ))}
-        <div
-          data-testid="connection-scale-wiki"
-          className="rounded-lg border border-[#e6e6e6] bg-[#fafafa] px-4 py-3"
-        >
-          <div className="flex items-start gap-3">
-            <BookOpen className="mt-0.5 h-4 w-4 shrink-0 text-[#5f6368]" />
-            <div className="min-w-0">
-              <h3 className="text-sm font-semibold text-[#2d2d2d]">
-                {t('workbench.connection_scale_wiki_title', '说明')}
-              </h3>
-              <p className="mt-1 text-xs leading-5 text-[#6b6f76]">
-                {t(
-                  'workbench.connection_scale_wiki_desc',
-                  '当 CPU、MEM 或磁盘持续超过 80% 时，建议扩容云设备规格或清理工作区缓存。',
-                )}
-              </p>
+        {showScaleWiki && (
+          <div
+            data-testid="connection-scale-wiki"
+            className="rounded-lg border border-border bg-surface px-4 py-3"
+          >
+            <div className="flex items-start gap-3">
+              <BookOpen className="mt-0.5 h-4 w-4 shrink-0 text-text-secondary" />
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold text-text-primary">
+                  {t('workbench.connection_scale_wiki_title', '说明')}
+                </h3>
+                <p className="mt-1 text-xs leading-5 text-text-secondary">
+                  {t(
+                    'workbench.connection_scale_wiki_desc',
+                    '当 CPU、MEM 或磁盘持续超过 80% 时，建议扩容云设备规格或清理工作区缓存。',
+                  )}
+                </p>
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
     </section>
   )
@@ -614,11 +671,9 @@ function ConnectionsDeviceSettingsPage() {
       const client = createHttpClient({ baseUrl: apiBaseUrl })
       const deviceApi = createDeviceApi(client)
       const allDevices = await deviceApi.getAllDevices()
-      const cloudClaudeDevices = allDevices.filter(
-        d => d.device_type === 'cloud' && d.bind_shell === 'claudecode',
-      )
-      setDevices(cloudClaudeDevices)
-      if (cloudClaudeDevices.length > 0) {
+      const claudeCodeDevices = allDevices.filter(isClaudeCodeDevice)
+      setDevices(claudeCodeDevices)
+      if (claudeCodeDevices.some(isCloudDevice)) {
         setCreating(false)
       }
     } catch (e) {
@@ -628,6 +683,9 @@ function ConnectionsDeviceSettingsPage() {
     }
   }, [])
 
+  const cloudDevices = devices.filter(isCloudDevice)
+  const localDevices = devices.filter(device => !isCloudDevice(device))
+
   useEffect(() => {
     void Promise.resolve().then(fetchDevices)
   }, [fetchDevices])
@@ -635,11 +693,11 @@ function ConnectionsDeviceSettingsPage() {
   return (
     <>
       <div className="mx-auto w-full max-w-[760px]">
-        <h1 className="text-xl font-semibold tracking-normal text-[#111]">
+        <h1 className="text-xl font-semibold tracking-normal text-text-primary">
           {t('workbench.connections_title', '连接')}
         </h1>
 
-        <div className="mt-9 flex border-b border-[#e5e5e5]">
+        <div className="mt-9 flex border-b border-border">
           {[t('workbench.connections_tab_this_mac', '连接设备')].map((tab, index) => (
             <button
               key={tab}
@@ -648,8 +706,8 @@ function ConnectionsDeviceSettingsPage() {
               className={[
                 'h-10 px-6 text-sm font-medium',
                 index === 0
-                  ? 'border-b border-[#111] text-[#111]'
-                  : 'text-[#606368] hover:text-[#111]',
+                  ? 'border-b border-text-primary text-text-primary'
+                  : 'text-text-secondary hover:text-text-primary',
               ].join(' ')}
             >
               {tab}
@@ -658,18 +716,18 @@ function ConnectionsDeviceSettingsPage() {
         </div>
 
         <section className="mt-6 space-y-5">
-          <div className="rounded-lg border border-[#e2e2e2] p-5">
+          <div className="rounded-lg border border-border bg-background p-5">
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-[#2d2d2d]">
+              <h2 className="text-sm font-semibold text-text-primary">
                 {t('workbench.connections_authorized_devices', '可连接的设备')}
               </h2>
-              {!loading && devices.length === 0 && (
+              {!loading && cloudDevices.length === 0 && (
                 <button
                   type="button"
                   data-testid="connection-add-device-button"
                   onClick={() => setAddDialogOpen(true)}
                   disabled={creating}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-full bg-[#f5f5f5] px-3 text-sm text-[#2d2d2d] hover:bg-[#ececec] disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex h-8 items-center gap-1.5 rounded-full bg-surface px-3 text-sm text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Plus className="h-4 w-4" />
                   {t('workbench.connection_add', '添加')}
@@ -679,21 +737,39 @@ function ConnectionsDeviceSettingsPage() {
 
             <div className="space-y-5">
               {creating && (
-                <div className="flex items-center gap-2 rounded-lg bg-[#eff6ff] px-3 py-2.5 text-xs text-[#2563eb]">
-                  <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[#409eff]" />
+                <div className="flex items-center gap-2 rounded-lg bg-primary/10 px-3 py-2.5 text-xs text-primary">
+                  <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
                   云设备创建中，初始化约需 2-3 分钟，完成后将自动出现在列表中
                 </div>
               )}
               {loading ? (
-                <div className="py-8 text-center text-sm text-[#6b6f76]">加载中...</div>
+                <div className="py-8 text-center text-sm text-text-secondary">
+                  {t('common.loading', '加载中...')}
+                </div>
               ) : devices.length === 0 ? (
-                <div className="py-8 text-center text-sm text-[#6b6f76]">暂无云设备</div>
+                <div className="py-8 text-center text-sm text-text-secondary">
+                  {t('workbench.connection_empty_devices')}
+                </div>
               ) : (
-                <DeviceSection
-                  title={t('workbench.connection_cloud_devices', '云设备')}
-                  devices={devices}
-                  onChanged={fetchDevices}
-                />
+                <>
+                  {cloudDevices.length > 0 && (
+                    <DeviceSection
+                      title={t('workbench.connection_cloud_devices', '云设备')}
+                      devices={cloudDevices}
+                      icon={Cloud}
+                      showScaleWiki
+                      onChanged={fetchDevices}
+                    />
+                  )}
+                  {localDevices.length > 0 && (
+                    <DeviceSection
+                      title={t('workbench.connection_local_devices')}
+                      devices={localDevices}
+                      icon={Monitor}
+                      onChanged={fetchDevices}
+                    />
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -728,6 +804,7 @@ function ArchivedChatsSettingsPage({
   onDeleteTask,
   onDeleteArchivedTasks,
 }: Required<Omit<ConnectionsSettingsPageProps, 'onBack'>>) {
+  const { t } = useTranslation('common')
   const [items, setItems] = useState<ArchivedTask[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -770,9 +847,14 @@ function ArchivedChatsSettingsPage({
   return (
     <div data-testid="archived-chats-settings" className="mx-auto w-full max-w-[860px]">
       <div className="flex items-center justify-between gap-4">
-        <h1 className="text-xl font-semibold tracking-normal text-[#111]">
-          Archived chats
-        </h1>
+        <div>
+          <h1 className="text-xl font-semibold tracking-normal text-text-primary">
+            {t('workbench.archived_chats_title', '已归档会话')}
+          </h1>
+          <p className="mt-2 text-sm text-text-secondary">
+            {t('workbench.archived_chats_subtitle', '查看、恢复或删除已归档的会话')}
+          </p>
+        </div>
         <button
           type="button"
           data-testid="delete-all-archived-chats-button"
@@ -781,17 +863,29 @@ function ArchivedChatsSettingsPage({
             await onDeleteArchivedTasks()
             await loadArchivedTasks()
           }}
-          className="h-9 rounded-full bg-[#fee2e2] px-3 text-sm font-medium text-[#b42318] hover:bg-[#fecaca] disabled:opacity-50"
+          className="h-9 rounded-full border border-red-500/20 bg-red-500/10 px-3 text-sm font-medium text-red-500 hover:bg-red-500/15 disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-text-muted"
         >
-          Delete all
+          {t('workbench.archived_chats_delete_all', '全部删除')}
         </button>
       </div>
 
-      <div className="mt-10 overflow-hidden rounded-lg border border-[#e2e2e2]">
-        {loading && <p className="px-5 py-6 text-sm text-[#8a8f98]">加载中...</p>}
-        {!loading && error && <p className="px-5 py-6 text-sm text-[#c44]">{error}</p>}
+      <div className="mt-8 overflow-hidden rounded-lg border border-border bg-surface">
+        {loading && (
+          <p className="px-5 py-8 text-sm text-text-muted">
+            {t('common.loading', '加载中...')}
+          </p>
+        )}
+        {!loading && error && <p className="px-5 py-6 text-sm text-red-500">{error}</p>}
         {!loading && !error && items.length === 0 && (
-          <p className="px-5 py-6 text-sm text-[#8a8f98]">暂无已归档会话</p>
+          <div className="flex min-h-[156px] flex-col items-center justify-center px-5 py-10 text-center">
+            <Archive className="mb-3 h-7 w-7 text-text-muted" />
+            <h2 className="text-sm font-semibold text-text-primary">
+              {t('workbench.archived_chats_empty_title', '暂无已归档会话')}
+            </h2>
+            <p className="mt-2 max-w-sm text-sm leading-6 text-text-secondary">
+              {t('workbench.archived_chats_empty_desc', '归档后的会话会显示在这里，方便之后恢复或清理。')}
+            </p>
+          </div>
         )}
         {!loading &&
           !error &&
@@ -799,13 +893,13 @@ function ArchivedChatsSettingsPage({
             <div
               key={item.id}
               data-testid="archived-chat-row"
-              className="flex min-h-[74px] items-center gap-4 border-b border-[#e8eaed] px-5 py-3 last:border-b-0"
+              className="flex min-h-[74px] items-center gap-4 border-b border-border bg-background px-5 py-3 last:border-b-0 hover:bg-muted"
             >
               <div className="min-w-0 flex-1">
-                <h2 className="truncate text-sm font-semibold text-[#202124]">
+                <h2 className="truncate text-sm font-semibold text-text-primary">
                   {item.title}
                 </h2>
-                <p className="mt-1 truncate text-sm text-[#6b6f76]">
+                <p className="mt-1 truncate text-sm text-text-secondary">
                   {formatArchivedDate(item.updated_at)}
                   {item.project_name ? ` · ${item.project_name}` : ''}
                 </p>
@@ -817,8 +911,8 @@ function ArchivedChatsSettingsPage({
                   await onDeleteTask(item.id)
                   await loadArchivedTasks()
                 }}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-[#777] hover:bg-[#f1f3f4] hover:text-[#b42318]"
-                aria-label="Delete archived chat"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-red-500/10 hover:text-red-500"
+                aria-label={t('workbench.archived_chats_delete_one', '删除归档会话')}
               >
                 <Trash2 className="h-4 w-4" />
               </button>
@@ -829,9 +923,9 @@ function ArchivedChatsSettingsPage({
                   await onUnarchiveTask(item.id)
                   await loadArchivedTasks()
                 }}
-                className="h-9 shrink-0 rounded-md bg-[#f1f3f4] px-3 text-sm font-medium text-[#3c4043] hover:bg-[#e8eaed]"
+                className="h-9 shrink-0 rounded-md bg-surface px-3 text-sm font-medium text-text-primary hover:bg-muted"
               >
-                Unarchive
+                {t('workbench.archived_chats_unarchive', '恢复')}
               </button>
             </div>
           ))}
@@ -848,19 +942,29 @@ export function ConnectionsSettingsPage({
   onDeleteArchivedTasks = noopArchivedAction,
 }: ConnectionsSettingsPageProps) {
   const { t } = useTranslation('common')
-  const [activeNav, setActiveNav] = useState('connections')
+  const [activeNav, setActiveNav] = useState(() =>
+    getSettingsNavFromPath(window.location.pathname)
+  )
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setActiveNav(getSettingsNavFromPath(window.location.pathname))
+    }
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
 
   return (
     <div
       data-testid="wework-settings-page"
-      className="flex h-screen min-w-0 flex-1 overflow-hidden bg-white text-[#1f1f1f]"
+      className="flex h-screen min-w-0 flex-1 overflow-hidden bg-background text-text-primary"
     >
-      <aside className="flex w-[294px] shrink-0 flex-col bg-[#d6d0c5] px-3 py-4">
+      <aside className="flex w-[294px] shrink-0 flex-col bg-[rgb(var(--color-sidebar))] px-3 py-4 backdrop-blur-xl">
         <button
           type="button"
           data-testid="settings-back-button"
           onClick={onBack}
-          className="mb-4 flex h-9 items-center gap-2 rounded-md px-2 text-sm text-[#777] hover:bg-black/5"
+          className="mb-4 flex h-9 items-center gap-2 rounded-md px-2 text-sm text-text-secondary hover:bg-[rgb(var(--color-sidebar-hover))]"
         >
           <ArrowLeft className="h-4 w-4" />
           {t('workbench.settings_back_to_app', '返回')}
@@ -872,12 +976,15 @@ export function ConnectionsSettingsPage({
               key={item.key}
               type="button"
               data-testid={`settings-nav-${item.key}`}
-              onClick={() => setActiveNav(item.key)}
+              onClick={() => {
+                setActiveNav(item.key)
+                navigateTo(getSettingsNavPath(item.key))
+              }}
               className={[
                 'flex min-h-[31px] w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm font-medium',
                 activeNav === item.key
-                  ? 'bg-black/5 text-[#202124]'
-                  : 'text-[#202124] hover:bg-black/5',
+                  ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
+                  : 'text-text-primary hover:bg-[rgb(var(--color-sidebar-hover))]',
               ].join(' ')}
             >
               <item.icon className="h-4 w-4 shrink-0" />
@@ -889,7 +996,7 @@ export function ConnectionsSettingsPage({
         </nav>
       </aside>
 
-      <main className="min-w-0 flex-1 overflow-auto bg-white px-8 py-16">
+      <main className="min-w-0 flex-1 overflow-auto bg-background px-8 py-16">
         {activeNav === 'archived-chats' ? (
           <ArchivedChatsSettingsPage
             onListArchivedTasks={onListArchivedTasks}
@@ -897,6 +1004,8 @@ export function ConnectionsSettingsPage({
             onDeleteTask={onDeleteTask}
             onDeleteArchivedTasks={onDeleteArchivedTasks}
           />
+        ) : activeNav === 'appearance' ? (
+          <AppearanceSettingsPage />
         ) : (
           <ConnectionsDeviceSettingsPage />
         )}

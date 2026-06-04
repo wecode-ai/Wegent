@@ -103,7 +103,10 @@ export default function GitHubIntegration() {
   }
 
   return (
-    <div className="space-y-3 rounded-md border border-border bg-base p-4">
+    <div
+      className="space-y-3 rounded-md border border-border bg-base p-4"
+      data-testid="git-tokens-section"
+    >
       <div className="space-y-1">
         <h3 className="text-base font-medium text-text-primary">
           {t('common:integrations.git_title')}
@@ -116,7 +119,10 @@ export default function GitHubIntegration() {
       ) : (
         <>
           {platforms.length > 0 && (
-            <div className="space-y-2 max-h-[50vh] overflow-y-auto custom-scrollbar">
+            <div
+              className="space-y-2 max-h-[50vh] overflow-y-auto custom-scrollbar"
+              data-testid="git-token-list"
+            >
               {platforms.map((info, index) => (
                 <div
                   key={info.id || `${info.git_domain}-${index}`}
@@ -177,7 +183,10 @@ export default function GitHubIntegration() {
           )}
 
           {platforms.length === 0 && (
-            <div className="rounded-md border border-border/70 bg-surface px-3 py-4 text-center">
+            <div
+              className="rounded-md border border-border/70 bg-surface px-3 py-4 text-center"
+              data-testid="git-token-empty-state"
+            >
               <p className="text-sm text-text-muted">{t('common:integrations.no_tokens')}</p>
             </div>
           )}

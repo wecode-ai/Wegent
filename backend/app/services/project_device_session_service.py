@@ -4,13 +4,14 @@
 
 """Project-scoped helpers for starting local device sessions."""
 
-from typing import Literal
+from typing import Literal, Optional
 
 from fastapi import HTTPException, status
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.models.project import Project
+from app.schemas.device import DeviceType
 from app.schemas.project import (
     ProjectConfig,
     ProjectDeviceSessionResponse,
@@ -21,6 +22,7 @@ from app.services.device.session_service import (
     DeviceSessionNotFoundError,
     local_device_session_service,
 )
+from app.services.device_service import device_service
 
 ProjectSessionType = Literal["terminal", "code_server"]
 
@@ -31,17 +33,17 @@ async def start_project_device_session(
     user_id: int,
     project_id: int,
     session_type: ProjectSessionType,
+    client_origin: Optional[str] = None,
 ) -> ProjectDeviceSessionResponse:
     """Start an interactive local device session for a workspace project."""
-    project = (
-        db.query(Project)
-        .filter(
-            Project.id == project_id,
-            Project.user_id == user_id,
-            Project.is_active == True,
-        )
-        .first()
+    query = db.query(Project).filter(
+        Project.id == project_id,
+        Project.user_id == user_id,
+        Project.is_active == True,
     )
+    if client_origin:
+        query = query.filter(Project.client_origin == client_origin)
+    project = query.first()
     if not project:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -50,6 +52,7 @@ async def start_project_device_session(
 
     project_config = _parse_project_config(project.config)
     device_id = _get_bound_device_id(project_config)
+    _ensure_device_supports_project_sessions(db, user_id, device_id)
     path, create_if_missing = _get_project_path(
         project_config, project.config, project_id
     )
@@ -124,6 +127,27 @@ def _get_bound_device_id(config: ProjectConfig) -> str:
             detail="Project must be configured for a bound local device",
         )
     return config.execution.deviceId
+
+
+def _ensure_device_supports_project_sessions(
+    db: Session,
+    user_id: int,
+    device_id: str,
+) -> None:
+    """Reject project terminal and code-server sessions for local devices."""
+
+    device_kind = device_service.get_device_by_device_id(db, user_id, device_id)
+    if not device_kind:
+        return
+
+    spec = getattr(device_kind, "json", None)
+    spec = spec.get("spec", {}) if isinstance(spec, dict) else {}
+    device_type = spec.get("deviceType")
+    if device_type == DeviceType.LOCAL.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Local devices do not support terminal or code-server sessions",
+        )
 
 
 def _get_project_path(

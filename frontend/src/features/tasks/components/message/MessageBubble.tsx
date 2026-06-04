@@ -13,6 +13,7 @@ import type {
   Attachment,
   SubtaskContextBrief,
   TaskType,
+  InteractiveFormAnswerPayload,
 } from '@/types/api'
 import {
   Bot,
@@ -33,7 +34,6 @@ import { ReasoningDisplay } from './thinking'
 import MixedContentView from './thinking/MixedContentView'
 import ThinkingDisplay from './thinking/ThinkingDisplay'
 import ClarificationForm from '../clarification/ClarificationForm'
-import { AskUserForm } from '../clarification'
 import FinalPromptMessage from './FinalPromptMessage'
 import { parseMarkdownFinalPrompt } from './finalPromptParser'
 import ClarificationAnswerSummary from '../clarification/ClarificationAnswerSummary'
@@ -48,7 +48,7 @@ import { processCitePatterns } from '../../utils/processCitePatterns'
 import RegenerateModelPopover from './RegenerateModelPopover'
 import VideoConfigBadge from './VideoConfigBadge'
 import { getMessageBubbleClassNames } from './messageBubbleStyles'
-import type { ClarificationData, ClarificationAnswer, AskUserFormData } from '@/types/api'
+import type { ClarificationData, ClarificationAnswer } from '@/types/api'
 import type { SourceReference, GeminiAnnotation } from '@/types/socket'
 import type { Model } from '../../hooks/useModelSelection'
 import type { UnifiedModel } from '@/apis/models'
@@ -162,9 +162,16 @@ export interface MessageBubbleProps {
   /** Whether to show waiting indicator (streaming but no content yet) */
   isWaiting?: boolean
   /** Generic callback when a component inside the message bubble wants to send a message (e.g., ClarificationForm) */
-  onSendMessage?: (content: string) => void
+  onSendMessage?: (
+    content: string,
+    options?: { interactiveFormAnswer?: InteractiveFormAnswerPayload }
+  ) => void
   /** Callback when user submits an ask_user_question form - sends the pre-formatted answer as a new conversation message */
-  onAskUserSubmit?: (askId: string, formattedMessage: string) => void
+  onAskUserSubmit?: (
+    toolUseId: string,
+    formattedMessage: string,
+    answer: InteractiveFormAnswerPayload
+  ) => void
   /** Callback when user selects text in AI message (optional) - receives selected text */
   onTextSelect?: (selectedText: string) => void
   /** Paragraph-level action configuration - shows action button on hover for each paragraph in AI messages */
@@ -220,120 +227,6 @@ export interface MessageBubbleProps {
   taskType?: TaskType
   /** Callback when user clicks forward button - receives the subtaskId of the message to forward */
   onForwardClick?: (subtaskId: number) => void
-}
-
-const parseBoolean = (value: unknown, defaultValue: boolean): boolean => {
-  if (typeof value === 'boolean') return value
-  if (typeof value === 'string') {
-    const lower = value.toLowerCase()
-    if (lower === 'true') return true
-    if (lower === 'false') return false
-  }
-  return defaultValue
-}
-
-const normalizeInteractiveQuestions = (rawQuestions: unknown): AskUserFormData['questions'] => {
-  if (!Array.isArray(rawQuestions)) return []
-
-  return rawQuestions
-    .filter(
-      question =>
-        question &&
-        typeof question === 'object' &&
-        typeof (question as Record<string, unknown>).question === 'string' &&
-        ((question as Record<string, unknown>).question as string).trim().length > 0
-    )
-    .map(question => {
-      const item = question as Record<string, unknown>
-      const hasOptions = Array.isArray(item.options) && item.options.length > 0
-      return {
-        id: (item.id as string) || '',
-        question: (item.question as string) || '',
-        input_type: hasOptions ? 'choice' : 'text',
-        options: hasOptions
-          ? (item.options as Array<Record<string, unknown>>).map(option => ({
-              label: (option.label as string) || '',
-              value: (option.value as string) || '',
-              recommended: parseBoolean(option.recommended, false),
-            }))
-          : null,
-        multi_select: parseBoolean(item.multi_select, false),
-        required: parseBoolean(item.required, true),
-        default: Array.isArray(item.default) ? (item.default as string[]) : null,
-        placeholder: typeof item.placeholder === 'string' ? item.placeholder : null,
-      }
-    })
-}
-
-const extractInteractiveFormDataFromThinking = (
-  thinking: Message['thinking'],
-  taskId: number,
-  subtaskId: number
-): AskUserFormData | null => {
-  if (!thinking || thinking.length === 0) return null
-
-  for (const step of [...thinking].reverse()) {
-    const stepToolUseId =
-      'tool_use_id' in step && typeof step.tool_use_id === 'string' ? step.tool_use_id : undefined
-    const details = step.details as Record<string, unknown> | undefined
-    if (!details) continue
-
-    const directToolName =
-      (details.tool_name as string | undefined) || (details.name as string | undefined)
-    const directInput =
-      details.input && typeof details.input === 'object'
-        ? (details.input as Record<string, unknown>)
-        : null
-
-    if (directToolName?.includes('interactive_form_question') && directInput) {
-      const questions = normalizeInteractiveQuestions(directInput.questions)
-      if (questions.length > 0) {
-        return {
-          type: 'interactive_form_question',
-          ask_id:
-            (directInput.ask_id as string) || stepToolUseId || step.title || `ask_${subtaskId}`,
-          tool_use_id: stepToolUseId || null,
-          task_id: taskId,
-          subtask_id: subtaskId,
-          questions,
-        }
-      }
-    }
-
-    const message = details.message as Record<string, unknown> | undefined
-    const content = Array.isArray(message?.content) ? message.content : null
-    if (!content) continue
-
-    for (const item of [...content].reverse()) {
-      if (!item || typeof item !== 'object') continue
-      const toolItem = item as Record<string, unknown>
-      const itemName = toolItem.name as string | undefined
-      const itemInput =
-        toolItem.input && typeof toolItem.input === 'object'
-          ? (toolItem.input as Record<string, unknown>)
-          : null
-
-      if (!itemName?.includes('interactive_form_question') || !itemInput) continue
-
-      const questions = normalizeInteractiveQuestions(itemInput.questions)
-      if (questions.length === 0) continue
-
-      return {
-        type: 'interactive_form_question',
-        ask_id:
-          (itemInput.ask_id as string) ||
-          (toolItem.id as string) ||
-          stepToolUseId ||
-          `ask_${subtaskId}`,
-        tool_use_id: (toolItem.id as string) || stepToolUseId || null,
-        task_id: taskId,
-        subtask_id: subtaskId,
-        questions,
-      }
-    }
-  }
-
-  return null
 }
 
 // Component for rendering a paragraph with hover action button
@@ -587,23 +480,11 @@ const MessageBubble = memo(
       isWaiting ||
       msg.isWaiting
 
-    const recoveredAskUserFormData = React.useMemo(
-      () =>
-        extractInteractiveFormDataFromThinking(
-          msg.thinking ?? null,
-          selectedTaskDetail?.id || 0,
-          msg.subtaskId || 0
-        ),
-      [msg.thinking, selectedTaskDetail?.id, msg.subtaskId]
-    )
-
     // Check if message contains special format (clarification or final prompt)
     // This is used to determine whether to use MixedContentView or renderMessageBody
     // We check this early to avoid duplicate parsing in the render logic
     const hasSpecialFormat = React.useMemo(() => {
       if (!msg.content || msg.type === 'user') return false
-
-      if (recoveredAskUserFormData) return false
 
       // If there are tool blocks, always use MixedContentView to render them
       if (
@@ -627,7 +508,7 @@ const MessageBubble = memo(
         content.toLowerCase().includes('prompt')
 
       return hasClarificationMarker || hasFinalPromptMarker
-    }, [msg.content, msg.type, msg.result?.blocks, recoveredAskUserFormData])
+    }, [msg.content, msg.type, msg.result?.blocks])
 
     const hasInlineThinkingBlocks = React.useMemo(
       () => msg.result?.blocks?.some(block => block.type === 'thinking') ?? false,
@@ -1323,65 +1204,6 @@ const MessageBubble = memo(
           }
         }
         const markdownClarification = parseMarkdownClarification(contentToParse)
-        if (recoveredAskUserFormData && markdownClarification) {
-          const { prefixText, suffixText } = markdownClarification
-          return (
-            <div className="space-y-4">
-              {prefixText && (
-                <EnhancedMarkdown
-                  source={prefixText}
-                  theme={theme}
-                  components={{
-                    a: ({ href, children }) => {
-                      if (!href) {
-                        return <span>{children}</span>
-                      }
-                      return (
-                        <SmartLink href={href} disabled={isStreaming}>
-                          {children}
-                        </SmartLink>
-                      )
-                    },
-                    img: ({ src, alt }) => {
-                      if (!src || typeof src !== 'string') return null
-                      return <SmartImage src={src} alt={alt} />
-                    },
-                  }}
-                />
-              )}
-              <AskUserForm
-                data={recoveredAskUserFormData}
-                taskId={selectedTaskDetail?.id || 0}
-                currentMessageIndex={messageIndex}
-                onSubmit={onAskUserSubmit}
-              />
-              {suffixText && (
-                <div className="mt-4 p-3 rounded-lg border border-border bg-surface/50">
-                  <EnhancedMarkdown
-                    source={suffixText}
-                    theme={theme}
-                    components={{
-                      a: ({ href, children }) => {
-                        if (!href) {
-                          return <span>{children}</span>
-                        }
-                        return (
-                          <SmartLink href={href} disabled={isStreaming}>
-                            {children}
-                          </SmartLink>
-                        )
-                      },
-                      img: ({ src, alt }) => {
-                        if (!src || typeof src !== 'string') return null
-                        return <SmartImage src={src} alt={alt} />
-                      },
-                    }}
-                  />
-                </div>
-              )}
-            </div>
-          )
-        }
         if (markdownClarification) {
           const { data, prefixText, suffixText } = markdownClarification
           return (

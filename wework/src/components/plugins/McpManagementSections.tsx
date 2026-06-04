@@ -110,7 +110,7 @@ export function CustomMcpForm({
           <button
             type="button"
             data-testid="custom-mcp-import-json-button"
-            className="flex h-9 items-center gap-2 rounded-xl bg-base px-3 text-sm font-semibold hover:bg-muted"
+            className="flex h-9 items-center gap-2 rounded-xl bg-background px-3 text-sm font-semibold hover:bg-muted"
             onClick={() => setIsJsonImportOpen((previous) => !previous)}
           >
             <FileJson className="h-4 w-4" />
@@ -119,7 +119,7 @@ export function CustomMcpForm({
           <button
             type="button"
             aria-label={t('workbench.plugins_uninstall_cancel', '取消')}
-            className="flex h-9 w-9 items-center justify-center rounded-lg text-text-muted hover:bg-base"
+            className="flex h-9 w-9 items-center justify-center rounded-lg text-text-muted hover:bg-background"
             onClick={onCancel}
           >
             <X className="h-4 w-4" />
@@ -127,7 +127,7 @@ export function CustomMcpForm({
         </div>
       </div>
       {isJsonImportOpen && (
-        <div className="mt-5 rounded-2xl border border-border bg-base p-3">
+        <div className="mt-5 rounded-2xl border border-border bg-background p-3">
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs font-semibold text-text-secondary">
               {t(
@@ -194,7 +194,7 @@ export function CustomMcpForm({
           <select
             value={form.type}
             data-testid="custom-mcp-type-select"
-            className="mt-2 h-10 w-full rounded-xl border border-border bg-base px-3 text-sm text-text-primary outline-none focus:border-primary"
+            className="mt-2 h-10 w-full rounded-xl border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-primary"
             onChange={(event) =>
               updateField(
                 'type',
@@ -258,7 +258,7 @@ export function CustomMcpForm({
       <div className="mt-5 flex justify-end gap-2">
         <button
           type="button"
-          className="h-9 rounded-xl px-4 text-sm font-semibold text-text-secondary hover:bg-base"
+          className="h-9 rounded-xl px-4 text-sm font-semibold text-text-secondary hover:bg-background"
           onClick={onCancel}
         >
           {t('workbench.plugins_uninstall_cancel', '取消')}
@@ -291,7 +291,7 @@ export function CustomMcpDialog({
   onSubmit: (event: FormEvent<HTMLFormElement>) => void
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 px-4">
+    <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/20 px-4">
       <section
         role="dialog"
         aria-modal="true"
@@ -327,7 +327,7 @@ function McpTextInput({
       <input
         value={value}
         data-testid={testId}
-        className="mt-2 h-10 w-full rounded-xl border border-border bg-base px-3 text-sm text-text-primary outline-none placeholder:text-text-muted focus:border-primary"
+        className="mt-2 h-10 w-full rounded-xl border border-border bg-background px-3 text-sm text-text-primary outline-none placeholder:text-text-muted focus:border-primary"
         onChange={(event) => onChange(event.target.value)}
       />
     </label>
@@ -351,7 +351,7 @@ function McpTextarea({
       <textarea
         value={value}
         data-testid={testId}
-        className="mt-2 h-20 w-full resize-none rounded-xl border border-border bg-base px-3 py-2 font-mono text-xs text-text-primary outline-none placeholder:text-text-muted focus:border-primary"
+        className="mt-2 h-20 w-full resize-none rounded-xl border border-border bg-background px-3 py-2 font-mono text-xs text-text-primary outline-none placeholder:text-text-muted focus:border-primary"
         onChange={(event) => onChange(event.target.value)}
       />
     </label>
@@ -385,7 +385,7 @@ export function McpProviderBlock({
   const providerName = provider.name.trim() || provider.name_en?.trim() || provider.key
 
   return (
-    <article className="rounded-2xl border border-border bg-base p-5">
+    <article className="rounded-2xl border border-border bg-background p-5">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -492,7 +492,7 @@ function McpProviderServerRow({
       <div className="min-w-0">
         <div className="flex items-center gap-2">
           <h4 className="truncate text-sm font-semibold">{server.name}</h4>
-          <span className="rounded-md bg-base px-2 py-0.5 text-xs font-semibold text-text-muted">
+          <span className="rounded-md bg-background px-2 py-0.5 text-xs font-semibold text-text-muted">
             {server.type}
           </span>
         </div>
@@ -503,7 +503,7 @@ function McpProviderServerRow({
         )}
       </div>
       {installed ? (
-        <span className="flex h-8 items-center justify-center gap-1 rounded-lg bg-base text-xs font-semibold text-primary">
+        <span className="flex h-8 items-center justify-center gap-1 rounded-lg bg-background text-xs font-semibold text-primary">
           <Check className="h-4 w-4" />
           {t('workbench.plugins_installed', '已安装')}
         </span>
@@ -511,7 +511,7 @@ function McpProviderServerRow({
         <button
           type="button"
           data-testid={`mcp-provider-install-${server.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`}
-          className="flex h-8 items-center justify-center gap-1 rounded-lg bg-base text-xs font-semibold hover:bg-muted"
+          className="flex h-8 items-center justify-center gap-1 rounded-lg bg-background text-xs font-semibold hover:bg-muted"
           onClick={onInstall}
         >
           <Plus className="h-4 w-4" />

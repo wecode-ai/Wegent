@@ -1,5 +1,19 @@
-import { useCallback, useEffect, useState } from 'react'
-import type { UnifiedModel, UnifiedModelListResponse } from '@/types/api'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  areModelsProtocolCompatible,
+  getDefaultModelOptions,
+  getModelCompatibilityFamily,
+  inferModelFamily,
+  isSupportedModelFamily,
+  normalizeModelOptions,
+} from '@/lib/model-ui'
+import type {
+  ModelCompatibilityDisabledReason,
+  ModelOptions,
+  ModelSelectionConfig,
+  UnifiedModel,
+  UnifiedModelListResponse,
+} from '@/types/api'
 
 interface WorkbenchModelApi {
   listModels: () => Promise<UnifiedModelListResponse>
@@ -8,19 +22,159 @@ interface WorkbenchModelApi {
 interface UseWorkbenchModelsOptions {
   api: WorkbenchModelApi
   locked: boolean
+  selectionConfig?: ModelSelectionConfig | null
+  compatibilityConfig?: ModelSelectionConfig | null
+  selectionReady?: boolean
+  onSelectionChange?: (selection: ModelSelectionConfig) => void
 }
 
-function isClaudeModel(model: UnifiedModel): boolean {
-  return [model.name, model.displayName, model.modelId, model.provider]
-    .filter(Boolean)
-    .some(value => String(value).toLowerCase().includes('claude'))
+function findConfiguredModel(
+  models: UnifiedModel[],
+  selectionConfig?: ModelSelectionConfig | null
+): UnifiedModel | null {
+  if (!selectionConfig?.modelName) return null
+  return (
+    models.find(
+      model =>
+        model.name === selectionConfig.modelName &&
+        (!selectionConfig.modelType || model.type === selectionConfig.modelType)
+    ) ?? null
+  )
 }
 
-export function useWorkbenchModels({ api, locked }: UseWorkbenchModelsOptions) {
-  const [models, setModels] = useState<UnifiedModel[]>([])
+function toSelectionConfig(
+  model: UnifiedModel,
+  options: ModelOptions
+): ModelSelectionConfig {
+  return {
+    modelName: model.name,
+    modelType: model.type,
+    options,
+  }
+}
+
+function areModelOptionsEqual(left: ModelOptions, right: ModelOptions): boolean {
+  const leftKeys = Object.keys(left)
+  const rightKeys = Object.keys(right)
+  if (leftKeys.length !== rightKeys.length) return false
+  return leftKeys.every(key => left[key] === right[key])
+}
+
+function getSelectionKey(
+  models: UnifiedModel[],
+  selectionConfig?: ModelSelectionConfig | null
+): string {
+  const modelsKey = models.map(model => `${model.type}:${model.name}`).join('|')
+  const options = selectionConfig?.options ?? {}
+  const optionsKey = Object.keys(options)
+    .sort()
+    .map(key => `${key}:${options[key]}`)
+    .join('|')
+  return [
+    modelsKey,
+    selectionConfig?.modelType ?? '',
+    selectionConfig?.modelName ?? '',
+    optionsKey,
+  ].join('::')
+}
+
+function isSameModel(left: UnifiedModel, right: UnifiedModel): boolean {
+  return left.name === right.name && left.type === right.type
+}
+
+function getCompatibilityDisabledReason(
+  currentModel: UnifiedModel,
+  nextModel: UnifiedModel
+): ModelCompatibilityDisabledReason | null {
+  if (isSameModel(currentModel, nextModel)) return null
+
+  const currentFamily = getModelCompatibilityFamily(currentModel)
+  if (!currentFamily) return 'missing_current_runtime_family'
+
+  const nextFamily = getModelCompatibilityFamily(nextModel)
+  if (!nextFamily) return 'missing_target_runtime_family'
+
+  return areModelsProtocolCompatible(currentModel, nextModel)
+    ? null
+    : 'runtime_family_mismatch'
+}
+
+function annotateModelsByCompatibility(
+  models: UnifiedModel[],
+  compatibilityConfig?: ModelSelectionConfig | null
+): UnifiedModel[] {
+  const currentModel = findConfiguredModel(models, compatibilityConfig)
+  if (!currentModel) return models
+  return models.map(model => {
+    const compatibilityDisabledReason = getCompatibilityDisabledReason(currentModel, model)
+    if (!compatibilityDisabledReason) return model
+    return {
+      ...model,
+      compatibilityDisabled: true,
+      compatibilityDisabledReason,
+    }
+  })
+}
+
+export function useWorkbenchModels({
+  api,
+  locked,
+  selectionConfig,
+  compatibilityConfig,
+  selectionReady = true,
+  onSelectionChange,
+}: UseWorkbenchModelsOptions) {
+  const [availableModels, setAvailableModels] = useState<UnifiedModel[]>([])
+  const models = useMemo(
+    () => annotateModelsByCompatibility(availableModels, compatibilityConfig),
+    [availableModels, compatibilityConfig],
+  )
   const [selectedModel, setSelectedModelState] = useState<UnifiedModel | null>(null)
+  const [selectedModelOptions, setSelectedModelOptions] = useState<ModelOptions>({})
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
+  const [restoredSelectionKey, setRestoredSelectionKey] = useState<string | null>(null)
+  const selectionKey = useMemo(
+    () => getSelectionKey(models, selectionConfig),
+    [models, selectionConfig],
+  )
+  const selectionMatchesConfig =
+    Boolean(
+      selectionConfig?.modelName &&
+        selectedModel &&
+        selectedModel.name === selectionConfig.modelName &&
+        (!selectionConfig.modelType || selectedModel.type === selectionConfig.modelType)
+    )
+  const isSelectionReady = useMemo(
+    () =>
+      selectionReady &&
+      !isLoading &&
+      (restoredSelectionKey === selectionKey || selectionMatchesConfig),
+    [
+      isLoading,
+      restoredSelectionKey,
+      selectionMatchesConfig,
+      selectionKey,
+      selectionReady,
+    ],
+  )
+
+  const restoreSelection = useCallback(
+    (
+      availableModels: UnifiedModel[],
+      nextSelectionConfig?: ModelSelectionConfig | null
+    ) => {
+      const model = findConfiguredModel(availableModels, nextSelectionConfig)
+      const nextOptions = model
+        ? normalizeModelOptions(model, nextSelectionConfig?.options ?? {})
+        : {}
+      setSelectedModelState(current => (current === model ? current : model))
+      setSelectedModelOptions(current =>
+        areModelOptionsEqual(current, nextOptions) ? current : nextOptions
+      )
+    },
+    []
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -31,11 +185,8 @@ export function useWorkbenchModels({ api, locked }: UseWorkbenchModelsOptions) {
       try {
         const response = await api.listModels()
         if (!cancelled) {
-          const filtered = response.data.filter(isClaudeModel)
-          setModels(filtered)
-          if (filtered.length > 0) {
-            setSelectedModelState(filtered[0])
-          }
+          const filtered = response.data.filter(isSupportedModelFamily)
+          setAvailableModels(filtered)
         }
       } catch (nextError) {
         if (!cancelled) {
@@ -52,20 +203,70 @@ export function useWorkbenchModels({ api, locked }: UseWorkbenchModelsOptions) {
     return () => {
       cancelled = true
     }
-  }, [api])
+  }, [api, restoreSelection])
+
+  useEffect(() => {
+    if (!selectionReady) {
+      return
+    }
+
+    let cancelled = false
+
+    async function syncSelection() {
+      await Promise.resolve()
+      if (!cancelled) {
+        restoreSelection(models, selectionConfig)
+        setRestoredSelectionKey(selectionKey)
+      }
+    }
+
+    syncSelection()
+    return () => {
+      cancelled = true
+    }
+  }, [models, restoreSelection, selectionConfig, selectionKey, selectionReady])
 
   const setSelectedModel = useCallback(
     (model: UnifiedModel | null) => {
-      if (locked) return
+      if (locked || model?.compatibilityDisabled) return
+      const currentFamily = selectedModel ? inferModelFamily(selectedModel) : null
+      const nextFamily = model ? inferModelFamily(model) : null
       setSelectedModelState(model)
+      setSelectedModelOptions(current => {
+        const nextOptions =
+          currentFamily === nextFamily
+            ? normalizeModelOptions(model, current)
+            : getDefaultModelOptions(model)
+        if (model) {
+          onSelectionChange?.(toSelectionConfig(model, nextOptions))
+        }
+        return nextOptions
+      })
     },
-    [locked]
+    [locked, onSelectionChange, selectedModel]
+  )
+
+  const setSelectedModelOption = useCallback(
+    (optionId: string, value: string) => {
+      if (locked) return
+      setSelectedModelOptions(current => {
+        const nextOptions = { ...current, [optionId]: value }
+        if (selectedModel) {
+          onSelectionChange?.(toSelectionConfig(selectedModel, nextOptions))
+        }
+        return nextOptions
+      })
+    },
+    [locked, onSelectionChange, selectedModel]
   )
 
   return {
     models,
     selectedModel,
+    selectedModelOptions,
+    isSelectionReady,
     setSelectedModel,
+    setSelectedModelOption,
     isLoading,
     error,
   }

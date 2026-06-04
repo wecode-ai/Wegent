@@ -1,70 +1,86 @@
-import { ArrowUp, Mic } from 'lucide-react'
-import { useTranslation } from 'react-i18next'
-import type { SkillRef, UnifiedModel, UnifiedSkill } from '@/types/api'
+import { ArrowUp, Mic, Square } from 'lucide-react'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { ModelOptions, UnifiedModel } from '@/types/api'
 import { AddContextMenu } from './AddContextMenu'
 import { ModelSelector } from './ModelSelector'
-import { SkillSelector } from './SkillSelector'
 
 interface ComposerToolbarProps {
   canSend: boolean
   models: UnifiedModel[]
-  skills: UnifiedSkill[]
   selectedModel: UnifiedModel | null
-  selectedSkills: SkillRef[]
-  optionsLocked: boolean
+  selectedModelOptions: ModelOptions
+  isModelSelectionReady: boolean
   onSelectModel: (model: UnifiedModel | null) => void
-  onToggleSkill: (skill: SkillRef) => void
+  onSelectModelOption: (optionId: string, value: string) => void
   onFileSelect: (files: File | File[]) => void
+  isStreaming?: boolean
+  onPause?: () => void
 }
 
 export function ComposerToolbar({
   canSend,
   models,
-  skills,
   selectedModel,
-  selectedSkills,
-  optionsLocked,
+  selectedModelOptions,
+  isModelSelectionReady,
   onSelectModel,
-  onToggleSkill,
+  onSelectModelOption,
   onFileSelect,
+  isStreaming = false,
+  onPause,
 }: ComposerToolbarProps) {
   const { t } = useTranslation('common')
 
   return (
-    <div className="mt-auto flex min-h-11 items-center justify-between gap-4">
-      <div className="-ml-3 flex min-w-0 items-center gap-2">
+    <div className="mt-auto flex min-h-9 items-center justify-between gap-4">
+      <div className="-ml-2 flex min-w-0 items-center gap-2">
         <AddContextMenu disabled={false} onFileSelect={onFileSelect} />
-        <SkillSelector
-          skills={skills}
-          selectedSkills={selectedSkills}
-          disabled={optionsLocked}
-          onToggleSkill={onToggleSkill}
-        />
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        <ModelSelector
-          models={models}
-          selectedModel={selectedModel}
-          disabled={optionsLocked}
-          onSelectModel={onSelectModel}
-        />
+        {isModelSelectionReady ? (
+          <ModelSelector
+            models={models}
+            selectedModel={selectedModel}
+            selectedModelOptions={selectedModelOptions}
+            disabled={false}
+            onSelectModel={onSelectModel}
+            onSelectModelOption={onSelectModelOption}
+          />
+        ) : (
+          <div
+            className="h-11 w-32 shrink-0"
+            data-testid="model-selector-loading"
+          />
+        )}
         <button
           type="button"
           data-testid="voice-input-button"
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full p-0 text-text-secondary hover:bg-muted"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full p-0 text-text-secondary hover:bg-muted"
           aria-label={t('workbench.voice_input', '语音输入')}
         >
-          <Mic className="h-5 w-5" />
+          <Mic className="h-4 w-4" />
         </button>
-        <button
-          type="submit"
-          data-testid="send-message-button"
-          disabled={!canSend}
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#1a1a1a] p-0 text-white disabled:cursor-not-allowed disabled:bg-[#d9d9d9]"
-          aria-label={t('workbench.send_message', '发送消息')}
-        >
-          <ArrowUp className="h-5 w-5" />
-        </button>
+        {isStreaming ? (
+          <button
+            type="button"
+            data-testid="pause-response-button"
+            onClick={onPause}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#1a1a1a] p-0 text-white hover:bg-[#333]"
+            aria-label={t('workbench.pause_response', '暂停回复')}
+          >
+            <Square className="h-3.5 w-3.5 fill-current" />
+          </button>
+        ) : (
+          <button
+            type="submit"
+            data-testid="send-message-button"
+            disabled={!canSend}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#1a1a1a] p-0 text-white disabled:cursor-not-allowed disabled:bg-[#d9d9d9]"
+            aria-label={t('workbench.send_message', '发送消息')}
+          >
+            <ArrowUp className="h-4 w-4" />
+          </button>
+        )}
       </div>
     </div>
   )

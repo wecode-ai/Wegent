@@ -177,6 +177,7 @@ class OpenAIRequestConverter:
             "table_contexts": request.table_contexts,
             "kb_meta_prompt": request.kb_meta_prompt,
             "task_data": request.task_data,
+            "interactive_form_answer": request.interactive_form_answer,
             "auth_token": request.auth_token,
             "skill_identity_token": request.skill_identity_token,
             "backend_url": request.backend_url,
@@ -333,6 +334,7 @@ class OpenAIRequestConverter:
             table_contexts=metadata.get("table_contexts", []),
             kb_meta_prompt=metadata.get("kb_meta_prompt", "") or "",
             task_data=metadata.get("task_data"),
+            interactive_form_answer=metadata.get("interactive_form_answer"),
             auth_token=metadata.get("auth_token", ""),
             skill_identity_token=metadata.get("skill_identity_token", ""),
             backend_url=metadata.get("backend_url", ""),
@@ -377,6 +379,7 @@ class OpenAIEventConverter:
         "response.function_call_arguments.delta": "tool_start",
         "response.function_call_arguments.done": "tool_result",
         "response.reasoning_summary_part.added": "thinking",
+        "response.reasoning_summary_text.delta": "thinking",
     }
 
     # Lifecycle events that should be skipped

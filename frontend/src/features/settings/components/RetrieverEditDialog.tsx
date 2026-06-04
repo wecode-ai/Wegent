@@ -50,6 +50,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Textarea } from '@/components/ui/textarea'
 import {
   Select,
   SelectContent,
@@ -73,6 +74,7 @@ import {
   RetrieverCRD,
   RetrievalMethodType,
 } from '@/apis/retrievers'
+import { formatRetrieverStorageExt, parseRetrieverStorageExt } from '@/utils/retriever-ext'
 
 interface RetrieverEditDialogProps {
   open: boolean
@@ -113,6 +115,7 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
   const [fixedIndexName, setFixedIndexName] = useState('')
   const [rollingStep, setRollingStep] = useState('5000')
   const [indexPrefix, setIndexPrefix] = useState('')
+  const [storageExtJson, setStorageExtJson] = useState('')
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
 
@@ -195,6 +198,7 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
               String(fullRetriever.spec.storageConfig.indexStrategy.rollingStep || 5000)
             )
             setIndexPrefix(fullRetriever.spec.storageConfig.indexStrategy.prefix || 'wegent')
+            setStorageExtJson(formatRetrieverStorageExt(fullRetriever.spec.storageConfig.ext))
 
             // Load retrieval methods from spec or fetch available methods
             const availableMethods = await fetchRetrievalMethods(loadedStorageType)
@@ -242,6 +246,7 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
         setFixedIndexName('')
         setRollingStep('5000')
         setIndexPrefix('wegent')
+        setStorageExtJson('')
         // Fetch retrieval methods for default storage type and enable all by default
         fetchRetrievalMethods(defaultStorageType).then(methods => {
           // Default to all available methods for new retrievers
@@ -380,6 +385,17 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
       return
     }
 
+    let storageExt: Record<string, unknown> | undefined
+    try {
+      storageExt = parseRetrieverStorageExt(storageExtJson)
+    } catch {
+      toast({
+        variant: 'destructive',
+        title: t('retrievers.extension_json_invalid'),
+      })
+      return
+    }
+
     setSaving(true)
     try {
       // Build retrieval methods config
@@ -412,6 +428,7 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
             ...(username && { username: username.trim() }),
             ...(password && { password: password }),
             ...(apiKey && { apiKey: apiKey }),
+            ...(storageExt && { ext: storageExt }),
             indexStrategy: {
               mode: indexMode,
               ...(indexMode === 'fixed' && { fixedName: fixedIndexName.trim() }),
@@ -739,6 +756,21 @@ const RetrieverEditDialog: React.FC<RetrieverEditDialogProps> = ({
               )}
             </div>
             <p className="text-xs text-text-muted">{t('retrievers.retrieval_methods_hint')}</p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="storageExtJson" className="text-sm font-medium">
+              {t('retrievers.extension_json')}
+            </Label>
+            <Textarea
+              id="storageExtJson"
+              data-testid="retriever-ext-json-input"
+              value={storageExtJson}
+              onChange={e => setStorageExtJson(e.target.value)}
+              placeholder={t('retrievers.extension_json_placeholder')}
+              className="min-h-[140px] bg-base font-mono text-xs"
+            />
+            <p className="text-xs text-text-muted">{t('retrievers.extension_json_hint')}</p>
           </div>
         </div>
 

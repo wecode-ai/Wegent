@@ -8,6 +8,10 @@ from types import SimpleNamespace
 from executor.agents.claude_code import standalone_chat_workspace as workspace
 
 
+def _enable_standalone_chats(monkeypatch):
+    monkeypatch.setenv("WEGENT_EXECUTOR_STANDALONE_CHATS_ENABLED", "true")
+
+
 def test_slugify_response_uses_alphanumeric_words():
     assert workspace.slugify_response("Hello, Codex 2026!") == "hello-codex-2026"
     assert workspace.slugify_response("只有中文") == "new-chat"
@@ -15,6 +19,112 @@ def test_slugify_response_uses_alphanumeric_words():
         workspace.slugify_response("abcdefghijklmnopqrstuvwxyz")
         == "abcdefghijklmnopqrst"
     )
+
+
+def test_prompt_text_for_workspace_extracts_text_blocks():
+    prompt = [
+        {"type": "input_text", "text": "hello-new-wework"},
+        {"type": "input_image", "image_url": "data:image/png;base64,abc"},
+        {"type": "message", "content": "run pwd"},
+    ]
+
+    assert workspace.prompt_text_for_workspace(prompt) == "hello-new-wework\nrun pwd"
+
+
+def test_standalone_chat_workspace_is_disabled_by_default(tmp_path, monkeypatch):
+    chats_root = tmp_path / "chats"
+    task_data = SimpleNamespace(
+        task_id=120,
+        project_id=None,
+        project_workspace_path=None,
+        git_url=None,
+    )
+
+    monkeypatch.delenv("WEGENT_EXECUTOR_STANDALONE_CHATS_ENABLED", raising=False)
+    monkeypatch.setenv("WEGENT_EXECUTOR_CHATS_DIR", str(chats_root))
+
+    result = workspace.prepare_standalone_chat_workspace(task_data, "hello")
+
+    assert result is None
+    assert not chats_root.exists()
+
+
+def test_disabled_standalone_chat_workspace_does_not_return_prepared_path(
+    tmp_path,
+    monkeypatch,
+):
+    workspace_path = tmp_path / "chats" / "2026-05-29" / "hello"
+    workspace_path.mkdir(parents=True)
+    task_data = SimpleNamespace(
+        task_id=121,
+        project_id=None,
+        project_workspace_path=str(workspace_path),
+        git_url=None,
+    )
+
+    monkeypatch.delenv("WEGENT_EXECUTOR_STANDALONE_CHATS_ENABLED", raising=False)
+
+    result = workspace.finalize_standalone_chat_workspace(task_data, "response")
+
+    assert result is None
+
+
+def test_prepare_standalone_chat_workspace_uses_request_text_before_execution(
+    tmp_path,
+    monkeypatch,
+):
+    workspace_root = tmp_path / "workspace"
+    source = workspace_root / "122"
+    source.mkdir(parents=True)
+    (source / "keep.txt").write_text("content", encoding="utf-8")
+    (source / ".claude").mkdir()
+    (source / ".claude" / "claude.json").write_text("{}", encoding="utf-8")
+    chats_root = tmp_path / "chats"
+    task_data = SimpleNamespace(
+        task_id=122,
+        project_id=None,
+        project_workspace_path=None,
+        git_url=None,
+    )
+
+    _enable_standalone_chats(monkeypatch)
+    monkeypatch.setenv("WEGENT_EXECUTOR_CHATS_DIR", str(chats_root))
+    monkeypatch.setattr(
+        workspace.config, "get_workspace_root", lambda: str(workspace_root)
+    )
+
+    result = workspace.prepare_standalone_chat_workspace(
+        task_data,
+        "hello-new-wework",
+    )
+
+    target = chats_root / datetime.now().strftime("%Y-%m-%d") / "hello-new-wework"
+    assert result == str(target)
+    assert (source / ".claude").exists()
+    assert (target / "keep.txt").read_text(encoding="utf-8") == "content"
+    assert not (target / ".claude").exists()
+
+
+def test_finalize_returns_prepared_standalone_workspace_path(tmp_path, monkeypatch):
+    workspace_path = tmp_path / "chats" / "2026-05-29" / "hello"
+    workspace_path.mkdir(parents=True)
+    executor_home = tmp_path / ".wegent-executor"
+    task_data = SimpleNamespace(
+        task_id=121,
+        project_id=None,
+        project_workspace_path=str(workspace_path),
+        git_url=None,
+    )
+
+    _enable_standalone_chats(monkeypatch)
+    monkeypatch.setattr(workspace.config, "WEGENT_EXECUTOR_HOME", str(executor_home))
+
+    result = workspace.finalize_standalone_chat_workspace(
+        task_data,
+        "response text should not rename",
+    )
+
+    assert result == str(workspace_path)
 
 
 def test_finalize_standalone_chat_workspace_moves_initial_task_workspace(
@@ -35,6 +145,7 @@ def test_finalize_standalone_chat_workspace_moves_initial_task_workspace(
         git_url=None,
     )
 
+    _enable_standalone_chats(monkeypatch)
     monkeypatch.setenv("WEGENT_EXECUTOR_CHATS_DIR", str(chats_root))
     monkeypatch.setattr(
         workspace.config, "get_workspace_root", lambda: str(workspace_root)
@@ -48,11 +159,42 @@ def test_finalize_standalone_chat_workspace_moves_initial_task_workspace(
 
     target = chats_root / datetime.now().strftime("%Y-%m-%d") / "hello-codex-2026"
     assert result == str(target)
-    assert not source.exists()
     assert (target / "keep.txt").read_text(encoding="utf-8") == "content"
     assert (executor_home / "sessions" / "123" / ".claude_session_id").read_text(
         encoding="utf-8"
     ) == "session-id"
+
+
+def test_finalize_standalone_chat_workspace_keeps_existing_session_root(
+    tmp_path,
+    monkeypatch,
+):
+    workspace_root = tmp_path / "workspace"
+    source = workspace_root / "126"
+    source.mkdir(parents=True)
+    (source / ".claude_session_id").write_text("stale-session-id", encoding="utf-8")
+    chats_root = tmp_path / "chats"
+    executor_home = tmp_path / ".wegent-executor"
+    session_file = executor_home / "sessions" / "126" / ".claude_session_id"
+    session_file.parent.mkdir(parents=True)
+    session_file.write_text("current-session-id", encoding="utf-8")
+    task_data = SimpleNamespace(
+        task_id=126,
+        project_id=None,
+        project_workspace_path=None,
+        git_url=None,
+    )
+
+    _enable_standalone_chats(monkeypatch)
+    monkeypatch.setenv("WEGENT_EXECUTOR_CHATS_DIR", str(chats_root))
+    monkeypatch.setattr(
+        workspace.config, "get_workspace_root", lambda: str(workspace_root)
+    )
+    monkeypatch.setattr(workspace.config, "WEGENT_EXECUTOR_HOME", str(executor_home))
+
+    workspace.finalize_standalone_chat_workspace(task_data, "Hello")
+
+    assert session_file.read_text(encoding="utf-8") == "current-session-id"
 
 
 def test_finalize_standalone_chat_workspace_adds_duplicate_suffix(
@@ -72,6 +214,7 @@ def test_finalize_standalone_chat_workspace_adds_duplicate_suffix(
         git_url=None,
     )
 
+    _enable_standalone_chats(monkeypatch)
     monkeypatch.setenv("WEGENT_EXECUTOR_CHATS_DIR", str(chats_root))
     monkeypatch.setattr(
         workspace.config, "get_workspace_root", lambda: str(workspace_root)
@@ -100,6 +243,7 @@ def test_duplicate_suffix_counts_toward_twenty_character_limit(
         git_url=None,
     )
 
+    _enable_standalone_chats(monkeypatch)
     monkeypatch.setenv("WEGENT_EXECUTOR_CHATS_DIR", str(chats_root))
     monkeypatch.setattr(
         workspace.config, "get_workspace_root", lambda: str(workspace_root)

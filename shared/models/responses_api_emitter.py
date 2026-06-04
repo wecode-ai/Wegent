@@ -515,7 +515,7 @@ class ResponsesAPIEmitter:
     # ============================================================
 
     async def reasoning(self, content: str) -> Any:
-        """Emit reasoning/thinking event.
+        """Emit reasoning/thinking text delta event.
 
         Args:
             content: Reasoning content
@@ -523,9 +523,9 @@ class ResponsesAPIEmitter:
         Returns:
             Transport-specific result
         """
-        data = self.builder.reasoning(content)
+        data = self.builder.reasoning_delta(content)
         return await self._emit(
-            ResponsesAPIStreamEvents.RESPONSE_PART_ADDED.value, data
+            ResponsesAPIStreamEvents.REASONING_SUMMARY_TEXT_DELTA.value, data
         )
 
     async def block_created(self, block: dict[str, Any]) -> Any:

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { adminApis } from '@/apis/admin'
 import SystemConfigPanel from '@/features/admin/components/SystemConfigPanel'
@@ -15,6 +15,8 @@ jest.mock('@/apis/admin', () => ({
     getQuickAccessConfig: jest.fn(),
     updateQuickAccessConfig: jest.fn(),
     getPublicTeams: jest.fn(),
+    getQuickLaunchFunctionsConfig: jest.fn(),
+    updateQuickLaunchFunctionsConfig: jest.fn(),
   },
 }))
 
@@ -25,28 +27,45 @@ jest.mock('@/hooks/use-toast', () => ({
 }))
 
 const tMock = (key: string) => {
+  const normalizedKey = key.replace(/^admin:/, '')
   const translations: Record<string, string> = {
-    'admin:system_config.loading': 'Loading configuration...',
-    'admin:system_config.title': 'System configuration',
-    'admin:system_config.description': 'Manage system configuration',
-    'admin:system_config.slogan_title': 'Slogans',
-    'admin:system_config.add_slogan': 'Add slogan',
-    'admin:system_config.no_slogans': 'No slogans',
-    'admin:system_config.tips_title': 'Tips',
-    'admin:system_config.add_tip': 'Add tip',
-    'admin:system_config.no_tips': 'No tips',
-    'admin:system_config.quick_access_title': 'Homepage recommended agents',
-    'admin:system_config.quick_access_description':
-      'Select the system agents shown on the homepage quick cards.',
-    'admin:system_config.quick_access_available': 'Available agents',
-    'admin:system_config.quick_access_selected': 'Homepage agents',
-    'admin:system_config.quick_access_no_description': 'No description',
-    'admin:system_config.quick_access_version': 'Homepage agents version',
-    'admin:system_config.version': 'Version',
-    'admin:common.save': 'Save',
+    'system_config.loading': 'Loading configuration...',
+    'system_config.title': 'System configuration',
+    'system_config.description': 'Manage system configuration',
+    'system_config.slogan_title': 'Slogans',
+    'system_config.add_slogan': 'Add slogan',
+    'system_config.no_slogans': 'No slogans',
+    'system_config.tips_title': 'Tips',
+    'system_config.add_tip': 'Add tip',
+    'system_config.no_tips': 'No tips',
+    'system_config.quick_launch_functions_title': 'System functions',
+    'system_config.quick_launch_functions_description':
+      'Configure QuickCard system functions with form fields.',
+    'system_config.quick_launch_functions_version': 'System functions version',
+    'system_config.quick_launch_function_title': 'Title',
+    'system_config.quick_launch_function_description': 'Description',
+    'system_config.quick_launch_function_presets': 'Input presets',
+    'system_config.quick_launch_function_add_preset': 'Add preset',
+    'system_config.quick_launch_function_preset_title': 'Preset title',
+    'system_config.quick_launch_function_preset_title_placeholder': 'Enter preset title',
+    'system_config.quick_launch_function_preset_prompt': 'Prompt',
+    'system_config.quick_launch_function_preset_prompt_placeholder': 'Enter prompt',
+    'system_config.quick_launch_function_preset_skills': 'Skills',
+    'system_config.quick_launch_function_preset_skills_placeholder': 'skill-a, skill-b',
+    'system_config.quick_launch_function_preset_deep_thinking': 'Deep thinking',
+    'system_config.quick_launch_function_preset_clarification': 'Clarification',
+    'system_config.quick_launch_function_preset_force_override': 'Force override',
+    'system_config.quick_launch_function_add': 'Add system function',
+    'system_config.quick_launch_function_empty': 'No system functions',
+    'system_config.version': 'Version',
+    'common.save': 'Save',
+    'common:actions.save': 'Save',
+    'common:actions.cancel': 'Cancel',
+    'common:actions.delete': 'Delete',
+    'system_config.errors.partial_save_failed': 'Some configuration changes failed to save',
   }
 
-  return translations[key] || key
+  return translations[normalizedKey] || normalizedKey
 }
 
 jest.mock('@/hooks/useTranslation', () => ({
@@ -63,10 +82,7 @@ describe('SystemConfigPanel', () => {
       slogans: [],
       tips: [],
     })
-    mockedAdminApis.getQuickAccessConfig.mockResolvedValue({
-      version: 5,
-      teams: [42],
-    })
+    mockedAdminApis.getQuickAccessConfig.mockResolvedValue({ version: 5, teams: [42] })
     mockedAdminApis.getPublicTeams.mockResolvedValue({
       total: 1,
       items: [
@@ -83,13 +99,150 @@ describe('SystemConfigPanel', () => {
         },
       ],
     })
+    mockedAdminApis.getQuickLaunchFunctionsConfig.mockResolvedValue({
+      version: 7,
+      functions: [
+        {
+          id: 'create_ppt',
+          title: 'Create PPT',
+          description: 'Create presentation decks',
+          icon: 'presentation',
+          team_id: 42,
+          enabled: true,
+          order: 1,
+          input_presets: [
+            {
+              id: 'roadmap',
+              title: 'Roadmap deck',
+              prompt: 'Help me create a product roadmap PPT',
+              options: {
+                enable_deep_thinking: true,
+                enable_clarification: false,
+                force_override: false,
+                selected_skill_names: ['slides'],
+              },
+            },
+          ],
+        },
+      ],
+    })
+    mockedAdminApis.updateSloganTipsConfig.mockResolvedValue({
+      version: 4,
+      slogans: [],
+      tips: [],
+    })
+    mockedAdminApis.updateQuickLaunchFunctionsConfig.mockResolvedValue({
+      version: 8,
+      functions: [],
+    })
   })
 
-  test('loads and displays homepage quick access team configuration', async () => {
+  test('does not render the legacy homepage recommended agents configuration', async () => {
     render(<SystemConfigPanel />)
 
-    expect(await screen.findByText('Homepage recommended agents')).toBeInTheDocument()
-    expect(screen.getByText('AI Assistant')).toBeInTheDocument()
-    expect(screen.getByText('Homepage agents version: 5')).toBeInTheDocument()
+    expect(await screen.findByTestId('quick-launch-functions-section')).toBeInTheDocument()
+    expect(screen.queryByTestId('quick-access-config-section')).not.toBeInTheDocument()
+    expect(mockedAdminApis.getQuickAccessConfig).not.toHaveBeenCalled()
+  })
+
+  test('loads and saves system function launcher form configuration', async () => {
+    render(<SystemConfigPanel />)
+
+    expect(await screen.findByTestId('quick-launch-functions-section')).toHaveTextContent(
+      'System functions'
+    )
+    expect(screen.getByText('System functions version: 7')).toBeInTheDocument()
+
+    expect(screen.queryByTestId('quick-launch-functions-json')).not.toBeInTheDocument()
+    expect(screen.getByTestId('quick-launch-function-card-0')).toHaveTextContent('Create PPT')
+
+    fireEvent.change(screen.getByTestId('quick-launch-function-title-0'), {
+      target: { value: 'Create Skill' },
+    })
+    fireEvent.change(screen.getByTestId('quick-launch-function-preset-title-0-0'), {
+      target: { value: 'Skill builder' },
+    })
+    fireEvent.change(screen.getByTestId('quick-launch-function-preset-prompt-0-0'), {
+      target: { value: 'Help me create a skill' },
+    })
+    fireEvent.change(screen.getByTestId('quick-launch-function-preset-skills-0-0'), {
+      target: { value: 'skill-author, tests, skill-author' },
+    })
+    fireEvent.click(screen.getByTestId('quick-launch-function-preset-clarification-0-0'))
+    fireEvent.click(screen.getByTestId('quick-launch-function-preset-force-override-0-0'))
+    fireEvent.click(screen.getByText('Save'))
+
+    await waitFor(() => {
+      expect(mockedAdminApis.updateQuickLaunchFunctionsConfig).toHaveBeenCalledWith({
+        functions: [
+          {
+            id: 'create_ppt',
+            title: 'Create Skill',
+            description: 'Create presentation decks',
+            icon: 'presentation',
+            team_id: 42,
+            enabled: true,
+            order: 1,
+            input_presets: [
+              {
+                id: 'roadmap',
+                title: 'Skill builder',
+                prompt: 'Help me create a skill',
+                options: {
+                  enable_deep_thinking: true,
+                  enable_clarification: true,
+                  force_override: true,
+                  selected_skill_names: ['skill-author', 'tests'],
+                },
+              },
+            ],
+          },
+        ],
+      })
+    })
+  })
+
+  test('keeps successful sections when saving partially fails', async () => {
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined)
+    mockedAdminApis.updateSloganTipsConfig.mockRejectedValueOnce(new Error('slogan save failed'))
+    mockedAdminApis.updateQuickLaunchFunctionsConfig.mockResolvedValueOnce({
+      version: 9,
+      functions: [
+        {
+          id: 'create_skill',
+          title: 'Create Skill',
+          description: 'Create skills',
+          icon: 'sparkles',
+          team_id: 42,
+          enabled: true,
+          order: 2,
+          input_presets: [
+            {
+              id: 'skill',
+              title: 'Create skill',
+              prompt: 'Help me create a skill',
+              options: { selected_skill_names: [] },
+            },
+          ],
+        },
+      ],
+    })
+
+    render(<SystemConfigPanel />)
+
+    expect(await screen.findByTestId('quick-launch-functions-section')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Save'))
+
+    await waitFor(() => {
+      expect(screen.getByText('System functions version: 9')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('quick-launch-function-card-0')).toHaveTextContent('Create Skill')
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Some configuration changes failed to save',
+        variant: 'destructive',
+      })
+    )
+    consoleErrorSpy.mockRestore()
   })
 })

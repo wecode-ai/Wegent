@@ -1,4 +1,9 @@
-import type { Attachment, SkillRef, UnifiedModel, UnifiedSkill } from '@/types/api'
+import type {
+  Attachment,
+  LocalDeviceSkill,
+  ModelOptions,
+  UnifiedModel,
+} from '@/types/api'
 import type { ProjectWorkControls } from '../ChatInput'
 import { AttachmentBadges } from './AttachmentBadges'
 import { ComposerToolbar } from './ComposerToolbar'
@@ -13,19 +18,21 @@ interface ProjectChatComposerProps {
   disabled: boolean
   placeholder: string
   models: UnifiedModel[]
-  skills: UnifiedSkill[]
   selectedModel: UnifiedModel | null
-  selectedSkills: SkillRef[]
+  selectedModelOptions: ModelOptions
+  isModelSelectionReady: boolean
   attachments: Attachment[]
   uploadingFiles: Map<string, { file: File; progress: number }>
   attachmentErrors: Map<string, string>
-  optionsLocked: boolean
   onSelectModel: (model: UnifiedModel | null) => void
-  onToggleSkill: (skill: SkillRef) => void
+  onSelectModelOption: (optionId: string, value: string) => void
   onFileSelect: (files: File | File[]) => void
   onRemoveAttachment: (attachmentId: number) => void
+  onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
   projectWork: ProjectWorkControls
   showProjectWorkBar?: boolean
+  isStreaming?: boolean
+  onPause?: () => void
 }
 
 export function ProjectChatComposer({
@@ -35,27 +42,29 @@ export function ProjectChatComposer({
   disabled,
   placeholder,
   models,
-  skills,
   selectedModel,
-  selectedSkills,
+  selectedModelOptions,
+  isModelSelectionReady,
   attachments,
   uploadingFiles,
   attachmentErrors,
-  optionsLocked,
   onSelectModel,
-  onToggleSkill,
+  onSelectModelOption,
   onFileSelect,
   onRemoveAttachment,
+  onListLocalSkills,
   projectWork,
   showProjectWorkBar = true,
+  isStreaming = false,
+  onPause,
 }: ProjectChatComposerProps) {
   const textareaRef = useAutoResizeTextarea(value, 168)
   const canSend = (value.trim().length > 0 || attachments.length > 0) && !disabled
 
   return (
-    <div className="w-full rounded-[28px] bg-surface shadow-[0_16px_44px_rgba(0,0,0,0.08)]">
+    <div className="relative w-full rounded-[28px] bg-surface shadow-[0_16px_44px_rgba(0,0,0,0.08)]">
       <form
-        className="flex min-h-[88px] w-full flex-col rounded-[28px] border border-border bg-base px-6 pb-3 pt-4"
+        className="flex min-h-[112px] w-full flex-col rounded-[28px] border border-border bg-background pb-2 pl-4 pr-2 pt-3.5"
         onSubmit={event => {
           event.preventDefault()
           if (canSend) onSubmit()
@@ -75,18 +84,22 @@ export function ProjectChatComposer({
           canSend={canSend}
           placeholder={placeholder}
           rows={2}
-          className="max-h-[128px] min-h-8 w-full resize-none overflow-y-auto bg-transparent text-base leading-6 text-text-primary outline-none placeholder:text-text-muted"
+          onPasteFiles={onFileSelect}
+          className="max-h-[128px] min-h-9 w-full resize-none overflow-y-auto bg-transparent p-0 text-sm leading-5 text-text-primary outline-none placeholder:text-text-muted"
+          skillMenuClassName="left-[-1rem] right-[-0.5rem]"
+          onListLocalSkills={onListLocalSkills}
         />
         <ComposerToolbar
           canSend={canSend}
           models={models}
-          skills={skills}
           selectedModel={selectedModel}
-          selectedSkills={selectedSkills}
-          optionsLocked={optionsLocked}
+          selectedModelOptions={selectedModelOptions}
+          isModelSelectionReady={isModelSelectionReady}
           onSelectModel={onSelectModel}
-          onToggleSkill={onToggleSkill}
+          onSelectModelOption={onSelectModelOption}
           onFileSelect={onFileSelect}
+          isStreaming={isStreaming}
+          onPause={onPause}
         />
       </form>
       {showProjectWorkBar && (
@@ -97,6 +110,7 @@ export function ProjectChatComposer({
           currentStandaloneDeviceId={projectWork.currentStandaloneDeviceId}
           onSelectProject={projectWork.onSelectProject}
           onSelectStandaloneDevice={projectWork.onSelectStandaloneDevice}
+          className="min-h-11 px-4"
         />
       )}
     </div>

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
@@ -53,7 +54,7 @@ def _merge_blocks(
 ) -> list[dict[str, Any]]:
     """Merge persisted and in-memory blocks while preserving first-seen order."""
     merged: list[dict[str, Any]] = []
-    seen_ids: set[str] = set()
+    block_indexes: dict[str, int] = {}
 
     for candidate in (existing_blocks, new_blocks):
         if not isinstance(candidate, list):
@@ -62,10 +63,15 @@ def _merge_blocks(
             if not isinstance(block, dict):
                 continue
             block_id = str(block.get("id") or "")
-            if block_id and block_id in seen_ids:
+            if block_id and block_id in block_indexes:
+                existing = merged[block_indexes[block_id]]
+                merged[block_indexes[block_id]] = {
+                    **existing,
+                    **{key: value for key, value in block.items() if value is not None},
+                }
                 continue
             if block_id:
-                seen_ids.add(block_id)
+                block_indexes[block_id] = len(merged)
             merged.append(block)
 
     return merged
@@ -162,12 +168,18 @@ def prepare_execution_session(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Task {task_id} not found",
             )
+        if task.client_origin != resolved_task_params.client_origin:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Task {task_id} not found",
+            )
         if not resolved_task_params.skip_status_check:
             check_task_status(db, task)
         if should_trigger_ai:
             mark_task_pending(task)
         if (
             resolved_task_params.model_id
+            or resolved_task_params.model_options
             or resolved_task_params.auto_delete_executor is not None
         ):
             from sqlalchemy.orm.attributes import flag_modified
@@ -184,6 +196,10 @@ def prepare_execution_session(
             if resolved_task_params.force_override_bot_model_type:
                 task_crd.metadata.labels["forceOverrideBotModelType"] = (
                     resolved_task_params.force_override_bot_model_type
+                )
+            if resolved_task_params.model_options:
+                task_crd.metadata.labels["modelOptions"] = json.dumps(
+                    resolved_task_params.model_options
                 )
             if resolved_task_params.auto_delete_executor is not None:
                 task_crd.metadata.labels["autoDeleteExecutor"] = (

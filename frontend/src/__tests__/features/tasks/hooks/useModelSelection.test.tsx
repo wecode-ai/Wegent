@@ -11,6 +11,12 @@ import {
   type Model,
   type TeamWithBotDetails,
 } from '@/features/tasks/hooks/useModelSelection'
+import {
+  getModelFromConfig,
+  getModelNamespaceFromConfig,
+  getModelTypeFromConfig,
+} from '@/features/settings/services/bots'
+import { getGlobalModelPreference } from '@/utils/modelPreferences'
 
 const mockTranslate = (_key: string, fallback?: string) => fallback ?? _key
 
@@ -29,6 +35,8 @@ jest.mock('@/apis/models', () => ({
 jest.mock('@/features/settings/services/bots', () => ({
   isPredefinedModel: jest.fn(() => false),
   getModelFromConfig: jest.fn(() => null),
+  getModelNamespaceFromConfig: jest.fn(() => undefined),
+  getModelTypeFromConfig: jest.fn(() => undefined),
   getAllowedModelsFromConfig: jest.fn(() => []),
 }))
 
@@ -47,6 +55,15 @@ const mockModel: Model = {
   provider: 'anthropic',
   modelId: 'claude-3-5-sonnet-20241022',
   type: 'public',
+}
+
+const mockAdvancedModel: Model = {
+  name: 'claude-opus-4-advanced',
+  displayName: 'Claude Opus 4 Advanced',
+  provider: 'anthropic',
+  modelId: 'claude-opus-4-advanced',
+  type: 'public',
+  isAdvanced: true,
 }
 
 const mockTeam: TeamWithBotDetails = {
@@ -102,6 +119,22 @@ async function renderModelSelectionHook() {
   return hook
 }
 
+function mockDeferredModelsLoad(models: Model[]) {
+  let resolveModels!: (value: { data: Model[] }) => void
+  const promise = new Promise<{ data: Model[] }>(resolve => {
+    resolveModels = resolve
+  })
+  ;(modelApis.getUnifiedModels as jest.Mock).mockReturnValue(promise)
+  return {
+    async resolve() {
+      await act(async () => {
+        resolveModels({ data: models })
+        await promise
+      })
+    },
+  }
+}
+
 describe('useModelSelection', () => {
   beforeEach(() => {
     jest.clearAllMocks()
@@ -130,5 +163,100 @@ describe('useModelSelection', () => {
     })
 
     expect(result.current.forceOverride).toBe(false)
+  })
+
+  it('resolves the concrete bot preset model from bot config', async () => {
+    ;(getModelFromConfig as jest.Mock).mockReturnValue(mockAdvancedModel.name)
+    ;(getModelTypeFromConfig as jest.Mock).mockReturnValue(mockAdvancedModel.type)
+    ;(getModelNamespaceFromConfig as jest.Mock).mockReturnValue(undefined)
+    const teamWithBotModel: TeamWithBotDetails = {
+      ...mockTeam,
+      bots: [
+        {
+          bot_id: 1,
+          bot_prompt: '',
+          bot: {
+            agent_config: { bind_model: mockAdvancedModel.name },
+          },
+        },
+      ],
+    } satisfies TeamWithBotDetails
+
+    ;(modelApis.getUnifiedModels as jest.Mock).mockReset()
+    let resolveModels!: (value: { data: Model[] }) => void
+    const promise = new Promise<{ data: Model[] }>(resolve => {
+      resolveModels = resolve
+    })
+    ;(modelApis.getUnifiedModels as jest.Mock).mockReturnValue(promise)
+
+    const { result } = renderHook(() =>
+      useModelSelection({
+        teamId: 1,
+        taskId: null,
+        selectedTeam: teamWithBotModel,
+      })
+    )
+
+    await act(async () => {
+      resolveModels({ data: [mockAdvancedModel] })
+      await promise
+    })
+
+    await waitFor(() => {
+      expect(result.current.boundDefaultModel).toEqual(mockAdvancedModel)
+    })
+  })
+
+  it('restores advanced model from team preference even when advanced models are hidden', async () => {
+    ;(getGlobalModelPreference as jest.Mock).mockReturnValue({
+      modelName: mockAdvancedModel.name,
+      modelType: mockAdvancedModel.type,
+      forceOverride: true,
+      updatedAt: Date.now(),
+    })
+    ;(modelApis.getUnifiedModels as jest.Mock).mockReset()
+    const modelLoad = mockDeferredModelsLoad([mockModel, mockAdvancedModel])
+
+    const { result } = renderHook(() =>
+      useModelSelection({
+        teamId: 1,
+        taskId: null,
+        selectedTeam: mockTeam,
+      })
+    )
+
+    await modelLoad.resolve()
+
+    await waitFor(() => {
+      expect(result.current.selectedModel).toEqual(expect.objectContaining(mockAdvancedModel))
+    })
+    expect(result.current.showAdvancedModels).toBe(false)
+    expect(result.current.filteredModels).toEqual([expect.objectContaining(mockModel)])
+  })
+
+  it('keeps advanced task model selection when advanced models are hidden', async () => {
+    ;(modelApis.getUnifiedModels as jest.Mock).mockReset()
+    const modelLoad = mockDeferredModelsLoad([mockModel, mockAdvancedModel])
+
+    const { result } = renderHook(() =>
+      useModelSelection({
+        teamId: 1,
+        taskId: 100,
+        taskModelId: mockAdvancedModel.name,
+        selectedTeam: mockTeam,
+      })
+    )
+
+    await modelLoad.resolve()
+
+    await waitFor(() => {
+      expect(result.current.selectedModel).toEqual(expect.objectContaining(mockAdvancedModel))
+    })
+
+    await act(async () => {})
+
+    expect(result.current.selectedModel).toEqual(expect.objectContaining(mockAdvancedModel))
+    expect(result.current.showAdvancedModels).toBe(false)
+    expect(result.current.filteredModels).toEqual([expect.objectContaining(mockModel)])
   })
 })

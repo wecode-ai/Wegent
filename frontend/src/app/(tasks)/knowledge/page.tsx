@@ -13,6 +13,7 @@ import {
   ResizableSidebar,
   CollapsedSidebarButtons,
 } from '@/features/tasks/components/sidebar'
+import { TaskParamSync } from '@/features/tasks/components/params'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 import { GithubStarButton } from '@/features/layout/GithubStarButton'
@@ -21,8 +22,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { saveLastTab } from '@/utils/userPreferences'
 import { useUser } from '@/features/common/UserContext'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
-import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext'
-import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { paths } from '@/config/paths'
 import { Spinner } from '@/components/ui/spinner'
 import { useWikiProjects } from '@/features/knowledge/useWikiProjects'
@@ -59,8 +59,7 @@ function KnowledgePageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { user } = useUser()
-  const { clearAllStreams } = useChatStreamContext()
-  const { setSelectedTask } = useTaskContext()
+  const { selectTask } = useTaskSession()
   const isMobile = useIsMobile()
 
   // Get initial knowledge type tab from URL parameter
@@ -214,13 +213,17 @@ function KnowledgePageContent() {
   const handleNewTask = () => {
     // IMPORTANT: Clear selected task FIRST to ensure UI state is reset immediately
     // This prevents the UI from being stuck showing the previous task's messages
-    setSelectedTask(null)
-    clearAllStreams()
+    selectTask(null)
     router.replace(paths.chat.getHref())
   }
 
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
+      {/* TaskParamSync handles URL taskId parameter synchronization with TaskSessionContext */}
+      <Suspense>
+        <TaskParamSync />
+      </Suspense>
+
       {/* Collapsed sidebar floating buttons */}
       {isCollapsed && !isMobile && (
         <CollapsedSidebarButtons onExpand={handleToggleCollapsed} onNewTask={handleNewTask} />

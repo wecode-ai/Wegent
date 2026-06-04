@@ -30,6 +30,10 @@ from app.services.mcp_provider_registry import (
     list_mcp_providers,
 )
 from app.services.readers import KindType, kindReader
+from app.services.skill_binding_service import (
+    SkillBindingContext,
+    skill_binding_service,
+)
 from app.services.skill_resolution import find_skill_by_name, find_skill_by_ref
 from app.services.user_mcp_service import user_mcp_service
 from shared.models import ExecutionRequest
@@ -194,7 +198,7 @@ class TaskRequestBuilder:
         # Convert preload_skills to the format expected by _get_bot_skills
         effective_preload_skills = list(preload_skills or [])
 
-        # When clarification mode is enabled, auto-inject the interactive-form-question skill.
+        # When clarification mode is enabled, auto-inject the interactive skill.
         # This replaces the old prompt-injection approach with the MCP skill approach,
         # allowing the AI to use the interactive_form_question tool for interactive clarification forms.
         if enable_clarification:
@@ -214,6 +218,17 @@ class TaskRequestBuilder:
         extra_available_skills = self._inject_subscription_manager_skill(
             is_subscription=is_subscription,
         )
+        binding_context = self._build_skill_binding_context(task=task, team=team)
+        user_default_skill_refs = skill_binding_service.list_user_default_skill_refs(
+            self.db,
+            user.id,
+            context=binding_context,
+        )
+        for skill_ref in user_default_skill_refs:
+            if skill_ref.get("force_preload"):
+                effective_preload_skills.append(skill_ref)
+            else:
+                extra_available_skills.append(skill_ref)
 
         user_preload_skills = None
         if effective_preload_skills:
@@ -480,6 +495,25 @@ class TaskRequestBuilder:
         )
 
         return request
+
+    def _build_skill_binding_context(
+        self,
+        *,
+        task: TaskResource,
+        team: Kind,
+    ) -> SkillBindingContext:
+        """Build runtime context for filtering user automatic Skill bindings."""
+        return SkillBindingContext(
+            mode=self._derive_task_mode(task),
+            agent_id=team.id,
+            project_id=getattr(task, "project_id", None),
+        )
+
+    def _derive_task_mode(self, task: TaskResource) -> str:
+        payload = task.json if isinstance(task.json, dict) else {}
+        metadata = payload.get("metadata", {})
+        labels = metadata.get("labels", {}) if isinstance(metadata, dict) else {}
+        return str(labels.get("taskType") or labels.get("type") or "chat")
 
     # =========================================================================
     # Bot Resolution (from ChatConfigBuilder)
@@ -1694,14 +1728,14 @@ Response template:
 
     @staticmethod
     def _inject_clarification_skill(preload_skills: list) -> list:
-        """Inject the interactive-form-question skill when clarification mode is enabled.
+        """Inject the interactive skill when clarification mode is enabled.
 
-        When enable_clarification=True, the interactive-form-question skill is automatically added
+        When enable_clarification=True, the interactive skill is automatically added
         to preload_skills. This replaces the old prompt-injection approach
         (CLARIFICATION_PROMPT appended to system prompt) with the MCP skill approach,
         allowing the AI to use the interactive_form_question tool for interactive clarification forms.
 
-        The interactive-form-question skill provides the interactive_form_question MCP tool which:
+        The interactive skill provides the interactive_form_question MCP tool which:
         1. Displays an interactive form card in the frontend
         2. Returns __silent_exit__ immediately (non-blocking)
         3. Waits for user response as a new conversation message
@@ -1710,10 +1744,9 @@ Response template:
             preload_skills: Current list of preload skills
 
         Returns:
-            Updated preload_skills list with interactive-form-question skill injected (if not already present)
+            Updated preload_skills list with interactive skill injected (if not already present)
         """
-        # Clarification skill name (matches backend/init_data/skills/interactive-form-question/SKILL.md)
-        clarification_skill_name = "interactive-form-question"
+        clarification_skill_name = "interactive"
 
         # Check if already present (avoid duplicates)
         existing_names = {

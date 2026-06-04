@@ -58,7 +58,7 @@ RUN dnf install -y \
     jq zip \
     # Redis server for standalone mode (embedded)
     redis \
-    && npm install -g @anthropic-ai/claude-code@2.1.33 \
+    && npm install -g @anthropic-ai/claude-code@2.1.142 \
     && dnf clean all \
     && rm -rf /var/cache/dnf/*
 

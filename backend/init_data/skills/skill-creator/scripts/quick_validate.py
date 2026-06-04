@@ -41,7 +41,14 @@ def validate_skill(skill_path):
         return False, f"Invalid YAML in frontmatter: {e}"
 
     # Define allowed properties
-    ALLOWED_PROPERTIES = {"name", "description", "license", "allowed-tools", "metadata"}
+    ALLOWED_PROPERTIES = {
+        "name",
+        "description",
+        "license",
+        "allowed-tools",
+        "metadata",
+        "compatibility",
+    }
 
     # Check for unexpected properties (excluding nested keys under metadata)
     unexpected_keys = set(frontmatter.keys()) - ALLOWED_PROPERTIES
@@ -63,11 +70,11 @@ def validate_skill(skill_path):
         return False, f"Name must be a string, got {type(name).__name__}"
     name = name.strip()
     if name:
-        # Check naming convention (hyphen-case: lowercase with hyphens)
+        # Check naming convention (kebab-case: lowercase with hyphens)
         if not re.match(r"^[a-z0-9-]+$", name):
             return (
                 False,
-                f"Name '{name}' should be hyphen-case (lowercase letters, digits, and hyphens only)",
+                f"Name '{name}' should be kebab-case (lowercase letters, digits, and hyphens only)",
             )
         if name.startswith("-") or name.endswith("-") or "--" in name:
             return (
@@ -95,6 +102,20 @@ def validate_skill(skill_path):
             return (
                 False,
                 f"Description is too long ({len(description)} characters). Maximum is 1024 characters.",
+            )
+
+    # Validate compatibility field if present (optional)
+    compatibility = frontmatter.get("compatibility", "")
+    if compatibility:
+        if not isinstance(compatibility, str):
+            return (
+                False,
+                f"Compatibility must be a string, got {type(compatibility).__name__}",
+            )
+        if len(compatibility) > 500:
+            return (
+                False,
+                f"Compatibility is too long ({len(compatibility)} characters). Maximum is 500 characters.",
             )
 
     return True, "Skill is valid!"

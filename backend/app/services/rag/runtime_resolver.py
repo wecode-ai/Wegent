@@ -29,6 +29,7 @@ from app.services.rag.runtime_specs import (
 from knowledge_engine.embedding.capabilities import (
     normalize_additional_input_modalities,
 )
+from shared.models import SearchHints
 from shared.utils.crypto import decrypt_api_key
 from shared.utils.placeholder import process_custom_headers_placeholders
 
@@ -160,6 +161,7 @@ class RagRuntimeResolver:
         vector_weight: float | None = None,
         keyword_weight: float | None = None,
         metadata_condition: dict | None = None,
+        search_hints: SearchHints | None = None,
     ) -> QueryRuntimeSpec:
         from app.services.knowledge.knowledge_service import KnowledgeService
 
@@ -182,11 +184,24 @@ class RagRuntimeResolver:
         return QueryRuntimeSpec(
             knowledge_base_ids=[knowledge_base_id],
             query=query,
+            search_hints=search_hints,
             max_results=max_results,
             route_mode="rag_retrieval",
             metadata_condition=metadata_condition,
             user_id=user_id,
             user_name=user_name,
+            knowledge_base_retrieval_overrides=[
+                {
+                    "knowledge_base_id": knowledge_base_id,
+                    "retrieval_config": RuntimeRetrievalConfig(
+                        top_k=max_results,
+                        score_threshold=score_threshold,
+                        retrieval_mode=retrieval_mode,
+                        vector_weight=vector_weight,
+                        keyword_weight=keyword_weight,
+                    ),
+                }
+            ],
             knowledge_base_configs=[
                 QueryKnowledgeBaseRuntimeConfig(
                     knowledge_base_id=knowledge_base_id,

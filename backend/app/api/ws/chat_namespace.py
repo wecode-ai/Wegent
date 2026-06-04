@@ -443,7 +443,6 @@ class ChatNamespace(socketio.AsyncNamespace):
                 )
         except Exception as e:
             logger.exception(f"[WS] task:join error fetching subtasks: {e}")
-            # Continue without subtasks - frontend can fall back to API call
 
         # Check for active streaming
         logger.info(
@@ -658,6 +657,29 @@ class ChatNamespace(socketio.AsyncNamespace):
                     "error": "Deep Research does not support follow-up questions. Please start a new conversation."
                 }
 
+            if payload.task_id:
+                from app.services.chat.interactive_forms import (
+                    validate_interactive_form_answer,
+                )
+
+                form_validation = validate_interactive_form_answer(
+                    db,
+                    task_id=payload.task_id,
+                    answer=payload.interactive_form_answer,
+                )
+                if not form_validation.ok:
+                    logger.warning(
+                        "[WS] chat:send blocked by interactive form state: "
+                        "task_id=%s, error=%s, message=%s",
+                        payload.task_id,
+                        form_validation.error,
+                        form_validation.message,
+                    )
+                    return {
+                        "error": form_validation.error,
+                        "message": form_validation.message,
+                    }
+
             # Get task JSON for group chat check
             task_json = {}
             if payload.task_id:
@@ -741,6 +763,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 model_id=payload.force_override_bot_model,
                 force_override_bot_model=payload.force_override_bot_model is not None,
                 force_override_bot_model_type=payload.force_override_bot_model_type,
+                model_options=payload.model_options,
                 is_group_chat=payload.is_group_chat,
                 git_url=payload.git_url,
                 git_repo=payload.git_repo,
@@ -758,6 +781,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 skip_status_check=payload.action == "pipeline:confirm",
                 device_id=payload.device_id,
                 project_id=payload.project_id,
+                client_origin=payload.client_origin,
                 generate_params=generate_params_dict,
             )
 
@@ -1335,6 +1359,25 @@ class ChatNamespace(socketio.AsyncNamespace):
             logger.info(
                 f"[WS] chat:retry found user_subtask: id={user_subtask.id}, prompt={user_subtask.prompt[:50] if user_subtask.prompt else ''}..."
             )
+
+            retryable_statuses = {
+                SubtaskStatus.FAILED.value,
+                SubtaskStatus.CANCELLED.value,
+            }
+            current_status = (
+                failed_ai_subtask.status.value
+                if hasattr(failed_ai_subtask.status, "value")
+                else str(failed_ai_subtask.status)
+            )
+            if current_status not in retryable_statuses:
+                logger.warning(
+                    "[WS] chat:retry rejected non-terminal failed subtask: "
+                    "task_id=%s, subtask_id=%s, status=%s",
+                    payload.task_id,
+                    failed_ai_subtask.id,
+                    current_status,
+                )
+                return {"error": f"Cannot retry subtask in {current_status} state"}
 
             # Reset the failed AI subtask to PENDING status using service module
             # Also pass task to reset Task status (required for executor_manager to pick up the task)

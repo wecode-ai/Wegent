@@ -1,35 +1,17 @@
 import { useEffect, useState } from 'react'
 import { FileText, Loader2, X } from 'lucide-react'
 import type { Attachment } from '@/types/api'
-import { getRuntimeConfig } from '@/config/runtime'
+import {
+  getAttachmentImageUrl,
+  getAttachmentTypeLabel,
+  isImageAttachment,
+} from '@/lib/attachments'
 
 interface AttachmentBadgesProps {
   attachments: Attachment[]
   uploadingFiles: Map<string, { file: File; progress: number }>
   errors: Map<string, string>
   onRemoveAttachment: (attachmentId: number) => void
-}
-
-function isImageAttachment(attachment: Attachment): boolean {
-  return (
-    attachment.mime_type.toLowerCase().startsWith('image/') ||
-    ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'].includes(
-      attachment.file_extension.toLowerCase()
-    )
-  )
-}
-
-function getAttachmentImageUrl(attachmentId: number): string {
-  const { apiBaseUrl } = getRuntimeConfig()
-  return `${apiBaseUrl}/attachments/${attachmentId}/download`
-}
-
-function getAttachmentTypeLabel(attachment: Attachment): string {
-  const extension = attachment.file_extension.replace('.', '').trim()
-  if (extension) return extension.toUpperCase()
-
-  const subtype = attachment.mime_type.split('/')[1]?.split(/[+;]/)[0]
-  return subtype ? subtype.toUpperCase() : 'FILE'
 }
 
 function ImageAttachmentPreview({ attachment }: { attachment: Attachment }) {
@@ -136,7 +118,7 @@ function DocumentAttachmentCard({
   return (
     <div
       data-testid="attachment-badge"
-      className="relative inline-flex h-14 w-[220px] items-center gap-3 rounded-xl border border-border bg-base px-3 pr-8 text-xs text-text-secondary shadow-sm"
+      className="relative inline-flex h-14 w-[220px] items-center gap-3 rounded-xl border border-border bg-background px-3 pr-8 text-xs text-text-secondary shadow-sm"
     >
       <span
         data-testid="attachment-document-icon"

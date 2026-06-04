@@ -13,8 +13,10 @@ describe('createDeviceApi', () => {
 
     await api.restartCloudDevice('device/1')
     await api.deleteCloudDevice('device/1')
+    await api.deleteDevice('device/1')
 
     expect(client.post).toHaveBeenCalledWith('/cloud-devices/device%2F1/restart')
     expect(client.delete).toHaveBeenCalledWith('/cloud-devices/device%2F1')
+    expect(client.delete).toHaveBeenCalledWith('/devices/device%2F1')
   })
 })

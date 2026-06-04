@@ -126,7 +126,6 @@ const buildProps = (): ChatInputCardProps => ({
   },
   onFileSelect: jest.fn(),
   onAttachmentRemove: jest.fn(),
-  isLoading: false,
   isStreaming: false,
   isStopping: false,
   hasMessages: false,
@@ -135,7 +134,6 @@ const buildProps = (): ChatInputCardProps => ({
   shouldHideChatInput: false,
   isModelSelectionRequired: false,
   isAttachmentReadyToSend: true,
-  isSubtaskStreaming: false,
   onStopStream: jest.fn(),
   onSendMessage: jest.fn(),
   availableSkills: [],
@@ -185,22 +183,15 @@ describe('ChatInputCard layout', () => {
     expect(chatInputWrapper).not.toHaveClass('pt-3')
   })
 
-  it('forwards queued and awaiting send state to input controls', () => {
+  it('forwards queue and guidance state to input controls', () => {
     render(
-      <ChatInputCard
-        {...buildProps()}
-        canQueueMessage
-        canSendGuidance
-        isAwaitingResponseStart
-        onSendGuidance={jest.fn()}
-      />
+      <ChatInputCard {...buildProps()} canQueueMessage canSendGuidance onSendGuidance={jest.fn()} />
     )
 
     expect(mockChatInputControls).toHaveBeenCalledWith(
       expect.objectContaining({
         canQueueMessage: true,
         canSendGuidance: true,
-        isAwaitingResponseStart: true,
         onSendGuidance: expect.any(Function),
       })
     )
@@ -253,6 +244,29 @@ describe('ChatInputCard layout', () => {
     fireEvent.click(screen.getByTestId('cancel-queued-message-button'))
 
     expect(onCancelQueuedMessage).toHaveBeenCalledWith('42:local-user-1')
+  })
+
+  it('moves a queued message back to the chat input for editing', () => {
+    const onEditQueuedMessage = jest.fn()
+
+    render(
+      <ChatInputCard
+        {...buildProps()}
+        onEditQueuedMessage={onEditQueuedMessage}
+        queuedMessages={[
+          {
+            id: '42:local-user-1',
+            displayMessage: 'next question',
+            status: 'queued',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('edit-queued-message-button'))
+
+    expect(onEditQueuedMessage).toHaveBeenCalledWith('42:local-user-1')
+    expect(screen.queryByTestId('prompt-edit-textarea')).not.toBeInTheDocument()
   })
 
   it('does not allow cancelling a queued message that is already sending', () => {
@@ -308,5 +322,28 @@ describe('ChatInputCard layout', () => {
 
     expect(onCancelGuidance).toHaveBeenCalledWith('guidance-1')
     expect(onSendExpiredGuidanceAsMessage).toHaveBeenCalledWith('guidance-2')
+  })
+
+  it('moves a guidance message back to the chat input for editing', () => {
+    const onEditGuidanceMessage = jest.fn()
+
+    render(
+      <ChatInputCard
+        {...buildProps()}
+        guidanceMessages={[
+          {
+            id: 'guidance-1',
+            displayMessage: 'focus on risks',
+            status: 'queued',
+          },
+        ]}
+        onEditGuidanceMessage={onEditGuidanceMessage}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('edit-guidance-message-button'))
+
+    expect(onEditGuidanceMessage).toHaveBeenCalledWith('guidance-1')
+    expect(screen.queryByTestId('prompt-edit-textarea')).not.toBeInTheDocument()
   })
 })

@@ -134,7 +134,6 @@ const buildProps = (): MobileChatInputControlsProps => ({
   selectedContexts: [],
   setSelectedContexts: jest.fn(),
   onFileSelect: jest.fn(),
-  isLoading: false,
   isStreaming: false,
   isStopping: false,
   hasMessages: false,
@@ -142,7 +141,6 @@ const buildProps = (): MobileChatInputControlsProps => ({
   isModelSelectionRequired: false,
   isAttachmentReadyToSend: true,
   taskInputMessage: 'hello',
-  isSubtaskStreaming: false,
   onStopStream: jest.fn(),
   onSendMessage: jest.fn(),
 })

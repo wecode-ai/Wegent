@@ -88,6 +88,20 @@ curl -fL -o wegent-executor \
 chmod +x wegent-executor
 ```
 
+#### 使用设备本机 CLI 配置
+
+默认情况下，executor 会使用 Wegent 下发的 Claude/Codex 模型和 provider 配置。如果某台设备已经在本机配置好了 Codex CLI 登录或 provider，可以通过环境变量让 Codex 使用本机配置：
+
+```bash
+WEGENT_LOCAL_CLI_CONFIG_RUNTIMES=codex
+```
+
+该变量为空或未设置时，所有 runtime 都继续使用系统下发配置。当前仅支持以下值：
+
+- `codex`：Codex 使用设备本机配置，不再注入 Wegent Codex provider。
+
+该配置只影响当前设备，适合不同设备分别使用系统下发配置或本机 Codex CLI 配置的场景。Claude 仍保持 Wegent 下发的配置行为。
+
 ### 构建设备镜像
 
 仓库提供 `docker/device/Dockerfile` 用于构建云设备或本地设备基础镜像。该镜像会安装 `code-server`、`weiboplat.wecoder-agent` 扩展、Claude Code CLI、`ttyd`、Node.js 22、Python、Git，并把 `executor/dist/wegent-executor` 放到 `/app/executor` 和 `~/.wegent-executor/bin/wegent-executor`。
@@ -123,14 +137,22 @@ docker run -d --platform linux/amd64 \
   wegent-device:linux-amd64
 ```
 
-设备镜像默认只启动 `wegent-executor` 和交互式 session gateway。Backend 根据项目 ID 找到项目绑定的本地设备与项目路径后，可以调用：
+设备镜像默认只启动 `wegent-executor` 和交互式 session gateway。需要注意的是，Wework 当前只对云设备开放项目连接工具；本地设备可以绑定到项目并执行 AI 任务，但不支持项目工具栏中的终端、IDE/code-server、桌面 VNC/VPN 入口。
 
 - `POST /api/projects/{project_id}/terminal`：在项目路径中启动可写 ttyd，返回带短期 token 的访问 URL。
 - `POST /api/projects/{project_id}/code-server`：返回带短期 token 的 code-server 访问 URL。设备镜像内的 code-server 使用固定密码运行，session gateway 会在服务端自动登录，浏览器不会看到 code-server 登录页或固定密码。
 
-两个入口都通过 `DEVICE_PUBLIC_BASE_URL` 下的 `/s/{session_id}/` 路径对外暴露；每个 terminal 或 code-server session 都有独立路径，因此同一用户可以同时打开多个项目，或在同一项目中打开多个 terminal/code-server。terminal 会话由设备侧动态创建，浏览器连接关闭后会销毁对应 ttyd 进程；code-server 是容器内持久进程，通过 gateway 按项目路径打开目录。若需要保留旧的固定 `8080` code-server 和 `7681` ttyd 入口，可在运行容器时添加 `-e START_DEVICE_UI=1` 并额外映射对应端口。
+上述项目会话接口用于云设备项目连接；如果项目绑定的是本地设备，Backend 会拒绝启动 terminal 或 code-server 会话。云设备返回的访问地址带有短期 session token，并通过设备侧 session gateway 暴露。每个 terminal 或 code-server session 都有独立路径，因此同一用户可以同时打开多个项目，或在同一项目中打开多个 terminal/code-server。terminal 会话由设备侧动态创建，浏览器连接关闭后会销毁对应 ttyd 进程；code-server 是容器内持久进程，通过 gateway 按项目路径打开目录。若需要保留旧的固定 `8080` code-server 和 `7681` ttyd 入口，可在运行容器时添加 `-e START_DEVICE_UI=1` 并额外映射对应端口。
 
 如果项目配置了 `workspace.localPath` 或 `workspace.checkoutPath`，设备会在启动 terminal 或 code-server 前自动创建该目录。
+
+### 非项目会话工作区
+
+当聊天未选择项目但绑定到在线设备时，Executor 侧的独立 Chats 工作区功能当前默认关闭。如需启用，可在设备运行环境中设置 `WEGENT_EXECUTOR_STANDALONE_CHATS_ENABLED=true`。
+
+启用后，首轮任务先在临时任务目录中执行；回复完成后，Executor 会根据日期和回复摘要生成目录名，并把临时目录移动到 Chats 工作区树中。默认根目录为 `~/.wecode/wegent-executor/workspace/chats`。如需自定义位置，可在设备运行环境中设置 `WEGENT_EXECUTOR_CHATS_DIR`。Backend 会把最终路径写入任务元数据标签 `standaloneChatWorkspacePath`，后续继续该会话或打开历史会话时会复用同一目录。
+
+项目会话不使用此路径；项目会话仍然使用项目配置中的 `workspace.localPath` 或 `workspace.checkoutPath`。
 
 #### 安装指定版本
 
@@ -221,6 +243,21 @@ EXECUTOR_MODE=local wegent-executor
 
 只需在发送每条消息之前更改设备选择即可。
 
+### 项目中使用本地设备
+
+创建项目时可以选择在线或繁忙的 ClaudeCode 本地设备。项目创建后，AI 任务会在该本地设备上执行，并使用项目配置中的本地路径或检出路径。
+
+本地设备不支持项目工具栏中的云端连接能力：
+
+| 功能 | 本地设备支持 |
+|------|--------------|
+| **终端** | 不支持 |
+| **IDE/code-server** | 不支持 |
+| **桌面 VNC/VPN** | 不支持 |
+| **CPU/MEM/磁盘监控** | 不支持 |
+
+如果项目绑定本地设备，工作区工具栏会隐藏终端、IDE 和桌面入口，并显示本地设备能力限制提示。需要这些连接和监控能力时，请选择云设备创建项目。
+
 ### 设置默认设备
 
 1. 在选择器中打开设备列表
@@ -239,11 +276,13 @@ EXECUTOR_MODE=local wegent-executor
 2. **设置页**：进入 **设置** → **连接** 查看可连接设备
 3. **API**：`GET /devices` 用于程序化访问
 
-### 管理云设备
+### 管理连接页设备
 
-**设置** → **连接** 页面会列出当前账号可连接的 Claude Code 云设备。页面仅展示 `device_type=cloud` 且 `bind_shell=claudecode` 的设备，并显示在线状态、executor 版本、CPU、内存和磁盘使用率。
+**设置** → **连接** 页面会列出当前账号可连接的 ClaudeCode 设备，包括云设备和本地设备。页面仅展示 `bind_shell=claudecode` 的设备，并按云设备、本地设备分组。
 
-当没有云设备时，点击 **添加** 可以创建一台新的云设备。创建请求返回后，页面会保留“云设备创建中”的提示；初始化通常需要 2-3 分钟，设备上线后会自动出现在列表中。
+云设备会显示在线状态、executor 版本、CPU、内存和磁盘使用率。当没有云设备时，点击 **添加** 可以创建一台新的云设备。创建请求返回后，页面会保留“云设备创建中”的提示；初始化通常需要 2-3 分钟，设备上线后会自动出现在列表中。
+
+本地设备会显示设备名称、在线状态和 executor 版本，但不会展示 CPU、MEM、磁盘监控数据和资源监控说明，也不会展示终端、IDE、桌面 VNC/VPN、重启或删除云资源等云设备专属操作。离线本地设备会显示删除入口，用于移除该设备的注册记录；如果设备重新连接，它会自动重新注册。
 
 在线云设备支持直接打开交互式会话：
 
@@ -271,7 +310,7 @@ EXECUTOR_MODE=local wegent-executor
 | **名称** | 设备主机名（如 "Darwin - MacBook-Pro.local"） |
 | **状态** | 在线/离线指示器 |
 | **版本** | executor 版本（如适用） |
-| **资源使用率** | CPU、内存、磁盘使用率（如设备上报） |
+| **资源使用率** | CPU、内存、磁盘使用率（仅云设备） |
 | **槽位** | 并发任务容量（X/5） |
 | **默认** | 如果设为默认则显示星号 |
 

@@ -9,9 +9,11 @@ from app.services.knowledge.splitter_config import (
 )
 from shared.models import (
     RemoteKnowledgeBaseQueryConfig,
+    RemoteKnowledgeBaseRetrievalOverride,
     RuntimeEmbeddingModelConfig,
     RuntimeRetrievalConfig,
     RuntimeRetrieverConfig,
+    SearchHints,
 )
 
 RetrievalPolicy = Literal[
@@ -66,11 +68,13 @@ class IndexRuntimeSpec(RuntimeSpecModel):
 
 
 QueryKnowledgeBaseRuntimeConfig = RemoteKnowledgeBaseQueryConfig
+QueryKnowledgeBaseRetrievalOverride = RemoteKnowledgeBaseRetrievalOverride
 
 
 class QueryRuntimeSpec(RuntimeSpecModel):
     knowledge_base_ids: list[int]
     query: str
+    search_hints: SearchHints | None = None
     max_results: int = 5
     route_mode: Literal["auto", "direct_injection", "rag_retrieval"] = "auto"
     direct_injection_budget: Optional[DirectInjectionBudget] = None
@@ -81,6 +85,9 @@ class QueryRuntimeSpec(RuntimeSpecModel):
     user_name: Optional[str] = None
     knowledge_base_configs: list[QueryKnowledgeBaseRuntimeConfig] = Field(
         default_factory=list
+    )
+    knowledge_base_retrieval_overrides: list[QueryKnowledgeBaseRetrievalOverride] = (
+        Field(default_factory=list)
     )
     enabled_index_families: list[str] = Field(default_factory=lambda: ["chunk_vector"])
     retrieval_policy: RetrievalPolicy = "chunk_only"

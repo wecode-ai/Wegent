@@ -16,6 +16,16 @@ function getRedirectTarget(): string {
   return queryRedirect || storedRedirect || '/'
 }
 
+function buildOidcLoginUrl(apiBaseUrl: string, redirect: string, appBasePath: string): string {
+  const params = new URLSearchParams()
+  params.set('redirect', redirect)
+  if (appBasePath) {
+    params.set('frontend_base_path', appBasePath)
+  }
+
+  return `${apiBaseUrl}/auth/oidc/login?${params.toString()}`
+}
+
 export function LoginPage() {
   const { t } = useTranslation('common')
   const { login, user, isLoading: authLoading } = useAuth()
@@ -38,6 +48,17 @@ export function LoginPage() {
     }
   }, [authLoading, redirectTarget, user])
 
+  useEffect(() => {
+    if (config.loginMode === 'oidc') {
+      sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, redirectTarget)
+      window.location.href = buildOidcLoginUrl(
+        config.apiBaseUrl,
+        redirectTarget,
+        config.appBasePath,
+      )
+    }
+  }, [config.apiBaseUrl, config.appBasePath, config.loginMode, redirectTarget])
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError(null)
@@ -54,15 +75,20 @@ export function LoginPage() {
   }
 
   function handleOidcLogin() {
-    const redirect = sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY)
-    const oidcUrl = redirect
-      ? `${config.apiBaseUrl}/auth/oidc/login?redirect=${encodeURIComponent(redirect)}`
-      : `${config.apiBaseUrl}/auth/oidc/login`
-    window.location.href = oidcUrl
+    const redirect = sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY) || redirectTarget
+    window.location.href = buildOidcLoginUrl(
+      config.apiBaseUrl,
+      redirect,
+      config.appBasePath,
+    )
+  }
+
+  if (config.loginMode === 'oidc') {
+    return null
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-base px-6 py-12">
+    <div className="flex min-h-screen items-center justify-center bg-background px-6 py-12">
       <div className="w-full max-w-md">
         <div className="mb-8 text-center">
           <h1 className="text-3xl font-semibold text-text-primary">
@@ -83,7 +109,7 @@ export function LoginPage() {
                   id="user_name"
                   name="user_name"
                   data-testid="login-username-input"
-                  className="mt-2 h-11 w-full rounded-lg border border-border bg-base px-3 text-sm text-text-primary outline-none focus:border-text-secondary"
+                  className="mt-2 h-11 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-text-secondary"
                   value={formData.user_name}
                   autoComplete="username"
                   onChange={event =>
@@ -101,7 +127,7 @@ export function LoginPage() {
                     name="password"
                     data-testid="login-password-input"
                     type={showPassword ? 'text' : 'password'}
-                    className="h-11 w-full rounded-lg border border-border bg-base px-3 pr-11 text-sm text-text-primary outline-none focus:border-text-secondary"
+                    className="h-11 w-full rounded-lg border border-border bg-background px-3 pr-11 text-sm text-text-primary outline-none focus:border-text-secondary"
                     value={formData.password}
                     autoComplete="current-password"
                     onChange={event =>
@@ -123,7 +149,7 @@ export function LoginPage() {
               <button
                 type="submit"
                 data-testid="login-submit-button"
-                className="h-11 w-full rounded-lg bg-text-primary text-sm font-semibold text-base shadow-sm disabled:opacity-60"
+                className="h-11 w-full rounded-lg bg-text-primary text-sm font-semibold text-white shadow-sm disabled:opacity-60"
                 disabled={isSubmitting}
               >
                 {isSubmitting
@@ -145,7 +171,7 @@ export function LoginPage() {
             <button
               type="button"
               data-testid="oidc-login-button"
-              className="h-11 w-full rounded-lg border border-border bg-base text-sm font-semibold text-text-primary hover:bg-muted"
+              className="h-11 w-full rounded-lg border border-border bg-background text-sm font-semibold text-text-primary hover:bg-muted"
               onClick={handleOidcLogin}
             >
               {config.oidcLoginText || t('workbench.oidc_login', '使用 OpenID Connect 登录')}

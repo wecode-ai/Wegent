@@ -28,6 +28,27 @@ from app.services.kind import kind_service
 logger = logging.getLogger(__name__)
 
 
+def _normalize_runtime_family_part(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    return normalized or None
+
+
+def build_model_runtime_family(
+    provider: Optional[str], config: Optional[Dict[str, Any]]
+) -> Optional[str]:
+    provider_key = _normalize_runtime_family_part(provider)
+    if not provider_key:
+        return None
+
+    protocol_key = _normalize_runtime_family_part((config or {}).get("protocol"))
+    if not protocol_key:
+        return provider_key
+
+    return f"{provider_key}.{protocol_key}"
+
+
 class ModelType(str, Enum):
     """
     Model type enumeration.
@@ -67,6 +88,9 @@ class UnifiedModel:
             str
         ] = None,  # New: llm, tts, stt, embedding, rerank
         is_advanced: bool = False,
+        model_group: Optional[str] = None,
+        model_sub_group: Optional[str] = None,
+        runtime_family: Optional[str] = None,
     ):
         self.name = name
         self.type = (
@@ -82,6 +106,15 @@ class UnifiedModel:
             model_category_type or "llm"
         )  # Default to 'llm' for backward compatibility
         self.is_advanced = is_advanced
+        self.model_group = model_group
+        self.model_sub_group = model_sub_group
+        self.runtime_family = runtime_family or build_model_runtime_family(
+            provider, self.config
+        )
+
+    @property
+    def runtime(self) -> Dict[str, Optional[str]]:
+        return {"family": self.runtime_family}
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -101,13 +134,15 @@ class UnifiedModel:
             "namespace": self.namespace,
             "modelCategoryType": self.model_category_type,
             "isAdvanced": self.is_advanced,
+            "modelGroup": self.model_group,
+            "modelSubGroup": self.model_sub_group,
+            "runtime": self.runtime,
             "config": safe_config,
         }
 
     def to_full_dict(self) -> Dict[str, Any]:
-        """Convert to full dictionary including config with env"""
+        """Convert to full dictionary without exposing sensitive env values."""
         result = self.to_dict()
-        result["config"] = self.config
         result["isActive"] = self.is_active
         return result
 
@@ -142,6 +177,8 @@ class ModelAggregationService:
                 "config": {},
                 "model_category_type": "llm",
                 "is_advanced": False,
+                "model_group": None,
+                "model_sub_group": None,
             }
 
         try:
@@ -156,6 +193,10 @@ class ModelAggregationService:
                 model_category_type = model_crd.spec.modelType.value
 
             config = model_crd.spec.modelConfig
+            if model_crd.spec.protocol:
+                config = {**config, "protocol": model_crd.spec.protocol}
+            if model_crd.spec.apiFormat:
+                config = {**config, "apiFormat": model_crd.spec.apiFormat.value}
 
             # Include type-specific config for non-LLM models
             if model_category_type == "video":
@@ -191,6 +232,8 @@ class ModelAggregationService:
                     if model_crd.spec.isAdvanced
                     else False
                 ),
+                "model_group": model_crd.spec.modelGroup,
+                "model_sub_group": model_crd.spec.modelSubGroup,
             }
         except (ValueError, KeyError, AttributeError) as e:
             logger.warning("Failed to extract model info: %s", e)
@@ -201,10 +244,16 @@ class ModelAggregationService:
                 "config": {},
                 "model_category_type": "llm",
                 "is_advanced": False,
+                "model_group": None,
+                "model_sub_group": None,
             }
 
     def _is_model_compatible_with_shell(
-        self, provider: Optional[str], shell_type: str, support_model: List[str]
+        self,
+        provider: Optional[str],
+        shell_type: str,
+        support_model: List[str],
+        config: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """
         Check if a model is compatible with the given shell type.
@@ -221,12 +270,18 @@ class ModelAggregationService:
         # Agno supports OpenAI, Claude and Gemini models
         shell_provider_map = {
             "Agno": ["openai", "claude", "gemini"],
-            "ClaudeCode": ["claude"],
+            "ClaudeCode": ["claude", "openai"],
         }
 
-        # If supportModel is specified in shell, use it
         if support_model:
-            return provider in support_model
+            if provider not in support_model:
+                return False
+
+        if shell_type == "ClaudeCode" and provider == "openai":
+            return self._is_codex_compatible_model_config(config or {})
+
+        if support_model:
+            return True
 
         # Otherwise, filter by shell's supported providers
         supported_providers = shell_provider_map.get(shell_type)
@@ -238,6 +293,18 @@ class ModelAggregationService:
 
         # No filter, allow all
         return True
+
+    @staticmethod
+    def _is_codex_compatible_model_config(config: Dict[str, Any]) -> bool:
+        """Return whether an OpenAI model config can run through CodeXAgent."""
+        api_format = str(config.get("apiFormat") or config.get("api_format") or "")
+        protocol = str(config.get("protocol") or "")
+        wire_api = str(config.get("wire_api") or "")
+        return (
+            api_format.lower() == "responses"
+            or protocol.lower() == "openai-responses"
+            or wire_api.lower() == "responses"
+        )
 
     def _get_shell_support_model(
         self, db: Session, shell_name: str, current_user: Optional[User] = None
@@ -403,7 +470,10 @@ class ModelAggregationService:
                 info = self._extract_model_info_from_crd(model_data)
 
                 if shell_type and not self._is_model_compatible_with_shell(
-                    info["provider"], actual_shell_type, support_model
+                    info["provider"],
+                    actual_shell_type,
+                    support_model,
+                    info.get("config"),
                 ):
                     continue
 
@@ -429,6 +499,8 @@ class ModelAggregationService:
                     namespace=resource.namespace,
                     model_category_type=info.get("model_category_type", "llm"),
                     is_advanced=info.get("is_advanced", False),
+                    model_group=info.get("model_group"),
+                    model_sub_group=info.get("model_sub_group"),
                 )
                 result.append(unified)
                 seen_names[resource.name] = resource_type
@@ -450,7 +522,10 @@ class ModelAggregationService:
             public_model_category_type = model_dict.get("model_category_type", "llm")
 
             if shell_type and not self._is_model_compatible_with_shell(
-                provider, actual_shell_type, support_model
+                provider,
+                actual_shell_type,
+                support_model,
+                config,
             ):
                 continue
 
@@ -474,6 +549,10 @@ class ModelAggregationService:
                 namespace="default",
                 model_category_type=public_model_category_type,
                 is_advanced=model_dict.get("is_advanced", False),
+                model_group=model_dict.get("modelGroup")
+                or model_dict.get("model_group"),
+                model_sub_group=model_dict.get("modelSubGroup")
+                or model_dict.get("model_sub_group"),
             )
 
             # If name already exists as user model, we still add public model
@@ -531,6 +610,8 @@ class ModelAggregationService:
                     model_id=info["model_id"],
                     config=info["config"],
                     is_active=resource.is_active,
+                    model_group=info.get("model_group"),
+                    model_sub_group=info.get("model_sub_group"),
                 ).to_full_dict()
 
         elif model_type == ModelType.PUBLIC:
@@ -553,6 +634,10 @@ class ModelAggregationService:
                             "model_category_type", "llm"
                         ),
                         is_advanced=model_dict.get("is_advanced", False),
+                        model_group=model_dict.get("modelGroup")
+                        or model_dict.get("model_group"),
+                        model_sub_group=model_dict.get("modelSubGroup")
+                        or model_dict.get("model_sub_group"),
                     ).to_full_dict()
 
         return None

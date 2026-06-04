@@ -1,0 +1,23 @@
+@keyframes message-loader-slide {
+  0%,
+  100% {
+    transform: translateX(-40%);
+  }
+
+  50% {
+    transform: translateX(140%);
+  }
+}
+
+@keyframes message-loader-breathe {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0) scaleX(0.8);
+  }
+
+  50% {
+    opacity: 0.9;
+    transform: translateY(-4px) scaleX(1.15);
+  }
+}

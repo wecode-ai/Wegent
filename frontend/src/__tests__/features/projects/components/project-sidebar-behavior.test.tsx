@@ -16,7 +16,6 @@ const removeTaskFromProjectMock = jest.fn()
 const refreshProjectsMock = jest.fn()
 const toggleProjectExpandedMock = jest.fn()
 const setSelectedProjectTaskIdMock = jest.fn()
-const clearAllStreamsMock = jest.fn()
 const setSelectedTaskMock = jest.fn()
 let isWorkspaceEnabledMock = true
 
@@ -123,15 +122,9 @@ jest.mock('@/components/ui/dropdown', () => ({
   DropdownMenuTrigger: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }))
 
-jest.mock('@/features/tasks/contexts/chatStreamContext', () => ({
-  useChatStreamContext: () => ({
-    clearAllStreams: clearAllStreamsMock,
-  }),
-}))
-
-jest.mock('@/features/tasks/contexts/taskContext', () => ({
-  useTaskContext: () => ({
-    setSelectedTask: setSelectedTaskMock,
+jest.mock('@/features/tasks/session/TaskSession', () => ({
+  useTaskSession: () => ({
+    selectTask: setSelectedTaskMock,
     refreshTasks: jest.fn(),
   }),
 }))
@@ -185,6 +178,7 @@ describe('project sidebar behavior', () => {
 
     fireEvent.click(screen.getByTestId('project-section-toggle'))
 
+    expect(screen.getByTestId('project-section-list')).toHaveClass('mt-1', 'space-y-0.5')
     expect(screen.getByText('pathless-project')).toBeInTheDocument()
     expect(screen.getByText('workspace-project')).toBeInTheDocument()
   })

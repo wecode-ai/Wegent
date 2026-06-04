@@ -21,6 +21,7 @@ describe('workbench project chat hooks', () => {
 
     act(() => result.current.setSelectedModel(model))
     expect(result.current.selectedModel).toEqual(model)
+    expect(result.current.selectedModelOptions).toEqual({})
 
     rerender({ locked: true })
     act(() => result.current.setSelectedModel(null))
@@ -28,16 +29,261 @@ describe('workbench project chat hooks', () => {
     expect(result.current.selectedModel).toEqual(model)
   })
 
-  test('keeps only models whose name includes claude', async () => {
+  test('keeps known and uncategorized coding model families', async () => {
     const claudeModel: UnifiedModel = { name: 'wecode-claude-sonnet-4-5', type: 'public' }
     const gptModel: UnifiedModel = { name: 'wecode-gpt-4.1', type: 'public' }
+    const unknownModel: UnifiedModel = { name: 'unknown-model', type: 'public' }
+    const api = {
+      listModels: vi.fn().mockResolvedValue({ data: [claudeModel, gptModel, unknownModel] }),
+    }
+
+    const { result } = renderHook(() => useWorkbenchModels({ api, locked: false }))
+
+    await waitFor(() =>
+      expect(result.current.models).toEqual([claudeModel, gptModel, unknownModel])
+    )
+  })
+
+  test('marks incompatible existing task model choices as disabled', async () => {
+    const currentClaudeModel: UnifiedModel = {
+      name: 'wecode-claude-sonnet-4-5',
+      type: 'public',
+      runtime: { family: 'claude.claude' },
+    }
+    const nextClaudeCompatibleModel: UnifiedModel = {
+      name: 'ali-deepseek-v4-flash',
+      type: 'public',
+      modelId: 'deepseek-v4-flash',
+      runtime: { family: 'claude.claude' },
+    }
+    const claudeCompatibleKimi: UnifiedModel = {
+      name: 'kimi-k2.5(内网)',
+      type: 'public',
+      displayName: '内网:Kimi-K2.5',
+      modelId: 'kimi-k2.5',
+      runtime: { family: 'claude.claude' },
+    }
+    const gptModel: UnifiedModel = {
+      name: 'gpt-5.5-medium',
+      type: 'user',
+      runtime: { family: 'openai.openai-responses' },
+    }
+    const unknownModel: UnifiedModel = {
+      name: 'custom-routing-model',
+      type: 'user',
+    }
+    const api = {
+      listModels: vi
+        .fn()
+        .mockResolvedValue({
+          data: [
+            currentClaudeModel,
+            nextClaudeCompatibleModel,
+            claudeCompatibleKimi,
+            gptModel,
+            unknownModel,
+          ],
+        }),
+    }
+
+    const { result } = renderHook(() =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        selectionConfig: {
+          modelName: 'wecode-claude-sonnet-4-5',
+          modelType: 'public',
+        },
+        compatibilityConfig: {
+          modelName: 'wecode-claude-sonnet-4-5',
+          modelType: 'public',
+        },
+      })
+    )
+
+    await waitFor(() =>
+      expect(result.current.models.map(model => model.name)).toEqual([
+        'wecode-claude-sonnet-4-5',
+        'ali-deepseek-v4-flash',
+        'kimi-k2.5(内网)',
+        'gpt-5.5-medium',
+        'custom-routing-model',
+      ])
+    )
+    expect(
+      result.current.models
+        .filter(model => model.compatibilityDisabled)
+        .map(model => [model.name, model.compatibilityDisabledReason])
+    ).toEqual([
+      ['gpt-5.5-medium', 'runtime_family_mismatch'],
+      ['custom-routing-model', 'missing_target_runtime_family'],
+    ])
+  })
+
+  test('disables Claude-compatible Kimi models for an OpenAI current task', async () => {
+    const currentGptModel: UnifiedModel = {
+      name: 'wecode-gpt-5.5(海外)',
+      type: 'public',
+      displayName: '海外:GPT5.5',
+      runtime: { family: 'openai.openai-responses' },
+    }
+    const nextGptModel: UnifiedModel = {
+      name: 'wecode-gpt-5.4(海外)',
+      type: 'public',
+      displayName: '海外:GPT5.4',
+      runtime: { family: 'openai.openai-responses' },
+    }
+    const claudeCompatibleKimi: UnifiedModel = {
+      name: 'kimi-k2.5(内网)',
+      type: 'public',
+      displayName: '内网:Kimi-K2.5',
+      runtime: { family: 'claude.claude' },
+    }
+    const unknownDeepseek: UnifiedModel = {
+      name: 'deepseek-without-env-model',
+      type: 'public',
+      displayName: 'DeepSeek Without env.model',
+    }
+    const api = {
+      listModels: vi
+        .fn()
+        .mockResolvedValue({
+          data: [currentGptModel, nextGptModel, claudeCompatibleKimi, unknownDeepseek],
+        }),
+    }
+
+    const { result } = renderHook(() =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        selectionConfig: {
+          modelName: 'wecode-gpt-5.5(海外)',
+          modelType: 'public',
+        },
+        compatibilityConfig: {
+          modelName: 'wecode-gpt-5.5(海外)',
+          modelType: 'public',
+        },
+      })
+    )
+
+    await waitFor(() =>
+      expect(result.current.models.map(model => model.name)).toEqual([
+        'wecode-gpt-5.5(海外)',
+        'wecode-gpt-5.4(海外)',
+        'kimi-k2.5(内网)',
+        'deepseek-without-env-model',
+      ])
+    )
+    expect(
+      result.current.models
+        .filter(model => model.compatibilityDisabled)
+        .map(model => [model.name, model.compatibilityDisabledReason])
+    ).toEqual([
+      ['kimi-k2.5(内网)', 'runtime_family_mismatch'],
+      ['deepseek-without-env-model', 'missing_target_runtime_family'],
+    ])
+  })
+
+  test('restores model selection config and emits user changes', async () => {
+    const claudeModel: UnifiedModel = { name: 'wecode-claude-sonnet-4-5', type: 'public' }
+    const gptModel: UnifiedModel = {
+      name: 'overseas-gpt-5.4',
+      type: 'user',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.4',
+          sortOrder: 10,
+        },
+      },
+    }
+    const onSelectionChange = vi.fn()
     const api = {
       listModels: vi.fn().mockResolvedValue({ data: [claudeModel, gptModel] }),
+    }
+
+    const { result } = renderHook(() =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        selectionConfig: {
+          modelName: 'overseas-gpt-5.4',
+          modelType: 'user',
+          options: { reasoning: 'medium' },
+        },
+        onSelectionChange,
+      })
+    )
+
+    await waitFor(() => expect(result.current.selectedModel).toEqual(gptModel))
+    expect(result.current.selectedModelOptions).toEqual({ reasoning: 'medium' })
+
+    act(() => result.current.setSelectedModelOption('reasoning', 'high'))
+
+    expect(onSelectionChange).toHaveBeenCalledWith({
+      modelName: 'overseas-gpt-5.4',
+      modelType: 'user',
+      options: { reasoning: 'high' },
+    })
+  })
+
+  test('waits for selection readiness before restoring configured model', async () => {
+    const claudeModel: UnifiedModel = { name: 'wecode-claude-sonnet-4-5', type: 'public' }
+    const gptModel: UnifiedModel = {
+      name: 'overseas-gpt-5.4',
+      type: 'user',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.4',
+          sortOrder: 10,
+        },
+      },
+    }
+    const api = {
+      listModels: vi.fn().mockResolvedValue({ data: [claudeModel, gptModel] }),
+    }
+    const selectionConfig = {
+      modelName: 'overseas-gpt-5.4',
+      modelType: 'user' as const,
+      options: { reasoning: 'high' },
+    }
+
+    const { result, rerender } = renderHook(
+      ({ selectionReady }: { selectionReady: boolean }) =>
+        useWorkbenchModels({
+          api,
+          locked: false,
+          selectionConfig,
+          selectionReady,
+        }),
+      { initialProps: { selectionReady: false } },
+    )
+
+    await waitFor(() => expect(result.current.models).toEqual([claudeModel, gptModel]))
+    expect(result.current.selectedModel).toBeNull()
+    expect(result.current.selectedModelOptions).toEqual({})
+
+    rerender({ selectionReady: true })
+
+    await waitFor(() => expect(result.current.selectedModel).toEqual(gptModel))
+    expect(result.current.selectedModelOptions).toEqual({ reasoning: 'high' })
+  })
+
+  test('does not auto-select the first model without saved selection config', async () => {
+    const claudeModel: UnifiedModel = { name: 'wecode-claude-sonnet-4-5', type: 'public' }
+    const api = {
+      listModels: vi.fn().mockResolvedValue({ data: [claudeModel] }),
     }
 
     const { result } = renderHook(() => useWorkbenchModels({ api, locked: false }))
 
     await waitFor(() => expect(result.current.models).toEqual([claudeModel]))
+    expect(result.current.selectedModel).toBeNull()
+    expect(result.current.selectedModelOptions).toEqual({})
   })
 
   test('loads skills and ignores skill changes when locked', async () => {
@@ -122,5 +368,36 @@ describe('workbench project chat hooks', () => {
     act(() => result.current.addExistingAttachment(attachment))
     act(() => result.current.resetAttachments())
     expect(result.current.attachments).toEqual([])
+  })
+
+  test('uploads attachments without restricting file extensions', async () => {
+    const attachment: Attachment = {
+      id: 43,
+      filename: 'init_env.sh',
+      file_size: 1200,
+      mime_type: 'application/x-sh',
+      status: 'ready',
+      file_extension: '.sh',
+      created_at: '2026-05-27T00:00:00.000Z',
+    }
+    const upload = vi.fn().mockResolvedValue(attachment)
+
+    const { result } = renderHook(() =>
+      useWorkbenchAttachments({
+        uploadAttachment: upload,
+        deleteAttachment: vi.fn(),
+      })
+    )
+
+    const file = new File(['#!/bin/sh'], 'init_env.sh', {
+      type: 'application/x-sh',
+    })
+    await act(async () => {
+      await result.current.handleFileSelect(file)
+    })
+
+    expect(upload).toHaveBeenCalledWith(file, expect.any(Function))
+    expect(result.current.attachments).toEqual([attachment])
+    expect(result.current.errors.size).toBe(0)
   })
 })

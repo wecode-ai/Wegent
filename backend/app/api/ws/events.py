@@ -13,6 +13,8 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from app.core.constants import CLIENT_ORIGIN_FRONTEND, SUPPORTED_CLIENT_ORIGINS
+
 # ============================================================
 # Event Names
 # ============================================================
@@ -133,6 +135,40 @@ class GenerateParams(BaseModel):
     duration: Optional[int] = Field(None, description="Duration in seconds")
 
 
+class InteractiveFormAnswerPayload(BaseModel):
+    """Structured answer for a deferred interactive_form_question tool call."""
+
+    type: Literal["interactive_form_question"] = Field(
+        "interactive_form_question",
+        description="Interactive form answer type",
+    )
+    tool_use_id: str = Field(
+        ...,
+        description="Deferred tool call ID for the rendered form",
+    )
+    task_id: Optional[int] = Field(None, description="Task ID for the rendered form")
+    subtask_id: Optional[int] = Field(
+        None,
+        description="Assistant subtask ID that rendered the form",
+    )
+    answers: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Normalized answer values keyed by question ID",
+    )
+    success: bool = Field(
+        True,
+        description="Whether the user submitted the form successfully.",
+    )
+    status: Literal["answered", "cancelled"] = Field(
+        "answered",
+        description="Answer status for the deferred form tool result.",
+    )
+    message: Optional[str] = Field(
+        None,
+        description="Human-readable formatted answer message",
+    )
+
+
 class ChatSendPayload(BaseModel):
     """Payload for chat:send event."""
 
@@ -163,6 +199,10 @@ class ChatSendPayload(BaseModel):
     )
     force_override_bot_model_type: Optional[str] = Field(
         None, description="Override model type"
+    )
+    model_options: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Model selection options, such as reasoning or speed.",
     )
     is_group_chat: bool = Field(
         False, description="Whether this is a group chat (for new tasks)"
@@ -198,9 +238,18 @@ class ChatSendPayload(BaseModel):
         None,
         description="Project ID to associate this task with",
     )
+    client_origin: str = Field(
+        CLIENT_ORIGIN_FRONTEND,
+        description="Client surface that owns this task",
+        pattern=f"^({'|'.join(SUPPORTED_CLIENT_ORIGINS)})$",
+    )
     # Video generation parameters (user-selected at generation time)
     generate_params: Optional[GenerateParams] = Field(
         None, description="Video generation params from user selection"
+    )
+    interactive_form_answer: Optional[InteractiveFormAnswerPayload] = Field(
+        None,
+        description="Answer payload for a deferred interactive_form_question tool call",
     )
 
 

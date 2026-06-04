@@ -11,6 +11,8 @@ export function WorkbenchPage() {
   const {
     state,
     messages,
+    queuedMessages,
+    guidanceMessages,
     runningTaskIds,
     projectChat,
     selectProject,
@@ -19,6 +21,10 @@ export function WorkbenchPage() {
     startStandaloneChat,
     startNewProjectChat,
     openTask,
+    searchTasks,
+    searchTaskDetail,
+    rememberExecutionDevice,
+    refreshDevices,
     createProject,
     updateProjectName,
     removeProject,
@@ -34,10 +40,20 @@ export function WorkbenchPage() {
     getDeviceHomeDirectory,
     getProjectWorkspaceRoot,
     listDeviceDirectories,
+    createDeviceDirectory,
     loadEnvironmentInfo,
     commitEnvironmentChanges,
+    listEnvironmentBranches,
+    checkoutEnvironmentBranch,
+    createEnvironmentBranch,
     setInput,
     sendCurrentInput,
+    pauseCurrentResponse,
+    isResponseStreaming,
+    cancelQueuedMessage,
+    sendQueuedAsGuidance,
+    editQueuedMessage,
+    cancelGuidanceMessage,
   } = useWorkbench()
   const Layout = isMobile ? MobileWorkbenchLayout : DesktopWorkbenchLayout
   const projectWork = {
@@ -53,6 +69,8 @@ export function WorkbenchPage() {
     <Layout
       state={state}
       messages={messages}
+      queuedMessages={queuedMessages}
+      guidanceMessages={guidanceMessages}
       runningTaskIds={runningTaskIds}
       onNewChat={startNewChat}
       onStartStandaloneChat={startStandaloneChat}
@@ -62,6 +80,10 @@ export function WorkbenchPage() {
       onSelectProject={selectProject}
       onStartNewProjectChat={startNewProjectChat}
       onOpenTask={openTask}
+      onSearchTasks={searchTasks}
+      onSearchTaskDetail={searchTaskDetail}
+      onRememberExecutionDevice={rememberExecutionDevice}
+      onRefreshDevices={refreshDevices}
       onCreateProject={createProject}
       onUpdateProjectName={updateProjectName}
       onRemoveProject={removeProject}
@@ -77,10 +99,20 @@ export function WorkbenchPage() {
       onGetDeviceHomeDirectory={getDeviceHomeDirectory}
       onGetProjectWorkspaceRoot={getProjectWorkspaceRoot}
       onListDeviceDirectories={listDeviceDirectories}
+      onCreateDeviceDirectory={createDeviceDirectory}
       onLoadEnvironmentInfo={loadEnvironmentInfo}
       onCommitEnvironmentChanges={commitEnvironmentChanges}
+      onListEnvironmentBranches={listEnvironmentBranches}
+      onCheckoutEnvironmentBranch={checkoutEnvironmentBranch}
+      onCreateEnvironmentBranch={createEnvironmentBranch}
       onInputChange={setInput}
       onSend={sendCurrentInput}
+      isResponseStreaming={isResponseStreaming}
+      onPauseResponse={pauseCurrentResponse}
+      onCancelQueuedMessage={cancelQueuedMessage}
+      onSendQueuedAsGuidance={sendQueuedAsGuidance}
+      onEditQueuedMessage={editQueuedMessage}
+      onCancelGuidanceMessage={cancelGuidanceMessage}
       onLogout={logout}
     />
   )

@@ -12,16 +12,20 @@ dependencies = [
     "ag-ui-protocol==0.1.8",
     "agno==2.1.5",
     "anthropic==0.67.0",
-    "claude-agent-sdk==0.1.52",
+    "claude-agent-sdk==0.2.87",
     "cryptography==46.0.3",
     "dacite>=1.8.0",
     "fastapi==0.109.1",
     "gitpython==3.1.43",
     "google-genai==1.55.0",
     "httpx[socks]==0.28.1",
-    "mcp==1.12.4",
+    "mcp==1.23.0",
+    # The Python SDK currently depends on a platform-specific Python CLI binary
+    # package that has no manylinux wheel. Linux images install the SDK with
+    # --no-deps and use the preinstalled npm Codex binary instead.
+    "openai-codex==0.1.0b2; platform_system != 'Linux'",
     "openai==1.107.1",
-    "pydantic==2.11.2",
+    "pydantic>=2.12,<2.13",
     "pymysql==1.1.0",
     "requests==2.31.0",
     # Pin charset-normalizer < 3.4.5 and chardet < 7.0.0 to avoid mypyc dynamic module issues with PyInstaller
@@ -29,7 +33,7 @@ dependencies = [
     "charset-normalizer>=3.0.0,<3.4.5",
     "chardet>=5.0.0,<7.0.0",
     "sqlalchemy==2.0.43",
-    "uvicorn==0.25.0",
+    "uvicorn==0.31.1",
     "pyyaml>=6.0.0",
 
     # envd Connect RPC dependencies

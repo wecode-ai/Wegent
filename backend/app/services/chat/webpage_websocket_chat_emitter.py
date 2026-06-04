@@ -285,6 +285,7 @@ class WebSocketEmitter:
         content: Optional[str] = None,
         tool_output: Optional[Any] = None,
         tool_input: Optional[Any] = None,
+        render_payload: Optional[Dict[str, Any]] = None,
         status: Optional[str] = None,
     ) -> None:
         """
@@ -299,6 +300,7 @@ class WebSocketEmitter:
             content: Optional text content update
             tool_output: Optional tool output data
             tool_input: Optional tool input data
+            render_payload: Optional UI-only renderer payload update
             status: Optional status update (pending, streaming, done, error)
         """
         payload: Dict[str, Any] = {
@@ -312,6 +314,8 @@ class WebSocketEmitter:
             payload["tool_output"] = tool_output
         if tool_input is not None:
             payload["tool_input"] = tool_input
+        if render_payload is not None:
+            payload["render_payload"] = render_payload
         if status is not None:
             payload["status"] = status
 
@@ -1038,7 +1042,6 @@ def get_main_event_loop() -> Optional[asyncio.AbstractEventLoop]:
     Returns:
         The main event loop or None if not initialized
     """
-    return _main_event_loop
     return _main_event_loop
 
 
