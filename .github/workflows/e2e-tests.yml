@@ -167,20 +167,16 @@ jobs:
           nohup python -m uvicorn chat_shell.main:app --host 0.0.0.0 --port 8100 > chat_shell.log 2>&1 &
           echo $! > chat_shell.pid
 
-      - name: Build frontend
+      - name: Start frontend dev server
         working-directory: ./frontend
         env:
           NEXT_PUBLIC_API_URL: http://localhost:8000
           NEXT_TELEMETRY_DISABLED: 1
-        run: npm run build
-
-      - name: Start frontend server
-        working-directory: ./frontend
-        env:
           RUNTIME_INTERNAL_API_URL: http://localhost:8000
           RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
         run: |
-          npm start &
+          nohup npm run dev > next-dev.log 2>&1 &
+          echo $! > next-dev.pid
 
       - name: Start Mock Model Server
         working-directory: ./frontend
@@ -236,6 +232,15 @@ jobs:
             rm mock-server.pid
           fi
 
+      - name: Stop frontend dev server
+        if: always()
+        working-directory: ./frontend
+        run: |
+          if [ -f next-dev.pid ]; then
+            kill $(cat next-dev.pid) 2>/dev/null || true
+            rm next-dev.pid
+          fi
+
       - name: Stop Chat Shell server
         if: always()
         working-directory: ./backend
@@ -269,6 +274,7 @@ jobs:
           path: |
             backend/backend.log
             backend/chat_shell.log
+            frontend/next-dev.log
             frontend/mock-model-server.log
           retention-days: 7
 
@@ -446,20 +452,16 @@ jobs:
           nohup python -m uvicorn chat_shell.main:app --host 0.0.0.0 --port 8100 > chat_shell.log 2>&1 &
           echo $! > chat_shell.pid
 
-      - name: Build frontend
+      - name: Start frontend dev server
         working-directory: ./frontend
         env:
           NEXT_PUBLIC_API_URL: http://localhost:8000
           NEXT_TELEMETRY_DISABLED: 1
-        run: npm run build
-
-      - name: Start frontend server
-        working-directory: ./frontend
-        env:
           RUNTIME_INTERNAL_API_URL: http://localhost:8000
           RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
         run: |
-          npm start &
+          nohup npm run dev > next-dev.log 2>&1 &
+          echo $! > next-dev.pid
 
       - name: Start Mock Model Server
         working-directory: ./frontend
@@ -589,6 +591,15 @@ jobs:
             rm executor/local-executor.pid
           fi
 
+      - name: Stop frontend dev server
+        if: always()
+        working-directory: ./frontend
+        run: |
+          if [ -f next-dev.pid ]; then
+            kill $(cat next-dev.pid) 2>/dev/null || true
+            rm next-dev.pid
+          fi
+
       - name: Stop Executor Manager
         if: always()
         working-directory: ./executor_manager
@@ -645,6 +656,7 @@ jobs:
           path: |
             backend/backend.log
             backend/chat_shell.log
+            frontend/next-dev.log
             frontend/mock-model-server.log
             executor/local-executor.log
             executor_manager/executor_manager.log

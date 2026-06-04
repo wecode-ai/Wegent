@@ -196,6 +196,11 @@ E2E tests run automatically in GitHub Actions:
 
 See [`.github/workflows/e2e-tests.yml`](../../.github/workflows/e2e-tests.yml) for configuration.
 
+CI starts the frontend with `npm run dev` instead of `npm run build && npm start`
+so E2E jobs do not spend time on a production Next.js build. This keeps E2E
+focused on browser/API behavior; production build failures need separate build
+coverage outside this workflow.
+
 ### Sharded CI Users
 
 The CI workflow runs Playwright tests across multiple shards. Each shard uses an
