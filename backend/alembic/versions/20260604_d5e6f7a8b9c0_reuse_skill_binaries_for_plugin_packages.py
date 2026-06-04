@@ -2,10 +2,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""reuse skill binaries for installed plugin packages
+"""ensure plugin packages reuse skill binaries
 
-Revision ID: c4d5e6f7a8b9
-Revises: b2c3d4e5f6a7
+Revision ID: d5e6f7a8b9c0
+Revises: c4d5e6f7a8b9
 Create Date: 2026-06-04
 
 """
@@ -21,14 +21,14 @@ from sqlalchemy import inspect
 
 from alembic import op
 
-revision: str = "c4d5e6f7a8b9"
-down_revision: Union[str, Sequence[str], None] = "b2c3d4e5f6a7"
+revision: str = "d5e6f7a8b9c0"
+down_revision: Union[str, Sequence[str], None] = "c4d5e6f7a8b9"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Store uploaded plugin ZIP packages in skill_binaries."""
+    """Repair databases that already ran the short-lived plugin package migration."""
     bind = op.get_bind()
     _add_column_if_missing(
         bind,
@@ -46,31 +46,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Remove plugin package metadata from skill_binaries."""
-    bind = op.get_bind()
-    skill_binaries = sa.table(
-        "skill_binaries",
-        sa.column("type", sa.String()),
-    )
-    bind.execute(skill_binaries.delete().where(skill_binaries.c.type == "plugin"))
-    _drop_column_if_exists(bind, "skill_binaries", "file_name")
-    _drop_column_if_exists(bind, "skill_binaries", "type")
+    """No-op; the previous migration owns the new skill_binaries columns."""
 
 
 def _add_column_if_missing(bind, table_name: str, column: sa.Column) -> None:
-    columns = {
-        column_info["name"] for column_info in inspect(bind).get_columns(table_name)
-    }
+    columns = {info["name"] for info in inspect(bind).get_columns(table_name)}
     if column.name not in columns:
         op.add_column(table_name, column)
-
-
-def _drop_column_if_exists(bind, table_name: str, column_name: str) -> None:
-    columns = {
-        column_info["name"] for column_info in inspect(bind).get_columns(table_name)
-    }
-    if column_name in columns:
-        op.drop_column(table_name, column_name)
 
 
 def _table_exists(bind, table_name: str) -> bool:
@@ -78,7 +60,6 @@ def _table_exists(bind, table_name: str) -> bool:
 
 
 def _migrate_existing_package_rows(bind) -> None:
-    """Move data from the short-lived plugin package table when present."""
     if not _table_exists(bind, "installed_plugin_packages"):
         return
 
@@ -104,7 +85,6 @@ def _migrate_existing_package_rows(bind) -> None:
 
 
 def _migrate_existing_files(bind) -> None:
-    """Move old filesystem plugin packages into skill_binaries when available."""
     kinds = sa.table(
         "kinds",
         sa.column("id", sa.Integer()),
@@ -151,17 +131,8 @@ def _migrate_existing_files(bind) -> None:
 
 
 def _drop_legacy_plugin_package_table(bind) -> None:
-    if not _table_exists(bind, "installed_plugin_packages"):
-        return
-    indexes = {
-        index["name"]
-        for index in inspect(bind).get_indexes("installed_plugin_packages")
-        if index.get("name")
-    }
-    index_name = op.f("ix_installed_plugin_packages_id")
-    if index_name in indexes:
-        op.drop_index(index_name, table_name="installed_plugin_packages")
-    op.drop_table("installed_plugin_packages")
+    if _table_exists(bind, "installed_plugin_packages"):
+        op.drop_table("installed_plugin_packages")
 
 
 def _skill_binaries_table() -> sa.TableClause:

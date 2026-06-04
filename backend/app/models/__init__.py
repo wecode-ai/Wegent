@@ -13,7 +13,6 @@ Use ResourceMember for all resource sharing functionality.
 """
 from app.models.api_key import APIKey
 from app.models.dingtalk_doc import DingtalkSyncedNode
-from app.models.installed_plugin_package import InstalledPluginPackage
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
 from app.models.namespace import Namespace
@@ -51,7 +50,6 @@ __all__ = [
     "DingtalkSyncedNode",
     "User",
     "Kind",
-    "InstalledPluginPackage",
     "TaskResource",
     "Subtask",
     "SubtaskContext",

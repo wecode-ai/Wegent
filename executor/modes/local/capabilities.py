@@ -923,13 +923,20 @@ class CapabilitySyncHandler:
     def _normalized_plugin_root(self, path: Path) -> Path:
         if (path / ".claude-plugin" / "plugin.json").exists():
             return path
-        children = [child for child in path.iterdir() if child.is_dir()]
+        children = [
+            child
+            for child in path.iterdir()
+            if child.is_dir() and not self._is_macos_zip_metadata(child)
+        ]
         if (
             len(children) == 1
             and (children[0] / ".claude-plugin" / "plugin.json").exists()
         ):
             return children[0]
         raise ValueError("Plugin package must include .claude-plugin/plugin.json")
+
+    def _is_macos_zip_metadata(self, path: Path) -> bool:
+        return path.name == "__MACOSX" or path.name.startswith("._")
 
     def _plugin_marketplace(self, item: dict[str, Any]) -> str | None:
         source = item.get("source") or {}
