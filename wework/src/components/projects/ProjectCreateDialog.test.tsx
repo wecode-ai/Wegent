@@ -25,6 +25,36 @@ const devices: DeviceInfo[] = [
 ]
 
 describe('ProjectCreateDialog', () => {
+  test('hides OpenClaw devices from the project device selector', () => {
+    render(
+      <ProjectCreateDialog
+        open
+        mode="scratch"
+        devices={[
+          ...devices,
+          {
+            id: 3,
+            device_id: 'openclaw-device',
+            name: 'OpenClaw Device',
+            status: 'online',
+            is_default: false,
+            device_type: 'cloud',
+            bind_shell: 'openclaw',
+          },
+        ]}
+        onClose={vi.fn()}
+        onCreateProject={vi.fn()}
+        onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
+        onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
+        onListDeviceDirectories={vi.fn().mockResolvedValue([])}
+        onCreateDeviceDirectory={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByTestId('project-device-select')).toHaveTextContent('Cloud Device')
+    expect(screen.queryByText(/OpenClaw Device/)).not.toBeInTheDocument()
+  })
+
   test('uses the preferred device and keeps form state when device preference changes', async () => {
     const onSelectDevicePreference = vi.fn()
 
