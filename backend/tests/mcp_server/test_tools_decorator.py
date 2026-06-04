@@ -4,9 +4,10 @@
 
 """Tests for the MCP tools decorator."""
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import pytest
+from pydantic import BaseModel
 
 from app.mcp_server.tools.decorator import (
     _extract_first_docstring_line,
@@ -94,6 +95,32 @@ class TestPythonTypeToJsonSchema:
         """Test None type."""
         assert _python_type_to_json_schema(None)["type"] == "null"
 
+    def test_typed_list_includes_items(self):
+        """Test that List[T] produces a schema with items."""
+        schema = _python_type_to_json_schema(List[str])
+        assert schema["type"] == "array"
+        assert schema["items"] == {"type": "string"}
+
+        schema = _python_type_to_json_schema(List[int])
+        assert schema["type"] == "array"
+        assert schema["items"] == {"type": "integer"}
+
+    def test_typed_list_of_pydantic_model_includes_items(self):
+        """Test that List[BaseModel] produces items with type object."""
+
+        class MyModel(BaseModel):
+            name: str
+
+        schema = _python_type_to_json_schema(List[MyModel])
+        assert schema["type"] == "array"
+        assert schema["items"] == {"type": "object"}
+
+    def test_bare_list_has_no_items(self):
+        """Bare list has no items — upstream behaviour remains unchanged."""
+        schema = _python_type_to_json_schema(list)
+        assert schema["type"] == "array"
+        assert "items" not in schema
+
 
 class TestExtractParametersFromSignature:
     """Tests for _extract_parameters_from_signature function."""
@@ -166,6 +193,64 @@ class TestExtractParametersFromSignature:
         )
 
         assert params[0]["name"] == "kb_id"
+
+    def test_typed_list_param_preserves_items(self):
+        """Array parameters must carry items so Gemini can validate the schema."""
+
+        class QuestionItem(BaseModel):
+            id: str
+            question: str
+
+        def func(questions: List[QuestionItem]):
+            pass
+
+        params = _extract_parameters_from_signature(
+            func=func,
+            exclude_params=[],
+            param_descriptions={},
+            param_renames={},
+        )
+
+        assert len(params) == 1
+        param = params[0]
+        assert param["type"] == "array"
+        assert "items" in param, "items must be present for array parameters"
+        assert param["items"] == {"type": "object"}
+
+    def test_typed_list_of_str_param_preserves_items(self):
+        """List[str] parameter must include items with string type."""
+
+        def func(tags: List[str]):
+            pass
+
+        params = _extract_parameters_from_signature(
+            func=func,
+            exclude_params=[],
+            param_descriptions={},
+            param_renames={},
+        )
+
+        param = params[0]
+        assert param["type"] == "array"
+        assert param["items"] == {"type": "string"}
+
+    def test_non_array_params_have_no_items(self):
+        """Non-array parameters must not carry an items field."""
+
+        def func(name: str, count: int, active: bool):
+            pass
+
+        params = _extract_parameters_from_signature(
+            func=func,
+            exclude_params=[],
+            param_descriptions={},
+            param_renames={},
+        )
+
+        for param in params:
+            assert (
+                "items" not in param
+            ), f"items must not appear on {param['type']} param"
 
 
 class TestMcpToolDecorator:

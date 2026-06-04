@@ -176,7 +176,7 @@ def _set_function_signature(func: Callable, params: List[Dict[str, Any]]) -> Non
     new_params = []
     for param in params:
         param_name = param["name"]
-        param_type = _json_type_to_python_type(param["type"])
+        param_type = _param_def_to_python_type(param)
         default = param.get("default", inspect.Parameter.empty)
 
         # Handle optional parameters
@@ -200,8 +200,34 @@ def _set_function_signature(func: Callable, params: List[Dict[str, Any]]) -> Non
     )
 
 
+def _param_def_to_python_type(param: Dict[str, Any]) -> type:
+    """Convert a full parameter definition to a Python type.
+
+    Handles array types with an ``items`` field by returning a typed
+    ``List[T]`` instead of bare ``list``, so FastMCP generates a JSON Schema
+    with ``items`` included.  LLMs like Gemini reject array parameters that
+    lack ``items``, causing a 400 INVALID_ARGUMENT error.
+
+    Args:
+        param: Parameter definition dict (may contain ``type`` and ``items``).
+
+    Returns:
+        Python type, e.g. ``List[dict]`` for ``{"type": "array", "items": {"type": "object"}}``.
+    """
+    json_type = param.get("type", "string")
+    if json_type == "array":
+        items = param.get("items", {})
+        if isinstance(items, dict):
+            # Recurse so nested arrays (e.g. List[List[int]]) preserve full typing.
+            item_py_type = _param_def_to_python_type(items)
+        else:
+            item_py_type = str
+        return List[item_py_type]
+    return _json_type_to_python_type(json_type)
+
+
 def _json_type_to_python_type(json_type: str) -> type:
-    """Convert JSON schema type back to Python type.
+    """Convert a JSON schema primitive type name to a Python type.
 
     Args:
         json_type: JSON schema type string

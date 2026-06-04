@@ -64,6 +64,10 @@ function sortDevicesForProjectCreation(devices: DeviceInfo[]): DeviceInfo[] {
   })
 }
 
+function getProjectCreationDevices(devices: DeviceInfo[]): DeviceInfo[] {
+  return sortDevicesForProjectCreation(devices.filter(canUseForProjectCreation))
+}
+
 function getDefaultDeviceId(
   devices: DeviceInfo[],
   preferredDeviceId?: string | null
@@ -75,7 +79,7 @@ function getDefaultDeviceId(
     return preferredDevice.device_id
   }
 
-  return sortDevicesForProjectCreation(devices).find(canUseForProjectCreation)?.device_id ?? ''
+  return getProjectCreationDevices(devices)[0]?.device_id ?? ''
 }
 
 function getParentPath(path: string): string {
@@ -162,7 +166,7 @@ function ProjectCreateDialogContent({
   onCreateDeviceDirectory,
 }: Omit<ProjectCreateDialogProps, 'open'>) {
   const { t } = useTranslation('common')
-  const sortedDevices = useMemo(() => sortDevicesForProjectCreation(devices), [devices])
+  const sortedDevices = useMemo(() => getProjectCreationDevices(devices), [devices])
   const firstDeviceId = useMemo(
     () => getDefaultDeviceId(sortedDevices, preferredDeviceId),
     [preferredDeviceId, sortedDevices]
