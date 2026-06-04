@@ -1156,7 +1156,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('settings-button')).toHaveClass('shrink-0')
   })
 
-  test('toggles an empty project chat list without persistent project highlight', async () => {
+  test('toggles an empty project chat list without selecting the project chat context', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.queryByText('暂无会话')).not.toBeInTheDocument()
@@ -1164,14 +1164,14 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('project-item-button'))
 
-    expect(baseProps.onSelectProject).toHaveBeenCalledWith(1)
+    expect(baseProps.onSelectProject).not.toHaveBeenCalled()
     expect(screen.getByText('暂无会话')).toBeInTheDocument()
     expect(screen.getByTestId('project-row-1')).not.toHaveClass('bg-white')
 
     await userEvent.click(screen.getByTestId('project-item-button'))
 
     expect(screen.queryByText('暂无会话')).not.toBeInTheDocument()
-    expect(baseProps.onSelectProject).toHaveBeenCalledTimes(1)
+    expect(baseProps.onSelectProject).not.toHaveBeenCalled()
   })
 
   test('limits project chats to five and toggles show more and show less', async () => {

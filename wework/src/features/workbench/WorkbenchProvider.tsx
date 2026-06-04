@@ -295,6 +295,28 @@ function getLastProjectStorageKey(userId: number) {
   return `wework.lastProjectId.${userId}`
 }
 
+function readTaskIdFromUrl(): number | null {
+  if (typeof window === 'undefined') return null
+  const params = new URLSearchParams(window.location.search)
+  const value = params.get('taskId') || params.get('task_id') || params.get('taskid')
+  if (!value) return null
+  const taskId = Number(value)
+  return Number.isFinite(taskId) && taskId > 0 ? taskId : null
+}
+
+function writeTaskIdToUrl(taskId: number | null) {
+  if (typeof window === 'undefined') return
+  const url = new URL(window.location.href)
+  url.searchParams.delete('task_id')
+  url.searchParams.delete('taskid')
+  if (taskId) {
+    url.searchParams.set('taskId', String(taskId))
+  } else {
+    url.searchParams.delete('taskId')
+  }
+  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
+}
+
 function readLastProjectId(userId: number): number | null {
   try {
     const value = window.localStorage.getItem(getLastProjectStorageKey(userId))
@@ -401,6 +423,7 @@ export function WorkbenchProvider({
   const localSkillsCacheRef = useRef<
     Map<string, { expiresAt: number; skills: LocalDeviceSkill[] }>
   >(new Map())
+  const urlTaskOpenAttemptRef = useRef<number | null>(null)
   const isOptionsLocked = Boolean(state.currentTask)
   const currentUser = state.user ?? user
   const activeDeviceId =
@@ -666,6 +689,7 @@ export function WorkbenchProvider({
 
   const selectProject = useCallback(
     (projectId: number | null) => {
+      writeTaskIdToUrl(null)
       if (projectId === null) {
         dispatch({
           type: 'project_cleared',
@@ -694,6 +718,7 @@ export function WorkbenchProvider({
 
   const selectStandaloneDevice = useCallback(
     (deviceId: string | null) => {
+      writeTaskIdToUrl(null)
       const standaloneDeviceId = getPreferredStandaloneDeviceId(
         state.devices,
         deviceId ?? user.preferences?.default_execution_target ?? state.standaloneDeviceId
@@ -718,6 +743,7 @@ export function WorkbenchProvider({
   )
 
   const startNewChat = useCallback(() => {
+    writeTaskIdToUrl(null)
     const lastProjectId = readLastProjectId(user.id)
     const project = lastProjectId
       ? state.projects.find(item => item.id === lastProjectId)
@@ -740,6 +766,7 @@ export function WorkbenchProvider({
   }, [state.devices, state.projects, state.standaloneDeviceId, user])
 
   const startStandaloneChat = useCallback(() => {
+    writeTaskIdToUrl(null)
     dispatch({
       type: 'project_cleared',
       standaloneDeviceId: getRememberedStandaloneDeviceId(
@@ -798,6 +825,7 @@ export function WorkbenchProvider({
       })
       setQueuedSends([])
       setGuidanceMessages([])
+      writeTaskIdToUrl(taskId)
       await resolvedServices.chatStream.joinTask(taskId)
     },
     [
@@ -821,6 +849,25 @@ export function WorkbenchProvider({
       Promise.resolve({ total: 0, items: [] }),
     [resolvedServices]
   )
+
+  useEffect(() => {
+    if (state.isBootstrapping) return
+    const taskId = readTaskIdFromUrl()
+    if (!taskId || state.currentTask?.id === taskId) return
+    if (urlTaskOpenAttemptRef.current === taskId) return
+
+    urlTaskOpenAttemptRef.current = taskId
+    void openTask(taskId).catch(error => {
+      dispatch({
+        type: 'error_set',
+        error: error instanceof Error ? error.message : '会话加载失败',
+      })
+      writeTaskIdToUrl(null)
+      if (urlTaskOpenAttemptRef.current === taskId) {
+        urlTaskOpenAttemptRef.current = null
+      }
+    })
+  }, [openTask, state.currentTask?.id, state.isBootstrapping])
 
   const setInput = useCallback((input: string) => {
     dispatch({ type: 'input_changed', input })
@@ -863,6 +910,7 @@ export function WorkbenchProvider({
   const archiveAllChats = useCallback(async () => {
     await resolvedServices.taskApi.archiveAllChats()
     if (!state.currentProject && (!state.currentTask || !state.currentTask.project_id)) {
+      writeTaskIdToUrl(null)
       dispatch({ type: 'current_task_cleared' })
       dispatchMessages({ type: 'reset', messages: [] })
     }
@@ -872,6 +920,7 @@ export function WorkbenchProvider({
   const archiveAllProjectChats = useCallback(async () => {
     await resolvedServices.projectApi.archiveAllProjectChats()
     if (state.currentProject || (state.currentTask?.project_id ?? 0) > 0) {
+      writeTaskIdToUrl(null)
       dispatch({ type: 'current_task_cleared' })
       dispatchMessages({ type: 'reset', messages: [] })
     }
@@ -881,6 +930,7 @@ export function WorkbenchProvider({
   const archiveProjectChats = useCallback(
     async (projectId: number) => {
       await resolvedServices.projectApi.archiveProjectChats(projectId)
+      writeTaskIdToUrl(null)
       dispatch({ type: 'current_task_cleared' })
       dispatchMessages({ type: 'reset', messages: [] })
       await refreshWorkLists()
@@ -892,6 +942,7 @@ export function WorkbenchProvider({
     async (taskId: number) => {
       await resolvedServices.taskApi.archiveTask(taskId)
       if (state.currentTask?.id === taskId) {
+        writeTaskIdToUrl(null)
         dispatch({ type: 'current_task_cleared' })
         dispatchMessages({ type: 'reset', messages: [] })
       }
@@ -924,9 +975,14 @@ export function WorkbenchProvider({
   const deleteTask = useCallback(
     async (taskId: number) => {
       await resolvedServices.taskApi.deleteTask(taskId)
+      if (state.currentTask?.id === taskId) {
+        writeTaskIdToUrl(null)
+        dispatch({ type: 'current_task_cleared' })
+        dispatchMessages({ type: 'reset', messages: [] })
+      }
       await refreshWorkLists()
     },
-    [refreshWorkLists, resolvedServices]
+    [refreshWorkLists, resolvedServices, state.currentTask?.id]
   )
 
   const deleteArchivedTasks = useCallback(async () => {
@@ -1104,6 +1160,7 @@ export function WorkbenchProvider({
       }
 
       if (!state.currentTask && ack.task_id) {
+        writeTaskIdToUrl(ack.task_id)
         const projectId = state.currentProject?.id ?? 0
         const openedTask: Task = {
           id: ack.task_id,

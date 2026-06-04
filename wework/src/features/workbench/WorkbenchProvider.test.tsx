@@ -217,6 +217,7 @@ function ProjectCreationProbe() {
 
 describe('WorkbenchProvider', () => {
   beforeEach(() => {
+    window.history.pushState({}, '', '/')
     localStorage.clear()
     vi.clearAllMocks()
   })
@@ -723,6 +724,117 @@ describe('WorkbenchProvider', () => {
     )
     expect(screen.getByTestId('standalone-device-id')).toHaveTextContent('local-online')
     expect(joinTask).toHaveBeenCalledWith(8)
+    expect(window.location.search).toBe('?taskId=8')
+  })
+
+  test('restores an opened task from the taskId URL parameter after refresh', async () => {
+    window.history.pushState({}, '', '/?taskId=8')
+    const getTaskDetail = vi.fn().mockResolvedValue({
+      id: 8,
+      title: 'restored chat',
+      status: 'SUCCESS',
+      task_type: 'code',
+      project_id: 0,
+      device_id: 'local-online',
+      created_at: '2026-05-29T00:00:00.000Z',
+      subtasks: [],
+    })
+    const joinTask = vi.fn()
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: {
+            listModels: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  name: 'gpt-5.5-medium',
+                  type: 'user',
+                  displayName: 'GPT 5.5 Medium',
+                },
+              ],
+            }),
+          },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({
+              items: [{ id: 7, name: 'Wegent', tasks: [] }],
+            }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({
+              total: 1,
+              items: [
+                {
+                  id: 8,
+                  title: 'restored chat',
+                  status: 'SUCCESS',
+                  task_type: 'code',
+                  project_id: 0,
+                  device_id: 'local-online',
+                  created_at: '2026-05-29T00:00:00.000Z',
+                },
+              ],
+            }),
+            getTaskDetail,
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([
+              {
+                id: 2,
+                device_id: 'local-online',
+                name: 'Local Online',
+                status: 'online',
+                is_default: false,
+                device_type: 'local',
+              },
+            ]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
+          },
+          chatStream: {
+            joinTask,
+            leaveTask: vi.fn(),
+            sendMessage: vi.fn(),
+            subscribe: vi.fn(() => vi.fn()),
+          },
+        }}
+      >
+        <ArchiveProbe />
+      </WorkbenchProvider>
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('current-task-title')).toHaveTextContent('restored chat')
+    )
+    expect(getTaskDetail).toHaveBeenCalledWith(8)
+    expect(joinTask).toHaveBeenCalledWith(8)
+    expect(window.location.search).toBe('?taskId=8')
   })
 
   test('persists the project creation device as the default execution target', async () => {
