@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 from click.testing import CliRunner
 
 from wegent.cli import cli
-from wegent.errors import EXIT_API_ERROR, CliError
+from wegent.errors import EXIT_API_ERROR, EXIT_USAGE_ERROR, CliError
 
 
 def invoke_with_client(args, client, input_text=None):
@@ -82,7 +82,7 @@ def test_kind_get_json_with_extra_argument_outputs_error_envelope():
         client,
     )
 
-    assert result.exit_code != 0
+    assert result.exit_code == EXIT_USAGE_ERROR
     error_text = result.stderr or result.output
     assert not error_text.startswith("Usage:")
     payload = load_error_payload(result)

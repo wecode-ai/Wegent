@@ -14,7 +14,7 @@ from .commands.login import login_cmd, logout_cmd
 from .commands.response import response_cmd
 from .commands.task import task_cmd
 from .config import get_api_key, get_server, get_token
-from .errors import CliError
+from .errors import EXIT_USAGE_ERROR, CliError
 from .output import dumps_json, error_envelope
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
@@ -53,12 +53,12 @@ class JsonAwareGroup(click.Group):
                 "invalid_arguments",
                 exc.format_message() or exc.message,
                 {"click_error": exc.__class__.__name__},
-                exc.exit_code,
+                EXIT_USAGE_ERROR,
             )
             click.echo(dumps_json(error_envelope(error)), err=True)
             if not standalone_mode:
                 raise error from exc
-            raise SystemExit(exc.exit_code) from exc
+            raise SystemExit(EXIT_USAGE_ERROR) from exc
 
 
 @click.group(cls=JsonAwareGroup, context_settings=CONTEXT_SETTINGS)

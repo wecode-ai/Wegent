@@ -12,6 +12,7 @@ from ..errors import EXIT_API_ERROR, CliError
 from ..io import read_input_text
 from ..output import dumps_json, dumps_yaml, error_envelope, success_envelope
 
+# Mirrors backend BatchService.supported_kinds for batch apply/delete validation.
 SUPPORTED_RESOURCE_KINDS = {
     "Ghost",
     "Model",
