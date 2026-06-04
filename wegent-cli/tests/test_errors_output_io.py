@@ -98,3 +98,13 @@ def test_load_structured_input_raises_on_invalid_json_or_yaml(tmp_path):
         load_structured_input(str(input_file))
 
     assert exc_info.value.code == "invalid_input"
+
+
+def test_load_structured_input_raises_file_read_error_on_invalid_utf8(tmp_path):
+    input_file = tmp_path / "payload.json"
+    input_file.write_bytes(b"\xff\xfe")
+
+    with pytest.raises(CliError) as exc_info:
+        load_structured_input(str(input_file))
+
+    assert exc_info.value.code == "file_read_error"

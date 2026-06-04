@@ -43,7 +43,7 @@ def load_structured_input(path: str, stdin_text: Optional[str] = None) -> Any:
 
     try:
         text = input_path.read_text(encoding="utf-8")
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise CliError(
             "file_read_error",
             f"Failed to read input file: {path}",
