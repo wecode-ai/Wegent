@@ -3,7 +3,7 @@ import type { DeviceInfo } from '@/types/api'
 type DeviceLike = Pick<DeviceInfo, 'device_type' | 'bind_shell' | 'status'>
 
 export function isClaudeCodeDevice(device: DeviceLike): boolean {
-  return (device.bind_shell ?? 'claudecode') === 'claudecode'
+  return (device.bind_shell ?? 'claudecode').toLowerCase() === 'claudecode'
 }
 
 export function isCloudDevice(device: Pick<DeviceInfo, 'device_type'>): boolean {
@@ -18,8 +18,8 @@ export function canUseForProjectCreation(device: DeviceLike): boolean {
   return isClaudeCodeDevice(device) && isUsableDevice(device)
 }
 
-export function supportsCloudSessions(device: Pick<DeviceInfo, 'device_type'>): boolean {
-  return isCloudDevice(device)
+export function supportsCloudSessions(device: DeviceLike): boolean {
+  return isCloudDevice(device) && isClaudeCodeDevice(device)
 }
 
 export function supportsDeviceMetrics(device: Pick<DeviceInfo, 'device_type'>): boolean {

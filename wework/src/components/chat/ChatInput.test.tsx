@@ -1624,6 +1624,15 @@ describe('ChatInput', () => {
         is_default: false,
         device_type: 'local',
       },
+      {
+        id: 4,
+        device_id: 'openclaw-online',
+        name: 'OpenClaw Online',
+        status: 'online',
+        is_default: false,
+        device_type: 'cloud',
+        bind_shell: 'openclaw',
+      },
     ]
 
     render(
@@ -1647,6 +1656,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('standalone-device-list')).toBeInTheDocument()
     expect(screen.getByText('Cloud Online')).toBeInTheDocument()
     expect(screen.getByText('Local Online')).toBeInTheDocument()
+    expect(screen.queryByText('OpenClaw Online')).not.toBeInTheDocument()
     expect(screen.getByTestId('standalone-device-option-local-offline')).toBeDisabled()
 
     await userEvent.click(screen.getByTestId('no-project-option'))
