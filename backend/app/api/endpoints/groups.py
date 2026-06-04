@@ -624,6 +624,12 @@ def add_entity_members_batch_endpoint(
             detail=str(e),
         )
 
+    logger.info(
+        f"Entity members batch added: group={group_name}, "
+        f"succeeded={len(succeeded_members)}, failed={len(failed_items)}, "
+        f"by_user={current_user.id}"
+    )
+
     return GroupEntityMemberBatchResponse(
         succeeded=[
             GroupEntityMemberResponse(
@@ -640,12 +646,6 @@ def add_entity_members_batch_endpoint(
         total=len(batch_create.members),
         success_count=len(succeeded_members),
         failed_count=len(failed_items),
-    )
-
-    logger.info(
-        f"Entity members batch added: group={group_name}, "
-        f"succeeded={len(succeeded_members)}, failed={len(failed_items)}, "
-        f"by_user={current_user.id}"
     )
 
 

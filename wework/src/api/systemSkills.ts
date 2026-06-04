@@ -29,6 +29,9 @@ export function createSystemSkillApi(client: HttpClient) {
     ): Promise<InstalledSkill> {
       return client.post('/system-skills/install', data)
     },
+    installPersonalSkill(skillId: number): Promise<InstalledSkill> {
+      return client.post('/system-skills/install/personal', { skillId })
+    },
     listInstalledSystemSkills(): Promise<InstalledSkillListResponse> {
       return client.get('/system-skills/installed')
     },

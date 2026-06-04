@@ -10,6 +10,7 @@ import pytest
 from app.models.kind import Kind
 from app.models.skill_binary import SkillBinary
 from app.schemas.system_skills import (
+    PersonalSkillInstallRequest,
     SystemSkillCatalogItem,
     SystemSkillInstallRequest,
     SystemSkillProviderListResponse,
@@ -230,6 +231,32 @@ def _create_skill_definition(test_db, user_id: int) -> Kind:
             "kind": "Skill",
             "metadata": {"name": "image-gen", "namespace": "default"},
             "spec": {"description": "Generate or edit images"},
+        },
+        is_active=True,
+    )
+    test_db.add(skill)
+    test_db.commit()
+    test_db.refresh(skill)
+    return skill
+
+
+def _create_personal_skill_definition(test_db, user_id: int) -> Kind:
+    skill = Kind(
+        user_id=user_id,
+        kind="Skill",
+        name="excel-helper",
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Skill",
+            "metadata": {"name": "excel-helper", "namespace": "default"},
+            "spec": {
+                "displayName": "Excel Helper",
+                "description": "Analyze Excel workbooks",
+                "version": "1.0.0",
+                "author": "Alice",
+                "tags": ["personal"],
+            },
         },
         is_active=True,
     )
@@ -471,6 +498,59 @@ async def test_install_system_skill_downloads_skill_and_creates_installed_state(
     assert installed.spec.skillRef is not None
     assert installed.spec.skillRef.name == "image-gen"
     assert installed.spec.skillRef.user_id == test_user.id
+
+
+def test_install_personal_skill_creates_installed_state(test_db, test_user):
+    skill = _create_personal_skill_definition(test_db, test_user.id)
+    service = _build_service(StaticSystemSkillProvider())
+
+    installed = service.install_personal_skill(
+        db=test_db,
+        user_id=test_user.id,
+        request=PersonalSkillInstallRequest(skillId=skill.id),
+    )
+
+    assert installed.spec.source.type == "personal"
+    assert installed.spec.source.skillKey == "excel-helper"
+    assert installed.spec.enabled is True
+    assert installed.spec.installState == "installed"
+    assert installed.spec.skillRef is not None
+    assert installed.spec.skillRef.name == "excel-helper"
+    assert installed.spec.skillRef.user_id == test_user.id
+
+
+def test_install_personal_skill_reactivates_existing_installed_state(
+    test_db, test_user
+):
+    skill = _create_personal_skill_definition(test_db, test_user.id)
+    service = _build_service(StaticSystemSkillProvider())
+    first = service.install_personal_skill(
+        db=test_db,
+        user_id=test_user.id,
+        request=PersonalSkillInstallRequest(skillId=skill.id),
+    )
+    service.uninstall_installed_system_skill(
+        db=test_db,
+        user_id=test_user.id,
+        installed_id=int(first.metadata["labels"]["id"]),
+    )
+
+    second = service.install_personal_skill(
+        db=test_db,
+        user_id=test_user.id,
+        request=PersonalSkillInstallRequest(skillId=skill.id),
+    )
+
+    refreshed = test_db.get(Kind, int(first.metadata["labels"]["id"]))
+    installed_rows = (
+        test_db.query(Kind)
+        .filter(Kind.user_id == test_user.id, Kind.kind == "InstalledSkill")
+        .all()
+    )
+    assert int(second.metadata["labels"]["id"]) == int(first.metadata["labels"]["id"])
+    assert refreshed.is_active is True
+    assert refreshed.json["spec"]["installState"] == "installed"
+    assert len(installed_rows) == 1
 
 
 @pytest.mark.anyio

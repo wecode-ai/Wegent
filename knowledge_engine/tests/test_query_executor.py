@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from shared.models import RuntimeRetrievalConfig
+from shared.models import RuntimeRetrievalConfig, SearchHints
 
 
 @pytest.mark.asyncio
@@ -101,6 +101,139 @@ async def test_query_executor_normalizes_explicit_none_values_to_defaults() -> N
             "top_k": 20,
             "score_threshold": 0.7,
             "retrieval_mode": "vector",
+        },
+        metadata_condition=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_query_executor_carries_search_hints_into_retrieval_setting() -> None:
+    from knowledge_engine.query import QueryExecutor
+
+    storage_backend = MagicMock()
+    storage_backend.retrieve.return_value = {"records": []}
+    executor = QueryExecutor(storage_backend=storage_backend, embed_model=object())
+
+    await executor.execute(
+        knowledge_id="1",
+        query="release checklist",
+        search_hints=SearchHints(
+            semantic_query="How to verify the release checklist?",
+            keywords=["release", "checklist"],
+            phrases=["release checklist"],
+        ),
+        retrieval_config={
+            "top_k": 4,
+            "score_threshold": 0.5,
+            "retrieval_mode": "hybrid",
+        },
+    )
+
+    storage_backend.retrieve.assert_called_once_with(
+        knowledge_id="1",
+        query="release checklist",
+        embed_model=executor.embed_model,
+        retrieval_setting={
+            "top_k": 4,
+            "score_threshold": 0.5,
+            "retrieval_mode": "hybrid",
+            "search_hints": {
+                "semantic_query": "How to verify the release checklist?",
+                "keywords": ["release", "checklist"],
+                "phrases": ["release checklist"],
+            },
+        },
+        metadata_condition=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_query_executor_prefers_explicit_query_plan_over_search_hints() -> None:
+    from knowledge_engine.query import QueryExecutor
+
+    storage_backend = MagicMock()
+    storage_backend.retrieve.return_value = {"records": []}
+    executor = QueryExecutor(storage_backend=storage_backend, embed_model=object())
+
+    await executor.execute(
+        knowledge_id="1",
+        query="原始 query",
+        query_plan={
+            "dense_query": "dense rewrite",
+            "sparse_query": "phrase one keyword",
+            "keywords": ["keyword"],
+            "phrases": ["phrase one"],
+            "hint_source": "explicit_hints",
+        },
+        search_hints=SearchHints(
+            semantic_query="ignored semantic",
+            keywords=["ignored"],
+            phrases=["ignored phrase"],
+        ),
+        retrieval_config={
+            "top_k": 4,
+            "score_threshold": 0.5,
+            "retrieval_mode": "hybrid",
+        },
+    )
+
+    storage_backend.retrieve.assert_called_once_with(
+        knowledge_id="1",
+        query="原始 query",
+        embed_model=executor.embed_model,
+        retrieval_setting={
+            "top_k": 4,
+            "score_threshold": 0.5,
+            "retrieval_mode": "hybrid",
+            "dense_query": "dense rewrite",
+            "sparse_query": "phrase one keyword",
+            "keywords": ["keyword"],
+            "phrases": ["phrase one"],
+            "hint_source": "explicit_hints",
+            "search_hints": {
+                "semantic_query": "ignored semantic",
+                "keywords": ["ignored"],
+                "phrases": ["ignored phrase"],
+            },
+        },
+        metadata_condition=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_query_executor_uses_original_query_as_partial_plan_fallback() -> None:
+    from knowledge_engine.query import QueryExecutor
+
+    storage_backend = MagicMock()
+    storage_backend.retrieve.return_value = {"records": []}
+    executor = QueryExecutor(storage_backend=storage_backend, embed_model=object())
+
+    await executor.execute(
+        knowledge_id="1",
+        query="原始 query",
+        query_plan={
+            "keywords": ["keyword"],
+            "phrases": ["phrase one"],
+            "hint_source": "explicit_hints",
+        },
+        retrieval_config={
+            "top_k": 4,
+            "score_threshold": 0.5,
+            "retrieval_mode": "hybrid",
+        },
+    )
+
+    storage_backend.retrieve.assert_called_once_with(
+        knowledge_id="1",
+        query="原始 query",
+        embed_model=executor.embed_model,
+        retrieval_setting={
+            "top_k": 4,
+            "score_threshold": 0.5,
+            "retrieval_mode": "hybrid",
+            "keywords": ["keyword"],
+            "phrases": ["phrase one"],
+            "hint_source": "explicit_hints",
         },
         metadata_condition=None,
     )

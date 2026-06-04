@@ -1,0 +1,37 @@
+[
+  {
+    "query": "红包 520 发送 金额 规则",
+    "expected_hint_source": "fallback",
+    "expected_normalized_query": "红包 520 发送 金额 规则",
+    "expected_dense_query": "红包 520 发送 金额 规则",
+    "expected_sparse_query": "红包 520 发送 金额 规则"
+  },
+  {
+    "query": "红包不让抢 红包使用问题",
+    "expected_hint_source": "fallback",
+    "expected_normalized_query": "红包不让抢 红包使用问题",
+    "expected_dense_query": "红包不让抢 红包使用问题",
+    "expected_sparse_query": "红包不让抢 红包使用问题"
+  },
+  {
+    "query": "MCP 工具 添加 服务器 ghost spec mcpServers",
+    "expected_hint_source": "fallback",
+    "expected_normalized_query": "MCP 工具 添加 服务器 ghost spec mcpServers",
+    "expected_dense_query": "MCP 工具 添加 服务器 ghost spec mcpServers",
+    "expected_sparse_query": "MCP 工具 添加 服务器 ghost spec mcpServers"
+  },
+  {
+    "query": "Milvus 混合检索为什么对长 query 效果差？",
+    "expected_hint_source": "fallback",
+    "expected_normalized_query": "Milvus 混合检索为什么对长 query 效果差？",
+    "expected_dense_query": "Milvus 混合检索为什么对长 query 效果差？",
+    "expected_sparse_query": "Milvus 混合检索为什么对长 query 效果差？"
+  },
+  {
+    "query": "ghost spec mcpServers",
+    "expected_hint_source": "fallback",
+    "expected_normalized_query": "ghost spec mcpServers",
+    "expected_dense_query": "ghost spec mcpServers",
+    "expected_sparse_query": "ghost spec mcpServers"
+  }
+]

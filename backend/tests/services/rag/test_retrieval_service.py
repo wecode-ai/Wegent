@@ -784,6 +784,7 @@ class TestRetrieveForChatShell:
         mock_execute.assert_awaited_once_with(
             knowledge_id="123",
             query="release checklist",
+            search_hints=None,
             retrieval_config=kb_config.retrieval_config,
             metadata_condition={
                 "operator": "and",

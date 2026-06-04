@@ -67,6 +67,14 @@ def _json_processor(result: CommandResult) -> CommandResult:
     if not result.get("success"):
         return result
 
+    if result.get("stdout_truncated"):
+        result["success"] = False
+        result["error"] = (
+            "Command output exceeded max_output_bytes and was truncated; "
+            "JSON is incomplete and cannot be parsed"
+        )
+        return result
+
     stdout = result.get("stdout") or ""
     try:
         result["stdout"] = json.loads(str(stdout))

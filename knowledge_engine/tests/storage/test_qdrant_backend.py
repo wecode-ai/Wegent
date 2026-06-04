@@ -215,3 +215,38 @@ class TestDropKnowledgeIndex:
         mock_client.delete_collection.assert_any_call(
             collection_name="test_kb_kb_1__parents",
         )
+
+
+class TestRetrieve:
+    def test_retrieve_uses_dense_query_from_search_hints(self) -> None:
+        from knowledge_engine.storage.qdrant_backend import QdrantBackend
+
+        backend = QdrantBackend(
+            {
+                "url": "http://localhost:6333",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+        mock_vector_store = MagicMock()
+        mock_vector_store.query.return_value = MagicMock(nodes=[], similarities=[])
+        backend.create_vector_store = MagicMock(return_value=mock_vector_store)
+        backend._build_metadata_filters = MagicMock(return_value="filters")
+
+        embed_model = MagicMock()
+        embed_model.get_query_embedding.return_value = [0.1, 0.2]
+
+        backend.retrieve(
+            knowledge_id="kb_1",
+            query="原始 query",
+            embed_model=embed_model,
+            retrieval_setting={
+                "top_k": 5,
+                "score_threshold": 0.7,
+                "retrieval_mode": "vector",
+                "dense_query": "semantic rewrite",
+            },
+        )
+
+        embed_model.get_query_embedding.assert_called_once_with("semantic rewrite")
+        vs_query = mock_vector_store.query.call_args.args[0]
+        assert vs_query.query_str == "semantic rewrite"

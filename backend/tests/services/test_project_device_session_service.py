@@ -236,6 +236,50 @@ async def test_start_project_device_session_rejects_project_without_bound_device
 
 
 @pytest.mark.asyncio
+async def test_start_project_device_session_rejects_local_device_type(monkeypatch):
+    """Project terminal and code-server sessions are cloud-device-only tools."""
+    from fastapi import HTTPException
+
+    from app.services import project_device_session_service as service
+
+    project = SimpleNamespace(
+        id=123,
+        user_id=7,
+        is_active=True,
+        config=_project_config(path="/workspace/project", device_id="local-device"),
+    )
+    device_kind = SimpleNamespace(json={"spec": {"deviceType": "local"}})
+    query = SimpleNamespace(filter=lambda *args: SimpleNamespace(first=lambda: project))
+    db = SimpleNamespace(query=lambda model: query)
+    execute_mock = AsyncMock()
+    monkeypatch.setattr(
+        service.local_device_session_service,
+        "start_session",
+        execute_mock,
+    )
+    monkeypatch.setattr(
+        service,
+        "device_service",
+        SimpleNamespace(
+            get_device_by_device_id=lambda db, user_id, device_id: device_kind
+        ),
+        raising=False,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await service.start_project_device_session(
+            db=db,
+            user_id=7,
+            project_id=123,
+            session_type="terminal",
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "local devices do not support" in exc_info.value.detail.lower()
+    execute_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_local_device_session_service_calls_device_start_session(monkeypatch):
     """Device session service should send a start_session RPC to the online device."""
     from app.services.device import session_service

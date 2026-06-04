@@ -44,6 +44,15 @@ class SinaMailPreferences(BaseModel):
     token: Optional[str] = None  # Encrypted mail token
 
 
+class WeiboBindingPreferences(BaseModel):
+    """Nested preferences for Weibo account binding."""
+
+    uid: str
+    screen_name: Optional[str] = None
+    avatar_url: Optional[str] = None
+    bound_at: Optional[str] = None
+
+
 class UserPreferences(BaseModel):
     """User preferences model"""
 
@@ -56,6 +65,7 @@ class UserPreferences(BaseModel):
     default_execution_target: Optional[str] = None
     wework_new_chat_model_selection: Optional[UserModelSelectionPreference] = None
     sina_mail: Optional[SinaMailPreferences] = None
+    weibo_binding: Optional[WeiboBindingPreferences] = None
 
 
 class Token(BaseModel):
@@ -121,6 +131,10 @@ class UserInDB(UserBase):
     preferences: Optional[UserPreferences] = None
     role: str = "user"
     auth_source: str = "unknown"
+    weibo_uid: Optional[str] = None
+    weibo_screen_name: Optional[str] = None
+    weibo_avatar_url: Optional[str] = None
+    weibo_bound_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
     # Admin-only field: indicates if admin setup wizard has been completed
@@ -158,6 +172,30 @@ class LoginRequest(BaseModel):
 class LoginResponse(BaseModel):
     access_token: str
     token_type: str
+
+
+class WeiboBindingResponse(BaseModel):
+    """Current Weibo account binding state."""
+
+    bound: bool
+    weibo_uid: Optional[str] = None
+    weibo_screen_name: Optional[str] = None
+    weibo_avatar_url: Optional[str] = None
+    weibo_bound_at: Optional[datetime] = None
+
+
+class WeiboBindingRequest(BaseModel):
+    """Confirmed Weibo binding request."""
+
+    expected_uid: str
+
+
+class WeiboAccountPreviewResponse(BaseModel):
+    """Weibo account profile resolved from the current SUB cookie."""
+
+    weibo_uid: str
+    weibo_screen_name: Optional[str] = None
+    weibo_avatar_url: Optional[str] = None
 
 
 class UserInfo(BaseModel):

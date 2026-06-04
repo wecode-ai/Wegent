@@ -19,7 +19,7 @@ from app.services.rag.runtime_resolver import RagRuntimeResolver
 from knowledge_engine.embedding import create_embedding_model_from_runtime_config
 from knowledge_engine.query import QueryExecutor
 from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
-from shared.models import RemoteKnowledgeBaseQueryConfig
+from shared.models import RemoteKnowledgeBaseQueryConfig, SearchHints
 from shared.telemetry.decorators import add_span_event, set_span_attribute, trace_async
 
 logger = logging.getLogger(__name__)
@@ -315,6 +315,7 @@ class RetrievalService:
     async def _do_rag_retrieval(
         self,
         query: str,
+        search_hints: SearchHints | None,
         knowledge_base_ids: list[int],
         db: Session,
         max_results: int,
@@ -331,6 +332,7 @@ class RetrievalService:
         for kb_id in knowledge_base_ids:
             result = await self.retrieve_from_knowledge_base_internal(
                 query=query,
+                search_hints=search_hints,
                 knowledge_base_id=kb_id,
                 db=db,
                 metadata_condition=metadata_condition,
@@ -429,6 +431,7 @@ class RetrievalService:
         query: str,
         knowledge_base_ids: list[int],
         db: Session,
+        search_hints: SearchHints | None = None,
         max_results: int = 5,
         document_ids: Optional[list[int]] = None,
         metadata_condition: Optional[Dict[str, Any]] = None,
@@ -453,6 +456,7 @@ class RetrievalService:
             query: Search query text.
             knowledge_base_ids: List of knowledge base IDs to search.
             db: Database session.
+            search_hints: Optional retrieval hints for sparse/dense query shaping.
             max_results: Maximum number of results to return per KB.
             document_ids: Optional list of document IDs to filter.
             metadata_condition: Optional metadata filtering conditions.
@@ -501,6 +505,7 @@ class RetrievalService:
             )
             return await self._do_rag_retrieval(
                 query=query,
+                search_hints=search_hints,
                 knowledge_base_ids=knowledge_base_ids,
                 db=db,
                 max_results=max_results,
@@ -586,6 +591,7 @@ class RetrievalService:
         # === RAG retrieval ===
         return await self._do_rag_retrieval(
             query=query,
+            search_hints=search_hints,
             knowledge_base_ids=knowledge_base_ids,
             db=db,
             max_results=max_results,
@@ -599,6 +605,7 @@ class RetrievalService:
         query: str,
         knowledge_base_id: int,
         db: Session,
+        search_hints: SearchHints | None = None,
         metadata_condition: Optional[Dict[str, Any]] = None,
         user_name: Optional[str] = None,
         knowledge_base_config: Optional[RemoteKnowledgeBaseQueryConfig] = None,
@@ -617,6 +624,7 @@ class RetrievalService:
             query: Search query
             knowledge_base_id: Knowledge base ID
             db: Database session
+            search_hints: Optional retrieval hints for sparse/dense query shaping.
             metadata_condition: Optional metadata filtering conditions
             user_name: User name for placeholder replacement in embedding headers
 
@@ -644,6 +652,7 @@ class RetrievalService:
 
         return await self._retrieve_from_kb_internal(
             query=query,
+            search_hints=search_hints,
             kb=kb,
             db=db,
             metadata_condition=metadata_condition,
@@ -656,6 +665,7 @@ class RetrievalService:
         query: str,
         kb: Kind,
         db: Session,
+        search_hints: SearchHints | None = None,
         metadata_condition: Optional[Dict[str, Any]] = None,
         user_name: Optional[str] = None,
         knowledge_base_config: Optional[RemoteKnowledgeBaseQueryConfig] = None,
@@ -667,6 +677,7 @@ class RetrievalService:
             query: Search query
             kb: Knowledge base Kind instance
             db: Database session
+            search_hints: Optional retrieval hints for sparse/dense query shaping.
             metadata_condition: Optional metadata filtering conditions
             user_name: User name for placeholder replacement in embedding headers (optional)
 
@@ -683,6 +694,7 @@ class RetrievalService:
         )
         result = await self._execute_runtime_query(
             query=query,
+            search_hints=search_hints,
             knowledge_base_config=resolved_config,
             metadata_condition=metadata_condition,
         )
@@ -733,9 +745,11 @@ class RetrievalService:
         self,
         *,
         query: str,
+        search_hints: SearchHints | None = None,
         knowledge_base_config: RemoteKnowledgeBaseQueryConfig,
         metadata_condition: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        """Execute a single knowledge query with optional retrieval hints."""
         storage_backend = create_storage_backend_from_runtime_config(
             knowledge_base_config.retriever_config
         )
@@ -749,6 +763,7 @@ class RetrievalService:
         return await executor.execute(
             knowledge_id=str(knowledge_base_config.knowledge_base_id),
             query=query,
+            search_hints=search_hints,
             retrieval_config=knowledge_base_config.retrieval_config,
             metadata_condition=metadata_condition,
             user_id=knowledge_base_config.index_owner_user_id,

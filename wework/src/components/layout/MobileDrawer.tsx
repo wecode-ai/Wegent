@@ -93,6 +93,9 @@ export function MobileDrawer({
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<number>>(
     () => new Set(),
   )
+  const [expandedTaskProjectIds, setExpandedTaskProjectIds] = useState<Set<number>>(
+    () => new Set(),
+  )
   const standaloneRecentTasks = useMemo(
     () => sortTasksByTime(recentTasks).filter(task => !task.project_id),
     [recentTasks],
@@ -118,9 +121,21 @@ export function MobileDrawer({
     onSelectProject(projectId)
   }
 
+  const toggleProjectTaskLimit = (projectId: number) => {
+    setExpandedTaskProjectIds(previous => {
+      const next = new Set(previous)
+      if (next.has(projectId)) {
+        next.delete(projectId)
+      } else {
+        next.add(projectId)
+      }
+      return next
+    })
+  }
+
   return (
     <div
-      className="fixed inset-0 z-50 isolate flex h-dvh flex-col overflow-hidden px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(22px,env(safe-area-inset-top))] text-[rgb(var(--color-sidebar-text-primary))] backdrop-blur-3xl backdrop-saturate-150"
+      className="fixed inset-0 z-critical isolate flex h-dvh flex-col overflow-hidden px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(22px,env(safe-area-inset-top))] text-[rgb(var(--color-sidebar-text-primary))] backdrop-blur-3xl backdrop-saturate-150"
       style={{ backgroundColor: 'rgb(var(--color-mobile-drawer))' }}
     >
       <header className="flex shrink-0 items-center justify-between gap-4">
@@ -147,7 +162,7 @@ export function MobileDrawer({
           data-testid="mobile-search-input"
           type="search"
           placeholder={t('workbench.search', '搜索')}
-          className="h-12 w-full rounded-2xl border border-border/60 bg-surface/85 pl-12 pr-4 text-sm font-medium text-text-primary outline-none placeholder:text-[rgb(var(--color-sidebar-text-muted))] focus:bg-surface"
+          className="h-12 w-full rounded-2xl border border-border/60 bg-surface/85 pl-12 pr-4 text-base font-medium leading-5 text-text-primary outline-none placeholder:text-[rgb(var(--color-sidebar-text-muted))] focus:bg-surface"
         />
       </div>
 
@@ -158,7 +173,12 @@ export function MobileDrawer({
           </h2>
           <div className="space-y-1">
             {projects.map(project => {
-              const tasks = sortProjectTasks(project.tasks).slice(0, PROJECT_TASK_LIMIT)
+              const sortedTasks = sortProjectTasks(project.tasks)
+              const showAllTasks = expandedTaskProjectIds.has(project.id)
+              const tasks = showAllTasks
+                ? sortedTasks
+                : sortedTasks.slice(0, PROJECT_TASK_LIMIT)
+              const hasMoreTasks = sortedTasks.length > PROJECT_TASK_LIMIT
               const selected = currentProjectId === project.id
               const expanded = expandedProjectIds.has(project.id)
               const ExpandIcon = expanded ? ChevronDown : ChevronRight
@@ -198,7 +218,7 @@ export function MobileDrawer({
                               onClose()
                             }}
                             className={[
-                              'flex h-9 min-w-[44px] w-full items-center rounded-lg px-2 text-left text-[13px]',
+                              'flex h-11 min-w-[44px] w-full items-center rounded-lg px-2 text-left text-[13px]',
                               currentTaskId === task.task_id
                                 ? 'bg-[rgb(var(--color-sidebar-active))] text-[rgb(var(--color-sidebar-text-primary))]'
                                 : 'text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]',
@@ -217,6 +237,18 @@ export function MobileDrawer({
                           </button>
                         )
                       })}
+                      {hasMoreTasks && (
+                        <button
+                          type="button"
+                          data-testid={`mobile-project-task-limit-toggle-${project.id}`}
+                          onClick={() => toggleProjectTaskLimit(project.id)}
+                          className="flex h-11 min-w-[44px] w-full items-center rounded-lg px-2 text-left text-[13px] font-medium text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
+                        >
+                          {showAllTasks
+                            ? t('workbench.show_less', '收起')
+                            : t('workbench.show_more', '显示更多')}
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>

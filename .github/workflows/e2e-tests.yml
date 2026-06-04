@@ -20,7 +20,7 @@ jobs:
   e2e-tests:
     name: E2E Tests (Shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -62,8 +62,10 @@ jobs:
           path: |
             ~/.cache/uv
             backend/.venv
+            executor/.venv
+            executor_manager/.venv
             shared/.venv
-          key: ${{ runner.os }}-python-${{ hashFiles('backend/pyproject.toml', 'shared/pyproject.toml') }}
+          key: ${{ runner.os }}-python-${{ hashFiles('backend/pyproject.toml', 'executor/pyproject.toml', 'executor_manager/pyproject.toml', 'shared/pyproject.toml') }}
           restore-keys: |
             ${{ runner.os }}-python-
 
@@ -96,6 +98,23 @@ jobs:
           uv sync
           source .venv/bin/activate
           uv pip install -e ../shared
+
+      - name: Install executor manager dependencies
+        working-directory: ./executor_manager
+        run: |
+          uv sync
+          source .venv/bin/activate
+          uv pip install -e ../shared
+
+      - name: Install executor dependencies
+        working-directory: ./executor
+        run: |
+          uv sync
+          source .venv/bin/activate
+          uv pip install -e ../shared
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code@2.1.142
 
       - name: Install frontend dependencies
         working-directory: ./frontend
@@ -138,11 +157,25 @@ jobs:
           source .venv/bin/activate
           alembic upgrade head
 
+      - name: Resolve Docker bridge host
+        run: |
+          DOCKER_BRIDGE_HOST=$(ip -4 addr show docker0 | awk '/inet / {print $2}' | cut -d/ -f1)
+          if [ -z "$DOCKER_BRIDGE_HOST" ]; then
+            DOCKER_BRIDGE_HOST=172.17.0.1
+          fi
+          echo "E2E_DOCKER_BRIDGE_HOST=$DOCKER_BRIDGE_HOST" >> "$GITHUB_ENV"
+          echo "BACKEND_INTERNAL_URL=http://$DOCKER_BRIDGE_HOST:8000" >> "$GITHUB_ENV"
+          echo "CALLBACK_HOST=http://$DOCKER_BRIDGE_HOST:8001" >> "$GITHUB_ENV"
+          echo "TASK_API_DOMAIN=http://$DOCKER_BRIDGE_HOST:8000" >> "$GITHUB_ENV"
+          echo "E2E_CLAUDE_MODEL_SERVER_URL=http://$DOCKER_BRIDGE_HOST:9999" >> "$GITHUB_ENV"
+          echo "Docker bridge host: $DOCKER_BRIDGE_HOST"
+
       - name: Start backend server
         working-directory: ./backend
         env:
           DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
           REDIS_URL: redis://localhost:6379/0
+          EXECUTOR_MANAGER_URL: http://localhost:8001
           SECRET_KEY: test-secret-key-for-ci-testing
           ALGORITHM: HS256
           ENVIRONMENT: development
@@ -184,17 +217,102 @@ jobs:
       - name: Start Mock Model Server
         working-directory: ./frontend
         run: |
-          npx tsx e2e/utils/mock-model-server.ts &
+          npx tsx e2e/utils/mock-model-server.ts > mock-model-server.log 2>&1 &
           echo $! > mock-server.pid
+
+      - name: Build ClaudeCode Executor Image
+        run: |
+          docker build \
+            -t wegent/e2e-claudecode-executor:latest \
+            -f frontend/e2e/fixtures/claudecode-executor/Dockerfile \
+            .
+
+      - name: Start Local ClaudeCode Executor
+        env:
+          EXECUTOR_MODE: local
+          WEGENT_BACKEND_URL: http://localhost:8000
+          DEVICE_ID: e2e-claudecode-device
+          DEVICE_NAME: E2E ClaudeCode Device
+          DEVICE_TYPE: local
+          BIND_SHELL: claudecode
+          WEGENT_EXECUTOR_HOME: ${{ runner.temp }}/wegent-executor-${{ matrix.shardIndex }}
+          LOCAL_WORKSPACE_ROOT: ${{ runner.temp }}/wegent-workspace-${{ matrix.shardIndex }}
+          LOCAL_HEARTBEAT_INTERVAL: "5"
+          LOG_LEVEL: info
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+          CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY: "1"
+          CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK: "1"
+          CLAUDE_CODE_INCLUDE_CO_AUTHORED_BY: "false"
+        run: |
+          for i in {1..120}; do
+            if curl -sf http://localhost:8000/api/docs >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          TOKEN=$(python - <<'PY'
+          import json
+          import urllib.request
+
+          payload = json.dumps({
+              "user_name": "admin",
+              "password": "Wegent2025!",
+          }).encode("utf-8")
+          request = urllib.request.Request(
+              "http://localhost:8000/api/auth/login",
+              data=payload,
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+          with urllib.request.urlopen(request, timeout=30) as response:
+              print(json.load(response)["access_token"])
+          PY
+          )
+          source executor/.venv/bin/activate
+          PYTHONPATH="$PWD" WEGENT_AUTH_TOKEN="$TOKEN" \
+            nohup python -m executor.main > executor/local-executor.log 2>&1 &
+          echo $! > executor/local-executor.pid
+
+      - name: Start Executor Manager
+        working-directory: ./executor_manager
+        env:
+          REDIS_URL: redis://localhost:6379/0
+          EXECUTOR_IMAGE: wegent/e2e-claudecode-executor:latest
+          EXECUTOR_PORT_RANGE_MIN: "12000"
+          EXECUTOR_PORT_RANGE_MAX: "12100"
+          EXECUTOR_READY_MAX_RETRIES: "90"
+          EXECUTOR_READY_INTERVAL: "1"
+          SANDBOX_READY_MAX_RETRIES: "90"
+          SANDBOX_READY_INTERVAL: "1"
+          EXECUTOR_MANAGER_CALLBACK_URL: http://localhost:8001/executor-manager/callback
+          DOCKER_HOST_ADDR: localhost
+          NETWORK: bridge
+          SERVICE_POOL: e2e-shard-${{ matrix.shardIndex }}
+          OTEL_ENABLED: "false"
+        run: |
+          source .venv/bin/activate
+          nohup uvicorn main:app --host 0.0.0.0 --port 8001 > executor_manager.log 2>&1 &
+          echo $! > executor_manager.pid
 
       - name: Wait for services
         run: |
-          npx wait-on \
-            http://localhost:8000/api/docs \
-            http://localhost:8100/health \
-            http://localhost:3000 \
-            http://localhost:9999/health \
-            --timeout 90000 || (cat backend/backend.log && cat backend/chat_shell.log && exit 1)
+          wait_for_url() {
+            local url="$1"
+            for i in {1..120}; do
+              if curl -sf "$url" >/dev/null; then
+                return 0
+              fi
+              sleep 1
+            done
+            return 1
+          }
+
+          wait_for_url http://localhost:8000/api/docs \
+            && wait_for_url http://localhost:8100/health \
+            && wait_for_url http://localhost:3000 \
+            && wait_for_url http://localhost:9999/health \
+            && wait_for_url http://localhost:8001/health \
+            || (cat backend/backend.log && cat backend/chat_shell.log && cat frontend/mock-model-server.log && cat executor/local-executor.log && cat executor_manager/executor_manager.log && exit 1)
 
       - name: Verify backend is running
         run: |
@@ -210,10 +328,34 @@ jobs:
           E2E_BASE_URL: http://localhost:3000
           E2E_API_URL: http://localhost:8000
           MOCK_MODEL_SERVER_URL: http://localhost:9999
+          E2E_LOCAL_CLAUDE_MODEL_SERVER_URL: http://localhost:9999
+          E2E_DEVICE_ID: e2e-claudecode-device
           CI: true
         run: |
           npx playwright test --project=chromium --project=api \
             --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
+
+      - name: Stop Local ClaudeCode Executor
+        if: always()
+        run: |
+          if [ -f executor/local-executor.pid ]; then
+            kill $(cat executor/local-executor.pid) 2>/dev/null || true
+            rm executor/local-executor.pid
+          fi
+
+      - name: Stop Executor Manager
+        if: always()
+        working-directory: ./executor_manager
+        run: |
+          if [ -f executor_manager.pid ]; then
+            kill $(cat executor_manager.pid) 2>/dev/null || true
+            rm executor_manager.pid
+          fi
+
+      - name: Remove Executor Manager Containers
+        if: always()
+        run: |
+          docker ps -aq --filter label=owner=executor_manager | xargs -r docker rm -f
 
       - name: Stop Mock Model Server
         if: always()
@@ -257,6 +399,9 @@ jobs:
           path: |
             backend/backend.log
             backend/chat_shell.log
+            frontend/mock-model-server.log
+            executor/local-executor.log
+            executor_manager/executor_manager.log
           retention-days: 7
 
   # Merge test reports from all shards

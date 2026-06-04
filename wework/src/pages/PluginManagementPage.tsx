@@ -1,7 +1,9 @@
 import { useState } from 'react'
-import { ChevronRight, Menu } from 'lucide-react'
+import { Menu } from 'lucide-react'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
+import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
 import { MobileDrawer } from '@/components/layout/MobileDrawer'
+import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSidebarCollapsed'
 import { PluginManagementWorkspace } from '@/components/plugins/PluginManagementWorkspace'
 import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
 import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
@@ -43,7 +45,8 @@ export function PluginManagementPage() {
   } = useWorkbench()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const { sidebarCollapsed, setSidebarCollapsed } =
+    useDesktopSidebarCollapsed()
 
   const handleSelectProject = (projectId: number) => {
     navigateTo('/')
@@ -55,12 +58,17 @@ export function PluginManagementPage() {
     void openTask(taskId, projectId)
   }
 
+  const handleOpenPlugins = () => {
+    setSettingsOpen(false)
+    navigateTo('/plugins')
+  }
+
   if (settingsOpen) {
     if (isMobile) {
       return (
         <MobileSettingsPage
           onBack={() => setSettingsOpen(false)}
-          onOpenPlugins={() => navigateTo('/plugins')}
+          onOpenPlugins={handleOpenPlugins}
         />
       )
     }
@@ -109,7 +117,7 @@ export function PluginManagementPage() {
           onSelectProject={handleSelectProject}
           onStartNewProjectChat={handleStartNewProjectChat}
           onOpenTask={handleOpenTask}
-          onOpenPlugins={() => navigateTo('/plugins')}
+          onOpenPlugins={handleOpenPlugins}
           onRefreshDevices={refreshDevices}
           onCreateProject={createProject}
           onUpdateProjectName={updateProjectName}
@@ -127,28 +135,25 @@ export function PluginManagementPage() {
           onLogout={logout}
         />
       ) : !isMobile ? (
-        <button
-          type="button"
-          data-testid="expand-sidebar-button"
-          onClick={() => setSidebarCollapsed(false)}
-          className="absolute left-4 top-4 z-20 flex h-9 w-9 items-center justify-center rounded-md bg-surface text-text-secondary hover:bg-muted"
-          aria-label={t('workbench.expand_sidebar', '展开侧边栏')}
-        >
-          <ChevronRight className="h-4 w-4" />
-        </button>
+        <DesktopWindowControls
+          sidebarCollapsed
+          onToggleSidebar={() => setSidebarCollapsed(false)}
+          onNewChat={handleNewChat}
+          className="absolute left-4 top-2 z-chrome"
+        />
       ) : (
-        <header className="absolute left-0 right-0 top-0 z-20 flex h-14 items-center justify-between bg-background/95 px-4 backdrop-blur">
-          <button
-            type="button"
-            data-testid="open-mobile-drawer-button"
-            onClick={() => setDrawerOpen(true)}
-            className="flex h-11 min-w-[44px] items-center justify-center rounded-full bg-surface"
-            aria-label={t('workbench.open_menu', '打开菜单')}
-          >
-            <Menu className="h-6 w-6" />
-          </button>
-          <span className="text-sm font-semibold">{t('workbench.plugins_manage', '管理')}</span>
-          <div className="h-11 min-w-[44px]" />
+        <>
+          <header className="pointer-events-none absolute left-5 top-[max(8px,env(safe-area-inset-top))] z-chrome flex h-11 items-center">
+            <button
+              type="button"
+              data-testid="open-mobile-drawer-button"
+              onClick={() => setDrawerOpen(true)}
+              className="pointer-events-auto flex h-11 min-w-[44px] items-center justify-center rounded-lg bg-surface text-text-primary transition-colors hover:bg-muted"
+              aria-label={t('workbench.open_menu', '打开菜单')}
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+          </header>
           <MobileDrawer
             open={drawerOpen}
             user={state.user}
@@ -165,9 +170,9 @@ export function PluginManagementPage() {
             onSelectProject={handleSelectProject}
             onOpenTask={handleOpenTask}
           />
-        </header>
+        </>
       )}
-      <PluginManagementWorkspace />
+      <PluginManagementWorkspace sidebarCollapsed={sidebarCollapsed && !isMobile} />
     </div>
   )
 }

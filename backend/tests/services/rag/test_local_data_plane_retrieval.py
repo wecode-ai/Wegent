@@ -54,6 +54,7 @@ async def test_query_local_uses_shared_default_budget() -> None:
     assert result["mode"] == "rag_retrieval"
     mock_retrieve.assert_awaited_once_with(
         query="release checklist",
+        search_hints=None,
         knowledge_base_ids=[1],
         db=db,
         max_results=5,
