@@ -83,19 +83,19 @@ def _get_rate_limit_redis_client(*, require_global_enabled: bool = True):
         return None
 
 
-def _hash_rate_limit_value(value: str) -> str:
+def hash_rate_limit_value(value: str) -> str:
     """Hash sensitive rate limit dimensions before storing them in Redis keys."""
     return sha256(value.encode("utf-8")).hexdigest()[:32]
 
 
 def _build_external_mcp_rate_limit_keys(request: Request) -> list[str]:
     client_ip = request.client.host if request.client else "unknown"
-    keys = [f"ip:{_hash_rate_limit_value(client_ip)}"]
+    keys = [f"ip:{hash_rate_limit_value(client_ip)}"]
 
     auth_header = request.headers.get("authorization", "")
     token = extract_token_from_header(auth_header)
     if token:
-        keys.append(f"token:{_hash_rate_limit_value(token)}")
+        keys.append(f"token:{hash_rate_limit_value(token)}")
 
     return keys
 

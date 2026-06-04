@@ -19,7 +19,9 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from app.core.config import settings
 from app.core.rate_limit import (
     ExternalMcpRateLimitStatus,
+    check_external_mcp_dimension_rate_limit,
     check_external_mcp_rate_limit,
+    hash_rate_limit_value,
 )
 from app.mcp_server.server import (
     EXTERNAL_KNOWLEDGE_MCP_MOUNT_PATH,
@@ -117,6 +119,13 @@ async def _document_file(request: Request) -> Response:
             status_code=400,
         )
 
+    rate_limit_response = await _check_download_preauth_rate_limit(
+        request,
+        document_id,
+    )
+    if rate_limit_response is not None:
+        return rate_limit_response
+
     token = request.headers.get(DOWNLOAD_TOKEN_HEADER, "")
     token_payload = verify_document_download_token(token)
     if token_payload is None or token_payload.document_id != document_id:
@@ -124,6 +133,13 @@ async def _document_file(request: Request) -> Response:
             {"error": "Invalid or expired download token", "code": "unauthorized"},
             status_code=401,
         )
+
+    rate_limit_response = await _check_download_rate_limit(
+        user_id=token_payload.user_id,
+        document_id=document_id,
+    )
+    if rate_limit_response is not None:
+        return rate_limit_response
 
     db = SessionLocal()
     try:
@@ -149,6 +165,87 @@ async def _document_file(request: Request) -> Response:
         )
     finally:
         db.close()
+
+
+async def _check_download_preauth_rate_limit(
+    request: Request,
+    document_id: int,
+) -> JSONResponse | None:
+    if not settings.EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_RATE_LIMIT_ENABLED:
+        return None
+
+    client_ip = request.client.host if request.client else "unknown"
+    ip_hash = hash_rate_limit_value(client_ip)
+    ip_status = await run_in_threadpool(
+        partial(
+            check_external_mcp_dimension_rate_limit,
+            dimensions=[f"ip:{ip_hash}"],
+            namespace="download_preauth_ip",
+            limit=settings.EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_PREAUTH_IP_RATE_LIMIT_REQUESTS,
+            window_seconds=(
+                settings.EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_PREAUTH_IP_RATE_LIMIT_WINDOW_SECONDS
+            ),
+        )
+    )
+    rate_limit_response = _download_rate_limit_response(ip_status)
+    if rate_limit_response is not None:
+        return rate_limit_response
+
+    document_status = await run_in_threadpool(
+        partial(
+            check_external_mcp_dimension_rate_limit,
+            dimensions=[f"ip:{ip_hash}:document:{document_id}"],
+            namespace="download_preauth_document",
+            limit=(
+                settings.EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_PREAUTH_DOCUMENT_RATE_LIMIT_REQUESTS
+            ),
+            window_seconds=(
+                settings.EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_PREAUTH_DOCUMENT_RATE_LIMIT_WINDOW_SECONDS
+            ),
+        )
+    )
+    return _download_rate_limit_response(document_status)
+
+
+async def _check_download_rate_limit(
+    *,
+    user_id: int,
+    document_id: int,
+) -> JSONResponse | None:
+    if not settings.EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_RATE_LIMIT_ENABLED:
+        return None
+
+    rate_limit_status = await run_in_threadpool(
+        partial(
+            check_external_mcp_dimension_rate_limit,
+            dimensions=[f"user:{user_id}:document:{document_id}"],
+            namespace="download",
+            limit=settings.EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_RATE_LIMIT_REQUESTS,
+            window_seconds=(
+                settings.EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_RATE_LIMIT_WINDOW_SECONDS
+            ),
+        )
+    )
+    return _download_rate_limit_response(rate_limit_status)
+
+
+def _download_rate_limit_response(
+    status: ExternalMcpRateLimitStatus,
+) -> JSONResponse | None:
+    if status == ExternalMcpRateLimitStatus.LIMITED:
+        return JSONResponse(
+            {"error": "Rate limit exceeded", "code": "rate_limited"},
+            status_code=429,
+        )
+    if status == ExternalMcpRateLimitStatus.UNAVAILABLE:
+        return JSONResponse(
+            {
+                "error": "Rate limit service unavailable",
+                "code": "rate_limit_unavailable",
+            },
+            status_code=503,
+        )
+    return None
 
 
 def _parse_document_id(request: Request) -> int | None:

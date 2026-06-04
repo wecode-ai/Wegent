@@ -6,7 +6,7 @@
 
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import ANY, AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -50,9 +50,15 @@ class NonClosingSession:
 
 @pytest.fixture(autouse=True)
 def allow_external_transport_rate_limit():
-    with patch(
-        "app.mcp_server.external_knowledge_app.check_external_mcp_rate_limit",
-        return_value=ExternalMcpRateLimitStatus.ALLOWED,
+    with (
+        patch(
+            "app.mcp_server.external_knowledge_app.check_external_mcp_rate_limit",
+            return_value=ExternalMcpRateLimitStatus.ALLOWED,
+        ),
+        patch(
+            "app.mcp_server.external_knowledge_app.check_external_mcp_dimension_rate_limit",
+            return_value=ExternalMcpRateLimitStatus.ALLOWED,
+        ),
     ):
         yield
 
@@ -564,6 +570,219 @@ def test_external_knowledge_mcp_transport_fails_closed_when_rate_limit_unavailab
     }
     rate_limit_check.assert_called_once()
     auth_handler.assert_called_once()
+
+
+def test_external_knowledge_document_file_applies_preauth_ip_rate_limit():
+    verify_token = MagicMock()
+    load_document_file = MagicMock()
+
+    with (
+        patch.object(
+            settings, "EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_RATE_LIMIT_ENABLED", True
+        ),
+        patch(
+            "app.mcp_server.external_knowledge_app.check_external_mcp_dimension_rate_limit",
+            return_value=ExternalMcpRateLimitStatus.LIMITED,
+        ) as rate_limit_check,
+        patch(
+            "app.mcp_server.external_knowledge_app.hash_rate_limit_value",
+            return_value="hashed-ip",
+        ),
+        patch(
+            "app.services.knowledge.external_document_access.verify_document_download_token",
+            verify_token,
+        ),
+        patch(
+            "app.services.knowledge.external_document_access.load_document_file_or_raise",
+            load_document_file,
+        ),
+    ):
+        app = _build_external_knowledge_mcp_app()
+        client = TestClient(app)
+        response = client.get("/documents/1/file")
+
+    assert response.status_code == 429
+    assert response.json() == {
+        "error": "Rate limit exceeded",
+        "code": "rate_limited",
+    }
+    rate_limit_check.assert_called_once()
+    assert rate_limit_check.call_args.kwargs["namespace"] == "download_preauth_ip"
+    assert rate_limit_check.call_args.kwargs["dimensions"] == ["ip:hashed-ip"]
+    assert rate_limit_check.call_args.kwargs["limit"] == 300
+    assert rate_limit_check.call_args.kwargs["window_seconds"] == 60
+    verify_token.assert_not_called()
+    load_document_file.assert_not_called()
+
+
+def test_external_knowledge_document_file_applies_preauth_document_rate_limit():
+    verify_token = MagicMock()
+    load_document_file = MagicMock()
+
+    with (
+        patch.object(
+            settings, "EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_RATE_LIMIT_ENABLED", True
+        ),
+        patch(
+            "app.mcp_server.external_knowledge_app.check_external_mcp_dimension_rate_limit",
+            side_effect=[
+                ExternalMcpRateLimitStatus.ALLOWED,
+                ExternalMcpRateLimitStatus.LIMITED,
+            ],
+        ) as rate_limit_check,
+        patch(
+            "app.mcp_server.external_knowledge_app.hash_rate_limit_value",
+            return_value="hashed-ip",
+        ),
+        patch(
+            "app.services.knowledge.external_document_access.verify_document_download_token",
+            verify_token,
+        ),
+        patch(
+            "app.services.knowledge.external_document_access.load_document_file_or_raise",
+            load_document_file,
+        ),
+    ):
+        app = _build_external_knowledge_mcp_app()
+        client = TestClient(app)
+        response = client.get("/documents/1/file")
+
+    assert response.status_code == 429
+    assert response.json() == {
+        "error": "Rate limit exceeded",
+        "code": "rate_limited",
+    }
+    assert rate_limit_check.call_count == 2
+    first_call, second_call = rate_limit_check.call_args_list
+    assert first_call.kwargs["namespace"] == "download_preauth_ip"
+    assert first_call.kwargs["dimensions"] == ["ip:hashed-ip"]
+    assert first_call.kwargs["limit"] == 300
+    assert first_call.kwargs["window_seconds"] == 60
+    assert second_call.kwargs["namespace"] == "download_preauth_document"
+    assert second_call.kwargs["dimensions"] == ["ip:hashed-ip:document:1"]
+    assert second_call.kwargs["limit"] == 60
+    assert second_call.kwargs["window_seconds"] == 60
+    verify_token.assert_not_called()
+    load_document_file.assert_not_called()
+
+
+def test_external_knowledge_document_file_fails_closed_when_preauth_limiter_unavailable():
+    verify_token = MagicMock()
+
+    with (
+        patch.object(
+            settings, "EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_RATE_LIMIT_ENABLED", True
+        ),
+        patch(
+            "app.mcp_server.external_knowledge_app.check_external_mcp_dimension_rate_limit",
+            return_value=ExternalMcpRateLimitStatus.UNAVAILABLE,
+        ) as rate_limit_check,
+        patch(
+            "app.mcp_server.external_knowledge_app.hash_rate_limit_value",
+            return_value="hashed-ip",
+        ),
+        patch(
+            "app.services.knowledge.external_document_access.verify_document_download_token",
+            verify_token,
+        ),
+    ):
+        app = _build_external_knowledge_mcp_app()
+        client = TestClient(app)
+        response = client.get("/documents/1/file")
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": "Rate limit service unavailable",
+        "code": "rate_limit_unavailable",
+    }
+    rate_limit_check.assert_called_once()
+    assert rate_limit_check.call_args.kwargs["namespace"] == "download_preauth_ip"
+    assert rate_limit_check.call_args.kwargs["dimensions"] == ["ip:hashed-ip"]
+    verify_token.assert_not_called()
+
+
+def test_external_knowledge_document_file_applies_postauth_rate_limit(test_user):
+    token = create_document_download_token(
+        user_id=test_user.id,
+        document_id=1,
+        disposition="inline",
+    )
+    load_document_file = MagicMock()
+
+    with (
+        patch.object(
+            settings, "EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_RATE_LIMIT_ENABLED", True
+        ),
+        patch(
+            "app.mcp_server.external_knowledge_app.check_external_mcp_dimension_rate_limit",
+            side_effect=[
+                ExternalMcpRateLimitStatus.ALLOWED,
+                ExternalMcpRateLimitStatus.ALLOWED,
+                ExternalMcpRateLimitStatus.LIMITED,
+            ],
+        ) as rate_limit_check,
+        patch(
+            "app.services.knowledge.external_document_access.load_document_file_or_raise",
+            load_document_file,
+        ),
+    ):
+        app = _build_external_knowledge_mcp_app()
+        client = TestClient(app)
+        response = client.get(
+            "/documents/1/file",
+            headers={DOWNLOAD_TOKEN_HEADER: token},
+        )
+
+    assert response.status_code == 429
+    assert response.json() == {
+        "error": "Rate limit exceeded",
+        "code": "rate_limited",
+    }
+    assert rate_limit_check.call_count == 3
+    assert rate_limit_check.call_args.kwargs["namespace"] == "download"
+    load_document_file.assert_not_called()
+
+
+def test_external_knowledge_document_file_fails_closed_when_postauth_limiter_unavailable(
+    test_user,
+):
+    token = create_document_download_token(
+        user_id=test_user.id,
+        document_id=1,
+        disposition="inline",
+    )
+
+    with (
+        patch.object(
+            settings, "EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_RATE_LIMIT_ENABLED", True
+        ),
+        patch(
+            "app.mcp_server.external_knowledge_app.check_external_mcp_dimension_rate_limit",
+            side_effect=[
+                ExternalMcpRateLimitStatus.ALLOWED,
+                ExternalMcpRateLimitStatus.ALLOWED,
+                ExternalMcpRateLimitStatus.UNAVAILABLE,
+            ],
+        ) as rate_limit_check,
+        patch(
+            "app.services.knowledge.external_document_access.load_document_file_or_raise"
+        ) as load_document_file,
+    ):
+        app = _build_external_knowledge_mcp_app()
+        client = TestClient(app)
+        response = client.get(
+            "/documents/1/file",
+            headers={DOWNLOAD_TOKEN_HEADER: token},
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": "Rate limit service unavailable",
+        "code": "rate_limit_unavailable",
+    }
+    assert rate_limit_check.call_count == 3
+    assert rate_limit_check.call_args.kwargs["namespace"] == "download"
+    load_document_file.assert_not_called()
 
 
 def test_external_knowledge_document_file_downloads_with_short_lived_token(

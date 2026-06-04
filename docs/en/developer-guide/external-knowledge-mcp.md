@@ -41,8 +41,15 @@ The code also provides Redis-backed rate limiting for the external MCP transport
 | `EXTERNAL_KNOWLEDGE_MCP_SEARCH_RATE_LIMIT_ENABLED` | `true` | Enables search tool rate limiting |
 | `EXTERNAL_KNOWLEDGE_MCP_SEARCH_RATE_LIMIT_REQUESTS` | `30` | Search requests allowed per window |
 | `EXTERNAL_KNOWLEDGE_MCP_SEARCH_RATE_LIMIT_WINDOW_SECONDS` | `60` | Search rate limit window in seconds |
+| `EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_RATE_LIMIT_ENABLED` | `true` | Enables document file download rate limiting |
+| `EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_PREAUTH_IP_RATE_LIMIT_REQUESTS` | `300` | Download requests allowed per client IP hash window before token verification |
+| `EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_PREAUTH_IP_RATE_LIMIT_WINDOW_SECONDS` | `60` | Client IP hash rate limit window before token verification, in seconds |
+| `EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_PREAUTH_DOCUMENT_RATE_LIMIT_REQUESTS` | `60` | Download requests allowed per client IP hash and document ID window before token verification |
+| `EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_PREAUTH_DOCUMENT_RATE_LIMIT_WINDOW_SECONDS` | `60` | Client IP hash and document ID rate limit window before token verification, in seconds |
+| `EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_RATE_LIMIT_REQUESTS` | `20` | Download requests allowed per window after token verification |
+| `EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_RATE_LIMIT_WINDOW_SECONDS` | `60` | Download rate limit window after token verification, in seconds |
 
-The transport limiter checks both client IP and `Authorization` token hash dimensions. If either dimension exceeds the limit, the request returns `rate_limited`. The search tool also has a user-ID-based limit. When rate limiting is enabled but Redis is unavailable, requests return `rate_limit_unavailable` and do not continue to expensive retrieval work. Raw tokens are never stored in Redis keys. Production deployments should still keep gateway allowlists and rate limits to stop abnormal traffic before it reaches the application.
+The transport limiter checks both client IP and `Authorization` token hash dimensions. If either dimension exceeds the limit, the request returns `rate_limited`. The search tool also has a user-ID-based limit. The document file endpoint uses independent limits: before token verification, it first applies a global client IP hash limit, then a client IP hash plus document ID limit; after token verification, it limits by authenticated user ID and document ID. When rate limiting is enabled but Redis is unavailable, requests return `rate_limit_unavailable` and do not continue to expensive retrieval or file loading work. Raw tokens are never stored in Redis keys. Production deployments should still keep gateway allowlists and rate limits to stop abnormal traffic before it reaches the application.
 
 ## Authentication
 
@@ -164,6 +171,7 @@ Behavior:
 - The token expires after 300 seconds by default and is bound to the authenticated user, document ID, and `disposition`.
 - `inline` is allowed only for previewable MIME types; callers should use `attachment` for non-previewable files.
 - The file endpoint rechecks permission; if access is revoked after token issuance, download returns `forbidden`.
+- The file endpoint has independent rate limiting. It returns `rate_limited` when exceeded and `rate_limit_unavailable` when Redis is unavailable.
 
 ### `wegent_kb_search_content`
 
@@ -206,7 +214,7 @@ Common `code` values:
 | `forbidden` | No permission to access the target knowledge base or document |
 | `file_unavailable` | Original document file is unavailable |
 | `unsupported_media_type` | The file does not support inline preview |
-| `rate_limited` | Transport request exceeds the rate limit |
+| `rate_limited` | Transport, search, or file download request exceeds the rate limit |
 | `rate_limit_unavailable` | Rate limit service is unavailable and the request is rejected |
 | `result_too_large` | Recursive result exceeds the limit |
 | `internal_error` | Internal exception |

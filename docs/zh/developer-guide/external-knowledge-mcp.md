@@ -41,8 +41,15 @@ EXTERNAL_KNOWLEDGE_MCP_ENABLED=true
 | `EXTERNAL_KNOWLEDGE_MCP_SEARCH_RATE_LIMIT_ENABLED` | `true` | 是否开启搜索工具级限流 |
 | `EXTERNAL_KNOWLEDGE_MCP_SEARCH_RATE_LIMIT_REQUESTS` | `30` | 搜索工具每个窗口允许的请求数 |
 | `EXTERNAL_KNOWLEDGE_MCP_SEARCH_RATE_LIMIT_WINDOW_SECONDS` | `60` | 搜索工具限流窗口秒数 |
+| `EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_RATE_LIMIT_ENABLED` | `true` | 是否开启文档文件下载限流 |
+| `EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_PREAUTH_IP_RATE_LIMIT_REQUESTS` | `300` | token 校验前每个客户端 IP hash 窗口允许的下载请求数 |
+| `EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_PREAUTH_IP_RATE_LIMIT_WINDOW_SECONDS` | `60` | token 校验前客户端 IP hash 限流窗口秒数 |
+| `EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_PREAUTH_DOCUMENT_RATE_LIMIT_REQUESTS` | `60` | token 校验前每个客户端 IP hash 和文档 ID 窗口允许的下载请求数 |
+| `EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_PREAUTH_DOCUMENT_RATE_LIMIT_WINDOW_SECONDS` | `60` | token 校验前客户端 IP hash 和文档 ID 限流窗口秒数 |
+| `EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_RATE_LIMIT_REQUESTS` | `20` | token 校验后每个窗口允许的下载请求数 |
+| `EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_RATE_LIMIT_WINDOW_SECONDS` | `60` | token 校验后下载限流窗口秒数 |
 
-transport 限流同时检查客户端 IP 和 `Authorization` token hash 两个维度，任一维度超限都会返回 `rate_limited`。搜索工具额外按认证用户 ID 限流。限流开启但 Redis 不可用时，请求会返回 `rate_limit_unavailable`，不会继续执行昂贵的检索操作。原始 token 不会写入 Redis key。生产环境仍应保留网关层 allowlist 和限流，用于在请求进入应用前拦截异常流量。
+transport 限流同时检查客户端 IP 和 `Authorization` token hash 两个维度，任一维度超限都会返回 `rate_limited`。搜索工具额外按认证用户 ID 限流。文档文件下载 endpoint 使用独立限流：token 校验前先按客户端 IP hash 做整体限流，再按客户端 IP hash 和文档 ID 做单文档限流，token 校验后按认证用户 ID 和文档 ID 限流。限流开启但 Redis 不可用时，请求会返回 `rate_limit_unavailable`，不会继续执行昂贵的检索或文件读取操作。原始 token 不会写入 Redis key。生产环境仍应保留网关层 allowlist 和限流，用于在请求进入应用前拦截异常流量。
 
 ## 鉴权
 
@@ -164,6 +171,7 @@ set_external_knowledge_auth_handler(enterprise_auth_handler)
 - token 默认有效期为 300 秒，并绑定认证用户、文档 ID 和 `disposition`。
 - `inline` 只支持可预览 MIME 类型；不可预览文件应使用 `attachment`。
 - 文件端点会重新校验权限；token 签发后权限被撤销时，下载会返回 `forbidden`。
+- 文件端点有独立限流；超限返回 `rate_limited`，Redis 不可用时返回 `rate_limit_unavailable`。
 
 ### `wegent_kb_search_content`
 
@@ -206,7 +214,7 @@ set_external_knowledge_auth_handler(enterprise_auth_handler)
 | `forbidden` | 无权访问目标知识库或文档 |
 | `file_unavailable` | 文档原文件不可用 |
 | `unsupported_media_type` | 文件不支持 inline 预览 |
-| `rate_limited` | transport 请求超过限流 |
+| `rate_limited` | transport、搜索或文件下载请求超过限流 |
 | `rate_limit_unavailable` | 限流服务不可用，已拒绝请求 |
 | `result_too_large` | 递归结果超过上限 |
 | `internal_error` | 内部异常 |
