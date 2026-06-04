@@ -7,7 +7,7 @@ import requests
 from .config import get_api_key, get_server, get_token
 from .errors import EXIT_API_ERROR, EXIT_AUTH_ERROR, EXIT_NETWORK_ERROR, CliError
 
-VALID_KINDS = ["ghost", "model", "shell", "bot", "team", "workspace", "task", "skill"]
+VALID_KINDS = ["ghost", "model", "shell", "bot", "team", "workspace", "task"]
 
 KIND_TO_PATH = {
     "ghost": "ghosts",
@@ -17,7 +17,6 @@ KIND_TO_PATH = {
     "team": "teams",
     "workspace": "workspaces",
     "task": "tasks",
-    "skill": "skills",
 }
 
 KIND_ALIASES = {
@@ -28,7 +27,6 @@ KIND_ALIASES = {
     "te": "team",
     "ws": "workspace",
     "ta": "task",
-    "sk": "skill",
 }
 
 _OMITTED = object()

@@ -1,13 +1,16 @@
 """Kind command group for CRD resource operations."""
 
+import json
+import sys
+from pathlib import Path
 from typing import Any
 
 import click
+import yaml
 
 from ..client import WegentClient
 from ..config import get_namespace
 from ..errors import CliError
-from ..io import load_structured_input
 from ..output import dumps_json, dumps_yaml, error_envelope, success_envelope
 
 
@@ -38,6 +41,64 @@ def _emit_error(error: CliError, json_output: bool) -> None:
     else:
         click.echo(f"Error: {error.message}", err=True)
     raise SystemExit(error.exit_code)
+
+
+def _usage_error(message: str, json_output: bool) -> None:
+    if json_output:
+        _emit_error(CliError("invalid_arguments", message), json_output)
+    raise click.UsageError(message)
+
+
+def _read_input_text(source: str) -> str:
+    if source == "-":
+        text = sys.stdin.read()
+    else:
+        input_path = Path(source)
+        if not input_path.exists():
+            raise CliError(
+                "file_not_found",
+                f"Input file not found: {source}",
+                {"path": source},
+            )
+        try:
+            text = input_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise CliError(
+                "file_read_error",
+                f"Failed to read input file: {source}",
+                {"path": source, "error": str(exc)},
+            ) from exc
+
+    if not text.strip():
+        label = "stdin" if source == "-" else source
+        raise CliError("empty_input", f"No input received from {label}")
+
+    return text
+
+
+def _load_resource_input(source: str) -> list[Any]:
+    text = _read_input_text(source)
+    try:
+        return _as_resource_list(json.loads(text))
+    except json.JSONDecodeError:
+        pass
+
+    try:
+        documents = [doc for doc in yaml.safe_load_all(text) if doc is not None]
+    except yaml.YAMLError as exc:
+        raise CliError(
+            "invalid_input",
+            f"Failed to parse structured input from {source}",
+            {"source": source, "error": str(exc)},
+        ) from exc
+
+    if len(documents) == 1:
+        return _as_resource_list(documents[0])
+
+    resources: list[Any] = []
+    for document in documents:
+        resources.extend(_as_resource_list(document))
+    return resources
 
 
 def _client(ctx: click.Context) -> WegentClient:
@@ -113,13 +174,15 @@ def apply_cmd(
 ) -> None:
     """Apply CRD resources from structured input."""
     if not file_path and not input_path:
-        raise click.UsageError("Provide --file or --input")
+        _usage_error("Provide --file or --input", json_output)
+    if file_path and input_path:
+        _usage_error("Provide only one of --file or --input", json_output)
 
     client = _client(ctx)
     ns = _namespace(namespace)
     source = file_path or input_path
     try:
-        resources = _as_resource_list(load_structured_input(source))
+        resources = _load_resource_input(source)
         _emit(client.apply_kinds(ns, resources), json_output)
     except CliError as exc:
         _emit_error(exc, json_output)
@@ -145,7 +208,7 @@ def delete_cmd(
     ns = _namespace(namespace)
     try:
         if input_path:
-            resources = _as_resource_list(load_structured_input(input_path))
+            resources = _load_resource_input(input_path)
             _emit(client.delete_kinds(ns, resources), json_output)
             return
 

@@ -85,6 +85,15 @@ def test_normalize_kind_rejects_invalid_kind():
     assert exc_info.value.code == "invalid_kind"
 
 
+def test_normalize_kind_rejects_generic_skill_kind():
+    client = WegentClient(server="http://backend")
+
+    with pytest.raises(CliError) as exc_info:
+        client.normalize_kind("skill")
+
+    assert exc_info.value.code == "invalid_kind"
+
+
 def test_request_builds_api_url_and_json_body():
     session = DummySession(make_response(payload={"ok": True}))
     client = WegentClient(server="http://backend/", token="token", session=session)
