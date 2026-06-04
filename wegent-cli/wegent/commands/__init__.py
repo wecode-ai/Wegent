@@ -1,1 +1,1 @@
-"""CLI commands for wegent."""
+"""Command modules for the Wegent CLI."""
