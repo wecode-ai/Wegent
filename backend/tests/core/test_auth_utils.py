@@ -196,6 +196,22 @@ class TestVerifyApiKey:
         # last_used_at should be updated (or at least not before original)
         assert api_key_record.last_used_at >= original_last_used
 
+    def test_verify_api_key_can_skip_last_used_update(
+        self, test_db: Session, test_api_key: Tuple[str, APIKey], test_user: User
+    ):
+        """Test that readonly verification does not update last_used_at."""
+        raw_key, api_key_record = test_api_key
+        original_last_used = datetime(2026, 1, 1, 8, 0, 0)
+        api_key_record.last_used_at = original_last_used
+        test_db.commit()
+
+        user = verify_api_key(test_db, raw_key, update_last_used_at=False)
+
+        test_db.refresh(api_key_record)
+        assert user is not None
+        assert user.id == test_user.id
+        assert api_key_record.last_used_at == original_last_used
+
 
 @pytest.mark.unit
 class TestVerifyJwtTokenWithDb:

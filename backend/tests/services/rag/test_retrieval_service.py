@@ -140,7 +140,14 @@ class TestGetAllChunksFromKnowledgeBase:
 
 @pytest.mark.unit
 class TestRetrieveForChatShell:
-    def test_internal_retrieve_endpoint_uses_gateway_runtime_spec(self, test_client):
+    def test_internal_retrieve_endpoint_uses_gateway_runtime_spec(
+        self,
+        test_client,
+        monkeypatch,
+    ):
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "test-internal-token")
         payload = {
             "query": "test",
             "knowledge_base_ids": [123],
@@ -171,7 +178,11 @@ class TestRetrieveForChatShell:
                 },
             ) as mock_query,
         ):
-            response = test_client.post("/api/internal/rag/retrieve", json=payload)
+            response = test_client.post(
+                "/api/internal/rag/retrieve",
+                json=payload,
+                headers={"Authorization": "Bearer test-internal-token"},
+            )
 
         assert response.status_code == 200
         mock_resolve.assert_called_once()
@@ -777,6 +788,7 @@ class TestRetrieveForChatShell:
                 "title": "Checklist",
                 "metadata": {"doc_ref": "9"},
                 "knowledge_base_id": 123,
+                "document_id": 9,
             }
         ]
         mock_storage.assert_called_once_with(kb_config.retriever_config)
@@ -792,3 +804,57 @@ class TestRetrieveForChatShell:
             },
             user_id=7,
         )
+
+    @pytest.mark.asyncio
+    async def test_rag_retrieval_leaves_non_numeric_doc_ref_without_document_id(self):
+        from app.services.rag.retrieval_service import RetrievalService
+
+        service = RetrievalService()
+        service.retrieve_from_knowledge_base_internal = AsyncMock(
+            return_value={
+                "records": [
+                    {
+                        "content": "chunk",
+                        "score": 0.9,
+                        "title": "doc.md",
+                        "metadata": {"doc_ref": "doc_abc"},
+                    }
+                ]
+            }
+        )
+
+        result = await service.retrieve_with_routing(
+            query="chunk",
+            knowledge_base_ids=[1],
+            db=MagicMock(),
+            route_mode="rag_retrieval",
+        )
+
+        assert result["records"][0]["document_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_rag_retrieval_extracts_document_id_from_prefixed_doc_ref(self):
+        from app.services.rag.retrieval_service import RetrievalService
+
+        service = RetrievalService()
+        service.retrieve_from_knowledge_base_internal = AsyncMock(
+            return_value={
+                "records": [
+                    {
+                        "content": "chunk",
+                        "score": 0.9,
+                        "title": "doc.md",
+                        "metadata": {"doc_ref": "doc_9"},
+                    }
+                ]
+            }
+        )
+
+        result = await service.retrieve_with_routing(
+            query="chunk",
+            knowledge_base_ids=[1],
+            db=MagicMock(),
+            route_mode="rag_retrieval",
+        )
+
+        assert result["records"][0]["document_id"] == 9

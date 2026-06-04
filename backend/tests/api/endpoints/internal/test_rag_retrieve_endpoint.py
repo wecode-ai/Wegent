@@ -10,6 +10,35 @@ from app.services.rag.runtime_specs import (
     DirectInjectionBudget,
     QueryRuntimeSpec,
 )
+from shared.models import (
+    RemoteKnowledgeBaseQueryConfig,
+    RuntimeEmbeddingModelConfig,
+    RuntimeRetrievalConfig,
+    RuntimeRetrieverConfig,
+)
+
+
+def _internal_headers() -> dict[str, str]:
+    token = settings.INTERNAL_SERVICE_TOKEN
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
+def _make_remote_query_config(knowledge_base_id: int) -> RemoteKnowledgeBaseQueryConfig:
+    return RemoteKnowledgeBaseQueryConfig(
+        knowledge_base_id=knowledge_base_id,
+        index_owner_user_id=7,
+        retriever_config=RuntimeRetrieverConfig(
+            name="retriever-a",
+            namespace="default",
+            storage_config={"type": "qdrant"},
+        ),
+        embedding_model_config=RuntimeEmbeddingModelConfig(
+            model_name="embed-a",
+            model_namespace="default",
+            resolved_config={"protocol": "openai"},
+        ),
+        retrieval_config=RuntimeRetrievalConfig(top_k=20),
+    )
 
 
 def _make_runtime_spec(
@@ -25,6 +54,10 @@ def _make_runtime_spec(
         document_ids=document_ids,
         query=query,
         route_mode=route_mode,
+        knowledge_base_configs=[
+            _make_remote_query_config(knowledge_base_id)
+            for knowledge_base_id in (knowledge_base_ids or [1])
+        ],
         direct_injection_budget=(
             DirectInjectionBudget(context_window=10000) if with_budget else None
         ),
@@ -55,7 +88,7 @@ def test_internal_retrieve_returns_restricted_safe_summary(test_client):
 
     with (
         patch(
-            "app.api.endpoints.internal.rag.RagRuntimeResolver.build_query_runtime_spec",
+            "app.api.endpoints.internal.rag.runtime_resolver.build_query_runtime_spec",
             return_value=_make_runtime_spec(
                 knowledge_base_ids=[1],
                 query=payload["query"],
@@ -104,7 +137,11 @@ def test_internal_retrieve_returns_restricted_safe_summary(test_client):
             },
         ) as mock_transform,
     ):
-        response = test_client.post("/api/internal/rag/retrieve", json=payload)
+        response = test_client.post(
+            "/api/internal/rag/retrieve",
+            json=payload,
+            headers=_internal_headers(),
+        )
 
     assert response.status_code == 200
     body = response.json()
@@ -150,7 +187,11 @@ def test_internal_all_chunks_routes_protocol_request_through_local_gateway(test_
             },
         ) as mock_list_chunks,
     ):
-        response = test_client.post("/api/internal/rag/all-chunks", json=payload)
+        response = test_client.post(
+            "/api/internal/rag/all-chunks",
+            json=payload,
+            headers=_internal_headers(),
+        )
 
     assert response.status_code == 200
     assert response.json() == {
@@ -203,6 +244,7 @@ def test_internal_purge_index_routes_protocol_request_through_local_gateway(
         response = test_client.post(
             "/api/internal/rag/purge-knowledge-index",
             json=payload,
+            headers=_internal_headers(),
         )
 
     assert response.status_code == 200
@@ -246,6 +288,7 @@ def test_internal_drop_index_routes_protocol_request_through_local_gateway(
         response = test_client.post(
             "/api/internal/rag/drop-knowledge-index",
             json=payload,
+            headers=_internal_headers(),
         )
 
     assert response.status_code == 200
@@ -276,7 +319,7 @@ def test_internal_retrieve_keeps_user_subtask_id_out_of_gateway(test_client):
 
     with (
         patch(
-            "app.api.endpoints.internal.rag.RagRuntimeResolver.build_query_runtime_spec",
+            "app.api.endpoints.internal.rag.runtime_resolver.build_query_runtime_spec",
             return_value=_make_runtime_spec(
                 knowledge_base_ids=[1],
                 query=payload["query"],
@@ -296,7 +339,11 @@ def test_internal_retrieve_keeps_user_subtask_id_out_of_gateway(test_client):
             "app.api.endpoints.internal.rag.retrieval_persistence_service.persist_retrieval_result"
         ) as mock_persist,
     ):
-        response = test_client.post("/api/internal/rag/retrieve", json=payload)
+        response = test_client.post(
+            "/api/internal/rag/retrieve",
+            json=payload,
+            headers=_internal_headers(),
+        )
 
     assert response.status_code == 200
     mock_query.assert_awaited_once_with(ANY, db=ANY)
@@ -310,7 +357,7 @@ def test_internal_retrieve_resolves_document_names_before_query(test_client):
             return_value=[101, 102],
         ) as mock_resolve,
         patch(
-            "app.api.endpoints.internal.rag.RagRuntimeResolver.build_query_runtime_spec",
+            "app.api.endpoints.internal.rag.runtime_resolver.build_query_runtime_spec",
             return_value=_make_runtime_spec(
                 knowledge_base_ids=[12],
                 document_ids=[101, 102],
@@ -335,6 +382,7 @@ def test_internal_retrieve_resolves_document_names_before_query(test_client):
                 "knowledge_base_ids": [12],
                 "document_names": ["release.md"],
             },
+            headers=_internal_headers(),
         )
 
     assert response.status_code == 200
@@ -355,6 +403,7 @@ def test_internal_retrieve_returns_error_when_document_names_not_found(test_clie
                 "knowledge_base_ids": [12],
                 "document_names": ["missing.md"],
             },
+            headers=_internal_headers(),
         )
 
     assert response.status_code == 200
@@ -381,7 +430,7 @@ def test_internal_retrieve_keeps_direct_injection_routing_in_backend(
 
     with (
         patch(
-            "app.api.endpoints.internal.rag.RagRuntimeResolver.build_query_runtime_spec",
+            "app.api.endpoints.internal.rag.runtime_resolver.build_query_runtime_spec",
             return_value=_make_runtime_spec(
                 knowledge_base_ids=[1],
                 query=payload["query"],
@@ -405,7 +454,11 @@ def test_internal_retrieve_keeps_direct_injection_routing_in_backend(
             "app.api.endpoints.internal.rag.retrieval_persistence_service.persist_retrieval_result"
         ) as mock_persist,
     ):
-        response = test_client.post("/api/internal/rag/retrieve", json=payload)
+        response = test_client.post(
+            "/api/internal/rag/retrieve",
+            json=payload,
+            headers=_internal_headers(),
+        )
 
     assert response.status_code == 200
     mock_get_query_gateway.assert_not_called()
@@ -441,7 +494,7 @@ def test_internal_retrieve_auto_route_uses_remote_gateway_for_rag_retrieval(
 
     with (
         patch(
-            "app.api.endpoints.internal.rag.RagRuntimeResolver.build_query_runtime_spec",
+            "app.api.endpoints.internal.rag.runtime_resolver.build_query_runtime_spec",
             return_value=_make_runtime_spec(
                 knowledge_base_ids=[1],
                 query=payload["query"],
@@ -461,7 +514,11 @@ def test_internal_retrieve_auto_route_uses_remote_gateway_for_rag_retrieval(
             new_callable=AsyncMock,
         ) as mock_local_query,
     ):
-        response = test_client.post("/api/internal/rag/retrieve", json=payload)
+        response = test_client.post(
+            "/api/internal/rag/retrieve",
+            json=payload,
+            headers=_internal_headers(),
+        )
 
     assert response.status_code == 200
     mock_get_query_gateway.assert_called_once()
@@ -490,7 +547,7 @@ def test_internal_retrieve_auto_route_passes_runtime_budget_to_route_decision(
 
     with (
         patch(
-            "app.api.endpoints.internal.rag.RagRuntimeResolver.build_query_runtime_spec",
+            "app.api.endpoints.internal.rag.runtime_resolver.build_query_runtime_spec",
             return_value=_make_runtime_spec(
                 knowledge_base_ids=[1],
                 query=payload["query"],
@@ -515,7 +572,11 @@ def test_internal_retrieve_auto_route_passes_runtime_budget_to_route_decision(
             ),
         ),
     ):
-        response = test_client.post("/api/internal/rag/retrieve", json=payload)
+        response = test_client.post(
+            "/api/internal/rag/retrieve",
+            json=payload,
+            headers=_internal_headers(),
+        )
 
     assert response.status_code == 200
     mock_decide_route_mode.assert_called_once_with(
@@ -553,7 +614,7 @@ def test_internal_retrieve_auto_route_keeps_local_direct_injection(
 
     with (
         patch(
-            "app.api.endpoints.internal.rag.RagRuntimeResolver.build_query_runtime_spec",
+            "app.api.endpoints.internal.rag.runtime_resolver.build_query_runtime_spec",
             return_value=_make_runtime_spec(
                 knowledge_base_ids=[1],
                 query=payload["query"],
@@ -578,7 +639,11 @@ def test_internal_retrieve_auto_route_keeps_local_direct_injection(
             },
         ) as mock_local_query,
     ):
-        response = test_client.post("/api/internal/rag/retrieve", json=payload)
+        response = test_client.post(
+            "/api/internal/rag/retrieve",
+            json=payload,
+            headers=_internal_headers(),
+        )
 
     assert response.status_code == 200
     mock_get_query_gateway.assert_not_called()
@@ -619,7 +684,7 @@ def test_internal_retrieve_falls_back_to_local_when_remote_query_fails(
 
     with (
         patch(
-            "app.api.endpoints.internal.rag.RagRuntimeResolver.build_query_runtime_spec",
+            "app.api.endpoints.internal.rag.runtime_resolver.build_query_runtime_spec",
             return_value=_make_runtime_spec(
                 knowledge_base_ids=[1],
                 query=payload["query"],
@@ -654,7 +719,11 @@ def test_internal_retrieve_falls_back_to_local_when_remote_query_fails(
             "app.api.endpoints.internal.rag.retrieval_persistence_service.persist_retrieval_result"
         ) as mock_persist,
     ):
-        response = test_client.post("/api/internal/rag/retrieve", json=payload)
+        response = test_client.post(
+            "/api/internal/rag/retrieve",
+            json=payload,
+            headers=_internal_headers(),
+        )
 
     assert response.status_code == 200
     assert response.json() == {
@@ -666,6 +735,7 @@ def test_internal_retrieve_falls_back_to_local_when_remote_query_fails(
                 "title": "Fallback doc",
                 "metadata": None,
                 "knowledge_base_id": 1,
+                "document_id": None,
             }
         ],
         "total": 1,
@@ -694,7 +764,7 @@ def test_internal_retrieve_returns_remote_error_without_local_fallback(
 
     with (
         patch(
-            "app.api.endpoints.internal.rag.RagRuntimeResolver.build_query_runtime_spec",
+            "app.api.endpoints.internal.rag.runtime_resolver.build_query_runtime_spec",
             return_value=_make_runtime_spec(
                 knowledge_base_ids=[1],
                 query="How should we proceed?",
@@ -728,6 +798,7 @@ def test_internal_retrieve_returns_remote_error_without_local_fallback(
                     "max_direct_chunks": 500,
                 },
             },
+            headers=_internal_headers(),
         )
 
     assert response.status_code == 400
