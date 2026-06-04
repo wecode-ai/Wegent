@@ -38,6 +38,20 @@ def test_load_config_uses_defaults_when_file_is_malformed(monkeypatch, tmp_path)
     assert config == DEFAULT_CONFIG
 
 
+def test_load_config_uses_defaults_when_file_is_non_dict_yaml(monkeypatch, tmp_path):
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("- server\n- http://example\n")
+    monkeypatch.delenv("WEGENT_SERVER", raising=False)
+    monkeypatch.delenv("WEGENT_TOKEN", raising=False)
+    monkeypatch.delenv("WEGENT_API_KEY", raising=False)
+    monkeypatch.delenv("WEGENT_NAMESPACE", raising=False)
+    monkeypatch.delenv("WEGENT_MODE", raising=False)
+
+    config = load_config(config_file=config_file)
+
+    assert config == DEFAULT_CONFIG
+
+
 def test_load_config_file_values_override_defaults(monkeypatch, tmp_path):
     config_file = tmp_path / "config.yaml"
     config_file.write_text(
