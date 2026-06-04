@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 ### Quick Start (Recommended)
 
 Use the one-click startup script with uv for automatic setup:
-
+ 
 ```bash
 cd backend
 ./start.sh
