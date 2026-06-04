@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import type { FormEvent } from 'react'
 import { useEffect, useMemo, useState } from 'react'
-import { useTranslation } from 'react-i18next'
+import { useTranslation } from '@/hooks/useTranslation'
 import { createHttpClient } from '@/api/http'
 import { createMcpApi } from '@/api/mcps'
 import { createPluginApi } from '@/api/plugins'
@@ -42,7 +42,6 @@ import type {
   InstalledSkill,
   MCPProviderInfo,
   MCPServer,
-  PersonalSkill,
 } from '@/types/api'
 
 type ManagementTab = 'mcp' | 'skills' | 'plugins' | 'integrations'
@@ -103,26 +102,7 @@ function toInstalledSkillItem(item: InstalledSkill): InstalledSkillItem {
     name: item.spec.displayName || item.spec.source.skillKey,
     description: item.spec.description,
     enabled: item.spec.enabled,
-    sourceType: 'system',
-  }
-}
-
-function getPersonalSkillId(item: PersonalSkill): number {
-  const labels = item.metadata['labels']
-  const id =
-    labels && typeof labels === 'object'
-      ? (labels as Record<string, unknown>).id
-      : undefined
-  return Number(id ?? 0)
-}
-
-function toPersonalSkillItem(item: PersonalSkill): InstalledSkillItem {
-  return {
-    id: getPersonalSkillId(item),
-    name: item.spec.displayName || item.metadata.name,
-    description: item.spec.description,
-    enabled: item.spec.enabled ?? true,
-    sourceType: 'personal',
+    sourceType: item.spec.source.type === 'personal' ? 'personal' : 'system',
   }
 }
 
@@ -261,50 +241,18 @@ export function PluginManagementWorkspace() {
   useEffect(() => {
     let isCurrent = true
 
-    let pendingSkillRequests = 2
-    const finishSkillRequest = () => {
-      pendingSkillRequests -= 1
-      if (pendingSkillRequests === 0) {
-        setIsLoadingSkills(false)
-      }
-    }
-
     systemSkillApi
       .listInstalledSystemSkills()
       .then((response) => {
         if (!isCurrent) return
-        setInstalledSkills((previous) => [
-          ...response.items.map(toInstalledSkillItem),
-          ...previous.filter((skill) => skill.sourceType === 'personal'),
-        ])
+        setInstalledSkills(response.items.map(toInstalledSkillItem))
       })
       .catch(() => {
         if (!isCurrent) return
-        setInstalledSkills((previous) =>
-          previous.filter((skill) => skill.sourceType === 'personal'),
-        )
+        setInstalledSkills([])
       })
       .finally(() => {
-        if (isCurrent) finishSkillRequest()
-      })
-
-    systemSkillApi
-      .listPersonalSkills()
-      .then((response) => {
-        if (!isCurrent) return
-        setInstalledSkills((previous) => [
-          ...previous.filter((skill) => skill.sourceType === 'system'),
-          ...response.items.map(toPersonalSkillItem),
-        ])
-      })
-      .catch(() => {
-        if (!isCurrent) return
-        setInstalledSkills((previous) =>
-          previous.filter((skill) => skill.sourceType === 'system'),
-        )
-      })
-      .finally(() => {
-        if (isCurrent) finishSkillRequest()
+        if (isCurrent) setIsLoadingSkills(false)
       })
 
     mcpApi
@@ -424,11 +372,7 @@ export function PluginManagementWorkspace() {
       ),
     )
 
-    const request =
-      skill.sourceType === 'system'
-        ? systemSkillApi.updateInstalledSystemSkill(id, !skill.enabled)
-        : systemSkillApi.updatePersonalSkillEnabled(id, !skill.enabled)
-    request.catch(() => {
+    systemSkillApi.updateInstalledSystemSkill(id, !skill.enabled).catch(() => {
       setInstalledSkills((previous) =>
         previous.map((item) =>
           item.id === id ? { ...item, enabled: skill.enabled } : item,
@@ -442,11 +386,9 @@ export function PluginManagementWorkspace() {
     if (!skill) return
 
     setInstalledSkills((previous) => previous.filter((item) => item.id !== id))
-    const request =
-      skill.sourceType === 'system'
-        ? systemSkillApi.uninstallInstalledSystemSkill(id)
-        : systemSkillApi.deletePersonalSkill(id)
-    request.catch(() => setInstalledSkills((previous) => [...previous, skill]))
+    systemSkillApi
+      .uninstallInstalledSystemSkill(id)
+      .catch(() => setInstalledSkills((previous) => [...previous, skill]))
   }
 
   const toggleInstalledMcp = (id: number) => {
@@ -574,7 +516,16 @@ export function PluginManagementWorkspace() {
     setIsUploadingSkill(true)
     try {
       const uploaded = await systemSkillApi.uploadPersonalSkill(file, name)
-      const item = toPersonalSkillItem(uploaded)
+      const labels = uploaded.metadata['labels']
+      const skillId =
+        labels && typeof labels === 'object'
+          ? Number((labels as Record<string, unknown>).id)
+          : 0
+      if (!Number.isFinite(skillId) || skillId <= 0) {
+        throw new Error('Uploaded skill is missing id')
+      }
+      const installed = await systemSkillApi.installPersonalSkill(skillId)
+      const item = toInstalledSkillItem(installed)
       setInstalledSkills((previous) => [
         item,
         ...previous.filter((skill) => skill.id !== item.id),

@@ -8,7 +8,8 @@ import {
 } from 'lucide-react'
 import type { FormEvent } from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useTranslation } from 'react-i18next'
+import { useTranslation } from '@/hooks/useTranslation'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { createHttpClient } from '@/api/http'
 import { createMcpApi } from '@/api/mcps'
 import { createPluginApi } from '@/api/plugins'
@@ -166,20 +167,29 @@ function getPersonalSkillId(item: PersonalSkill): number | null {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null
 }
 
-function toPersonalCatalogItem(item: PersonalSkill): CatalogItem {
+function getInstalledSkillKey(item: InstalledSkill): string {
+  return item.spec.skillRef?.name || item.spec.source.skillKey
+}
+
+function toPersonalCatalogItem(
+  item: PersonalSkill,
+  installedBySkillKey: Map<string, InstalledSkill> = new Map(),
+): CatalogItem {
+  const installed = installedBySkillKey.get(item.metadata.name)
   return {
     id: `personal-${item.metadata.name}`,
     name: item.spec.displayName || item.metadata.name,
     description: item.spec.description,
     personalSkillId: getPersonalSkillId(item),
+    installedSkillId: installed ? getInstalledSkillId(installed) : null,
     version: item.spec.version,
     author: item.spec.author,
     tags: item.spec.tags ?? [],
     section: 'personal',
     icon: Sparkles,
     iconClassName: 'bg-teal-50 text-teal-600',
-    installState: 'installed',
-    enabled: item.spec.enabled ?? true,
+    installState: installed?.spec.installState ?? 'not_installed',
+    enabled: installed?.spec.enabled ?? false,
     sourceType: 'personal',
   }
 }
@@ -221,7 +231,9 @@ function toInstalledPluginItem(item: InstalledPlugin): InstalledPluginItem {
   }
 }
 
-function getKindIdFromMetadata(metadata: Record<string, unknown>): number | null {
+function getKindIdFromMetadata(
+  metadata: Record<string, unknown>,
+): number | null {
   const labels = metadata['labels']
   const id =
     labels && typeof labels === 'object'
@@ -271,15 +283,16 @@ function createDefaultPluginApi() {
 
 function tabClassName(selected: boolean) {
   return [
-    'h-9 rounded-xl px-4 text-sm font-semibold transition-colors',
+    'h-9 flex-1 rounded-lg px-3 text-sm font-semibold transition-colors sm:h-9 sm:flex-none sm:rounded-xl sm:px-4',
     selected
-      ? 'bg-popover text-text-primary shadow-sm'
+      ? 'bg-popover text-text-primary shadow-sm max-sm:bg-text-primary max-sm:text-white'
       : 'text-text-secondary hover:text-text-primary',
   ].join(' ')
 }
 
 export function PluginsWorkspace() {
   const { t } = useTranslation('common')
+  const isMobile = useIsMobile()
   const [activeTab, setActiveTab] = useState<CatalogTab>('skills')
   const [query, setQuery] = useState('')
   const [sectionFilter, setSectionFilter] = useState<CatalogSectionId | 'all'>(
@@ -299,14 +312,16 @@ export function PluginsWorkspace() {
   const [isCreatingCustomMcp, setIsCreatingCustomMcp] = useState(false)
   const [isUploadingSkill, setIsUploadingSkill] = useState(false)
   const [isUploadingPlugin, setIsUploadingPlugin] = useState(false)
-  const [pluginUploadError, setPluginUploadError] = useState<string | null>(null)
+  const [pluginUploadError, setPluginUploadError] = useState<string | null>(
+    null,
+  )
   const [systemSkillPage, setSystemSkillPage] = useState(1)
   const systemSkillApi = useMemo(() => createDefaultSystemSkillApi(), [])
   const mcpApi = useMemo(() => createDefaultMcpApi(), [])
   const pluginApi = useMemo(() => createDefaultPluginApi(), [])
-  const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginItem[]>(
-    [],
-  )
+  const [installedPlugins, setInstalledPlugins] = useState<
+    InstalledPluginItem[]
+  >([])
   const [isLoadingPlugins, setIsLoadingPlugins] = useState(true)
   const [systemSkillState, setSystemSkillState] = useState<SystemSkillState>({
     items: [],
@@ -357,6 +372,58 @@ export function PluginsWorkspace() {
   }
 
   const installSystemSkill = async (item: CatalogItem) => {
+    if (item.sourceType === 'personal') {
+      if (!item.personalSkillId) return
+
+      setPersonalSkillState((previous) => ({
+        ...previous,
+        items: previous.items.map((skill) =>
+          skill.id === item.id
+            ? { ...skill, installState: 'installed', enabled: true }
+            : skill,
+        ),
+      }))
+
+      try {
+        const installed = await systemSkillApi.installPersonalSkill(
+          item.personalSkillId,
+        )
+        setPersonalSkillState((previous) => ({
+          ...previous,
+          items: previous.items.map((skill) =>
+            skill.id === item.id
+              ? {
+                  ...skill,
+                  installState: installed.spec.installState,
+                  installedSkillId: getInstalledSkillId(installed),
+                  enabled: installed.spec.enabled,
+                }
+              : skill,
+          ),
+          error: null,
+        }))
+      } catch (error) {
+        setPersonalSkillState((previous) => ({
+          ...previous,
+          items: previous.items.map((skill) =>
+            skill.id === item.id
+              ? {
+                  ...skill,
+                  installState: item.installState,
+                  installedSkillId: item.installedSkillId,
+                  enabled: item.enabled,
+                }
+              : skill,
+          ),
+          error:
+            error instanceof Error
+              ? error.message
+              : 'Failed to install personal skill',
+        }))
+      }
+      return
+    }
+
     if (!item.providerKey || !item.skillKey) return
 
     updateCatalogItem(item.id, { installState: 'installed', enabled: true })
@@ -393,23 +460,36 @@ export function PluginsWorkspace() {
 
   const uninstallSystemSkill = async (item: CatalogItem) => {
     if (item.sourceType === 'personal') {
-      if (!item.personalSkillId) return
+      if (!item.installedSkillId) return
 
       setPersonalSkillState((previous) => ({
         ...previous,
-        items: previous.items.filter((skill) => skill.id !== item.id),
+        items: previous.items.map((skill) =>
+          skill.id === item.id
+            ? {
+                ...skill,
+                installState: 'not_installed',
+                installedSkillId: null,
+                enabled: false,
+              }
+            : skill,
+        ),
       }))
 
       try {
-        await systemSkillApi.deletePersonalSkill(item.personalSkillId)
+        await systemSkillApi.uninstallInstalledSystemSkill(
+          item.installedSkillId,
+        )
       } catch (error) {
         setPersonalSkillState((previous) => ({
           ...previous,
-          items: [...previous.items, item],
+          items: previous.items.map((skill) =>
+            skill.id === item.id ? item : skill,
+          ),
           error:
             error instanceof Error
               ? error.message
-              : 'Failed to delete personal skill',
+              : 'Failed to uninstall personal skill',
         }))
       }
       return
@@ -441,53 +521,56 @@ export function PluginsWorkspace() {
     }
   }
 
-  const loadMcpProviderServers = useCallback((providerKey: string) => {
-    setMcpMarketplaceState((previous) => ({
-      ...previous,
-      providerLoadingByKey: {
-        ...previous.providerLoadingByKey,
-        [providerKey]: true,
-      },
-      providerErrors: {
-        ...previous.providerErrors,
-        [providerKey]: '',
-      },
-    }))
+  const loadMcpProviderServers = useCallback(
+    (providerKey: string) => {
+      setMcpMarketplaceState((previous) => ({
+        ...previous,
+        providerLoadingByKey: {
+          ...previous.providerLoadingByKey,
+          [providerKey]: true,
+        },
+        providerErrors: {
+          ...previous.providerErrors,
+          [providerKey]: '',
+        },
+      }))
 
-    mcpApi
-      .listProviderServers(providerKey)
-      .then((response) => {
-        setMcpMarketplaceState((previous) => ({
-          ...previous,
-          providerServers: {
-            ...previous.providerServers,
-            [providerKey]: response.success ? response.servers : [],
-          },
-          providerErrors: {
-            ...previous.providerErrors,
-            [providerKey]: response.success ? '' : response.message,
-          },
-        }))
-      })
-      .catch((error: Error) => {
-        setMcpMarketplaceState((previous) => ({
-          ...previous,
-          providerErrors: {
-            ...previous.providerErrors,
-            [providerKey]: error.message,
-          },
-        }))
-      })
-      .finally(() => {
-        setMcpMarketplaceState((previous) => ({
-          ...previous,
-          providerLoadingByKey: {
-            ...previous.providerLoadingByKey,
-            [providerKey]: false,
-          },
-        }))
-      })
-  }, [mcpApi])
+      mcpApi
+        .listProviderServers(providerKey)
+        .then((response) => {
+          setMcpMarketplaceState((previous) => ({
+            ...previous,
+            providerServers: {
+              ...previous.providerServers,
+              [providerKey]: response.success ? response.servers : [],
+            },
+            providerErrors: {
+              ...previous.providerErrors,
+              [providerKey]: response.success ? '' : response.message,
+            },
+          }))
+        })
+        .catch((error: Error) => {
+          setMcpMarketplaceState((previous) => ({
+            ...previous,
+            providerErrors: {
+              ...previous.providerErrors,
+              [providerKey]: error.message,
+            },
+          }))
+        })
+        .finally(() => {
+          setMcpMarketplaceState((previous) => ({
+            ...previous,
+            providerLoadingByKey: {
+              ...previous.providerLoadingByKey,
+              [providerKey]: false,
+            },
+          }))
+        })
+    },
+    [mcpApi],
+  )
 
   const installProviderServer = (
     provider: MCPProviderInfo,
@@ -577,7 +660,16 @@ export function PluginsWorkspace() {
     setIsUploadingSkill(true)
     try {
       const uploaded = await systemSkillApi.uploadPersonalSkill(file, name)
-      const catalogItem = toPersonalCatalogItem(uploaded)
+      const personalSkillId = getPersonalSkillId(uploaded)
+      const installed = personalSkillId
+        ? await systemSkillApi.installPersonalSkill(personalSkillId)
+        : null
+      const catalogItem = toPersonalCatalogItem(
+        uploaded,
+        installed
+          ? new Map([[getInstalledSkillKey(installed), installed]])
+          : new Map(),
+      )
       setPersonalSkillState((previous) => ({
         ...previous,
         items: [
@@ -633,13 +725,15 @@ export function PluginsWorkspace() {
         item.id === id ? { ...item, enabled: !item.enabled } : item,
       ),
     )
-    pluginApi.updateInstalledPlugin(id, { enabled: !plugin.enabled }).catch(() => {
-      setInstalledPlugins((previous) =>
-        previous.map((item) =>
-          item.id === id ? { ...item, enabled: plugin.enabled } : item,
-        ),
-      )
-    })
+    pluginApi
+      .updateInstalledPlugin(id, { enabled: !plugin.enabled })
+      .catch(() => {
+        setInstalledPlugins((previous) =>
+          previous.map((item) =>
+            item.id === id ? { ...item, enabled: plugin.enabled } : item,
+          ),
+        )
+      })
   }
 
   const togglePluginComponent = (
@@ -669,7 +763,9 @@ export function PluginsWorkspace() {
       ),
     )
     pluginApi
-      .updateInstalledPlugin(id, { componentStates: { [componentKey]: enabled } })
+      .updateInstalledPlugin(id, {
+        componentStates: { [componentKey]: enabled },
+      })
       .then((updated) => {
         const nextItem = toInstalledPluginItem(updated)
         setInstalledPlugins((previous) =>
@@ -756,12 +852,22 @@ export function PluginsWorkspace() {
       error: null,
     }))
 
-    systemSkillApi
-      .listPersonalSkills()
-      .then((response) => {
+    Promise.all([
+      systemSkillApi.listPersonalSkills(),
+      systemSkillApi.listInstalledSystemSkills(),
+    ])
+      .then(([personalResponse, installedResponse]) => {
         if (!isCurrent) return
+        const personalInstalled = installedResponse.items.filter(
+          (item) => item.spec.source.type === 'personal',
+        )
+        const installedBySkillKey = new Map(
+          personalInstalled.map((item) => [getInstalledSkillKey(item), item]),
+        )
         setPersonalSkillState({
-          items: response.items.map(toPersonalCatalogItem),
+          items: personalResponse.items.map((item) =>
+            toPersonalCatalogItem(item, installedBySkillKey),
+          ),
           isLoading: false,
           error: null,
         })
@@ -876,8 +982,8 @@ export function PluginsWorkspace() {
     () =>
       selectedPluginId === null
         ? null
-        : installedPlugins.find((plugin) => plugin.id === selectedPluginId) ??
-          null,
+        : (installedPlugins.find((plugin) => plugin.id === selectedPluginId) ??
+          null),
     [installedPlugins, selectedPluginId],
   )
 
@@ -894,7 +1000,9 @@ export function PluginsWorkspace() {
           (mcpMarketplaceState.providerServers[provider.key] ?? []).some(
             (server) =>
               server.name.toLowerCase().includes(normalizedQuery) ||
-              (server.description ?? '').toLowerCase().includes(normalizedQuery),
+              (server.description ?? '')
+                .toLowerCase()
+                .includes(normalizedQuery),
           )
         )
       }),
@@ -915,7 +1023,9 @@ export function PluginsWorkspace() {
             (provider) =>
               provider.key === providerKey &&
               (provider.name.toLowerCase().includes(normalizedQuery) ||
-                (provider.name_en ?? '').toLowerCase().includes(normalizedQuery) ||
+                (provider.name_en ?? '')
+                  .toLowerCase()
+                  .includes(normalizedQuery) ||
                 provider.description.toLowerCase().includes(normalizedQuery) ||
                 provider.key.toLowerCase().includes(normalizedQuery)),
           )
@@ -983,11 +1093,14 @@ export function PluginsWorkspace() {
   }
 
   return (
-    <main className="min-w-0 flex-1 overflow-y-auto bg-background px-4 pb-5 pt-20 text-text-primary sm:px-8 sm:py-5">
-      <div className="mx-auto flex w-full max-w-[1000px] flex-col gap-8 sm:gap-10">
-        <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+    <main
+      data-testid="plugins-workspace"
+      className="min-w-0 flex-1 overflow-y-auto bg-background px-4 pb-6 pt-16 text-text-primary sm:px-8 sm:py-5"
+    >
+      <div className="mx-auto flex w-full max-w-[1000px] flex-col gap-4 sm:gap-10">
+        <header className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
           <div
-            className="inline-flex w-fit rounded-2xl bg-surface p-1"
+            className="inline-flex w-full rounded-xl bg-surface p-0.5 sm:w-fit sm:rounded-2xl sm:p-1"
             role="tablist"
           >
             <button
@@ -1028,97 +1141,155 @@ export function PluginsWorkspace() {
             </button>
           </div>
 
-          <div className="flex items-center gap-2 overflow-visible">
+          <div className="hidden w-full items-center justify-between gap-2 overflow-visible sm:flex sm:w-auto sm:justify-end">
             <button
               type="button"
               data-testid="plugins-manage-button"
-              className="flex h-9 items-center gap-2 rounded-xl bg-surface px-3 text-sm font-semibold hover:bg-muted"
+              className="flex h-10 min-w-[44px] items-center gap-2 rounded-xl bg-surface px-3 text-sm font-semibold hover:bg-muted sm:h-9"
               onClick={() => navigateTo('/plugins/manage')}
             >
               <Settings className="h-4 w-4" />
               {t('workbench.plugins_manage', '管理')}
             </button>
-            <PluginCreateMenu
-              isOpen={isCreateMenuOpen}
-              onToggle={() => setIsCreateMenuOpen((previous) => !previous)}
-              onCreateSkill={() => {
-                setIsCreateMenuOpen(false)
-                setShowSkillUploadDialog(true)
-              }}
-              onCreateMcp={() => {
-                setIsCreateMenuOpen(false)
-                setShowCustomMcpDialog(true)
-              }}
-              onCreatePlugin={() => {
-                setIsCreateMenuOpen(false)
-                setPluginUploadError(null)
-                setShowPluginUploadDialog(true)
-              }}
-            />
+            {!isMobile && (
+              <PluginCreateMenu
+                isOpen={isCreateMenuOpen}
+                onToggle={() => setIsCreateMenuOpen((previous) => !previous)}
+                onCreateSkill={() => {
+                  setIsCreateMenuOpen(false)
+                  setShowSkillUploadDialog(true)
+                }}
+                onCreateMcp={() => {
+                  setIsCreateMenuOpen(false)
+                  setShowCustomMcpDialog(true)
+                }}
+                onCreatePlugin={() => {
+                  setIsCreateMenuOpen(false)
+                  setPluginUploadError(null)
+                  setShowPluginUploadDialog(true)
+                }}
+              />
+            )}
             <button
               type="button"
               aria-label={t('workbench.plugins_more_actions', '更多操作')}
-              className="flex h-9 w-9 items-center justify-center rounded-xl text-text-secondary hover:bg-surface"
+              className="flex h-10 w-10 items-center justify-center rounded-xl text-text-secondary hover:bg-surface sm:h-9 sm:w-9"
             >
               <MoreHorizontal className="h-4 w-4" />
             </button>
           </div>
         </header>
 
-        <section className="flex flex-col items-center gap-6 pt-3 sm:gap-8">
-          <h1 className="max-w-[12em] text-center text-3xl font-medium leading-tight tracking-normal sm:max-w-none sm:text-[38px]">
-            {t('workbench.plugins_title', '让 Codex 按你的方式工作')}
+        <section className="flex flex-col gap-2 pt-0 sm:items-center sm:gap-8 sm:pt-3">
+          <h1 className="hidden max-w-[12em] text-center text-3xl font-medium leading-tight tracking-normal sm:block sm:max-w-none sm:text-[38px]">
+            {t('workbench.plugins_title', '让 Wework 按你的方式工作')}
           </h1>
-          <div className="flex w-full max-w-[760px] flex-col gap-3 sm:flex-row">
-            <label className="relative min-w-0 flex-1">
-              <span className="sr-only">
-                {t('workbench.plugins_search_placeholder', '搜索技能')}
-              </span>
-              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
-              <input
-                value={query}
-                onChange={(event) => {
-                  setQuery(event.target.value)
-                  setSystemSkillPage(1)
-                }}
-                placeholder={
-                  activeTab === 'skills'
-                    ? t('workbench.plugins_search_placeholder', '搜索技能')
-                    : activeTab === 'mcp'
-                      ? t('workbench.plugins_search_mcp', '搜索 MCP')
-                      : t('workbench.plugins_search_plugins', '搜索插件')
-                }
-                data-testid="plugins-search-input"
-                className="h-11 min-h-[44px] w-full rounded-xl border border-border bg-background pl-11 pr-4 text-sm outline-none placeholder:text-text-muted focus:border-primary"
-              />
-            </label>
+          <div className="flex w-full max-w-none flex-col gap-2 sm:max-w-[760px] sm:flex-row">
+            <div className="grid w-full grid-cols-[minmax(0,1fr)_44px] items-center gap-2 sm:flex sm:min-w-0 sm:flex-1">
+              <label className="relative min-w-0 flex-1">
+                <span className="sr-only">
+                  {t('workbench.plugins_search_placeholder', '搜索技能')}
+                </span>
+                <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
+                <input
+                  value={query}
+                  onChange={(event) => {
+                    setQuery(event.target.value)
+                    setSystemSkillPage(1)
+                  }}
+                  placeholder={
+                    activeTab === 'skills'
+                      ? t('workbench.plugins_search_placeholder', '搜索技能')
+                      : activeTab === 'mcp'
+                        ? t('workbench.plugins_search_mcp', '搜索 MCP')
+                        : t('workbench.plugins_search_plugins', '搜索插件')
+                  }
+                  data-testid="plugins-search-input"
+                  className="h-11 min-h-[44px] w-full rounded-xl border border-border bg-background pl-11 pr-4 text-base leading-5 outline-none placeholder:text-text-muted focus:border-primary sm:text-sm sm:leading-normal"
+                />
+              </label>
+              {isMobile && (
+                <div className="sm:hidden">
+                <PluginCreateMenu
+                  compact
+                  isOpen={isCreateMenuOpen}
+                  onToggle={() => setIsCreateMenuOpen((previous) => !previous)}
+                  onCreateSkill={() => {
+                    setIsCreateMenuOpen(false)
+                    setShowSkillUploadDialog(true)
+                  }}
+                  onCreateMcp={() => {
+                    setIsCreateMenuOpen(false)
+                    setShowCustomMcpDialog(true)
+                  }}
+                  onCreatePlugin={() => {
+                    setIsCreateMenuOpen(false)
+                    setPluginUploadError(null)
+                    setShowPluginUploadDialog(true)
+                  }}
+                />
+                </div>
+              )}
+            </div>
             {activeTab === 'skills' && (
-              <select
-                value={sectionFilter}
-                data-testid="plugins-section-filter"
-                onChange={(event) =>
-                  setSectionFilter(event.target.value as CatalogSectionId | 'all')
-                }
-                className="h-10 rounded-xl border-0 bg-surface px-4 text-sm font-semibold text-text-primary outline-none"
-              >
-                <option value="all">
-                  {t('workbench.plugins_filter_all', '全部')}
-                </option>
-                <option value="recommended">
-                  {t('workbench.plugins_recommended', '推荐')}
-                </option>
-                <option value="system">
-                  {t('workbench.plugins_system', '系统')}
-                </option>
-                <option value="personal">
-                  {t('workbench.plugins_personal', '个人')}
-                </option>
-              </select>
+              <>
+                <div
+                  className="scrollbar-none -mx-1 flex gap-2 overflow-x-auto px-1 sm:hidden"
+                  data-testid="plugins-mobile-section-filter"
+                >
+                  {(['all', ...sections] as const).map((section) => (
+                    <button
+                      key={section}
+                      type="button"
+                      data-testid={`plugins-mobile-section-filter-${section}`}
+                      aria-pressed={sectionFilter === section}
+                      onClick={() => setSectionFilter(section)}
+                      className={[
+                        'h-9 shrink-0 rounded-xl px-4 text-sm font-semibold transition-colors',
+                        sectionFilter === section
+                          ? 'bg-text-primary text-white'
+                          : 'bg-surface text-text-secondary hover:text-text-primary',
+                      ].join(' ')}
+                    >
+                      {section === 'all'
+                        ? t('workbench.plugins_filter_all', '全部')
+                        : section === 'recommended'
+                          ? t('workbench.plugins_recommended', '推荐')
+                          : section === 'system'
+                            ? t('workbench.plugins_system', '系统')
+                            : t('workbench.plugins_personal', '个人')}
+                    </button>
+                  ))}
+                </div>
+                <select
+                  value={sectionFilter}
+                  data-testid="plugins-section-filter"
+                  onChange={(event) =>
+                    setSectionFilter(
+                      event.target.value as CatalogSectionId | 'all',
+                    )
+                  }
+                  className="hidden h-10 rounded-xl border-0 bg-surface px-4 text-sm font-semibold text-text-primary outline-none sm:block"
+                >
+                  <option value="all">
+                    {t('workbench.plugins_filter_all', '全部')}
+                  </option>
+                  <option value="recommended">
+                    {t('workbench.plugins_recommended', '推荐')}
+                  </option>
+                  <option value="system">
+                    {t('workbench.plugins_system', '系统')}
+                  </option>
+                  <option value="personal">
+                    {t('workbench.plugins_personal', '个人')}
+                  </option>
+                </select>
+              </>
             )}
           </div>
         </section>
 
-        <section className="space-y-12">
+        <section className="space-y-6 sm:space-y-12">
           {activeTab === 'mcp' ? (
             <McpMarketplaceCatalog
               providers={filteredMcpProviders}
@@ -1141,7 +1312,10 @@ export function PluginsWorkspace() {
             ) : filteredInstalledPlugins.length === 0 ? (
               <div className="flex min-h-[220px] flex-col items-center justify-center gap-3 text-sm font-semibold">
                 <div className="text-text-secondary">
-                  {t('workbench.plugins_no_installed_plugins', '暂无已安装插件')}
+                  {t(
+                    'workbench.plugins_no_installed_plugins',
+                    '暂无已安装插件',
+                  )}
                 </div>
                 <button
                   type="button"
@@ -1254,7 +1428,10 @@ export function PluginsWorkspace() {
       {pendingUninstallMcp && (
         <ConfirmUninstallDialog
           item={{ name: pendingUninstallMcp.server.name }}
-          title={t('workbench.plugins_uninstall_mcp_confirm_title', '卸载 MCP？')}
+          title={t(
+            'workbench.plugins_uninstall_mcp_confirm_title',
+            '卸载 MCP？',
+          )}
           description={t(
             'workbench.plugins_uninstall_mcp_confirm_description',
             '卸载后可以在市场中重新安装。',

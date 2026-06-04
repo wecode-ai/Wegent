@@ -21,7 +21,7 @@ import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
 const DESKTOP_COMPOSER_FRAME_CLASS =
   'mx-auto w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100vw-4rem)]'
 const DESKTOP_FLOATING_COMPOSER_CLASS =
-  'pointer-events-none absolute bottom-4 left-1/2 z-50 w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100%_-_3rem)] -translate-x-1/2'
+  'pointer-events-none absolute bottom-4 left-1/2 z-chrome w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100%_-_3rem)] -translate-x-1/2'
 
 interface DesktopWorkbenchMainProps {
   sidebarCollapsed: boolean

@@ -55,12 +55,17 @@ export function PluginManagementPage() {
     void openTask(taskId, projectId)
   }
 
+  const handleOpenPlugins = () => {
+    setSettingsOpen(false)
+    navigateTo('/plugins')
+  }
+
   if (settingsOpen) {
     if (isMobile) {
       return (
         <MobileSettingsPage
           onBack={() => setSettingsOpen(false)}
-          onOpenPlugins={() => navigateTo('/plugins')}
+          onOpenPlugins={handleOpenPlugins}
         />
       )
     }
@@ -109,7 +114,7 @@ export function PluginManagementPage() {
           onSelectProject={handleSelectProject}
           onStartNewProjectChat={handleStartNewProjectChat}
           onOpenTask={handleOpenTask}
-          onOpenPlugins={() => navigateTo('/plugins')}
+          onOpenPlugins={handleOpenPlugins}
           onRefreshDevices={refreshDevices}
           onCreateProject={createProject}
           onUpdateProjectName={updateProjectName}

@@ -132,6 +132,17 @@ describe('MobileWorkbenchLayout', () => {
       'px-4',
       'pt-3',
     )
+    expect(screen.getByTestId('mobile-empty-chat-input-dock').className).not.toMatch(
+      /\bz-(?:modal|critical)\b/,
+    )
+    expect(screen.getByTestId('mobile-empty-state-content')).toHaveClass(
+      'items-center',
+      'gap-6',
+    )
+    expect(screen.getByTestId('mobile-empty-state-content').parentElement).toHaveClass(
+      'items-center',
+      'justify-center',
+    )
     expect(screen.getByTestId('compact-input-pill')).toHaveClass('min-h-[52px]')
     expect(screen.getByTestId('add-context-button')).toHaveClass('h-[52px]')
   })
@@ -198,7 +209,19 @@ describe('MobileWorkbenchLayout', () => {
       'model-selector-mobile-title',
     )
     expect(screen.getByTestId('model-selector-menu')).toHaveClass('h-[82dvh]')
-    expect(screen.getByTestId('model-selector-search-input')).toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-menu').closest('.fixed')).toHaveClass(
+      'z-modal',
+    )
+    expect(screen.getByTestId('model-selector-confirm-button').parentElement).toHaveClass(
+      'shrink-0',
+    )
+    expect(screen.getByTestId('model-selector-confirm-button').parentElement).not.toHaveClass(
+      'absolute',
+    )
+    expect(screen.getByTestId('model-selector-search-input')).toHaveClass(
+      'text-base',
+      'leading-5',
+    )
     expect(screen.getByTestId('model-selector-model-list')).toHaveClass(
       'overflow-y-auto',
       'scrollbar-none',
@@ -343,11 +366,13 @@ describe('MobileWorkbenchLayout', () => {
       'absolute',
       'bottom-0',
       'pointer-events-none',
+      'z-chrome',
     )
     expect(screen.getByTestId('mobile-conversation-header')).toHaveClass(
       'absolute',
       'bg-background/95',
       'backdrop-blur',
+      'z-chrome',
     )
     expect(screen.getByTestId('mobile-conversation-header')).toHaveClass('gap-2')
     expect(screen.getByTestId('open-mobile-drawer-button').closest('header')).toHaveClass(
@@ -383,7 +408,11 @@ describe('MobileWorkbenchLayout', () => {
     expect(mobileDrawer).toHaveStyle({
       backgroundColor: 'rgb(var(--color-mobile-drawer))',
     })
-    expect(mobileDrawer).toHaveClass('backdrop-blur-3xl', 'backdrop-saturate-150')
+    expect(mobileDrawer).toHaveClass(
+      'z-critical',
+      'backdrop-blur-3xl',
+      'backdrop-saturate-150',
+    )
     expect(screen.getByText('项目')).toBeInTheDocument()
     expect(screen.queryByText('图片')).not.toBeInTheDocument()
     expect(screen.queryByText('编码')).not.toBeInTheDocument()
@@ -393,6 +422,10 @@ describe('MobileWorkbenchLayout', () => {
     expect(screen.getByTestId('mobile-search-input')).toHaveAttribute(
       'placeholder',
       '搜索',
+    )
+    expect(screen.getByTestId('mobile-search-input')).toHaveClass(
+      'text-base',
+      'leading-5',
     )
     expect(screen.getByText('github_wegent')).toBeInTheDocument()
     expect(screen.queryByText('项目任务')).not.toBeInTheDocument()

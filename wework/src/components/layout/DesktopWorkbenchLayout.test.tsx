@@ -298,7 +298,7 @@ describe('DesktopWorkbenchLayout', () => {
       'absolute',
       'bottom-4',
       'left-1/2',
-      'z-50',
+      'z-chrome',
       '-translate-x-1/2',
     )
     expect(screen.getByTestId('desktop-floating-composer-card')).toHaveClass(
@@ -418,6 +418,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('search-button'))
 
     const dialog = screen.getByTestId('desktop-search-dialog')
+    expect(dialog.closest('.fixed')).toHaveClass('z-critical')
     expect(dialog).toBeInTheDocument()
     expect(screen.getByTestId('desktop-search-input')).toHaveFocus()
     expect(within(dialog).getByText('近期对话')).toBeInTheDocument()
@@ -1302,7 +1303,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
     expect(screen.getByTestId('environment-info-popover')).toHaveClass(
       'w-[340px]',
-      'bg-[#fcfcfc]',
+      'bg-background',
       'text-text-primary',
       'border-border',
       'backdrop-blur-3xl',

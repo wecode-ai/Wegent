@@ -142,7 +142,7 @@ export function ActionMenu({
               top: menuPosition?.top ?? 0,
               visibility: menuPosition ? 'visible' : 'hidden',
             }}
-            className="fixed z-[70] min-w-[176px] rounded-lg border border-black/10 bg-[#2b2b2b] py-1.5 text-white shadow-xl"
+            className="fixed z-popover min-w-[176px] rounded-lg border border-black/10 bg-[#2b2b2b] py-1.5 text-white shadow-xl"
           >
             {items.map(item => (
               <button

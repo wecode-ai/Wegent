@@ -51,9 +51,13 @@ function createSkillZipFile(name: string, rootSkillMd = false): File {
   endView.setUint32(12, centralHeader.length, true)
   endView.setUint32(16, centralDirectoryOffset, true)
 
-  return new File([localHeader, contentBytes, centralHeader, endHeader], `${name}.zip`, {
-    type: 'application/zip',
-  })
+  return new File(
+    [localHeader, contentBytes, centralHeader, endHeader],
+    `${name}.zip`,
+    {
+      type: 'application/zip',
+    },
+  )
 }
 
 function mockSystemSkillsFetch(
@@ -99,6 +103,59 @@ function mockSystemSkillsFetch(
       author: 'Alice',
       tags: ['personal'],
       prompt: 'Uploaded prompt',
+    },
+  }
+  const installedPersonalSkill = {
+    apiVersion: 'agent.wecode.io/v1',
+    kind: 'InstalledSkill',
+    metadata: {
+      name: 'personal-excel-helper',
+      namespace: 'default',
+      labels: { id: '88' },
+    },
+    spec: {
+      source: {
+        type: 'personal',
+        skillKey: 'excel-helper',
+        catalogItemId: 'personal/77',
+      },
+      skillRef: {
+        kind: 'Skill',
+        name: 'excel-helper',
+        namespace: 'default',
+        user_id: 1,
+      },
+      displayName: 'Excel Helper',
+      description: 'Analyze Excel workbooks',
+      version: '1.0.0',
+      installState: 'installed',
+      enabled: true,
+      sourcePayload: null,
+    },
+    status: { state: 'Available' },
+  }
+  const installedUploadedPersonalSkill = {
+    ...installedPersonalSkill,
+    metadata: {
+      name: 'personal-zip-helper',
+      namespace: 'default',
+      labels: { id: '89' },
+    },
+    spec: {
+      ...installedPersonalSkill.spec,
+      source: {
+        type: 'personal',
+        skillKey: 'zip-helper',
+        catalogItemId: 'personal/78',
+      },
+      skillRef: {
+        kind: 'Skill',
+        name: 'zip-helper',
+        namespace: 'default',
+        user_id: 1,
+      },
+      displayName: 'zip-helper',
+      description: 'Uploaded helper',
     },
   }
   const mcpProvidersResponse = {
@@ -233,6 +290,26 @@ function mockSystemSkillsFetch(
           json: () => Promise.resolve(personalSkillsResponse),
         })
       }
+      if (requestUrl.pathname === '/api/system-skills/installed') {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ items: [] }),
+        })
+      }
+      if (requestUrl.pathname === '/api/system-skills/install/personal') {
+        const body = init?.body ? JSON.parse(String(init.body)) : {}
+        return Promise.resolve({
+          ok: true,
+          status: 201,
+          json: () =>
+            Promise.resolve(
+              body.skillId === 78
+                ? installedUploadedPersonalSkill
+                : installedPersonalSkill,
+            ),
+        })
+      }
       if (requestUrl.pathname === '/api/v1/kinds/skills/77') {
         return Promise.resolve({
           ok: true,
@@ -329,6 +406,8 @@ describe('PluginsWorkspace', () => {
     expect(skillsTab).toHaveClass(
       'bg-popover',
       'text-text-primary',
+      'max-sm:bg-text-primary',
+      'max-sm:text-white',
     )
     expect(await screen.findByText('Weibo Skill 1')).toBeInTheDocument()
   })
@@ -351,6 +430,50 @@ describe('PluginsWorkspace', () => {
     expect(screen.queryByText('Weibo Skill 1')).not.toBeInTheDocument()
   })
 
+  test('uses a readable single-column mobile catalog layout', async () => {
+    render(<PluginsWorkspace />)
+
+    expect(await screen.findByText('Weibo Skill 1')).toBeInTheDocument()
+    expect(screen.getByTestId('plugins-workspace')).toHaveClass(
+      'pt-16',
+      'sm:py-5',
+    )
+    expect(screen.getByRole('tablist')).toHaveClass('w-full', 'sm:w-fit')
+    expect(screen.getByRole('tab', { name: '技能' })).toHaveClass(
+      'h-9',
+      'flex-1',
+      'bg-popover',
+      'max-sm:bg-text-primary',
+      'max-sm:text-white',
+    )
+    expect(screen.getByTestId('plugins-search-input')).toHaveClass(
+      'text-base',
+      'sm:text-sm',
+    )
+    expect(screen.getByTestId('plugins-mobile-section-filter')).toHaveClass(
+      'sm:hidden',
+    )
+    expect(screen.getByTestId('plugins-section-filter')).toHaveClass(
+      'hidden',
+      'sm:block',
+    )
+
+    const catalogCard = screen.getByText('Weibo Skill 1').closest('article')
+    expect(catalogCard).toHaveClass('rounded-2xl', 'border', 'sm:rounded-lg')
+    expect(catalogCard?.querySelector('button')).toHaveClass(
+      'h-11',
+      'w-11',
+      'sm:h-8',
+      'sm:w-8',
+    )
+
+    const catalogGrid = screen
+      .getByText('Weibo Skill 1')
+      .closest('section')
+      ?.querySelector('.grid')
+    expect(catalogGrid).toHaveClass('grid-cols-1', 'sm:grid-cols-2')
+  })
+
   test('shows personal skills and uploads a personal skill zip', async () => {
     render(<PluginsWorkspace />)
 
@@ -362,7 +485,9 @@ describe('PluginsWorkspace', () => {
     )
     expect(screen.getByText('Excel Helper')).toBeInTheDocument()
     expect(screen.queryByText('Weibo Skill 1')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('system-skills-pagination')).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('system-skills-pagination'),
+    ).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('plugins-create-button'))
     expect(screen.getByTestId('plugins-create-menu')).toHaveClass(
@@ -370,7 +495,9 @@ describe('PluginsWorkspace', () => {
       'text-text-primary',
       'isolate',
     )
-    expect(screen.getByTestId('plugins-create-skill-option')).toBeInTheDocument()
+    expect(
+      screen.getByTestId('plugins-create-skill-option'),
+    ).toBeInTheDocument()
     expect(screen.getByTestId('plugins-create-skill-option')).toHaveClass(
       'text-text-primary',
     )
@@ -397,6 +524,13 @@ describe('PluginsWorkspace', () => {
         body: expect.any(FormData),
       }),
     )
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/system-skills/install/personal',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ skillId: 78 }),
+      }),
+    )
   })
 
   test('opens the create menu and creates a custom MCP', async () => {
@@ -410,20 +544,22 @@ describe('PluginsWorkspace', () => {
     fireEvent.change(screen.getByTestId('custom-mcp-import-json-textarea'), {
       target: {
         value: JSON.stringify({
-        mcpServers: {
-          'local-docs': {
-            type: 'streamable-http',
-            url: 'https://mcp.example.com/local',
-            headers: { Authorization: 'Bearer token' },
-            description: 'Local docs search',
+          mcpServers: {
+            'local-docs': {
+              type: 'streamable-http',
+              url: 'https://mcp.example.com/local',
+              headers: { Authorization: 'Bearer token' },
+              description: 'Local docs search',
+            },
           },
-        },
-      }),
+        }),
       },
     })
     await userEvent.click(screen.getByTestId('custom-mcp-apply-json-button'))
 
-    expect(screen.getByTestId('custom-mcp-name-input')).toHaveValue('local-docs')
+    expect(screen.getByTestId('custom-mcp-name-input')).toHaveValue(
+      'local-docs',
+    )
     expect(screen.getByTestId('custom-mcp-display-name-input')).toHaveValue(
       'local-docs',
     )
@@ -454,6 +590,22 @@ describe('PluginsWorkspace', () => {
       }),
     )
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  test('closes the create menu on outside click and Escape', async () => {
+    render(<PluginsWorkspace />)
+
+    await userEvent.click(screen.getByTestId('plugins-create-button'))
+    expect(screen.getByTestId('plugins-create-menu')).toBeInTheDocument()
+
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByTestId('plugins-create-menu')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('plugins-create-button'))
+    expect(screen.getByTestId('plugins-create-menu')).toBeInTheDocument()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByTestId('plugins-create-menu')).not.toBeInTheDocument()
   })
 
   test('places system pagination before the personal skills section', async () => {
@@ -490,7 +642,9 @@ describe('PluginsWorkspace', () => {
     expect(
       vi
         .mocked(fetch)
-        .mock.calls.some(([url]) => String(url).includes('/api/mcps/installed')),
+        .mock.calls.some(([url]) =>
+          String(url).includes('/api/mcps/installed'),
+        ),
     ).toBe(false)
 
     await userEvent.click(
@@ -512,7 +666,9 @@ describe('PluginsWorkspace', () => {
       screen.getByTestId('mcp-market-uninstall--mcp_router-hot-search'),
     )
     expect(screen.getByRole('dialog')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('mcp-market-confirm-uninstall-button'))
+    await userEvent.click(
+      screen.getByTestId('mcp-market-confirm-uninstall-button'),
+    )
 
     expect(fetch).toHaveBeenCalledWith(
       '/api/mcps/installed/9',
@@ -558,6 +714,30 @@ describe('PluginsWorkspace', () => {
     )
   })
 
+  test('shows personal skills as uninstalled until explicitly installed', async () => {
+    render(<PluginsWorkspace />)
+
+    expect(await screen.findByText('Excel Helper')).toBeInTheDocument()
+    expect(
+      screen.getByTestId('system-skill-install-personal-excel-helper'),
+    ).toBeInTheDocument()
+
+    await userEvent.click(
+      screen.getByTestId('system-skill-install-personal-excel-helper'),
+    )
+
+    expect(
+      await screen.findByTestId('system-skill-uninstall-personal-excel-helper'),
+    ).toBeInTheDocument()
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/system-skills/install/personal',
+      expect.objectContaining({
+        method: 'POST',
+        body: '{"skillId":77}',
+      }),
+    )
+  })
+
   test('uses icon actions for install and confirmed uninstall', async () => {
     mockSystemSkillsFetch({
       installState: 'installed',
@@ -569,7 +749,7 @@ describe('PluginsWorkspace', () => {
 
     expect(await screen.findByText('Weibo Skill 1')).toBeInTheDocument()
     expect(
-      screen.queryByRole('button', { name: '安装' }),
+      screen.queryByTestId('system-skill-install--weibo-page-1'),
     ).not.toBeInTheDocument()
 
     await userEvent.click(

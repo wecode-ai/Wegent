@@ -1,4 +1,5 @@
-import { Boxes, ChevronDown, Server, Sparkles } from 'lucide-react'
+import { Boxes, ChevronDown, Plus, Server, Sparkles } from 'lucide-react'
+import { useEffect, useRef } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 
 export function PluginCreateMenu({
@@ -8,6 +9,7 @@ export function PluginCreateMenu({
   onCreateMcp,
   onCreatePlugin,
   buttonTestId = 'plugins-create-button',
+  compact = false,
 }: {
   isOpen: boolean
   onToggle: () => void
@@ -15,25 +17,56 @@ export function PluginCreateMenu({
   onCreateMcp: () => void
   onCreatePlugin?: () => void
   buttonTestId?: string
+  compact?: boolean
 }) {
   const { t } = useTranslation('common')
+  const containerRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!isOpen) return
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (containerRef.current?.contains(event.target as Node)) return
+      onToggle()
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onToggle()
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isOpen, onToggle])
 
   return (
-    <div className="relative">
+    <div ref={containerRef} className="relative">
       <button
         type="button"
         data-testid={buttonTestId}
         aria-expanded={isOpen}
-        className="flex h-9 items-center gap-2 rounded-xl bg-surface px-3 text-sm font-semibold text-text-primary hover:bg-muted"
+        aria-label={compact ? t('workbench.plugins_create', '创建') : undefined}
+        className={[
+          'flex min-w-[44px] items-center justify-center gap-2 rounded-xl bg-surface text-sm font-semibold text-text-primary hover:bg-muted',
+          compact ? 'h-11 w-11 px-0' : 'h-10 px-3 sm:h-9',
+        ].join(' ')}
         onClick={onToggle}
       >
-        {t('workbench.plugins_create', '创建')}
-        <ChevronDown className="h-4 w-4" />
+        {compact ? (
+          <Plus className="h-5 w-5" />
+        ) : (
+          <>
+            {t('workbench.plugins_create', '创建')}
+            <ChevronDown className="h-4 w-4" />
+          </>
+        )}
       </button>
       {isOpen && (
         <div
           data-testid="plugins-create-menu"
-          className="absolute right-0 top-11 z-[100] isolate w-40 overflow-hidden rounded-xl border border-border bg-[rgb(var(--color-popover))] p-1 text-text-primary shadow-2xl ring-1 ring-border"
+          className="absolute right-0 top-11 z-popover isolate w-40 overflow-hidden rounded-xl border border-border bg-[rgb(var(--color-popover))] p-1 text-text-primary shadow-2xl ring-1 ring-border"
         >
           <button
             type="button"

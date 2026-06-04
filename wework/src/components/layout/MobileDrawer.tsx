@@ -120,7 +120,7 @@ export function MobileDrawer({
 
   return (
     <div
-      className="fixed inset-0 z-50 isolate flex h-dvh flex-col overflow-hidden px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(22px,env(safe-area-inset-top))] text-[rgb(var(--color-sidebar-text-primary))] backdrop-blur-3xl backdrop-saturate-150"
+      className="fixed inset-0 z-critical isolate flex h-dvh flex-col overflow-hidden px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(22px,env(safe-area-inset-top))] text-[rgb(var(--color-sidebar-text-primary))] backdrop-blur-3xl backdrop-saturate-150"
       style={{ backgroundColor: 'rgb(var(--color-mobile-drawer))' }}
     >
       <header className="flex shrink-0 items-center justify-between gap-4">
@@ -147,7 +147,7 @@ export function MobileDrawer({
           data-testid="mobile-search-input"
           type="search"
           placeholder={t('workbench.search', '搜索')}
-          className="h-12 w-full rounded-2xl border border-border/60 bg-surface/85 pl-12 pr-4 text-sm font-medium text-text-primary outline-none placeholder:text-[rgb(var(--color-sidebar-text-muted))] focus:bg-surface"
+          className="h-12 w-full rounded-2xl border border-border/60 bg-surface/85 pl-12 pr-4 text-base font-medium leading-5 text-text-primary outline-none placeholder:text-[rgb(var(--color-sidebar-text-muted))] focus:bg-surface"
         />
       </div>
 

@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import {
@@ -169,7 +170,7 @@ export function ModelSelector({
     setActiveFamilyId(current => (current === familyId ? current : familyId))
   }, [])
 
-  useOutsideClick(containerRef, open, closeMenu)
+  useOutsideClick(containerRef, open && !isMobile, closeMenu)
 
   useLayoutEffect(() => {
     if (!open) return
@@ -374,9 +375,9 @@ export function ModelSelector({
   }
 
   function renderMobileSheet() {
-    return (
+    return createPortal(
       <div
-        className="fixed inset-0 z-50 bg-black/25"
+        className="fixed inset-0 z-modal bg-black/25"
         onClick={closeMenu}
       >
         <div
@@ -421,12 +422,12 @@ export function ModelSelector({
                 value={mobileQuery}
                 onChange={event => setMobileQuery(event.target.value)}
                 placeholder={t('workbench.search_models')}
-                className="min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted"
+                className="min-w-0 flex-1 bg-transparent text-base leading-5 text-text-primary outline-none placeholder:text-text-muted"
               />
             </label>
           </div>
 
-          <div className="flex min-h-0 flex-1 flex-col px-5 pb-24 pt-5">
+          <div className="flex min-h-0 flex-1 flex-col px-5 pb-5 pt-5">
             <div className="mb-5 shrink-0 space-y-4">
               {controlsAboveFamilies.map(renderMobileControlSection)}
               {!supportsReasoningControl && renderMobileAutomaticReasoningSection()}
@@ -528,7 +529,7 @@ export function ModelSelector({
             )}
           </div>
 
-          <div className="absolute inset-x-0 bottom-0 flex gap-3 border-t border-border bg-background/95 px-5 pb-[max(20px,env(safe-area-inset-bottom))] pt-3 backdrop-blur">
+          <div className="flex shrink-0 gap-3 border-t border-border bg-background/95 px-5 pb-[max(20px,env(safe-area-inset-bottom))] pt-3 backdrop-blur">
             <button
               type="button"
               data-testid="model-selector-auto-button"
@@ -547,7 +548,8 @@ export function ModelSelector({
             </button>
           </div>
         </div>
-      </div>
+      </div>,
+      document.body,
     )
   }
 
@@ -578,7 +580,7 @@ export function ModelSelector({
       {open && !isMobile && (
         <div
           className={[
-            'absolute z-40 w-[min(46rem,calc(100vw-2rem))]',
+            'absolute z-popover w-[min(46rem,calc(100vw-2rem))]',
             menuPositionClass,
             menuClassName,
           ].join(' ')}
