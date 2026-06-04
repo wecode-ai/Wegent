@@ -5,6 +5,7 @@
 """Tests for MCP server routing and URL configuration."""
 
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import ANY, AsyncMock, patch
 
 import pytest
@@ -144,6 +145,23 @@ def test_external_knowledge_mcp_root_returns_metadata_json():
             "wegent_kb_search_content",
         ],
     }
+
+
+def test_external_knowledge_mcp_docs_cover_metadata_tools_and_file_endpoint():
+    app = _build_external_knowledge_mcp_app()
+    client = TestClient(app)
+    metadata = client.get("/").json()
+    repo_root = Path(__file__).resolve().parents[3]
+    docs = [
+        (repo_root / "docs/zh/developer-guide/external-knowledge-mcp.md").read_text(),
+        (repo_root / "docs/en/developer-guide/external-knowledge-mcp.md").read_text(),
+    ]
+
+    for doc in docs:
+        for tool_name in metadata["tools"]:
+            assert tool_name in doc
+        assert "documents/{document_id}/file" in doc
+        assert "X-Wegent-Download-Token" in doc
 
 
 def test_get_mcp_knowledge_config_uses_sse_endpoint():

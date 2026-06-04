@@ -32,10 +32,23 @@ def _reset_external_user(token) -> None:
 
 @pytest.fixture(autouse=True)
 def allow_external_search_rate_limit():
-    with patch.object(
-        knowledge_external,
-        "_search_rate_limit_status",
-        return_value=ExternalMcpRateLimitStatus.ALLOWED,
+    runtime_spec = MagicMock()
+    with (
+        patch.object(
+            knowledge_external,
+            "_search_rate_limit_status",
+            return_value=ExternalMcpRateLimitStatus.ALLOWED,
+        ),
+        patch.object(
+            knowledge_external.RagRuntimeResolver,
+            "build_query_knowledge_base_configs_from_records",
+            return_value=["resolved-config"],
+        ),
+        patch.object(
+            knowledge_external.RagRuntimeResolver,
+            "build_query_runtime_spec",
+            return_value=runtime_spec,
+        ),
     ):
         yield
 
@@ -1331,8 +1344,6 @@ async def test_search_content_filters_inaccessible_and_invalid_knowledge_base_id
     assert payload["warnings"] == [knowledge_external.IGNORED_KNOWLEDGE_BASES_WARNING]
     assert payload["records"][0]["knowledge_base_name"] == "Payments"
     query_content.assert_awaited_once()
-    assert query_content.await_args.kwargs["target_ids"] == [1]
-    assert query_content.await_args.kwargs["knowledge_bases"] == [kb]
 
 
 @pytest.mark.asyncio
@@ -1773,3 +1784,61 @@ async def test_search_content_uses_query_gateway(test_user):
     assert build_spec.call_args.kwargs["route_mode"] == "rag_retrieval"
     assert build_spec.call_args.kwargs["knowledge_base_configs"] == ["resolved-config"]
     gateway.query.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_query_content_routes_local_gateway_through_threadpool():
+    runtime_spec = MagicMock()
+    local_result = {"total": 0, "records": []}
+    run_in_threadpool = AsyncMock(return_value=local_result)
+
+    with (
+        patch.object(
+            knowledge_external,
+            "get_query_gateway",
+            return_value=knowledge_external.LocalRagGateway(),
+        ),
+        patch.object(
+            knowledge_external,
+            "run_in_threadpool",
+            run_in_threadpool,
+        ),
+    ):
+        result = await knowledge_external._query_content(runtime_spec)
+
+    assert result == local_result
+    run_in_threadpool.assert_awaited_once_with(
+        knowledge_external._query_content_local_sync,
+        runtime_spec,
+    )
+
+
+@pytest.mark.asyncio
+async def test_query_content_falls_back_to_local_threadpool_for_retryable_remote_error():
+    runtime_spec = MagicMock()
+    fallback_result = {"total": 1, "records": [{"content": "fallback"}]}
+    gateway = MagicMock()
+    gateway.query = AsyncMock(
+        side_effect=knowledge_external.RemoteRagGatewayError(
+            "knowledge runtime unavailable",
+            retryable=True,
+        )
+    )
+    run_in_threadpool = AsyncMock(return_value=fallback_result)
+
+    with (
+        patch.object(knowledge_external, "get_query_gateway", return_value=gateway),
+        patch.object(
+            knowledge_external,
+            "run_in_threadpool",
+            run_in_threadpool,
+        ),
+    ):
+        result = await knowledge_external._query_content(runtime_spec)
+
+    assert result == fallback_result
+    gateway.query.assert_awaited_once_with(runtime_spec, db=None)
+    run_in_threadpool.assert_awaited_once_with(
+        knowledge_external._query_content_local_sync,
+        runtime_spec,
+    )

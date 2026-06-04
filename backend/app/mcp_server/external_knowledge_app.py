@@ -6,6 +6,7 @@
 
 import logging
 from contextlib import asynccontextmanager
+from functools import partial
 from typing import AsyncIterator
 
 from starlette.applications import Starlette
@@ -252,11 +253,16 @@ class _ExternalKnowledgeRateLimitMiddleware:
             return
 
         request = Request(scope)
-        rate_limit_status = check_external_mcp_rate_limit(
-            request,
-            namespace="transport",
-            limit=settings.EXTERNAL_KNOWLEDGE_MCP_RATE_LIMIT_REQUESTS,
-            window_seconds=settings.EXTERNAL_KNOWLEDGE_MCP_RATE_LIMIT_WINDOW_SECONDS,
+        rate_limit_status = await run_in_threadpool(
+            partial(
+                check_external_mcp_rate_limit,
+                request,
+                namespace="transport",
+                limit=settings.EXTERNAL_KNOWLEDGE_MCP_RATE_LIMIT_REQUESTS,
+                window_seconds=(
+                    settings.EXTERNAL_KNOWLEDGE_MCP_RATE_LIMIT_WINDOW_SECONDS
+                ),
+            )
         )
         if rate_limit_status == ExternalMcpRateLimitStatus.LIMITED:
             await _send_json_error(

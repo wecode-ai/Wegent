@@ -6,7 +6,7 @@ sidebar_position: 11
 
 English | [简体中文](../../zh/developer-guide/external-knowledge-mcp.md)
 
-The external knowledge MCP exposes knowledge base listing, node listing, and content search to trusted external integrations. It supports the business workflow where a caller first lists accessible knowledge bases, then searches specific knowledge bases.
+The external knowledge MCP exposes knowledge base listing, node listing, parsed document content reading, original file download credentials, and content search to trusted external integrations. It supports the business workflow where a caller first lists accessible knowledge bases, then browses nodes, reads document content, or searches selected knowledge bases.
 
 ## Endpoint
 
@@ -23,6 +23,7 @@ When enabled, it is mounted by Backend:
 | `/mcp/knowledge-external` | Service metadata |
 | `/mcp/knowledge-external/health` | Health check |
 | `/mcp/knowledge-external/sse` | Streamable HTTP MCP transport |
+| `/mcp/knowledge-external/documents/{document_id}/file` | Original document file download |
 
 If `API_PREFIX=/api` is configured, Backend also registers `/api/mcp/knowledge-external`. The Backend application lifespan starts `external_knowledge_mcp_server.session_manager.run()` only when the external knowledge MCP is enabled. If the mounted app is created without entering the session manager, concurrent Streamable HTTP requests can fail because the task group is not initialized.
 
@@ -45,7 +46,7 @@ The transport limiter checks both client IP and `Authorization` token hash dimen
 
 ## Authentication
 
-All non-public MCP transport requests must resolve to an authenticated external knowledge user before they can reach the MCP server. The root metadata endpoint and health check are public. Document file downloads use a short-lived document download token returned by `wegent_kb_get_document_download`.
+All non-public MCP transport requests must resolve to an authenticated external knowledge user before they can reach the MCP server. The root metadata endpoint and health check are public. Document file downloads do not use Bearer authentication; they use a short-lived document download token returned by `wegent_kb_get_document_download`.
 
 Default authentication accepts only user-generated API tokens:
 
@@ -58,6 +59,8 @@ After authentication succeeds, the owner of the API token becomes the authentica
 The default implementation does not accept `X-API-Key`. Supplying `X-API-Key` does not establish an external knowledge MCP user context.
 
 Deployments can replace authentication with `set_external_knowledge_auth_handler()`. The replacement handler receives the optional Bearer token and the Starlette `Request`, then returns `ExternalKnowledgeUser` on success or `None` on failure. The handler may ignore the Bearer token and resolve the user from trusted gateway headers such as `X-User-Name`.
+
+The document file endpoint requires the `X-Wegent-Download-Token` request header. The token is returned by `wegent_kb_get_document_download`, expires after 300 seconds by default, and is bound to the authenticated user, document ID, and `disposition`. After token verification, the file endpoint rechecks document permission and file availability.
 
 ```python
 from app.mcp_server import ExternalKnowledgeUser, set_external_knowledge_auth_handler
@@ -125,6 +128,43 @@ Behavior:
 - Non-root recursive listing traverses only the target folder subtree and is not affected by unrelated root nodes in the same knowledge base.
 - Root recursive listing handles orphan nodes and abnormal cyclic components, returning degradation details in `warnings`.
 
+### `wegent_kb_get_document_content`
+
+Reads parsed text content for an accessible document.
+
+Parameters:
+
+| Name | Type | Default | Description |
+| --- | --- | --- | --- |
+| `document_id` | `int` | required | Document ID |
+| `offset` | `int` | `0` | Character offset, must be greater than or equal to `0` |
+| `limit` | `int` | `MAX_DOCUMENT_READ_LIMIT` | Number of characters to return, from `1` to `MAX_DOCUMENT_READ_LIMIT` |
+
+Behavior:
+
+- The returned content comes from parsed attachment text, not the original binary file.
+- `content_available` indicates whether the document has readable parsed text.
+- `has_more` indicates whether more text is available; callers should page with `offset` and `limit`.
+- The response includes `index_status` so callers can inspect the document indexing state.
+
+### `wegent_kb_get_document_download`
+
+Returns a short-lived original file download credential for an accessible document.
+
+Parameters:
+
+| Name | Type | Default | Description |
+| --- | --- | --- | --- |
+| `document_id` | `int` | required | Document ID |
+| `disposition` | `string` | `inline` | File response disposition. Must be `inline` or `attachment` |
+
+Behavior:
+
+- The response returns `resource_url` and `headers`. Callers should request `resource_url` with the returned `X-Wegent-Download-Token` header.
+- The token expires after 300 seconds by default and is bound to the authenticated user, document ID, and `disposition`.
+- `inline` is allowed only for previewable MIME types; callers should use `attachment` for non-previewable files.
+- The file endpoint rechecks permission; if access is revoked after token issuance, download returns `forbidden`.
+
 ### `wegent_kb_search_content`
 
 Searches content in selected knowledge bases.
@@ -163,6 +203,9 @@ Common `code` values:
 | `bad_request` | Invalid parameters |
 | `unauthorized` | No authenticated user context |
 | `not_found` | Knowledge base not found or inaccessible |
+| `forbidden` | No permission to access the target knowledge base or document |
+| `file_unavailable` | Original document file is unavailable |
+| `unsupported_media_type` | The file does not support inline preview |
 | `rate_limited` | Transport request exceeds the rate limit |
 | `rate_limit_unavailable` | Rate limit service is unavailable and the request is rejected |
 | `result_too_large` | Recursive result exceeds the limit |

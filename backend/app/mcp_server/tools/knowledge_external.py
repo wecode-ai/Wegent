@@ -6,7 +6,12 @@
 
 import json
 import logging
+from dataclasses import dataclass
+from functools import partial
 from typing import Optional
+
+import anyio
+from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
 from app.core.rate_limit import (
@@ -20,7 +25,6 @@ from app.mcp_server.server import (
     _external_knowledge_request_user,
     external_knowledge_mcp_server,
 )
-from app.models.kind import Kind
 from app.models.knowledge import KnowledgeFolder
 from app.schemas.knowledge import ResourceScope
 from app.schemas.knowledge_external import (
@@ -62,6 +66,7 @@ from app.services.rag.remote_gateway import (
     should_fallback_to_local,
 )
 from app.services.rag.runtime_resolver import RagRuntimeResolver
+from app.services.rag.runtime_specs import QueryRuntimeSpec
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +83,17 @@ IGNORED_KNOWLEDGE_BASES_WARNING = (
 )
 DOCUMENT_CONTENT_FORMAT = "text"
 DOCUMENT_CONTENT_SOURCE = "parsed_attachment"
+
+
+@dataclass(frozen=True)
+class SearchPreparation:
+    """Pure search state prepared in a worker thread."""
+
+    runtime_spec: QueryRuntimeSpec
+    target_ids: list[int]
+    ignored_knowledge_base_ids: list[int]
+    warnings: list[str]
+    kb_name_map: dict[int, str]
 
 
 def _normalize_url_path(path: str) -> str:
@@ -154,89 +170,19 @@ def _search_rate_limit_status(user_id: int) -> ExternalMcpRateLimitStatus:
     )
 
 
-async def _query_content(
-    db,
-    user,
-    query: str,
-    target_ids: list[int],
-    max_results: int,
-    knowledge_bases: list[Kind],
-) -> dict:
-    runtime_resolver = RagRuntimeResolver()
-    knowledge_base_configs = (
-        runtime_resolver.build_query_knowledge_base_configs_from_records(
-            db=db,
-            knowledge_base_records=knowledge_bases,
-            current_user_id=user.id,
-            user_name=user.user_name,
-        )
-    )
-    runtime_spec = runtime_resolver.build_query_runtime_spec(
-        db=db,
-        knowledge_base_ids=target_ids,
-        query=query,
-        max_results=max_results,
-        route_mode="rag_retrieval",
-        user_id=user.id,
-        user_name=user.user_name,
-        knowledge_base_configs=knowledge_base_configs,
-    )
-
-    gateway = get_query_gateway()
-    try:
-        return await gateway.query(runtime_spec, db=db)
-    except RemoteRagGatewayError as exc:
-        if not should_fallback_to_local(exc):
-            raise
-        logger.warning(
-            "External knowledge search remote query failed; falling back to local: %s",
-            exc,
-        )
-        return await LocalRagGateway().query(runtime_spec, db=db)
-
-
-@external_knowledge_mcp_server.tool()
-async def wegent_kb_list_knowledge_bases(
-    scope: str = "all",
-    group_name: Optional[str] = None,
-    query: Optional[str] = None,
-    limit: int = DEFAULT_KNOWLEDGE_BASE_LIST_LIMIT,
-    offset: int = 0,
+def _list_knowledge_bases_sync(
+    *,
+    user_id: int,
+    scope: ResourceScope,
+    group_name: Optional[str],
+    query: Optional[str],
+    limit: int,
+    offset: int,
 ) -> str:
-    """List knowledge bases visible to the authenticated external user."""
-    user = _get_external_user()
-    if not user:
-        return _json_error("Authentication required", "unauthorized")
-
-    if not isinstance(scope, str):
-        return _json_error("scope must be a string")
-    if group_name is not None and not isinstance(group_name, str):
-        return _json_error("group_name must be a string")
-    if query is not None and not isinstance(query, str):
-        return _json_error("query must be a string")
-    if not _is_int(limit):
-        return _json_error("limit must be an integer")
-    if not _is_int(offset):
-        return _json_error("offset must be an integer")
-    if limit < 1 or limit > MAX_KNOWLEDGE_BASE_LIST_LIMIT:
-        return _json_error(
-            f"limit must be between 1 and {MAX_KNOWLEDGE_BASE_LIST_LIMIT}"
-        )
-    if offset < 0:
-        return _json_error("offset must be greater than or equal to 0")
-
-    try:
-        scope_enum = ResourceScope(scope.strip())
-    except ValueError:
-        return _json_error("Invalid scope")
-    normalized_group_name = (group_name or "").strip() or None
-    if scope_enum == ResourceScope.GROUP and not normalized_group_name:
-        return _json_error("group_name is required when scope is group")
-
     db = SessionLocal()
     try:
         kbs = KnowledgeService.list_knowledge_bases(
-            db, user.id, scope=scope_enum, group_name=normalized_group_name
+            db, user_id, scope=scope, group_name=group_name
         )
         keyword = (query or "").strip().lower()
         if keyword:
@@ -286,44 +232,20 @@ async def wegent_kb_list_knowledge_bases(
         db.close()
 
 
-@external_knowledge_mcp_server.tool()
-async def wegent_kb_list_nodes(
+def _list_nodes_sync(
+    *,
+    user_id: int,
     knowledge_base_id: int,
-    folder_id: int = 0,
-    recursive: bool = False,
-    include_inactive: bool = True,
-    limit: int = DEFAULT_DIRECT_NODE_LIMIT,
-    offset: int = 0,
+    folder_id: int,
+    recursive: bool,
+    include_inactive: bool,
+    limit: int,
+    offset: int,
 ) -> str:
-    """List folder and document nodes in a knowledge base."""
-    user = _get_external_user()
-    if not user:
-        return _json_error("Authentication required", "unauthorized")
-    if not _is_int(knowledge_base_id):
-        return _json_error("knowledge_base_id must be an integer")
-    if not _is_int(folder_id):
-        return _json_error("folder_id must be an integer")
-    if not _is_bool(recursive):
-        return _json_error("recursive must be a boolean")
-    if not _is_bool(include_inactive):
-        return _json_error("include_inactive must be a boolean")
-    if not _is_int(limit):
-        return _json_error("limit must be an integer")
-    if not _is_int(offset):
-        return _json_error("offset must be an integer")
-    if knowledge_base_id <= 0:
-        return _json_error("knowledge_base_id is required")
-    if folder_id < 0:
-        return _json_error("folder_id must be greater than or equal to 0")
-    if limit < 1 or limit > MAX_DIRECT_NODE_LIMIT:
-        return _json_error(f"limit must be between 1 and {MAX_DIRECT_NODE_LIMIT}")
-    if offset < 0:
-        return _json_error("offset must be greater than or equal to 0")
-
     db = SessionLocal()
     try:
         kb, has_access = KnowledgeService.get_knowledge_base(
-            db, knowledge_base_id, user.id
+            db, knowledge_base_id, user_id
         )
         if not kb:
             return _json_error("Knowledge base not found", "not_found")
@@ -388,29 +310,18 @@ async def wegent_kb_list_nodes(
         db.close()
 
 
-@external_knowledge_mcp_server.tool()
-async def wegent_kb_get_document_content(
+def _get_document_content_sync(
+    *,
+    user_id: int,
     document_id: int,
-    offset: int = 0,
-    limit: int = MAX_DOCUMENT_READ_LIMIT,
+    offset: int,
+    limit: int,
 ) -> str:
-    """Read parsed text content for an accessible knowledge document."""
-    user = _get_external_user()
-    if not user:
-        return _json_error("Authentication required", "unauthorized")
-
-    validation_error = _validate_document_id(document_id)
-    if validation_error:
-        return _json_error(validation_error)
-    validation_error = _validate_document_read_paging(offset, limit)
-    if validation_error:
-        return _json_error(validation_error)
-
     db = SessionLocal()
     try:
         access = get_document_access_or_raise(
             db,
-            user_id=user.id,
+            user_id=user_id,
             document_id=document_id,
         )
         results = document_read_service.read_documents(
@@ -452,6 +363,288 @@ async def wegent_kb_get_document_content(
         db.close()
 
 
+def _get_document_download_sync(
+    *,
+    user_id: int,
+    document_id: int,
+    disposition: str,
+    resource_url: str,
+) -> str:
+    db = SessionLocal()
+    try:
+        access = get_document_access_or_raise(
+            db,
+            user_id=user_id,
+            document_id=document_id,
+        )
+        if not access.downloadable:
+            return _json_error("Document file is unavailable", "file_unavailable")
+        if disposition == "inline" and not access.previewable:
+            return _json_error(
+                "Document file is not previewable", "unsupported_media_type"
+            )
+
+        token = create_document_download_token(
+            user_id=user_id,
+            document_id=document_id,
+            disposition=disposition,
+        )
+        return ExternalDocumentDownloadResponse(
+            document_id=document_id,
+            node_id=f"document:{document_id}",
+            knowledge_base_id=access.knowledge_base_id,
+            resource_url=resource_url,
+            headers={DOWNLOAD_TOKEN_HEADER: token},
+            expiration_seconds=DOCUMENT_DOWNLOAD_TOKEN_EXPIRES_SECONDS,
+            disposition=disposition,
+            mime_type=access.mime_type or "application/octet-stream",
+            file_name=access.file_name,
+            file_extension=access.file_extension,
+            file_size=access.file_size,
+            downloadable=access.downloadable,
+            previewable=access.previewable,
+        ).model_dump_json()
+    except ExternalDocumentAccessError as exc:
+        return _json_error(str(exc), exc.code)
+    except Exception as exc:
+        logger.exception("wegent_kb_get_document_download failed: %s", exc)
+        return _json_error(INTERNAL_ERROR_MESSAGE, "internal_error")
+    finally:
+        db.close()
+
+
+def _prepare_search_content_sync(
+    *,
+    user_id: int,
+    user_name: str,
+    query: str,
+    requested_ids: list[int],
+    max_results: int,
+) -> SearchPreparation | str:
+    search_rate_limit_status = _search_rate_limit_status(user_id)
+    if search_rate_limit_status == ExternalMcpRateLimitStatus.LIMITED:
+        return _json_error("Rate limit exceeded", "rate_limited")
+    if search_rate_limit_status == ExternalMcpRateLimitStatus.UNAVAILABLE:
+        return _json_error(
+            "Rate limit service unavailable",
+            "rate_limit_unavailable",
+        )
+
+    db = SessionLocal()
+    try:
+        ignored_knowledge_base_ids: list[int] = []
+        warnings: list[str] = []
+        target_ids = []
+        target_kbs = []
+        kb_name_map = {}
+        for requested_knowledge_base_id in requested_ids:
+            if requested_knowledge_base_id <= 0:
+                ignored_knowledge_base_ids.append(requested_knowledge_base_id)
+                continue
+
+            kb, has_access = KnowledgeService.get_knowledge_base(
+                db, requested_knowledge_base_id, user_id
+            )
+            if kb and has_access:
+                spec = kb.json.get("spec", {}) or {}
+                target_ids.append(kb.id)
+                target_kbs.append(kb)
+                kb_name_map[kb.id] = spec.get("name", "")
+            else:
+                ignored_knowledge_base_ids.append(requested_knowledge_base_id)
+
+        if ignored_knowledge_base_ids:
+            warnings.append(IGNORED_KNOWLEDGE_BASES_WARNING)
+
+        if not target_ids:
+            return _json_error("No accessible knowledge bases found", "not_found")
+
+        runtime_resolver = RagRuntimeResolver()
+        knowledge_base_configs = (
+            runtime_resolver.build_query_knowledge_base_configs_from_records(
+                db=db,
+                knowledge_base_records=target_kbs,
+                current_user_id=user_id,
+                user_name=user_name,
+            )
+        )
+        runtime_spec = runtime_resolver.build_query_runtime_spec(
+            db=db,
+            knowledge_base_ids=target_ids,
+            query=query,
+            max_results=max_results,
+            route_mode="rag_retrieval",
+            user_id=user_id,
+            user_name=user_name,
+            knowledge_base_configs=knowledge_base_configs,
+        )
+        return SearchPreparation(
+            runtime_spec=runtime_spec,
+            target_ids=target_ids,
+            ignored_knowledge_base_ids=ignored_knowledge_base_ids,
+            warnings=warnings,
+            kb_name_map=kb_name_map,
+        )
+    except Exception as exc:
+        logger.exception("wegent_kb_search_content preparation failed: %s", exc)
+        return _json_error(INTERNAL_ERROR_MESSAGE, "internal_error")
+    finally:
+        db.close()
+
+
+def _query_content_local_sync(runtime_spec: QueryRuntimeSpec) -> dict:
+    db = SessionLocal()
+    try:
+        return anyio.run(partial(LocalRagGateway().query, runtime_spec, db=db))
+    finally:
+        db.close()
+
+
+async def _query_content(runtime_spec: QueryRuntimeSpec) -> dict:
+    gateway = get_query_gateway()
+    if isinstance(gateway, LocalRagGateway):
+        return await run_in_threadpool(_query_content_local_sync, runtime_spec)
+
+    try:
+        return await gateway.query(runtime_spec, db=None)
+    except RemoteRagGatewayError as exc:
+        if not should_fallback_to_local(exc):
+            raise
+        logger.warning(
+            "External knowledge search remote query failed; falling back to local: %s",
+            exc,
+        )
+        return await run_in_threadpool(_query_content_local_sync, runtime_spec)
+
+
+@external_knowledge_mcp_server.tool()
+async def wegent_kb_list_knowledge_bases(
+    scope: str = "all",
+    group_name: Optional[str] = None,
+    query: Optional[str] = None,
+    limit: int = DEFAULT_KNOWLEDGE_BASE_LIST_LIMIT,
+    offset: int = 0,
+) -> str:
+    """List knowledge bases visible to the authenticated external user."""
+    user = _get_external_user()
+    if not user:
+        return _json_error("Authentication required", "unauthorized")
+
+    if not isinstance(scope, str):
+        return _json_error("scope must be a string")
+    if group_name is not None and not isinstance(group_name, str):
+        return _json_error("group_name must be a string")
+    if query is not None and not isinstance(query, str):
+        return _json_error("query must be a string")
+    if not _is_int(limit):
+        return _json_error("limit must be an integer")
+    if not _is_int(offset):
+        return _json_error("offset must be an integer")
+    if limit < 1 or limit > MAX_KNOWLEDGE_BASE_LIST_LIMIT:
+        return _json_error(
+            f"limit must be between 1 and {MAX_KNOWLEDGE_BASE_LIST_LIMIT}"
+        )
+    if offset < 0:
+        return _json_error("offset must be greater than or equal to 0")
+
+    try:
+        scope_enum = ResourceScope(scope.strip())
+    except ValueError:
+        return _json_error("Invalid scope")
+    normalized_group_name = (group_name or "").strip() or None
+    if scope_enum == ResourceScope.GROUP and not normalized_group_name:
+        return _json_error("group_name is required when scope is group")
+
+    return await run_in_threadpool(
+        partial(
+            _list_knowledge_bases_sync,
+            user_id=user.id,
+            scope=scope_enum,
+            group_name=normalized_group_name,
+            query=query,
+            limit=limit,
+            offset=offset,
+        )
+    )
+
+
+@external_knowledge_mcp_server.tool()
+async def wegent_kb_list_nodes(
+    knowledge_base_id: int,
+    folder_id: int = 0,
+    recursive: bool = False,
+    include_inactive: bool = True,
+    limit: int = DEFAULT_DIRECT_NODE_LIMIT,
+    offset: int = 0,
+) -> str:
+    """List folder and document nodes in a knowledge base."""
+    user = _get_external_user()
+    if not user:
+        return _json_error("Authentication required", "unauthorized")
+    if not _is_int(knowledge_base_id):
+        return _json_error("knowledge_base_id must be an integer")
+    if not _is_int(folder_id):
+        return _json_error("folder_id must be an integer")
+    if not _is_bool(recursive):
+        return _json_error("recursive must be a boolean")
+    if not _is_bool(include_inactive):
+        return _json_error("include_inactive must be a boolean")
+    if not _is_int(limit):
+        return _json_error("limit must be an integer")
+    if not _is_int(offset):
+        return _json_error("offset must be an integer")
+    if knowledge_base_id <= 0:
+        return _json_error("knowledge_base_id is required")
+    if folder_id < 0:
+        return _json_error("folder_id must be greater than or equal to 0")
+    if limit < 1 or limit > MAX_DIRECT_NODE_LIMIT:
+        return _json_error(f"limit must be between 1 and {MAX_DIRECT_NODE_LIMIT}")
+    if offset < 0:
+        return _json_error("offset must be greater than or equal to 0")
+
+    return await run_in_threadpool(
+        partial(
+            _list_nodes_sync,
+            user_id=user.id,
+            knowledge_base_id=knowledge_base_id,
+            folder_id=folder_id,
+            recursive=recursive,
+            include_inactive=include_inactive,
+            limit=limit,
+            offset=offset,
+        )
+    )
+
+
+@external_knowledge_mcp_server.tool()
+async def wegent_kb_get_document_content(
+    document_id: int,
+    offset: int = 0,
+    limit: int = MAX_DOCUMENT_READ_LIMIT,
+) -> str:
+    """Read parsed text content for an accessible knowledge document."""
+    user = _get_external_user()
+    if not user:
+        return _json_error("Authentication required", "unauthorized")
+
+    validation_error = _validate_document_id(document_id)
+    if validation_error:
+        return _json_error(validation_error)
+    validation_error = _validate_document_read_paging(offset, limit)
+    if validation_error:
+        return _json_error(validation_error)
+
+    return await run_in_threadpool(
+        partial(
+            _get_document_content_sync,
+            user_id=user.id,
+            document_id=document_id,
+            offset=offset,
+            limit=limit,
+        )
+    )
+
+
 @external_knowledge_mcp_server.tool()
 async def wegent_kb_get_document_download(
     document_id: int,
@@ -471,47 +664,16 @@ async def wegent_kb_get_document_download(
     except ExternalDocumentAccessError as exc:
         return _json_error(str(exc), exc.code)
 
-    db = SessionLocal()
-    try:
-        access = get_document_access_or_raise(
-            db,
-            user_id=user.id,
-            document_id=document_id,
-        )
-        if not access.downloadable:
-            return _json_error("Document file is unavailable", "file_unavailable")
-        if normalized_disposition == "inline" and not access.previewable:
-            return _json_error(
-                "Document file is not previewable", "unsupported_media_type"
-            )
-
-        token = create_document_download_token(
+    resource_url = _external_knowledge_document_file_url(document_id)
+    return await run_in_threadpool(
+        partial(
+            _get_document_download_sync,
             user_id=user.id,
             document_id=document_id,
             disposition=normalized_disposition,
+            resource_url=resource_url,
         )
-        return ExternalDocumentDownloadResponse(
-            document_id=document_id,
-            node_id=f"document:{document_id}",
-            knowledge_base_id=access.knowledge_base_id,
-            resource_url=_external_knowledge_document_file_url(document_id),
-            headers={DOWNLOAD_TOKEN_HEADER: token},
-            expiration_seconds=DOCUMENT_DOWNLOAD_TOKEN_EXPIRES_SECONDS,
-            disposition=normalized_disposition,
-            mime_type=access.mime_type or "application/octet-stream",
-            file_name=access.file_name,
-            file_extension=access.file_extension,
-            file_size=access.file_size,
-            downloadable=access.downloadable,
-            previewable=access.previewable,
-        ).model_dump_json()
-    except ExternalDocumentAccessError as exc:
-        return _json_error(str(exc), exc.code)
-    except Exception as exc:
-        logger.exception("wegent_kb_get_document_download failed: %s", exc)
-        return _json_error(INTERNAL_ERROR_MESSAGE, "internal_error")
-    finally:
-        db.close()
+    )
 
 
 @external_knowledge_mcp_server.tool()
@@ -552,57 +714,25 @@ async def wegent_kb_search_content(
             f"knowledge_base_ids must contain at most {MAX_SEARCH_KNOWLEDGE_BASE_IDS} items"
         )
 
-    search_rate_limit_status = _search_rate_limit_status(user.id)
-    if search_rate_limit_status == ExternalMcpRateLimitStatus.LIMITED:
-        return _json_error("Rate limit exceeded", "rate_limited")
-    if search_rate_limit_status == ExternalMcpRateLimitStatus.UNAVAILABLE:
-        return _json_error(
-            "Rate limit service unavailable",
-            "rate_limit_unavailable",
-        )
-
-    db = SessionLocal()
-    try:
-        ignored_knowledge_base_ids: list[int] = []
-        warnings: list[str] = []
-        target_ids = []
-        target_kbs = []
-        kb_name_map = {}
-        for requested_knowledge_base_id in requested_ids:
-            if requested_knowledge_base_id <= 0:
-                ignored_knowledge_base_ids.append(requested_knowledge_base_id)
-                continue
-
-            kb, has_access = KnowledgeService.get_knowledge_base(
-                db, requested_knowledge_base_id, user.id
-            )
-            if kb and has_access:
-                spec = kb.json.get("spec", {}) or {}
-                target_ids.append(kb.id)
-                target_kbs.append(kb)
-                kb_name_map[kb.id] = spec.get("name", "")
-            else:
-                ignored_knowledge_base_ids.append(requested_knowledge_base_id)
-
-        if ignored_knowledge_base_ids:
-            warnings.append(IGNORED_KNOWLEDGE_BASES_WARNING)
-
-        if not target_ids:
-            return _json_error("No accessible knowledge bases found", "not_found")
-
-        result = await _query_content(
-            db,
-            user,
+    preparation = await run_in_threadpool(
+        partial(
+            _prepare_search_content_sync,
+            user_id=user.id,
+            user_name=user.user_name,
             query=normalized_query,
-            target_ids=target_ids,
+            requested_ids=requested_ids,
             max_results=max_results,
-            knowledge_bases=target_kbs,
         )
+    )
+    if isinstance(preparation, str):
+        return preparation
+
+    try:
+        result = await _query_content(preparation.runtime_spec)
 
         records = []
         for item in result.get("records", []):
             kb_id = item.get("knowledge_base_id")
-            metadata = item.get("metadata") or {}
             records.append(
                 ExternalSearchContentRecord(
                     content=item.get("content", ""),
@@ -610,7 +740,9 @@ async def wegent_kb_search_content(
                     score=item.get("score"),
                     knowledge_base_id=kb_id,
                     knowledge_base_name=(
-                        kb_name_map.get(kb_id) if kb_id is not None else None
+                        preparation.kb_name_map.get(kb_id)
+                        if kb_id is not None
+                        else None
                     ),
                     document_id=extract_document_id(item),
                 )
@@ -620,13 +752,11 @@ async def wegent_kb_search_content(
             query=normalized_query,
             total=result.get("total", len(records)),
             total_estimated_tokens=result.get("total_estimated_tokens", 0),
-            searched_knowledge_base_ids=target_ids,
-            ignored_knowledge_base_ids=ignored_knowledge_base_ids,
-            warnings=warnings,
+            searched_knowledge_base_ids=preparation.target_ids,
+            ignored_knowledge_base_ids=preparation.ignored_knowledge_base_ids,
+            warnings=preparation.warnings,
             records=records,
         ).model_dump_json()
     except Exception as exc:
         logger.exception("wegent_kb_search_content failed: %s", exc)
         return _json_error(INTERNAL_ERROR_MESSAGE, "internal_error")
-    finally:
-        db.close()

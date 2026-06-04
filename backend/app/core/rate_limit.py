@@ -48,7 +48,11 @@ def _check_redis_available() -> bool:
     try:
         import redis
 
-        client = redis.from_url(settings.REDIS_URL, socket_connect_timeout=1)
+        client = redis.from_url(
+            settings.REDIS_URL,
+            socket_connect_timeout=1,
+            socket_timeout=1,
+        )
         client.ping()
         return True
     except Exception as e:
@@ -66,7 +70,11 @@ def _get_rate_limit_redis_client(*, require_global_enabled: bool = True):
     try:
         import redis
 
-        client = redis.from_url(settings.REDIS_URL, socket_connect_timeout=1)
+        client = redis.from_url(
+            settings.REDIS_URL,
+            socket_connect_timeout=1,
+            socket_timeout=1,
+        )
         client.ping()
         _redis_rate_limit_client = client
         return client

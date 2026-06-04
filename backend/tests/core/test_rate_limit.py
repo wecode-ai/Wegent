@@ -191,6 +191,7 @@ def test_check_redis_available_returns_true_when_ping_succeeds():
     fake_redis.from_url.assert_called_once_with(
         "redis://example/0",
         socket_connect_timeout=1,
+        socket_timeout=1,
     )
     fake_client.ping.assert_called_once_with()
 
