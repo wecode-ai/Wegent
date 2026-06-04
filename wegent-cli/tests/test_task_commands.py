@@ -112,6 +112,28 @@ def test_task_result_extracts_backend_assistant_value():
     assert payload["data"]["messages"] == ["final answer"]
 
 
+def test_task_result_prefers_specified_result_fields_before_value():
+    client = MagicMock()
+    client.get_task.return_value = {
+        "id": 123,
+        "status": "COMPLETED",
+        "subtasks": [
+            {
+                "role": "ASSISTANT",
+                "result": {
+                    "content": "content answer",
+                    "value": "value answer",
+                },
+            },
+        ],
+    }
+
+    result = invoke_with_client(["task", "result", "123", "--json"], client)
+
+    assert result.exit_code == 0
+    assert json.loads(result.output)["data"]["messages"] == ["content answer"]
+
+
 def test_task_cancel_uses_cancel_endpoint():
     client = MagicMock()
     client.cancel_task.return_value = {"id": 123, "status": "cancelled"}

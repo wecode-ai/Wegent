@@ -9,7 +9,8 @@ from ..errors import CliError
 from ..io import load_structured_input
 from ..output import dumps_json, dumps_yaml, error_envelope, success_envelope
 
-ASSISTANT_OUTPUT_FIELDS = ("value", "content", "response", "text", "output")
+RESULT_OUTPUT_FIELDS = ("content", "response", "text", "output", "value")
+TOP_LEVEL_OUTPUT_FIELDS = ("content", "response", "text", "output")
 
 
 def _client(ctx: click.Context) -> WegentClient:
@@ -41,8 +42,8 @@ def _task_create_payload(input_path: str) -> dict[str, Any]:
     return loaded
 
 
-def _first_output_value(data: dict[str, Any]) -> str | None:
-    for field in ASSISTANT_OUTPUT_FIELDS:
+def _first_output_value(data: dict[str, Any], fields: tuple[str, ...]) -> str | None:
+    for field in fields:
         value = data.get(field)
         if isinstance(value, str) and value.strip():
             return value
@@ -62,11 +63,11 @@ def _assistant_message(subtask: Any) -> str | None:
         return result
 
     if isinstance(result, dict):
-        message = _first_output_value(result)
+        message = _first_output_value(result, RESULT_OUTPUT_FIELDS)
         if message is not None:
             return message
 
-    return _first_output_value(subtask)
+    return _first_output_value(subtask, TOP_LEVEL_OUTPUT_FIELDS)
 
 
 def _assistant_messages(task: Any) -> list[str]:
