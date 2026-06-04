@@ -8,24 +8,56 @@ import { buildStorageState, getJwtExpiryMs } from '../utils/auth-state'
 const authFile = path.join(__dirname, '../.auth/user.json')
 const apiBaseUrl = process.env.E2E_API_URL || 'http://localhost:8000'
 const appBaseUrl = process.env.E2E_BASE_URL || 'http://localhost:3000'
+const loginMaxAttempts = 3
+const loginRetryDelayMs = 1000
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
 
 async function loginViaApi(request: APIRequestContext, user: TestUser): Promise<string> {
-  const response = await request.post(`${apiBaseUrl}/api/auth/login`, {
-    data: {
-      user_name: user.username,
-      password: user.password,
-    },
-  })
+  let lastError: Error | undefined
 
-  expect(response.ok(), `Login failed for ${user.username}: ${await response.text()}`).toBe(true)
+  for (let attempt = 1; attempt <= loginMaxAttempts; attempt += 1) {
+    try {
+      const response = await request.post(`${apiBaseUrl}/api/auth/login`, {
+        data: {
+          user_name: user.username,
+          password: user.password,
+        },
+      })
 
-  const body = (await response.json()) as { access_token?: string }
-  expect(
-    body.access_token,
-    `Login response did not include access_token for ${user.username}`
-  ).toEqual(expect.any(String))
+      if (!response.ok()) {
+        lastError = new Error(
+          `Login failed for ${user.username} on attempt ${attempt}/${loginMaxAttempts}: ${response.status()} ${await response.text()}`
+        )
+      } else {
+        const body = (await response.json()) as { access_token?: string }
+        if (typeof body.access_token === 'string' && body.access_token.length > 0) {
+          return body.access_token
+        }
+        lastError = new Error(
+          `Login response did not include access_token for ${user.username} on attempt ${attempt}/${loginMaxAttempts}`
+        )
+      }
+    } catch (error) {
+      lastError =
+        error instanceof Error
+          ? new Error(
+              `Login failed for ${user.username} on attempt ${attempt}/${loginMaxAttempts}: ${error.message}`
+            )
+          : new Error(`Login failed for ${user.username} on attempt ${attempt}/${loginMaxAttempts}`)
+    }
 
-  return body.access_token!
+    if (attempt < loginMaxAttempts) {
+      console.log(
+        `Retrying login for ${user.username} after attempt ${attempt}/${loginMaxAttempts}`
+      )
+      await delay(loginRetryDelayMs * attempt)
+    }
+  }
+
+  throw lastError || new Error(`Login failed for ${user.username}`)
 }
 
 async function ensureUser(

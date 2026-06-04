@@ -203,6 +203,8 @@ isolated E2E admin and regular user to reduce cross-shard data interference:
 
 - `E2E_SHARD_INDEX=1` uses `e2e-admin-shard-1` and `e2e-user-shard-1`
 - `E2E_SHARD_INDEX=2` uses `e2e-admin-shard-2` and `e2e-user-shard-2`
+- `E2E_SHARD_INDEX=3` uses `e2e-admin-shard-3` and `e2e-user-shard-3`
+- `E2E_SHARD_INDEX=4` uses `e2e-admin-shard-4` and `e2e-user-shard-4`
 - Local runs without `E2E_SHARD_INDEX` use `e2e-admin-local` and `e2e-user-local`
 
 `global-setup.ts` provisions these users with the bootstrap admin account, logs in
