@@ -849,6 +849,12 @@ class CapabilitySyncHandler:
             return False
         response = client.get(download_path, timeout=60)
         if not response:
+            logger.warning(
+                "Failed to download plugin package: name=%s installed_plugin_id=%s path=%s",
+                item.get("name"),
+                item.get("installed_plugin_id"),
+                download_path,
+            )
             return False
 
         content = response.content

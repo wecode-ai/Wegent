@@ -21,6 +21,7 @@ from .enums import (
     SubtaskStatus,
     TriggerMode,
 )
+from .installed_plugin_package import InstalledPluginPackage
 from .kind import Kind
 from .skill_binary import SkillBinary
 from .subtask import Subtask
@@ -51,6 +52,7 @@ __all__ = [
     "SubtaskContext",
     "User",
     "Kind",
+    "InstalledPluginPackage",
     "SkillBinary",
     # Work Queue Models
     "QueueMessage",
