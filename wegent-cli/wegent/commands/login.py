@@ -12,7 +12,7 @@ from typing import Any
 import click
 import requests
 
-from ..config import CONFIG_FILE, get_server, load_config, save_config
+from ..config import CONFIG_FILE, get_server, load_config_file, save_config
 
 POLL_INTERVAL_SECONDS = 2
 POLL_MAX_ATTEMPTS = 150
@@ -121,7 +121,7 @@ def _save_login_config(
     username: str | None,
 ) -> None:
     """Save login configuration to file."""
-    config = load_config(config_file=CONFIG_FILE)
+    config = load_config_file(config_file=CONFIG_FILE)
     config["token"] = token
     config["auth_method"] = auth_method
     config["username"] = username
@@ -268,11 +268,15 @@ def _oidc_login(api_server: str, username: str | None, server: str | None) -> No
 @click.command("logout")
 def logout_cmd():
     """Logout and remove saved token."""
-    config = load_config(config_file=CONFIG_FILE)
+    config = load_config_file(config_file=CONFIG_FILE)
     had_token = bool(config.get("token"))
+    removed = False
     for key in ("token", "auth_method", "username"):
-        config.pop(key, None)
-    save_config(config, config_file=CONFIG_FILE)
+        if key in config:
+            removed = True
+            config.pop(key, None)
+    if removed:
+        save_config(config, config_file=CONFIG_FILE)
 
     if had_token:
         click.echo(click.style("Logged out successfully.", fg="green"))

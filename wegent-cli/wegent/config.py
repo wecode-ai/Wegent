@@ -31,19 +31,24 @@ def ensure_config_dir(config_file: Path = CONFIG_FILE) -> None:
     config_file.parent.mkdir(parents=True, exist_ok=True)
 
 
+def load_config_file(config_file: Path = CONFIG_FILE) -> dict[str, Any]:
+    """Load only persisted config values without defaults or environment overrides."""
+    if not config_file.exists():
+        return {}
+
+    with config_file.open("r", encoding="utf-8") as file_obj:
+        try:
+            file_config = yaml.safe_load(file_obj) or {}
+        except (UnicodeDecodeError, yaml.YAMLError):
+            return {}
+
+    return file_config if isinstance(file_config, dict) else {}
+
+
 def load_config(config_file: Path = CONFIG_FILE) -> dict[str, Any]:
     """Load configuration from defaults, file, and environment variables."""
     config = DEFAULT_CONFIG.copy()
-
-    if config_file.exists():
-        with config_file.open("r", encoding="utf-8") as file_obj:
-            try:
-                file_config = yaml.safe_load(file_obj) or {}
-            except (UnicodeDecodeError, yaml.YAMLError):
-                file_config = {}
-            if not isinstance(file_config, dict):
-                file_config = {}
-            config.update(file_config)
+    config.update(load_config_file(config_file=config_file))
 
     for env_name, key in ENV_TO_KEY.items():
         value = os.environ.get(env_name)

@@ -4,7 +4,13 @@ from typing import Any
 
 import click
 
-from ..config import CONFIG_FILE, DEFAULT_CONFIG, load_config, save_config
+from ..config import (
+    CONFIG_FILE,
+    DEFAULT_CONFIG,
+    load_config,
+    load_config_file,
+    save_config,
+)
 from ..output import dumps_json, success_envelope
 
 CONFIG_KEYS = ["server", "namespace", "token", "api_key", "mode"]
@@ -55,7 +61,7 @@ def config_view(as_json: bool):
 @click.argument("value")
 def config_set(key: str, value: str):
     """Set a configuration value."""
-    config = load_config(config_file=CONFIG_FILE)
+    config = load_config_file(config_file=CONFIG_FILE)
     config[key] = value
     save_config(config, config_file=CONFIG_FILE)
 
@@ -67,7 +73,7 @@ def config_set(key: str, value: str):
 @click.option("--json", "as_json", is_flag=True, help="Output JSON.")
 def config_unset(key: str, as_json: bool):
     """Unset a configuration value."""
-    config = load_config(config_file=CONFIG_FILE)
+    config = load_config_file(config_file=CONFIG_FILE)
     existed = key in config
     if existed:
         del config[key]
