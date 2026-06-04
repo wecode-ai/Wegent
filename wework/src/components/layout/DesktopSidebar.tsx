@@ -1,7 +1,6 @@
 import {
   Archive,
   ChevronDown,
-  ChevronLeft,
   ChevronRight,
   Clock,
   Edit3,
@@ -34,6 +33,7 @@ import type {
 } from '@/types/api'
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 import { DesktopSearchDialog } from './DesktopSearchDialog'
+import { DesktopWindowControls } from './DesktopWindowControls'
 import { useResizableSidebar } from './useResizableSidebar'
 
 interface DesktopSidebarProps {
@@ -94,7 +94,7 @@ function SidebarButton({
       data-testid={testId}
       onClick={onClick}
       className={[
-        'flex h-8 w-full items-center gap-3 rounded-md px-3 text-left text-[13px] font-medium leading-[18px]',
+        'flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] font-medium leading-[18px]',
         selected
           ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
           : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]',
@@ -127,7 +127,7 @@ function SidebarSectionHeader({
   const iconVisibilityClass = 'opacity-0 group-hover/section:opacity-100'
 
   return (
-    <div className="group/section mb-3 flex h-8 items-center justify-between px-3">
+    <div className="group/section mb-3 flex h-8 items-center justify-between px-2">
       <button
         type="button"
         data-testid={toggleTestId}
@@ -660,19 +660,14 @@ export function DesktopSidebar({
 
   return (
     <aside
-      className="relative flex shrink-0 flex-col border-r border-border/70 bg-[rgb(var(--color-sidebar))] px-4 py-4 shadow-[inset_-1px_0_0_rgb(var(--color-border))] backdrop-blur-xl backdrop-saturate-150"
+      className="relative flex shrink-0 flex-col border-r border-border/70 bg-[rgb(var(--color-sidebar))] px-1.5 py-4 shadow-[inset_-1px_0_0_rgb(var(--color-border))] backdrop-blur-xl backdrop-saturate-150"
       style={{ width: sidebarWidth }}
     >
-      <div className="-mt-3 mb-1 flex justify-end">
-        <button
-          type="button"
-          data-testid="collapse-sidebar-button"
-          onClick={onCollapse}
-          className="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
-          aria-label={t('workbench.collapse_sidebar', '收起侧边栏')}
-        >
-          <ChevronLeft className="h-4 w-4" />
-        </button>
+      <div className="-mt-2 mb-4 flex h-8 items-center">
+        <DesktopWindowControls
+          sidebarCollapsed={false}
+          onToggleSidebar={onCollapse}
+        />
       </div>
 
       <nav className="space-y-0.5">
@@ -832,7 +827,7 @@ export function DesktopSidebar({
           type="button"
           data-testid="settings-button"
           onClick={() => setSettingsMenuOpen(open => !open)}
-          className="flex h-9 shrink-0 items-center gap-3 rounded-md px-3 text-[13px] font-medium leading-[18px] text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
+          className="flex h-9 shrink-0 items-center gap-2 rounded-md px-2 text-[13px] font-medium leading-[18px] text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
           aria-expanded={settingsMenuOpen}
         >
           <Settings className="h-4 w-4" />

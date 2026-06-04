@@ -1,4 +1,4 @@
-import { Bot, ChevronRight } from 'lucide-react'
+import { Bot } from 'lucide-react'
 import { useState } from 'react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type {
@@ -24,7 +24,6 @@ const DESKTOP_FLOATING_COMPOSER_CLASS =
   'pointer-events-none absolute bottom-4 left-1/2 z-chrome w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100%_-_3rem)] -translate-x-1/2'
 
 interface DesktopWorkbenchMainProps {
-  sidebarCollapsed: boolean
   isBootstrapping: boolean
   currentTask: Task | null
   currentProject: ProjectWithTasks | null
@@ -41,7 +40,6 @@ interface DesktopWorkbenchMainProps {
   onListEnvironmentBranches: () => Promise<string[]>
   onCheckoutEnvironmentBranch: (branchName: string) => Promise<void>
   onCreateEnvironmentBranch: (branchName: string) => Promise<void>
-  onExpandSidebar: () => void
   onInputChange: (value: string) => void
   onSend: () => void
   isResponseStreaming: boolean
@@ -53,7 +51,6 @@ interface DesktopWorkbenchMainProps {
 }
 
 export function DesktopWorkbenchMain({
-  sidebarCollapsed,
   isBootstrapping,
   currentTask,
   currentProject,
@@ -70,7 +67,6 @@ export function DesktopWorkbenchMain({
   onListEnvironmentBranches,
   onCheckoutEnvironmentBranch,
   onCreateEnvironmentBranch,
-  onExpandSidebar,
   onInputChange,
   onSend,
   isResponseStreaming,
@@ -95,17 +91,6 @@ export function DesktopWorkbenchMain({
   return (
     <main className="relative flex min-w-0 flex-1 overflow-hidden">
       <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-        {sidebarCollapsed && (
-          <button
-            type="button"
-            data-testid="expand-sidebar-button"
-            onClick={onExpandSidebar}
-            className="absolute left-4 top-1 z-10 flex h-9 w-9 items-center justify-center rounded-md bg-surface text-text-secondary hover:bg-muted hover:text-text-primary"
-            aria-label={t('workbench.expand_sidebar', '展开侧边栏')}
-          >
-            <ChevronRight className="h-4 w-4" />
-          </button>
-        )}
         {isBootstrapping ? (
           <div
             className="flex flex-1"

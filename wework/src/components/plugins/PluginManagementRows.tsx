@@ -1,5 +1,5 @@
 import { Boxes, Globe, Sparkles, Trash2 } from 'lucide-react'
-import { useTranslation } from 'react-i18next'
+import { useTranslation } from '@/hooks/useTranslation'
 import type { InstalledPlugin } from '@/types/api'
 
 export interface InstalledSkillItem {

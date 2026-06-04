@@ -93,6 +93,9 @@ export function MobileDrawer({
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<number>>(
     () => new Set(),
   )
+  const [expandedTaskProjectIds, setExpandedTaskProjectIds] = useState<Set<number>>(
+    () => new Set(),
+  )
   const standaloneRecentTasks = useMemo(
     () => sortTasksByTime(recentTasks).filter(task => !task.project_id),
     [recentTasks],
@@ -116,6 +119,18 @@ export function MobileDrawer({
       return next
     })
     onSelectProject(projectId)
+  }
+
+  const toggleProjectTaskLimit = (projectId: number) => {
+    setExpandedTaskProjectIds(previous => {
+      const next = new Set(previous)
+      if (next.has(projectId)) {
+        next.delete(projectId)
+      } else {
+        next.add(projectId)
+      }
+      return next
+    })
   }
 
   return (
@@ -158,7 +173,12 @@ export function MobileDrawer({
           </h2>
           <div className="space-y-1">
             {projects.map(project => {
-              const tasks = sortProjectTasks(project.tasks).slice(0, PROJECT_TASK_LIMIT)
+              const sortedTasks = sortProjectTasks(project.tasks)
+              const showAllTasks = expandedTaskProjectIds.has(project.id)
+              const tasks = showAllTasks
+                ? sortedTasks
+                : sortedTasks.slice(0, PROJECT_TASK_LIMIT)
+              const hasMoreTasks = sortedTasks.length > PROJECT_TASK_LIMIT
               const selected = currentProjectId === project.id
               const expanded = expandedProjectIds.has(project.id)
               const ExpandIcon = expanded ? ChevronDown : ChevronRight
@@ -217,6 +237,18 @@ export function MobileDrawer({
                           </button>
                         )
                       })}
+                      {hasMoreTasks && (
+                        <button
+                          type="button"
+                          data-testid={`mobile-project-task-limit-toggle-${project.id}`}
+                          onClick={() => toggleProjectTaskLimit(project.id)}
+                          className="flex h-9 min-w-[44px] w-full items-center rounded-lg px-2 text-left text-[13px] font-medium text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
+                        >
+                          {showAllTasks
+                            ? t('workbench.show_less', '收起')
+                            : t('workbench.show_more', '显示更多')}
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>

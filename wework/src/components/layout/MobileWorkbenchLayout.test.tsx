@@ -490,6 +490,51 @@ describe('MobileWorkbenchLayout', () => {
     expect(onOpenPlugins).not.toHaveBeenCalled()
   })
 
+  test('shows more project tasks from the mobile drawer', async () => {
+    const stateWithManyProjectTasks = {
+      ...baseState,
+      projects: [
+        {
+          ...baseState.projects[0],
+          tasks: Array.from({ length: 5 }, (_, index) => ({
+            id: index + 1,
+            task_id: index + 1,
+            task_title: `项目任务 ${index + 1}`,
+            task_status: 'COMPLETED',
+            created_at: `2026-05-2${index}T00:00:00.000Z`,
+          })),
+        },
+      ],
+    }
+
+    render(
+      <MobileWorkbenchLayout
+        state={stateWithManyProjectTasks}
+        messages={[]}
+        onSelectProject={vi.fn()}
+        onOpenTask={vi.fn()}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
+    await userEvent.click(screen.getByText('github_wegent'))
+
+    expect(screen.getAllByTestId('mobile-project-task-button')).toHaveLength(4)
+    expect(screen.queryByText('项目任务 1')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('mobile-project-task-limit-toggle-1'))
+
+    expect(screen.getAllByTestId('mobile-project-task-button')).toHaveLength(5)
+    expect(screen.getByText('项目任务 1')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('mobile-project-task-limit-toggle-1'))
+
+    expect(screen.getAllByTestId('mobile-project-task-button')).toHaveLength(4)
+    expect(screen.queryByText('项目任务 1')).not.toBeInTheDocument()
+  })
+
   test('opens a mobile-specific settings page with plugins inside settings', async () => {
     const onOpenPlugins = vi.fn()
 

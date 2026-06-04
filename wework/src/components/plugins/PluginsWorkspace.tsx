@@ -1,6 +1,7 @@
 import {
   BookOpen,
   ImageIcon,
+  MessageCircle,
   MoreHorizontal,
   Search,
   Settings,
@@ -283,17 +284,65 @@ function createDefaultPluginApi() {
 
 function tabClassName(selected: boolean) {
   return [
-    'h-9 flex-1 rounded-lg px-3 text-sm font-semibold transition-colors sm:h-9 sm:flex-none sm:rounded-xl sm:px-4',
+    'h-7 flex-1 rounded-md px-3 text-[13px] font-semibold leading-[18px] transition-colors md:flex-none',
     selected
-      ? 'bg-popover text-text-primary shadow-sm max-sm:bg-text-primary max-sm:text-white'
-      : 'text-text-secondary hover:text-text-primary',
+      ? 'bg-white text-black shadow-[0_1px_6px_rgba(15,23,42,0.10)]'
+      : 'text-[#777982] hover:text-[#111114]',
   ].join(' ')
 }
 
-export function PluginsWorkspace() {
+function MarketplaceHero() {
+  const { t } = useTranslation('common')
+
+  return (
+    <section className="relative z-0 flex min-h-[190px] w-full overflow-hidden rounded-2xl bg-[#c9d3ff] shadow-[0_14px_38px_rgba(104,117,179,0.16)] md:min-h-[220px]">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_16%_20%,rgba(255,255,255,0.95),transparent_31%),radial-gradient(circle_at_82%_24%,rgba(226,215,255,0.95),transparent_34%),linear-gradient(135deg,#b9c9ff_0%,#eef4ff_38%,#d8d4ff_68%,#b8c3ff_100%)]" />
+      <div className="absolute -left-16 top-4 h-[360px] w-[520px] rotate-[-20deg] rounded-[50%] border border-white/45 bg-white/22 blur-[2px]" />
+      <div className="absolute -right-10 bottom-[-120px] h-[360px] w-[600px] rotate-[-8deg] rounded-[50%] border border-white/35 bg-white/18 blur-[2px]" />
+      <div className="absolute inset-0 bg-[linear-gradient(120deg,rgba(255,255,255,0.34),transparent_45%,rgba(255,255,255,0.18))]" />
+      <div className="relative z-0 flex min-h-full w-full flex-col items-center justify-center gap-7 px-6 py-8 text-center">
+        <div className="inline-flex max-w-full items-center gap-2.5 rounded-xl border border-white/70 bg-white/78 px-4 py-2.5 text-sm font-semibold leading-5 text-[#272936] shadow-[0_10px_32px_rgba(82,88,132,0.18)] backdrop-blur-md">
+          <Sparkles className="h-4 w-4 shrink-0 text-[#7982d8]" />
+          <span className="truncate">
+            {t(
+              'workbench.plugins_hero_prompt',
+              '帮我整理本周的项目进度并生成可视化报告',
+            )}
+          </span>
+        </div>
+        <button
+          type="button"
+          className="inline-flex h-10 items-center gap-2.5 rounded-lg bg-black px-5 text-sm font-semibold leading-5 text-white shadow-[0_14px_24px_rgba(0,0,0,0.20)] transition-transform hover:-translate-y-0.5"
+        >
+          <MessageCircle className="h-5 w-5" />
+          {t('workbench.plugins_hero_cta', '在对话中试用')}
+        </button>
+      </div>
+      <div className="absolute right-7 top-1/2 z-0 flex -translate-y-1/2 flex-col gap-3">
+        {[0, 1, 2, 3, 4].map((dot) => (
+          <span
+            key={dot}
+            className={[
+              'h-2.5 w-2.5 rounded-full',
+              dot === 0 ? 'bg-black' : 'bg-black/25',
+            ].join(' ')}
+          />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+interface PluginsWorkspaceProps {
+  sidebarCollapsed?: boolean
+}
+
+export function PluginsWorkspace({
+  sidebarCollapsed = false,
+}: PluginsWorkspaceProps) {
   const { t } = useTranslation('common')
   const isMobile = useIsMobile()
-  const [activeTab, setActiveTab] = useState<CatalogTab>('skills')
+  const [activeTab, setActiveTab] = useState<CatalogTab>('plugins')
   const [query, setQuery] = useState('')
   const [sectionFilter, setSectionFilter] = useState<CatalogSectionId | 'all'>(
     'all',
@@ -1095,14 +1144,31 @@ export function PluginsWorkspace() {
   return (
     <main
       data-testid="plugins-workspace"
-      className="min-w-0 flex-1 overflow-y-auto bg-background px-4 pb-6 pt-16 text-text-primary sm:px-8 sm:py-5"
+      className="min-w-0 flex-1 overflow-y-auto bg-white text-[#111114]"
     >
-      <div className="mx-auto flex w-full max-w-[1000px] flex-col gap-4 sm:gap-10">
-        <header className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+      <div className="sticky top-0 z-40 bg-white/92 backdrop-blur-xl">
+        <div
+          className={[
+            'mx-auto flex h-12 w-full max-w-[1420px] items-center justify-between pl-20 pr-5 md:pr-7',
+            sidebarCollapsed ? 'md:pl-28' : 'md:pl-7',
+          ].join(' ')}
+        >
           <div
-            className="inline-flex w-full rounded-xl bg-surface p-0.5 sm:w-fit sm:rounded-2xl sm:p-1"
+            className="inline-flex w-full rounded-lg bg-[#f6f6f7] p-0.5 md:w-fit"
             role="tablist"
           >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'plugins'}
+              className={tabClassName(activeTab === 'plugins')}
+              onClick={() => {
+                setSelectedPluginId(null)
+                setActiveTab('plugins')
+              }}
+            >
+              {t('workbench.plugin_management_tab_plugins', '插件')}
+            </button>
             <button
               type="button"
               role="tab"
@@ -1127,25 +1193,13 @@ export function PluginsWorkspace() {
             >
               {t('workbench.plugin_management_tab_mcp', 'MCP')}
             </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeTab === 'plugins'}
-              className={tabClassName(activeTab === 'plugins')}
-              onClick={() => {
-                setSelectedPluginId(null)
-                setActiveTab('plugins')
-              }}
-            >
-              {t('workbench.plugin_management_tab_plugins', '插件')}
-            </button>
           </div>
 
-          <div className="hidden w-full items-center justify-between gap-2 overflow-visible sm:flex sm:w-auto sm:justify-end">
+          <div className="hidden w-full items-center justify-between gap-3 overflow-visible md:flex md:w-auto md:justify-end">
             <button
               type="button"
               data-testid="plugins-manage-button"
-              className="flex h-10 min-w-[44px] items-center gap-2 rounded-xl bg-surface px-3 text-sm font-semibold hover:bg-muted sm:h-9"
+              className="flex h-8 min-w-[44px] items-center gap-1.5 rounded-lg bg-[#f5f5f6] px-2.5 text-[13px] font-medium leading-[18px] transition-colors hover:bg-[#eeeeef]"
               onClick={() => navigateTo('/plugins/manage')}
             >
               <Settings className="h-4 w-4" />
@@ -1173,43 +1227,47 @@ export function PluginsWorkspace() {
             <button
               type="button"
               aria-label={t('workbench.plugins_more_actions', '更多操作')}
-              className="flex h-10 w-10 items-center justify-center rounded-xl text-text-secondary hover:bg-surface sm:h-9 sm:w-9"
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-[#101014] transition-colors hover:bg-[#f3f3f4]"
             >
               <MoreHorizontal className="h-4 w-4" />
             </button>
           </div>
-        </header>
+        </div>
+      </div>
 
-        <section className="flex flex-col gap-2 pt-0 sm:items-center sm:gap-8 sm:pt-3">
-          <h1 className="hidden max-w-[12em] text-center text-3xl font-medium leading-tight tracking-normal sm:block sm:max-w-none sm:text-[38px]">
+      <div className="mx-auto flex w-full max-w-[840px] flex-col gap-5 px-5 pb-10 pt-1 md:px-8 md:pt-[3px]">
+        <section className="hidden flex-col items-center md:flex">
+          <h1 className="text-center text-[24px] font-medium leading-8 tracking-normal text-[#101014] md:text-[28px]">
             {t('workbench.plugins_title', '让 Wework 按你的方式工作')}
           </h1>
-          <div className="flex w-full max-w-none flex-col gap-2 sm:max-w-[760px] sm:flex-row">
-            <div className="grid w-full grid-cols-[minmax(0,1fr)_44px] items-center gap-2 sm:flex sm:min-w-0 sm:flex-1">
-              <label className="relative min-w-0 flex-1">
-                <span className="sr-only">
-                  {t('workbench.plugins_search_placeholder', '搜索技能')}
-                </span>
-                <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
-                <input
-                  value={query}
-                  onChange={(event) => {
-                    setQuery(event.target.value)
-                    setSystemSkillPage(1)
-                  }}
-                  placeholder={
-                    activeTab === 'skills'
-                      ? t('workbench.plugins_search_placeholder', '搜索技能')
-                      : activeTab === 'mcp'
-                        ? t('workbench.plugins_search_mcp', '搜索 MCP')
-                        : t('workbench.plugins_search_plugins', '搜索插件')
-                  }
-                  data-testid="plugins-search-input"
-                  className="h-11 min-h-[44px] w-full rounded-xl border border-border bg-background pl-11 pr-4 text-base leading-5 outline-none placeholder:text-text-muted focus:border-primary sm:text-sm sm:leading-normal"
-                />
-              </label>
-              {isMobile && (
-                <div className="sm:hidden">
+        </section>
+
+        <div className="sticky top-12 z-30 mt-0 grid w-full grid-cols-1 gap-2.5 py-0 md:-mt-1 md:grid-cols-[minmax(0,1fr)_auto] md:py-1.5">
+          <div className="grid w-full grid-cols-[minmax(0,1fr)_44px] items-center gap-2 md:flex md:min-w-0 md:flex-1">
+            <label className="relative min-w-0 flex-1">
+              <span className="sr-only">
+                {t('workbench.plugins_search_placeholder', '搜索技能')}
+              </span>
+              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
+              <input
+                value={query}
+                onChange={(event) => {
+                  setQuery(event.target.value)
+                  setSystemSkillPage(1)
+                }}
+                placeholder={
+                  activeTab === 'skills'
+                    ? t('workbench.plugins_search_placeholder', '搜索技能')
+                    : activeTab === 'mcp'
+                      ? t('workbench.plugins_search_mcp', '搜索 MCP')
+                      : t('workbench.plugins_search_plugins', '搜索插件')
+                }
+                data-testid="plugins-search-input"
+                className="h-9 w-full rounded-lg border border-[#dedee4] bg-white pl-10 pr-3 text-[13px] leading-[18px] text-[#111114] shadow-[0_1px_2px_rgba(15,23,42,0.03)] outline-none transition-colors placeholder:text-[#8b9099] focus:border-[#9da2ae]"
+              />
+            </label>
+            {isMobile && (
+              <div className="md:hidden">
                 <PluginCreateMenu
                   compact
                   isOpen={isCreateMenuOpen}
@@ -1228,68 +1286,69 @@ export function PluginsWorkspace() {
                     setShowPluginUploadDialog(true)
                   }}
                 />
-                </div>
-              )}
-            </div>
-            {activeTab === 'skills' && (
-              <>
-                <div
-                  className="scrollbar-none -mx-1 flex gap-2 overflow-x-auto px-1 sm:hidden"
-                  data-testid="plugins-mobile-section-filter"
-                >
-                  {(['all', ...sections] as const).map((section) => (
-                    <button
-                      key={section}
-                      type="button"
-                      data-testid={`plugins-mobile-section-filter-${section}`}
-                      aria-pressed={sectionFilter === section}
-                      onClick={() => setSectionFilter(section)}
-                      className={[
-                        'h-9 shrink-0 rounded-xl px-4 text-sm font-semibold transition-colors',
-                        sectionFilter === section
-                          ? 'bg-text-primary text-white'
-                          : 'bg-surface text-text-secondary hover:text-text-primary',
-                      ].join(' ')}
-                    >
-                      {section === 'all'
-                        ? t('workbench.plugins_filter_all', '全部')
-                        : section === 'recommended'
-                          ? t('workbench.plugins_recommended', '推荐')
-                          : section === 'system'
-                            ? t('workbench.plugins_system', '系统')
-                            : t('workbench.plugins_personal', '个人')}
-                    </button>
-                  ))}
-                </div>
-                <select
-                  value={sectionFilter}
-                  data-testid="plugins-section-filter"
-                  onChange={(event) =>
-                    setSectionFilter(
-                      event.target.value as CatalogSectionId | 'all',
-                    )
-                  }
-                  className="hidden h-10 rounded-xl border-0 bg-surface px-4 text-sm font-semibold text-text-primary outline-none sm:block"
-                >
-                  <option value="all">
-                    {t('workbench.plugins_filter_all', '全部')}
-                  </option>
-                  <option value="recommended">
-                    {t('workbench.plugins_recommended', '推荐')}
-                  </option>
-                  <option value="system">
-                    {t('workbench.plugins_system', '系统')}
-                  </option>
-                  <option value="personal">
-                    {t('workbench.plugins_personal', '个人')}
-                  </option>
-                </select>
-              </>
+              </div>
             )}
           </div>
-        </section>
+          {activeTab === 'skills' && (
+            <>
+              <div
+                className="scrollbar-none -mx-1 flex gap-2 overflow-x-auto px-1 md:hidden"
+                data-testid="plugins-mobile-section-filter"
+              >
+                {(['all', ...sections] as const).map((section) => (
+                  <button
+                    key={section}
+                    type="button"
+                    data-testid={`plugins-mobile-section-filter-${section}`}
+                    aria-pressed={sectionFilter === section}
+                    onClick={() => setSectionFilter(section)}
+                    className={[
+                      'h-9 shrink-0 rounded-xl px-4 text-sm font-semibold transition-colors',
+                      sectionFilter === section
+                        ? 'bg-text-primary text-white'
+                        : 'bg-surface text-text-secondary hover:text-text-primary',
+                    ].join(' ')}
+                  >
+                    {section === 'all'
+                      ? t('workbench.plugins_filter_all', '全部')
+                      : section === 'recommended'
+                        ? t('workbench.plugins_recommended', '推荐')
+                        : section === 'system'
+                          ? t('workbench.plugins_system', '系统')
+                          : t('workbench.plugins_personal', '个人')}
+                  </button>
+                ))}
+              </div>
+              <select
+                value={sectionFilter}
+                data-testid="plugins-section-filter"
+                onChange={(event) =>
+                  setSectionFilter(
+                    event.target.value as CatalogSectionId | 'all',
+                  )
+                }
+                className="hidden h-10 rounded-xl border-0 bg-surface px-4 text-sm font-semibold text-text-primary outline-none md:block"
+              >
+                <option value="all">
+                  {t('workbench.plugins_filter_all', '全部')}
+                </option>
+                <option value="recommended">
+                  {t('workbench.plugins_recommended', '推荐')}
+                </option>
+                <option value="system">
+                  {t('workbench.plugins_system', '系统')}
+                </option>
+                <option value="personal">
+                  {t('workbench.plugins_personal', '个人')}
+                </option>
+              </select>
+            </>
+          )}
+        </div>
 
-        <section className="space-y-6 sm:space-y-12">
+        <MarketplaceHero />
+
+        <section className="space-y-8">
           {activeTab === 'mcp' ? (
             <McpMarketplaceCatalog
               providers={filteredMcpProviders}

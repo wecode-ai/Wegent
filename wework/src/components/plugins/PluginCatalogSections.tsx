@@ -71,11 +71,13 @@ export function CatalogSection({
   onRequestUninstall: (item: CatalogItem) => void
 }) {
   return (
-    <section className="space-y-3 sm:space-y-5">
-      <div className="border-b border-border pb-2 sm:pb-3">
-        <h2 className="text-base font-semibold sm:text-lg">{title}</h2>
+    <section>
+      <div className="border-b border-[#ececf0] pb-3">
+        <h2 className="text-lg font-semibold tracking-normal text-[#111114]">
+          {title}
+        </h2>
       </div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-x-14 sm:gap-y-4">
+      <div className="grid grid-cols-1 gap-x-16 sm:grid-cols-2">
         {items.map((item) => (
           <CatalogCard
             key={item.id}
@@ -473,20 +475,20 @@ function CatalogCard({
   const canUpdate = item.installState === 'update_available'
 
   return (
-    <article className="group flex min-h-[84px] items-center gap-3 rounded-2xl border border-border/70 bg-background px-3 py-3 shadow-sm hover:bg-surface sm:min-h-[74px] sm:gap-4 sm:rounded-lg sm:border-0 sm:bg-transparent sm:py-2 sm:shadow-none">
+    <article className="group grid min-h-[72px] grid-cols-[44px_minmax(0,1fr)_40px] items-center gap-3 border-b border-[#ececf0] py-2.5">
       <div
         className={[
-          'flex h-12 w-12 shrink-0 items-center justify-center rounded-xl',
+          'flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-black/10 shadow-[0_8px_20px_rgba(15,23,42,0.08)]',
           item.iconClassName,
         ].join(' ')}
       >
-        <Icon className="h-6 w-6" />
+        <Icon className="h-5 w-5" />
       </div>
       <div className="min-w-0 flex-1">
-        <h3 className="truncate text-base font-semibold leading-5 sm:text-[15px]">
+        <h3 className="truncate text-sm font-semibold leading-5 text-[#111114]">
           {item.name}
         </h3>
-        <p className="mt-1 max-h-10 overflow-hidden text-sm leading-5 text-text-secondary sm:truncate">
+        <p className="mt-0.5 truncate text-[13px] leading-[18px] text-[#656973]">
           {item.description}
         </p>
       </div>
@@ -498,7 +500,7 @@ function CatalogCard({
               aria-label={updateLabel}
               data-testid={`system-skill-update-${item.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`}
               onClick={() => onInstall(item)}
-              className="flex h-11 w-11 items-center justify-center rounded-xl bg-surface text-text-primary hover:bg-muted sm:h-8 sm:w-8 sm:rounded-lg"
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#e3e3e8] bg-[#fafafa] text-[#1e1f24] hover:bg-[#f1f1f3]"
             >
               <RefreshCw className="h-4 w-4" />
             </button>
@@ -508,7 +510,7 @@ function CatalogCard({
             aria-label={item.enabled ? enabledLabel : uninstallLabel}
             data-testid={`system-skill-uninstall-${item.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`}
             onClick={() => onRequestUninstall(item)}
-            className="flex h-11 w-11 items-center justify-center rounded-xl text-text-muted hover:bg-surface hover:text-text-primary sm:h-8 sm:w-8 sm:rounded-lg"
+            className="flex h-9 w-9 items-center justify-center rounded-lg text-[#9ca0a8] hover:bg-[#f6f6f7] hover:text-[#1e1f24]"
             disabled={!item.installedSkillId}
           >
             <Check className="h-4 w-4" />
@@ -520,7 +522,7 @@ function CatalogCard({
           aria-label={installLabel}
           data-testid={`system-skill-install-${item.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`}
           onClick={() => onInstall(item)}
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-surface hover:bg-muted sm:h-8 sm:w-8 sm:rounded-lg"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#e3e3e8] bg-[#fafafa] hover:bg-[#f1f1f3]"
         >
           <Plus className="h-4 w-4" />
         </button>
