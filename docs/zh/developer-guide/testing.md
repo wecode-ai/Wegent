@@ -1,3 +1,7 @@
+---
+sidebar_position: 5
+---
+
 # 测试框架文档
 
 本文档介绍 Wegent 项目的单元测试框架设置。
@@ -15,6 +19,7 @@
 ## 当前测试覆盖率
 
 ### 后端 (`backend/`)
+
 - ✅ 核心安全：身份验证、JWT 令牌、password 哈希
 - ✅ 配置管理
 - ✅ 异常处理
@@ -23,21 +28,25 @@
 - ⏳ API 端点（占位符目录已存在）
 
 ### 执行器 (`executor/`)
+
 - ✅ Agent 工厂
 - ✅ 基础 agent 类
 - ✅ 模拟 AI 客户端交互（Anthropic、OpenAI）
 
 ### 执行器管理器 (`executor_manager/`)
+
 - ✅ 基础执行器类
 - ✅ 任务调度器
 - ✅ Docker 执行器和工具
 - ✅ Docker 常量和配置
 
 ### 共享模块 (`shared/`)
+
 - ✅ 加密工具
 - ✅ 敏感数据脱敏（令牌、API 密钥等）
 
 ### 前端 (`frontend/`)
+
 - ⏳ 组件测试（已建立基本设置）
 - ⏳ Hook 测试
 - ⏳ 工具函数测试
@@ -191,8 +200,8 @@ shared/tests/
 
 - **加密**：敏感数据的加密和解密（Git 令牌、API 密钥）
 - **数据脱敏**：日志和输出中敏感信息的自动脱敏
-  - GitHub 令牌（github_pat_*）
-  - Anthropic API 密钥（sk-ant-api03-*）
+  - GitHub 令牌（`github_pat_*`）
+  - Anthropic API 密钥（`sk-ant-api03-*`）
   - OpenAI API 密钥
   - 通用 API 密钥和 secrets
   - 文件路径保护（无误报）
@@ -218,11 +227,23 @@ frontend/src/__tests__/
 └── components/              # 组件测试
 ```
 
+## 端到端测试
+
+前端端到端测试位于 `frontend/e2e/`，使用 Playwright 并连接真实后端服务。新增 E2E 用例不得 mock 后端 API，也不得通过 `test.skip()`、条件跳过或静默失败来规避问题。
+
+CLI 相关端到端测试覆盖两类场景：
+
+- `frontend/e2e/tests/api/cli.spec.ts`：通过 `python -m wegent.cli` 调用真实后端，验证资源列表、创建、读取和删除。
+- `frontend/e2e/tests/cli/cli-page.spec.ts`：先用 CLI 创建资源，再在浏览器页面中验证该资源出现，随后用 CLI 删除并验证页面移除。
+
+本地运行 CLI E2E 前需要安装前端依赖和 `wegent-cli/requirements.txt` 中的 Python 依赖。GitHub Actions 的 E2E workflow 会在运行 Playwright 前安装这些 CLI 依赖，并通过 `E2E_API_URL` 把 CLI 指向当前 shard 的后端服务。
+
 ## 持续集成
 
 ### GitHub Actions 工作流
 
 `.github/workflows/test.yml` 工作流在以下情况下自动运行：
+
 - 推送到 `main`、`master` 或 `develop` 分支
 - 向这些分支提交的拉取请求
 
@@ -456,14 +477,17 @@ npm test -- src/__tests__/utils/test_example.test.ts
 ### 常见问题
 
 **测试中的导入错误：**
+
 - 确保您从正确的目录运行 pytest
 - 检查模块是否已安装：`uv sync`
 
 **数据库错误：**
+
 - 测试使用 SQLite 内存数据库，无需设置
 - 检查 fixture 是否正确导入
 
 **前端测试失败：**
+
 - 确保已安装 Node.js 18.x
 - 运行 `npm ci` 以安装确切的依赖版本
 - 清除 Jest 缓存：`npx jest --clearCache`

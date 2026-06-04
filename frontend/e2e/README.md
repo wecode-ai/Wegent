@@ -138,6 +138,16 @@ CI builds `fixtures/claudecode-executor/Dockerfile`, starts a real `executor_man
 
 For GitHub Actions, `executor_manager` runs directly on the runner and task containers use Docker bridge networking with normal port mappings. Keep `DOCKER_HOST_ADDR=localhost` so the runner can dispatch to mapped container ports. Use the runner's Docker bridge IP for container-to-runner URLs such as `TASK_API_DOMAIN`, `CALLBACK_HOST`, and the ClaudeCode mock model base URL.
 
+## CLI E2E Tests
+
+CLI E2E tests run the real Wegent CLI against the real backend. They do not mock backend APIs.
+
+- `tests/api/cli.spec.ts` covers CLI-only resource list, apply, get, and delete flows.
+- `tests/cli/cli-page.spec.ts` mixes CLI setup/cleanup with browser assertions on the resource library page.
+- `utils/cli.ts` runs `python -m wegent.cli` from the repository's `wegent-cli` directory and points it at `E2E_API_URL` or `http://localhost:8000`.
+
+Local runs need the frontend dependencies and the Python packages from `wegent-cli/requirements.txt`. The GitHub Actions E2E workflow installs those CLI dependencies before the sharded Playwright run.
+
 ## Page Object Model
 
 Tests use the Page Object Model pattern for better maintainability:
