@@ -297,7 +297,7 @@ describe('DesktopWorkbenchLayout', () => {
       'pointer-events-none',
       'absolute',
       'bottom-0',
-      'z-40',
+      'z-10',
       'from-background',
     )
     expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass(
@@ -383,24 +383,24 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('restores and stores sidebar width in localStorage', () => {
-    localStorage.setItem('wework.desktop.sidebar.width', '320')
+    localStorage.setItem('wework.desktop.sidebar.width', '230')
 
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
-    expect(document.querySelector('aside')).toHaveStyle({ width: '320px' })
+    expect(document.querySelector('aside')).toHaveStyle({ width: '230px' })
 
     fireEvent.pointerDown(screen.getByTestId('sidebar-resize-handle'))
-    fireEvent.pointerMove(document, { clientX: 360 })
+    fireEvent.pointerMove(document, { clientX: 235 })
     fireEvent.pointerUp(document)
 
-    expect(document.querySelector('aside')).toHaveStyle({ width: '360px' })
-    expect(localStorage.getItem('wework.desktop.sidebar.width')).toBe('360')
+    expect(document.querySelector('aside')).toHaveStyle({ width: '235px' })
+    expect(localStorage.getItem('wework.desktop.sidebar.width')).toBe('235')
   })
 
   test('uses the selected sidebar width as the default', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
-    expect(document.querySelector('aside')).toHaveStyle({ width: '320px' })
+    expect(document.querySelector('aside')).toHaveStyle({ width: '220px' })
   })
 
   test('collapses and expands the sidebar', async () => {
