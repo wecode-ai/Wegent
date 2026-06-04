@@ -3,7 +3,7 @@ from unittest.mock import Mock
 import pytest
 import requests
 
-from wegent.client import KIND_ALIASES, KIND_TO_PATH, VALID_KINDS, WegentClient
+from wegent.client import APIError, KIND_ALIASES, KIND_TO_PATH, VALID_KINDS, WegentClient
 from wegent.errors import EXIT_API_ERROR, EXIT_AUTH_ERROR, EXIT_NETWORK_ERROR, CliError
 
 
@@ -93,6 +93,19 @@ def test_request_maps_401_to_auth_error():
     assert exc_info.value.exit_code == EXIT_AUTH_ERROR
 
 
+def test_request_maps_403_to_auth_error():
+    session = DummySession(
+        make_response(status_code=403, payload={"detail": "forbidden"})
+    )
+    client = WegentClient(server="http://backend", session=session)
+
+    with pytest.raises(CliError) as exc_info:
+        client.request("GET", "/tasks/1")
+
+    assert exc_info.value.code == "auth_error"
+    assert exc_info.value.exit_code == EXIT_AUTH_ERROR
+
+
 def test_request_maps_backend_error():
     session = DummySession(make_response(status_code=500, payload={"detail": "boom"}))
     client = WegentClient(server="http://backend", session=session)
@@ -116,6 +129,21 @@ def test_request_maps_connection_error():
     assert exc_info.value.exit_code == EXIT_NETWORK_ERROR
 
 
+def test_request_maps_timeout_error():
+    session = DummySession(side_effect=requests.exceptions.Timeout())
+    client = WegentClient(server="http://backend", session=session)
+
+    with pytest.raises(CliError) as exc_info:
+        client.request("GET", "/tasks/1")
+
+    assert exc_info.value.code == "network_error"
+    assert exc_info.value.exit_code == EXIT_NETWORK_ERROR
+
+
+def test_api_error_export_is_preserved_for_legacy_command_imports():
+    assert issubclass(APIError, Exception)
+
+
 def test_api_methods_use_expected_paths():
     session = DummySession(make_response(payload={"items": []}))
     client = WegentClient(server="http://backend", session=session)
@@ -123,6 +151,7 @@ def test_api_methods_use_expected_paths():
     client.list_kind("ghost", "default")
     client.get_kind("team", "default", "chat-team")
     client.apply_kinds("default", [{"kind": "Ghost"}])
+    client.delete_kind("ghost", "default", "chat-ghost")
     client.delete_kinds("default", [{"kind": "Ghost"}])
     client.get_default_teams()
     client.create_task({"prompt": "hello"})
@@ -134,18 +163,19 @@ def test_api_methods_use_expected_paths():
     client.cancel_response("resp_7")
     client.delete_response("resp_7")
 
-    assert [call["url"] for call in session.calls] == [
-        "http://backend/api/v1/namespaces/default/ghosts",
-        "http://backend/api/v1/namespaces/default/teams/chat-team",
-        "http://backend/api/v1/namespaces/default/apply",
-        "http://backend/api/v1/namespaces/default/delete",
-        "http://backend/api/users/default-teams",
-        "http://backend/api/tasks/create",
-        "http://backend/api/tasks/7",
-        "http://backend/api/tasks/7/runtime-check",
-        "http://backend/api/tasks/7/cancel",
-        "http://backend/api/v1/responses",
-        "http://backend/api/v1/responses/resp_7",
-        "http://backend/api/v1/responses/resp_7/cancel",
-        "http://backend/api/v1/responses/resp_7",
+    assert [(call["method"], call["url"]) for call in session.calls] == [
+        ("GET", "http://backend/api/v1/namespaces/default/ghosts"),
+        ("GET", "http://backend/api/v1/namespaces/default/teams/chat-team"),
+        ("POST", "http://backend/api/v1/namespaces/default/apply"),
+        ("DELETE", "http://backend/api/v1/namespaces/default/ghosts/chat-ghost"),
+        ("POST", "http://backend/api/v1/namespaces/default/delete"),
+        ("GET", "http://backend/api/users/default-teams"),
+        ("POST", "http://backend/api/tasks/create"),
+        ("GET", "http://backend/api/tasks/7"),
+        ("GET", "http://backend/api/tasks/7/runtime-check"),
+        ("POST", "http://backend/api/tasks/7/cancel"),
+        ("POST", "http://backend/api/v1/responses"),
+        ("GET", "http://backend/api/v1/responses/resp_7"),
+        ("POST", "http://backend/api/v1/responses/resp_7/cancel"),
+        ("DELETE", "http://backend/api/v1/responses/resp_7"),
     ]
