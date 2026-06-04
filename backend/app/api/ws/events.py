@@ -200,7 +200,7 @@ class ChatSendPayload(BaseModel):
     force_override_bot_model_type: Optional[str] = Field(
         None, description="Override model type"
     )
-    model_options: Optional[Dict[str, str]] = Field(
+    model_options: Optional[Dict[str, Any]] = Field(
         None,
         description="Model selection options, such as reasoning or speed.",
     )

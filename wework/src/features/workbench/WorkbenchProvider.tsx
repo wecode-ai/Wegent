@@ -314,12 +314,23 @@ function writeLastProjectId(userId: number, projectId: number) {
   }
 }
 
+function normalizeStoredModelOptions(
+  options?: Record<string, unknown> | null,
+): ModelOptions {
+  if (!options) return {}
+  return Object.fromEntries(
+    Object.entries(options).filter((entry): entry is [string, string] => {
+      return typeof entry[1] === 'string'
+    }),
+  )
+}
+
 function getTaskModelSelection(task: Task | null): ModelSelectionConfig | null {
   if (!task?.model_id) return null
   return {
     modelName: task.model_id,
     modelType: task.force_override_bot_model_type ?? null,
-    options: task.model_options ?? {},
+    options: normalizeStoredModelOptions(task.model_options),
   }
 }
 

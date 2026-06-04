@@ -37,6 +37,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 SELECTED_KB_PRELOAD_SKILL = "wegent-knowledge"
+SERVICE_TIER_ALIASES = {
+    "fast": "priority",
+    "priority": "priority",
+    "快速": "priority",
+    "运行快速": "priority",
+    "standard": "default",
+    "default": "default",
+    "普通": "default",
+    "标准": "default",
+    "运行标准": "default",
+}
 
 
 def _reasoning_from_model_options(payload: Any) -> Optional[Dict[str, Any]]:
@@ -63,6 +74,23 @@ def _reasoning_from_model_options(payload: Any) -> Optional[Dict[str, Any]]:
     if summary:
         result["summary"] = str(summary)
     return result or None
+
+
+def _service_tier_from_model_options(payload: Any) -> Optional[str]:
+    """Convert UI speed options into Codex service tier values."""
+    if payload is None:
+        return None
+    model_options = getattr(payload, "model_options", None)
+    if not isinstance(model_options, dict):
+        return None
+
+    speed = model_options.get("speed") or model_options.get("service_tier")
+    if isinstance(speed, dict):
+        speed = speed.get("value") or speed.get("speed") or speed.get("service_tier")
+    if not speed:
+        return None
+
+    return SERVICE_TIER_ALIASES.get(str(speed).strip().lower())
 
 
 def _build_executor_attachment_payload(context: Any) -> dict[str, Any]:
@@ -317,6 +345,14 @@ async def build_execution_request(
             logger.info(
                 "[build_execution_request] Applied reasoning config from model think_config: %s",
                 request.model_config["think_config"],
+            )
+
+        selected_service_tier = _service_tier_from_model_options(payload)
+        if selected_service_tier:
+            request.model_config["service_tier"] = selected_service_tier
+            logger.info(
+                "[build_execution_request] Applied selected service tier: %s",
+                selected_service_tier,
             )
 
         # Store reasoning_config in ExecutionRequest for downstream access

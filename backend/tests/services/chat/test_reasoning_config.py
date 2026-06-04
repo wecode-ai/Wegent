@@ -126,3 +126,30 @@ class TestModelOptionsReasoningConfig:
             "effort": "high",
             "summary": "concise",
         }
+
+    @pytest.mark.parametrize(
+        ("speed", "service_tier"),
+        [
+            ("fast", "priority"),
+            ("快速", "priority"),
+            ("standard", "default"),
+            ("标准", "default"),
+        ],
+    )
+    def test_model_options_speed_maps_to_service_tier(self, speed, service_tier):
+        """Test UI speed options map to Codex service tier values."""
+        from app.services.chat.trigger.unified import _service_tier_from_model_options
+
+        payload = MagicMock()
+        payload.model_options = {"speed": speed}
+
+        assert _service_tier_from_model_options(payload) == service_tier
+
+    def test_model_options_speed_object_maps_to_service_tier(self):
+        """Test object-shaped UI speed maps to Codex service tier values."""
+        from app.services.chat.trigger.unified import _service_tier_from_model_options
+
+        payload = MagicMock()
+        payload.model_options = {"speed": {"value": "fast"}}
+
+        assert _service_tier_from_model_options(payload) == "priority"
