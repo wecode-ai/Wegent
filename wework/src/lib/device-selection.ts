@@ -3,6 +3,11 @@ export interface SelectableDevice {
   name?: string | null
   status?: string | null
   device_type?: string | null
+  bind_shell?: string | null
+}
+
+export function isClaudeCodeDevice(device: SelectableDevice): boolean {
+  return (device.bind_shell ?? 'claudecode').toLowerCase() === 'claudecode'
 }
 
 export function isOnlineDevice(device: SelectableDevice): boolean {
@@ -14,7 +19,7 @@ export function isCloudDevice(device: SelectableDevice): boolean {
 }
 
 export function sortStandaloneDevices<T extends SelectableDevice>(devices: T[]): T[] {
-  return [...devices].sort((left, right) => {
+  return devices.filter(isClaudeCodeDevice).sort((left, right) => {
     const leftOnline = isOnlineDevice(left) ? 0 : 1
     const rightOnline = isOnlineDevice(right) ? 0 : 1
     if (leftOnline !== rightOnline) return leftOnline - rightOnline
@@ -35,7 +40,7 @@ export function getPreferredStandaloneDeviceId(
     ? devices.find(device => device.device_id === currentDeviceId)
     : undefined
 
-  if (currentDevice && isOnlineDevice(currentDevice)) {
+  if (currentDevice && isClaudeCodeDevice(currentDevice) && isOnlineDevice(currentDevice)) {
     return currentDevice.device_id
   }
 
