@@ -28,7 +28,7 @@ jobs:
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Cache Python dependencies
         uses: actions/cache@v3
@@ -72,7 +72,7 @@ jobs:
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: "3.10"
 
       - name: Cache Python dependencies
         uses: actions/cache@v3
@@ -115,7 +115,7 @@ jobs:
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Cache Python dependencies
         uses: actions/cache@v3
@@ -161,7 +161,7 @@ jobs:
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: "3.10"
 
       - name: Cache Python dependencies
         uses: actions/cache@v3
@@ -219,7 +219,7 @@ jobs:
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Cache Python dependencies
         uses: actions/cache@v3
@@ -264,8 +264,8 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18.x'
-          cache: 'npm'
+          node-version: "18.x"
+          cache: "npm"
           cache-dependency-path: ./frontend/package-lock.json
 
       - name: Cache Next.js build
@@ -306,7 +306,7 @@ jobs:
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: "3.10"
 
       - name: Cache Python dependencies
         uses: actions/cache@v3
@@ -373,7 +373,7 @@ jobs:
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: "3.10"
 
       - name: Install backend dependencies
         working-directory: ./backend
@@ -399,16 +399,26 @@ jobs:
           INIT_DATA_ENABLED: "False"
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+          source $HOME/.cargo/env
+          nohup uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 > backend.log 2>&1 &
+          BACKEND_PID=$!
           echo "Waiting for backend to start..."
           for i in {1..30}; do
-            if curl -s http://localhost:8000/api/health > /dev/null 2>&1; then
+            if curl -s http://localhost:8000/api/docs > /dev/null 2>&1; then
               echo "Backend is ready!"
-              break
+              exit 0
+            fi
+            if ! kill -0 "$BACKEND_PID" 2>/dev/null; then
+              echo "Backend process exited before becoming ready"
+              cat backend.log
+              exit 1
             fi
             echo "Waiting... ($i/30)"
             sleep 2
           done
+          echo "Backend did not become ready in time"
+          cat backend.log
+          exit 1
 
       - name: Install wegent dependencies
         working-directory: ./wegent-cli
@@ -427,7 +437,17 @@ jobs:
   test-summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [test-backend, test-executor, test-executor-manager, test-shared, test-knowledge-engine, test-frontend, test-wegent-cli, test-wegent-cli-integration]
+    needs:
+      [
+        test-backend,
+        test-executor,
+        test-executor-manager,
+        test-shared,
+        test-knowledge-engine,
+        test-frontend,
+        test-wegent-cli,
+        test-wegent-cli-integration,
+      ]
     if: always()
 
     steps:
