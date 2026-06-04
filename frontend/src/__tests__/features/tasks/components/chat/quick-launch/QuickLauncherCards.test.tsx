@@ -97,6 +97,29 @@ describe('QuickLauncherCards', () => {
     expect(screen.queryByTestId('quick-launch-system-grid')).not.toHaveClass('justify-center')
   })
 
+  test('renders launcher cards with titles only', () => {
+    render(
+      <QuickLauncherCards
+        systemLaunchers={[
+          makeLauncher({
+            key: 'system:video_summary',
+            title: 'Analyze Weibo video',
+            description: 'Analyze this Weibo video and summarize the author viewpoint',
+          }),
+        ]}
+        favoriteLaunchers={[]}
+        onSelectLauncher={jest.fn()}
+      />
+    )
+
+    const systemCard = screen.getByTestId('quick-launcher-system_function-system-video_summary')
+
+    expect(systemCard).toHaveTextContent('Analyze Weibo video')
+    expect(systemCard).not.toHaveTextContent(
+      'Analyze this Weibo video and summarize the author viewpoint'
+    )
+  })
+
   test('supports horizontal scrolling for both launcher rows without inline arrow slots', () => {
     render(
       <QuickLauncherCards
