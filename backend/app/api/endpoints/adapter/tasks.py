@@ -23,6 +23,7 @@ from app.core.constants import (
     SUPPORTED_CLIENT_ORIGINS,
 )
 from app.db.session import get_async_db
+from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.remote_workspace import (
     RemoteWorkspaceStatusResponse,
@@ -55,6 +56,8 @@ from app.schemas.task import (
     TaskLiteListResponse,
     TaskRuntimeActiveStream,
     TaskRuntimeCheck,
+    TaskRuntimeSessionResponse,
+    TaskRuntimeSessionUpdate,
     TaskSkillsResponse,
     TaskUpdate,
 )
@@ -67,6 +70,12 @@ from app.services.adapters.wework_conversation_search import (
 from app.services.chat.storage import session_manager
 from app.services.remote_workspace_service import remote_workspace_service
 from app.services.shared_task import shared_task_service
+from app.services.task_member_service import task_member_service
+from app.services.task_runtime_session import (
+    CODEX_RUNTIME_PROVIDER,
+    RuntimeSessionAlreadyExistsError,
+    set_task_runtime_session,
+)
 from shared.telemetry.decorators import trace_sync
 
 router = APIRouter()
@@ -375,6 +384,65 @@ async def get_task_runtime_check(
         status_updated_at=task.get("updated_at"),
         active_stream=active_stream,
     )
+
+
+@router.put("/{task_id}/runtime-session", response_model=TaskRuntimeSessionResponse)
+def update_task_runtime_session(
+    request: TaskRuntimeSessionUpdate,
+    task_id: int = Depends(with_task_telemetry),
+    current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
+    db: Session = Depends(get_db),
+):
+    """Persist runtime session metadata for a task.
+
+    Executors call this after a runtime creates a resumable session ID.
+    The endpoint returns only after the database commit succeeds.
+    """
+    provider = request.provider.strip().lower()
+    if provider != CODEX_RUNTIME_PROVIDER:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only Codex runtime sessions are supported",
+        )
+
+    task = (
+        db.query(TaskResource)
+        .filter(
+            TaskResource.id == task_id,
+            TaskResource.kind == "Task",
+            TaskResource.is_active.in_(TaskResource.is_active_query()),
+        )
+        .first()
+    )
+    if not task or not task_member_service.is_member(db, task_id, current_user.id):
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    try:
+        session = set_task_runtime_session(
+            task,
+            provider=provider,
+            session_id=request.id,
+        )
+        db.commit()
+        db.refresh(task)
+    except RuntimeSessionAlreadyExistsError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except Exception:
+        db.rollback()
+        logger.exception("Failed to persist runtime session for task %s", task_id)
+        raise
+
+    return TaskRuntimeSessionResponse(**session)
 
 
 @router.get("/{task_id}", response_model=TaskDetail)

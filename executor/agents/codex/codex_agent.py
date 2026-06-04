@@ -15,14 +15,18 @@ from typing import Any, Callable, Optional, Tuple
 from executor.agents.base import Agent
 from executor.agents.codex.config_builder import CodeXConfig, build_codex_config
 from executor.agents.codex.event_mapper import CodeXEventMapper
-from executor.agents.codex.session_store import CodeXSessionStore
 from executor.config import config
+from executor.services.api_client import ApiClient
+
 from shared.logger import setup_logger
 from shared.models.execution import ExecutionRequest
 from shared.models.responses_api_emitter import ResponsesAPIEmitter
 from shared.status import TaskStatus
 
 logger = setup_logger("codex_agent")
+CODEX_RUNTIME_PROVIDER = "codex"
+RUNTIME_SESSION_SAVE_ATTEMPTS = 3
+RUNTIME_SESSION_SAVE_TIMEOUT_SECONDS = 10
 
 
 class CodeXAgent(Agent):
@@ -67,8 +71,6 @@ class CodeXAgent(Agent):
         self._codex = None
         self._thread = None
         self._turn = None
-        self._bot_id = self._resolve_bot_id(task_data)
-        self._session_store = CodeXSessionStore()
         self.on_client_created_callback: Optional[Callable[[], Any]] = None
 
     def initialize(self) -> TaskStatus:
@@ -201,35 +203,55 @@ class CodeXAgent(Agent):
 
     async def _open_thread(self) -> None:
         assert self.codex_config is not None
-        thread_id = self._session_store.load(
-            self.task_id,
-            self._bot_id,
-            self.new_session,
-        )
+        thread_id = None if self.new_session else self.task_data.runtime_session_id
         developer_instructions = self._build_developer_instructions()
         thread_kwargs = self._build_thread_kwargs(developer_instructions)
-        try:
-            if thread_id:
-                self._thread = await self._codex.thread_resume(
-                    thread_id,
-                    **thread_kwargs,
-                )
-            else:
-                self._thread = await self._codex.thread_start(
-                    **thread_kwargs,
-                    service_name="wegent",
-                )
-        except Exception:
-            if not thread_id:
-                raise
-            logger.warning(
-                "Failed to resume Codex thread %s, starting a new one", thread_id
-            )
-            self._thread = await self._codex.thread_start(
+
+        if thread_id:
+            self._thread = await self._codex.thread_resume(
+                thread_id,
                 **thread_kwargs,
-                service_name="wegent",
             )
-        self._session_store.save(self.task_id, self._bot_id, self._thread.id)
+            if str(self._thread.id) != str(thread_id):
+                raise RuntimeError(
+                    "Codex runtime resumed a different session than requested"
+                )
+            return
+
+        self._thread = await self._codex.thread_start(
+            **thread_kwargs,
+            service_name="wegent",
+        )
+        await self._save_runtime_session(str(self._thread.id))
+
+    async def _save_runtime_session(self, thread_id: str) -> None:
+        auth_token = self.task_data.auth_token or config.WEGENT_AUTH_TOKEN
+        if not auth_token:
+            raise RuntimeError(
+                "Cannot persist Codex runtime session without auth token"
+            )
+
+        for attempt in range(1, RUNTIME_SESSION_SAVE_ATTEMPTS + 1):
+            saved = await asyncio.to_thread(
+                self._save_runtime_session_sync,
+                auth_token,
+                thread_id,
+            )
+            if saved:
+                return
+            if attempt < RUNTIME_SESSION_SAVE_ATTEMPTS:
+                await asyncio.sleep(0.5 * attempt)
+
+        raise RuntimeError("Failed to persist Codex runtime session")
+
+    def _save_runtime_session_sync(self, auth_token: str, thread_id: str) -> bool:
+        client = ApiClient(auth_token)
+        response = client.put(
+            f"/api/tasks/{self.task_id}/runtime-session",
+            json={"provider": CODEX_RUNTIME_PROVIDER, "id": thread_id},
+            timeout=RUNTIME_SESSION_SAVE_TIMEOUT_SECONDS,
+        )
+        return response is not None
 
     def _build_thread_kwargs(self, developer_instructions: str) -> dict[str, Any]:
         from openai_codex import ApprovalMode
@@ -309,13 +331,6 @@ class CodeXAgent(Agent):
         from openai_codex import Sandbox
 
         return Sandbox.full_access
-
-    @staticmethod
-    def _resolve_bot_id(task_data: ExecutionRequest) -> Optional[int]:
-        if not task_data.bot:
-            return None
-        bot_id = task_data.bot[0].get("id")
-        return int(bot_id) if bot_id is not None else None
 
     def _default_workspace_path(self) -> str:
         return os.path.join(config.get_workspace_root(), str(self.task_id))

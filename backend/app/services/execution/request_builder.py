@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.project import Project
-from app.models.subtask import Subtask
+from app.models.subtask import Subtask, SubtaskRole
 from app.models.task import TaskResource
 from app.schemas.kind import Bot, Ghost, Shell
 from app.schemas.kind import Skill as SkillCRD
@@ -35,8 +35,13 @@ from app.services.skill_binding_service import (
     skill_binding_service,
 )
 from app.services.skill_resolution import find_skill_by_name, find_skill_by_ref
+from app.services.task_runtime_session import (
+    CODEX_RUNTIME_PROVIDER,
+    get_task_runtime_session_id,
+)
 from app.services.user_mcp_service import user_mcp_service
 from shared.models import ExecutionRequest
+from shared.models.codex_routing import should_route_to_codex_agent
 from shared.models.db import Kind, User
 from shared.utils.url_util import domains_match
 
@@ -326,6 +331,24 @@ class TaskRequestBuilder:
                     current_bot_id,
                 )
 
+        runtime_session_id = None
+        runtime_session_provider = None
+        if self._is_codex_runtime(bot_config, model_config):
+            runtime_session_provider = CODEX_RUNTIME_PROVIDER
+            if not new_session:
+                runtime_session_id = get_task_runtime_session_id(
+                    task,
+                    CODEX_RUNTIME_PROVIDER,
+                )
+                if (
+                    self._has_prior_assistant_turn(task.id, subtask)
+                    and not runtime_session_id
+                ):
+                    raise ValueError(
+                        "Codex runtime session is missing for an existing task. "
+                        "Start a new session to continue."
+                    )
+
         return ExecutionRequest(
             task_id=task.id,
             subtask_id=subtask.id,
@@ -370,6 +393,8 @@ class TaskRequestBuilder:
             is_group_chat=is_group_chat,
             history_limit=history_limit,
             new_session=new_session,
+            runtime_session_id=runtime_session_id,
+            runtime_session_provider=runtime_session_provider,
             collaboration_model=collaboration_model,
             mode=collaboration_model,
             auth_token=auth_token,
@@ -514,6 +539,30 @@ class TaskRequestBuilder:
         metadata = payload.get("metadata", {})
         labels = metadata.get("labels", {}) if isinstance(metadata, dict) else {}
         return str(labels.get("taskType") or labels.get("type") or "chat")
+
+    def _is_codex_runtime(self, bot_config: list, model_config: dict[str, Any]) -> bool:
+        """Return whether this request will execute with CodeXAgent."""
+        if not bot_config:
+            return False
+        return should_route_to_codex_agent(
+            bot_config[0].get("shell_type"), model_config
+        )
+
+    def _has_prior_assistant_turn(self, task_id: int, current_subtask: Subtask) -> bool:
+        """Return whether this task has an assistant turn before the current one."""
+        query = self.db.query(Subtask.id).filter(
+            Subtask.task_id == task_id,
+            Subtask.role == SubtaskRole.ASSISTANT,
+        )
+
+        message_id = current_subtask.message_id
+        if message_id is not None:
+            return query.filter(Subtask.message_id < message_id).first() is not None
+
+        if current_subtask.id is not None:
+            return query.filter(Subtask.id < current_subtask.id).first() is not None
+
+        return query.filter(Subtask.id != current_subtask.id).first() is not None
 
     # =========================================================================
     # Bot Resolution (from ChatConfigBuilder)
