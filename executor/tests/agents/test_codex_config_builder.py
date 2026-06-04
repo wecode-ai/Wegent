@@ -100,6 +100,7 @@ def test_build_codex_config_resolves_api_key_env_placeholder(monkeypatch):
         "model_providers.wecode-openai.experimental_bearer_token=sk-from-executor-env"
         in config.config_overrides
     )
+    assert config.thread_config == {"model_reasoning_effort": "medium"}
 
 
 def test_build_codex_config_splits_nested_reasoning_summary():
@@ -114,12 +115,15 @@ def test_build_codex_config_splits_nested_reasoning_summary():
         }
     )
 
-    assert config.thread_config == {"model_reasoning_summary": "detailed"}
-    assert config.effort is None
+    assert config.thread_config == {
+        "model_reasoning_effort": "medium",
+        "model_reasoning_summary": "detailed",
+    }
+    assert config.effort == "medium"
     assert config.summary == "detailed"
 
 
-def test_build_codex_config_filters_invalid_reasoning_values():
+def test_build_codex_config_defaults_invalid_reasoning_to_medium():
     config = build_codex_config(
         {
             "model": "openai",
@@ -131,6 +135,61 @@ def test_build_codex_config_filters_invalid_reasoning_values():
         }
     )
 
-    assert config.thread_config == {}
-    assert config.effort is None
+    assert config.thread_config == {"model_reasoning_effort": "medium"}
+    assert config.effort == "medium"
     assert config.summary is None
+
+
+@pytest.mark.parametrize(
+    ("ui_value", "effort"),
+    [
+        ("extra_high", "xhigh"),
+        ("Ultra", "xhigh"),
+        ("超高", "xhigh"),
+        ("高", "high"),
+        ("中", "medium"),
+        ("低", "low"),
+        ("关闭", "medium"),
+    ],
+)
+def test_build_codex_config_normalizes_ui_reasoning_aliases(ui_value, effort):
+    config = build_codex_config(
+        {
+            "model": "openai",
+            "model_id": "gpt-5.5",
+            "base_url": "http://127.0.0.1:3456/v1",
+            "api_key": "wecode-proxy-placeholder",
+            "api_format": "responses",
+            "reasoning": ui_value,
+        }
+    )
+
+    assert config.thread_config == {"model_reasoning_effort": effort}
+    assert config.effort == effort
+
+
+@pytest.mark.parametrize(
+    ("ui_value", "service_tier"),
+    [
+        ("fast", "priority"),
+        ("快速", "priority"),
+        ("standard", "default"),
+        ("标准", "default"),
+    ],
+)
+def test_build_codex_config_normalizes_service_tier_aliases(ui_value, service_tier):
+    config = build_codex_config(
+        {
+            "model": "openai",
+            "model_id": "gpt-5.5",
+            "base_url": "http://127.0.0.1:3456/v1",
+            "api_key": "wecode-proxy-placeholder",
+            "api_format": "responses",
+            "service_tier": ui_value,
+        }
+    )
+
+    assert config.thread_config == {
+        "model_reasoning_effort": "medium",
+        "service_tier": service_tier,
+    }
