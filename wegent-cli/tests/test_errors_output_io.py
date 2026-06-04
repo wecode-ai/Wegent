@@ -1,6 +1,5 @@
-import json
-
 import pytest
+import yaml
 
 from wegent.errors import (
     EXIT_API_ERROR,
@@ -10,7 +9,13 @@ from wegent.errors import (
     CliError,
 )
 from wegent.io import load_structured_input
-from wegent.output import error_envelope, success_envelope
+from wegent.output import (
+    dumps_json,
+    dumps_yaml,
+    error_envelope,
+    extract_response_text,
+    success_envelope,
+)
 
 
 def test_cli_error_defaults_to_usage_exit_code():
@@ -61,6 +66,47 @@ def test_error_envelope_wraps_cli_error():
             "details": {},
         },
     }
+
+
+def test_dumps_json_serializes_success_envelope_with_indentation():
+    envelope = success_envelope({"id": "resp_1"})
+    serialized = dumps_json(envelope)
+
+    assert serialized.startswith('{\n  "success": true,')
+    assert yaml.safe_load(serialized) == envelope
+
+
+def test_dumps_yaml_serializes_simple_mapping():
+    serialized = dumps_yaml({"success": True, "id": "resp_1"})
+
+    assert yaml.safe_load(serialized) == {"success": True, "id": "resp_1"}
+
+
+def test_extract_response_text_joins_assistant_chunks_only():
+    response = {
+        "output": [
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": "Hello"},
+                    {"type": "output_text", "text": "world"},
+                ],
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "Ignore me"}],
+            },
+            {
+                "type": "tool_call",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "Ignore tool"}],
+            },
+        ]
+    }
+
+    assert extract_response_text(response) == "Hello\nworld"
 
 
 def test_load_structured_input_reads_json_file(tmp_path):
