@@ -57,15 +57,17 @@ jobs:
 
       # Cache Python packages
       - name: Cache Python packages
+        id: python-cache
         uses: actions/cache@v4
         with:
           path: |
             ~/.cache/uv
             backend/.venv
             shared/.venv
-          key: ${{ runner.os }}-python-${{ hashFiles('backend/pyproject.toml', 'shared/pyproject.toml') }}
+          key: ${{ runner.os }}-python-3.11-e2e-${{ hashFiles('backend/pyproject.toml', 'backend/uv.lock', 'shared/pyproject.toml', 'shared/uv.lock') }}
           restore-keys: |
-            ${{ runner.os }}-python-
+            ${{ runner.os }}-python-3.11-e2e-
+            ${{ runner.os }}-python-3.11-
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -73,6 +75,15 @@ jobs:
           node-version: "20"
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
+
+      - name: Cache frontend node_modules
+        id: frontend-node-modules-cache
+        uses: actions/cache@v4
+        with:
+          path: frontend/node_modules
+          key: ${{ runner.os }}-node-20-frontend-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-20-frontend-
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -84,6 +95,7 @@ jobs:
 
       # Install dependencies in parallel
       - name: Install shared module
+        if: steps.python-cache.outputs.cache-hit != 'true'
         working-directory: ./shared
         run: |
           uv venv --allow-existing
@@ -91,6 +103,7 @@ jobs:
           uv pip install -e .
 
       - name: Install backend dependencies
+        if: steps.python-cache.outputs.cache-hit != 'true'
         working-directory: ./backend
         run: |
           uv sync
@@ -98,6 +111,7 @@ jobs:
           uv pip install -e ../shared
 
       - name: Install frontend dependencies
+        if: steps.frontend-node-modules-cache.outputs.cache-hit != 'true'
         working-directory: ./frontend
         run: npm ci
 
@@ -312,6 +326,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Cache Python packages
+        id: executor-python-cache
         uses: actions/cache@v4
         with:
           path: |
@@ -320,10 +335,10 @@ jobs:
             executor/.venv
             executor_manager/.venv
             shared/.venv
-          key: ${{ runner.os }}-python-executor-e2e-${{ hashFiles('backend/pyproject.toml', 'executor/pyproject.toml', 'executor_manager/pyproject.toml', 'shared/pyproject.toml') }}
+          key: ${{ runner.os }}-python-3.11-executor-e2e-${{ hashFiles('backend/pyproject.toml', 'backend/uv.lock', 'executor/pyproject.toml', 'executor/uv.lock', 'executor_manager/pyproject.toml', 'executor_manager/uv.lock', 'shared/pyproject.toml', 'shared/uv.lock') }}
           restore-keys: |
-            ${{ runner.os }}-python-executor-e2e-
-            ${{ runner.os }}-python-
+            ${{ runner.os }}-python-3.11-executor-e2e-
+            ${{ runner.os }}-python-3.11-
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -331,6 +346,28 @@ jobs:
           node-version: "20"
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
+
+      - name: Cache frontend node_modules
+        id: frontend-node-modules-cache
+        uses: actions/cache@v4
+        with:
+          path: frontend/node_modules
+          key: ${{ runner.os }}-node-20-frontend-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-20-frontend-
+
+      - name: Configure npm global cache path
+        run: |
+          mkdir -p ~/.npm-global/bin
+          npm config set prefix ~/.npm-global
+          echo "$HOME/.npm-global/bin" >> "$GITHUB_PATH"
+
+      - name: Cache Claude Code CLI
+        id: claude-code-cli-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm-global
+          key: ${{ runner.os }}-node-20-claude-code-cli-2.1.142
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -341,6 +378,7 @@ jobs:
         run: pip install uv
 
       - name: Install shared module
+        if: steps.executor-python-cache.outputs.cache-hit != 'true'
         working-directory: ./shared
         run: |
           uv venv --allow-existing
@@ -348,6 +386,7 @@ jobs:
           uv pip install -e .
 
       - name: Install backend dependencies
+        if: steps.executor-python-cache.outputs.cache-hit != 'true'
         working-directory: ./backend
         run: |
           uv sync
@@ -355,6 +394,7 @@ jobs:
           uv pip install -e ../shared
 
       - name: Install executor manager dependencies
+        if: steps.executor-python-cache.outputs.cache-hit != 'true'
         working-directory: ./executor_manager
         run: |
           uv sync
@@ -362,6 +402,7 @@ jobs:
           uv pip install -e ../shared
 
       - name: Install executor dependencies
+        if: steps.executor-python-cache.outputs.cache-hit != 'true'
         working-directory: ./executor
         run: |
           uv sync
@@ -369,9 +410,11 @@ jobs:
           uv pip install -e ../shared
 
       - name: Install Claude Code CLI
+        if: steps.claude-code-cli-cache.outputs.cache-hit != 'true'
         run: npm install -g @anthropic-ai/claude-code@2.1.142
 
       - name: Install frontend dependencies
+        if: steps.frontend-node-modules-cache.outputs.cache-hit != 'true'
         working-directory: ./frontend
         run: npm ci
 
@@ -677,6 +720,15 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Cache frontend node_modules
+        id: frontend-node-modules-cache
+        uses: actions/cache@v4
+        with:
+          path: frontend/node_modules
+          key: ${{ runner.os }}-node-20-frontend-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-20-frontend-
+
       - name: Download all blob reports
         uses: actions/download-artifact@v4
         with:
@@ -685,6 +737,7 @@ jobs:
           merge-multiple: true
 
       - name: Install frontend dependencies
+        if: steps.frontend-node-modules-cache.outputs.cache-hit != 'true'
         working-directory: ./frontend
         run: npm ci
 

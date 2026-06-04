@@ -201,6 +201,11 @@ so E2E jobs do not spend time on a production Next.js build. This keeps E2E
 focused on browser/API behavior; production build failures need separate build
 coverage outside this workflow.
 
+The workflow caches Python virtualenvs, frontend `node_modules`, Playwright
+browsers, and the executor job's Claude Code CLI. Dependency install steps are
+skipped only on exact cache hits; partial restore-key matches still run install
+commands to reconcile dependencies before saving a fresh cache.
+
 ### Sharded CI Users
 
 The CI workflow runs Playwright tests across multiple shards. Each shard uses an
