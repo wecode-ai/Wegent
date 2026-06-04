@@ -24,6 +24,7 @@ vi.mock('@/api/devices', () => ({
 const createDeviceApiMock = vi.mocked(createDeviceApi)
 const createProjectApiMock = vi.mocked(createProjectApi)
 const getVncConfigMock = vi.fn()
+const fetchMock = vi.fn()
 
 const project = {
   id: 7,
@@ -44,6 +45,8 @@ const project = {
 describe('WorkspacePanelCards', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.stubGlobal('fetch', fetchMock)
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
     vi.spyOn(window, 'open').mockImplementation(() => null)
     window.localStorage.setItem('auth_token', 'token-1')
     let terminalSessionCount = 0
@@ -148,6 +151,13 @@ describe('WorkspacePanelCards', () => {
     await waitFor(() =>
       expect(api.startCodeServerSession).toHaveBeenCalledWith(7),
     )
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost/ide?__wegent_probe=1',
+      expect.objectContaining({
+        credentials: 'omit',
+        method: 'GET',
+      }),
+    )
     expect(window.open).toHaveBeenCalledWith(
       'http://localhost/ide',
       '_blank',
@@ -176,5 +186,110 @@ describe('WorkspacePanelCards', () => {
       'noopener',
     )
     expect(onRequestClose).toHaveBeenCalledTimes(1)
+  })
+
+  test('marks terminal as unavailable when session probing fails', async () => {
+    const api = createProjectApiMock()
+    vi.mocked(api.startTerminalSession).mockRejectedValueOnce(
+      new Error('terminal unavailable'),
+    )
+    render(<WorkspacePanelCards currentProject={project} />)
+
+    await userEvent.click(screen.getByTestId('workspace-terminal-card'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-terminal-card')).toBeDisabled(),
+    )
+    expect(screen.getByTestId('workspace-terminal-card')).toHaveTextContent('暂不可用')
+
+    await userEvent.click(screen.getByTestId('workspace-terminal-card'))
+
+    expect(api.startTerminalSession).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('workspace-ide-card')).not.toBeDisabled()
+    expect(screen.getByTestId('workspace-desktop-card')).not.toBeDisabled()
+  })
+
+  test('marks IDE as unavailable when session probing fails', async () => {
+    const api = createProjectApiMock()
+    vi.mocked(api.startCodeServerSession).mockRejectedValueOnce(
+      new Error('code-server unavailable'),
+    )
+    render(<WorkspacePanelCards currentProject={project} />)
+
+    await userEvent.click(screen.getByTestId('workspace-ide-card'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-ide-card')).toBeDisabled(),
+    )
+    expect(screen.getByTestId('workspace-ide-card')).toHaveTextContent('暂不可用')
+    expect(window.open).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('workspace-ide-card'))
+
+    expect(api.startCodeServerSession).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('workspace-terminal-card')).not.toBeDisabled()
+    expect(screen.getByTestId('workspace-desktop-card')).not.toBeDisabled()
+  })
+
+  test('marks IDE as unavailable when the returned session URL is missing', async () => {
+    const api = createProjectApiMock()
+    fetchMock.mockResolvedValueOnce(
+      new Response('Session not found', { status: 404 }),
+    )
+    render(<WorkspacePanelCards currentProject={project} />)
+
+    await userEvent.click(screen.getByTestId('workspace-ide-card'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-ide-card')).toBeDisabled(),
+    )
+    expect(window.open).not.toHaveBeenCalled()
+    expect(api.startCodeServerSession).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('alert')).toHaveTextContent('会话已失效，请重新打开工具')
+  })
+
+  test('marks desktop as unavailable when VNC probing fails', async () => {
+    getVncConfigMock.mockRejectedValueOnce(new Error('vnc unavailable'))
+    render(<WorkspacePanelCards currentProject={project} />)
+
+    await userEvent.click(screen.getByTestId('workspace-desktop-card'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-desktop-card')).toBeDisabled(),
+    )
+    expect(screen.getByTestId('workspace-desktop-card')).toHaveTextContent('暂不可用')
+    expect(window.open).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('workspace-desktop-card'))
+
+    expect(getVncConfigMock).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('workspace-terminal-card')).not.toBeDisabled()
+    expect(screen.getByTestId('workspace-ide-card')).not.toBeDisabled()
+  })
+
+  test('resets unavailable tools when the project changes', async () => {
+    const api = createProjectApiMock()
+    vi.mocked(api.startTerminalSession).mockRejectedValueOnce(
+      new Error('terminal unavailable'),
+    )
+    const nextProject = {
+      ...project,
+      id: 8,
+      name: 'project39',
+    }
+    const { rerender } = render(<WorkspacePanelCards currentProject={project} />)
+
+    await userEvent.click(screen.getByTestId('workspace-terminal-card'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-terminal-card')).toBeDisabled(),
+    )
+
+    rerender(<WorkspacePanelCards currentProject={nextProject} />)
+
+    expect(screen.getByTestId('workspace-terminal-card')).not.toBeDisabled()
+    expect(screen.getByTestId('workspace-terminal-card')).not.toHaveTextContent(
+      '暂不可用',
+    )
   })
 })

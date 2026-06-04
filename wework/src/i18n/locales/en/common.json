@@ -150,6 +150,8 @@
     "open_project_desktop": "Open project desktop",
     "project_tool_requires_project": "Select a project first",
     "project_tool_start_failed": "Failed to start",
+    "project_session_unavailable": "Session expired. Reopen the tool.",
+    "project_tool_unavailable": "Unavailable",
     "back_to_workspace_tools": "Back to tools",
     "project_terminal_frame_title": "Project terminal",
     "scroll_to_bottom": "Scroll to bottom",
