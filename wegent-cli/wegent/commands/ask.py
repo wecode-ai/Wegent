@@ -9,7 +9,6 @@ from ..config import get_mode
 from ..errors import CliError
 from ..output import (
     dumps_json,
-    dumps_yaml,
     error_envelope,
     extract_response_text,
     success_envelope,
@@ -68,7 +67,7 @@ def _emit_response(response: Any, json_output: bool) -> None:
         return
 
     text = extract_response_text(response) if isinstance(response, dict) else ""
-    click.echo(text if text else dumps_yaml(response))
+    click.echo(text if text else dumps_json(response))
 
 
 @click.command("ask")

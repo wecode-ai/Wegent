@@ -216,3 +216,24 @@ def test_ask_non_json_prints_extracted_assistant_text():
 
     assert result.exit_code == 0
     assert result.output == "Plain answer\n"
+
+
+def test_ask_non_json_without_assistant_text_prints_json_response():
+    client = MagicMock()
+    response = {
+        "id": "resp_1",
+        "status": "completed",
+        "output": [
+            {
+                "type": "message",
+                "role": "tool",
+                "content": [{"type": "output_text", "text": "tool output"}],
+            }
+        ],
+    }
+    client.create_response.return_value = response
+
+    result = invoke_with_client(["ask", "hello", "--model", "custom#team"], client)
+
+    assert result.exit_code == 0
+    assert json.loads(result.output) == response
