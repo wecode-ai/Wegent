@@ -4,8 +4,9 @@
 
 'use client'
 
-import { useEffect, useMemo, useState, type ComponentType } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ComponentType } from 'react'
 import dynamic from 'next/dynamic'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { Building2, Check, ChevronDown, Globe2, Layers3, Search, UserRound } from 'lucide-react'
 
 import { listGroups } from '@/apis/groups'
@@ -29,6 +30,15 @@ const managedResourceTypes: ManagedResourceType[] = [
   'shell',
   'retriever',
 ]
+
+const sourceFilters: ManagedResourceSourceFilter[] = ['all', 'personal', 'group', 'system']
+
+const resourceLibraryUrlParams = {
+  type: 'type',
+  source: 'source',
+  legacyScope: 'scope',
+  group: 'group',
+} as const
 
 const TeamListWithScope = dynamic(
   () =>
@@ -66,27 +76,36 @@ const RetrieverListWithScope = dynamic(
   { ssr: false }
 )
 
-function getInitialSearchParam(name: string): string | null {
+type SearchParamReader = Pick<URLSearchParams, 'get'>
+
+function getInitialSearchParams(): URLSearchParams {
   if (typeof window === 'undefined') {
-    return null
+    return new URLSearchParams()
   }
-  return new URLSearchParams(window.location.search).get(name)
+
+  return new URLSearchParams(window.location.search)
 }
 
-function getInitialResourceType(): ManagedResourceType {
-  const type = getInitialSearchParam('type')
-  return managedResourceTypes.includes(type as ManagedResourceType)
-    ? (type as ManagedResourceType)
-    : 'agent'
+function isManagedResourceType(value: string | null): value is ManagedResourceType {
+  return managedResourceTypes.includes(value as ManagedResourceType)
 }
 
-function getInitialSourceFilter(): ManagedResourceSourceFilter {
-  const source = getInitialSearchParam('source')
-  if (source === 'all' || source === 'personal' || source === 'group' || source === 'system') {
+function isSourceFilter(value: string | null): value is ManagedResourceSourceFilter {
+  return sourceFilters.includes(value as ManagedResourceSourceFilter)
+}
+
+function getResourceTypeFromSearchParams(params: SearchParamReader): ManagedResourceType {
+  const type = params.get(resourceLibraryUrlParams.type)
+  return isManagedResourceType(type) ? type : 'agent'
+}
+
+function getSourceFilterFromSearchParams(params: SearchParamReader): ManagedResourceSourceFilter {
+  const source = params.get(resourceLibraryUrlParams.source)
+  if (isSourceFilter(source)) {
     return source
   }
 
-  const legacyScope = getInitialSearchParam('scope')
+  const legacyScope = params.get(resourceLibraryUrlParams.legacyScope)
   if (legacyScope === 'personal' || legacyScope === 'group') {
     return legacyScope
   }
@@ -94,8 +113,20 @@ function getInitialSourceFilter(): ManagedResourceSourceFilter {
   return 'all'
 }
 
+function getGroupNameFromSearchParams(params: SearchParamReader): string | null {
+  return params.get(resourceLibraryUrlParams.group)
+}
+
+function getInitialResourceType(): ManagedResourceType {
+  return getResourceTypeFromSearchParams(getInitialSearchParams())
+}
+
+function getInitialSourceFilter(): ManagedResourceSourceFilter {
+  return getSourceFilterFromSearchParams(getInitialSearchParams())
+}
+
 function getInitialGroupName(): string | null {
-  return getInitialSearchParam('group')
+  return getGroupNameFromSearchParams(getInitialSearchParams())
 }
 
 function getGroupDisplayName(group: Group): string {
@@ -172,13 +203,13 @@ function ResourceSourceFilterControls({
   onValueChange,
   groups,
   selectedGroup,
-  onGroupChange,
+  onGroupSourceChange,
 }: {
   value: ManagedResourceSourceFilter
   onValueChange: (value: ManagedResourceSourceFilter) => void
   groups: Group[]
   selectedGroup: string | null
-  onGroupChange: (groupName: string | null) => void
+  onGroupSourceChange: (groupName: string | null) => void
 }) {
   const t = useResourceLibraryTranslation()
   const [isGroupMenuOpen, setIsGroupMenuOpen] = useState(false)
@@ -294,10 +325,7 @@ function ResourceSourceFilterControls({
                     'bg-primary/10 text-primary focus:text-primary'
                 )}
                 data-testid="resource-source-all-groups-option"
-                onClick={() => {
-                  onGroupChange(null)
-                  onValueChange('group')
-                }}
+                onClick={() => onGroupSourceChange(null)}
               >
                 <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
                   {value === 'group' && !selectedGroup && <Check className="h-4 w-4" aria-hidden />}
@@ -333,10 +361,7 @@ function ResourceSourceFilterControls({
                         isSelected && 'bg-primary/10 text-primary focus:text-primary'
                       )}
                       data-testid={`resource-source-group-option-${group.id}`}
-                      onClick={() => {
-                        onGroupChange(group.name)
-                        onValueChange('group')
-                      }}
+                      onClick={() => onGroupSourceChange(group.name)}
                     >
                       <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
                         {isSelected && <Check className="h-4 w-4" aria-hidden />}
@@ -382,11 +407,90 @@ interface MyResourcesProps {
 }
 
 export function MyResources({ title }: MyResourcesProps = {}) {
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+  const searchParamsSnapshot = searchParams.toString()
   const [resourceType, setResourceType] = useState<ManagedResourceType>(getInitialResourceType)
   const [sourceFilter, setSourceFilter] =
     useState<ManagedResourceSourceFilter>(getInitialSourceFilter)
   const [groups, setGroups] = useState<Group[]>([])
   const [selectedGroup, setSelectedGroup] = useState<string | null>(getInitialGroupName)
+
+  const replaceResourceLibraryUrl = useCallback(
+    ({
+      type,
+      source,
+      group,
+    }: {
+      type?: ManagedResourceType
+      source?: ManagedResourceSourceFilter
+      group?: string | null
+    }) => {
+      const params = new URLSearchParams(searchParamsSnapshot)
+
+      if (type) {
+        params.set(resourceLibraryUrlParams.type, type)
+      }
+
+      if (source) {
+        params.set(resourceLibraryUrlParams.source, source)
+        params.delete(resourceLibraryUrlParams.legacyScope)
+      }
+
+      if (group !== undefined) {
+        if (group) {
+          params.set(resourceLibraryUrlParams.group, group)
+        } else {
+          params.delete(resourceLibraryUrlParams.group)
+        }
+      }
+
+      if (source && source !== 'group') {
+        params.delete(resourceLibraryUrlParams.group)
+      }
+
+      const queryString = params.toString()
+      const nextUrl = queryString ? `${pathname}?${queryString}` : pathname
+      router.replace(nextUrl, { scroll: false })
+    },
+    [pathname, router, searchParamsSnapshot]
+  )
+
+  const handleResourceTypeChange = useCallback(
+    (nextType: ManagedResourceType) => {
+      setResourceType(nextType)
+      replaceResourceLibraryUrl({ type: nextType })
+    },
+    [replaceResourceLibraryUrl]
+  )
+
+  const handleSourceFilterChange = useCallback(
+    (nextSource: ManagedResourceSourceFilter) => {
+      setSourceFilter(nextSource)
+      replaceResourceLibraryUrl({
+        source: nextSource,
+        group: nextSource === 'group' ? selectedGroup : null,
+      })
+    },
+    [replaceResourceLibraryUrl, selectedGroup]
+  )
+
+  const handleGroupSourceChange = useCallback(
+    (groupName: string | null) => {
+      setSelectedGroup(groupName)
+      setSourceFilter('group')
+      replaceResourceLibraryUrl({ source: 'group', group: groupName })
+    },
+    [replaceResourceLibraryUrl]
+  )
+
+  useEffect(() => {
+    const params = new URLSearchParams(searchParamsSnapshot)
+    setResourceType(getResourceTypeFromSearchParams(params))
+    setSourceFilter(getSourceFilterFromSearchParams(params))
+    setSelectedGroup(getGroupNameFromSearchParams(params))
+  }, [searchParamsSnapshot])
 
   useEffect(() => {
     let isMounted = true
@@ -411,10 +515,10 @@ export function MyResources({ title }: MyResourcesProps = {}) {
     const sourceControls = (
       <ResourceSourceFilterControls
         value={sourceFilter}
-        onValueChange={setSourceFilter}
+        onValueChange={handleSourceFilterChange}
         groups={groups}
         selectedGroup={selectedGroup}
-        onGroupChange={setSelectedGroup}
+        onGroupSourceChange={handleGroupSourceChange}
       />
     )
     const groupName = sourceFilter === 'group' ? selectedGroup : null
@@ -485,7 +589,7 @@ export function MyResources({ title }: MyResourcesProps = {}) {
         data-testid="managed-resource-header"
       >
         {title && <h1 className="shrink-0 text-xl font-semibold text-text-primary">{title}</h1>}
-        <ManagedResourceTabs value={resourceType} onValueChange={setResourceType} />
+        <ManagedResourceTabs value={resourceType} onValueChange={handleResourceTypeChange} />
       </div>
 
       <div>{renderManager()}</div>
