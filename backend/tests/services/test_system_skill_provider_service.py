@@ -638,6 +638,65 @@ def test_install_personal_skill_deactivates_duplicate_installed_states(
     assert refreshed_older.json["spec"]["installState"] == "uninstalled"
 
 
+def test_install_personal_skill_deactivates_legacy_system_duplicate_by_skill_ref(
+    test_db, test_user
+):
+    skill = _create_personal_skill_definition(test_db, test_user.id)
+    legacy_system = Kind(
+        user_id=test_user.id,
+        kind="InstalledSkill",
+        name=f"legacy-{skill.name}",
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "InstalledSkill",
+            "metadata": {"name": f"legacy-{skill.name}", "namespace": "default"},
+            "spec": {
+                "source": {
+                    "type": "system",
+                    "providerKey": "legacy",
+                    "skillKey": skill.name,
+                    "catalogItemId": f"@legacy/{skill.name}",
+                },
+                "skillRef": {
+                    "kind": "Skill",
+                    "name": skill.name,
+                    "namespace": skill.namespace,
+                    "user_id": skill.user_id,
+                },
+                "displayName": skill.json["spec"].get("displayName") or skill.name,
+                "description": skill.json["spec"].get("description", ""),
+                "installState": "installed",
+                "enabled": True,
+            },
+            "status": {"state": "Available"},
+        },
+        is_active=True,
+    )
+    test_db.add(legacy_system)
+    test_db.commit()
+    test_db.refresh(legacy_system)
+    service = _build_service(StaticSystemSkillProvider())
+
+    installed = service.install_personal_skill(
+        db=test_db,
+        user_id=test_user.id,
+        request=PersonalSkillInstallRequest(skillId=skill.id),
+    )
+
+    refreshed_legacy = test_db.get(Kind, legacy_system.id)
+    installed_rows = (
+        test_db.query(Kind)
+        .filter(Kind.user_id == test_user.id, Kind.kind == "InstalledSkill")
+        .all()
+    )
+    assert installed.spec.source.type == "personal"
+    assert int(installed.metadata["labels"]["id"]) != legacy_system.id
+    assert refreshed_legacy.is_active is False
+    assert refreshed_legacy.json["spec"]["installState"] == "uninstalled"
+    assert len(installed_rows) == 2
+
+
 @pytest.mark.anyio
 async def test_update_installed_system_skill_toggles_enabled_state(test_db, test_user):
     installed = _create_installed_skill(test_db, test_user.id, enabled=True)

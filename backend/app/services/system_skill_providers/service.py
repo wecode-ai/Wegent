@@ -221,13 +221,15 @@ class SystemSkillProviderService:
         if not skill:
             raise HTTPException(status_code=404, detail="Skill not found")
 
+        skill_ref = self._skill_ref_for_skill(skill)
         existing_installed = self._find_installed_skill(
             db,
             user_id=user_id,
             source_type="personal",
             skill_key=skill.name,
+            skill_ref=skill_ref,
         )
-        if existing_installed:
+        if existing_installed and self._source_type(existing_installed) == "personal":
             return self._reactivate_installed_skill(db, existing_installed)
 
         installed = self._create_personal_installed_skill(
@@ -235,6 +237,13 @@ class SystemSkillProviderService:
             skill=skill,
         )
         db.add(installed)
+        db.flush()
+        self._deactivate_duplicate_installed_skills(
+            db,
+            retained=installed,
+            source=self._get_spec(installed).get("source"),
+            skill_ref=skill_ref,
+        )
         db.commit()
         db.refresh(installed)
         return self._kind_to_installed_skill(installed)
@@ -481,13 +490,31 @@ class SystemSkillProviderService:
         installed.json["spec"] = existing_spec
         installed.is_active = True
         flag_modified(installed, "json")
-        for duplicate in self._find_matching_installed_skill_rows(
+        self._deactivate_duplicate_installed_skills(
             db,
-            user_id=installed.user_id,
+            retained=installed,
             source=existing_spec.get("source"),
             skill_ref=existing_spec.get("skillRef"),
+        )
+        db.commit()
+        db.refresh(installed)
+        return self._kind_to_installed_skill(installed)
+
+    def _deactivate_duplicate_installed_skills(
+        self,
+        db: Session,
+        *,
+        retained: Kind,
+        source: Any,
+        skill_ref: Any,
+    ) -> None:
+        for duplicate in self._find_matching_installed_skill_rows(
+            db,
+            user_id=retained.user_id,
+            source=source,
+            skill_ref=skill_ref,
         ):
-            if duplicate.id == installed.id:
+            if duplicate.id == retained.id:
                 continue
             duplicate_spec = self._get_spec(duplicate)
             duplicate_spec["enabled"] = False
@@ -495,9 +522,6 @@ class SystemSkillProviderService:
             duplicate.json["spec"] = duplicate_spec
             duplicate.is_active = False
             flag_modified(duplicate, "json")
-        db.commit()
-        db.refresh(installed)
-        return self._kind_to_installed_skill(installed)
 
     def _find_personal_skill_by_id(
         self,
@@ -526,6 +550,7 @@ class SystemSkillProviderService:
         source_type: str,
         skill_key: str,
         provider_key: Optional[str] = None,
+        skill_ref: Any = None,
     ) -> Optional[Kind]:
         rows = self._find_matching_installed_skill_rows(
             db,
@@ -535,11 +560,12 @@ class SystemSkillProviderService:
                 "providerKey": provider_key,
                 "skillKey": skill_key,
             },
+            skill_ref=skill_ref,
         )
         if not rows:
             return None
 
-        def priority(row: Kind) -> tuple[int, int]:
+        def priority(row: Kind) -> tuple[int, int, int, int, int]:
             spec = self._get_spec(row)
             active_installed = (
                 row.is_active
@@ -547,9 +573,41 @@ class SystemSkillProviderService:
                 and spec.get("installState", "installed") == "installed"
             )
             active = row.is_active
-            return (2 if active_installed else 1 if active else 0, row.id)
+            source_matches = self._source_matches(
+                spec.get("source", {}),
+                source_type=source_type,
+                skill_key=skill_key,
+                provider_key=provider_key,
+            )
+            skill_ref_matches = self._skill_ref_matches(
+                spec.get("skillRef", {}),
+                skill_ref,
+            )
+            personal_source = self._source_type(row) == "personal"
+            return (
+                1 if source_matches else 0,
+                1 if personal_source else 0,
+                2 if active_installed else 1 if active else 0,
+                1 if skill_ref_matches else 0,
+                row.id,
+            )
 
         return max(rows, key=priority)
+
+    def _skill_ref_for_skill(self, skill: Kind) -> dict[str, Any]:
+        return {
+            "kind": "Skill",
+            "name": skill.name,
+            "namespace": skill.namespace,
+            "user_id": skill.user_id,
+        }
+
+    def _source_type(self, row: Kind) -> Optional[str]:
+        source = self._get_spec(row).get("source")
+        if not isinstance(source, dict):
+            return None
+        source_type = source.get("type")
+        return source_type if isinstance(source_type, str) else None
 
     def _find_matching_installed_skill_rows(
         self,
@@ -620,7 +678,9 @@ class SystemSkillProviderService:
         )
 
     def _skill_ref_matches(self, row_skill_ref: Any, skill_ref: Any) -> bool:
-        if not self._has_skill_ref_identity(row_skill_ref):
+        if not self._has_skill_ref_identity(
+            row_skill_ref
+        ) or not self._has_skill_ref_identity(skill_ref):
             return False
         return (
             row_skill_ref.get("kind", "Skill") == skill_ref.get("kind", "Skill")
