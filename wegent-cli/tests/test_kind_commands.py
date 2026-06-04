@@ -131,6 +131,21 @@ def test_kind_unknown_subcommand_without_json_uses_click_error_text():
     assert "No such command" in error_text
 
 
+def test_top_level_get_json_is_not_preserved_and_outputs_error_envelope():
+    client = MagicMock()
+
+    result = invoke_with_client(["get", "ghosts", "--json"], client)
+
+    assert result.exit_code != 0
+    error_text = result.stderr or result.output
+    assert not error_text.startswith("Usage:")
+    payload = load_error_payload(result)
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "invalid_arguments"
+    client.list_kind.assert_not_called()
+    client.get_kind.assert_not_called()
+
+
 def test_kind_describe_is_alias_for_named_get():
     client = MagicMock()
     client.get_kind.return_value = {"kind": "Team", "metadata": {"name": "agent"}}

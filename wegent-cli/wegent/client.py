@@ -32,19 +32,6 @@ KIND_ALIASES = {
 _OMITTED = object()
 
 
-class APIError(Exception):
-    """Legacy API error kept for command modules pending replacement."""
-
-    def __init__(self, status_code: int, message: str):
-        self.status_code = status_code
-        self.message = message
-        super().__init__(f"API Error {status_code}: {message}")
-
-
-class InvalidKindError(CliError, ValueError):
-    """Invalid kind error compatible with new and legacy command handlers."""
-
-
 class WegentClient:
     """Authenticated client for Wegent Backend APIs."""
 
@@ -157,7 +144,7 @@ class WegentClient:
         if normalized.endswith("s") and normalized[:-1] in VALID_KINDS:
             normalized = normalized[:-1]
         if normalized not in VALID_KINDS:
-            raise InvalidKindError(
+            raise CliError(
                 "invalid_kind",
                 f"Invalid kind: {kind}. Valid kinds: {', '.join(VALID_KINDS)}",
                 {"kind": kind, "valid_kinds": VALID_KINDS},
@@ -213,69 +200,3 @@ class WegentClient:
 
     def delete_response(self, response_id: str) -> Any:
         return self.request("DELETE", f"/v1/responses/{response_id}")
-
-    @staticmethod
-    def _to_api_error(error: CliError) -> APIError:
-        status_code = int(error.details.get("status_code") or 0)
-        return APIError(status_code, error.message)
-
-    def list_resources(
-        self, kind: str, namespace: str, name_filter: Optional[str] = None
-    ) -> list[dict[str, Any]]:
-        try:
-            result = self.list_kind(kind, namespace)
-        except CliError as exc:
-            raise self._to_api_error(exc) from exc
-
-        items = result.get("items", []) if isinstance(result, dict) else result
-        if name_filter and items:
-            items = [
-                item
-                for item in items
-                if name_filter.lower()
-                in item.get("metadata", {}).get("name", "").lower()
-            ]
-        return items
-
-    def get_resource(self, kind: str, namespace: str, name: str) -> Any:
-        try:
-            return self.get_kind(kind, namespace, name)
-        except CliError as exc:
-            raise self._to_api_error(exc) from exc
-
-    def create_resource(self, namespace: str, resource: dict[str, Any]) -> Any:
-        try:
-            path = self.kind_path(resource.get("kind", ""))
-            return self.request("POST", f"/v1/namespaces/{namespace}/{path}", resource)
-        except CliError as exc:
-            raise self._to_api_error(exc) from exc
-
-    def update_resource(
-        self, kind: str, namespace: str, name: str, resource: dict[str, Any]
-    ) -> Any:
-        try:
-            return self.request(
-                "PUT",
-                f"/v1/namespaces/{namespace}/{self.kind_path(kind)}/{name}",
-                resource,
-            )
-        except CliError as exc:
-            raise self._to_api_error(exc) from exc
-
-    def delete_resource(self, kind: str, namespace: str, name: str) -> Any:
-        try:
-            return self.delete_kind(kind, namespace, name)
-        except CliError as exc:
-            raise self._to_api_error(exc) from exc
-
-    def apply_resources(self, namespace: str, resources: list[dict[str, Any]]) -> Any:
-        try:
-            return self.apply_kinds(namespace, resources)
-        except CliError as exc:
-            raise self._to_api_error(exc) from exc
-
-    def delete_resources(self, namespace: str, resources: list[dict[str, Any]]) -> Any:
-        try:
-            return self.delete_kinds(namespace, resources)
-        except CliError as exc:
-            raise self._to_api_error(exc) from exc

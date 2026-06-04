@@ -1,9 +1,7 @@
 """Kind command group for CRD resource operations."""
 
 import json
-import sys
-from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 import yaml
@@ -11,10 +9,11 @@ import yaml
 from ..client import WegentClient
 from ..config import get_namespace
 from ..errors import CliError
+from ..io import read_input_text
 from ..output import dumps_json, dumps_yaml, error_envelope, success_envelope
 
 
-def _as_resource_list(data: Any) -> list[Any]:
+def _as_resource_list(data: Any) -> list[dict[str, Any]]:
     if isinstance(data, list):
         return _validate_resource_list(data)
     if isinstance(data, dict):
@@ -28,7 +27,7 @@ def _as_resource_list(data: Any) -> list[Any]:
     )
 
 
-def _validate_resource_list(resources: list[Any]) -> list[Any]:
+def _validate_resource_list(resources: list[Any]) -> list[dict[str, Any]]:
     if not resources:
         raise CliError(
             "invalid_input",
@@ -39,7 +38,7 @@ def _validate_resource_list(resources: list[Any]) -> list[Any]:
             "invalid_input",
             "Kind resource entries must be objects",
         )
-    return resources
+    return cast(list[dict[str, Any]], resources)
 
 
 def _emit(data: Any, json_output: bool) -> None:
@@ -63,37 +62,12 @@ def _usage_error(message: str, json_output: bool) -> None:
     raise click.UsageError(message)
 
 
-def _read_input_text(source: str) -> str:
-    if source == "-":
-        text = sys.stdin.read()
-    else:
-        input_path = Path(source)
-        if not input_path.exists():
-            raise CliError(
-                "file_not_found",
-                f"Input file not found: {source}",
-                {"path": source},
-            )
-        try:
-            text = input_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as exc:
-            raise CliError(
-                "file_read_error",
-                f"Failed to read input file: {source}",
-                {"path": source, "error": str(exc)},
-            ) from exc
-
-    if not text.strip():
-        raise CliError(
-            "invalid_input",
-            "Kind input must include at least one resource object",
-        )
-
-    return text
-
-
-def _load_resource_input(source: str) -> list[Any]:
-    text = _read_input_text(source)
+def _load_resource_input(source: str) -> list[dict[str, Any]]:
+    text = read_input_text(
+        source,
+        empty_error_code="invalid_input",
+        empty_message="Kind input must include at least one resource object",
+    )
     try:
         return _as_resource_list(json.loads(text))
     except json.JSONDecodeError:
@@ -111,7 +85,7 @@ def _load_resource_input(source: str) -> list[Any]:
     if len(documents) == 1:
         return _as_resource_list(documents[0])
 
-    resources: list[Any] = []
+    resources: list[dict[str, Any]] = []
     for document in documents:
         resources.extend(_as_resource_list(document))
     return _validate_resource_list(resources)

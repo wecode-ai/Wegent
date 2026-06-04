@@ -3,7 +3,7 @@ from unittest.mock import Mock
 import pytest
 import requests
 
-from wegent.client import APIError, WegentClient
+from wegent.client import WegentClient
 from wegent.errors import EXIT_API_ERROR, EXIT_AUTH_ERROR, EXIT_NETWORK_ERROR, CliError
 
 
@@ -190,10 +190,6 @@ def test_request_returns_empty_dict_for_non_json_success():
     client = WegentClient(server="http://backend", session=session)
 
     assert client.request("GET", "/tasks/1") == {}
-
-
-def test_api_error_export_is_preserved_for_legacy_command_imports():
-    assert issubclass(APIError, Exception)
 
 
 def test_api_methods_use_expected_paths():
