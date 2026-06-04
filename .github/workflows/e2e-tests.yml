@@ -24,8 +24,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shardIndex: [1, 2, 3]
-        shardTotal: [3]
+        shardIndex: [1, 2, 3, 4]
+        shardTotal: [4]
 
     services:
       mysql:
@@ -330,6 +330,7 @@ jobs:
           MOCK_MODEL_SERVER_URL: http://localhost:9999
           E2E_LOCAL_CLAUDE_MODEL_SERVER_URL: http://localhost:9999
           E2E_DEVICE_ID: e2e-claudecode-device
+          E2E_SHARD_INDEX: ${{ matrix.shardIndex }}
           CI: true
         run: |
           npx playwright test --project=chromium --project=api \

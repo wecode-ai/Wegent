@@ -196,6 +196,20 @@ E2E tests run automatically in GitHub Actions:
 
 See [`.github/workflows/e2e-tests.yml`](../../.github/workflows/e2e-tests.yml) for configuration.
 
+### Sharded CI Users
+
+The CI workflow runs Playwright tests across multiple shards. Each shard uses an
+isolated E2E admin and regular user to reduce cross-shard data interference:
+
+- `E2E_SHARD_INDEX=1` uses `e2e-admin-shard-1` and `e2e-user-shard-1`
+- `E2E_SHARD_INDEX=2` uses `e2e-admin-shard-2` and `e2e-user-shard-2`
+- Local runs without `E2E_SHARD_INDEX` use `e2e-admin-local` and `e2e-user-local`
+
+`global-setup.ts` provisions these users with the bootstrap admin account, logs in
+through the backend API, and writes Playwright `storageState` for browser tests.
+Set `E2E_USE_ISOLATED_USERS=false` to fall back to the bootstrap admin user when
+debugging against an environment where creating users is not desirable.
+
 ## Troubleshooting
 
 ### Tests Timing Out
