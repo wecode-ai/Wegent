@@ -17,7 +17,11 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db, with_task_telemetry
 from app.core import security
 from app.core.config import settings
-from app.core.constants import CLIENT_ORIGIN_FRONTEND, SUPPORTED_CLIENT_ORIGINS
+from app.core.constants import (
+    CLIENT_ORIGIN_FRONTEND,
+    CLIENT_ORIGIN_WEWORK,
+    SUPPORTED_CLIENT_ORIGINS,
+)
 from app.db.session import get_async_db
 from app.models.user import User
 from app.schemas.remote_workspace import (
@@ -57,6 +61,9 @@ from app.schemas.task import (
 from app.services import prompt_draft_service
 from app.services.adapters.executor_job import job_service
 from app.services.adapters.task_kinds import task_kinds_service
+from app.services.adapters.wework_conversation_search import (
+    search_wework_conversation_tasks,
+)
 from app.services.chat.storage import session_manager
 from app.services.remote_workspace_service import remote_workspace_service
 from app.services.shared_task import shared_task_service
@@ -270,6 +277,29 @@ def search_tasks_by_title(
     skip = (page - 1) * limit
     items, total = task_kinds_service.get_user_tasks_by_title_with_pagination(
         db=db, user_id=current_user.id, title=title, skip=skip, limit=limit
+    )
+    return {"total": total, "items": items}
+
+
+@router.get("/wework/conversation-search", response_model=TaskListResponse)
+def search_wework_conversation_task_list(
+    keyword: str = Query(
+        ..., min_length=1, description="Search by task title or message keywords"
+    ),
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(10, ge=1, le=100, description="Items per page"),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Search WeWork conversations by title or conversation content."""
+    skip = (page - 1) * limit
+    items, total = search_wework_conversation_tasks(
+        db=db,
+        user_id=current_user.id,
+        keyword=keyword,
+        skip=skip,
+        limit=limit,
+        client_origin=CLIENT_ORIGIN_WEWORK,
     )
     return {"total": total, "items": items}
 

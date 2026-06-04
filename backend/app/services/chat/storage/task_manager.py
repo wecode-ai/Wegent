@@ -57,7 +57,7 @@ class TaskCreationParams:
         None  # Model type: 'public', 'user', 'group'
     )
     # Model selection options, such as reasoning or speed.
-    model_options: Optional[Dict[str, str]] = None
+    model_options: Optional[Dict[str, Any]] = None
     is_group_chat: bool = False
     git_url: Optional[str] = None
     git_repo: Optional[str] = None

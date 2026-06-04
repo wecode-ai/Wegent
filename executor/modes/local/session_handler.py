@@ -31,6 +31,7 @@ SESSION_IDLE_GRACE_SECONDS = 3
 SESSION_PORT_READY_TIMEOUT_SECONDS = 5.0
 SESSION_PORT_CONNECT_TIMEOUT_SECONDS = 0.2
 SESSION_PORT_RETRY_INTERVAL_SECONDS = 0.05
+SESSION_PROBE_QUERY_KEY = "__wegent_probe"
 
 SessionType = Literal["terminal", "code_server"]
 
@@ -95,11 +96,32 @@ class SessionGateway:
     async def _handle_request(self, request: web.Request) -> web.StreamResponse:
         session = self._resolve_session(request)
         if not session:
-            return web.Response(status=404, text="Session not found")
+            return self._session_error_response(
+                status=404,
+                message=(
+                    "This terminal or IDE session is no longer available. "
+                    "Return to Wegent and open it again from the workspace tools."
+                ),
+            )
         if not self._is_authorized(request, session):
-            return web.Response(status=401, text="Invalid session token")
+            return self._session_error_response(
+                status=401,
+                message=(
+                    "This session link is missing valid authorization. "
+                    "Return to Wegent and open the tool again."
+                ),
+            )
         if time.time() > session.expires_at:
-            return web.Response(status=410, text="Session expired")
+            return self._session_error_response(
+                status=410,
+                message=(
+                    "This terminal or IDE session has expired. "
+                    "Return to Wegent and open it again from the workspace tools."
+                ),
+            )
+
+        if request.query.get(SESSION_PROBE_QUERY_KEY) == "1":
+            return web.Response(status=204, headers=self._session_probe_headers())
 
         # On first authenticated request, set auth cookies and redirect to
         # the clean URL so the token does not remain visible in the address bar.
@@ -131,6 +153,19 @@ class SessionGateway:
         if not session_id:
             return None
         return self.sessions.get(session_id)
+
+    def _session_error_response(self, *, status: int, message: str) -> web.Response:
+        return web.Response(
+            status=status,
+            text=message,
+            content_type="text/plain",
+            headers=self._session_probe_headers(),
+        )
+
+    def _session_probe_headers(self) -> dict[str, str]:
+        return {
+            "Access-Control-Allow-Origin": "*",
+        }
 
     def _should_redirect_authenticated_request(
         self,
@@ -261,7 +296,7 @@ class SessionGateway:
         query_items = [
             (key, value)
             for key, value in parse_qsl(request.query_string, keep_blank_values=True)
-            if key not in {"token", "session_id"}
+            if key not in {"token", "session_id", SESSION_PROBE_QUERY_KEY}
         ]
         query = urlencode(query_items)
         suffix = f"{path}?{query}" if query else path

@@ -43,9 +43,21 @@ import re
 from pathlib import Path
 
 FRONTMATTER_PATTERN = re.compile(r"^---\\n(.*?)\\n---", re.S)
-ROOTS = (
-    (Path.home() / ".claude" / "skills", "claude"),
-    (Path.home() / ".codex" / "skills", "codex"),
+SKILL_SOURCES = (
+    (Path.home() / ".claude" / "skills", "claude", "**/SKILL.md", "skill"),
+    (Path.home() / ".codex" / "skills", "codex", "**/SKILL.md", "skill"),
+    (
+        Path.home() / ".claude" / "plugins" / "cache",
+        "claude-plugin",
+        "**/skills/**/SKILL.md",
+        "plugin",
+    ),
+    (
+        Path.home() / ".codex" / "plugins" / "cache",
+        "codex-plugin",
+        "**/skills/**/SKILL.md",
+        "plugin",
+    ),
 )
 
 
@@ -53,6 +65,13 @@ def read_frontmatter(path):
     text = path.read_text(encoding="utf-8", errors="replace")
     match = FRONTMATTER_PATTERN.match(text)
     return match.group(1) if match else ""
+
+
+def read_json_file(path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
 
 
 def line_indent(line):
@@ -117,32 +136,64 @@ def nested_metadata_field(frontmatter, field_name):
     return None
 
 
-def skill_metadata(skill_file, source):
+def plugin_info(skill_file):
+    parts = skill_file.parts
+    try:
+        cache_index = parts.index("cache")
+        skills_index = parts.index("skills", cache_index + 1)
+    except ValueError:
+        return None, None
+    if skills_index <= cache_index + 2:
+        return None, None
+    marketplace = parts[cache_index + 1]
+    plugin_name = parts[cache_index + 2]
+    return plugin_name, f"{plugin_name}@{marketplace}"
+
+
+def is_managed(record):
+    return isinstance(record, dict) and record.get("managed", True) is not False
+
+
+def skill_origin(name, plugin_key, manifest):
+    if plugin_key:
+        return "wegent" if is_managed(manifest.get("plugins", {}).get(plugin_key)) else "local"
+    return "wegent" if is_managed(manifest.get("skills", {}).get(name)) else "local"
+
+
+def skill_metadata(skill_file, source, source_kind, manifest):
     stat = skill_file.stat()
     frontmatter = read_frontmatter(skill_file)
     name = frontmatter_field(frontmatter, "name") or skill_file.parent.name
-    return {
+    plugin_name, plugin_key = (
+        plugin_info(skill_file) if source_kind == "plugin" else (None, None)
+    )
+    metadata = {
         "name": name,
         "description": frontmatter_field(frontmatter, "description") or "",
         "short_description": nested_metadata_field(frontmatter, "short-description")
         or frontmatter_field(frontmatter, "short-description"),
         "path": str(skill_file),
         "source": source,
+        "origin": skill_origin(name, plugin_key, manifest),
         "mtime": stat.st_mtime,
     }
+    if plugin_name:
+        metadata["plugin_name"] = plugin_name
+    return metadata
 
 
+manifest = read_json_file(Path.home() / ".wegent-executor" / "capabilities.json")
 skills = []
 seen_paths = set()
-for root, source in ROOTS:
+for root, source, pattern, source_kind in SKILL_SOURCES:
     if not root.is_dir():
         continue
-    for skill_file in sorted(root.glob("**/SKILL.md")):
+    for skill_file in sorted(root.glob(pattern)):
         key = str(skill_file)
         if key in seen_paths:
             continue
         try:
-            skills.append(skill_metadata(skill_file, source))
+            skills.append(skill_metadata(skill_file, source, source_kind, manifest))
             seen_paths.add(key)
         except OSError:
             continue
@@ -171,8 +222,14 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
         command="ls -a -p",
         post_processor="directory_list",
     ),
+    "mkdir_p": LocalDeviceCommandDefinition(command="mkdir -p"),
     "git_clone": LocalDeviceCommandDefinition(command="git clone"),
     "git_branch": LocalDeviceCommandDefinition(command="git branch --show-current"),
+    "git_branch_list": LocalDeviceCommandDefinition(
+        command="git branch --format=%(refname:short)"
+    ),
+    "git_checkout": LocalDeviceCommandDefinition(command="git checkout"),
+    "git_checkout_new": LocalDeviceCommandDefinition(command="git checkout -b"),
     "git_diff_shortstat": LocalDeviceCommandDefinition(command="git diff --shortstat"),
     "git_branch_diff_shortstat": LocalDeviceCommandDefinition(
         command=GIT_BRANCH_DIFF_SHORTSTAT_COMMAND

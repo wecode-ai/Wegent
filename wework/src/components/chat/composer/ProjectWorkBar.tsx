@@ -208,7 +208,7 @@ export function ProjectWorkBar({
                       <span className="min-w-0 flex-1 truncate">
                         {device.name || device.device_id}
                       </span>
-                      <span className={online ? 'text-primary' : 'text-text-muted'}>
+                      <span className={online ? 'text-text-secondary' : 'text-text-muted'}>
                         {getDeviceStatusLabel(device)}
                       </span>
                       {selected && online && (

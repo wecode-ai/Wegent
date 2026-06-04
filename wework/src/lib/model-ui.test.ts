@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import {
   areModelsProtocolCompatible,
   getModelCompatibilityFamily,
+  getControlsForModel,
   groupModelsByFamily,
   inferModelFamily,
   isSupportedModelFamily,
@@ -188,5 +189,26 @@ describe('model-ui', () => {
     expect(getModelCompatibilityFamily(claudeCompatibleKimi)).toBe('claude.claude')
     expect(areModelsProtocolCompatible(claudeCompatibleKimi, gptModel)).toBe(false)
     expect(areModelsProtocolCompatible(gptModel, unknownKimi)).toBe(false)
+  })
+
+  test('enables model-scoped speed control from object-shaped ui controls', () => {
+    const model: UnifiedModel = {
+      name: 'overseas-gpt-5.5',
+      type: 'user',
+      displayName: '海外:gpt-5.5',
+      config: {
+        ui: {
+          family: 'gpt',
+          controls: {
+            speed: true,
+          },
+        },
+      },
+    }
+
+    expect(getControlsForModel(model).map(control => control.id)).toEqual([
+      'reasoning',
+      'speed',
+    ])
   })
 })

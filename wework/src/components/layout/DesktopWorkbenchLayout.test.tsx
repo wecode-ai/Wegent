@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { createDeviceApi } from '@/api/devices'
@@ -59,6 +59,7 @@ describe('DesktopWorkbenchLayout', () => {
         writeText: vi.fn().mockResolvedValue(undefined),
       },
     })
+    Element.prototype.scrollIntoView = vi.fn()
     fetchQuotaMock.mockResolvedValue({
       quota: 748,
       usage: 747.74,
@@ -168,6 +169,7 @@ describe('DesktopWorkbenchLayout', () => {
     onSelectProject: vi.fn(),
     onStartNewProjectChat: vi.fn(),
     onOpenTask: vi.fn(),
+    onSearchTaskDetail: vi.fn(),
     onCreateProject: vi.fn(),
     onUpdateProjectName: vi.fn(),
     onRemoveProject: vi.fn(),
@@ -183,6 +185,7 @@ describe('DesktopWorkbenchLayout', () => {
     onGetDeviceHomeDirectory: vi.fn().mockResolvedValue('/home/ubuntu'),
     onGetProjectWorkspaceRoot: vi.fn().mockResolvedValue('/workspace/projects'),
     onListDeviceDirectories: vi.fn(),
+    onCreateDeviceDirectory: vi.fn(),
     onLoadEnvironmentInfo: vi.fn().mockResolvedValue({
       additions: '+173',
       deletions: '-13366',
@@ -193,6 +196,13 @@ describe('DesktopWorkbenchLayout', () => {
         'https://github.com/wecode-ai/Wegent/compare/human%2Fnarwhal-20260528-073440?expand=1',
     }),
     onCommitEnvironmentChanges: vi.fn().mockResolvedValue(undefined),
+    onListEnvironmentBranches: vi.fn().mockResolvedValue([
+      'main',
+      'human/chipmunk-20260603-053420',
+      'human/narwhal-20260528-073440',
+    ]),
+    onCheckoutEnvironmentBranch: vi.fn().mockResolvedValue(undefined),
+    onCreateEnvironmentBranch: vi.fn().mockResolvedValue(undefined),
     onInputChange: vi.fn(),
     onSend: vi.fn(),
     onLogout: vi.fn(),
@@ -281,7 +291,14 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass(
       'h-full',
       'overflow-y-auto',
-      'pb-40',
+      'pb-52',
+    )
+    expect(screen.getByTestId('desktop-floating-composer-backdrop')).toHaveClass(
+      'pointer-events-none',
+      'absolute',
+      'bottom-0',
+      'z-40',
+      'from-background',
     )
     expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass(
       'pointer-events-none',
@@ -295,6 +312,45 @@ describe('DesktopWorkbenchLayout', () => {
       'pointer-events-auto',
     )
     expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
+  })
+
+  test('positions the scroll-to-bottom button above the floating composer', () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'assistant',
+            content: 'Long reply',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+          },
+        ]}
+      />,
+    )
+
+    const scroller = screen.getByTestId('desktop-chat-scroll')
+    Object.defineProperty(scroller, 'clientHeight', {
+      value: 200,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 600,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 0,
+      writable: true,
+      configurable: true,
+    })
+
+    fireEvent.scroll(scroller)
+
+    expect(screen.getByTestId('scroll-to-bottom-button')).toHaveClass(
+      'bottom-36',
+      'z-[60]',
+    )
   })
 
   test('reserves extra bottom space when queued messages are shown above the composer', () => {
@@ -322,8 +378,8 @@ describe('DesktopWorkbenchLayout', () => {
       />,
     )
 
-    expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass('pb-56')
-    expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass('pb-40')
+    expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass('pb-72')
+    expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass('pb-52')
   })
 
   test('restores and stores sidebar width in localStorage', () => {
@@ -364,6 +420,253 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByText('新对话')).toBeInTheDocument()
     expect(document.querySelector('aside')).toBeInTheDocument()
+  })
+
+  test('opens and filters the desktop search dialog from the sidebar', async () => {
+    const onOpenTask = vi.fn()
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onOpenTask={onOpenTask}
+        state={{
+          ...baseProps.state,
+          projects: [
+            {
+              id: 9,
+              name: 'New project 5',
+              tasks: [
+                {
+                  id: 90,
+                  task_id: 90,
+                  task_title: '创建OKR系统',
+                  task_status: 'COMPLETED',
+                  updated_at: '2026-05-31T10:00:00.000Z',
+                },
+              ],
+            },
+          ],
+          recentTasks: [
+            {
+              id: 91,
+              title: '修复 git pull 失败',
+              status: 'COMPLETED',
+              task_type: 'code',
+              created_at: '2026-05-30T00:00:00.000Z',
+              updated_at: '2026-05-30T08:30:00.000Z',
+            },
+          ],
+        }}
+      />,
+    )
+
+    expect(screen.queryByTestId('desktop-search-dialog')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('search-button'))
+
+    const dialog = screen.getByTestId('desktop-search-dialog')
+    expect(dialog).toBeInTheDocument()
+    expect(screen.getByTestId('desktop-search-input')).toHaveFocus()
+    expect(within(dialog).getByText('近期对话')).toBeInTheDocument()
+    expect(within(dialog).getByText('创建OKR系统')).toBeInTheDocument()
+    expect(within(dialog).getByText('New project 5')).toBeInTheDocument()
+    expect(within(dialog).getByText('修复 git pull 失败')).toBeInTheDocument()
+    expect(within(dialog).queryByText('#1')).not.toBeInTheDocument()
+
+    await userEvent.type(screen.getByTestId('desktop-search-input'), 'okr')
+
+    expect(within(dialog).getByText('创建OKR系统')).toBeInTheDocument()
+    expect(within(dialog).queryByText('修复 git pull 失败')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('desktop-search-result-90'))
+
+    expect(onOpenTask).toHaveBeenCalledWith(90, 9)
+    expect(screen.queryByTestId('desktop-search-dialog')).not.toBeInTheDocument()
+  })
+
+  test('searches inside conversation messages from task details', async () => {
+    const onOpenTask = vi.fn()
+    const onSearchTaskDetail = vi.fn().mockImplementation(async (taskId: number) => ({
+      id: taskId,
+      title: 'hi',
+      status: 'COMPLETED',
+      task_type: 'code',
+      created_at: '2026-05-30T00:00:00.000Z',
+      updated_at: '2026-05-30T08:30:00.000Z',
+      subtasks: [
+        {
+          id: 101,
+          task_id: taskId,
+          role: 'assistant',
+          status: 'COMPLETED',
+          result: { value: '这是关于胡云鹏的回复内容' },
+          created_at: '2026-05-30T08:31:00.000Z',
+        },
+      ],
+    }))
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onOpenTask={onOpenTask}
+        onSearchTaskDetail={onSearchTaskDetail}
+        state={{
+          ...baseProps.state,
+          recentTasks: [
+            {
+              id: 91,
+              title: 'hi',
+              status: 'COMPLETED',
+              task_type: 'code',
+              created_at: '2026-05-30T00:00:00.000Z',
+              updated_at: '2026-05-30T08:30:00.000Z',
+            },
+          ],
+        }}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('search-button'))
+    await userEvent.type(screen.getByTestId('desktop-search-input'), '胡云鹏')
+
+    const dialog = screen.getByTestId('desktop-search-dialog')
+    expect(await within(dialog).findByText('hi')).toBeInTheDocument()
+    expect(onSearchTaskDetail).toHaveBeenCalledWith(91)
+
+    await userEvent.click(screen.getByTestId('desktop-search-result-91'))
+
+    expect(onOpenTask).toHaveBeenCalledWith(91, 0)
+  })
+
+  test('searches remote conversation content beyond loaded sidebar tasks', async () => {
+    const onOpenTask = vi.fn()
+    const onSearchTasks = vi.fn().mockResolvedValue({
+      total: 1,
+      items: [
+        {
+          id: 92,
+          title: 'hi',
+          status: 'COMPLETED',
+          task_type: 'code',
+          project_id: 9,
+          created_at: '2026-05-30T00:00:00.000Z',
+          updated_at: '2026-05-30T08:30:00.000Z',
+        },
+      ],
+    })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onOpenTask={onOpenTask}
+        onSearchTasks={onSearchTasks}
+        state={{
+          ...baseProps.state,
+          projects: [
+            {
+              id: 9,
+              name: '文档',
+              tasks: [],
+            },
+          ],
+          recentTasks: [],
+        }}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('search-button'))
+    await userEvent.type(screen.getByTestId('desktop-search-input'), '胡云鹏')
+
+    const dialog = screen.getByTestId('desktop-search-dialog')
+    expect(await within(dialog).findByText('hi')).toBeInTheDocument()
+    expect(within(dialog).getByText('文档')).toBeInTheDocument()
+    expect(onSearchTasks).toHaveBeenCalledWith('胡云鹏')
+
+    await userEvent.click(screen.getByTestId('desktop-search-result-92'))
+
+    expect(onOpenTask).toHaveBeenCalledWith(92, 9)
+  })
+
+  test('does not load local task details when remote search is available', async () => {
+    const onSearchTasks = vi.fn().mockResolvedValue({ total: 0, items: [] })
+    const onSearchTaskDetail = vi.fn().mockResolvedValue({ subtasks: [] })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onSearchTasks={onSearchTasks}
+        onSearchTaskDetail={onSearchTaskDetail}
+        state={{
+          ...baseProps.state,
+          recentTasks: [
+            {
+              id: 91,
+              title: 'hi',
+              status: 'COMPLETED',
+              task_type: 'code',
+              created_at: '2026-05-30T00:00:00.000Z',
+              updated_at: '2026-05-30T08:30:00.000Z',
+            },
+          ],
+        }}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('search-button'))
+    await userEvent.type(screen.getByTestId('desktop-search-input'), 'ubuntu')
+
+    await waitFor(() => expect(onSearchTasks).toHaveBeenCalledWith('ubuntu'))
+
+    expect(onSearchTaskDetail).not.toHaveBeenCalled()
+  })
+
+  test('expands and scrolls to the current project task after opening from search', async () => {
+    const projectTasks = Array.from({ length: 7 }, (_, index) => ({
+      id: 900 + index,
+      task_id: 900 + index,
+      task_title: `项目会话 ${index + 1}`,
+      task_status: 'COMPLETED',
+      created_at: `2026-05-30T0${index}:00:00.000Z`,
+      updated_at: `2026-05-30T0${index}:30:00.000Z`,
+    }))
+    const selectedTask = projectTasks[6]
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          projects: [
+            {
+              id: 9,
+              name: '文档',
+              tasks: projectTasks,
+            },
+          ],
+          currentProject: {
+            id: 9,
+            name: '文档',
+            tasks: projectTasks,
+          },
+          currentTask: {
+            id: selectedTask.task_id,
+            title: selectedTask.task_title,
+            status: 'COMPLETED',
+            task_type: 'code',
+            project_id: 9,
+            created_at: selectedTask.created_at,
+            updated_at: selectedTask.updated_at,
+          },
+        }}
+      />,
+    )
+
+    const selectedRow = await screen.findByTestId(
+      `project-chat-row-${selectedTask.task_id}`,
+    )
+
+    expect(selectedRow).toHaveTextContent('项目会话 7')
+    expect(selectedRow).toHaveClass('bg-[rgb(var(--color-sidebar-active))]')
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled()
   })
 
   test('opens the settings menu from the sidebar', async () => {
@@ -672,8 +975,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('confirm-rename-project-button'))
     expect(baseProps.onUpdateProjectName).toHaveBeenCalledWith(1, 'publish-v2')
 
-    await userEvent.click(screen.getByTestId('project-item-button'))
-    expect(screen.getByText('Implement archive')).toBeInTheDocument()
+    expect(await screen.findByText('Implement archive')).toBeInTheDocument()
     expect(screen.getByText('2h')).toBeInTheDocument()
     expect(screen.getByTestId('project-chat-time-11')).toHaveClass(
       'group-hover/task:opacity-0',
@@ -1046,9 +1348,11 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
     expect(screen.getByTestId('environment-info-popover')).toHaveClass(
       'w-[340px]',
-      'bg-popover',
+      'bg-[#fcfcfc]',
       'text-text-primary',
       'border-border',
+      'backdrop-blur-3xl',
+      'backdrop-saturate-150',
     )
     expect(screen.getByText('环境信息')).toBeInTheDocument()
     expect(screen.getByText('变更')).toBeInTheDocument()
@@ -1121,6 +1425,109 @@ describe('DesktopWorkbenchLayout', () => {
       ),
     )
     expect(screen.getByText('已提交')).toBeInTheDocument()
+  })
+
+  test('switches and creates branches from the environment popover', async () => {
+    const onListEnvironmentBranches = vi.fn().mockResolvedValue([
+      'main',
+      'human/chipmunk-20260603-053420',
+      'human/alpaca-20260603-050330',
+    ])
+    const onCheckoutEnvironmentBranch = vi.fn().mockResolvedValue(undefined)
+    const onCreateEnvironmentBranch = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onListEnvironmentBranches={onListEnvironmentBranches}
+        onCheckoutEnvironmentBranch={onCheckoutEnvironmentBranch}
+        onCreateEnvironmentBranch={onCreateEnvironmentBranch}
+        state={{
+          ...baseProps.state,
+          currentProject: {
+            id: 1,
+            name: 'github_wegent',
+            tasks: [],
+            config: {
+              mode: 'workspace',
+              execution: {
+                targetType: 'local',
+                deviceId: 'device-1',
+              },
+              workspace: {
+                source: 'local_path',
+                localPath: '/workspace/github_wegent',
+              },
+            },
+          },
+        }}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+    await userEvent.click(screen.getByTestId('environment-branch-row'))
+
+    expect(await screen.findByTestId('environment-branch-menu')).toBeInTheDocument()
+    await waitFor(() => expect(onListEnvironmentBranches).toHaveBeenCalledTimes(1))
+    expect(screen.getByText('main')).toBeInTheDocument()
+    expect(screen.getByText('human/chipmunk-20260603-053420')).toBeInTheDocument()
+
+    await userEvent.type(screen.getByTestId('environment-branch-search-input'), 'alp')
+    expect(screen.getByText('human/alpaca-20260603-050330')).toBeInTheDocument()
+    expect(screen.queryByText('human/chipmunk-20260603-053420')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByText('human/alpaca-20260603-050330'))
+    await waitFor(() =>
+      expect(onCheckoutEnvironmentBranch).toHaveBeenCalledWith(
+        expect.anything(),
+        'human/alpaca-20260603-050330',
+      ),
+    )
+
+    await userEvent.click(screen.getByTestId('environment-branch-row'))
+    await userEvent.click(await screen.findByTestId('environment-open-new-branch-button'))
+    await userEvent.type(screen.getByTestId('environment-new-branch-input'), 'human/new-branch')
+    await userEvent.click(screen.getByTestId('environment-confirm-new-branch-button'))
+
+    await waitFor(() =>
+      expect(onCreateEnvironmentBranch).toHaveBeenCalledWith(
+        expect.anything(),
+        'human/new-branch',
+      ),
+    )
+  })
+
+  test('does not reopen the branch menu when the environment popover is reopened', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+    await userEvent.click(screen.getByTestId('environment-branch-row'))
+
+    expect(await screen.findByTestId('environment-branch-menu')).toBeInTheDocument()
+
+    await userEvent.click(document.body)
+    expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+
+    expect(await screen.findByTestId('environment-info-popover')).toBeInTheDocument()
+    expect(screen.queryByTestId('environment-branch-menu')).not.toBeInTheDocument()
+  })
+
+  test('closes the branch menu when Escape is pressed', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+    await userEvent.click(screen.getByTestId('environment-branch-row'))
+
+    expect(await screen.findByTestId('environment-branch-menu')).toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('environment-branch-menu')).not.toBeInTheDocument(),
+    )
+    expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
   })
 
   test('loads environment info from the first workspace project when the popover opens', async () => {

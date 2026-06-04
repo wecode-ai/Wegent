@@ -15,6 +15,11 @@ interface RecentTaskParams {
   page?: number
 }
 
+interface SearchTaskParams {
+  limit?: number
+  page?: number
+}
+
 export function createTaskApi(client: HttpClient) {
   return {
     listRecentTasks(params: RecentTaskParams): Promise<TaskListResponse> {
@@ -24,6 +29,13 @@ export function createTaskApi(client: HttpClient) {
       query.set('types', 'online,offline')
       query.set('client_origin', WEWORK_CLIENT_ORIGIN)
       return client.get(`/tasks/lite/personal?${query.toString()}`)
+    },
+    searchTasks(keyword: string, params: SearchTaskParams = {}): Promise<TaskListResponse> {
+      const query = new URLSearchParams()
+      query.set('keyword', keyword)
+      query.set('page', String(params.page ?? 1))
+      query.set('limit', String(params.limit ?? 20))
+      return client.get(`/tasks/wework/conversation-search?${query.toString()}`)
     },
     getTaskDetail(taskId: number): Promise<TaskDetail> {
       return client.get(`/tasks/${taskId}?client_origin=${WEWORK_CLIENT_ORIGIN}`)

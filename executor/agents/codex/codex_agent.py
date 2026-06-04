@@ -200,8 +200,6 @@ class CodeXAgent(Agent):
         await self._codex.__aenter__()
 
     async def _open_thread(self) -> None:
-        from openai_codex import ApprovalMode
-
         assert self.codex_config is not None
         thread_id = self._session_store.load(
             self.task_id,
@@ -209,27 +207,16 @@ class CodeXAgent(Agent):
             self.new_session,
         )
         developer_instructions = self._build_developer_instructions()
+        thread_kwargs = self._build_thread_kwargs(developer_instructions)
         try:
             if thread_id:
                 self._thread = await self._codex.thread_resume(
                     thread_id,
-                    approval_mode=ApprovalMode.deny_all,
-                    config=self.codex_config.thread_config,
-                    cwd=self.project_path,
-                    developer_instructions=developer_instructions,
-                    model=self.codex_config.model,
-                    model_provider=self.codex_config.model_provider,
-                    sandbox=self._sandbox_full_access(),
+                    **thread_kwargs,
                 )
             else:
                 self._thread = await self._codex.thread_start(
-                    approval_mode=ApprovalMode.deny_all,
-                    config=self.codex_config.thread_config,
-                    cwd=self.project_path,
-                    developer_instructions=developer_instructions,
-                    model=self.codex_config.model,
-                    model_provider=self.codex_config.model_provider,
-                    sandbox=self._sandbox_full_access(),
+                    **thread_kwargs,
                     service_name="wegent",
                 )
         except Exception:
@@ -239,16 +226,26 @@ class CodeXAgent(Agent):
                 "Failed to resume Codex thread %s, starting a new one", thread_id
             )
             self._thread = await self._codex.thread_start(
-                approval_mode=ApprovalMode.deny_all,
-                config=self.codex_config.thread_config,
-                cwd=self.project_path,
-                developer_instructions=developer_instructions,
-                model=self.codex_config.model,
-                model_provider=self.codex_config.model_provider,
-                sandbox=self._sandbox_full_access(),
+                **thread_kwargs,
                 service_name="wegent",
             )
         self._session_store.save(self.task_id, self._bot_id, self._thread.id)
+
+    def _build_thread_kwargs(self, developer_instructions: str) -> dict[str, Any]:
+        from openai_codex import ApprovalMode
+
+        assert self.codex_config is not None
+        kwargs = {
+            "approval_mode": ApprovalMode.deny_all,
+            "config": self.codex_config.thread_config,
+            "cwd": self.project_path,
+            "developer_instructions": developer_instructions,
+            "model": self.codex_config.model,
+            "sandbox": self._sandbox_full_access(),
+        }
+        if self.codex_config.model_provider:
+            kwargs["model_provider"] = self.codex_config.model_provider
+        return kwargs
 
     async def _notify_client_created(self) -> None:
         if not self.on_client_created_callback:

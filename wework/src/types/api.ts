@@ -122,7 +122,7 @@ export interface Task {
   is_group_chat?: boolean
   model_id?: string | null
   force_override_bot_model_type?: ModelType | null
-  model_options?: Record<string, string> | null
+  model_options?: Record<string, unknown> | null
   requested_skills?: SkillRef[]
 }
 
@@ -176,6 +176,8 @@ export interface LocalDeviceSkill {
   short_description?: string | null
   path: string
   source: 'claude' | 'codex' | string
+  origin?: 'local' | 'wegent' | string
+  plugin_name?: string | null
   mtime?: number
 }
 

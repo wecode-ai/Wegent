@@ -21,6 +21,8 @@ export function WorkbenchPage() {
     startStandaloneChat,
     startNewProjectChat,
     openTask,
+    searchTasks,
+    searchTaskDetail,
     rememberExecutionDevice,
     refreshDevices,
     createProject,
@@ -38,8 +40,12 @@ export function WorkbenchPage() {
     getDeviceHomeDirectory,
     getProjectWorkspaceRoot,
     listDeviceDirectories,
+    createDeviceDirectory,
     loadEnvironmentInfo,
     commitEnvironmentChanges,
+    listEnvironmentBranches,
+    checkoutEnvironmentBranch,
+    createEnvironmentBranch,
     setInput,
     sendCurrentInput,
     pauseCurrentResponse,
@@ -74,6 +80,8 @@ export function WorkbenchPage() {
       onSelectProject={selectProject}
       onStartNewProjectChat={startNewProjectChat}
       onOpenTask={openTask}
+      onSearchTasks={searchTasks}
+      onSearchTaskDetail={searchTaskDetail}
       onRememberExecutionDevice={rememberExecutionDevice}
       onRefreshDevices={refreshDevices}
       onCreateProject={createProject}
@@ -91,8 +99,12 @@ export function WorkbenchPage() {
       onGetDeviceHomeDirectory={getDeviceHomeDirectory}
       onGetProjectWorkspaceRoot={getProjectWorkspaceRoot}
       onListDeviceDirectories={listDeviceDirectories}
+      onCreateDeviceDirectory={createDeviceDirectory}
       onLoadEnvironmentInfo={loadEnvironmentInfo}
       onCommitEnvironmentChanges={commitEnvironmentChanges}
+      onListEnvironmentBranches={listEnvironmentBranches}
+      onCheckoutEnvironmentBranch={checkoutEnvironmentBranch}
+      onCreateEnvironmentBranch={createEnvironmentBranch}
       onInputChange={setInput}
       onSend={sendCurrentInput}
       isResponseStreaming={isResponseStreaming}

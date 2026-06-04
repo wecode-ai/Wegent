@@ -68,7 +68,35 @@ function displaySkillNameFromName(name: string): string {
 }
 
 function displaySkillName(skill: LocalDeviceSkill): string {
+  if (skill.plugin_name && skill.source.includes('plugin')) {
+    return `${displaySkillNameFromName(skill.plugin_name)}: ${displaySkillNameFromName(skill.name)}`
+  }
   return displaySkillNameFromName(skill.name)
+}
+
+function isPluginSkill(skill: LocalDeviceSkill): boolean {
+  return Boolean(skill.plugin_name && skill.source.includes('plugin'))
+}
+
+function compareSkillDisplayName(
+  left: LocalDeviceSkill,
+  right: LocalDeviceSkill,
+): number {
+  const leftName = displaySkillName(left).toLowerCase()
+  const rightName = displaySkillName(right).toLowerCase()
+  const nameResult = leftName.localeCompare(rightName)
+  if (nameResult !== 0) return nameResult
+
+  return left.path.localeCompare(right.path)
+}
+
+function displaySkillOrigin(
+  skill: LocalDeviceSkill,
+  t: (key: string) => string,
+): string {
+  return skill.origin === 'wegent'
+    ? t('workbench.local_skill_origin_wegent')
+    : t('workbench.local_skill_origin_local')
 }
 
 function localSkillTestId(name: string): string {
@@ -95,19 +123,57 @@ function parseSkillMentions(value: string): SkillMention[] {
   })
 }
 
-function findSkillMentionBeforeCursor(
+interface SkillMentionDeletionRange {
+  start: number
+  end: number
+  cursor: number
+}
+
+function findExpandedSelectionDeletionRange(
+  selectionStart: number,
+  selectionEnd: number,
+  mentions: SkillMention[],
+): SkillMentionDeletionRange | null {
+  if (selectionStart === selectionEnd) return null
+
+  let start = Math.min(selectionStart, selectionEnd)
+  let end = Math.max(selectionStart, selectionEnd)
+  let intersectsSkillMention = false
+
+  for (const mention of mentions) {
+    if (mention.end <= start || mention.start >= end) continue
+    intersectsSkillMention = true
+    start = Math.min(start, mention.start)
+    end = Math.max(end, mention.end)
+  }
+
+  return intersectsSkillMention ? { start, end, cursor: start } : null
+}
+
+function findBackspaceSkillMentionDeletionRange(
+  cursor: number,
+  mentions: SkillMention[],
+): SkillMentionDeletionRange | null {
+  for (const mention of mentions) {
+    if (cursor > mention.start && cursor <= mention.end) {
+      return { start: mention.start, end: mention.end, cursor: mention.start }
+    }
+  }
+
+  return null
+}
+
+function findDeleteSkillMentionDeletionRange(
   value: string,
   cursor: number,
   mentions: SkillMention[],
-): { start: number; end: number } | null {
-  const mention = mentions.find(item => {
-    if (item.end === cursor) return true
-    return cursor > item.end && value.slice(item.end, cursor) === ' '
-  })
-
-  if (mention) return { start: mention.start, end: cursor }
-
-  return null
+): SkillMentionDeletionRange | null {
+  const mention = mentions.find(item => cursor >= item.start && cursor < item.end)
+  const end =
+    mention && /\s/.test(value[mention.end] ?? '') ? mention.end + 1 : mention?.end
+  return mention
+    ? { start: mention.start, end: end ?? mention.end, cursor: mention.start }
+    : null
 }
 
 function renderCaret(key: string) {
@@ -161,9 +227,9 @@ function renderTextWithSkillMentions(
       <span
         key={mention.id}
         data-testid={`local-skill-chip-${localSkillTestId(mention.name)}`}
-        className="inline-flex h-6 max-w-full items-center gap-1.5 rounded-md border border-[#E6D5AF] bg-[#FFF8EA] px-2 align-middle text-xs font-medium text-[#6F4D13]"
+        className="inline-flex max-w-full items-baseline gap-1 align-baseline text-[inherit] font-medium leading-[inherit] text-blue-600"
       >
-        <Package className="h-3.5 w-3.5 shrink-0" />
+        <Package className="h-[0.9em] w-[0.9em] shrink-0 translate-y-[0.08em]" />
         <span className="truncate">{mention.label}</span>
       </span>,
     )
@@ -229,16 +295,18 @@ export function ComposerTextarea({
 
   const filteredSkills = useMemo(() => {
     const query = trigger?.query.trim().toLowerCase() ?? ''
-    if (!query) return skills
+    const matchingSkills = query
+      ? skills.filter(skill => {
+          const description = skill.short_description || skill.description || ''
+          return (
+            skill.name.toLowerCase().includes(query) ||
+            displaySkillName(skill).toLowerCase().includes(query) ||
+            description.toLowerCase().includes(query)
+          )
+        })
+      : skills
 
-    return skills.filter(skill => {
-      const description = skill.short_description || skill.description || ''
-      return (
-        skill.name.toLowerCase().includes(query) ||
-        displaySkillName(skill).toLowerCase().includes(query) ||
-        description.toLowerCase().includes(query)
-      )
-    })
+    return [...matchingSkills].sort(compareSkillDisplayName)
   }, [skills, trigger?.query])
 
   const showSkillMenu = trigger !== null && Boolean(onListLocalSkills)
@@ -300,7 +368,7 @@ export function ComposerTextarea({
             return null
           })
           .filter((mention): mention is SkillMention =>
-            Boolean(mention && nextValue.slice(mention.start, mention.end) === mention.label),
+            Boolean(mention && nextValue.slice(mention.start, mention.end) === mention.reference),
           ),
       )
       onChange(nextValue)
@@ -432,23 +500,42 @@ export function ComposerTextarea({
   )
 
   const handleKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = event => {
-    if (
-      event.key === 'Backspace' &&
-      event.currentTarget.selectionStart === event.currentTarget.selectionEnd
-    ) {
-      const mention = findSkillMentionBeforeCursor(
-        value,
-        event.currentTarget.selectionStart,
-        validSkillMentions,
-      )
-      if (mention) {
+    if (event.key === 'Backspace' || event.key === 'Delete') {
+      const selectionStart = event.currentTarget.selectionStart
+      const selectionEnd = event.currentTarget.selectionEnd
+      const deletionRange =
+        findExpandedSelectionDeletionRange(
+          selectionStart,
+          selectionEnd,
+          validSkillMentions,
+        ) ??
+        (selectionStart === selectionEnd && event.key === 'Backspace'
+          ? findBackspaceSkillMentionDeletionRange(
+              selectionStart,
+              validSkillMentions,
+            )
+          : null) ??
+        (selectionStart === selectionEnd && event.key === 'Delete'
+          ? findDeleteSkillMentionDeletionRange(
+              value,
+              selectionStart,
+              validSkillMentions,
+            )
+          : null)
+
+      if (deletionRange) {
         event.preventDefault()
-        const nextValue = value.slice(0, mention.start) + value.slice(mention.end)
+        const nextValue =
+          value.slice(0, deletionRange.start) + value.slice(deletionRange.end)
         handleValueChange(nextValue)
         window.requestAnimationFrame(() => {
           const textarea = textareaRef.current
-          textarea?.setSelectionRange(mention.start, mention.start)
-          setSelection({ start: mention.start, end: mention.start, focused: true })
+          textarea?.setSelectionRange(deletionRange.cursor, deletionRange.cursor)
+          setSelection({
+            start: deletionRange.cursor,
+            end: deletionRange.cursor,
+            focused: true,
+          })
         })
         return
       }
@@ -586,35 +673,41 @@ export function ComposerTextarea({
               {t('workbench.no_local_skills')}
             </div>
           ) : (
-            filteredSkills.map((skill, index) => (
-              <button
-                key={`${skill.source}:${skill.path}`}
-                type="button"
-                data-testid={`local-skill-option-${skill.name}`}
-                aria-selected={index === selectedIndex}
-                role="option"
-                onMouseEnter={() => setSelectedIndex(index)}
-                onPointerEnter={() => setSelectedIndex(index)}
-                onClick={() => selectSkill(skill)}
-                className={[
-                  'flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2 text-left',
-                  index === selectedIndex ? 'bg-muted' : '',
-                ].join(' ')}
-              >
-                <Sparkles className="h-4 w-4 shrink-0 text-primary" />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium text-text-primary">
-                    {displaySkillName(skill)}
-                  </span>
-                  {(skill.short_description || skill.description) && (
-                    <span className="line-clamp-1 text-xs text-text-muted">
-                      {skill.short_description || skill.description}
+            filteredSkills.map((skill, index) => {
+              const SkillIcon = isPluginSkill(skill) ? Package : Sparkles
+
+              return (
+                <button
+                  key={`${skill.source}:${skill.path}`}
+                  type="button"
+                  data-testid={`local-skill-option-${skill.name}`}
+                  aria-selected={index === selectedIndex}
+                  role="option"
+                  onMouseEnter={() => setSelectedIndex(index)}
+                  onPointerEnter={() => setSelectedIndex(index)}
+                  onClick={() => selectSkill(skill)}
+                  className={[
+                    'flex min-h-8 w-full items-center gap-2 rounded-lg px-3 py-1.5 text-left',
+                    index === selectedIndex ? 'bg-muted' : '',
+                  ].join(' ')}
+                >
+                  <SkillIcon className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
+                  <span className="flex min-w-0 flex-1 items-baseline gap-2">
+                    <span className="max-w-[48%] shrink-0 truncate text-[13px] font-medium leading-[18px] text-text-primary">
+                      {displaySkillName(skill)}
                     </span>
-                  )}
-                </span>
-                <span className="shrink-0 text-xs text-text-muted">{skill.source}</span>
-              </button>
-            ))
+                    {(skill.short_description || skill.description) && (
+                      <span className="min-w-0 flex-1 truncate text-[13px] leading-[18px] text-text-muted">
+                        {skill.short_description || skill.description}
+                      </span>
+                    )}
+                  </span>
+                  <span className="shrink-0 text-xs text-text-muted">
+                    {displaySkillOrigin(skill, t)}
+                  </span>
+                </button>
+              )
+            })
           )}
         </div>
       )}
