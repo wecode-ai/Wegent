@@ -1040,6 +1040,7 @@ export class TaskStateMachine {
           this.state = {
             ...this.state,
             status: 'ready',
+            isStopping: false,
             runtime,
             derived: this.deriveRuntimeState(runtime),
           }
@@ -1063,6 +1064,7 @@ export class TaskStateMachine {
           this.state = {
             ...this.state,
             status: 'streaming',
+            isStopping: false,
             runtime,
             derived: this.deriveRuntimeState(runtime),
           }

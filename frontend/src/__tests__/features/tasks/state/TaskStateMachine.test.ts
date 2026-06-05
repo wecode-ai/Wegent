@@ -1451,4 +1451,87 @@ describe('TaskStateMachine', () => {
     expect(state.runtime.activeStreamSubtaskId).toBeUndefined()
     expect(state.derived.blocksQueuedDispatch).toBe(false)
   })
+
+  describe('isStopping cleanup on recovery', () => {
+    it('clears isStopping when SYNC_DONE completes recovery', async () => {
+      const machine = new TaskStateMachine(42, createRuntimeActions())
+      machine.handleChatStart(10)
+      machine.setStopping(true)
+      expect(machine.getState().isStopping).toBe(true)
+
+      await machine.checkHealth('page-visible')
+
+      expect(machine.getState().isStopping).toBe(false)
+    })
+
+    it('clears isStopping when SYNC_DONE_STREAMING recovers an active stream', async () => {
+      const consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
+      const runningSubtask = {
+        id: 10,
+        task_id: 42,
+        team_id: 1,
+        title: 'streaming',
+        bot_ids: [],
+        role: 'ASSISTANT',
+        message_id: 1,
+        parent_id: 1,
+        prompt: '',
+        executor_namespace: '',
+        executor_name: '',
+        status: 'RUNNING',
+        progress: 0,
+        batch: 0,
+        result: { value: 'hello' },
+        error_message: '',
+        user_id: 1,
+        created_at: '2026-06-01T10:00:00.000Z',
+        updated_at: '2026-06-01T10:00:05.000Z',
+        completed_at: null,
+        bots: [],
+      }
+
+      const actions = createRuntimeActions({
+        verifyRuntime: jest.fn().mockResolvedValue({
+          task_id: 42,
+          task_status: 'RUNNING',
+          status_updated_at: '2026-06-01T10:00:05',
+          active_stream: {
+            subtask_id: 10,
+            cached_content: 'hello world',
+            offset: 11,
+          },
+        }),
+        joinTask: jest.fn().mockResolvedValue({
+          subtasks: [runningSubtask],
+          streaming: {
+            subtask_id: 10,
+            cached_content: 'hello world',
+            offset: 11,
+          },
+        }),
+      })
+      const machine = new TaskStateMachine(42, actions)
+
+      machine.handleTaskStatus('RUNNING', '2026-06-01T10:00:00')
+      machine.handleChatStart(10, 'Chat', 1)
+      machine.handleChatChunk(10, 'hello')
+      machine.setStopping(true)
+      expect(machine.getState().isStopping).toBe(true)
+
+      await machine.checkHealth('page-visible')
+
+      expect(machine.getState().isStopping).toBe(false)
+      expect(machine.getState().phase).toBe('streaming')
+
+      consoleInfoSpy.mockRestore()
+    })
+
+    it('does not clear isStopping when sync is not in progress', () => {
+      const machine = new TaskStateMachine(42, createRuntimeActions())
+      machine.setStopping(true)
+
+      machine.setStopping(false)
+      expect(machine.getState().isStopping).toBe(false)
+    })
+  })
 })

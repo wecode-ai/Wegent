@@ -181,4 +181,164 @@ describe('SocketProvider reconnect notification', () => {
 
     expect(mockReconnectCallback).toHaveBeenCalledTimes(1)
   })
+
+  describe('cancelChatStream timeout', () => {
+    it('resolves with timeout error when ack callback is never invoked', async () => {
+      jest.useFakeTimers()
+      const socket = createMockSocket()
+      const pendingEmits: Array<{
+        event: string
+        payload: unknown
+        ack: (response: unknown) => void
+      }> = []
+
+      socket.emit.mockImplementation(
+        (event: string, payload: unknown, ack?: (response: unknown) => void) => {
+          if (event === 'task:join' && ack) {
+            ack({ subtasks: [] })
+          } else if (event === 'chat:cancel' && ack) {
+            pendingEmits.push({ event, payload, ack })
+          }
+        }
+      )
+
+      mockIo.mockReturnValue(socket)
+
+      let socketApi: ReturnType<typeof useSocket> | undefined
+      render(
+        <SocketProvider>
+          <SocketProbe
+            onReady={api => {
+              socketApi = api
+            }}
+          />
+        </SocketProvider>
+      )
+
+      await waitFor(() => expect(socketApi?.socket).toBe(socket))
+
+      await act(async () => {
+        socket.triggerSocket('connect')
+      })
+
+      let result: { success: boolean; error?: string } | undefined
+      act(() => {
+        void socketApi!.cancelChatStream(42, 'partial', 'Chat').then(r => {
+          result = r
+        })
+      })
+
+      expect(pendingEmits.length).toBe(1)
+
+      act(() => {
+        jest.advanceTimersByTime(10_000)
+      })
+
+      await waitFor(() => expect(result).toBeDefined())
+      expect(result!.success).toBe(false)
+      expect(result!.error).toContain('timed out')
+
+      jest.useRealTimers()
+    })
+
+    it('resolves with ack response when callback fires before timeout', async () => {
+      jest.useFakeTimers()
+      const socket = createMockSocket()
+
+      socket.emit.mockImplementation(
+        (event: string, payload: unknown, ack?: (response: unknown) => void) => {
+          if (event === 'task:join' && ack) {
+            ack({ subtasks: [] })
+          } else if (event === 'chat:cancel' && ack) {
+            ack({ success: true })
+          }
+        }
+      )
+
+      mockIo.mockReturnValue(socket)
+
+      let socketApi: ReturnType<typeof useSocket> | undefined
+      render(
+        <SocketProvider>
+          <SocketProbe
+            onReady={api => {
+              socketApi = api
+            }}
+          />
+        </SocketProvider>
+      )
+
+      await waitFor(() => expect(socketApi?.socket).toBe(socket))
+
+      await act(async () => {
+        socket.triggerSocket('connect')
+      })
+
+      let result: { success: boolean; error?: string } | undefined
+      await act(async () => {
+        result = await socketApi!.cancelChatStream(42, 'partial', 'Chat')
+      })
+
+      expect(result!.success).toBe(true)
+
+      jest.useRealTimers()
+    })
+
+    it('ignores late ack after timeout already resolved', async () => {
+      jest.useFakeTimers()
+      const socket = createMockSocket()
+      const pendingAcks: Array<(response: unknown) => void> = []
+
+      socket.emit.mockImplementation(
+        (event: string, payload: unknown, ack?: (response: unknown) => void) => {
+          if (event === 'task:join' && ack) {
+            ack({ subtasks: [] })
+          } else if (event === 'chat:cancel' && ack) {
+            pendingAcks.push(ack)
+          }
+        }
+      )
+
+      mockIo.mockReturnValue(socket)
+
+      let socketApi: ReturnType<typeof useSocket> | undefined
+      render(
+        <SocketProvider>
+          <SocketProbe
+            onReady={api => {
+              socketApi = api
+            }}
+          />
+        </SocketProvider>
+      )
+
+      await waitFor(() => expect(socketApi?.socket).toBe(socket))
+
+      await act(async () => {
+        socket.triggerSocket('connect')
+      })
+
+      let result: { success: boolean; error?: string } | undefined
+      act(() => {
+        void socketApi!.cancelChatStream(42, 'partial', 'Chat').then(r => {
+          result = r
+        })
+      })
+
+      act(() => {
+        jest.advanceTimersByTime(10_000)
+      })
+
+      await waitFor(() => expect(result).toBeDefined())
+      expect(result!.success).toBe(false)
+
+      act(() => {
+        pendingAcks[0]({ success: true })
+      })
+
+      expect(result!.success).toBe(false)
+
+      jest.useRealTimers()
+    })
+  })
 })

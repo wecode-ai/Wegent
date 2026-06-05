@@ -564,7 +564,17 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         return { success: false, error: 'Not connected to server' }
       }
 
+      const CANCEL_ACK_TIMEOUT_MS = 10_000
+
       return new Promise(resolve => {
+        let settled = false
+        const timer = setTimeout(() => {
+          if (!settled) {
+            settled = true
+            resolve({ success: false, error: 'Cancel acknowledgement timed out' })
+          }
+        }, CANCEL_ACK_TIMEOUT_MS)
+
         socket.emit(
           'chat:cancel',
           {
@@ -573,7 +583,11 @@ export function SocketProvider({ children }: { children: ReactNode }) {
             shell_type: shellType,
           },
           (response: { success?: boolean; error?: string }) => {
-            resolve({ success: response.success ?? true, error: response.error })
+            if (!settled) {
+              settled = true
+              clearTimeout(timer)
+              resolve({ success: response.success ?? true, error: response.error })
+            }
           }
         )
       })

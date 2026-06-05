@@ -843,10 +843,13 @@ export function useMessageSyncer({
         }
 
         // Call backend to cancel
+        let cancelSucceeded = false
         if (subtaskId) {
           try {
             const result = await cancelChatStream(subtaskId, partialContent, shellType)
-            if (result.error) {
+            if (result.success) {
+              cancelSucceeded = true
+            } else {
               console.error('[messageSyncer] Failed to cancel stream:', result.error)
             }
           } catch (error) {
@@ -854,8 +857,8 @@ export function useMessageSyncer({
           }
         }
 
-        // Update state machine - mark as cancelled
-        if (subtaskId) {
+        // Only transition to cancelled if backend confirmed the cancel
+        if (subtaskId && cancelSucceeded) {
           machine.handleChatCancelled(subtaskId)
         }
       } finally {
