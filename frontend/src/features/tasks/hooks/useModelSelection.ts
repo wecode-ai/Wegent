@@ -308,8 +308,13 @@ export function useModelSelection({
     if (botConfig) {
       const bindModel = getModelFromConfig(botConfig)
       if (bindModel) {
-        const foundModel = selectableModels.find(
-          m => m.name === bindModel || m.displayName === bindModel
+        const foundModel = selectableModels.find(model =>
+          modelMatchesConfiguredRef(
+            model,
+            bindModel,
+            getModelTypeFromConfig(botConfig),
+            getModelNamespaceFromConfig(botConfig)
+          )
         )
         return foundModel || null
       }
@@ -420,6 +425,9 @@ export function useModelSelection({
 
       if (restoredModel) {
         setSelectedModel(restoredModel)
+        if (restoredModel.isAdvanced) {
+          setShowAdvancedModelsState(true)
+        }
         if (restoredModel.name === DEFAULT_MODEL_NAME) {
           setForceOverrideState(false)
         } else if (restoredForceOverride !== undefined) {
@@ -500,6 +508,9 @@ export function useModelSelection({
   /** Select a model directly */
   const selectModel = useCallback((model: Model | null) => {
     setSelectedModel(model)
+    if (model?.isAdvanced) {
+      setShowAdvancedModelsState(true)
+    }
     setForceOverrideState(Boolean(model && model.name !== DEFAULT_MODEL_NAME))
   }, [])
 
@@ -517,6 +528,9 @@ export function useModelSelection({
       const model = filteredModels.find(m => m.name === modelName && m.type === modelType)
       if (model) {
         setSelectedModel(model)
+        if (model.isAdvanced) {
+          setShowAdvancedModelsState(true)
+        }
         setForceOverrideState(true)
       }
     },
@@ -527,8 +541,11 @@ export function useModelSelection({
   const selectDefaultModel = useCallback(() => {
     const defaultModel = { name: DEFAULT_MODEL_NAME, provider: '', modelId: '' }
     setSelectedModel(defaultModel)
+    if (boundDefaultModel?.isAdvanced) {
+      setShowAdvancedModelsState(true)
+    }
     setForceOverrideState(false)
-  }, [])
+  }, [boundDefaultModel?.isAdvanced])
 
   /** Set force override flag */
   const setForceOverride = useCallback((value: boolean) => {
