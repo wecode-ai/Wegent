@@ -336,6 +336,7 @@
     "quick_launch_function_order": "排序",
     "quick_launch_function_icon": "图标",
     "quick_launch_function_enabled": "启用",
+    "quick_launch_function_disabled": "已停用",
     "quick_launch_function_phrases": "快捷短语",
     "quick_launch_function_add_phrase": "添加短语",
     "quick_launch_function_phrase_placeholder": "例如：帮我创建一个产品路线图 PPT",
@@ -350,6 +351,9 @@
     "quick_launch_function_preset_deep_thinking": "深度思考",
     "quick_launch_function_preset_clarification": "澄清模式",
     "quick_launch_function_preset_force_override": "强制覆盖模型",
+    "quick_launch_function_preset_attachments": "附件",
+    "quick_launch_function_preset_upload_attachment": "上传附件",
+    "quick_launch_function_preset_no_attachments": "暂无预设附件",
     "version": "版本",
     "success": {
       "updated": "配置更新成功"
@@ -359,6 +363,7 @@
       "save_failed": "保存配置失败",
       "partial_save_failed": "部分配置已保存，另一些保存失败，请重试。",
       "quick_launch_functions_required": "系统功能必须填写 ID、名称并选择目标智能体",
+      "quick_launch_attachment_upload_failed": "预设附件上传失败",
       "slogan_required": "中英文 Slogan 均为必填项",
       "tip_required": "中英文提示内容均为必填项"
     }
