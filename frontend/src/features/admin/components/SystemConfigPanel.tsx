@@ -51,7 +51,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { formatFileSize, uploadAttachment } from '@/apis/attachments'
+import { formatFileSize, uploadFile } from '@/apis/attachments'
 
 // Common form data type for both slogans and tips
 type ItemFormData = {
@@ -521,7 +521,7 @@ const SystemConfigPanel: React.FC = () => {
     const uploadKey = `${functionIndex}-${presetIndex}`
     setUploadingQuickLaunchPresetKey(uploadKey)
     try {
-      const attachment = await uploadAttachment(file)
+      const attachment = await uploadFile(file)
       setQuickLaunchAttachmentLabels(prev => ({
         ...prev,
         [attachment.id]: `${attachment.filename} - ${formatFileSize(attachment.file_size)}`,
