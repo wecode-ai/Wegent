@@ -67,6 +67,57 @@ class TestExtractClaudeOptionsWithMcp:
         options = extract_claude_options(task_data)
         assert "mcp_servers" not in options
 
+    def test_request_system_prompt_overrides_bot_system_prompt(self):
+        """Top-level request prompt contains dynamic context added by backend."""
+        task_data = ExecutionRequest(
+            task_id=1,
+            system_prompt=(
+                "You are helpful.\n\n"
+                "<wegent_runtime_guidance>\n"
+                "Tell users to click View the task files.\n"
+                "</wegent_runtime_guidance>"
+            ),
+            bot=[{"system_prompt": "You are helpful."}],
+        )
+
+        options = extract_claude_options(task_data)
+
+        assert options["system_prompt"] == task_data.system_prompt
+        assert "<wegent_runtime_guidance>" in options["system_prompt"]
+
+    def test_bot_system_prompt_used_when_request_system_prompt_absent(self):
+        """Bot prompt remains the fallback when backend has no dynamic prompt."""
+        task_data = ExecutionRequest(
+            task_id=1,
+            bot=[{"system_prompt": "You are helpful."}],
+        )
+
+        options = extract_claude_options(task_data)
+
+        assert options["system_prompt"] == "You are helpful."
+
+    def test_pipeline_uses_current_request_system_prompt(self):
+        """Pipeline stages pass the stage-specific top-level prompt to Claude."""
+        task_data = ExecutionRequest(
+            task_id=1,
+            collaboration_model="pipeline",
+            new_session=True,
+            system_prompt=(
+                "Current stage prompt.\n\n"
+                "<wegent_runtime_guidance>\n"
+                "Use Wegent task files for downloads.\n"
+                "</wegent_runtime_guidance>"
+            ),
+            bot=[
+                {"id": 2, "system_prompt": "First raw bot prompt."},
+                {"id": 3, "system_prompt": "Second raw bot prompt."},
+            ],
+        )
+
+        options = extract_claude_options(task_data)
+
+        assert options["system_prompt"] == task_data.system_prompt
+
     def test_empty_bot_list(self):
         """Empty bot list should not crash."""
         task_data = ExecutionRequest(task_id=1, bot=[])

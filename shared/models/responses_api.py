@@ -285,6 +285,16 @@ class BlockCreatedEvent(TypedDict):
     block: dict[str, Any]
 
 
+class BlockUpdatedEvent(TypedDict):
+    """response.block.updated event."""
+
+    type: Literal["response.block.updated"]
+    response_id: str
+    item_id: str
+    block_id: str
+    updates: dict[str, Any]
+
+
 class ErrorEvent(TypedDict):
     """error event."""
 
@@ -384,6 +394,7 @@ class ResponsesAPIStreamEvents(str, Enum):
 
     # Wegent block events
     BLOCK_CREATED = "response.block.created"
+    BLOCK_UPDATED = "response.block.updated"
 
     # Error event
     ERROR = "error"
@@ -653,6 +664,16 @@ class ResponsesAPIEventBuilder:
             "response_id": self.response_id,
             "item_id": self.item_id,
             "block": block,
+        }
+
+    def block_updated(self, block_id: str, updates: dict[str, Any]) -> dict:
+        """Create a block-updated event for non-text blocks."""
+        return {
+            "type": ResponsesAPIStreamEvents.BLOCK_UPDATED.value,
+            "response_id": self.response_id,
+            "item_id": self.item_id,
+            "block_id": block_id,
+            "updates": updates,
         }
 
     # ============================================================

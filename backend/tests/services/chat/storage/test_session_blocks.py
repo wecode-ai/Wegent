@@ -111,3 +111,5 @@ async def test_thinking_blocks_are_split_by_text_boundaries():
     assert blocks[1]["content"] == "Answer."
     assert blocks[2]["content"] == "Second thought."
     assert [block["status"] for block in blocks] == ["done", "done", "done"]
+    assert blocks[0]["timestamp"] > 1_000_000_000_000
+    assert blocks[2]["timestamp"] > 1_000_000_000_000

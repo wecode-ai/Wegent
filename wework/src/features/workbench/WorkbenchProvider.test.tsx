@@ -1770,12 +1770,20 @@ describe('WorkbenchProvider', () => {
           </button>
           <ol data-testid="tool-blocks">
             {workbench.messages.flatMap(message =>
-              (message.blocks ?? []).map(block => (
-                <li key={block.id}>
-                  {block.toolName}:{String(block.toolInput?.command)}:
-                  {String(block.toolOutput)}
-                </li>
-              ))
+              (message.blocks ?? []).flatMap(block =>
+                block.type === 'tool'
+                  ? [
+                      <li key={block.id}>
+                        {block.toolName}:{String(block.toolInput?.command)}:
+                        {String(block.toolOutput)}
+                      </li>,
+                    ]
+                  : [
+                      <li key={block.id}>
+                        thinking:{block.content}:{block.status}
+                      </li>,
+                    ]
+              )
             )}
           </ol>
         </div>
@@ -1833,6 +1841,13 @@ describe('WorkbenchProvider', () => {
                         status: 'done',
                         timestamp: 1770000000000,
                       },
+                      {
+                        id: 'thinking_1',
+                        type: 'thinking',
+                        content: 'I will inspect the workspace',
+                        status: 'done',
+                        timestamp: 1770000000100,
+                      },
                     ],
                   },
                   status: 'COMPLETED',
@@ -1873,6 +1888,9 @@ describe('WorkbenchProvider', () => {
       expect(screen.getByTestId('tool-blocks')).toHaveTextContent(
         'exec:pwd:/Users/yunpeng7/AIGCWorkSpace'
       )
+    )
+    expect(screen.getByTestId('tool-blocks')).toHaveTextContent(
+      'thinking:I will inspect the workspace:done'
     )
   })
 

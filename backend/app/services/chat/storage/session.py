@@ -16,6 +16,7 @@ supporting page refresh recovery during streaming.
 import asyncio
 import json
 import logging
+import time
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -1035,7 +1036,7 @@ class SessionManager:
                                 blocks_key, -1, json.dumps(last_block)
                             )
                 else:
-                    ts = int(asyncio.get_event_loop().time() * 1000)
+                    ts = int(time.time() * 1000)
                     block = {
                         "id": f"thinking-{uuid.uuid4().hex[:12]}",
                         "type": "thinking",

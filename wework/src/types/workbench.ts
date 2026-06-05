@@ -5,15 +5,26 @@ export type MessageStatus = 'pending' | 'streaming' | 'done' | 'failed'
 
 export type ToolBlockStatus = 'generating_arguments' | 'pending' | 'streaming' | 'done' | 'error'
 
-export interface ToolBlock {
+export interface BaseProcessingBlock {
   id: string
   subtaskId: number
-  toolName: string
-  toolInput?: Record<string, unknown>
-  toolOutput?: unknown
   status: ToolBlockStatus
   createdAt: number
 }
+
+export interface ToolBlock extends BaseProcessingBlock {
+  type: 'tool'
+  toolName: string
+  toolInput?: Record<string, unknown>
+  toolOutput?: unknown
+}
+
+export interface ThinkingBlock extends BaseProcessingBlock {
+  type: 'thinking'
+  content: string
+}
+
+export type ProcessingBlock = ToolBlock | ThinkingBlock
 
 export interface WorkbenchMessage {
   id: string
@@ -25,7 +36,7 @@ export interface WorkbenchMessage {
   status: MessageStatus
   error?: string
   attachments?: Attachment[]
-  blocks?: ToolBlock[]
+  blocks?: ProcessingBlock[]
   createdAt: string
 }
 
