@@ -790,6 +790,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           system_prompt: botData.system_prompt,
           mcp_servers: botData.mcp_servers,
           skills: botData.skills,
+          skill_refs: botData.skill_refs,
+          preload_skills: botData.preload_skills,
+          preload_skill_refs: botData.preload_skill_refs,
           namespace: 'default',
           default_knowledge_base_refs: botData.default_knowledge_base_refs,
         }
@@ -943,6 +946,21 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           system_prompt: isDifyAgent ? '' : prompt.trim() || '',
           mcp_servers: parsedMcpConfig ?? {},
           skills: selectedSkills.length > 0 ? selectedSkills : [],
+          skill_refs: buildSkillRefsFromSelection(
+            selectedSkills,
+            selectedSkillRefs,
+            allSkills,
+            scope,
+            groupName
+          ),
+          preload_skills: preloadSkills.length > 0 ? preloadSkills : [],
+          preload_skill_refs: buildSkillRefsFromSelection(
+            preloadSkills,
+            selectedSkillRefs,
+            allSkills,
+            scope,
+            groupName
+          ),
           namespace: 'default',
           default_knowledge_base_refs: defaultKnowledgeBaseRefs,
         }

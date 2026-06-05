@@ -9,6 +9,7 @@ import {
 } from './admin-quick-launch'
 import { outboundTokenAdminApis } from './outboundTokens'
 import { RetrieverCRD } from './retrievers'
+import type { SkillRefMeta } from '@/types/api'
 
 // Re-export RetrieverCRD for backward compatibility
 export type { RetrieverCRD } from './retrievers'
@@ -288,6 +289,9 @@ export interface AdminPublicBot {
   system_prompt: string | null
   mcp_servers: Record<string, unknown> | null
   skills: string[] | null
+  skill_refs: Record<string, SkillRefMeta> | null
+  preload_skills: string[] | null
+  preload_skill_refs: Record<string, SkillRefMeta> | null
   // Expanded Model fields for UI convenience
   agent_config: Record<string, unknown> | null
   default_knowledge_base_refs: { id: number; name: string }[] | null
@@ -307,6 +311,9 @@ export interface AdminPublicBotCreate {
   system_prompt?: string
   mcp_servers?: Record<string, unknown>
   skills?: string[]
+  skill_refs?: Record<string, SkillRefMeta>
+  preload_skills?: string[]
+  preload_skill_refs?: Record<string, SkillRefMeta>
   agent_config?: Record<string, unknown>
   default_knowledge_base_refs?: { id: number; name: string }[]
 }
@@ -321,6 +328,9 @@ export interface AdminPublicBotUpdate {
   system_prompt?: string
   mcp_servers?: Record<string, unknown>
   skills?: string[]
+  skill_refs?: Record<string, SkillRefMeta>
+  preload_skills?: string[]
+  preload_skill_refs?: Record<string, SkillRefMeta>
   agent_config?: Record<string, unknown>
   default_knowledge_base_refs?: { id: number; name: string }[]
 }

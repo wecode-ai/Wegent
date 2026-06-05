@@ -21,7 +21,7 @@ from app.schemas.admin import (
     PublicBotResponse,
     PublicBotUpdate,
 )
-from app.schemas.kind import Ghost, Model
+from app.schemas.kind import Ghost, Model, SkillRefMeta
 from app.services.adapters.shell_utils import get_shell_info_by_name
 
 logger = logging.getLogger(__name__)
@@ -160,6 +160,15 @@ def _validate_bot_resource_references(
     return (True, None)
 
 
+def _normalize_skill_refs(refs: Optional[dict]) -> dict[str, SkillRefMeta]:
+    """Normalize raw skill ref dictionaries into SkillRefMeta models."""
+    if not refs:
+        return {}
+    return {
+        skill_name: SkillRefMeta.model_validate(ref) for skill_name, ref in refs.items()
+    }
+
+
 def _bot_to_response(bot: Kind, db: Session) -> PublicBotResponse:
     """Convert Kind model to PublicBotResponse with expanded Ghost and Model info."""
     ghost_name, shell_name, model_name = _get_bot_ref_info(bot)
@@ -168,6 +177,9 @@ def _bot_to_response(bot: Kind, db: Session) -> PublicBotResponse:
     system_prompt = None
     mcp_servers = None
     skills = None
+    skill_refs = None
+    preload_skills = None
+    preload_skill_refs = None
     agent_config = None
     default_knowledge_base_refs = None
 
@@ -197,6 +209,9 @@ def _bot_to_response(bot: Kind, db: Session) -> PublicBotResponse:
                 system_prompt = ghost_spec.get("systemPrompt", "")
                 mcp_servers = ghost_spec.get("mcpServers", {})
                 skills = ghost_spec.get("skills", [])
+                skill_refs = ghost_spec.get("skill_refs", {})
+                preload_skills = ghost_spec.get("preload_skills", [])
+                preload_skill_refs = ghost_spec.get("preload_skill_refs", {})
                 default_knowledge_base_refs = ghost_spec.get(
                     "defaultKnowledgeBaseRefs", []
                 )
@@ -257,6 +272,9 @@ def _bot_to_response(bot: Kind, db: Session) -> PublicBotResponse:
         system_prompt=system_prompt,
         mcp_servers=mcp_servers,
         skills=skills,
+        skill_refs=skill_refs,
+        preload_skills=preload_skills,
+        preload_skill_refs=preload_skill_refs,
         agent_config=agent_config,
         default_knowledge_base_refs=default_knowledge_base_refs,
     )
@@ -312,6 +330,9 @@ def _create_public_ghost(
     system_prompt: str,
     mcp_servers: dict,
     skills: list,
+    skill_refs: Optional[dict] = None,
+    preload_skills: Optional[list[str]] = None,
+    preload_skill_refs: Optional[dict] = None,
     default_knowledge_base_refs: Optional[list[dict]] = None,
 ) -> Kind:
     """Create a public Ghost for the bot."""
@@ -334,6 +355,11 @@ def _create_public_ghost(
         ghost_crd.spec.systemPrompt = system_prompt or ""
         ghost_crd.spec.mcpServers = mcp_servers or {}
         ghost_crd.spec.skills = skills or []
+        ghost_crd.spec.skill_refs = _normalize_skill_refs(skill_refs) or None
+        ghost_crd.spec.preload_skills = preload_skills or []
+        ghost_crd.spec.preload_skill_refs = (
+            _normalize_skill_refs(preload_skill_refs) or None
+        )
         ghost_crd.spec.defaultKnowledgeBaseRefs = default_knowledge_base_refs or []
         existing_ghost.json = ghost_crd.model_dump()
         flag_modified(existing_ghost, "json")
@@ -346,6 +372,18 @@ def _create_public_ghost(
     }
     if skills:
         ghost_spec["skills"] = skills
+    if skill_refs:
+        ghost_spec["skill_refs"] = {
+            name: ref.model_dump()
+            for name, ref in _normalize_skill_refs(skill_refs).items()
+        }
+    if preload_skills:
+        ghost_spec["preload_skills"] = preload_skills
+    if preload_skill_refs:
+        ghost_spec["preload_skill_refs"] = {
+            name: ref.model_dump()
+            for name, ref in _normalize_skill_refs(preload_skill_refs).items()
+        }
     if default_knowledge_base_refs:
         ghost_spec["defaultKnowledgeBaseRefs"] = default_knowledge_base_refs
 
@@ -535,6 +573,9 @@ async def create_public_bot(
             bot_data.system_prompt or "",
             bot_data.mcp_servers or {},
             bot_data.skills or [],
+            bot_data.skill_refs or {},
+            bot_data.preload_skills or [],
+            bot_data.preload_skill_refs or {},
             bot_data.default_knowledge_base_refs or [],
         )
         ghost_name = ghost.name
@@ -672,6 +713,9 @@ async def update_public_bot(
         or bot_data.system_prompt is not None
         or bot_data.mcp_servers is not None
         or bot_data.skills is not None
+        or bot_data.skill_refs is not None
+        or bot_data.preload_skills is not None
+        or bot_data.preload_skill_refs is not None
         or bot_data.agent_config is not None
         or bot_data.default_knowledge_base_refs is not None
     ):
@@ -717,6 +761,9 @@ async def update_public_bot(
             bot_data.system_prompt is not None
             or bot_data.mcp_servers is not None
             or bot_data.skills is not None
+            or bot_data.skill_refs is not None
+            or bot_data.preload_skills is not None
+            or bot_data.preload_skill_refs is not None
             or bot_data.default_knowledge_base_refs is not None
         ):
             # Get existing ghost to preserve unchanged fields
@@ -739,6 +786,16 @@ async def update_public_bot(
                     ghost_crd.spec.mcpServers = bot_data.mcp_servers
                 if bot_data.skills is not None:
                     ghost_crd.spec.skills = bot_data.skills
+                if bot_data.skill_refs is not None:
+                    ghost_crd.spec.skill_refs = (
+                        _normalize_skill_refs(bot_data.skill_refs) or None
+                    )
+                if bot_data.preload_skills is not None:
+                    ghost_crd.spec.preload_skills = bot_data.preload_skills
+                if bot_data.preload_skill_refs is not None:
+                    ghost_crd.spec.preload_skill_refs = (
+                        _normalize_skill_refs(bot_data.preload_skill_refs) or None
+                    )
                 if bot_data.default_knowledge_base_refs is not None:
                     ghost_crd.spec.defaultKnowledgeBaseRefs = (
                         bot_data.default_knowledge_base_refs
@@ -754,6 +811,9 @@ async def update_public_bot(
                     bot_data.system_prompt or "",
                     bot_data.mcp_servers or {},
                     bot_data.skills or [],
+                    bot_data.skill_refs or {},
+                    bot_data.preload_skills or [],
+                    bot_data.preload_skill_refs or {},
                     bot_data.default_knowledge_base_refs or [],
                 )
                 ghost_name = ghost.name
