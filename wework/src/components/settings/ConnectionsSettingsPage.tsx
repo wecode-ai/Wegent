@@ -6,6 +6,7 @@ import {
   Check,
   Cloud,
   Code2,
+  ExternalLink,
   Globe2,
   Loader2,
   Monitor,
@@ -618,6 +619,7 @@ function DeviceSection({
   showScaleWiki?: boolean
 }) {
   const { t } = useTranslation('common')
+  const scaleWikiUrl = getRuntimeConfig().cloudDeviceScalingWikiUrl
 
   return (
     <section className="space-y-2.5">
@@ -647,6 +649,18 @@ function DeviceSection({
                   {t(
                     'workbench.connection_scale_wiki_desc',
                     '当 CPU、MEM 或磁盘持续超过 80% 时，建议扩容云设备规格或清理工作区缓存。',
+                  )}
+                  {scaleWikiUrl && (
+                    <a
+                      href={scaleWikiUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      data-testid="connection-scale-wiki-link"
+                      className="ml-2 inline-flex items-center gap-1 align-middle font-medium text-text-secondary transition-colors hover:text-primary hover:underline"
+                    >
+                      {t('workbench.connection_scale_wiki_link', '详细见Wiki')}
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
                   )}
                 </p>
               </div>

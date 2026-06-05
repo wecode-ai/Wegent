@@ -278,7 +278,7 @@ Access your devices through:
 
 The **Settings** → **Connections** page lists ClaudeCode devices that the current account can connect to, including cloud devices and local devices. It only shows devices with `bind_shell=claudecode`, grouped by cloud devices and local devices.
 
-Cloud devices display online status, executor version, CPU, memory, and disk usage. When no cloud device exists, click **Add** to create one. After the create request returns, the page keeps a "cloud device creating" notice visible. Initialization usually takes 2-3 minutes, and the device appears in the list automatically when it comes online.
+Cloud devices display online status, executor version, CPU, memory, and disk usage. When no cloud device exists, click **Add** to create one. After the create request returns, the page keeps a "cloud device creating" notice visible. Initialization usually takes 2-3 minutes, and the device appears in the list automatically when it comes online. The Wework frontend can configure the scaling Wiki link in the resource note card with `VITE_CLOUD_DEVICE_SCALING_WIKI_URL`, guiding users to request a larger cloud device or clean workspace cache when CPU, MEM, or disk stays above 80%.
 
 Local devices display device name, online status, and executor version. They do not show CPU, MEM, or disk monitoring data or the resource monitoring note, and they do not show cloud-only actions such as Terminal, IDE, Desktop VNC/VPN, restart, or cloud-resource deletion. Offline local devices show a delete entry for removing the device registration. If the device reconnects, it automatically registers again.
 
