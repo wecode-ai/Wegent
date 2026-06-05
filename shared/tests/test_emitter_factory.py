@@ -272,6 +272,32 @@ class TestThrottledTransport:
         assert call_args[0][3]["delta"] == " world!"
 
     @pytest.mark.asyncio
+    async def test_cross_type_events_flush_pending_buffer_in_order(self):
+        """Test that reasoning buffered before text is sent before that text."""
+        mock_transport = AsyncMock(spec=EventTransport)
+        config = ThrottleConfig(default_interval=10.0)
+        throttled = ThrottledTransport(mock_transport, config)
+
+        await throttled.send(
+            "response.reasoning_summary_text.delta", 1, 2, {"delta": "Good"}
+        )
+        mock_transport.reset_mock()
+
+        await throttled.send(
+            "response.reasoning_summary_text.delta", 1, 2, {"delta": "思考"}
+        )
+        mock_transport.send.assert_not_called()
+
+        await throttled.send("response.output_text.delta", 1, 2, {"delta": "数据"})
+
+        calls = mock_transport.send.call_args_list
+        assert [call.args[0] for call in calls] == [
+            "response.reasoning_summary_text.delta",
+            "response.output_text.delta",
+        ]
+        assert [call.args[3]["delta"] for call in calls] == ["思考", "数据"]
+
+    @pytest.mark.asyncio
     async def test_flush_all(self):
         """Test flushing all buffers."""
         mock_transport = AsyncMock(spec=EventTransport)
