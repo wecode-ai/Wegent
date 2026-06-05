@@ -102,6 +102,9 @@ async function waitForChatCompletionRequest(
 }
 
 test.describe('Chat Image Browser E2E with Mock Model Server', () => {
+  // Tests in this spec use the same shard user and mutate that user's selected team state.
+  test.describe.configure({ mode: 'default' })
+
   let apiClient: ApiClient
   let token: string
   const testImagePath = path.join(__dirname, '../../fixtures/test-image.png')
