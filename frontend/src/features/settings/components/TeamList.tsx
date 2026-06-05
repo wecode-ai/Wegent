@@ -35,8 +35,9 @@ import TeamShareModal from './TeamShareModal'
 import TeamCreationWizard from './wizard/TeamCreationWizard'
 import { TeamApiCallButton } from './TeamApiCallButton'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useGroupPermissions } from '@/hooks/useGroupPermissions'
 import { useToast } from '@/hooks/use-toast'
-import { getTeamDisplayName, sortTeamsByUpdatedAt } from '@/utils/team'
+import { getTeamDisplayName } from '@/utils/team'
 import { isGroupTeam, isPublicTeam, isSharedTeam } from '@/utils/team-permissions'
 import type { BaseRole } from '@/types/base-role'
 import { sortBotsByUpdatedAt } from '@/utils/bot'
@@ -74,6 +75,12 @@ import {
   type TeamTargetPage,
 } from '@/features/tasks/components/selector/team-selector-utils'
 import type { ManagedResourceSourceFilter } from '@/features/resource-library/types'
+import {
+  buildGroupDisplayNameMap,
+  sortResourceLibraryItems,
+  type ResourceLibrarySortMode,
+  type ResourceLibrarySortSource,
+} from '@/features/resource-library/resourceSorting'
 import { ResourceManagementLayout } from './resource-management/ResourceManagementLayout'
 
 interface TeamListProps {
@@ -82,18 +89,30 @@ interface TeamListProps {
   groupRoleMap?: Map<string, BaseRole>
   onEditResource?: (namespace: string) => void
   sourceControls?: ReactNode
+  sortControls?: ReactNode
   sourceFilter?: ManagedResourceSourceFilter
   groups?: Group[]
+  sortMode?: ResourceLibrarySortMode
 }
 
+/**
+ * Displays a list of Team (user-facing agent) resources grouped by ownership.
+ * Supports CRUD operations with group-role-based permission controls.
+ *
+ * @param props.scope - Current scope context (personal/group/all)
+ * @param props.groupName - Current group name when scope is 'group'
+ * @param props.groupRoleMap - Map of group namespace to user's role
+ */
 export default function TeamList({
   scope = 'personal',
   groupName,
   groupRoleMap,
   onEditResource,
   sourceControls,
+  sortControls,
   sourceFilter = 'all',
   groups = [],
+  sortMode = 'default',
 }: TeamListProps) {
   const { t } = useTranslation(['common', 'wizard'])
   const { toast } = useToast()
@@ -128,17 +147,6 @@ export default function TeamList({
   const [writableGroups, setWritableGroups] = useState<Group[]>([])
   const router = useRouter()
 
-  const setTeamsSorted = useCallback<React.Dispatch<React.SetStateAction<Team[]>>>(
-    updater => {
-      setTeams(prev => {
-        const next =
-          typeof updater === 'function' ? (updater as (value: Team[]) => Team[])(prev) : updater
-        return sortTeamsByUpdatedAt(next)
-      })
-    },
-    [setTeams]
-  )
-
   const setBotsSorted = useCallback<React.Dispatch<React.SetStateAction<Bot[]>>>(
     updater => {
       setBots(prev => {
@@ -158,7 +166,7 @@ export default function TeamList({
           fetchTeamsList(scope, groupName),
           fetchBotsList(scope, groupName),
         ])
-        setTeamsSorted(teamsData)
+        setTeams(teamsData)
         setBotsSorted(botsData)
       } catch {
         toast({
@@ -170,7 +178,7 @@ export default function TeamList({
       }
     }
     loadData()
-  }, [toast, setBotsSorted, setTeamsSorted, t, scope, groupName])
+  }, [toast, setBotsSorted, t, scope, groupName])
 
   // Load groups where user has at least Developer role (for copy target selection)
   useEffect(() => {
@@ -224,7 +232,7 @@ export default function TeamList({
       const currentNamespace = scope === 'group' ? groupName : 'default'
       const copiedNamespace = copied.namespace || 'default'
       if (copiedNamespace === currentNamespace) {
-        setTeamsSorted(prev => [copied, ...prev])
+        setTeams(prev => [copied, ...prev])
       }
       // Refresh bots so the cloned bot (solo mode) is available in edit dialog
       fetchBotsList(scope, groupName)
@@ -289,7 +297,7 @@ export default function TeamList({
     })
     // Reload teams list
     const teamsData = await fetchTeamsList(scope, groupName)
-    setTeamsSorted(teamsData)
+    setTeams(teamsData)
     setWizardOpen(false)
   }
 
@@ -343,18 +351,35 @@ export default function TeamList({
     return filterTeamsByMode(sourceFilteredTeams, modeFilter)
   }, [sourceFilteredTeams, modeFilter])
 
-  // Helper function to check permissions for a specific group resource
-  const canEditGroupResource = (namespace: string) => {
-    if (!groupRoleMap) return false
-    const role = groupRoleMap.get(namespace)
-    return role === 'Owner' || role === 'Maintainer' || role === 'Developer'
-  }
+  const groupDisplayNames = useMemo(() => buildGroupDisplayNameMap(groups), [groups])
 
-  const canDeleteGroupResource = (namespace: string) => {
-    if (!groupRoleMap) return false
-    const role = groupRoleMap.get(namespace)
-    return role === 'Owner' || role === 'Maintainer'
-  }
+  const getTeamSource = useCallback((team: Team): ResourceLibrarySortSource => {
+    if (isPublicTeam(team)) return 'system'
+    if (isGroupTeam(team) || isSharedTeam(team)) return 'group'
+    return 'personal'
+  }, [])
+
+  const sortedTeams = useMemo(
+    () =>
+      sortResourceLibraryItems(filteredTeams, {
+        sortMode,
+        groupDisplayNames,
+        getSource: getTeamSource,
+        getName: team => team.name,
+        getDisplayName: getTeamDisplayName,
+        getNamespace: team => team.namespace || 'default',
+        getCreatedAt: team => team.created_at,
+        getUpdatedAt: team => team.updated_at,
+        getStableId: team => team.id,
+      }),
+    [filteredTeams, sortMode, groupDisplayNames, getTeamSource]
+  )
+
+  const { canEditGroupResource, canDeleteGroupResource } = useGroupPermissions({
+    scope,
+    groupName,
+    groupRoleMap,
+  })
 
   const handleDelete = async (teamId: number) => {
     setTeamToDelete(teamId)
@@ -399,7 +424,7 @@ export default function TeamList({
     setIsDeleting(true)
     try {
       await deleteTeam(teamToDelete)
-      setTeamsSorted(prev => prev.filter(team => team.id !== teamToDelete))
+      setTeams(prev => prev.filter(team => team.id !== teamToDelete))
       setDeleteConfirmVisible(false)
       setTeamToDelete(null)
       setRunningTasksInfo(null)
@@ -419,7 +444,7 @@ export default function TeamList({
     setIsDeleting(true)
     try {
       await deleteTeam(teamToDelete, true)
-      setTeamsSorted(prev => prev.filter(team => team.id !== teamToDelete))
+      setTeams(prev => prev.filter(team => team.id !== teamToDelete))
       setForceDeleteConfirmVisible(false)
       setTeamToDelete(null)
       setRunningTasksInfo(null)
@@ -451,7 +476,7 @@ export default function TeamList({
       })
       setShareModalVisible(true)
       // Update team status to sharing
-      setTeamsSorted(prev => prev.map(t => (t.id === team.id ? { ...t, share_status: 1 } : t)))
+      setTeams(prev => prev.map(t => (t.id === team.id ? { ...t, share_status: 1 } : t)))
     } catch {
       toast({
         variant: 'destructive',
@@ -576,34 +601,37 @@ export default function TeamList({
   ) : null
 
   const filters = (
-    <>
-      {sourceControls}
-      <div
-        className="flex flex-col gap-2 sm:flex-row sm:items-center"
-        data-testid="team-mode-filter"
-      >
-        <span className="text-xs font-medium text-text-muted">{t('teams.filter_mode')}</span>
-        <div className="flex flex-wrap items-center gap-2">
-          {modeFilterOptions.map(option => {
-            const Icon = option.icon
-            return (
-              <Button
-                key={option.value}
-                type="button"
-                variant={modeFilter === option.value ? 'primary' : 'outline'}
-                aria-pressed={modeFilter === option.value}
-                onClick={() => setModeFilter(option.value)}
-                data-testid={option.testId}
-                className="h-11 min-w-[44px] px-4 lg:h-9"
-              >
-                {Icon && <Icon className="h-4 w-4" aria-hidden />}
-                {option.label}
-              </Button>
-            )
-          })}
+    <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+      <div className="flex min-w-0 flex-col gap-3">
+        {sourceControls}
+        <div
+          className="flex flex-col gap-2 sm:flex-row sm:items-center"
+          data-testid="team-mode-filter"
+        >
+          <span className="text-xs font-medium text-text-muted">{t('teams.filter_mode')}</span>
+          <div className="flex flex-wrap items-center gap-2">
+            {modeFilterOptions.map(option => {
+              const Icon = option.icon
+              return (
+                <Button
+                  key={option.value}
+                  type="button"
+                  variant={modeFilter === option.value ? 'primary' : 'outline'}
+                  aria-pressed={modeFilter === option.value}
+                  onClick={() => setModeFilter(option.value)}
+                  data-testid={option.testId}
+                  className="h-11 min-w-[44px] px-4 lg:h-9"
+                >
+                  {Icon && <Icon className="h-4 w-4" aria-hidden />}
+                  {option.label}
+                </Button>
+              )
+            })}
+          </div>
         </div>
       </div>
-    </>
+      {sortControls}
+    </div>
   )
 
   return (
@@ -625,8 +653,8 @@ export default function TeamList({
               className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar space-y-3 pr-1"
               data-testid="team-list-items"
             >
-              {filteredTeams.length > 0 ? (
-                filteredTeams.map(team => (
+              {sortedTeams.length > 0 ? (
+                sortedTeams.map(team => (
                   <Card
                     key={team.id}
                     className="p-3 sm:p-4 bg-base hover:bg-hover transition-colors overflow-hidden"
@@ -866,7 +894,7 @@ export default function TeamList({
         open={editDialogOpen}
         onClose={handleCloseEditDialog}
         teams={teams}
-        setTeams={setTeamsSorted}
+        setTeams={setTeams}
         editingTeamId={editingTeamId}
         initialTeam={prefillTeam}
         bots={bots}

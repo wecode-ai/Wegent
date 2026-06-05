@@ -6,7 +6,9 @@ from typing import Optional
 
 import httpx
 
+from app.models.user import User
 from app.services.tauth import auth_headers
+from app.services.weibo_account_binding import weibo_account_binding_service
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +18,18 @@ WEIBO_DOWNLOAD_URL = (
 )
 WEIBO_SOURCE = "3061639762"
 WEIBO_SERVICE_UID = 5835938223
+
+
+def resolve_weibo_media_uid(user: User | None) -> int:
+    """Resolve the TAuth UID for Weibo video APIs."""
+    if user is None:
+        return WEIBO_SERVICE_UID
+
+    binding_status = weibo_account_binding_service.get_status(user)
+    if binding_status.weibo_uid and binding_status.weibo_uid.isdigit():
+        return int(binding_status.weibo_uid)
+
+    return WEIBO_SERVICE_UID
 
 
 @dataclass(frozen=True)
@@ -36,6 +50,7 @@ class WeiboMediaService:
         filename: str,
         file_size: int,
         file_check: str,
+        user: User | None = None,
     ) -> WeiboInitResult:
         """Initialize chunked upload and return client upload parameters."""
         params = {
@@ -46,7 +61,7 @@ class WeiboMediaService:
             "type": "short_video_tmp",
             "mediaprops": "",
         }
-        headers = auth_headers(WEIBO_SERVICE_UID)
+        headers = auth_headers(resolve_weibo_media_uid(user))
 
         async with httpx.AsyncClient() as client:
             response = await client.get(
@@ -87,7 +102,7 @@ class WeiboMediaService:
             request_id=request_id,
         )
 
-    def get_download_url(self, fid: int) -> Optional[str]:
+    def get_download_url(self, fid: int, user: User | None = None) -> Optional[str]:
         """Convert a Weibo file ID to a short-lived download URL."""
         logger.info("[weibo_media] Converting fid=%s to video URL", fid)
 
@@ -95,7 +110,7 @@ class WeiboMediaService:
             "fid": fid,
             "source": WEIBO_SOURCE,
         }
-        headers = auth_headers(WEIBO_SERVICE_UID)
+        headers = auth_headers(resolve_weibo_media_uid(user))
 
         try:
             with httpx.Client() as client:

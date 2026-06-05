@@ -409,7 +409,7 @@ export class ApiClient {
    * List all users (admin only)
    */
   async adminListUsers(page: number = 1, pageSize: number = 20): Promise<ApiResponse> {
-    return this.call('GET', `/api/admin/users?page=${page}&page_size=${pageSize}`)
+    return this.call('GET', `/api/admin/users?page=${page}&limit=${pageSize}`)
   }
 
   /**

@@ -88,6 +88,8 @@ Click the attachment button to upload files:
 2. **Select files** - Supports images, documents, code files
 3. **Wait for upload** - Files show preview after upload
 
+Some system recommendation presets can add attachments automatically. Preset attachments are shown in the input attachment area and can be removed before sending. If you upload your own attachment, Wegent removes the attachments added by the current preset and sends only the files you uploaded.
+
 #### Skill Selection
 
 If the agent supports skills:

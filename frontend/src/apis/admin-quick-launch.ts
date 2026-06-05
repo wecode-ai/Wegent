@@ -16,6 +16,7 @@ export interface QuickLaunchInputPreset {
   title: string
   prompt?: string | null
   options?: QuickLaunchInputOptions | null
+  source_attachment_ids?: number[]
 }
 
 export interface QuickLaunchFunctionConfig {

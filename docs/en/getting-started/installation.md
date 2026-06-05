@@ -109,6 +109,10 @@ ATTACHMENT_STORAGE_BACKEND=mysql
 # RUNTIME_SOCKET_DIRECT_URL=http://backend:8000
 # Legacy (deprecated): NEXT_PUBLIC_API_URL=http://localhost:8000
 
+# Wework frontend build configuration (optional)
+# Sets the scaling Wiki link in the cloud device resource note card under Settings -> Connections
+# VITE_CLOUD_DEVICE_SCALING_WIKI_URL=https://wiki.example.com/cloud-device-scaling
+
 # Executor Manager Configuration
 EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:latest
 EXECUTOR_WORKSPACE=/path/to/workspace

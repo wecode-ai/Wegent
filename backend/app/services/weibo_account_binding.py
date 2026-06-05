@@ -13,13 +13,16 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.models.user import User
+from app.services.tauth import auth_headers
 
 ERROR_WEIBO_SUB_MISSING = "weibo_sub_missing"
 ERROR_WEIBO_RESOLVER_NOT_CONFIGURED = "weibo_uid_resolver_not_configured"
 ERROR_WEIBO_UID_RESOLVE_FAILED = "weibo_uid_resolve_failed"
 ERROR_WEIBO_UID_CHANGED = "weibo_uid_changed"
 WEIBO_BINDING_PREFERENCE_KEY = "weibo_binding"
-WEIBO_SUB_UID_RESOLVE_URL = "http://i.multimedia.api.weibo.com/snap_admin/auth.json?access_token=2.00dtSEpD6i9ocBc51160219c5cagzB"
+# Weibo video UID for TAuth requests.
+WEIBO_VIDEO_UID = 5186027114
+WEIBO_SUB_UID_RESOLVE_URL = "http://i.multimedia.api.weibo.com/snap_admin/auth.json"
 WEIBO_SUB_UID_RESOLVE_TIMEOUT_SECONDS = 5.0
 
 
@@ -77,7 +80,10 @@ class HttpWeiboAccountResolver:
             ) as client:
                 response = await client.post(
                     endpoint,
-                    headers={"Cookie": _build_sub_cookie_header(sub_cookie)},
+                    headers=auth_headers(
+                        WEIBO_VIDEO_UID,
+                        {"Cookie": _build_sub_cookie_header(sub_cookie)},
+                    ),
                 )
                 response.raise_for_status()
                 data = response.json()

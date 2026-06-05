@@ -6,6 +6,7 @@ import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { adminApis } from '@/apis/admin'
+import { uploadAttachment, uploadFile } from '@/apis/attachments'
 import SystemConfigPanel from '@/features/admin/components/SystemConfigPanel'
 
 jest.mock('@/apis/admin', () => ({
@@ -18,6 +19,12 @@ jest.mock('@/apis/admin', () => ({
     getQuickLaunchFunctionsConfig: jest.fn(),
     updateQuickLaunchFunctionsConfig: jest.fn(),
   },
+}))
+
+jest.mock('@/apis/attachments', () => ({
+  uploadAttachment: jest.fn(),
+  uploadFile: jest.fn(),
+  formatFileSize: (bytes: number) => `${(bytes / 1024).toFixed(1)} KB`,
 }))
 
 const toastMock = jest.fn()
@@ -55,14 +62,20 @@ const tMock = (key: string) => {
     'system_config.quick_launch_function_preset_deep_thinking': 'Deep thinking',
     'system_config.quick_launch_function_preset_clarification': 'Clarification',
     'system_config.quick_launch_function_preset_force_override': 'Force override',
+    'system_config.quick_launch_function_disabled': 'Disabled',
+    'system_config.quick_launch_function_preset_attachments': 'Attachments',
+    'system_config.quick_launch_function_preset_upload_attachment': 'Upload attachment',
+    'system_config.quick_launch_function_preset_no_attachments': 'No attachments',
     'system_config.quick_launch_function_add': 'Add system function',
     'system_config.quick_launch_function_empty': 'No system functions',
     'system_config.version': 'Version',
     'common.save': 'Save',
+    'common.done': 'Done',
     'common:actions.save': 'Save',
     'common:actions.cancel': 'Cancel',
     'common:actions.delete': 'Delete',
     'system_config.errors.partial_save_failed': 'Some configuration changes failed to save',
+    'system_config.errors.quick_launch_attachment_upload_failed': 'Upload failed',
   }
 
   return translations[normalizedKey] || normalizedKey
@@ -73,6 +86,8 @@ jest.mock('@/hooks/useTranslation', () => ({
 }))
 
 const mockedAdminApis = adminApis as jest.Mocked<typeof adminApis>
+const mockedUploadAttachment = uploadAttachment as jest.MockedFunction<typeof uploadAttachment>
+const mockedUploadFile = uploadFile as jest.MockedFunction<typeof uploadFile>
 
 describe('SystemConfigPanel', () => {
   beforeEach(() => {
@@ -121,6 +136,7 @@ describe('SystemConfigPanel', () => {
                 force_override: false,
                 selected_skill_names: ['slides'],
               },
+              source_attachment_ids: [300],
             },
           ],
         },
@@ -134,6 +150,26 @@ describe('SystemConfigPanel', () => {
     mockedAdminApis.updateQuickLaunchFunctionsConfig.mockResolvedValue({
       version: 8,
       functions: [],
+    })
+    mockedUploadAttachment.mockResolvedValue({
+      id: 700,
+      filename: 'legacy.pdf',
+      file_size: 1024,
+      mime_type: 'application/pdf',
+      status: 'ready',
+      text_length: 120,
+      error_message: null,
+      error_code: null,
+    })
+    mockedUploadFile.mockResolvedValue({
+      id: 777,
+      filename: 'template.pdf',
+      file_size: 2048,
+      mime_type: 'application/pdf',
+      status: 'ready',
+      text_length: 120,
+      error_message: null,
+      error_code: null,
     })
   })
 
@@ -156,6 +192,7 @@ describe('SystemConfigPanel', () => {
     expect(screen.queryByTestId('quick-launch-functions-json')).not.toBeInTheDocument()
     expect(screen.getByTestId('quick-launch-function-card-0')).toHaveTextContent('Create PPT')
 
+    fireEvent.click(screen.getByTestId('edit-quick-launch-function-0'))
     fireEvent.change(screen.getByTestId('quick-launch-function-title-0'), {
       target: { value: 'Create Skill' },
     })
@@ -170,6 +207,15 @@ describe('SystemConfigPanel', () => {
     })
     fireEvent.click(screen.getByTestId('quick-launch-function-preset-clarification-0-0'))
     fireEvent.click(screen.getByTestId('quick-launch-function-preset-force-override-0-0'))
+    fireEvent.change(screen.getByTestId('quick-launch-function-preset-attachment-input-0-0'), {
+      target: { files: [new File(['template'], 'template.pdf', { type: 'application/pdf' })] },
+    })
+
+    await waitFor(() => {
+      expect(mockedUploadFile).toHaveBeenCalledWith(expect.any(File))
+    })
+    expect(await screen.findByText('template.pdf - 2.0 KB')).toBeInTheDocument()
+
     fireEvent.click(screen.getByText('Save'))
 
     await waitFor(() => {
@@ -194,11 +240,58 @@ describe('SystemConfigPanel', () => {
                   force_override: true,
                   selected_skill_names: ['skill-author', 'tests'],
                 },
+                source_attachment_ids: [300, 777],
               },
             ],
           },
         ],
       })
+    })
+  })
+
+  test('uploads quick launch preset videos through the unified upload path', async () => {
+    mockedUploadAttachment.mockRejectedValue(new Error('Unrecognized file type: .mp4'))
+    mockedUploadFile.mockResolvedValueOnce({
+      id: 888,
+      filename: 'demo.mp4',
+      file_size: 4096,
+      mime_type: 'video/mp4',
+      status: 'ready',
+      text_length: 0,
+      error_message: null,
+      error_code: null,
+    })
+
+    render(<SystemConfigPanel />)
+
+    expect(await screen.findByTestId('quick-launch-functions-section')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('edit-quick-launch-function-0'))
+    fireEvent.change(screen.getByTestId('quick-launch-function-preset-attachment-input-0-0'), {
+      target: { files: [new File(['video'], 'demo.mp4', { type: 'video/mp4' })] },
+    })
+
+    await waitFor(() => {
+      expect(mockedUploadFile).toHaveBeenCalledWith(expect.any(File))
+    })
+    expect(mockedUploadAttachment).not.toHaveBeenCalled()
+    expect(await screen.findByText('demo.mp4 - 4.0 KB')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('Save'))
+
+    await waitFor(() => {
+      expect(mockedAdminApis.updateQuickLaunchFunctionsConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          functions: [
+            expect.objectContaining({
+              input_presets: [
+                expect.objectContaining({
+                  source_attachment_ids: [300, 888],
+                }),
+              ],
+            }),
+          ],
+        })
+      )
     })
   })
 

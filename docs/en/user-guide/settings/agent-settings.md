@@ -66,7 +66,7 @@ Bot = Executor + Model + Prompt + Tools
 | **Bot** | Manage individual bots |
 | **Models** | Configure AI models |
 | **Shells** | Custom executors |
-| **Skills** | Claude Code skills |
+| **Skills** | Chat and Claude Code skills |
 | **Integrations** | Git tokens |
 
 ### Quick Access
@@ -145,7 +145,7 @@ Click **Save** to create your agent. It will appear in your agent list.
 | **Model** | No | AI model (can inherit) |
 | **Prompt** | No | System instructions |
 | **MCP Config** | No | External tools |
-| **Skills** | No | Claude Code skills |
+| **Skills** | No | Chat and Claude Code skills |
 
 ### Executor Types
 
@@ -333,13 +333,21 @@ MCP tools extend bot capabilities with external services.
 
 ### Skills
 
-Skills are on-demand capabilities for Claude Code bots.
+Skills add reusable capabilities to Chat and Claude Code bots.
 
 **Adding Skills**:
 
 1. In Bot configuration, find **Skills** section
 2. Select skills from dropdown
-3. Click **Manage Skills** to upload new ones
+3. Check the preload option next to a selected skill when it should be available from task start
+4. Click **Manage Skills** to upload new ones
+
+**Preloading Skills**:
+
+- Both the simple configuration UI and the full configuration UI support preload skills
+- **Chat** and **ClaudeCode** executors support preload skills
+- For ClaudeCode, preloaded skills are deployed into the Claude Code skills directory when the task starts
+- Preload only core skills that the bot should prioritize; leave other skills on-demand
 
 **Managing Skills**:
 
@@ -438,7 +446,7 @@ Enable for development agents, disable for chat agents.
 - [Model Configuration](./configuring-models.md) - Set up AI models
 - [Managing Tasks](../chat/managing-tasks.md) - Use agents to execute tasks
 - [Shell Configuration](./configuring-shells.md) - Custom executors
-- [Skill Management](./managing-skills.md) - Claude Code skills
+- [Skill Management](./managing-skills.md) - Chat and Claude Code skills
 
 ---
 

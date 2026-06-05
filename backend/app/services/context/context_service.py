@@ -23,6 +23,7 @@ from app.models.subtask_context import (
     InjectionMode,
     SubtaskContext,
 )
+from app.models.user import User
 from app.schemas.subtask_context import (
     KnowledgeBaseContextCreate,
     SubtaskContextBrief,
@@ -706,6 +707,84 @@ class ContextService:
 
         return binary_data
 
+    def copy_attachment_for_user(
+        self,
+        db: Session,
+        source_context: SubtaskContext,
+        target_user_id: int,
+        source_metadata: Optional[Dict[str, Any]] = None,
+    ) -> SubtaskContext:
+        """Copy a trusted source attachment into a target user's unlinked context.
+
+        This is used for system-owned templates such as quick launch preset
+        attachments. Callers must verify the source context is allowed by their
+        business rules before invoking this method.
+        """
+        if source_context.context_type != ContextType.ATTACHMENT.value:
+            raise ValueError("source_context must be an attachment")
+        if source_context.status != ContextStatus.READY.value:
+            raise ValueError("source attachment must be ready")
+        if target_user_id <= 0:
+            raise ValueError("target_user_id must be positive")
+
+        binary_data = self.get_attachment_binary_data(db, source_context)
+        if binary_data is None:
+            raise StorageError(
+                f"Failed to read source attachment {source_context.id} binary data"
+            )
+
+        storage_backend = get_storage_backend(db)
+        copied_context = self._create_attachment_context(
+            user_id=target_user_id,
+            filename=source_context.original_filename,
+            extension=source_context.file_extension,
+            file_size=source_context.file_size,
+            mime_type=source_context.mime_type,
+            subtask_id=self.UNLINKED_SUBTASK_ID,
+            storage_backend=storage_backend.backend_type,
+        )
+        db.add(copied_context)
+        db.flush()
+
+        storage_key = generate_storage_key(copied_context.id, target_user_id)
+        copied_context.type_data = {
+            **copied_context.type_data,
+            "storage_key": storage_key,
+            "source_attachment_id": source_context.id,
+            **(source_metadata or {}),
+        }
+
+        try:
+            self._store_attachment_binary(
+                storage_backend=storage_backend,
+                context=copied_context,
+                filename=copied_context.original_filename,
+                mime_type=copied_context.mime_type,
+                file_size=copied_context.file_size,
+                binary_data=binary_data,
+            )
+        except StorageError as e:
+            logger.exception(
+                f"Failed to copy source attachment {source_context.id}: {e}"
+            )
+            db.rollback()
+            raise
+
+        copied_context.extracted_text = source_context.extracted_text or ""
+        copied_context.text_length = source_context.text_length or 0
+        copied_context.image_base64 = source_context.image_base64 or ""
+        copied_context.status = ContextStatus.READY.value
+        copied_context.error_message = ""
+
+        db.commit()
+        db.refresh(copied_context)
+
+        logger.info(
+            f"Copied attachment {source_context.id} for user {target_user_id}: "
+            f"new_context_id={copied_context.id}"
+        )
+        return copied_context
+
     def get_attachment_url(
         self,
         db: Session,
@@ -768,7 +847,7 @@ class ContextService:
         return context.file_extension.lower() in self.VIDEO_EXTENSIONS
 
     def build_video_content_from_attachment(
-        self, context: SubtaskContext
+        self, db: Session, context: SubtaskContext
     ) -> Optional[VideoAttachmentPayload]:
         """
         Build a provider-neutral video attachment payload.
@@ -783,6 +862,7 @@ class ContextService:
         Note: Videos are stored on Weibo platform only, not in S3/MinIO storage backends.
 
         Args:
+            db: Database session used to resolve the attachment owner's current binding
             context: SubtaskContext record with video attachment
         Returns:
             VideoAttachmentPayload, or None if not a video context
@@ -818,7 +898,8 @@ class ContextService:
                 f"Video attachment {attachment_id} is missing fid"
             )
 
-        video_url = weibo_media_service.get_download_url(fid)
+        user = db.query(User).filter(User.id == context.user_id).first()
+        video_url = weibo_media_service.get_download_url(fid, user=user)
         if not video_url:
             raise VideoAttachmentResolutionError(
                 f"Failed to resolve video URL for attachment {attachment_id}"

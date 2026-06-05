@@ -447,7 +447,9 @@ def _build_user_message_content(
                     f"Video attachment {attachment.id} requires a video-capable model"
                 )
 
-            payload = context_service.build_video_content_from_attachment(attachment)
+            payload = context_service.build_video_content_from_attachment(
+                db, attachment
+            )
 
             if payload is None:
                 logger.warning(
