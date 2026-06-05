@@ -12,6 +12,7 @@ import { ResourceListItem } from '@/components/common/ResourceListItem'
 import { CommandLineIcon, PencilIcon, TrashIcon, GlobeAltIcon } from '@heroicons/react/24/outline'
 import { Loader2 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
+import { useGroupPermissions } from '@/hooks/useGroupPermissions'
 import { useTranslation } from '@/hooks/useTranslation'
 import ShellEditDialog from './ShellEditDialog'
 import {
@@ -53,6 +54,14 @@ interface ShellListProps {
   sortMode?: ResourceLibrarySortMode
 }
 
+/**
+ * Displays a list of Shell (runtime environment) resources grouped by ownership.
+ * Supports CRUD operations with group-role-based permission controls.
+ *
+ * @param props.scope - Current scope context (personal/group/all)
+ * @param props.groupName - Current group name when scope is 'group'
+ * @param props.groupRoleMap - Map of group namespace to user's role
+ */
 const ShellList: React.FC<ShellListProps> = ({
   scope = 'personal',
   groupName,
@@ -134,18 +143,11 @@ const ShellList: React.FC<ShellListProps> = ({
 
   const totalShells = sortedShells.length
 
-  // Helper function to check permissions for a specific group resource
-  const canEditGroupResource = (namespace: string) => {
-    if (!groupRoleMap) return false
-    const role = groupRoleMap.get(namespace)
-    return role === 'Owner' || role === 'Maintainer' || role === 'Developer'
-  }
-
-  const canDeleteGroupResource = (namespace: string) => {
-    if (!groupRoleMap) return false
-    const role = groupRoleMap.get(namespace)
-    return role === 'Owner' || role === 'Maintainer'
-  }
+  const { canEditGroupResource, canDeleteGroupResource } = useGroupPermissions({
+    scope,
+    groupName,
+    groupRoleMap,
+  })
 
   const handleDelete = async () => {
     if (!deleteConfirmShell) return

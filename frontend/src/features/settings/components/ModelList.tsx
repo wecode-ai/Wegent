@@ -18,6 +18,7 @@ import {
 } from '@heroicons/react/24/outline'
 import { Loader2 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
+import { useGroupPermissions } from '@/hooks/useGroupPermissions'
 import { useTranslation } from '@/hooks/useTranslation'
 import ModelEditDialog from './ModelEditDialog'
 import {
@@ -98,6 +99,14 @@ interface ModelListProps {
   sortMode?: ResourceLibrarySortMode
 }
 
+/**
+ * Displays a list of Model resources grouped by ownership (user, group, public).
+ * Supports CRUD operations with group-role-based permission controls.
+ *
+ * @param props.scope - Current scope context (personal/group/all)
+ * @param props.groupName - Current group name when scope is 'group'
+ * @param props.groupRoleMap - Map of group namespace to user's role
+ */
 const ModelList: React.FC<ModelListProps> = ({
   scope,
   groupName,
@@ -211,19 +220,11 @@ const ModelList: React.FC<ModelListProps> = ({
 
   const totalModels = displayModels.length
 
-  // Helper function to check permissions for a specific group resource
-  const canEditGroupResource = (namespace: string) => {
-    if (!groupRoleMap) return false
-    const role = groupRoleMap.get(namespace)
-    return role === 'Owner' || role === 'Maintainer' || role === 'Developer'
-  }
-
-  const canDeleteGroupResource = (namespace: string) => {
-    if (!groupRoleMap) return false
-    const role = groupRoleMap.get(namespace)
-    return role === 'Owner' || role === 'Maintainer'
-  }
-
+  const { canEditGroupResource, canDeleteGroupResource } = useGroupPermissions({
+    scope,
+    groupName,
+    groupRoleMap,
+  })
   // Convert DisplayModel to ModelCRD for editing
   const convertToModelCRD = (displayModel: DisplayModel): ModelCRD => {
     const env = (displayModel.config?.env as Record<string, unknown>) || {}

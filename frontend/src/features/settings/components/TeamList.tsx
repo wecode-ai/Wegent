@@ -35,6 +35,7 @@ import TeamShareModal from './TeamShareModal'
 import TeamCreationWizard from './wizard/TeamCreationWizard'
 import { TeamApiCallButton } from './TeamApiCallButton'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useGroupPermissions } from '@/hooks/useGroupPermissions'
 import { useToast } from '@/hooks/use-toast'
 import { getTeamDisplayName } from '@/utils/team'
 import { isGroupTeam, isPublicTeam, isSharedTeam } from '@/utils/team-permissions'
@@ -94,6 +95,14 @@ interface TeamListProps {
   sortMode?: ResourceLibrarySortMode
 }
 
+/**
+ * Displays a list of Team (user-facing agent) resources grouped by ownership.
+ * Supports CRUD operations with group-role-based permission controls.
+ *
+ * @param props.scope - Current scope context (personal/group/all)
+ * @param props.groupName - Current group name when scope is 'group'
+ * @param props.groupRoleMap - Map of group namespace to user's role
+ */
 export default function TeamList({
   scope = 'personal',
   groupName,
@@ -366,18 +375,11 @@ export default function TeamList({
     [filteredTeams, sortMode, groupDisplayNames, getTeamSource]
   )
 
-  // Helper function to check permissions for a specific group resource
-  const canEditGroupResource = (namespace: string) => {
-    if (!groupRoleMap) return false
-    const role = groupRoleMap.get(namespace)
-    return role === 'Owner' || role === 'Maintainer' || role === 'Developer'
-  }
-
-  const canDeleteGroupResource = (namespace: string) => {
-    if (!groupRoleMap) return false
-    const role = groupRoleMap.get(namespace)
-    return role === 'Owner' || role === 'Maintainer'
-  }
+  const { canEditGroupResource, canDeleteGroupResource } = useGroupPermissions({
+    scope,
+    groupName,
+    groupRoleMap,
+  })
 
   const handleDelete = async (teamId: number) => {
     setTeamToDelete(teamId)
