@@ -1,5 +1,6 @@
-import { Check, ChevronDown, Cloud, FolderOpen, FolderPlus, FolderX, HardDrive } from 'lucide-react'
+import { Check, ChevronDown, Cloud, FolderPlus, FolderX, HardDrive } from 'lucide-react'
 import { useCallback, useMemo, useRef, useState } from 'react'
+import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   getPreferredStandaloneDeviceId,
@@ -120,7 +121,6 @@ export function ProjectWorkBar({
                   const device = getDeviceForProject(project)
                   const isUnavailable = Boolean(device && device.status !== 'online')
                   const selected = project.id === currentProjectId
-                  const ProjectIcon = isUnavailable ? FolderX : FolderOpen
                   const projectTextClass = isUnavailable
                     ? 'text-text-muted'
                     : selected
@@ -139,8 +139,9 @@ export function ProjectWorkBar({
                       className={`flex w-full flex-col rounded-xl px-4 py-2 text-left hover:bg-muted disabled:cursor-not-allowed disabled:hover:bg-transparent ${projectTextClass}`}
                     >
                       <div className="flex min-h-7 items-center gap-3">
-                        <ProjectIcon
-                          data-testid={
+                        <ProjectFolderIcon
+                          project={project}
+                          testId={
                             isUnavailable
                               ? `project-unavailable-icon-${project.id}`
                               : `project-available-icon-${project.id}`
@@ -237,7 +238,7 @@ export function ProjectWorkBar({
         >
           {currentProject ? (
             <>
-              <FolderOpen className="h-4 w-4" />
+              <ProjectFolderIcon project={currentProject} className="h-4 w-4" />
               <span>{currentProject.name}</span>
             </>
           ) : (
