@@ -5,25 +5,45 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { usePathname } from 'next/navigation'
 import { useSocket } from '@/contexts/SocketContext'
 import { useUser } from '@/features/common/UserContext'
 import { useOptionalTaskSession } from '@/features/tasks/session/TaskSession'
+import type { UnifiedMessage } from '@/features/tasks/state/TaskStateMachine'
 import type { ChatStatusUpdatedPayload } from '@/types/socket'
 
 const CONTEXT_REMAINING_STATUS_ITEM = 'context-remaining'
-const ACTIVE_TASK_STATUS_PATHS = ['/chat', '/code', '/generate', '/devices/chat']
+const PERSISTED_PHASE = 'persisted'
 
 function formatTokenCount(value: number): string {
   return new Intl.NumberFormat().format(value)
 }
 
-function isTaskStatusRoute(pathname: string | null): boolean {
-  if (!pathname) {
-    return false
+/**
+ * Derive a status payload from the most recent AI message that carries a
+ * persisted context_metrics snapshot. Used as a cold-load fallback before any
+ * live `chat:status_updated` event arrives in this session.
+ */
+function deriveStatusFromMessages(
+  taskId: number,
+  messages: Map<string, UnifiedMessage>
+): ChatStatusUpdatedPayload | null {
+  let latest: UnifiedMessage | null = null
+  for (const message of messages.values()) {
+    if (message.type !== 'ai') continue
+    if (!message.result?.context_metrics) continue
+    if (!latest || message.timestamp > latest.timestamp) {
+      latest = message
+    }
   }
 
-  return ACTIVE_TASK_STATUS_PATHS.some(path => pathname === path || pathname.startsWith(`${path}/`))
+  if (!latest?.result?.context_metrics) return null
+
+  return {
+    task_id: taskId,
+    subtask_id: latest.subtaskId ?? 0,
+    phase: PERSISTED_PHASE,
+    context_metrics: latest.result.context_metrics,
+  }
 }
 
 export interface ChatStatusDisplayModel {
@@ -35,7 +55,6 @@ export interface ChatStatusDisplayModel {
 
 export interface ChatStatusIndicatorState {
   enabled: boolean
-  shouldRender: boolean
   display: ChatStatusDisplayModel | null
   currentTaskId: number | null
 }
@@ -44,7 +63,6 @@ export function useChatStatusIndicator(): ChatStatusIndicatorState {
   const { registerChatHandlers } = useSocket()
   const { user } = useUser()
   const taskSession = useOptionalTaskSession()
-  const pathname = usePathname()
   const [statusByTaskId, setStatusByTaskId] = useState<Record<number, ChatStatusUpdatedPayload>>({})
 
   const currentTaskId =
@@ -55,8 +73,16 @@ export function useChatStatusIndicator(): ChatStatusIndicatorState {
 
   const enabledItems = user?.preferences?.chat_status_items ?? []
   const enabled = enabledItems.includes(CONTEXT_REMAINING_STATUS_ITEM)
-  const currentStatus = currentTaskId ? statusByTaskId[currentTaskId] : null
-  const supportedRoute = isTaskStatusRoute(pathname)
+  const liveStatus = currentTaskId ? statusByTaskId[currentTaskId] : null
+
+  const fallbackStatus = useMemo<ChatStatusUpdatedPayload | null>(() => {
+    if (!currentTaskId || liveStatus) return null
+    const messages = taskSession?.messages
+    if (!messages || messages.size === 0) return null
+    return deriveStatusFromMessages(currentTaskId, messages)
+  }, [currentTaskId, liveStatus, taskSession?.messages])
+
+  const currentStatus = liveStatus ?? fallbackStatus
 
   useEffect(() => {
     return registerChatHandlers({
@@ -88,7 +114,6 @@ export function useChatStatusIndicator(): ChatStatusIndicatorState {
 
   return {
     enabled,
-    shouldRender: enabled && supportedRoute && !!currentTaskId && !!display,
     display,
     currentTaskId,
   }

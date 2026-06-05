@@ -4,11 +4,12 @@
 
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import QuotaUsage from '@/features/tasks/components/params/QuotaUsage'
+import ChatToolbarStatus from '@/features/tasks/components/input/ChatToolbarStatus'
 
 const fetchQuota = jest.fn()
 const getRuntimeConfigSync = jest.fn()
 const useChatStatusIndicator = jest.fn()
+const usePathname = jest.fn()
 
 jest.mock('@/apis/quota', () => ({
   quotaApis: {
@@ -24,10 +25,14 @@ jest.mock('@/features/tasks/hooks/useChatStatusIndicator', () => ({
   useChatStatusIndicator: () => useChatStatusIndicator(),
 }))
 
+jest.mock('next/navigation', () => ({
+  usePathname: () => usePathname(),
+}))
+
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (key: string, params?: Record<string, string | number>) => {
-      if (key === 'common:chat_status.title') return 'Chat Status'
+      if (key === 'common:chat_status.title') return 'Current chat status'
       if (key === 'common:chat_status.context_remaining') {
         return `Context ${params?.percent}% left`
       }
@@ -51,11 +56,13 @@ jest.mock('@/hooks/use-toast', () => ({
   }),
 }))
 
-describe('QuotaUsage', () => {
+describe('ChatToolbarStatus', () => {
   beforeEach(() => {
     fetchQuota.mockReset()
     getRuntimeConfigSync.mockReset()
     useChatStatusIndicator.mockReset()
+    usePathname.mockReset()
+    usePathname.mockReturnValue('/chat')
   })
 
   test('renders context status without quota data', async () => {
@@ -65,7 +72,6 @@ describe('QuotaUsage', () => {
     fetchQuota.mockResolvedValue(null)
     useChatStatusIndicator.mockReturnValue({
       enabled: true,
-      shouldRender: true,
       currentTaskId: 1,
       display: {
         percent: 57,
@@ -75,9 +81,9 @@ describe('QuotaUsage', () => {
       },
     })
 
-    render(<QuotaUsage compact />)
+    render(<ChatToolbarStatus compact />)
 
-    fireEvent.click(await screen.findByTestId('chat-meta-trigger'))
+    fireEvent.click(await screen.findByTestId('chat-toolbar-status-trigger'))
 
     expect(await screen.findByTestId('chat-status-section')).toHaveTextContent('Context 57% left')
     expect(screen.queryByTestId('quota-usage-section')).not.toBeInTheDocument()
@@ -104,18 +110,17 @@ describe('QuotaUsage', () => {
     })
     useChatStatusIndicator.mockReturnValue({
       enabled: false,
-      shouldRender: false,
       currentTaskId: null,
       display: null,
     })
 
-    render(<QuotaUsage compact />)
+    render(<ChatToolbarStatus compact />)
 
     await waitFor(() => {
-      expect(screen.getByTestId('chat-meta-trigger')).toBeInTheDocument()
+      expect(screen.getByTestId('chat-toolbar-status-trigger')).toBeInTheDocument()
     })
 
-    fireEvent.click(screen.getByTestId('chat-meta-trigger'))
+    fireEvent.click(screen.getByTestId('chat-toolbar-status-trigger'))
 
     expect(await screen.findByTestId('quota-usage-section')).toHaveTextContent('Quota brief')
     expect(screen.queryByTestId('chat-status-section')).not.toBeInTheDocument()
