@@ -2503,7 +2503,10 @@ Response template:
 
         workspace = config.workspace
         if workspace:
-            project_workspace_path = workspace.localPath or workspace.checkoutPath
+            if workspace.source == "git" and workspace.checkoutPath:
+                project_workspace_path = f"projects/{workspace.checkoutPath}"
+            else:
+                project_workspace_path = workspace.localPath or workspace.checkoutPath
             workspace_data["project"] = {
                 "project_id": project_id,
                 "workspace_source": workspace.source,
