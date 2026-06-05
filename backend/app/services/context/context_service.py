@@ -727,6 +727,14 @@ class ContextService:
         if target_user_id <= 0:
             raise ValueError("target_user_id must be positive")
 
+        if self.is_video_context(source_context):
+            return self._copy_video_metadata_for_user(
+                db=db,
+                source_context=source_context,
+                target_user_id=target_user_id,
+                source_metadata=source_metadata,
+            )
+
         binary_data = self.get_attachment_binary_data(db, source_context)
         if binary_data is None:
             raise StorageError(
@@ -782,6 +790,51 @@ class ContextService:
         logger.info(
             f"Copied attachment {source_context.id} for user {target_user_id}: "
             f"new_context_id={copied_context.id}"
+        )
+        return copied_context
+
+    def _copy_video_metadata_for_user(
+        self,
+        db: Session,
+        source_context: SubtaskContext,
+        target_user_id: int,
+        source_metadata: Optional[Dict[str, Any]] = None,
+    ) -> SubtaskContext:
+        """Copy a video attachment context without local binary storage."""
+        source_type_data = dict(source_context.type_data or {})
+        source_type_data.pop("storage_key", None)
+        copied_type_data = {
+            **source_type_data,
+            "original_filename": source_context.original_filename,
+            "file_extension": source_context.file_extension,
+            "file_size": source_context.file_size,
+            "mime_type": source_context.mime_type,
+            "storage_backend": source_context.storage_backend or "weibo",
+            "source_attachment_id": source_context.id,
+            **(source_metadata or {}),
+        }
+
+        copied_context = SubtaskContext(
+            subtask_id=self.UNLINKED_SUBTASK_ID,
+            user_id=target_user_id,
+            context_type=ContextType.ATTACHMENT.value,
+            name=source_context.original_filename,
+            status=ContextStatus.READY.value,
+            binary_data=b"",
+            image_base64=source_context.image_base64 or "",
+            extracted_text=source_context.extracted_text or "",
+            text_length=source_context.text_length or 0,
+            error_message="",
+            type_data=copied_type_data,
+        )
+        db.add(copied_context)
+        db.flush()
+        db.commit()
+        db.refresh(copied_context)
+
+        logger.info(
+            f"Copied video attachment metadata {source_context.id} for user "
+            f"{target_user_id}: new_context_id={copied_context.id}"
         )
         return copied_context
 

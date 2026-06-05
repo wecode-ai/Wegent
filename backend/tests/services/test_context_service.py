@@ -168,6 +168,82 @@ class TestContextServiceAttachmentCopy:
         db.commit.assert_called_once()
         db.refresh.assert_called_once_with(copied)
 
+    def test_copy_attachment_for_user_copies_video_metadata_without_binary(
+        self, monkeypatch
+    ) -> None:
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context import context_service
+
+        source = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="demo.mp4",
+            status=ContextStatus.READY.value,
+            extracted_text="",
+            text_length=0,
+            image_base64="",
+            type_data={
+                "original_filename": "demo.mp4",
+                "file_extension": ".mp4",
+                "file_size": 4096,
+                "mime_type": "video/mp4",
+                "storage_backend": "weibo",
+                "fid": 987654,
+            },
+        )
+        source.id = 60
+        added_contexts = []
+        db = Mock()
+
+        def add_context(context):
+            added_contexts.append(context)
+
+        def flush_context():
+            if added_contexts and added_contexts[-1].id is None:
+                added_contexts[-1].id = 601
+
+        db.add.side_effect = add_context
+        db.flush.side_effect = flush_context
+        monkeypatch.setattr(
+            context_service,
+            "get_attachment_binary_data",
+            lambda _db, _context: pytest.fail("video copy must not read binary data"),
+        )
+
+        copied = context_service.copy_attachment_for_user(
+            db=db,
+            source_context=source,
+            target_user_id=7,
+            source_metadata={
+                "source": "quick_launch_preset",
+                "quick_launch_function_id": "create_video",
+                "quick_launch_preset_id": "demo",
+            },
+        )
+
+        assert copied.id == 601
+        assert copied.user_id == 7
+        assert copied.subtask_id == 0
+        assert copied.context_type == ContextType.ATTACHMENT.value
+        assert copied.status == ContextStatus.READY.value
+        assert copied.type_data["original_filename"] == "demo.mp4"
+        assert copied.type_data["file_extension"] == ".mp4"
+        assert copied.type_data["mime_type"] == "video/mp4"
+        assert copied.type_data["storage_backend"] == "weibo"
+        assert copied.type_data["fid"] == 987654
+        assert copied.type_data["source"] == "quick_launch_preset"
+        assert copied.type_data["source_attachment_id"] == 60
+        assert copied.type_data["quick_launch_function_id"] == "create_video"
+        assert copied.type_data["quick_launch_preset_id"] == "demo"
+        assert copied.binary_data == b""
+        db.commit.assert_called_once()
+        db.refresh.assert_called_once_with(copied)
+
 
 class TestContextServiceKnowledgeBaseRetrieval:
     """Test knowledge base retrieval result functionality"""
