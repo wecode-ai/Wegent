@@ -308,8 +308,13 @@ export function useModelSelection({
     if (botConfig) {
       const bindModel = getModelFromConfig(botConfig)
       if (bindModel) {
-        const foundModel = selectableModels.find(
-          m => m.name === bindModel || m.displayName === bindModel
+        const foundModel = selectableModels.find(model =>
+          modelMatchesConfiguredRef(
+            model,
+            bindModel,
+            getModelTypeFromConfig(botConfig),
+            getModelNamespaceFromConfig(botConfig)
+          )
         )
         return foundModel || null
       }
