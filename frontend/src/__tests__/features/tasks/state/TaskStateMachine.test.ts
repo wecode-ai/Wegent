@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { TaskStateMachine, type TaskStateMachineDeps } from '@/features/tasks/state'
+import { getChatSendState } from '@/features/tasks/components/input/chatSendState'
 
 function createRuntimeActions(overrides: Partial<TaskStateMachineDeps> = {}): TaskStateMachineDeps {
   return {
@@ -1532,6 +1533,44 @@ describe('TaskStateMachine', () => {
 
       machine.setStopping(false)
       expect(machine.getState().isStopping).toBe(false)
+    })
+
+    it('recovery unblocks getChatSendState so new messages are not queued', async () => {
+      const machine = new TaskStateMachine(42, createRuntimeActions())
+      machine.handleChatStart(10)
+      machine.handleChatChunk(10, 'partial')
+      machine.setStopping(true)
+
+      const stateWhileStuck = machine.getState()
+      expect(
+        getChatSendState({
+          isStreaming: stateWhileStuck.derived.isStreaming,
+          isStopping: stateWhileStuck.isStopping,
+          isModelSelectionRequired: false,
+          isAttachmentReadyToSend: true,
+          hasNoTeams: false,
+          shouldHideChatInput: false,
+          taskInputMessage: 'hello',
+          canQueueMessage: true,
+        }).primaryAction
+      ).toBe('loading')
+
+      await machine.checkHealth('page-visible')
+
+      const stateAfterRecovery = machine.getState()
+      expect(stateAfterRecovery.isStopping).toBe(false)
+      expect(
+        getChatSendState({
+          isStreaming: stateAfterRecovery.derived.isStreaming,
+          isStopping: stateAfterRecovery.isStopping,
+          isModelSelectionRequired: false,
+          isAttachmentReadyToSend: true,
+          hasNoTeams: false,
+          shouldHideChatInput: false,
+          taskInputMessage: 'hello',
+          canQueueMessage: true,
+        }).primaryAction
+      ).toBe('send')
     })
   })
 })
