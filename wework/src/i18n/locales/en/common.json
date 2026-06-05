@@ -334,6 +334,7 @@
     "connection_resource_memory": "MEM",
     "connection_resource_disk": "Disk",
     "connection_scale_wiki_title": "Notes",
+    "connection_scale_wiki_link": "Scaling Wiki",
     "connection_scale_wiki_desc": "When CPU, MEM, or disk stays above 80%, scale the cloud device plan or clean workspace cache.",
     "connection_status_online": "Online",
     "connection_status_offline": "Offline",
