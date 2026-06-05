@@ -79,6 +79,7 @@ def test_input_preset_normalizes_prompt_and_options():
         id=" review ",
         title=" Review ",
         prompt="  Review this change  ",
+        source_attachment_ids=[10, 20, 10],
         options={
             "enable_deep_thinking": False,
             "enable_clarification": True,
@@ -94,6 +95,16 @@ def test_input_preset_normalizes_prompt_and_options():
     assert preset.options.enable_clarification is True
     assert preset.options.force_override is True
     assert preset.options.selected_skill_names == ["code-review", "tests"]
+    assert preset.source_attachment_ids == [10, 20]
+
+
+def test_input_preset_rejects_invalid_source_attachment_ids():
+    with pytest.raises(ValidationError):
+        QuickLaunchInputPreset(
+            id="review",
+            title="Review",
+            source_attachment_ids=[1, 0],
+        )
 
 
 def test_quick_launch_function_rejects_more_than_six_input_presets():

@@ -3,9 +3,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import datetime
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
+
+from app.schemas.kind import SkillRefMeta
 
 
 # User Management Schemas
@@ -390,6 +392,15 @@ class PublicBotCreate(BaseModel):
         None, description="MCP servers config for Ghost"
     )
     skills: Optional[List[str]] = Field(None, description="Skills list for Ghost")
+    skill_refs: Optional[Dict[str, SkillRefMeta]] = Field(
+        None, description="Precise skill refs for Ghost skills"
+    )
+    preload_skills: Optional[List[str]] = Field(
+        None, description="Skills to preload into the Ghost system prompt"
+    )
+    preload_skill_refs: Optional[Dict[str, SkillRefMeta]] = Field(
+        None, description="Precise skill refs for preloaded Ghost skills"
+    )
     agent_config: Optional[dict] = Field(None, description="Agent config for Model")
     default_knowledge_base_refs: Optional[List[dict]] = Field(
         None, description="Default knowledge base refs for Ghost"
@@ -415,6 +426,15 @@ class PublicBotUpdate(BaseModel):
         None, description="MCP servers config for Ghost"
     )
     skills: Optional[List[str]] = Field(None, description="Skills list for Ghost")
+    skill_refs: Optional[Dict[str, SkillRefMeta]] = Field(
+        None, description="Precise skill refs for Ghost skills"
+    )
+    preload_skills: Optional[List[str]] = Field(
+        None, description="Skills to preload into the Ghost system prompt"
+    )
+    preload_skill_refs: Optional[Dict[str, SkillRefMeta]] = Field(
+        None, description="Precise skill refs for preloaded Ghost skills"
+    )
     agent_config: Optional[dict] = Field(None, description="Agent config for Model")
     default_knowledge_base_refs: Optional[List[dict]] = Field(
         None, description="Default knowledge base refs for Ghost"
@@ -443,6 +463,9 @@ class PublicBotResponse(BaseModel):
     system_prompt: Optional[str] = None
     mcp_servers: Optional[dict] = None
     skills: Optional[List[str]] = None
+    skill_refs: Optional[Dict[str, SkillRefMeta]] = None
+    preload_skills: Optional[List[str]] = None
+    preload_skill_refs: Optional[Dict[str, SkillRefMeta]] = None
     default_knowledge_base_refs: Optional[List[dict]] = None
     # Expanded Model fields for UI convenience
     agent_config: Optional[dict] = None

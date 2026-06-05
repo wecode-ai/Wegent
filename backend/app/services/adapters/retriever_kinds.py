@@ -606,6 +606,8 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
                 "storageType": retriever.spec.storageConfig.type,
                 "namespace": kind.namespace,
                 "description": retriever.spec.description,
+                "created_at": kind.created_at,
+                "updated_at": kind.updated_at,
             }
         except Exception as e:
             logger.warning(f"Failed to parse retriever {kind.name}: {e}")
@@ -623,6 +625,8 @@ class RetrieverKindsService(BaseService[Kind, Dict, Dict]):
                 "storageType": "unknown",
                 "namespace": kind.namespace,
                 "description": None,
+                "created_at": kind.created_at,
+                "updated_at": kind.updated_at,
             }
 
 

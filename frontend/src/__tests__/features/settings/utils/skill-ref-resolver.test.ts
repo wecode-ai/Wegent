@@ -39,4 +39,31 @@ describe('buildSkillRefsFromSelection', () => {
       is_public: false,
     })
   })
+
+  test('prefers public skills for public scope duplicate names', () => {
+    const selectedSkillNames = ['dup-skill']
+    const existingRefs: Record<string, SkillRefMeta> = {}
+    const skillPool = [
+      {
+        id: 1,
+        name: 'dup-skill',
+        namespace: 'default',
+        is_public: false,
+      },
+      {
+        id: 2,
+        name: 'dup-skill',
+        namespace: 'default',
+        is_public: true,
+      },
+    ] as UnifiedSkill[]
+
+    const refs = buildSkillRefsFromSelection(selectedSkillNames, existingRefs, skillPool, 'public')
+
+    expect(refs['dup-skill']).toEqual({
+      skill_id: 2,
+      namespace: 'default',
+      is_public: true,
+    })
+  })
 })
