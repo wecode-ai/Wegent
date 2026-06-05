@@ -1000,7 +1000,7 @@ Options:
   --socket-url URL              Socket direct url (auto-computed from BACKEND_PORT)
   --clean-frontend-cache        Remove frontend .next cache before starting frontend
   --init                        Interactive configuration initialization
-  --stop [services...]          Stop tracked services by default. Can specify multiple:
+  --stop [services...]          Stop all known service ports by default. Can specify multiple:
                                 $(valid_service_names)
   -g, --graceful                Use graceful shutdown with stop/restart (SIGTERM, wait 30s, then SIGKILL)
   --restart [services...]       Restart services (default: all)
@@ -1045,7 +1045,7 @@ Examples:
   $0 -p 8080                            # Specify frontend port as 8080
   $0 -e my-executor:latest              # Specify custom executor image
   $0 --socket-url http://192.168.1.100:8000  # Specify socket URL with your IP
-  $0 --stop                             # Stop services tracked by .pids (force kill)
+  $0 --stop                             # Stop all known service ports (force kill)
   $0 --stop all                         # Stop all known services (force kill)
   $0 --stop backend frontend            # Stop only backend and frontend
   $0 --stop be cs kr                    # Stop backend, chat_shell, knowledge_runtime (short names)
@@ -1466,23 +1466,16 @@ stop_services() {
         all_ports+=("$(get_runtime_service_port "$service")")
     done
 
-    local tracked_services=()
-    local tracked_service
-    for tracked_service in $(get_tracked_services); do
-        [ -n "$tracked_service" ] || continue
-        tracked_services+=("$tracked_service")
-    done
-
     # Determine which services to stop
     local services=()
     local service_ports=()
 
     if [ $# -eq 0 ]; then
-        # No specific services provided, stop only services this script tracks.
-        services=("${tracked_services[@]}")
-        for service in "${services[@]}"; do
-            service_ports+=("$(get_runtime_service_port "$service")")
-        done
+        # No specific services provided: stop every known service port.
+        # PID files can be missing when a process was orphaned or started by a
+        # previous shell, so default stop must not depend on .pids alone.
+        services=("${all_services[@]}")
+        service_ports=("${all_ports[@]}")
     else
         # Parse specified services
         for svc in "$@"; do

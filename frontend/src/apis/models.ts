@@ -169,6 +169,8 @@ export interface UnifiedModel {
   isAdvanced?: boolean
   modelGroup?: string | null
   modelSubGroup?: string | null
+  created_at?: string | null
+  updated_at?: string | null
 }
 
 export interface UnifiedModelListResponse {
