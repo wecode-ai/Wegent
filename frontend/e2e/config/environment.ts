@@ -20,7 +20,7 @@ export function getEnvironment(): E2EEnvironment {
     baseUrl: process.env.E2E_BASE_URL || 'http://localhost:3000',
     apiUrl: process.env.E2E_API_URL || 'http://localhost:8000',
     timeout: parseInt(process.env.E2E_TIMEOUT || '30000', 10),
-    retries: isCI ? 2 : 0,
+    retries: 0,
     isCI,
   }
 }

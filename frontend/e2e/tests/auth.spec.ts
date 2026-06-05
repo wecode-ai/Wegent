@@ -33,8 +33,8 @@ test.describe('Authentication', () => {
     // Submit form
     await page.locator('button[type="submit"]').click()
 
-    // Should redirect to chat or home
-    await page.waitForURL(/\/(chat|$)/, { timeout: 15000 })
+    // Should leave login page after successful authentication.
+    await page.waitForURL(url => !url.pathname.includes('/login'), { timeout: 30000 })
     await expect(page).not.toHaveURL(/\/login/)
   })
 

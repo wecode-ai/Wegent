@@ -26,6 +26,9 @@ export function WorkbenchPage() {
     rememberExecutionDevice,
     refreshDevices,
     createProject,
+    createGitWorkspaceProject,
+    listGitRepositories,
+    listGitBranches,
     updateProjectName,
     removeProject,
     archiveAllChats,
@@ -85,6 +88,9 @@ export function WorkbenchPage() {
       onRememberExecutionDevice={rememberExecutionDevice}
       onRefreshDevices={refreshDevices}
       onCreateProject={createProject}
+      onCreateGitWorkspaceProject={createGitWorkspaceProject}
+      onListGitRepositories={listGitRepositories}
+      onListGitBranches={listGitBranches}
       onUpdateProjectName={updateProjectName}
       onRemoveProject={removeProject}
       onArchiveAllChats={archiveAllChats}

@@ -8,6 +8,7 @@ import {
   listProjectBranches,
   loadProjectEnvironment,
 } from '@/api/environment'
+import { createGitApi } from '@/api/git'
 import { createHttpClient } from '@/api/http'
 import { createModelApi } from '@/api/models'
 import { createProjectApi } from '@/api/projects'
@@ -25,6 +26,9 @@ import type {
   ArchivedTaskListResponse,
   ChatSendPayload,
   CreateProjectRequest,
+  CreateGitWorkspaceProjectRequest,
+  GitBranch,
+  GitRepoInfo,
   DeviceInfo,
   LocalDeviceSkill,
   ModelOptions,
@@ -70,7 +74,15 @@ export interface WorkbenchServices {
   teamApi: ReturnType<typeof createTeamApi>
   modelApi: ReturnType<typeof createModelApi>
   skillApi: ReturnType<typeof createSkillApi>
-  projectApi: ReturnType<typeof createProjectApi>
+  projectApi: Omit<
+    ReturnType<typeof createProjectApi>,
+    'createGitWorkspaceProject'
+  > & {
+    createGitWorkspaceProject?: ReturnType<
+      typeof createProjectApi
+    >['createGitWorkspaceProject']
+  }
+  gitApi?: ReturnType<typeof createGitApi>
   taskApi: Omit<ReturnType<typeof createTaskApi>, 'searchTasks'> & {
     searchTasks?: ReturnType<typeof createTaskApi>['searchTasks']
   }
@@ -119,6 +131,11 @@ export interface WorkbenchContextValue {
   refreshWorkLists: () => Promise<void>
   refreshDevices: () => Promise<void>
   createProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
+  createGitWorkspaceProject: (
+    data: CreateGitWorkspaceProjectRequest,
+  ) => Promise<ProjectWithTasks>
+  listGitRepositories: () => Promise<GitRepoInfo[]>
+  listGitBranches: (repo: GitRepoInfo) => Promise<GitBranch[]>
   updateProjectName: (projectId: number, name: string) => Promise<void>
   removeProject: (projectId: number) => Promise<void>
   archiveAllChats: () => Promise<void>
@@ -174,6 +191,7 @@ function createDefaultServices(): WorkbenchServices {
     modelApi: createModelApi(client),
     skillApi: createSkillApi(client),
     projectApi: createProjectApi(client),
+    gitApi: createGitApi(client),
     taskApi: createTaskApi(client),
     deviceApi: createDeviceApi(client),
     userApi: createUserApi(client),
@@ -950,6 +968,38 @@ export function WorkbenchProvider({
     [refreshWorkLists, rememberExecutionDevice, resolvedServices, user.id]
   )
 
+  const createGitWorkspaceProject = useCallback(
+    async (data: CreateGitWorkspaceProjectRequest) => {
+      if (!resolvedServices.projectApi.createGitWorkspaceProject) {
+        throw new Error('Git workspace project creation is unavailable')
+      }
+      const response = await resolvedServices.projectApi.createGitWorkspaceProject(data)
+      const project: ProjectWithTasks = {
+        ...response.project,
+        tasks: response.project.tasks ?? [],
+      }
+      rememberExecutionDevice(data.device_id)
+      await refreshWorkLists()
+      writeLastProjectId(user.id, project.id)
+      dispatch({ type: 'project_selected', project })
+      dispatchMessages({ type: 'reset', messages: [] })
+      setQueuedSends([])
+      setGuidanceMessages([])
+      return project
+    },
+    [refreshWorkLists, rememberExecutionDevice, resolvedServices, user.id]
+  )
+
+  const listGitRepositories = useCallback(
+    () => resolvedServices.gitApi?.listRepositories() ?? Promise.resolve([]),
+    [resolvedServices]
+  )
+
+  const listGitBranches = useCallback(
+    (repo: GitRepoInfo) => resolvedServices.gitApi?.listBranches(repo) ?? Promise.resolve([]),
+    [resolvedServices]
+  )
+
   const updateProjectName = useCallback(
     async (projectId: number, name: string) => {
       await resolvedServices.projectApi.updateProject(projectId, { name })
@@ -1582,6 +1632,9 @@ export function WorkbenchProvider({
     refreshWorkLists,
     refreshDevices,
     createProject,
+    createGitWorkspaceProject,
+    listGitRepositories,
+    listGitBranches,
     updateProjectName,
     removeProject,
     archiveAllChats,

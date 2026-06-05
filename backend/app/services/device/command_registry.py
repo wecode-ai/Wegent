@@ -235,6 +235,7 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
         post_processor="directory_list",
     ),
     "mkdir_p": LocalDeviceCommandDefinition(command="mkdir -p"),
+    "path_exists": LocalDeviceCommandDefinition(command="test -e"),
     "git_clone": LocalDeviceCommandDefinition(command="git clone"),
     "git_branch": LocalDeviceCommandDefinition(command="git branch --show-current"),
     "git_branch_list": LocalDeviceCommandDefinition(

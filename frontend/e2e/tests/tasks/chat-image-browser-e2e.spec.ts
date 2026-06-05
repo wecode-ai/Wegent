@@ -102,6 +102,9 @@ async function waitForChatCompletionRequest(
 }
 
 test.describe('Chat Image Browser E2E with Mock Model Server', () => {
+  // Tests in this spec use the same shard user and mutate that user's selected team state.
+  test.describe.configure({ mode: 'default' })
+
   let apiClient: ApiClient
   let token: string
   const testImagePath = path.join(__dirname, '../../fixtures/test-image.png')
@@ -334,6 +337,22 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
     await page.waitForTimeout(1500)
   }
 
+  async function isTestTeamAlreadySelected(page: Page): Promise<boolean> {
+    const selectedBadge = page
+      .locator('[data-testid="selected-team-badge"]')
+      .filter({ hasText: TEST_TEAM_NAME })
+      .first()
+    if (await selectedBadge.isVisible({ timeout: 1000 }).catch(() => false)) {
+      return true
+    }
+
+    const chatInputTeamText = page
+      .locator('[data-testid="chat-input-card"]')
+      .getByText(TEST_TEAM_NAME, { exact: true })
+      .first()
+    return chatInputTeamText.isVisible({ timeout: 1000 }).catch(() => false)
+  }
+
   /**
    * Helper function to select the test team in the UI
    * Updated to work with the new QuickAccessCards pagination design (removed "More" button)
@@ -351,6 +370,11 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
       // Take a screenshot for debugging
       await page.screenshot({ path: 'test-results/chat-page-initial.png' })
       console.log('Saved initial page screenshot')
+
+      if (await isTestTeamAlreadySelected(page)) {
+        console.log('Test team is already selected')
+        return true
+      }
 
       // Strategy 0: Current input toolbar selector.
       // The trigger is icon-only and uses data-testid="agent-skill-selector-button".
@@ -379,6 +403,12 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
           console.log('Found test team in current selector, selecting...')
           await teamOption.click()
           await page.waitForTimeout(1000)
+          return true
+        }
+
+        if (await isTestTeamAlreadySelected(page)) {
+          console.log('Test team is already selected after opening current selector')
+          await page.keyboard.press('Escape').catch(() => {})
           return true
         }
 
@@ -456,29 +486,6 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
         }
       }
 
-      // Strategy 2b: Fallback - try button with text "智能体" or "Agent"
-      const teamSelectorByText = page
-        .locator('button:has-text("智能体"), button:has-text("Agent")')
-        .first()
-      if (await teamSelectorByText.isVisible({ timeout: 3000 }).catch(() => false)) {
-        console.log('Found TeamSelectorButton by text, clicking...')
-        await teamSelectorByText.click()
-        await page.waitForTimeout(500)
-
-        // Look for the test team in the popover
-        const teamOption = page
-          .locator(
-            `[data-testid="team-option-${TEST_TEAM_NAME}"], [role="button"]:has-text("${TEST_TEAM_NAME}")`
-          )
-          .first()
-        if (await teamOption.isVisible({ timeout: 3000 }).catch(() => false)) {
-          console.log('Found team in popover, selecting...')
-          await teamOption.click()
-          await page.waitForTimeout(1000)
-          return true
-        }
-      }
-
       // Strategy 3: Look for team selector with data-tour attribute (when a task is selected)
       const teamSelector = page.locator('[data-tour="team-selector"]')
       if (await teamSelector.isVisible({ timeout: 3000 }).catch(() => false)) {
@@ -500,12 +507,9 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
         }
       }
 
-      // Strategy 4: Direct click on team card if visible anywhere on page
-      const teamCard = page.locator(`text="${TEST_TEAM_NAME}"`).first()
-      if (await teamCard.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await teamCard.click()
-        await page.waitForTimeout(1000)
-        console.log(`Selected team from direct card: ${TEST_TEAM_NAME}`)
+      // Strategy 4: Directly visible team text in the input means URL-based selection has applied.
+      if (await isTestTeamAlreadySelected(page)) {
+        console.log(`Selected team is visible in chat input: ${TEST_TEAM_NAME}`)
         return true
       }
 
@@ -863,19 +867,18 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
 
     await sendButton.click()
 
-    // Wait for response to appear
-    await page.waitForTimeout(8000)
+    // Check if response is displayed. Use an assertion so Playwright waits for streamed text.
+    const responseText = page
+      .getByTestId('messages-container')
+      .getByText(/I can see the image you uploaded/i)
+      .first()
 
-    // Check if response is displayed
-    // The mock server returns: "I can see the image you uploaded. It appears to be a small red test image."
-    const responseText = page.locator('text=I can see the image')
-    const hasResponse = await responseText.isVisible({ timeout: 10000 }).catch(() => false)
-
-    if (hasResponse) {
+    try {
+      await expect(responseText).toBeVisible({ timeout: 30000 })
       console.log('✅ Model response displayed successfully!')
-    } else {
+    } catch (error) {
       await page.screenshot({ path: 'test-results/chat-response-not-found.png' })
+      throw error
     }
-    expect(hasResponse).toBe(true)
   })
 })

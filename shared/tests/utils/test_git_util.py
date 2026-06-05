@@ -6,7 +6,27 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from shared.utils.git_util import clone_repo_with_token, is_gerrit_url
+from shared.utils.git_util import (
+    clone_repo_with_token,
+    get_safe_git_workspace_key,
+    is_gerrit_url,
+)
+
+
+def test_safe_git_workspace_key_uses_domain_and_repository_path():
+    key = get_safe_git_workspace_key(
+        "https://github.com/wecode-ai/Wegent.git",
+        domain="github.com",
+        repo="wecode-ai/Wegent",
+    )
+
+    assert key == "Wegent"
+
+
+def test_safe_git_workspace_key_falls_back_to_url_identity():
+    key = get_safe_git_workspace_key("git@gitlab.example.com:platform/app.git")
+
+    assert key == "app"
 
 
 class TestGitUtil:

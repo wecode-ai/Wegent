@@ -28,6 +28,7 @@ const mockSocketContext = {
   registerSkillHandlers: jest.fn(() => jest.fn()),
   registerTaskHandlers: jest.fn(() => jest.fn()),
   sendSkillResponse: jest.fn(),
+  onReconnect: jest.fn(() => jest.fn()),
 }
 
 jest.mock('@/contexts/SocketContext', () => ({
