@@ -168,6 +168,19 @@ class EmitterBridgeTransport(EventTransport):
                 message_id=message_id,
             )
 
+        elif event_type == ResponsesAPIStreamEvents.BLOCK_UPDATED.value:
+            block_id = data.get("block_id")
+            updates = data.get("updates")
+            if not block_id or not isinstance(updates, dict):
+                return None
+            return ExecutionEvent(
+                type=EventType.BLOCK_UPDATED.value,
+                task_id=self.task_id,
+                subtask_id=self.subtask_id,
+                data={"block_id": str(block_id), "updates": updates},
+                message_id=message_id,
+            )
+
         # error -> ERROR
         elif event_type == ResponsesAPIStreamEvents.ERROR.value:
             return ExecutionEvent(

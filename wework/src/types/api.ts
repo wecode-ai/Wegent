@@ -342,18 +342,26 @@ export interface ChatStartPayload {
   message_id?: number
 }
 
+export type ChatResultPayload = Record<string, unknown> & {
+  value?: string
+  error?: string
+  reasoning_chunk?: string
+  blocks?: ChatBlock[]
+}
+
 export interface ChatChunkPayload {
   task_id?: number
   subtask_id: number
   content: string
   offset: number
+  result?: ChatResultPayload
 }
 
 export interface ChatDonePayload {
   task_id?: number
   subtask_id: number
   offset: number
-  result: Record<string, unknown> & { value?: string; error?: string }
+  result: ChatResultPayload
   message_id?: number
 }
 
@@ -369,6 +377,7 @@ export interface TaskJoinResponse {
     subtask_id: number
     offset: number
     cached_content: string
+    blocks?: ChatBlock[]
   }
   subtasks?: Array<Record<string, unknown>>
   error?: string
