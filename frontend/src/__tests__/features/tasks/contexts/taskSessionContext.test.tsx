@@ -189,6 +189,43 @@ describe('TaskSessionProvider', () => {
     expect(mockedTaskApis.getTaskRuntimeCheck).not.toHaveBeenCalled()
   })
 
+  it('loads task detail after a new chat message resolves to a real task id', async () => {
+    mockSocketContext.sendChatMessage.mockResolvedValue({
+      task_id: 713,
+      subtask_id: 714,
+      message_id: 1,
+    })
+
+    render(
+      <TaskSessionProvider>
+        <SessionProbe />
+      </TaskSessionProvider>
+    )
+
+    await waitFor(() => {
+      expect(sessionProbe.current).not.toBeNull()
+    })
+
+    mockedTaskApis.getTaskDetail.mockClear()
+
+    await act(async () => {
+      await sessionProbe.current?.sendMessage(
+        {
+          message: 'hello',
+          team_id: 1,
+          task_type: 'task',
+        },
+        {
+          immediateTaskId: -1,
+        }
+      )
+    })
+
+    await waitFor(() => {
+      expect(mockedTaskApis.getTaskDetail).toHaveBeenCalledWith(713)
+    })
+  })
+
   it('uses runtime check only for later consistency recovery', async () => {
     render(
       <TaskSessionProvider>

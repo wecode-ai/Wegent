@@ -47,6 +47,10 @@ BLOCKED_IP_NETWORKS = [
     ipaddress.ip_network("169.254.0.0/16"),
     # IPv4 shared address space (RFC6598)
     ipaddress.ip_network("100.64.0.0/10"),
+    # IPv4 unspecified addresses. These should never be valid remote
+    # metadata fetch targets and may route to local services depending
+    # on the runtime environment.
+    ipaddress.ip_network("0.0.0.0/8"),
     # IPv6 loopback
     ipaddress.ip_network("::1/128"),
     # IPv6 link-local
@@ -55,6 +59,8 @@ BLOCKED_IP_NETWORKS = [
     ipaddress.ip_network("fc00::/7"),
     # IPv4-mapped IPv6
     ipaddress.ip_network("::ffff:0:0/96"),
+    # IPv6 unspecified address.
+    ipaddress.ip_network("::/128"),
 ]
 
 # Cloud metadata endpoints that should be blocked

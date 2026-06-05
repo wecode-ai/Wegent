@@ -193,7 +193,10 @@ class ThrottledTransport(EventTransport):
 
         # Check if throttling is needed
         if not self._config.should_throttle(event_type):
-            # No throttling, send directly
+            # No throttling, but preserve ordering with any buffered deltas for
+            # the same response before sending the higher-priority event.
+            async with self._lock:
+                await self._flush_task_buffers(task_id, subtask_id)
             return await self._transport.send(
                 event_type,
                 task_id,
@@ -219,6 +222,12 @@ class ThrottledTransport(EventTransport):
         key = (event["task_id"], event["subtask_id"], event["event_type"])
 
         async with self._lock:
+            await self._flush_task_buffers(
+                event["task_id"],
+                event["subtask_id"],
+                exclude_event_type=event["event_type"],
+            )
+
             interval = self._config.get_interval(event["event_type"])
 
             # Initialize buffer
@@ -292,6 +301,27 @@ class ThrottledTransport(EventTransport):
             # Check if this buffer has expired
             time_since_last = current_time - self._last_send_times.get(buffer_key, 0)
             if time_since_last >= interval:
+                await self._flush_buffer(buffer_key)
+
+    async def _flush_task_buffers(
+        self,
+        task_id: int,
+        subtask_id: int,
+        exclude_event_type: Optional[str] = None,
+    ) -> None:
+        """Flush pending buffers for a response before a different event type.
+
+        Per-event-type throttling must not reorder semantically adjacent stream
+        segments. For example, reasoning deltas buffered just before output text
+        must reach the frontend before that output text.
+        """
+        for buffer_key in list(self._buffers.keys()):
+            buffer_task_id, buffer_subtask_id, buffer_event_type = buffer_key
+            if buffer_task_id != task_id or buffer_subtask_id != subtask_id:
+                continue
+            if exclude_event_type and buffer_event_type == exclude_event_type:
+                continue
+            if self._buffers[buffer_key]:
                 await self._flush_buffer(buffer_key)
 
     def _calculate_buffer_size(self, events: List[dict]) -> int:

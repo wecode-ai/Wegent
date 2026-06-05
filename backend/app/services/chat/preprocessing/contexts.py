@@ -432,8 +432,8 @@ def _validate_attachment_ownership(
         filters.append(SubtaskContext.subtask_id == 0)
 
     # Query with row locking
-    valid_rows = db.query(SubtaskContext.id).filter(*filters).with_for_update().all()
-    valid_ids = [row[0] for row in valid_rows]
+    valid_contexts = db.query(SubtaskContext).filter(*filters).with_for_update().all()
+    valid_ids = [context.id for context in valid_contexts]
 
     # Check for invalid IDs
     invalid_ids = set(attachment_ids) - set(valid_ids)
@@ -443,7 +443,37 @@ def _validate_attachment_ownership(
             detail=f"Invalid or unauthorized attachment IDs: {sorted(invalid_ids)}",
         )
 
-    return valid_ids
+    ordinary_attachment_ids = [
+        context.id
+        for context in valid_contexts
+        if not _is_quick_launch_preset_attachment(context)
+    ]
+    if ordinary_attachment_ids and len(ordinary_attachment_ids) < len(valid_ids):
+        return _order_attachment_ids(attachment_ids, set(ordinary_attachment_ids))
+
+    return _order_attachment_ids(attachment_ids, set(valid_ids))
+
+
+def _is_quick_launch_preset_attachment(context: SubtaskContext) -> bool:
+    """Return whether an attachment was copied from a quick launch preset."""
+    return (
+        isinstance(context.type_data, dict)
+        and context.type_data.get("source") == "quick_launch_preset"
+    )
+
+
+def _order_attachment_ids(
+    requested_ids: List[int],
+    valid_ids: set[int],
+) -> List[int]:
+    """Return valid attachment IDs in request order without duplicates."""
+    ordered_ids: List[int] = []
+    seen_ids: set[int] = set()
+    for attachment_id in requested_ids:
+        if attachment_id in valid_ids and attachment_id not in seen_ids:
+            ordered_ids.append(attachment_id)
+            seen_ids.add(attachment_id)
+    return ordered_ids
 
 
 def link_contexts_to_subtask(

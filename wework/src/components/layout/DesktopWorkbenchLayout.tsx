@@ -14,6 +14,8 @@ import type {
   TaskListResponse,
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
+import { stripAppBasePath } from '@/config/runtime'
+import { isSettingsRoute, navigateTo } from '@/lib/navigation'
 import { DesktopSidebar } from './DesktopSidebar'
 import { DesktopWorkbenchMain } from './DesktopWorkbenchMain'
 import { DesktopWindowControls } from './DesktopWindowControls'
@@ -132,7 +134,9 @@ export function DesktopWorkbenchLayout({
 }: DesktopWorkbenchLayoutProps) {
   const { sidebarCollapsed, setSidebarCollapsed } =
     useDesktopSidebarCollapsed()
-  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(() =>
+    isSettingsRoute(stripAppBasePath(window.location.pathname))
+  )
   const [environmentInfo, setEnvironmentInfo] = useState<EnvironmentInfo>({
     additions: '+0',
     deletions: '-0',
@@ -169,6 +173,14 @@ export function DesktopWorkbenchLayout({
       }))
     }
   }, [environmentProject, onLoadEnvironmentInfo])
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setSettingsOpen(isSettingsRoute(stripAppBasePath(window.location.pathname)))
+    }
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
 
   useEffect(() => {
     const nextCompletedIds = new Set(
@@ -245,7 +257,10 @@ export function DesktopWorkbenchLayout({
           onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
           onListDeviceDirectories={onListDeviceDirectories}
           onCreateDeviceDirectory={onCreateDeviceDirectory}
-          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenSettings={() => {
+            setSettingsOpen(true)
+            navigateTo('/settings')
+          }}
           onLogout={onLogout}
         />
       )}
@@ -260,7 +275,10 @@ export function DesktopWorkbenchLayout({
 
       {settingsOpen ? (
         <ConnectionsSettingsPage
-          onBack={() => setSettingsOpen(false)}
+          onBack={() => {
+            setSettingsOpen(false)
+            navigateTo('/')
+          }}
           onListArchivedTasks={onListArchivedTasks}
           onUnarchiveTask={onUnarchiveTask}
           onDeleteTask={onDeleteTask}
@@ -271,6 +289,7 @@ export function DesktopWorkbenchLayout({
           isBootstrapping={state.isBootstrapping}
           currentTask={state.currentTask}
           currentProject={state.currentProject}
+          devices={state.devices}
           messages={messages}
           queuedMessages={queuedMessages}
           guidanceMessages={guidanceMessages}

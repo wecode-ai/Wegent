@@ -115,7 +115,6 @@ class ModelKindService(KindBaseService):
         except ValueError as e:
             logger.exception("Failed to encrypt API key: %r", e)
             raise
-            raise
 
         return resource_data
 
