@@ -34,6 +34,9 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     mkdir_definition = resolve_local_device_command(
         "mkdir_p", settings.LOCAL_DEVICE_COMMANDS
     )
+    path_exists_definition = resolve_local_device_command(
+        "path_exists", settings.LOCAL_DEVICE_COMMANDS
+    )
     git_clone_definition = resolve_local_device_command(
         "git_clone", settings.LOCAL_DEVICE_COMMANDS
     )
@@ -87,6 +90,9 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert mkdir_definition is not None
     assert mkdir_definition.command == "mkdir -p"
     assert mkdir_definition.post_processor is None
+    assert path_exists_definition is not None
+    assert path_exists_definition.command == "test -e"
+    assert path_exists_definition.post_processor is None
     assert git_clone_definition is not None
     assert git_clone_definition.command == "git clone"
     assert git_clone_definition.post_processor is None

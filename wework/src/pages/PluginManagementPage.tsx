@@ -27,6 +27,9 @@ export function PluginManagementPage() {
     openTask,
     refreshDevices,
     createProject,
+    createGitWorkspaceProject,
+    listGitRepositories,
+    listGitBranches,
     updateProjectName,
     removeProject,
     archiveAllChats,
@@ -120,6 +123,9 @@ export function PluginManagementPage() {
           onOpenPlugins={handleOpenPlugins}
           onRefreshDevices={refreshDevices}
           onCreateProject={createProject}
+          onCreateGitWorkspaceProject={createGitWorkspaceProject}
+          onListGitRepositories={listGitRepositories}
+          onListGitBranches={listGitBranches}
           onUpdateProjectName={updateProjectName}
           onRemoveProject={removeProject}
           onArchiveAllChats={archiveAllChats}
