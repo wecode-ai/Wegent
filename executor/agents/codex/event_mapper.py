@@ -16,6 +16,7 @@ from shared.models import ResponsesAPIEmitter
 from shared.status import TaskStatus
 
 logger = setup_logger("codex_event_mapper")
+DEFAULT_AGENT_MESSAGE_ID = "__default_agent_message__"
 
 
 class CodeXEventMapper:
@@ -26,8 +27,11 @@ class CodeXEventMapper:
         self.final_text = ""
         self.usage: Optional[dict[str, Any]] = None
         self._saw_delta = False
-        self._commentary_delta_text = ""
+        self._agent_message_phases: dict[str, str] = {}
+        self._commentary_delta_texts: dict[str, str] = {}
+        self._commentary_block_ids: dict[str, str] = {}
         self._pending_agent_delta_text = ""
+        self._pending_agent_deltas: dict[str, str] = {}
         self._tool_contexts: dict[str, dict[str, Any]] = {}
 
     async def handle(self, event: Any) -> Optional[TaskStatus]:
@@ -37,17 +41,28 @@ class CodeXEventMapper:
         if method == "item/agentMessage/delta":
             delta = str(getattr(payload, "delta", "") or "")
             if delta:
-                phase = self._normalize_type(self._get(payload, "phase"))
+                item_id = self._agent_message_item_id(payload)
+                phase = self._normalize_type(
+                    self._get(payload, "phase")
+                    or self._agent_message_phases.get(item_id)
+                )
                 if phase == "commentary":
-                    self._commentary_delta_text += delta
+                    await self._append_commentary_delta(item_id, delta)
                     return None
                 if phase in {"finalanswer", "final_answer"}:
                     self.final_text += delta
                     self._saw_delta = True
                     await self.emitter.text_delta(delta)
                     return None
+                self._pending_agent_deltas[item_id] = (
+                    self._pending_agent_deltas.get(item_id, "") + delta
+                )
                 self._pending_agent_delta_text += delta
                 return None
+            return None
+
+        if method == "item/started":
+            await self._handle_started_item(payload)
             return None
 
         if method == "item/completed":
@@ -63,8 +78,22 @@ class CodeXEventMapper:
 
         return None
 
+    async def _handle_started_item(self, payload: Any) -> None:
+        item = self._notification_item(payload)
+        item_type = self._normalize_type(self._get(item, "type"))
+
+        if item_type in {"agentmessage", "message"}:
+            item_id = self._agent_message_item_id(item)
+            phase = self._normalize_type(self._get(item, "phase"))
+            if phase:
+                self._agent_message_phases[item_id] = phase
+            return
+
+        if item_type == "commandexecution":
+            await self._handle_command_execution_start(item)
+
     async def _handle_completed_item(self, payload: Any) -> None:
-        item = self._completed_item(payload)
+        item = self._notification_item(payload)
         item_type = self._normalize_type(self._get(item, "type"))
 
         if item_type in {"agentmessage", "message"}:
@@ -77,30 +106,42 @@ class CodeXEventMapper:
 
         if item_type in {"functioncalloutput", "function_call_output"}:
             await self._handle_function_call_output(item)
+            return
+
+        if item_type == "commandexecution":
+            await self._handle_command_execution_done(item)
 
     async def _handle_completed_message(self, item: Any) -> None:
         if self._get(item, "role") not in (None, "assistant"):
             return
 
-        phase = self._normalize_type(self._get(item, "phase"))
+        item_id = self._agent_message_item_id(item)
+        phase_value = self._get(item, "phase")
+        stored_phase = self._agent_message_phases.pop(item_id, "")
+        phase = self._normalize_type(phase_value or stored_phase)
         if phase == "commentary":
             text = (
                 self._extract_message_text(item)
-                or self._commentary_delta_text
-                or self._pending_agent_delta_text
+                or self._commentary_delta_texts.get(item_id, "")
+                or self._pending_agent_deltas.get(item_id, "")
             )
             self._pending_agent_delta_text = ""
-            self._commentary_delta_text = ""
+            self._pending_agent_deltas.pop(item_id, None)
             if not text:
                 return
-            await self._emit_commentary_block(text)
+            await self._complete_commentary_block(item_id, text)
             return
 
         if phase in {"finalanswer", "final_answer"} or not phase:
-            text = self._extract_message_text(item) or self._pending_agent_delta_text
+            text = (
+                self._extract_message_text(item)
+                or self._pending_agent_deltas.get(item_id, "")
+                or self._pending_agent_delta_text
+            )
             if not text:
                 return
             self._pending_agent_delta_text = ""
+            self._pending_agent_deltas.pop(item_id, None)
             if not self._saw_delta:
                 self.final_text += text
                 self._saw_delta = True
@@ -147,13 +188,98 @@ class CodeXEventMapper:
             tool_protocol="function_call",
         )
 
-    async def _emit_commentary_block(self, content: str) -> None:
+    async def _handle_command_execution_start(self, item: Any) -> None:
+        call_id = self._call_id(item)
+        if not call_id or call_id in self._tool_contexts:
+            return
+        arguments = self._command_execution_arguments(item)
+        self._tool_contexts[call_id] = {
+            "name": "bash",
+            "arguments": arguments,
+        }
+        await self.emitter.tool_start(
+            call_id=call_id,
+            name="bash",
+            arguments=arguments,
+            display_name="Shell",
+            tool_protocol="function_call",
+        )
+
+    async def _handle_command_execution_done(self, item: Any) -> None:
+        call_id = self._call_id(item)
+        if not call_id:
+            return
+        if call_id not in self._tool_contexts:
+            await self._handle_command_execution_start(item)
+        context = self._tool_contexts.pop(call_id, {})
+        status = self._command_execution_status(item)
+        await self.emitter.tool_done(
+            call_id=call_id,
+            name=str(context.get("name") or "bash"),
+            arguments=(
+                context.get("arguments") or self._command_execution_arguments(item)
+            ),
+            output=self._stringify_output(
+                self._get(item, "aggregated_output")
+                or self._get(item, "aggregatedOutput")
+            ),
+            tool_protocol="function_call",
+            status=status,
+        )
+
+    async def _append_commentary_delta(self, item_id: str, delta: str) -> None:
+        block_id = self._commentary_block_ids.get(item_id)
+        if not block_id:
+            block_id = f"codex-commentary-{uuid.uuid4().hex[:12]}"
+            self._commentary_block_ids[item_id] = block_id
+            await self._emit_commentary_block(
+                block_id=block_id,
+                content="",
+                status="streaming",
+            )
+
+        content = self._commentary_delta_texts.get(item_id, "") + delta
+        self._commentary_delta_texts[item_id] = content
+        await self.emitter.block_updated(
+            block_id,
+            {
+                "content": content,
+                "status": "streaming",
+            },
+        )
+
+    async def _complete_commentary_block(self, item_id: str, content: str) -> None:
+        block_id = self._commentary_block_ids.get(item_id)
+        if not block_id:
+            block_id = f"codex-commentary-{uuid.uuid4().hex[:12]}"
+            await self._emit_commentary_block(
+                block_id=block_id,
+                content=content,
+                status="done",
+            )
+        else:
+            await self.emitter.block_updated(
+                block_id,
+                {
+                    "content": content,
+                    "status": "done",
+                },
+            )
+        self._commentary_delta_texts.pop(item_id, None)
+        self._commentary_block_ids.pop(item_id, None)
+
+    async def _emit_commentary_block(
+        self,
+        block_id: str,
+        content: str,
+        status: str,
+    ) -> None:
         await self.emitter.block_created(
             {
-                "id": f"codex-commentary-{uuid.uuid4().hex[:12]}",
+                "id": block_id,
                 "type": "thinking",
                 "content": content,
-                "status": "done",
+                "status": status,
                 "timestamp": int(time.time() * 1000),
             }
         )
@@ -196,7 +322,7 @@ class CodeXEventMapper:
         return str(error)
 
     @classmethod
-    def _completed_item(cls, payload: Any) -> Any:
+    def _notification_item(cls, payload: Any) -> Any:
         item = cls._get(payload, "item")
         root = cls._get(item, "root")
         return root or item or payload
@@ -242,6 +368,15 @@ class CodeXEventMapper:
         return str(value or "")
 
     @classmethod
+    def _agent_message_item_id(cls, source: Any) -> str:
+        value = (
+            cls._get(source, "item_id")
+            or cls._get(source, "itemId")
+            or cls._get(source, "id")
+        )
+        return str(value or DEFAULT_AGENT_MESSAGE_ID)
+
+    @classmethod
     def _parse_arguments(cls, value: Any) -> dict[str, Any]:
         if isinstance(value, dict):
             return value
@@ -267,6 +402,29 @@ class CodeXEventMapper:
                 normalized_arguments["cwd"] = workdir
             return "bash", normalized_arguments, "Shell"
         return name, arguments, None
+
+    @classmethod
+    def _command_execution_arguments(cls, item: Any) -> dict[str, Any]:
+        arguments: dict[str, Any] = {}
+        command = cls._get(item, "command")
+        cwd = cls._get(item, "cwd")
+        if command is not None:
+            arguments["command"] = str(command)
+        if cwd is not None:
+            arguments["cwd"] = str(cwd)
+        return arguments
+
+    @classmethod
+    def _command_execution_status(cls, item: Any) -> str:
+        status = cls._normalize_type(cls._get(item, "status"))
+        if status in {"failed", "declined", "error"}:
+            return "failed"
+        exit_code = cls._get(item, "exit_code")
+        if exit_code is None:
+            exit_code = cls._get(item, "exitCode")
+        if isinstance(exit_code, int) and exit_code != 0:
+            return "failed"
+        return "completed"
 
     @staticmethod
     def _stringify_output(output: Any) -> Optional[str]:
