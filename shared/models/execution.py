@@ -152,8 +152,6 @@ class ExecutionRequest:
     history_limit: Optional[int] = None
     stateless: bool = False
     new_session: bool = False
-    runtime_session_id: Optional[str] = None
-    runtime_session_provider: Optional[str] = None
     collaboration_model: str = "single"
     mode: Optional[str] = (
         None  # From Task: Collaboration mode (e.g., "coordinate", "collaborate")

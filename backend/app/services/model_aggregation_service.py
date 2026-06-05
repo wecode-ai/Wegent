@@ -24,7 +24,6 @@ from app.schemas.kind import Model, ModelCategoryType, Shell
 from app.services.adapters.public_model import public_model_service
 from app.services.adapters.shell_utils import find_shell_json
 from app.services.kind import kind_service
-from shared.models.codex_routing import uses_responses_wire_api
 
 logger = logging.getLogger(__name__)
 
@@ -279,7 +278,7 @@ class ModelAggregationService:
                 return False
 
         if shell_type == "ClaudeCode" and provider == "openai":
-            return uses_responses_wire_api(config or {})
+            return self._is_codex_compatible_model_config(config or {})
 
         if support_model:
             return True
@@ -294,6 +293,18 @@ class ModelAggregationService:
 
         # No filter, allow all
         return True
+
+    @staticmethod
+    def _is_codex_compatible_model_config(config: Dict[str, Any]) -> bool:
+        """Return whether an OpenAI model config can run through CodeXAgent."""
+        api_format = str(config.get("apiFormat") or config.get("api_format") or "")
+        protocol = str(config.get("protocol") or "")
+        wire_api = str(config.get("wire_api") or "")
+        return (
+            api_format.lower() == "responses"
+            or protocol.lower() == "openai-responses"
+            or wire_api.lower() == "responses"
+        )
 
     def _get_shell_support_model(
         self, db: Session, shell_name: str, current_user: Optional[User] = None

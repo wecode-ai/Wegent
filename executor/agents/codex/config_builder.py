@@ -15,13 +15,9 @@ from executor.agents.env_value import resolve_env_value
 from executor.config import config
 from executor.config.local_cli_config import use_local_cli_config
 from shared.logger import setup_logger
-from shared.models.codex_routing import (
-    OPENAI_RESPONSES_PROTOCOL,
-    RESPONSES_WIRE_API,
-    is_codex_compatible_model_config,
-    read_model_api_format,
-)
 
+OPENAI_RESPONSES_PROTOCOL = "openai-responses"
+RESPONSES_WIRE_API = "responses"
 DEFAULT_PROVIDER_NAME = "wecode openai"
 CODEX_REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
 CODEX_REASONING_SUMMARIES = {"auto", "concise", "detailed"}
@@ -56,7 +52,6 @@ SERVICE_TIER_ALIASES = {
 }
 
 logger = setup_logger("codex_config_builder")
-is_codex_compatible_model = is_codex_compatible_model_config
 
 
 @dataclass(frozen=True)
@@ -70,6 +65,20 @@ class CodeXConfig:
     thread_config: dict[str, Any]
     effort: Optional[str]
     summary: Optional[str]
+
+
+def is_codex_compatible_model(model_config: dict[str, Any]) -> bool:
+    """Return whether an execution model should run through CodeXAgent."""
+    provider = str(model_config.get("model") or "").lower()
+    api_format = _read_api_format(model_config)
+    protocol = str(model_config.get("protocol") or "").lower()
+    wire_api = str(model_config.get("wire_api") or "").lower()
+
+    return provider == "openai" and (
+        api_format == RESPONSES_WIRE_API
+        or protocol == OPENAI_RESPONSES_PROTOCOL
+        or wire_api == RESPONSES_WIRE_API
+    )
 
 
 def build_codex_config(model_config: dict[str, Any]) -> CodeXConfig:
@@ -168,7 +177,9 @@ def _resolve_wire_api(model_config: dict[str, Any]) -> str:
 
 
 def _read_api_format(model_config: dict[str, Any]) -> str:
-    return read_model_api_format(model_config)
+    return str(
+        model_config.get("api_format") or model_config.get("apiFormat") or ""
+    ).lower()
 
 
 def _sanitize_provider_id(value: str) -> str:

@@ -35,9 +35,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import requests
+
 from executor.config import config
 from executor.config.env_reader import get_task_api_domain
-
 from shared.logger import setup_logger
 
 logger = setup_logger("api_client")
@@ -123,31 +123,6 @@ class ApiClient:
             return None
         except requests.exceptions.RequestException as e:
             logger.error(f"[ApiClient] GET {path} error: {e}")
-            return None
-
-    def put(
-        self,
-        path: str,
-        timeout: int = DEFAULT_TIMEOUT,
-        **kwargs,
-    ) -> Optional[requests.Response]:
-        """Make PUT request to Backend API."""
-        url = f"{self.api_base_url}{path}"
-        try:
-            response = requests.put(
-                url, headers=self.headers, timeout=timeout, **kwargs
-            )
-            if response.status_code == 200:
-                return response
-            logger.warning(
-                f"[ApiClient] PUT {path} failed: HTTP {response.status_code}"
-            )
-            return None
-        except requests.exceptions.Timeout:
-            logger.warning(f"[ApiClient] PUT {path} timeout")
-            return None
-        except requests.exceptions.RequestException as e:
-            logger.error(f"[ApiClient] PUT {path} error: {e}")
             return None
 
 

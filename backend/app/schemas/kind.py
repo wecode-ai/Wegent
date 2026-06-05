@@ -603,27 +603,6 @@ class ArchiveInfo(BaseModel):
         return normalize_workspace_archive_datetime(value).isoformat()
 
 
-class RuntimeSession(BaseModel):
-    """Runtime session metadata for resumable agent backends."""
-
-    provider: str
-    id: str
-    updatedAt: Optional[datetime] = None
-
-    @field_serializer("updatedAt")
-    def serialize_updated_at(self, value: Optional[datetime]) -> Optional[str]:
-        """Serialize runtime session timestamps in the configured display timezone."""
-        if value is None:
-            return None
-        return normalize_workspace_archive_datetime(value).isoformat()
-
-
-class TaskRuntime(BaseModel):
-    """Task runtime metadata persisted with the Task CRD."""
-
-    sessions: Dict[str, RuntimeSession] = Field(default_factory=dict)
-
-
 class TaskStatus(Status):
     """Task status"""
 
@@ -641,10 +620,6 @@ class TaskStatus(Status):
         None,
         description="Workspace archive information for Pod recovery after deletion. "
         "Set when executor Pod is deleted after task completion.",
-    )
-    runtime: Optional[TaskRuntime] = Field(
-        None,
-        description="Runtime metadata such as resumable provider session IDs.",
     )
 
 

@@ -227,21 +227,6 @@ class TaskRuntimeCheck(BaseModel):
     active_stream: Optional[TaskRuntimeActiveStream] = None
 
 
-class TaskRuntimeSessionUpdate(BaseModel):
-    """Request body for updating a task runtime session."""
-
-    provider: str
-    id: str
-
-
-class TaskRuntimeSessionResponse(BaseModel):
-    """Response for a persisted task runtime session."""
-
-    provider: str
-    id: str
-    updatedAt: str
-
-
 class TaskListResponse(BaseModel):
     """Task paginated response model"""
 
