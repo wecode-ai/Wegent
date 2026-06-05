@@ -188,6 +188,14 @@ function buildContextAwareResponseContent(request: ModelRequest | null): string 
   return DEFAULT_RESPONSE_CONTENT
 }
 
+function truncateForLog(value: string, maxLength = 1000): string {
+  if (value.length <= maxLength) {
+    return value
+  }
+
+  return `${value.slice(0, maxLength)}...`
+}
+
 function parseJsonBody<T>(body: string): T | null {
   try {
     return body ? (JSON.parse(body) as T) : null
@@ -409,6 +417,15 @@ const server = http.createServer((req, res) => {
     console.log(`[${timestamp}] ${req.method} ${req.url}`)
     console.log(`${'='.repeat(60)}`)
 
+    const requestText = getRequestText(parsedBody).trim()
+    const contextToken = extractContextToken(requestText)
+    if (requestText) {
+      console.log(`Request text snippet: ${truncateForLog(requestText)}`)
+    }
+    if (contextToken) {
+      console.log(`Context token: ${contextToken}`)
+    }
+
     // Check for image_url in messages
     if (parsedBody?.messages) {
       console.log(`\nMessages count: ${parsedBody.messages.length}`)
@@ -433,6 +450,7 @@ const server = http.createServer((req, res) => {
       const streamRule = findStreamRule(parsedBody)
       const responseContent =
         streamRule?.responseContent || buildContextAwareResponseContent(parsedBody)
+      console.log(`Mock response content: ${truncateForLog(responseContent)}`)
 
       // Check if streaming is requested
       const isStreaming = parsedBody?.stream === true
@@ -488,6 +506,7 @@ const server = http.createServer((req, res) => {
         streamRule?.responseContent || buildContextAwareResponseContent(parsedBody)
       const model = parsedBody?.model || 'mock-claude'
       const isStreaming = parsedBody?.stream === true
+      console.log(`Mock response content: ${truncateForLog(responseContent)}`)
 
       if (isStreaming) {
         writeAnthropicStreamingResponse(

@@ -1,10 +1,25 @@
+import type { Page } from '@playwright/test'
 import { test, expect } from '../fixtures/test-fixtures'
+
+const SETTINGS_INTEGRATIONS_PATH = '/settings?tab=integrations'
+const INTEGRATIONS_READY_TIMEOUT = 30000
+
+async function openIntegrationsPage(page: Page) {
+  await page.goto(SETTINGS_INTEGRATIONS_PATH)
+  await page.waitForLoadState('domcontentloaded')
+  await expect(page).toHaveURL(/\/settings/)
+  await expect(page.getByTestId('settings-integrations-page')).toBeVisible({
+    timeout: INTEGRATIONS_READY_TIMEOUT,
+  })
+  await expect(page.getByTestId('git-tokens-section')).toBeVisible()
+  await expect(page.getByTestId('add-git-token-button')).toBeVisible({
+    timeout: INTEGRATIONS_READY_TIMEOUT,
+  })
+}
 
 test.describe('Settings - Git Integration', () => {
   test.beforeEach(async ({ page }) => {
-    // Git integration is on the integrations tab (index 2)
-    await page.goto('/settings?tab=integrations')
-    await page.waitForLoadState('domcontentloaded')
+    await openIntegrationsPage(page)
   })
 
   test('should access integrations page', async ({ page }) => {
@@ -21,51 +36,23 @@ test.describe('Settings - Git Integration', () => {
   })
 
   test('should display token list or empty state', async ({ page }) => {
-    // Wait for page to be fully loaded
-    await page.waitForLoadState('domcontentloaded')
-    await page.waitForTimeout(1000)
+    const tokenContent = page.locator(
+      '[data-testid="git-token-list"], [data-testid="git-token-empty-state"]'
+    )
 
-    // Look for token list or empty state message "No git tokens configured"
-    // One of these should be visible after loading
-    const hasTokens = await page
-      .locator('button[title*="Edit"]')
-      .isVisible({ timeout: 5000 })
-      .catch(() => false)
-    const hasEmptyState = await page
-      .locator('text=No git tokens configured')
-      .isVisible({ timeout: 1000 })
-      .catch(() => false)
-    // Also check for loading state that might still be present
-    const hasLoadingOrContent = await page
-      .locator('[data-testid="git-tokens"], .git-token-list, h2:has-text("Integrations")')
-      .isVisible({ timeout: 1000 })
-      .catch(() => false)
-
-    // Either tokens exist (edit button visible), empty state is shown, or page is still in valid state
-    expect(hasTokens || hasEmptyState || hasLoadingOrContent).toBeTruthy()
+    await expect(tokenContent).toBeVisible({ timeout: INTEGRATIONS_READY_TIMEOUT })
   })
 
   test('should open add token dialog', async ({ page }) => {
-    // Wait for integrations page to load
-    await expect(page.locator('h2:has-text("Integrations")')).toBeVisible({ timeout: 20000 })
+    const addTokenButton = page.getByTestId('add-git-token-button')
 
-    // "New Token" button should always be visible after page loads
-    const addTokenButton = page.locator('button:has-text("New Token"), button:has-text("新建")')
-
-    // Button should be visible - no skip, this is a required UI element
-    await expect(addTokenButton).toBeVisible({ timeout: 20000 })
+    await expect(addTokenButton).toBeVisible({ timeout: INTEGRATIONS_READY_TIMEOUT })
 
     await addTokenButton.click()
 
-    // Wait for dialog to open and become visible
-    // headlessui Dialog may render hidden initially, wait for content
-    await page.waitForTimeout(500)
-
-    // Dialog should have data-headlessui-state="open" when visible
-    // Check for the dialog panel content (Dialog.Title has text-xl class)
-    const dialogContent = page.locator(
-      '[role="dialog"] .text-xl, [role="dialog"] [class*="DialogTitle"]'
-    )
-    await expect(dialogContent.first()).toBeVisible({ timeout: 20000 })
+    await expect(page.getByTestId('git-token-dialog-content')).toBeVisible({
+      timeout: INTEGRATIONS_READY_TIMEOUT,
+    })
+    await expect(page.getByRole('heading', { name: /Add Git Token|新增 Git 令牌/ })).toBeVisible()
   })
 })

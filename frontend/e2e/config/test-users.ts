@@ -1,6 +1,11 @@
 /**
  * Test users configuration
  */
+import {
+  buildBootstrapAdminUser,
+  buildE2EAdminUser,
+  buildE2ERegularUser,
+} from '../utils/auth-state'
 
 export interface TestUser {
   username: string
@@ -10,25 +15,20 @@ export interface TestUser {
 }
 
 /**
+ * Bootstrap admin user for provisioning isolated E2E users.
+ */
+export const BOOTSTRAP_ADMIN_USER: TestUser = buildBootstrapAdminUser()
+
+/**
  * Default admin user for E2E tests
  */
-export const ADMIN_USER: TestUser = {
-  username: 'admin',
-  password: 'Wegent2025!',
-  role: 'admin',
-  description: 'Default admin user with full access',
-}
+export const ADMIN_USER: TestUser = buildE2EAdminUser()
 
 /**
  * Default regular user for E2E tests
  * Note: This user should be created during test setup if it does not exist
  */
-export const REGULAR_USER: TestUser = {
-  username: 'e2e-user',
-  password: 'Test@12345',
-  role: 'user',
-  description: 'Regular user with limited access',
-}
+export const REGULAR_USER: TestUser = buildE2ERegularUser()
 
 /**
  * Get test user by role
