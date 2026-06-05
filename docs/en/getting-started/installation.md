@@ -110,7 +110,7 @@ ATTACHMENT_STORAGE_BACKEND=mysql
 # Legacy (deprecated): NEXT_PUBLIC_API_URL=http://localhost:8000
 
 # Wework frontend build configuration (optional)
-# Sets the scaling Wiki link in the cloud device resource note card under Settings → Connections
+# Sets the scaling Wiki link in the cloud device resource note card under Settings -> Connections
 # VITE_CLOUD_DEVICE_SCALING_WIKI_URL=https://wiki.example.com/cloud-device-scaling
 
 # Executor Manager Configuration

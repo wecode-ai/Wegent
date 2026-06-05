@@ -13,6 +13,8 @@ import type { TruncationInfo } from '@/types/api'
 
 // API base URL - use relative path for browser compatibility
 const API_BASE_URL = ''
+const WEIBO_CHUNK_UPLOAD_CONCURRENCY = 3
+const WEIBO_CHUNK_UPLOAD_MAX_RETRIES = 3
 
 /**
  * Attachment status enum
@@ -742,12 +744,19 @@ interface WeiboInitResponse {
   file_check: string // MD5 hash of the file (calculated during init)
 }
 
+interface WeiboChunkUploadTask {
+  chunkIndex: number
+  startLoc: number
+  chunkSize: number
+  chunk: Blob
+}
+
 /**
  * Weibo chunk upload response
  */
 export interface WeiboChunkUploadResponse {
   succ?: boolean
-  fid?: string // only in last chunk response
+  fid?: string // returned once the server has accepted all chunks
   fmid?: string
   url?: string
   request_id: string
@@ -921,7 +930,13 @@ function uploadWeiboChunk(
     xhr.open('POST', url)
     xhr.setRequestHeader('Content-Type', 'application/octet-stream')
     xhr.setRequestHeader('X-Up-Auth', params.auth)
-    chunk.arrayBuffer().then(buffer => xhr.send(buffer))
+    chunk.arrayBuffer().then(buffer => {
+      if (abortSignal?.aborted) {
+        reject(new Error('Upload cancelled'))
+        return
+      }
+      xhr.send(buffer)
+    }, reject)
   })
 }
 
@@ -936,6 +951,177 @@ export function getWeiboChunkUploadError(response: WeiboChunkUploadResponse): st
     response.message ||
     'Weibo chunk upload failed'
   )
+}
+
+function getWeiboChunkTasks(file: File, chunkSize: number): WeiboChunkUploadTask[] {
+  const totalChunks = Math.ceil(file.size / chunkSize)
+
+  return Array.from({ length: totalChunks }, (_, index) => {
+    const startLoc = index * chunkSize
+    const endLoc = Math.min(startLoc + chunkSize, file.size)
+
+    return {
+      chunkIndex: index + 1,
+      startLoc,
+      chunkSize: endLoc - startLoc,
+      chunk: file.slice(startLoc, endLoc),
+    }
+  })
+}
+
+async function uploadWeiboChunkWithRetry(
+  task: WeiboChunkUploadTask,
+  params: {
+    auth: string
+    fileToken: string
+    chunkCount: number
+    fileLength: number
+    fileCheck: string
+  },
+  onChunkProgress: (chunkIndex: number, progress: number) => void,
+  abortSignal: AbortSignal
+): Promise<WeiboChunkUploadResponse> {
+  const sectionCheck = await calculateChunkMD5(task.chunk)
+
+  for (let retryCount = 0; ; retryCount += 1) {
+    try {
+      return await uploadWeiboChunk(
+        task.chunk,
+        {
+          auth: params.auth,
+          fileToken: params.fileToken,
+          startLoc: task.startLoc,
+          sectionCheck,
+          chunkCount: params.chunkCount,
+          chunkIndex: task.chunkIndex,
+          chunkSize: task.chunkSize,
+          fileLength: params.fileLength,
+          fileCheck: params.fileCheck,
+        },
+        chunkProgress => onChunkProgress(task.chunkIndex, chunkProgress),
+        abortSignal
+      )
+    } catch (error) {
+      if ((error as Error).message === 'Upload cancelled') {
+        throw error
+      }
+
+      if (retryCount + 1 >= WEIBO_CHUNK_UPLOAD_MAX_RETRIES) {
+        throw error
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)))
+    }
+  }
+}
+
+async function uploadWeiboChunksConcurrently(
+  tasks: WeiboChunkUploadTask[],
+  params: {
+    auth: string
+    fileToken: string
+    fileCheck: string
+    fileLength: number
+  },
+  onProgress?: (progress: number) => void,
+  abortSignal?: AbortSignal
+): Promise<WeiboChunkUploadResponse | null> {
+  const internalAbortController = new AbortController()
+  const chunkUploadedBytes = new Array(tasks.length).fill(0)
+  let totalUploadedBytes = 0
+  let lastReportedProgress = 0
+  let nextTaskIndex = 0
+  let firstError: Error | null = null
+  let lastResponse: WeiboChunkUploadResponse | null = null
+
+  const getNextTaskIndex = () => {
+    const taskIndex = nextTaskIndex
+    nextTaskIndex += 1
+    return taskIndex
+  }
+
+  const handleAbort = () => internalAbortController.abort()
+  if (abortSignal) {
+    if (abortSignal.aborted) {
+      throw new Error('Upload cancelled')
+    }
+    abortSignal.addEventListener('abort', handleAbort)
+  }
+
+  const reportProgress = (chunkIndex: number, progress: number) => {
+    const task = tasks[chunkIndex - 1]
+    if (!task || !onProgress) {
+      return
+    }
+
+    const previousUploadedBytes = chunkUploadedBytes[chunkIndex - 1]
+    const uploadedBytes = Math.max(
+      previousUploadedBytes,
+      Math.min(task.chunkSize, Math.round((task.chunkSize * progress) / 100))
+    )
+    chunkUploadedBytes[chunkIndex - 1] = uploadedBytes
+    totalUploadedBytes += uploadedBytes - previousUploadedBytes
+
+    const overallProgress = Math.round((totalUploadedBytes / params.fileLength) * 100)
+    lastReportedProgress = Math.max(lastReportedProgress, overallProgress)
+    onProgress(lastReportedProgress)
+  }
+
+  const worker = async () => {
+    while (!internalAbortController.signal.aborted) {
+      const taskIndex = getNextTaskIndex()
+
+      if (taskIndex >= tasks.length) {
+        return
+      }
+
+      const task = tasks[taskIndex]
+      try {
+        const response = await uploadWeiboChunkWithRetry(
+          task,
+          {
+            auth: params.auth,
+            fileToken: params.fileToken,
+            chunkCount: tasks.length,
+            fileLength: params.fileLength,
+            fileCheck: params.fileCheck,
+          },
+          reportProgress,
+          internalAbortController.signal
+        )
+
+        reportProgress(task.chunkIndex, 100)
+        if (response.fid) {
+          lastResponse = response
+        }
+      } catch (error) {
+        if (!firstError) {
+          firstError = error as Error
+          internalAbortController.abort()
+        }
+        return
+      }
+    }
+  }
+
+  try {
+    const workerCount = Math.min(WEIBO_CHUNK_UPLOAD_CONCURRENCY, tasks.length)
+    await Promise.all(Array.from({ length: workerCount }, () => worker()))
+
+    if (firstError) {
+      throw firstError
+    }
+
+    if (onProgress) {
+      onProgress(100)
+    }
+
+    return lastResponse
+  } finally {
+    if (abortSignal) {
+      abortSignal.removeEventListener('abort', handleAbort)
+    }
+  }
 }
 
 /**
@@ -956,77 +1142,22 @@ export async function uploadVideoToWeibo(
   const { file_token: fileToken, chunk_size: chunkSize, auth, file_check: fileCheck } = initResult
 
   // Step 2: Calculate total chunks (MD5 already calculated in initWeiboUpload)
-  const totalChunks = Math.ceil(file.size / chunkSize)
+  const tasks = getWeiboChunkTasks(file, chunkSize)
 
-  // Step 3: Upload each chunk
-  let lastResponse: WeiboChunkUploadResponse | null = null
+  // Step 3: Upload chunks with limited concurrency
+  const lastResponse = await uploadWeiboChunksConcurrently(
+    tasks,
+    {
+      auth,
+      fileToken,
+      fileCheck,
+      fileLength: file.size,
+    },
+    onProgress,
+    abortSignal
+  )
 
-  for (let i = 0; i < totalChunks; i++) {
-    // Check for abort
-    if (abortSignal?.aborted) {
-      throw new Error('Upload cancelled')
-    }
-
-    const startLoc = i * chunkSize
-    const endLoc = Math.min(startLoc + chunkSize, file.size)
-    const chunk = file.slice(startLoc, endLoc)
-    const chunkIndex = i + 1 // Weibo uses 1-based index
-    const actualChunkSize = endLoc - startLoc
-
-    // Calculate chunk MD5
-    const sectionCheck = await calculateChunkMD5(chunk)
-
-    // Upload chunk with retry
-    let retryCount = 0
-    const maxRetries = 3
-
-    while (retryCount < maxRetries) {
-      try {
-        lastResponse = await uploadWeiboChunk(
-          chunk,
-          {
-            auth,
-            fileToken,
-            startLoc,
-            sectionCheck,
-            chunkCount: totalChunks,
-            chunkIndex,
-            chunkSize: actualChunkSize,
-            fileLength: file.size,
-            fileCheck,
-          },
-          chunkProgress => {
-            // Update overall progress
-            if (onProgress) {
-              const baseProgress = (i / totalChunks) * 100
-              const chunkContribution = (chunkProgress / 100) * (100 / totalChunks)
-              onProgress(Math.round(baseProgress + chunkContribution))
-            }
-          },
-          abortSignal // Pass abort signal to chunk upload
-        )
-        break // Success, exit retry loop
-      } catch (error) {
-        // Don't retry on cancel
-        if ((error as Error).message === 'Upload cancelled') {
-          throw error
-        }
-        retryCount++
-        if (retryCount >= maxRetries) {
-          throw error
-        }
-        // Wait before retry
-        await new Promise(resolve => setTimeout(resolve, 1000 * retryCount))
-      }
-    }
-
-    // Update progress after chunk completion
-    if (onProgress) {
-      onProgress(Math.round(((i + 1) / totalChunks) * 100))
-    }
-  }
-
-  // Step 5: Return result from last chunk (contains fid)
+  // Step 4: Return the response that contains fid after all chunks are accepted
   if (!lastResponse?.fid) {
     throw new Error('Upload completed but no fid returned')
   }

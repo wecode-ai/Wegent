@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { X, User, Users, Inbox, Clock, Send, Loader2, MessageSquare, Bot } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -111,6 +111,8 @@ export function ForwardMessageDialog({
 
   // Message selection state
   const [selectedMessageIds, setSelectedMessageIds] = useState<Set<number>>(new Set())
+  const wasOpenRef = useRef(false)
+  const initializedSelectionKeyRef = useRef<string | null>(null)
 
   // Recent contacts
   const [recentContacts, setRecentContacts] = useState<RecentContact[]>([])
@@ -124,30 +126,9 @@ export function ForwardMessageDialog({
   const [selfQueues, setSelfQueues] = useState<WorkQueue[]>([])
   const [selfQueuesLoading, setSelfQueuesLoading] = useState(false)
   const [selectedSelfQueueId, setSelectedSelfQueueId] = useState<number | undefined>(undefined)
+  const initialSelectionKey = subtaskIds?.join(',') ?? ''
 
-  // Initialize selected messages when dialog opens
-  useEffect(() => {
-    if (open) {
-      loadRecentContacts()
-      loadSelfQueues()
-      // Initialize selected messages with the provided subtaskIds
-      if (subtaskIds && subtaskIds.length > 0) {
-        setSelectedMessageIds(new Set(subtaskIds))
-      } else {
-        setSelectedMessageIds(new Set())
-      }
-    } else {
-      // Reset form when dialog closes
-      setRecipients([])
-      setNote('')
-      setPriority('normal')
-      setForwardMode('others')
-      setSelectedSelfQueueId(undefined)
-      setSelectedMessageIds(new Set())
-    }
-  }, [open, subtaskIds])
-
-  const loadRecentContacts = async () => {
+  const loadRecentContacts = useCallback(async () => {
     setRecentLoading(true)
     try {
       const response = await getRecentContacts(10)
@@ -157,9 +138,9 @@ export function ForwardMessageDialog({
     } finally {
       setRecentLoading(false)
     }
-  }
+  }, [])
 
-  const loadSelfQueues = async () => {
+  const loadSelfQueues = useCallback(async () => {
     setSelfQueuesLoading(true)
     try {
       const response = await listWorkQueues()
@@ -176,7 +157,55 @@ export function ForwardMessageDialog({
     } finally {
       setSelfQueuesLoading(false)
     }
-  }
+  }, [])
+
+  const buildInitialSelectedMessageIds = useCallback(() => {
+    if (!initialSelectionKey) {
+      return new Set<number>()
+    }
+
+    const ids = initialSelectionKey
+      .split(',')
+      .map(id => Number(id))
+      .filter(Number.isFinite)
+    return new Set(ids)
+  }, [initialSelectionKey])
+
+  // Initialize selected messages when dialog opens or when a genuinely different
+  // initial selection is provided while open.
+  useEffect(() => {
+    if (open) {
+      const isNewOpen = !wasOpenRef.current
+      if (isNewOpen) {
+        loadRecentContacts()
+        loadSelfQueues()
+      }
+
+      if (isNewOpen || initializedSelectionKeyRef.current !== initialSelectionKey) {
+        setSelectedMessageIds(buildInitialSelectedMessageIds())
+        initializedSelectionKeyRef.current = initialSelectionKey
+      }
+
+      wasOpenRef.current = true
+      return
+    }
+
+    // Reset form when dialog closes
+    wasOpenRef.current = false
+    initializedSelectionKeyRef.current = null
+    setRecipients([])
+    setNote('')
+    setPriority('normal')
+    setForwardMode('others')
+    setSelectedSelfQueueId(undefined)
+    setSelectedMessageIds(new Set())
+  }, [
+    buildInitialSelectedMessageIds,
+    initialSelectionKey,
+    loadRecentContacts,
+    loadSelfQueues,
+    open,
+  ])
 
   // Load user's public queues when a user is selected
   const loadUserQueues = useCallback(

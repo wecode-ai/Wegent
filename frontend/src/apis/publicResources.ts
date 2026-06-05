@@ -11,7 +11,7 @@
  * The adapter transforms Admin API responses to match the types used by existing components like BotEdit.
  */
 
-import { Bot } from '@/types/api'
+import type { Bot, SkillRefMeta } from '@/types/api'
 import { UnifiedShell } from './shells'
 import { UnifiedModel } from './models'
 import { adminApis, AdminPublicBot, AdminPublicShell, AdminPublicModel } from './admin'
@@ -35,7 +35,9 @@ export function transformPublicBotToBot(publicBot: AdminPublicBot): Bot {
     mcp_servers: publicBot.mcp_servers || {},
     default_knowledge_base_refs: publicBot.default_knowledge_base_refs || [],
     skills: publicBot.skills || [],
-    preload_skills: [], // preload_skills not supported for public bots yet
+    skill_refs: publicBot.skill_refs || {},
+    preload_skills: publicBot.preload_skills || [],
+    preload_skill_refs: publicBot.preload_skill_refs || {},
     is_active: publicBot.is_active,
     created_at: publicBot.created_at,
     updated_at: publicBot.updated_at,
@@ -102,6 +104,9 @@ export interface PublicBotFormData {
   system_prompt?: string // System prompt for Ghost
   mcp_servers?: Record<string, unknown> // MCP servers config for Ghost
   skills?: string[] // Skills list for Ghost
+  skill_refs?: Record<string, SkillRefMeta> // Precise refs for Ghost skills
+  preload_skills?: string[] // Skills to preload into the system prompt
+  preload_skill_refs?: Record<string, SkillRefMeta> // Precise refs for preloaded skills
   agent_config?: Record<string, unknown> // Agent config for Model
   default_knowledge_base_refs?: { id: number; name: string }[] // Default knowledge base refs for Ghost
 }
@@ -131,6 +136,9 @@ export const publicResourceApis = {
       system_prompt: formData.system_prompt,
       mcp_servers: formData.mcp_servers,
       skills: formData.skills,
+      skill_refs: formData.skill_refs,
+      preload_skills: formData.preload_skills,
+      preload_skill_refs: formData.preload_skill_refs,
       agent_config: formData.agent_config,
       default_knowledge_base_refs: formData.default_knowledge_base_refs,
     })
@@ -149,6 +157,9 @@ export const publicResourceApis = {
       system_prompt: formData.system_prompt,
       mcp_servers: formData.mcp_servers,
       skills: formData.skills,
+      skill_refs: formData.skill_refs,
+      preload_skills: formData.preload_skills,
+      preload_skill_refs: formData.preload_skill_refs,
       agent_config: formData.agent_config,
       default_knowledge_base_refs: formData.default_knowledge_base_refs,
     })

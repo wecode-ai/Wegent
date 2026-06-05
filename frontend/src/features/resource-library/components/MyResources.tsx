@@ -21,6 +21,7 @@ import { Input } from '@/components/ui/input'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { Group } from '@/types/group'
+import { getResourceLibrarySortMode, type ResourceLibrarySortMode } from '../resourceSorting'
 import type { ManagedResourceSourceFilter, ManagedResourceType } from '../types'
 
 const managedResourceTypes: ManagedResourceType[] = [
@@ -38,6 +39,7 @@ const resourceLibraryUrlParams = {
   source: 'source',
   legacyScope: 'scope',
   group: 'group',
+  sort: 'sort',
 } as const
 
 const TeamListWithScope = dynamic(
@@ -117,6 +119,10 @@ function getGroupNameFromSearchParams(params: SearchParamReader): string | null 
   return params.get(resourceLibraryUrlParams.group)
 }
 
+function getSortModeFromSearchParams(params: SearchParamReader): ResourceLibrarySortMode {
+  return getResourceLibrarySortMode(params.get(resourceLibraryUrlParams.sort))
+}
+
 function getInitialResourceType(): ManagedResourceType {
   return getResourceTypeFromSearchParams(getInitialSearchParams())
 }
@@ -127,6 +133,10 @@ function getInitialSourceFilter(): ManagedResourceSourceFilter {
 
 function getInitialGroupName(): string | null {
   return getGroupNameFromSearchParams(getInitialSearchParams())
+}
+
+function getInitialSortMode(): ResourceLibrarySortMode {
+  return getSortModeFromSearchParams(getInitialSearchParams())
 }
 
 function getGroupDisplayName(group: Group): string {
@@ -392,6 +402,45 @@ function ResourceSourceFilterControls({
   )
 }
 
+function ResourceSortControls({
+  value,
+  onValueChange,
+}: {
+  value: ResourceLibrarySortMode
+  onValueChange: (value: ResourceLibrarySortMode) => void
+}) {
+  const t = useResourceLibraryTranslation()
+  const options: ResourceLibrarySortMode[] = ['default', 'latest']
+
+  return (
+    <div
+      className="flex flex-col gap-2 sm:flex-row sm:items-center lg:flex-shrink-0 lg:justify-end"
+      data-testid="managed-resource-sort-control"
+    >
+      <span className="text-xs font-medium text-text-muted">{t('fields.sort')}</span>
+      <div className="flex flex-wrap items-center gap-2">
+        {options.map(option => {
+          const isActive = value === option
+
+          return (
+            <Button
+              key={option}
+              type="button"
+              variant={isActive ? 'primary' : 'outline'}
+              aria-pressed={isActive}
+              className="h-11 min-w-[44px] px-4 lg:h-9"
+              onClick={() => onValueChange(option)}
+              data-testid={`resource-sort-${option}-button`}
+            >
+              {t(`sort.${option}`)}
+            </Button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function sourceFilterToScope(
   sourceFilter: ManagedResourceSourceFilter
 ): 'personal' | 'group' | 'all' {
@@ -416,16 +465,19 @@ export function MyResources({ title }: MyResourcesProps = {}) {
     useState<ManagedResourceSourceFilter>(getInitialSourceFilter)
   const [groups, setGroups] = useState<Group[]>([])
   const [selectedGroup, setSelectedGroup] = useState<string | null>(getInitialGroupName)
+  const [sortMode, setSortMode] = useState<ResourceLibrarySortMode>(getInitialSortMode)
 
   const replaceResourceLibraryUrl = useCallback(
     ({
       type,
       source,
       group,
+      sort,
     }: {
       type?: ManagedResourceType
       source?: ManagedResourceSourceFilter
       group?: string | null
+      sort?: ResourceLibrarySortMode
     }) => {
       const params = new URLSearchParams(searchParamsSnapshot)
 
@@ -443,6 +495,14 @@ export function MyResources({ title }: MyResourcesProps = {}) {
           params.set(resourceLibraryUrlParams.group, group)
         } else {
           params.delete(resourceLibraryUrlParams.group)
+        }
+      }
+
+      if (sort) {
+        if (sort === 'latest') {
+          params.set(resourceLibraryUrlParams.sort, sort)
+        } else {
+          params.delete(resourceLibraryUrlParams.sort)
         }
       }
 
@@ -485,11 +545,20 @@ export function MyResources({ title }: MyResourcesProps = {}) {
     [replaceResourceLibraryUrl]
   )
 
+  const handleSortModeChange = useCallback(
+    (nextSortMode: ResourceLibrarySortMode) => {
+      setSortMode(nextSortMode)
+      replaceResourceLibraryUrl({ sort: nextSortMode })
+    },
+    [replaceResourceLibraryUrl]
+  )
+
   useEffect(() => {
     const params = new URLSearchParams(searchParamsSnapshot)
     setResourceType(getResourceTypeFromSearchParams(params))
     setSourceFilter(getSourceFilterFromSearchParams(params))
     setSelectedGroup(getGroupNameFromSearchParams(params))
+    setSortMode(getSortModeFromSearchParams(params))
   }, [searchParamsSnapshot])
 
   useEffect(() => {
@@ -521,6 +590,9 @@ export function MyResources({ title }: MyResourcesProps = {}) {
         onGroupSourceChange={handleGroupSourceChange}
       />
     )
+    const sortControls = (
+      <ResourceSortControls value={sortMode} onValueChange={handleSortModeChange} />
+    )
     const groupName = sourceFilter === 'group' ? selectedGroup : null
 
     if (resourceType === 'agent') {
@@ -530,7 +602,9 @@ export function MyResources({ title }: MyResourcesProps = {}) {
           selectedGroup={groupName}
           sourceFilter={sourceFilter}
           sourceControls={sourceControls}
+          sortControls={sortControls}
           groups={groups}
+          sortMode={sortMode}
         />
       )
     }
@@ -541,7 +615,9 @@ export function MyResources({ title }: MyResourcesProps = {}) {
           selectedGroup={groupName}
           sourceFilter={sourceFilter}
           sourceControls={sourceControls}
+          sortControls={sortControls}
           groups={groups}
+          sortMode={sortMode}
         />
       )
     }
@@ -552,7 +628,9 @@ export function MyResources({ title }: MyResourcesProps = {}) {
           selectedGroup={groupName}
           sourceFilter={sourceFilter}
           sourceControls={sourceControls}
+          sortControls={sortControls}
           groups={groups}
+          sortMode={sortMode}
         />
       )
     }
@@ -563,7 +641,9 @@ export function MyResources({ title }: MyResourcesProps = {}) {
           selectedGroup={groupName}
           sourceFilter={sourceFilter}
           sourceControls={sourceControls}
+          sortControls={sortControls}
           groups={groups}
+          sortMode={sortMode}
         />
       )
     }
@@ -574,7 +654,9 @@ export function MyResources({ title }: MyResourcesProps = {}) {
           selectedGroup={groupName}
           sourceFilter={sourceFilter}
           sourceControls={sourceControls}
+          sortControls={sortControls}
           groups={groups}
+          sortMode={sortMode}
         />
       )
     }

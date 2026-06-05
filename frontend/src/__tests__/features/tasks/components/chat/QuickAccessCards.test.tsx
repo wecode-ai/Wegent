@@ -111,6 +111,7 @@ const makeInputPreset = (
   title: overrides.title ?? prompt,
   prompt,
   options: overrides.options,
+  source_attachment_ids: overrides.source_attachment_ids,
 })
 
 const renderQuickAccessCards = (
@@ -318,6 +319,42 @@ describe('QuickAccessCards', () => {
 
     expect(onTeamSelect).toHaveBeenCalledWith(expect.objectContaining({ id: 2 }))
     expect(onPhraseSelect).toHaveBeenCalledWith('帮我创建一个 xxx 的 PPT')
+  })
+
+  test('shows an attachment icon on quick presets that include attachments', async () => {
+    mockGetQuickLaunch.mockResolvedValueOnce({
+      system_functions: [
+        {
+          type: 'system_function',
+          id: 'create_ppt',
+          title: 'Create PPT',
+          team_id: 2,
+          name: 'system-team',
+          enabled: true,
+          order: 10,
+          input_presets: [
+            makeInputPreset('把附件整理成 PPT', { source_attachment_ids: [10] }),
+            makeInputPreset('空白创建 PPT'),
+          ],
+        },
+      ],
+      favorite_agents: [],
+    } satisfies QuickLaunchResponse)
+
+    render(
+      <QuickAccessCards
+        teams={[makeTeam({ id: 2, name: 'system-team', description: 'System description' })]}
+        selectedTeam={null}
+        onTeamSelect={jest.fn()}
+        onPhraseSelect={jest.fn()}
+        currentMode="chat"
+      />
+    )
+
+    fireEvent.click(await screen.findByText('Create PPT'))
+
+    expect(screen.getByTestId('quick-phrase-attachment-icon-0')).toBeInTheDocument()
+    expect(screen.queryByTestId('quick-phrase-attachment-icon-1')).not.toBeInTheDocument()
   })
 
   test('animates quick phrase panel in and out before restoring quick cards', async () => {
