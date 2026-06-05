@@ -23,6 +23,7 @@ from app.models.subtask_context import (
     InjectionMode,
     SubtaskContext,
 )
+from app.models.user import User
 from app.schemas.subtask_context import (
     KnowledgeBaseContextCreate,
     SubtaskContextBrief,
@@ -768,7 +769,7 @@ class ContextService:
         return context.file_extension.lower() in self.VIDEO_EXTENSIONS
 
     def build_video_content_from_attachment(
-        self, context: SubtaskContext
+        self, db: Session, context: SubtaskContext
     ) -> Optional[VideoAttachmentPayload]:
         """
         Build a provider-neutral video attachment payload.
@@ -783,6 +784,7 @@ class ContextService:
         Note: Videos are stored on Weibo platform only, not in S3/MinIO storage backends.
 
         Args:
+            db: Database session used to resolve the attachment owner's current binding
             context: SubtaskContext record with video attachment
         Returns:
             VideoAttachmentPayload, or None if not a video context
@@ -818,7 +820,8 @@ class ContextService:
                 f"Video attachment {attachment_id} is missing fid"
             )
 
-        video_url = weibo_media_service.get_download_url(fid)
+        user = db.query(User).filter(User.id == context.user_id).first()
+        video_url = weibo_media_service.get_download_url(fid, user=user)
         if not video_url:
             raise VideoAttachmentResolutionError(
                 f"Failed to resolve video URL for attachment {attachment_id}"
