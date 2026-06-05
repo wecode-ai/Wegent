@@ -42,6 +42,8 @@ from shared.utils.url_util import domains_match
 
 logger = logging.getLogger(__name__)
 SELECTED_KB_PRELOAD_SKILL = "wegent-knowledge"
+WEB_RUNTIME_GUIDANCE_MARKER = "<wegent_runtime_guidance>"
+WEB_RUNTIME_GUIDANCE_CLOSE = "</wegent_runtime_guidance>"
 
 
 class TaskRequestBuilder:
@@ -110,6 +112,7 @@ class TaskRequestBuilder:
         override_model_name: Optional[str] = None,
         force_override: bool = False,
         team_member_prompt: Optional[str] = None,
+        web_runtime_guidance: bool = False,
     ) -> ExecutionRequest:
         """Build ExecutionRequest from database models.
 
@@ -138,6 +141,7 @@ class TaskRequestBuilder:
             override_model_name: Optional model name to override bot's model
             force_override: If True, override takes highest priority
             team_member_prompt: Optional additional prompt from team member
+            web_runtime_guidance: Whether to inject Wegent web UI runtime guidance
 
         Returns:
             ExecutionRequest ready for dispatch
@@ -325,6 +329,23 @@ class TaskRequestBuilder:
                     previous_bot_id,
                     current_bot_id,
                 )
+
+        if web_runtime_guidance:
+            project_workspace = workspace.get("project") or {}
+            task_device_id = self._extract_task_device_id(
+                task
+            ) or project_workspace.get("device_id")
+            device_type = self._get_device_type(user.id, task_device_id)
+            shell_type = bot_config[0].get("shell_type", "") if bot_config else ""
+            system_prompt = self._append_web_runtime_guidance(
+                system_prompt,
+                shell_type=shell_type,
+                device_type=device_type,
+                has_device_id=bool(task_device_id),
+                execution_target_type=project_workspace.get("execution_target_type"),
+                workspace_source=project_workspace.get("workspace_source"),
+                workspace_path=project_workspace.get("project_workspace_path"),
+            )
 
         return ExecutionRequest(
             task_id=task.id,
@@ -514,6 +535,134 @@ class TaskRequestBuilder:
         metadata = payload.get("metadata", {})
         labels = metadata.get("labels", {}) if isinstance(metadata, dict) else {}
         return str(labels.get("taskType") or labels.get("type") or "chat")
+
+    @staticmethod
+    def _append_web_runtime_guidance(
+        system_prompt: str,
+        *,
+        shell_type: str | None,
+        device_type: str | None,
+        has_device_id: bool,
+        execution_target_type: str | None,
+        workspace_source: str | None,
+        workspace_path: str | None,
+    ) -> str:
+        """Append Wegent web UI runtime guidance to the system prompt."""
+        if WEB_RUNTIME_GUIDANCE_MARKER in (system_prompt or ""):
+            return system_prompt
+
+        environment = TaskRequestBuilder._describe_web_runtime_environment(
+            shell_type=shell_type,
+            device_type=device_type,
+            has_device_id=has_device_id,
+            execution_target_type=execution_target_type,
+        )
+        workspace_details = []
+        if workspace_source:
+            workspace_details.append(f"- workspace source: {workspace_source}")
+        if workspace_path:
+            workspace_details.append(f"- workspace path: {workspace_path}")
+
+        guidance_lines = [
+            WEB_RUNTIME_GUIDANCE_MARKER,
+            "This request was started from the Wegent web UI.",
+            "Runtime environment:",
+            f"- You are running in: {environment}.",
+            *workspace_details,
+            "",
+            "User-facing file access:",
+            "- Do not assume the user can access local paths, container paths, "
+            "terminal sessions, or files you create directly.",
+            "- If you create, edit, or download files for the user, tell the user "
+            'to click "View the task files" / "查看任务文件" in the Wegent task '
+            "page to browse, preview, or download them.",
+            "- Keep paths in your answer as useful context when relevant, but do "
+            "not present a runtime path as the only way for the user to get a file.",
+            "",
+            "Interaction rules:",
+            "- Match Wegent's web interaction model instead of giving generic "
+            "sandbox or local-terminal instructions.",
+            "- If the task runs on a selected device, remember that generated "
+            "files may live on that device or be exposed through Wegent task files.",
+            WEB_RUNTIME_GUIDANCE_CLOSE,
+        ]
+        guidance = "\n".join(guidance_lines)
+        base_prompt = (system_prompt or "").rstrip()
+        if not base_prompt:
+            return guidance
+        return f"{base_prompt}\n\n{guidance}"
+
+    @staticmethod
+    def _describe_web_runtime_environment(
+        *,
+        shell_type: str | None,
+        device_type: str | None,
+        has_device_id: bool,
+        execution_target_type: str | None,
+    ) -> str:
+        """Build a concise execution environment label for web guidance."""
+        if has_device_id:
+            if device_type == "local":
+                return "local device selected in Wegent"
+            if device_type == "cloud":
+                return "cloud device or remote sandbox selected in Wegent"
+            return "selected Wegent device"
+
+        if execution_target_type == "cloud":
+            return "Wegent-managed cloud sandbox"
+        if execution_target_type == "local":
+            return "local device configured for this workspace project"
+
+        if shell_type in {"ClaudeCode", "Agno", "Codex"}:
+            return "Wegent-managed disposable execution sandbox"
+        if shell_type == "Dify":
+            return "external service configured by the selected bot"
+        if shell_type == "Chat":
+            return "Wegent web chat runtime"
+
+        return "Wegent-managed execution runtime"
+
+    @staticmethod
+    def _extract_task_device_id(task: TaskResource) -> str | None:
+        """Extract the selected device ID from task CRD JSON if present."""
+        task_json = task.json if isinstance(task.json, dict) else {}
+        spec = task_json.get("spec", {})
+        if not isinstance(spec, dict):
+            return None
+        device_id = spec.get("device_id")
+        if isinstance(device_id, str) and device_id.strip():
+            return device_id.strip()
+        return None
+
+    def _get_device_type(self, user_id: int, device_id: str | None) -> str | None:
+        """Resolve a Device CRD type without making request building depend on it."""
+        if not device_id:
+            return None
+
+        try:
+            device = (
+                self.db.query(Kind)
+                .filter(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Device",
+                    Kind.namespace == "default",
+                    Kind.name == device_id,
+                    Kind.is_active,
+                )
+                .first()
+            )
+        except Exception as e:
+            logger.warning(
+                "[TaskRequestBuilder] Failed to resolve device type for %s: %s",
+                device_id,
+                e,
+            )
+            return None
+
+        device_json = device.json if device and isinstance(device.json, dict) else {}
+        spec = device_json.get("spec", {}) if isinstance(device_json, dict) else {}
+        device_type = spec.get("deviceType") if isinstance(spec, dict) else None
+        return device_type if isinstance(device_type, str) else None
 
     # =========================================================================
     # Bot Resolution (from ChatConfigBuilder)
@@ -2354,7 +2503,10 @@ Response template:
 
         workspace = config.workspace
         if workspace:
-            project_workspace_path = workspace.localPath or workspace.checkoutPath
+            if workspace.source == "git" and workspace.checkoutPath:
+                project_workspace_path = f"projects/{workspace.checkoutPath}"
+            else:
+                project_workspace_path = workspace.localPath or workspace.checkoutPath
             workspace_data["project"] = {
                 "project_id": project_id,
                 "workspace_source": workspace.source,

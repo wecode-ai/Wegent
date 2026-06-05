@@ -4,6 +4,7 @@ import {
   ChevronRight,
   Edit3,
   Folder,
+  FolderGit2,
   FolderPlus,
   Loader2,
   MessageSquarePlus,
@@ -18,10 +19,14 @@ import type { ReactNode } from 'react'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
+import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
+  CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
   DeviceInfo,
+  GitBranch,
+  GitRepoInfo,
   ProjectTask,
   ProjectWithTasks,
   Task,
@@ -56,6 +61,11 @@ interface DesktopSidebarProps {
   onOpenPlugins: () => void
   onRefreshDevices?: () => Promise<void>
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
+  onCreateGitWorkspaceProject: (
+    data: CreateGitWorkspaceProjectRequest,
+  ) => Promise<ProjectWithTasks>
+  onListGitRepositories: () => Promise<GitRepoInfo[]>
+  onListGitBranches: (repo: GitRepoInfo) => Promise<GitBranch[]>
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
   onRemoveProject: (projectId: number) => Promise<void>
   onArchiveAllChats: () => Promise<void>
@@ -71,7 +81,7 @@ interface DesktopSidebarProps {
   onLogout: () => void
 }
 
-type ProjectCreateMode = 'scratch' | 'existing'
+type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
 function SidebarButton({
   icon: Icon,
@@ -319,7 +329,10 @@ function ProjectItem({
           aria-expanded={expanded}
           className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
         >
-          <Folder className="h-3.5 w-3.5 shrink-0 text-[rgb(var(--color-sidebar-text-secondary))]" />
+          <ProjectFolderIcon
+            project={project}
+            className="h-3.5 w-3.5 shrink-0 text-[rgb(var(--color-sidebar-text-secondary))]"
+          />
           <span className="truncate">{project.name}</span>
         </button>
         {!expanded && projectRunning && (
@@ -504,6 +517,9 @@ export function DesktopSidebar({
   onOpenPlugins,
   onRefreshDevices,
   onCreateProject,
+  onCreateGitWorkspaceProject,
+  onListGitRepositories,
+  onListGitBranches,
   onUpdateProjectName,
   onRemoveProject,
   onArchiveAllChats,
@@ -574,12 +590,9 @@ export function DesktopSidebar({
     })
   }
 
-  const openProjectCreateDialog = async (mode: ProjectCreateMode) => {
-    try {
-      await onRefreshDevices?.()
-    } finally {
-      setProjectCreateMode(mode)
-    }
+  const openProjectCreateDialog = (mode: ProjectCreateMode) => {
+    setProjectCreateMode(mode)
+    void onRefreshDevices?.().catch(() => undefined)
   }
 
   useEffect(() => {
@@ -716,7 +729,7 @@ export function DesktopSidebar({
               icon={FolderPlus}
               items={[
                 {
-                  label: t('workbench.start_from_scratch', '从头开始'),
+                  label: t('workbench.start_from_scratch', '新建空白项目'),
                   icon: FolderPlus,
                   testId: 'project-start-from-scratch-button',
                   onSelect: () => openProjectCreateDialog('scratch'),
@@ -726,6 +739,12 @@ export function DesktopSidebar({
                   icon: Folder,
                   testId: 'project-existing-folder-button',
                   onSelect: () => openProjectCreateDialog('existing'),
+                },
+                {
+                  label: t('workbench.clone_from_git', '从 Git 克隆'),
+                  icon: FolderGit2,
+                  testId: 'project-clone-from-git-button',
+                  onSelect: () => openProjectCreateDialog('git'),
                 },
               ]}
             />
@@ -854,12 +873,15 @@ export function DesktopSidebar({
         devices={devices}
         onClose={() => setProjectCreateMode(null)}
         onCreateProject={onCreateProject}
+        onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
         preferredDeviceId={preferredDeviceId}
         onSelectDevicePreference={onRememberExecutionDevice}
         onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
         onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
         onListDeviceDirectories={onListDeviceDirectories}
         onCreateDeviceDirectory={onCreateDeviceDirectory}
+        onListGitRepositories={onListGitRepositories}
+        onListGitBranches={onListGitBranches}
       />
       <TextInputDialog
         open={renamingProject !== null}

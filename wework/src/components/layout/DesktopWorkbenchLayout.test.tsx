@@ -173,6 +173,7 @@ describe('DesktopWorkbenchLayout', () => {
     onOpenTask: vi.fn(),
     onSearchTaskDetail: vi.fn(),
     onCreateProject: vi.fn(),
+    onCreateGitWorkspaceProject: vi.fn(),
     onUpdateProjectName: vi.fn(),
     onRemoveProject: vi.fn(),
     onArchiveAllChats: vi.fn(),
@@ -188,6 +189,8 @@ describe('DesktopWorkbenchLayout', () => {
     onGetProjectWorkspaceRoot: vi.fn().mockResolvedValue('/workspace/projects'),
     onListDeviceDirectories: vi.fn(),
     onCreateDeviceDirectory: vi.fn(),
+    onListGitRepositories: vi.fn().mockResolvedValue([]),
+    onListGitBranches: vi.fn().mockResolvedValue([]),
     onLoadEnvironmentInfo: vi.fn().mockResolvedValue({
       additions: '+173',
       deletions: '-13366',
@@ -797,6 +800,121 @@ describe('DesktopWorkbenchLayout', () => {
         }),
       ),
     )
+  })
+
+  test('opens Git project creation from the project create menu', async () => {
+    const onListGitRepositories = vi.fn().mockResolvedValue([
+      {
+        git_repo_id: 101,
+        name: 'Wegent',
+        git_repo: 'wecode-ai/Wegent',
+        git_url: 'https://github.com/wecode-ai/Wegent.git',
+        git_domain: 'github.com',
+        namespace: 'wecode-ai',
+        private: false,
+        type: 'github',
+      },
+    ])
+    const onListGitBranches = vi.fn().mockResolvedValue([
+      { name: 'main', default: true, protected: false },
+    ])
+    const onCreateGitWorkspaceProject = vi.fn().mockResolvedValue({
+      id: 9,
+      name: 'Wegent',
+      tasks: [],
+    })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onListGitRepositories={onListGitRepositories}
+        onListGitBranches={onListGitBranches}
+        onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'device-1',
+              name: 'executor',
+              status: 'online',
+              is_default: true,
+            },
+          ],
+        }}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-clone-from-git-button'))
+
+    await waitFor(() => expect(onListGitRepositories).toHaveBeenCalledTimes(1))
+    await userEvent.selectOptions(
+      screen.getByTestId('git-repository-select'),
+      'https://github.com/wecode-ai/Wegent.git',
+    )
+    await waitFor(() => expect(screen.getByTestId('git-branch-select')).toHaveValue('main'))
+    await userEvent.click(screen.getByTestId('create-project-button'))
+
+    await waitFor(() =>
+      expect(onCreateGitWorkspaceProject).toHaveBeenCalledWith(
+        expect.objectContaining({
+          device_id: 'device-1',
+          git: expect.objectContaining({
+            url: 'https://github.com/wecode-ai/Wegent.git',
+            branch: 'main',
+          }),
+        }),
+      ),
+    )
+  })
+
+  test('opens Git project dialog before device refresh completes', async () => {
+    let resolveRefreshDevices: (() => void) | undefined
+    let resolveRepositories: (() => void) | undefined
+    const onRefreshDevices = vi.fn(
+      () =>
+        new Promise<void>(resolve => {
+          resolveRefreshDevices = resolve
+        }),
+    )
+    const onListGitRepositories = vi.fn(
+      () =>
+        new Promise<[]>(resolve => {
+          resolveRepositories = () => resolve([])
+        }),
+    )
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onRefreshDevices={onRefreshDevices}
+        onListGitRepositories={onListGitRepositories}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'device-1',
+              name: 'executor',
+              status: 'online',
+              is_default: true,
+            },
+          ],
+        }}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-clone-from-git-button'))
+
+    expect(screen.getByText('克隆 Git 仓库')).toBeInTheDocument()
+    expect(screen.getByTestId('git-repository-select')).toBeDisabled()
+    expect(screen.getByText('正在加载仓库...')).toBeInTheDocument()
+    expect(onRefreshDevices).toHaveBeenCalledTimes(1)
+
+    resolveRefreshDevices?.()
+    resolveRepositories?.()
   })
 
   test('keeps project create menu open until clicking outside', async () => {

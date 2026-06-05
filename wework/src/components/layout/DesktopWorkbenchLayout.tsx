@@ -8,7 +8,10 @@ import type {
 import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
 import type {
   ArchivedTaskListResponse,
+  CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
+  GitBranch,
+  GitRepoInfo,
   ProjectWithTasks,
   TaskDetail,
   TaskListResponse,
@@ -42,6 +45,11 @@ interface DesktopWorkbenchLayoutProps {
   onRememberExecutionDevice?: (deviceId: string) => void
   onRefreshDevices?: () => Promise<void>
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
+  onCreateGitWorkspaceProject: (
+    data: CreateGitWorkspaceProjectRequest,
+  ) => Promise<ProjectWithTasks>
+  onListGitRepositories: () => Promise<GitRepoInfo[]>
+  onListGitBranches: (repo: GitRepoInfo) => Promise<GitBranch[]>
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
   onRemoveProject: (projectId: number) => Promise<void>
   onArchiveAllChats: () => Promise<void>
@@ -102,6 +110,9 @@ export function DesktopWorkbenchLayout({
   onRememberExecutionDevice,
   onRefreshDevices,
   onCreateProject,
+  onCreateGitWorkspaceProject,
+  onListGitRepositories,
+  onListGitBranches,
   onUpdateProjectName,
   onRemoveProject,
   onArchiveAllChats,
@@ -246,6 +257,9 @@ export function DesktopWorkbenchLayout({
           onOpenPlugins={onOpenPlugins}
           onRefreshDevices={onRefreshDevices}
           onCreateProject={onCreateProject}
+          onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
+          onListGitRepositories={onListGitRepositories}
+          onListGitBranches={onListGitBranches}
           onUpdateProjectName={onUpdateProjectName}
           onRemoveProject={onRemoveProject}
           onArchiveAllChats={onArchiveAllChats}

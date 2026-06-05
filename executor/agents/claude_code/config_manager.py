@@ -467,6 +467,10 @@ def extract_claude_options(task_data: ExecutionRequest) -> Dict[str, Any]:
             if key in bot_config and bot_config[key] is not None:
                 options[key] = bot_config[key]
 
+    if task_data.system_prompt:
+        options["system_prompt"] = task_data.system_prompt
+        logger.info("[ClaudeOptions] Using top-level ExecutionRequest system_prompt")
+
     # Final summary log
     final_mcp = options.get("mcp_servers", options.get("mcpServers"))
     if final_mcp and isinstance(final_mcp, dict):

@@ -67,6 +67,55 @@ async def test_create_cloud_device_passes_current_user_jwt_to_provider(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_create_cloud_device_passes_current_user_git_tokens_to_provider(
+    monkeypatch,
+):
+    """Cloud device creation should pass current user's real git tokens."""
+    provider = _FakeCloudDeviceProvider()
+    monkeypatch.setattr(cloud_devices, "cloud_device_provider", provider)
+    monkeypatch.setattr(
+        "wecode.service.api_key_service.create_api_key_for_cloud_device",
+        lambda db, user_id, user_name: ("key-id", "device-api-key"),
+    )
+    monkeypatch.setattr(
+        cloud_devices.get_user_gitinfo,
+        "get_real_git_tokens",
+        lambda user_name: [
+            {
+                "type": "gitlab",
+                "git_domain": "git.intra.weibo.com",
+                "git_token": "git-intra-token",
+            },
+            {
+                "type": "gitlab",
+                "git_domain": "gitlab.weibo.cn",
+                "git_token": "gitlab-weibo-token",
+            },
+        ],
+    )
+
+    await cloud_devices.create_cloud_device(
+        request=_FakeRequest(),
+        body=CreateCloudDeviceRequest(),
+        db=SimpleNamespace(),
+        current_user=SimpleNamespace(id=7, user_name="alice"),
+    )
+
+    assert provider.create_device_kwargs["git_tokens"] == [
+        {
+            "type": "gitlab",
+            "git_domain": "git.intra.weibo.com",
+            "git_token": "git-intra-token",
+        },
+        {
+            "type": "gitlab",
+            "git_domain": "gitlab.weibo.cn",
+            "git_token": "gitlab-weibo-token",
+        },
+    ]
+
+
+@pytest.mark.asyncio
 async def test_restart_cloud_device_uses_current_user(monkeypatch):
     """Cloud device restart should be scoped to the current user."""
     provider = _FakeCloudDeviceProvider()

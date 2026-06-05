@@ -23,7 +23,8 @@ dependencies = [
     # The Python SDK currently depends on a platform-specific Python CLI binary
     # package that has no manylinux wheel. Linux images install the SDK with
     # --no-deps and use the preinstalled npm Codex binary instead.
-    "openai-codex==0.1.0b2; platform_system != 'Linux'",
+    "openai-codex==0.1.0b3; platform_system != 'Linux'",
+    "openai-codex-cli-bin==0.137.0a4; platform_system != 'Linux'",
     "openai==1.107.1",
     "pydantic>=2.12,<2.13",
     "pymysql==1.1.0",

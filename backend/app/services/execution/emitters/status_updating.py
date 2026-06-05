@@ -106,6 +106,8 @@ class StatusUpdatingEmitter(ResultEmitter):
             EventType.TOOL_ARGUMENT_DONE.value,
             EventType.TOOL_RESULT.value,
             EventType.THINKING.value,
+            EventType.BLOCK_CREATED.value,
+            EventType.BLOCK_UPDATED.value,
         ):
             await session_manager.touch_task_streaming_activity(self._task_id)
 

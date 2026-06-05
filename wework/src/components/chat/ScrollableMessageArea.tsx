@@ -48,13 +48,22 @@ export function ScrollableMessageArea({
   const messageScrollSignature = useMemo(() => {
     if (!lastMessage) return 'empty'
 
+    const blockSignature = (lastMessage.blocks ?? [])
+      .map(block => {
+        if (block.type === 'thinking') {
+          return `${block.id}:${block.status}:${block.content.length}`
+        }
+        return `${block.id}:${block.status}:${String(block.toolOutput ?? '').length}`
+      })
+      .join('|')
+
     return [
       messages.length,
       lastMessage.id,
       lastMessage.role,
       lastMessage.status,
       lastMessage.content.length,
-      lastMessage.blocks?.length ?? 0,
+      blockSignature,
     ].join(':')
   }, [lastMessage, messages.length])
 

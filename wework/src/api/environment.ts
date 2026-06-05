@@ -24,6 +24,9 @@ function outputAsString(output: DeviceCommandResponse['stdout']): string {
 
 function workspacePath(project: ProjectWithTasks): string | undefined {
   const config = project.config
+  if (config?.workspace?.source === 'git' && config.workspace.checkoutPath) {
+    return `projects/${config.workspace.checkoutPath}`
+  }
   return config?.workspace?.localPath || config?.workspace?.checkoutPath || config?.path
 }
 

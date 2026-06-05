@@ -30,6 +30,40 @@ describe('REST adapters', () => {
     )
   })
 
+  test('creates Git workspace projects from the wework client origin', async () => {
+    const client = mockClient()
+    vi.mocked(client.post).mockResolvedValueOnce({
+      project: { id: 9, name: 'Wegent' },
+      checkout_path: 'Wegent',
+      reused_existing_checkout: false,
+    })
+
+    await createProjectApi(client).createGitWorkspaceProject({
+      device_id: 'device-1',
+      name: 'Wegent',
+      git: {
+        url: 'https://github.com/wecode-ai/Wegent.git',
+        repo: 'wecode-ai/Wegent',
+        repoId: 101,
+        domain: 'github.com',
+        branch: 'main',
+      },
+    })
+
+    expect(client.post).toHaveBeenCalledWith('/projects/git-workspace', {
+      device_id: 'device-1',
+      name: 'Wegent',
+      client_origin: 'wework',
+      git: {
+        url: 'https://github.com/wecode-ai/Wegent.git',
+        repo: 'wecode-ai/Wegent',
+        repoId: 101,
+        domain: 'github.com',
+        branch: 'main',
+      },
+    })
+  })
+
   test('loads recent online and offline workbench tasks', async () => {
     const client = mockClient()
     vi.mocked(client.get).mockResolvedValueOnce({ total: 0, items: [] })

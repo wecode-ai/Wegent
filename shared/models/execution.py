@@ -41,6 +41,7 @@ class EventType(str, Enum):
     TOOL_ARGUMENT_DONE = "tool_argument_done"
     TOOL_RESULT = "tool_result"
     BLOCK_CREATED = "block_created"
+    BLOCK_UPDATED = "block_updated"
     PROGRESS = "progress"
     DONE = "done"
     ERROR = "error"

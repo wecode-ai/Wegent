@@ -39,6 +39,31 @@ export interface ProjectWorkspaceConfig {
   checkoutPath?: string
 }
 
+export interface ProjectGitConfig {
+  url: string
+  repo?: string | null
+  repoId?: number | null
+  domain?: string | null
+  branch?: string | null
+}
+
+export interface GitRepoInfo {
+  git_repo_id: number
+  name: string
+  git_repo: string
+  git_url: string
+  namespace: string
+  private: boolean
+  git_domain: string
+  type: 'github' | 'gitlab' | 'gitee' | 'gitea' | 'gerrit' | string
+}
+
+export interface GitBranch {
+  name: string
+  protected?: boolean
+  default?: boolean
+}
+
 export type ModelType = 'public' | 'user' | 'group'
 
 export interface ModelSelectionConfig {
@@ -53,6 +78,7 @@ export interface ProjectConfig {
   device_id?: string
   execution?: ProjectExecutionConfig | null
   workspace?: ProjectWorkspaceConfig | null
+  git?: ProjectGitConfig | null
   modelSelection?: ModelSelectionConfig | null
 }
 
@@ -99,6 +125,21 @@ export interface CreateProjectRequest {
   color?: string
   client_origin?: string
   config?: ProjectConfig
+}
+
+export interface CreateGitWorkspaceProjectRequest {
+  device_id: string
+  name?: string
+  description?: string
+  color?: string
+  client_origin?: string
+  git: ProjectGitConfig
+}
+
+export interface CreateGitWorkspaceProjectResponse {
+  project: ProjectWithTasks
+  checkout_path: string
+  reused_existing_checkout: boolean
 }
 
 export interface UpdateProjectRequest {
@@ -301,18 +342,26 @@ export interface ChatStartPayload {
   message_id?: number
 }
 
+export type ChatResultPayload = Record<string, unknown> & {
+  value?: string
+  error?: string
+  reasoning_chunk?: string
+  blocks?: ChatBlock[]
+}
+
 export interface ChatChunkPayload {
   task_id?: number
   subtask_id: number
   content: string
   offset: number
+  result?: ChatResultPayload
 }
 
 export interface ChatDonePayload {
   task_id?: number
   subtask_id: number
   offset: number
-  result: Record<string, unknown> & { value?: string; error?: string }
+  result: ChatResultPayload
   message_id?: number
 }
 
@@ -328,6 +377,7 @@ export interface TaskJoinResponse {
     subtask_id: number
     offset: number
     cached_content: string
+    blocks?: ChatBlock[]
   }
   subtasks?: Array<Record<string, unknown>>
   error?: string

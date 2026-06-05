@@ -15,6 +15,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.core.constants import CLIENT_ORIGIN_FRONTEND, SUPPORTED_CLIENT_ORIGINS
+from shared.utils.git_util import get_safe_git_workspace_key
 
 
 class ProjectTaskBase(BaseModel):
@@ -167,6 +168,13 @@ class ProjectConfig(BaseModel):
         if workspace.source == "git":
             if not self.git:
                 raise ValueError("git config is required when workspace.source is git")
+            if not workspace.checkoutPath:
+                workspace_key = get_safe_git_workspace_key(
+                    self.git.url,
+                    domain=self.git.domain,
+                    repo=self.git.repo,
+                )
+                workspace.checkoutPath = workspace_key
             if (
                 self.execution.targetType == "cloud"
                 and workspace.checkoutPath
@@ -224,6 +232,26 @@ class ProjectCreate(ProjectBase):
     pass
 
 
+class GitWorkspaceProjectCreate(BaseModel):
+    """Request model for creating a Git-backed workspace project."""
+
+    device_id: str = Field(..., min_length=1, description="Local device ID")
+    git: ProjectGitConfig = Field(..., description="Git repository configuration")
+    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    description: str = Field(default="", description="Project description")
+    color: Optional[str] = Field(None, max_length=20)
+    client_origin: str = Field(default=CLIENT_ORIGIN_FRONTEND)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_client_origin(self) -> "GitWorkspaceProjectCreate":
+        """Validate project client origin."""
+        if self.client_origin not in SUPPORTED_CLIENT_ORIGINS:
+            raise ValueError("Unsupported client_origin")
+        return self
+
+
 class ProjectUpdate(BaseModel):
     """Request model for updating a project."""
 
@@ -266,6 +294,16 @@ class ProjectWithTasksResponse(ProjectResponse):
     tasks: list[ProjectTaskResponse] = Field(
         default_factory=list,
         description="Tasks in this project",
+    )
+
+
+class GitWorkspaceProjectResponse(BaseModel):
+    """Response model for Git-backed workspace creation."""
+
+    project: ProjectResponse
+    checkout_path: str = Field(..., description="Relative checkout path")
+    reused_existing_checkout: bool = Field(
+        default=False, description="Whether an existing checkout was reused"
     )
 
 

@@ -7,7 +7,7 @@ import { TaskStateMachine, type TaskStateMachineDeps } from '@/features/tasks/st
 function createRuntimeActions(overrides: Partial<TaskStateMachineDeps> = {}): TaskStateMachineDeps {
   return {
     joinTask: jest.fn().mockResolvedValue({ subtasks: [] }),
-    verifyRuntime: jest.fn().mockResolvedValue({
+    pullRuntime: jest.fn().mockResolvedValue({
       task_id: 42,
       task_status: 'COMPLETED',
       status_updated_at: '2026-06-01T10:00:00',
@@ -159,10 +159,17 @@ describe('TaskStateMachine', () => {
 
   it('keeps pending socket recovery when terminal task detail arrives before socket connect', async () => {
     const joinTask = jest.fn().mockResolvedValue({ subtasks: [] })
+    const pullRuntime = jest.fn().mockResolvedValue({
+      task_id: 100,
+      task_status: 'COMPLETED',
+      status_updated_at: '2026-06-01T10:00:00.000Z',
+      active_stream: null,
+    })
     let connected = false
 
     const machine = new TaskStateMachine(100, {
       joinTask,
+      pullRuntime,
       isConnected: () => connected,
     })
 
@@ -181,10 +188,64 @@ describe('TaskStateMachine', () => {
     connected = true
     await machine.handleSocketConnected('websocket-reconnect')
 
+    expect(pullRuntime).toHaveBeenCalledWith(100)
     expect(joinTask).toHaveBeenCalledWith(100, {
       forceRefresh: true,
       afterMessageId: undefined,
     })
+  })
+
+  it('checks runtime before resolving pending socket recovery on reconnect', async () => {
+    const joinTask = jest.fn().mockResolvedValue({ subtasks: [] })
+    const pullRuntime = jest.fn().mockResolvedValue({
+      task_id: 100,
+      task_status: 'RUNNING',
+      active_stream: {
+        subtask_id: 77,
+        cursor: 12,
+      },
+    })
+    let connected = false
+
+    const machine = new TaskStateMachine(100, {
+      joinTask,
+      pullRuntime,
+      isConnected: () => connected,
+    })
+
+    await machine.recover({ force: true, reason: 'task-selected' })
+    expect(machine.getState().phase).toBe('waiting_socket')
+
+    connected = true
+    await machine.handleSocketConnected('websocket-reconnect')
+
+    expect(pullRuntime).toHaveBeenCalledWith(100)
+    expect(joinTask).toHaveBeenCalledWith(100, {
+      forceRefresh: true,
+      afterMessageId: undefined,
+      resumeFromCursor: 0,
+      activeStreamSubtaskId: 77,
+    })
+  })
+
+  it('requires pullRuntime when resolving pending socket recovery on reconnect', async () => {
+    const joinTask = jest.fn().mockResolvedValue({ subtasks: [] })
+    let connected = false
+
+    const machine = new TaskStateMachine(100, {
+      joinTask,
+      isConnected: () => connected,
+    })
+
+    await machine.recover({ force: true, reason: 'task-selected' })
+    expect(machine.getState().phase).toBe('waiting_socket')
+
+    connected = true
+
+    await expect(machine.handleSocketConnected('websocket-reconnect')).rejects.toThrow(
+      '[TaskStateMachine] pullRuntime action is required for checkHealth().'
+    )
+    expect(joinTask).not.toHaveBeenCalled()
   })
 
   it('refreshes timestamp when the same AI message receives a new chat:error event', () => {
@@ -991,7 +1052,7 @@ describe('TaskStateMachine', () => {
 
   it('checkHealth joins when server has an active stream and local room is not joined', async () => {
     const actions = createRuntimeActions({
-      verifyRuntime: jest.fn().mockResolvedValue({
+      pullRuntime: jest.fn().mockResolvedValue({
         task_id: 42,
         task_status: 'RUNNING',
         status_updated_at: '2026-06-01T10:00:00',
@@ -1015,7 +1076,7 @@ describe('TaskStateMachine', () => {
     })
     await machine.checkHealth('page-visible')
 
-    expect(actions.verifyRuntime).toHaveBeenCalledTimes(1)
+    expect(actions.pullRuntime).toHaveBeenCalledTimes(1)
     expect(actions.joinTask).toHaveBeenCalledWith(42, {
       forceRefresh: true,
       afterMessageId: undefined,
@@ -1029,7 +1090,7 @@ describe('TaskStateMachine', () => {
   it('checkHealth syncs messages when the task updatedAt has not been message-synced', async () => {
     const consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
     const actions = createRuntimeActions({
-      verifyRuntime: jest.fn().mockResolvedValue({
+      pullRuntime: jest.fn().mockResolvedValue({
         task_id: 42,
         task_status: 'COMPLETED',
         status_updated_at: '2026-06-01T10:00:10',
@@ -1087,7 +1148,7 @@ describe('TaskStateMachine', () => {
 
   it('does not synthesize interactive form blocks from messages_chain on refresh', async () => {
     const actions = createRuntimeActions({
-      verifyRuntime: jest.fn().mockResolvedValue({
+      pullRuntime: jest.fn().mockResolvedValue({
         task_id: 42,
         task_status: 'COMPLETED',
         status_updated_at: '2026-06-01T10:00:10',
@@ -1180,7 +1241,7 @@ describe('TaskStateMachine', () => {
     })
     const toolOutput = [{ type: 'text', text: deferredText, id: 'lc_1266' }]
     const actions = createRuntimeActions({
-      verifyRuntime: jest.fn().mockResolvedValue({
+      pullRuntime: jest.fn().mockResolvedValue({
         task_id: 793,
         task_status: 'COMPLETED',
         status_updated_at: '2026-06-03T20:34:56',
@@ -1326,7 +1387,7 @@ describe('TaskStateMachine', () => {
       bots: [],
     }
     const actions = createRuntimeActions({
-      verifyRuntime: jest.fn().mockResolvedValue({
+      pullRuntime: jest.fn().mockResolvedValue({
         task_id: 42,
         task_status: 'COMPLETED',
         status_updated_at: '2026-06-01T10:00:10',
@@ -1432,7 +1493,7 @@ describe('TaskStateMachine', () => {
 
   it('checkHealth clears local streaming when server is terminal with no active stream', async () => {
     const actions = createRuntimeActions({
-      verifyRuntime: jest.fn().mockResolvedValue({
+      pullRuntime: jest.fn().mockResolvedValue({
         task_id: 42,
         task_status: 'COMPLETED',
         status_updated_at: '2026-06-01T10:00:10',

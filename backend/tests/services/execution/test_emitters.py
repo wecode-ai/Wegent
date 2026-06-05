@@ -206,6 +206,61 @@ class TestWebSocketResultEmitter:
             }
             assert "ask_id" not in call_kwargs["render_payload"]
 
+    @pytest.mark.asyncio
+    async def test_direct_block_updated_emits_and_persists_block_update(self):
+        """Direct block updates should reach the websocket and update stored blocks."""
+        from app.services.execution.emitters import WebSocketResultEmitter
+
+        with (
+            patch(
+                "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
+            ) as mock_get,
+            patch("app.services.chat.storage.session_manager") as mock_session,
+        ):
+            mock_ws = AsyncMock()
+            mock_get.return_value = mock_ws
+            mock_session.get_blocks = AsyncMock(
+                return_value=[
+                    {
+                        "id": "codex-commentary-1",
+                        "type": "thinking",
+                        "content": "",
+                        "status": "streaming",
+                    }
+                ]
+            )
+            mock_session.add_block = AsyncMock()
+
+            emitter = WebSocketResultEmitter(task_id=10, subtask_id=20)
+            event = ExecutionEvent.create(
+                EventType.BLOCK_UPDATED,
+                task_id=10,
+                subtask_id=20,
+                data={
+                    "block_id": "codex-commentary-1",
+                    "updates": {"content": "Working", "status": "done"},
+                },
+            )
+
+            await emitter.emit(event)
+
+            mock_ws.emit_block_updated.assert_awaited_once_with(
+                task_id=10,
+                subtask_id=20,
+                block_id="codex-commentary-1",
+                content="Working",
+                status="done",
+            )
+            mock_session.add_block.assert_awaited_once_with(
+                20,
+                {
+                    "id": "codex-commentary-1",
+                    "type": "thinking",
+                    "content": "Working",
+                    "status": "done",
+                },
+            )
+
 
 class TestSSEResultEmitter:
     """Tests for SSEResultEmitter."""
