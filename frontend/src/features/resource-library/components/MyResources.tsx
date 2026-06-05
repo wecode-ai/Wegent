@@ -4,9 +4,10 @@
 
 'use client'
 
-import { useEffect, useState, type ComponentType } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ComponentType } from 'react'
 import dynamic from 'next/dynamic'
-import { Building2, Check, ChevronDown, Globe2, Layers3, UserRound } from 'lucide-react'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
+import { Building2, Check, ChevronDown, Globe2, Layers3, Search, UserRound } from 'lucide-react'
 
 import { listGroups } from '@/apis/groups'
 import { Button } from '@/components/ui/button'
@@ -16,9 +17,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown'
+import { Input } from '@/components/ui/input'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { Group } from '@/types/group'
+import { getResourceLibrarySortMode, type ResourceLibrarySortMode } from '../resourceSorting'
 import type { ManagedResourceSourceFilter, ManagedResourceType } from '../types'
 
 const managedResourceTypes: ManagedResourceType[] = [
@@ -28,6 +31,16 @@ const managedResourceTypes: ManagedResourceType[] = [
   'shell',
   'retriever',
 ]
+
+const sourceFilters: ManagedResourceSourceFilter[] = ['all', 'personal', 'group', 'system']
+
+const resourceLibraryUrlParams = {
+  type: 'type',
+  source: 'source',
+  legacyScope: 'scope',
+  group: 'group',
+  sort: 'sort',
+} as const
 
 const TeamListWithScope = dynamic(
   () =>
@@ -65,27 +78,36 @@ const RetrieverListWithScope = dynamic(
   { ssr: false }
 )
 
-function getInitialSearchParam(name: string): string | null {
+type SearchParamReader = Pick<URLSearchParams, 'get'>
+
+function getInitialSearchParams(): URLSearchParams {
   if (typeof window === 'undefined') {
-    return null
+    return new URLSearchParams()
   }
-  return new URLSearchParams(window.location.search).get(name)
+
+  return new URLSearchParams(window.location.search)
 }
 
-function getInitialResourceType(): ManagedResourceType {
-  const type = getInitialSearchParam('type')
-  return managedResourceTypes.includes(type as ManagedResourceType)
-    ? (type as ManagedResourceType)
-    : 'agent'
+function isManagedResourceType(value: string | null): value is ManagedResourceType {
+  return managedResourceTypes.includes(value as ManagedResourceType)
 }
 
-function getInitialSourceFilter(): ManagedResourceSourceFilter {
-  const source = getInitialSearchParam('source')
-  if (source === 'all' || source === 'personal' || source === 'group' || source === 'system') {
+function isSourceFilter(value: string | null): value is ManagedResourceSourceFilter {
+  return sourceFilters.includes(value as ManagedResourceSourceFilter)
+}
+
+function getResourceTypeFromSearchParams(params: SearchParamReader): ManagedResourceType {
+  const type = params.get(resourceLibraryUrlParams.type)
+  return isManagedResourceType(type) ? type : 'agent'
+}
+
+function getSourceFilterFromSearchParams(params: SearchParamReader): ManagedResourceSourceFilter {
+  const source = params.get(resourceLibraryUrlParams.source)
+  if (isSourceFilter(source)) {
     return source
   }
 
-  const legacyScope = getInitialSearchParam('scope')
+  const legacyScope = params.get(resourceLibraryUrlParams.legacyScope)
   if (legacyScope === 'personal' || legacyScope === 'group') {
     return legacyScope
   }
@@ -93,12 +115,54 @@ function getInitialSourceFilter(): ManagedResourceSourceFilter {
   return 'all'
 }
 
+function getGroupNameFromSearchParams(params: SearchParamReader): string | null {
+  return params.get(resourceLibraryUrlParams.group)
+}
+
+function getSortModeFromSearchParams(params: SearchParamReader): ResourceLibrarySortMode {
+  return getResourceLibrarySortMode(params.get(resourceLibraryUrlParams.sort))
+}
+
+function getInitialResourceType(): ManagedResourceType {
+  return getResourceTypeFromSearchParams(getInitialSearchParams())
+}
+
+function getInitialSourceFilter(): ManagedResourceSourceFilter {
+  return getSourceFilterFromSearchParams(getInitialSearchParams())
+}
+
 function getInitialGroupName(): string | null {
-  return getInitialSearchParam('group')
+  return getGroupNameFromSearchParams(getInitialSearchParams())
+}
+
+function getInitialSortMode(): ResourceLibrarySortMode {
+  return getSortModeFromSearchParams(getInitialSearchParams())
 }
 
 function getGroupDisplayName(group: Group): string {
   return group.display_name || group.name
+}
+
+const groupNameCollator = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: 'base',
+})
+
+function compareGroupsByDisplayName(left: Group, right: Group): number {
+  const displayNameResult = groupNameCollator.compare(
+    getGroupDisplayName(left),
+    getGroupDisplayName(right)
+  )
+
+  if (displayNameResult !== 0) {
+    return displayNameResult
+  }
+
+  return groupNameCollator.compare(left.name, right.name)
+}
+
+function getGroupSearchText(group: Group): string {
+  return `${getGroupDisplayName(group)} ${group.name}`.toLowerCase()
 }
 
 function useResourceLibraryTranslation() {
@@ -149,15 +213,17 @@ function ResourceSourceFilterControls({
   onValueChange,
   groups,
   selectedGroup,
-  onGroupChange,
+  onGroupSourceChange,
 }: {
   value: ManagedResourceSourceFilter
   onValueChange: (value: ManagedResourceSourceFilter) => void
   groups: Group[]
   selectedGroup: string | null
-  onGroupChange: (groupName: string | null) => void
+  onGroupSourceChange: (groupName: string | null) => void
 }) {
   const t = useResourceLibraryTranslation()
+  const [isGroupMenuOpen, setIsGroupMenuOpen] = useState(false)
+  const [groupSearchQuery, setGroupSearchQuery] = useState('')
   const regularOptions: Array<{
     value: ManagedResourceSourceFilter
     label: string
@@ -170,6 +236,17 @@ function ResourceSourceFilterControls({
   const selectedGroupLabel = selectedGroupInfo ? getGroupDisplayName(selectedGroupInfo) : null
   const groupButtonLabel =
     value === 'group' ? selectedGroupLabel || t('sources.all_groups') : t('sources.group')
+  const sortedGroups = useMemo(() => [...groups].sort(compareGroupsByDisplayName), [groups])
+  const normalizedGroupSearchQuery = groupSearchQuery.trim().toLowerCase()
+  const filteredGroups = useMemo(() => {
+    if (!normalizedGroupSearchQuery) {
+      return sortedGroups
+    }
+
+    return sortedGroups.filter(group =>
+      getGroupSearchText(group).includes(normalizedGroupSearchQuery)
+    )
+  }, [normalizedGroupSearchQuery, sortedGroups])
 
   return (
     <div
@@ -197,7 +274,15 @@ function ResourceSourceFilterControls({
             </Button>
           )
         })}
-        <DropdownMenu>
+        <DropdownMenu
+          open={isGroupMenuOpen}
+          onOpenChange={open => {
+            setIsGroupMenuOpen(open)
+            if (!open) {
+              setGroupSearchQuery('')
+            }
+          }}
+        >
           <DropdownMenuTrigger asChild>
             <Button
               type="button"
@@ -221,62 +306,84 @@ function ResourceSourceFilterControls({
           <DropdownMenuContent
             align="start"
             sideOffset={6}
-            className="max-h-[320px] min-w-[220px] max-w-[min(320px,calc(100vw-2rem))] overflow-y-auto"
+            className="flex max-h-[320px] min-w-[220px] max-w-[min(320px,calc(100vw-2rem))] flex-col overflow-hidden"
           >
-            <DropdownMenuItem
-              className={cn(
-                'min-h-11 gap-2 lg:min-h-9',
-                value === 'group' &&
-                  !selectedGroup &&
-                  'bg-primary/10 text-primary focus:text-primary'
-              )}
-              data-testid="resource-source-all-groups-option"
-              onClick={() => {
-                onGroupChange(null)
-                onValueChange('group')
-              }}
+            <div
+              className="border-b border-border p-1 pb-2"
+              onKeyDown={event => event.stopPropagation()}
             >
-              <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
-                {value === 'group' && !selectedGroup && <Check className="h-4 w-4" aria-hidden />}
-              </span>
-              <span className="truncate">{t('sources.all_groups')}</span>
-            </DropdownMenuItem>
-            {groups.length === 0 ? (
+              <div className="relative">
+                <Search
+                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
+                  aria-hidden
+                />
+                <Input
+                  value={groupSearchQuery}
+                  onChange={event => setGroupSearchQuery(event.target.value)}
+                  placeholder={t('search.groups_placeholder')}
+                  data-testid="resource-source-group-search-input"
+                  className="h-9 bg-base pl-9"
+                />
+              </div>
+            </div>
+            <div className="min-h-0 overflow-y-auto pt-1">
               <DropdownMenuItem
-                disabled
-                className="min-h-11 text-text-muted lg:min-h-9"
-                data-testid="resource-source-group-empty-option"
+                className={cn(
+                  'min-h-11 gap-2 lg:min-h-9',
+                  value === 'group' &&
+                    !selectedGroup &&
+                    'bg-primary/10 text-primary focus:text-primary'
+                )}
+                data-testid="resource-source-all-groups-option"
+                onClick={() => onGroupSourceChange(null)}
               >
-                {t('states.no_groups')}
+                <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
+                  {value === 'group' && !selectedGroup && <Check className="h-4 w-4" aria-hidden />}
+                </span>
+                <span className="truncate">{t('sources.all_groups')}</span>
               </DropdownMenuItem>
-            ) : (
-              groups.map(group => {
-                const isSelected = value === 'group' && selectedGroup === group.name
-                const displayName = getGroupDisplayName(group)
+              {groups.length === 0 ? (
+                <DropdownMenuItem
+                  disabled
+                  className="min-h-11 text-text-muted lg:min-h-9"
+                  data-testid="resource-source-group-empty-option"
+                >
+                  {t('states.no_groups')}
+                </DropdownMenuItem>
+              ) : filteredGroups.length === 0 ? (
+                <DropdownMenuItem
+                  disabled
+                  className="min-h-11 text-text-muted lg:min-h-9"
+                  data-testid="resource-source-group-no-match-option"
+                >
+                  {t('search.groups_empty')}
+                </DropdownMenuItem>
+              ) : (
+                filteredGroups.map(group => {
+                  const isSelected = value === 'group' && selectedGroup === group.name
+                  const displayName = getGroupDisplayName(group)
 
-                return (
-                  <DropdownMenuItem
-                    key={group.id}
-                    className={cn(
-                      'min-h-11 gap-2 lg:min-h-9',
-                      isSelected && 'bg-primary/10 text-primary focus:text-primary'
-                    )}
-                    data-testid={`resource-source-group-option-${group.id}`}
-                    onClick={() => {
-                      onGroupChange(group.name)
-                      onValueChange('group')
-                    }}
-                  >
-                    <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
-                      {isSelected && <Check className="h-4 w-4" aria-hidden />}
-                    </span>
-                    <span className="truncate" title={displayName}>
-                      {displayName}
-                    </span>
-                  </DropdownMenuItem>
-                )
-              })
-            )}
+                  return (
+                    <DropdownMenuItem
+                      key={group.id}
+                      className={cn(
+                        'min-h-11 gap-2 lg:min-h-9',
+                        isSelected && 'bg-primary/10 text-primary focus:text-primary'
+                      )}
+                      data-testid={`resource-source-group-option-${group.id}`}
+                      onClick={() => onGroupSourceChange(group.name)}
+                    >
+                      <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
+                        {isSelected && <Check className="h-4 w-4" aria-hidden />}
+                      </span>
+                      <span className="truncate" title={displayName}>
+                        {displayName}
+                      </span>
+                    </DropdownMenuItem>
+                  )
+                })
+              )}
+            </div>
           </DropdownMenuContent>
         </DropdownMenu>
         <Button
@@ -290,6 +397,45 @@ function ResourceSourceFilterControls({
           <Globe2 className="h-4 w-4" aria-hidden />
           {t('sources.system')}
         </Button>
+      </div>
+    </div>
+  )
+}
+
+function ResourceSortControls({
+  value,
+  onValueChange,
+}: {
+  value: ResourceLibrarySortMode
+  onValueChange: (value: ResourceLibrarySortMode) => void
+}) {
+  const t = useResourceLibraryTranslation()
+  const options: ResourceLibrarySortMode[] = ['default', 'latest']
+
+  return (
+    <div
+      className="flex flex-col gap-2 sm:flex-row sm:items-center lg:flex-shrink-0 lg:justify-end"
+      data-testid="managed-resource-sort-control"
+    >
+      <span className="text-xs font-medium text-text-muted">{t('fields.sort')}</span>
+      <div className="flex flex-wrap items-center gap-2">
+        {options.map(option => {
+          const isActive = value === option
+
+          return (
+            <Button
+              key={option}
+              type="button"
+              variant={isActive ? 'primary' : 'outline'}
+              aria-pressed={isActive}
+              className="h-11 min-w-[44px] px-4 lg:h-9"
+              onClick={() => onValueChange(option)}
+              data-testid={`resource-sort-${option}-button`}
+            >
+              {t(`sort.${option}`)}
+            </Button>
+          )
+        })}
       </div>
     </div>
   )
@@ -310,11 +456,110 @@ interface MyResourcesProps {
 }
 
 export function MyResources({ title }: MyResourcesProps = {}) {
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+  const searchParamsSnapshot = searchParams.toString()
   const [resourceType, setResourceType] = useState<ManagedResourceType>(getInitialResourceType)
   const [sourceFilter, setSourceFilter] =
     useState<ManagedResourceSourceFilter>(getInitialSourceFilter)
   const [groups, setGroups] = useState<Group[]>([])
   const [selectedGroup, setSelectedGroup] = useState<string | null>(getInitialGroupName)
+  const [sortMode, setSortMode] = useState<ResourceLibrarySortMode>(getInitialSortMode)
+
+  const replaceResourceLibraryUrl = useCallback(
+    ({
+      type,
+      source,
+      group,
+      sort,
+    }: {
+      type?: ManagedResourceType
+      source?: ManagedResourceSourceFilter
+      group?: string | null
+      sort?: ResourceLibrarySortMode
+    }) => {
+      const params = new URLSearchParams(searchParamsSnapshot)
+
+      if (type) {
+        params.set(resourceLibraryUrlParams.type, type)
+      }
+
+      if (source) {
+        params.set(resourceLibraryUrlParams.source, source)
+        params.delete(resourceLibraryUrlParams.legacyScope)
+      }
+
+      if (group !== undefined) {
+        if (group) {
+          params.set(resourceLibraryUrlParams.group, group)
+        } else {
+          params.delete(resourceLibraryUrlParams.group)
+        }
+      }
+
+      if (sort) {
+        if (sort === 'latest') {
+          params.set(resourceLibraryUrlParams.sort, sort)
+        } else {
+          params.delete(resourceLibraryUrlParams.sort)
+        }
+      }
+
+      if (source && source !== 'group') {
+        params.delete(resourceLibraryUrlParams.group)
+      }
+
+      const queryString = params.toString()
+      const nextUrl = queryString ? `${pathname}?${queryString}` : pathname
+      router.replace(nextUrl, { scroll: false })
+    },
+    [pathname, router, searchParamsSnapshot]
+  )
+
+  const handleResourceTypeChange = useCallback(
+    (nextType: ManagedResourceType) => {
+      setResourceType(nextType)
+      replaceResourceLibraryUrl({ type: nextType })
+    },
+    [replaceResourceLibraryUrl]
+  )
+
+  const handleSourceFilterChange = useCallback(
+    (nextSource: ManagedResourceSourceFilter) => {
+      setSourceFilter(nextSource)
+      replaceResourceLibraryUrl({
+        source: nextSource,
+        group: nextSource === 'group' ? selectedGroup : null,
+      })
+    },
+    [replaceResourceLibraryUrl, selectedGroup]
+  )
+
+  const handleGroupSourceChange = useCallback(
+    (groupName: string | null) => {
+      setSelectedGroup(groupName)
+      setSourceFilter('group')
+      replaceResourceLibraryUrl({ source: 'group', group: groupName })
+    },
+    [replaceResourceLibraryUrl]
+  )
+
+  const handleSortModeChange = useCallback(
+    (nextSortMode: ResourceLibrarySortMode) => {
+      setSortMode(nextSortMode)
+      replaceResourceLibraryUrl({ sort: nextSortMode })
+    },
+    [replaceResourceLibraryUrl]
+  )
+
+  useEffect(() => {
+    const params = new URLSearchParams(searchParamsSnapshot)
+    setResourceType(getResourceTypeFromSearchParams(params))
+    setSourceFilter(getSourceFilterFromSearchParams(params))
+    setSelectedGroup(getGroupNameFromSearchParams(params))
+    setSortMode(getSortModeFromSearchParams(params))
+  }, [searchParamsSnapshot])
 
   useEffect(() => {
     let isMounted = true
@@ -339,11 +584,14 @@ export function MyResources({ title }: MyResourcesProps = {}) {
     const sourceControls = (
       <ResourceSourceFilterControls
         value={sourceFilter}
-        onValueChange={setSourceFilter}
+        onValueChange={handleSourceFilterChange}
         groups={groups}
         selectedGroup={selectedGroup}
-        onGroupChange={setSelectedGroup}
+        onGroupSourceChange={handleGroupSourceChange}
       />
+    )
+    const sortControls = (
+      <ResourceSortControls value={sortMode} onValueChange={handleSortModeChange} />
     )
     const groupName = sourceFilter === 'group' ? selectedGroup : null
 
@@ -354,7 +602,9 @@ export function MyResources({ title }: MyResourcesProps = {}) {
           selectedGroup={groupName}
           sourceFilter={sourceFilter}
           sourceControls={sourceControls}
+          sortControls={sortControls}
           groups={groups}
+          sortMode={sortMode}
         />
       )
     }
@@ -365,7 +615,9 @@ export function MyResources({ title }: MyResourcesProps = {}) {
           selectedGroup={groupName}
           sourceFilter={sourceFilter}
           sourceControls={sourceControls}
+          sortControls={sortControls}
           groups={groups}
+          sortMode={sortMode}
         />
       )
     }
@@ -376,7 +628,9 @@ export function MyResources({ title }: MyResourcesProps = {}) {
           selectedGroup={groupName}
           sourceFilter={sourceFilter}
           sourceControls={sourceControls}
+          sortControls={sortControls}
           groups={groups}
+          sortMode={sortMode}
         />
       )
     }
@@ -387,7 +641,9 @@ export function MyResources({ title }: MyResourcesProps = {}) {
           selectedGroup={groupName}
           sourceFilter={sourceFilter}
           sourceControls={sourceControls}
+          sortControls={sortControls}
           groups={groups}
+          sortMode={sortMode}
         />
       )
     }
@@ -398,7 +654,9 @@ export function MyResources({ title }: MyResourcesProps = {}) {
           selectedGroup={groupName}
           sourceFilter={sourceFilter}
           sourceControls={sourceControls}
+          sortControls={sortControls}
           groups={groups}
+          sortMode={sortMode}
         />
       )
     }
@@ -413,7 +671,7 @@ export function MyResources({ title }: MyResourcesProps = {}) {
         data-testid="managed-resource-header"
       >
         {title && <h1 className="shrink-0 text-xl font-semibold text-text-primary">{title}</h1>}
-        <ManagedResourceTabs value={resourceType} onValueChange={setResourceType} />
+        <ManagedResourceTabs value={resourceType} onValueChange={handleResourceTypeChange} />
       </div>
 
       <div>{renderManager()}</div>

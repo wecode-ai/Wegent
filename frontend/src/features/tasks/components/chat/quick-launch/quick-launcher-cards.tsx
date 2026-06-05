@@ -54,14 +54,6 @@ function LauncherCard({
       >
         {launcher.title}
       </span>
-      {launcher.description && (
-        <span
-          className="mt-1 block truncate text-xs leading-[18px] text-text-muted"
-          title={launcher.description}
-        >
-          {launcher.description}
-        </span>
-      )}
     </button>
   )
 }

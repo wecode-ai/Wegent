@@ -220,6 +220,7 @@ describe('WorkbenchProvider', () => {
     window.history.pushState({}, '', '/')
     localStorage.clear()
     vi.clearAllMocks()
+    window.history.pushState({}, '', '/')
   })
 
   test('bootstraps current user, default team, projects, and recent tasks', async () => {
@@ -290,6 +291,95 @@ describe('WorkbenchProvider', () => {
     await waitFor(() =>
       expect(screen.getByTestId('probe')).toHaveTextContent('alice')
     )
+  })
+
+  test('opens task from the browser path after bootstrap', async () => {
+    window.history.pushState({}, '', '/tasks/8')
+    const getTaskDetail = vi.fn().mockResolvedValue({
+      id: 8,
+      title: 'Restored task',
+      status: 'COMPLETED',
+      task_type: 'code',
+      project_id: 0,
+      device_id: 'local-online',
+      created_at: '2026-06-04T00:00:00.000Z',
+      updated_at: '2026-06-04T00:01:00.000Z',
+      subtasks: [],
+    })
+    const joinTask = vi.fn()
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: { listModels: vi.fn().mockResolvedValue({ data: [] }) },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({ items: [] }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail,
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([
+              {
+                id: 1,
+                device_id: 'local-online',
+                name: 'Local Device',
+                status: 'online',
+                is_default: false,
+                device_type: 'local',
+                bind_shell: 'claudecode',
+              },
+            ]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
+          },
+          chatStream: {
+            joinTask,
+            leaveTask: vi.fn(),
+            sendMessage: vi.fn(),
+            sendGuidance: vi.fn(),
+            cancelStream: vi.fn(),
+            subscribe: vi.fn(() => vi.fn()),
+            connect: vi.fn(),
+          },
+        }}
+      >
+        <ArchiveProbe />
+      </WorkbenchProvider>
+    )
+
+    await waitFor(() => expect(getTaskDetail).toHaveBeenCalledWith(8))
+    expect(await screen.findByTestId('current-task-title')).toHaveTextContent(
+      'Restored task',
+    )
+    expect(joinTask).toHaveBeenCalledWith(8)
   })
 
   test('refreshes devices when a device comes online after bootstrap', async () => {
@@ -724,7 +814,8 @@ describe('WorkbenchProvider', () => {
     )
     expect(screen.getByTestId('standalone-device-id')).toHaveTextContent('local-online')
     expect(joinTask).toHaveBeenCalledWith(8)
-    expect(window.location.search).toBe('?taskId=8')
+    expect(window.location.pathname).toBe('/tasks/8')
+    expect(window.location.search).toBe('')
   })
 
   test('restores an opened task from the taskId URL parameter after refresh', async () => {
@@ -834,7 +925,8 @@ describe('WorkbenchProvider', () => {
     )
     expect(getTaskDetail).toHaveBeenCalledWith(8)
     expect(joinTask).toHaveBeenCalledWith(8)
-    expect(window.location.search).toBe('?taskId=8')
+    expect(window.location.pathname).toBe('/tasks/8')
+    expect(window.location.search).toBe('')
   })
 
   test('persists the project creation device as the default execution target', async () => {

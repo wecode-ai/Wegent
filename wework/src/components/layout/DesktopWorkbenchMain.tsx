@@ -7,7 +7,7 @@ import type {
 } from '@/components/chat/ChatInput'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { ProjectWithTasks, Task } from '@/types/api'
+import type { DeviceInfo, ProjectWithTasks, Task } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import type {
   GuidanceWorkbenchMessage,
@@ -33,6 +33,7 @@ interface DesktopWorkbenchMainProps {
   isBootstrapping: boolean
   currentTask: Task | null
   currentProject: ProjectWithTasks | null
+  devices: DeviceInfo[]
   messages: WorkbenchMessage[]
   queuedMessages: QueuedWorkbenchMessage[]
   guidanceMessages: GuidanceWorkbenchMessage[]
@@ -60,6 +61,7 @@ export function DesktopWorkbenchMain({
   isBootstrapping,
   currentTask,
   currentProject,
+  devices,
   messages,
   queuedMessages,
   guidanceMessages,
@@ -186,6 +188,7 @@ export function DesktopWorkbenchMain({
         {bottomPanelOpen && (
           <BottomWorkspacePanel
             currentProject={currentProject}
+            devices={devices}
             onRequestClose={() => setBottomPanelOpen(false)}
           />
         )}
@@ -205,6 +208,7 @@ export function DesktopWorkbenchMain({
       {rightPanelOpen && (
         <RightWorkspacePanel
           currentProject={currentProject}
+          devices={devices}
           onRequestClose={() => setRightPanelOpen(false)}
         />
       )}
