@@ -133,9 +133,10 @@ export function TaskSessionProvider({ children }: { children: ReactNode }) {
     (realTaskId: number, previousTaskId: number) => {
       if (realTaskId === previousTaskId) return
       writeSelectedTask({ id: realTaskId } as Task)
+      void pullTaskDetail(realTaskId)
       setTaskState(machineRef.current?.getState() ?? null)
     },
-    [writeSelectedTask]
+    [pullTaskDetail, writeSelectedTask]
   )
 
   const messageSyncer = useMessageSyncer({

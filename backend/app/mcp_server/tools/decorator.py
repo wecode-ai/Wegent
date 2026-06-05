@@ -163,6 +163,10 @@ def _extract_parameters_from_signature(
             "required": required,
         }
 
+        # Preserve items for array types so LLMs like Gemini can validate the schema.
+        if "items" in schema:
+            param_def["items"] = schema["items"]
+
         # Add default if present
         if has_default and param.default is not None:
             param_def["default"] = param.default

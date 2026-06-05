@@ -35,6 +35,12 @@ import type { BaseRole } from '@/types/base-role'
 import type { Group } from '@/types/group'
 import type { ManagedResourceSourceFilter } from '@/features/resource-library/types'
 import {
+  buildGroupDisplayNameMap,
+  sortResourceLibraryItems,
+  type ResourceLibrarySortMode,
+  type ResourceLibrarySortSource,
+} from '@/features/resource-library/resourceSorting'
+import {
   hasResourceCreateTargets,
   ResourceCreateButton,
   type ResourceCreateTarget,
@@ -47,8 +53,10 @@ interface RetrieverListProps {
   groupRoleMap?: Map<string, BaseRole>
   onEditResource?: (namespace: string) => void
   sourceControls?: ReactNode
+  sortControls?: ReactNode
   sourceFilter?: ManagedResourceSourceFilter
   groups?: Group[]
+  sortMode?: ResourceLibrarySortMode
 }
 
 const RetrieverList: React.FC<RetrieverListProps> = ({
@@ -57,8 +65,10 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
   groupRoleMap,
   onEditResource,
   sourceControls,
+  sortControls,
   sourceFilter = 'all',
   groups = [],
+  sortMode = 'default',
 }) => {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -107,7 +117,34 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
     return retrievers
   }, [retrievers, sourceFilter])
 
-  const totalRetrievers = sourceFilteredRetrievers.length
+  const groupDisplayNames = React.useMemo(() => buildGroupDisplayNameMap(groups), [groups])
+
+  const getRetrieverSource = React.useCallback(
+    (retriever: UnifiedRetriever): ResourceLibrarySortSource => {
+      if (retriever.type === 'public') return 'system'
+      if (retriever.type === 'group') return 'group'
+      return 'personal'
+    },
+    []
+  )
+
+  const sortedRetrievers = React.useMemo(
+    () =>
+      sortResourceLibraryItems(sourceFilteredRetrievers, {
+        sortMode,
+        groupDisplayNames,
+        getSource: getRetrieverSource,
+        getName: retriever => retriever.name,
+        getDisplayName: retriever => retriever.displayName,
+        getNamespace: retriever => retriever.namespace,
+        getCreatedAt: retriever => retriever.created_at,
+        getUpdatedAt: retriever => retriever.updated_at,
+        getStableId: retriever => `${retriever.type}-${retriever.namespace}-${retriever.name}`,
+      }),
+    [sourceFilteredRetrievers, sortMode, groupDisplayNames, getRetrieverSource]
+  )
+
+  const totalRetrievers = sortedRetrievers.length
 
   // Helper function to check permissions for a specific group resource
   const canEditGroupResource = (namespace: string) => {
@@ -249,13 +286,21 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
     />
   ) : null
 
+  const filters =
+    sourceControls || sortControls ? (
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">{sourceControls}</div>
+        {sortControls}
+      </div>
+    ) : null
+
   return (
     <>
       <ResourceManagementLayout
         title={t('common:retrievers.title')}
         description={t('common:retrievers.description')}
         actions={createAction}
-        filters={sourceControls}
+        filters={filters}
       >
         {loading && (
           <div className="flex items-center justify-center py-12">
@@ -275,7 +320,7 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
 
         {!loading && totalRetrievers > 0 && (
           <div className="space-y-3" data-testid="retriever-list-items">
-            {sourceFilteredRetrievers.map(retriever => (
+            {sortedRetrievers.map(retriever => (
               <Card
                 key={`${retriever.type}-${retriever.namespace}-${retriever.name}`}
                 className="overflow-hidden bg-base p-3 transition-colors hover:bg-hover sm:p-4"

@@ -3,6 +3,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
+import {
+  canUseForProjectCreation,
+  isCloudDevice,
+  isUsableDevice,
+} from '@/lib/device-capabilities'
 import type { CreateProjectRequest, DeviceInfo, ProjectWithTasks } from '@/types/api'
 
 type ProjectCreateMode = 'scratch' | 'existing'
@@ -45,18 +50,10 @@ function basename(path: string): string {
   return segments.at(-1) || 'project'
 }
 
-function isUsableDevice(device: DeviceInfo): boolean {
-  return device.status === 'online' || device.status === 'busy'
-}
-
-function isCloudDevice(device: DeviceInfo): boolean {
-  return device.device_type === 'cloud'
-}
-
 function sortDevicesForProjectCreation(devices: DeviceInfo[]): DeviceInfo[] {
   return [...devices].sort((left, right) => {
-    const leftUsable = isUsableDevice(left) ? 0 : 1
-    const rightUsable = isUsableDevice(right) ? 0 : 1
+    const leftUsable = canUseForProjectCreation(left) ? 0 : 1
+    const rightUsable = canUseForProjectCreation(right) ? 0 : 1
     if (leftUsable !== rightUsable) return leftUsable - rightUsable
 
     const leftCloud = isUsableDevice(left) && isCloudDevice(left) ? 0 : 1
@@ -67,6 +64,10 @@ function sortDevicesForProjectCreation(devices: DeviceInfo[]): DeviceInfo[] {
   })
 }
 
+function getProjectCreationDevices(devices: DeviceInfo[]): DeviceInfo[] {
+  return sortDevicesForProjectCreation(devices.filter(canUseForProjectCreation))
+}
+
 function getDefaultDeviceId(
   devices: DeviceInfo[],
   preferredDeviceId?: string | null
@@ -74,11 +75,11 @@ function getDefaultDeviceId(
   const preferredDevice = preferredDeviceId
     ? devices.find(device => device.device_id === preferredDeviceId)
     : undefined
-  if (preferredDevice && isUsableDevice(preferredDevice)) {
+  if (preferredDevice && canUseForProjectCreation(preferredDevice)) {
     return preferredDevice.device_id
   }
 
-  return sortDevicesForProjectCreation(devices).find(isUsableDevice)?.device_id ?? ''
+  return getProjectCreationDevices(devices)[0]?.device_id ?? ''
 }
 
 function getParentPath(path: string): string {
@@ -165,7 +166,7 @@ function ProjectCreateDialogContent({
   onCreateDeviceDirectory,
 }: Omit<ProjectCreateDialogProps, 'open'>) {
   const { t } = useTranslation('common')
-  const sortedDevices = useMemo(() => sortDevicesForProjectCreation(devices), [devices])
+  const sortedDevices = useMemo(() => getProjectCreationDevices(devices), [devices])
   const firstDeviceId = useMemo(
     () => getDefaultDeviceId(sortedDevices, preferredDeviceId),
     [preferredDeviceId, sortedDevices]
@@ -287,7 +288,7 @@ function ProjectCreateDialogContent({
   }, [currentPath, deviceId, mode, onListDeviceDirectories, t])
 
   const selectedDevice = sortedDevices.find(device => device.device_id === deviceId)
-  const selectedDeviceUsable = Boolean(selectedDevice && isUsableDevice(selectedDevice))
+  const selectedDeviceUsable = Boolean(selectedDevice && canUseForProjectCreation(selectedDevice))
   const scratchPath = useMemo(
     () => `${normalizePath(projectRoot)}/${sanitizePathSegment(projectName)}`,
     [projectName, projectRoot],
