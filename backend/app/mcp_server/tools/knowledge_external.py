@@ -11,6 +11,7 @@ from functools import partial
 from typing import Optional
 
 import anyio
+from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
@@ -435,7 +436,6 @@ def _prepare_search_content_sync(
         ignored_knowledge_base_ids: list[int] = []
         warnings: list[str] = []
         target_ids = []
-        target_kbs = []
         kb_name_map = {}
         for requested_knowledge_base_id in requested_ids:
             if requested_knowledge_base_id <= 0:
@@ -448,7 +448,6 @@ def _prepare_search_content_sync(
             if kb and has_access:
                 spec = kb.json.get("spec", {}) or {}
                 target_ids.append(kb.id)
-                target_kbs.append(kb)
                 kb_name_map[kb.id] = spec.get("name", "")
             else:
                 ignored_knowledge_base_ids.append(requested_knowledge_base_id)
@@ -460,23 +459,14 @@ def _prepare_search_content_sync(
             return _json_error("No accessible knowledge bases found", "not_found")
 
         runtime_resolver = RagRuntimeResolver()
-        knowledge_base_configs = (
-            runtime_resolver.build_query_knowledge_base_configs_from_records(
-                db=db,
-                knowledge_base_records=target_kbs,
-                current_user_id=user_id,
-                user_name=user_name,
-            )
-        )
         runtime_spec = runtime_resolver.build_query_runtime_spec(
-            db=db,
             knowledge_base_ids=target_ids,
             query=query,
             max_results=max_results,
             route_mode="rag_retrieval",
             user_id=user_id,
             user_name=user_name,
-            knowledge_base_configs=knowledge_base_configs,
+            knowledge_base_configs=[],
         )
         return SearchPreparation(
             runtime_spec=runtime_spec,
@@ -492,10 +482,32 @@ def _prepare_search_content_sync(
         db.close()
 
 
+def _with_local_query_configs(
+    runtime_spec: QueryRuntimeSpec,
+    db: Session,
+) -> QueryRuntimeSpec:
+    if (
+        runtime_spec.route_mode != "rag_retrieval"
+        or runtime_spec.knowledge_base_configs
+    ):
+        return runtime_spec
+
+    knowledge_base_configs = RagRuntimeResolver().build_query_knowledge_base_configs(
+        db=db,
+        knowledge_base_ids=runtime_spec.knowledge_base_ids,
+        current_user_id=runtime_spec.user_id,
+        user_name=runtime_spec.user_name,
+    )
+    return runtime_spec.model_copy(
+        update={"knowledge_base_configs": knowledge_base_configs}
+    )
+
+
 def _query_content_local_sync(runtime_spec: QueryRuntimeSpec) -> dict:
     db = SessionLocal()
     try:
-        return anyio.run(partial(LocalRagGateway().query, runtime_spec, db=db))
+        local_runtime_spec = _with_local_query_configs(runtime_spec, db)
+        return anyio.run(partial(LocalRagGateway().query, local_runtime_spec, db=db))
     finally:
         db.close()
 
