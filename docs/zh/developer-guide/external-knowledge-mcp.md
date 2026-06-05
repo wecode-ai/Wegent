@@ -27,6 +27,31 @@ EXTERNAL_KNOWLEDGE_MCP_ENABLED=true
 
 如果配置了 `API_PREFIX=/api`，Backend 也会注册 `/api/mcp/knowledge-external`。Backend 主应用 lifespan 只会在外部知识库 MCP 开启时启动 `external_knowledge_mcp_server.session_manager.run()`。如果只创建挂载应用而没有进入 session manager，Streamable HTTP 并发请求会出现 task group 未初始化问题。
 
+## 架构概览
+
+外部知识库 MCP 是 Backend 内的独立挂载应用，入口、鉴权、限流、工具执行和数据访问分层如下：
+
+```mermaid
+flowchart LR
+    caller[外部调用方] --> gateway[API Gateway / Ingress allowlist]
+    gateway --> app[Backend external knowledge MCP app]
+    app --> middleware[鉴权与限流 middleware]
+    middleware --> mcp[FastMCP transport 和 tools]
+    mcp --> permission[KnowledgeService 权限校验]
+    permission --> tools{工具类型}
+    tools --> list[知识库和目录列表]
+    tools --> content[文档内容读取]
+    tools --> download[下载 token 签发]
+    tools --> search[内容搜索]
+    list --> mysql[(MySQL)]
+    content --> mysql
+    download --> storage[附件存储]
+    search --> rag{RAG query gateway}
+    rag --> remote[Knowledge Runtime remote]
+    rag --> local[Backend local RAG]
+    middleware --> redis[(Redis 限流)]
+```
+
 ## 访问控制和限流
 
 外部知识库 MCP 面向受信任系统，不能公网裸露。部署时应通过 API Gateway、Nginx 或 Ingress 对 `/mcp/knowledge-external` 和 `/api/mcp/knowledge-external` 做来源 allowlist，例如只允许内网网段或业务方固定出口 IP。
@@ -97,7 +122,7 @@ set_external_knowledge_auth_handler(enterprise_auth_handler)
 | 名称 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `scope` | `string` | `all` | 可见范围，取值与内部知识库列表一致，例如 `all`、`personal`、`group` |
-| `group_name` | `string \| null` | `null` | 可选的空间或分组名称。传入空字符串会被视为非法参数 |
+| `group_name` | `string \| null` | `null` | 可选的空间或分组名称。`scope=group` 时必填，空字符串会被视为缺失 |
 | `query` | `string \| null` | `null` | 可选关键字，按知识库名称和描述做大小写不敏感过滤 |
 | `limit` | `int` | `50` | 返回数量，范围 `1..100` |
 | `offset` | `int` | `0` | 偏移量，必须大于等于 `0` |
@@ -173,6 +198,20 @@ set_external_knowledge_auth_handler(enterprise_auth_handler)
 - 文件端点会重新校验权限；token 签发后权限被撤销时，下载会返回 `forbidden`。
 - 文件端点有独立限流；超限返回 `rate_limited`，Redis 不可用时返回 `rate_limit_unavailable`。
 
+下载分为凭证签发和文件读取两段。文件端点在 token 校验前后分别限流，并在读取文件前重新校验权限：
+
+```mermaid
+flowchart TD
+    start[调用 wegent_kb_get_document_download] --> access[校验文档权限和文件能力]
+    access --> token[签发短期下载 token]
+    token --> caller[调用方使用 resource_url 和 X-Wegent-Download-Token]
+    caller --> preauth[下载端点 pre-auth IP / document 限流]
+    preauth --> verify[校验 token、document_id 和过期时间]
+    verify --> postauth[post-auth user / document 限流]
+    postauth --> recheck[重新校验文档权限和 disposition]
+    recheck --> file[读取附件并返回文件]
+```
+
 ### `wegent_kb_search_content`
 
 在指定知识库中检索内容。
@@ -191,7 +230,30 @@ set_external_knowledge_auth_handler(enterprise_auth_handler)
 - `knowledge_base_ids` 会先去重再校验数量上限，重复 ID 不会放大权限查询。
 - `max_results` 必须是严格整数，字符串 `"10"` 不会被接受。
 - 不可访问的 `knowledge_base_ids` 会被忽略，并通过 `ignored_knowledge_base_ids` 和 `warnings` 返回；如果没有任何可访问知识库，返回 `not_found`。
-- 搜索结果优先读取顶层 `document_id`，如果不存在则兼容读取 `metadata.document_id`。
+- 搜索结果优先读取顶层 `document_id`，如果不存在则兼容读取 `metadata.document_id`、顶层 `doc_ref` 或 `metadata.doc_ref`。
+
+搜索路径会按当前 RAG query gateway 执行。remote 正常路径只发送基础 runtime spec，不构建本地 `knowledge_base_configs`；只有 local 模式或 remote fallback 到 local 时才补建本地检索配置：
+
+```mermaid
+flowchart TD
+    start[调用 wegent_kb_search_content] --> rate[搜索工具级 user 限流]
+    rate --> validate[校验 query、max_results、knowledge_base_ids]
+    validate --> dedupe[去重 knowledge_base_ids]
+    dedupe --> access[逐个校验知识库权限]
+    access --> found{有可访问知识库？}
+    found -->|否| not_found[返回 not_found]
+    found -->|是| spec[构建不含本地 configs 的 QueryRuntimeSpec]
+    spec --> gateway{RAG query gateway}
+    gateway -->|local| build_local[构建本地 knowledge_base_configs]
+    build_local --> local_query[LocalRagGateway query]
+    gateway -->|remote| remote_query[RemoteRagGateway query]
+    remote_query --> ok{remote 成功？}
+    ok -->|是| response[组装搜索响应]
+    ok -->|否，且可 fallback| build_fallback[补建本地 knowledge_base_configs]
+    build_fallback --> local_query
+    ok -->|否，且不可 fallback| error[返回内部错误]
+    local_query --> response
+```
 
 ## 错误返回
 

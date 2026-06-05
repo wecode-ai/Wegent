@@ -27,6 +27,31 @@ When enabled, it is mounted by Backend:
 
 If `API_PREFIX=/api` is configured, Backend also registers `/api/mcp/knowledge-external`. The Backend application lifespan starts `external_knowledge_mcp_server.session_manager.run()` only when the external knowledge MCP is enabled. If the mounted app is created without entering the session manager, concurrent Streamable HTTP requests can fail because the task group is not initialized.
 
+## Architecture Overview
+
+The external knowledge MCP is an independently mounted Backend app. Its entrypoint, authentication, rate limiting, tool execution, and data access layers are organized as follows:
+
+```mermaid
+flowchart LR
+    caller[External caller] --> gateway[API Gateway / Ingress allowlist]
+    gateway --> app[Backend external knowledge MCP app]
+    app --> middleware[Auth and rate-limit middleware]
+    middleware --> mcp[FastMCP transport and tools]
+    mcp --> permission[KnowledgeService permission check]
+    permission --> tools{Tool type}
+    tools --> list[Knowledge base and node listing]
+    tools --> content[Document content read]
+    tools --> download[Download token issuing]
+    tools --> search[Content search]
+    list --> mysql[(MySQL)]
+    content --> mysql
+    download --> storage[Attachment storage]
+    search --> rag{RAG query gateway}
+    rag --> remote[Knowledge Runtime remote]
+    rag --> local[Backend local RAG]
+    middleware --> redis[(Redis rate limits)]
+```
+
 ## Access Control and Rate Limiting
 
 The external knowledge MCP is intended for trusted systems and must not be exposed directly to the public internet. Deployments should use an API Gateway, Nginx, or Ingress allowlist for `/mcp/knowledge-external` and `/api/mcp/knowledge-external`, for example allowing only internal network ranges or fixed caller egress IPs.
@@ -97,7 +122,7 @@ Parameters:
 | Name | Type | Default | Description |
 | --- | --- | --- | --- |
 | `scope` | `string` | `all` | Visibility scope, matching the internal knowledge list, for example `all`, `personal`, or `group` |
-| `group_name` | `string \| null` | `null` | Optional space or group name. An empty string is rejected |
+| `group_name` | `string \| null` | `null` | Optional space or group name. Required when `scope=group`; an empty string is treated as missing |
 | `query` | `string \| null` | `null` | Optional keyword filter. It matches knowledge base name and description case-insensitively |
 | `limit` | `int` | `50` | Number of results to return, from `1` to `100` |
 | `offset` | `int` | `0` | Offset, must be greater than or equal to `0` |
@@ -173,6 +198,20 @@ Behavior:
 - The file endpoint rechecks permission; if access is revoked after token issuance, download returns `forbidden`.
 - The file endpoint has independent rate limiting. It returns `rate_limited` when exceeded and `rate_limit_unavailable` when Redis is unavailable.
 
+Downloads are split into credential issuing and file reading. The file endpoint applies rate limits before and after token verification, then rechecks permission before reading the file:
+
+```mermaid
+flowchart TD
+    start[Call wegent_kb_get_document_download] --> access[Check document permission and file capability]
+    access --> token[Issue short-lived download token]
+    token --> caller[Caller uses resource_url and X-Wegent-Download-Token]
+    caller --> preauth[Download endpoint pre-auth IP / document rate limit]
+    preauth --> verify[Verify token, document_id, and expiration]
+    verify --> postauth[Post-auth user / document rate limit]
+    postauth --> recheck[Recheck document permission and disposition]
+    recheck --> file[Read attachment and return file]
+```
+
 ### `wegent_kb_search_content`
 
 Searches content in selected knowledge bases.
@@ -191,7 +230,30 @@ Behavior:
 - `knowledge_base_ids` are deduplicated before the count limit is enforced, so repeated IDs do not amplify permission checks.
 - `max_results` must be a strict integer. The string `"10"` is rejected.
 - Inaccessible `knowledge_base_ids` are ignored and returned in `ignored_knowledge_base_ids` with `warnings`. If no requested knowledge base is accessible, the tool returns `not_found`.
-- Search results prefer top-level `document_id`; if absent, they also read `metadata.document_id`.
+- Search results prefer top-level `document_id`; if absent, they also read `metadata.document_id`, top-level `doc_ref`, or `metadata.doc_ref`.
+
+Search follows the configured RAG query gateway. A successful remote path sends only the basic runtime spec and does not build local `knowledge_base_configs`; local configs are built only for local mode or when a remote query falls back to local:
+
+```mermaid
+flowchart TD
+    start[Call wegent_kb_search_content] --> rate[Search tool user rate limit]
+    rate --> validate[Validate query, max_results, and knowledge_base_ids]
+    validate --> dedupe[Deduplicate knowledge_base_ids]
+    dedupe --> access[Check each knowledge base permission]
+    access --> found{Any accessible knowledge base?}
+    found -->|No| not_found[Return not_found]
+    found -->|Yes| spec[Build QueryRuntimeSpec without local configs]
+    spec --> gateway{RAG query gateway}
+    gateway -->|local| build_local[Build local knowledge_base_configs]
+    build_local --> local_query[LocalRagGateway query]
+    gateway -->|remote| remote_query[RemoteRagGateway query]
+    remote_query --> ok{Remote query succeeded?}
+    ok -->|Yes| response[Build search response]
+    ok -->|No and fallback allowed| build_fallback[Build local knowledge_base_configs]
+    build_fallback --> local_query
+    ok -->|No and fallback denied| error[Return internal error]
+    local_query --> response
+```
 
 ## Error Response
 
