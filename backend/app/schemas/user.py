@@ -44,6 +44,7 @@ class UserPreferences(BaseModel):
     send_key: Literal["enter", "cmd_enter"] = "enter"
     search_key: Literal["cmd_k", "cmd_f", "disabled"] = "cmd_k"
     memory_enabled: bool = False
+    chat_status_items: Optional[List[str]] = None
     mcp_provider_keys: Optional[MCPProviderKeys] = None
     quick_access: Optional[QuickAccessPreference] = None
     # Default execution target: 'cloud' for cloud mode, or device_id for a specific device

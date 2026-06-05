@@ -22,6 +22,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator
 
+from chat_shell.compression.context_metrics import ContextMetricsTracker
 from chat_shell.core.config import settings
 from chat_shell.services.context import ChatContext
 from chat_shell.services.guidance import GuidanceConsumer, create_guidance_queue_client
@@ -218,6 +219,7 @@ class ChatService(ChatInterface):
                 request.task_id,
                 request.subtask_id,
             )
+            context_metrics_tracker: ContextMetricsTracker | None = None
 
             # Prepare all context resources in parallel
             add_span_event("preparing_context")
@@ -300,6 +302,19 @@ class ChatService(ChatInterface):
             )
             add_span_event("messages_built", {"message_count": len(messages)})
 
+            context_metrics_tracker = ContextMetricsTracker(
+                task_id=request.task_id,
+                subtask_id=request.subtask_id,
+                model_id=model_id or "gpt-4",
+                model_type=(
+                    request.model_config.get("model") if request.model_config else None
+                ),
+                model_config=request.model_config,
+                emitter=emitter,
+            )
+            initial_snapshot = await context_metrics_tracker.initialize(messages)
+            state.context_metrics = initial_snapshot.to_dict()
+
             # Persist the formatted user message (with system-reminder time block) to
             # the DB so that future turns load the same exact content, enabling
             # prefix-cache hits.  We do this only when datetime was injected
@@ -329,7 +344,12 @@ class ChatService(ChatInterface):
             add_span_event("creating_tool_event_handler")
             t2 = time.perf_counter()
             agent_builder = agent.create_agent_builder(agent_config)
-            on_tool_event = create_tool_event_handler(state, emitter, agent_builder)
+            on_tool_event = create_tool_event_handler(
+                state,
+                emitter,
+                agent_builder,
+                context_metrics_tracker=context_metrics_tracker,
+            )
             logger.info(
                 "[CHAT_SERVICE_PERF] create_agent_builder: %.2fms",
                 (time.perf_counter() - t2) * 1000,
@@ -394,6 +414,13 @@ class ChatService(ChatInterface):
             # Finalize if not cancelled
             await guidance_consumer.expire_pending()
             if not core.is_cancelled():
+                if context_metrics_tracker is not None:
+                    final_snapshot = (
+                        await context_metrics_tracker.record_final_assistant_response(
+                            state.full_response
+                        )
+                    )
+                    state.context_metrics = final_snapshot.to_dict()
                 add_span_event("finalizing", {"total_tokens": token_count})
                 await core.finalize()
 

@@ -173,6 +173,7 @@ def extract_completed_result(response_data: dict) -> dict:
         "loaded_skills": response_data.get("loaded_skills"),
         "stop_reason": response_data.get("stop_reason"),
         "messages_chain": response_data.get("messages_chain"),
+        "context_metrics": response_data.get("context_metrics"),
         "standalone_chat_workspace_path": response_data.get(
             "standalone_chat_workspace_path"
         ),
@@ -235,6 +236,18 @@ class ResponsesAPIEventParser:
                 data={
                     "block_id": data.get("block_id"),
                     "block_offset": data.get("block_offset"),
+                },
+                message_id=message_id,
+            )
+
+        elif event_type == ResponsesAPIStreamEvents.STATUS_UPDATED.value:
+            return ExecutionEvent(
+                type=EventType.STATUS_UPDATED,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                data={
+                    "phase": data.get("phase"),
+                    "context_metrics": data.get("context_metrics") or {},
                 },
                 message_id=message_id,
             )

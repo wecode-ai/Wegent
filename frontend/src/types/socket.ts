@@ -36,6 +36,7 @@ export const ServerEvents = {
   CHAT_DONE: 'chat:done',
   CHAT_ERROR: 'chat:error',
   CHAT_CANCELLED: 'chat:cancelled',
+  CHAT_STATUS_UPDATED: 'chat:status_updated',
   CHAT_GUIDANCE_QUEUED: 'chat:guidance_queued',
   CHAT_GUIDANCE_APPLIED: 'chat:guidance_applied',
   CHAT_GUIDANCE_EXPIRED: 'chat:guidance_expired',
@@ -318,6 +319,27 @@ export interface ChatErrorPayload {
 export interface ChatCancelledPayload {
   task_id: number
   subtask_id: number
+}
+
+export interface ContextMetricsSnapshot {
+  context_window: number
+  reserved_output_tokens: number
+  available_input_tokens: number
+  used_input_tokens: number
+  remaining_input_tokens: number
+  remaining_percent: number
+  display_remaining_tokens: number
+  display_remaining_percent: number
+  trigger_limit: number
+  target_limit: number
+  is_over_trigger: boolean
+}
+
+export interface ChatStatusUpdatedPayload {
+  task_id: number
+  subtask_id: number
+  phase: string
+  context_metrics: ContextMetricsSnapshot
 }
 
 /**

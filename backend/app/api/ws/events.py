@@ -54,6 +54,7 @@ class ServerEvents:
     CHAT_DONE = "chat:done"
     CHAT_ERROR = "chat:error"
     CHAT_CANCELLED = "chat:cancelled"
+    CHAT_STATUS_UPDATED = "chat:status_updated"
 
     # Block events for mixed content rendering (to task room)
     CHAT_BLOCK_CREATED = "chat:block_created"

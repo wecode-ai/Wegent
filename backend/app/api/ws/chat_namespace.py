@@ -457,6 +457,9 @@ class ChatNamespace(socketio.AsyncNamespace):
             # Get cached content and blocks from Redis
             cached_content = await session_manager.get_streaming_content(subtask_id)
             blocks = await session_manager.get_blocks(subtask_id)
+            cached_context_metrics = await session_manager.get_context_metrics(
+                subtask_id
+            )
             offset = len(cached_content) if cached_content else 0
 
             logger.info(
@@ -464,6 +467,13 @@ class ChatNamespace(socketio.AsyncNamespace):
                 f"cached_content_len={len(cached_content) if cached_content else 0}, "
                 f"blocks_count={len(blocks)}, offset={offset}"
             )
+
+            if cached_context_metrics:
+                await self.emit(
+                    ServerEvents.CHAT_STATUS_UPDATED,
+                    cached_context_metrics,
+                    to=sid,
+                )
 
             return {
                 "streaming": {
@@ -1625,6 +1635,18 @@ class ChatNamespace(socketio.AsyncNamespace):
                     "content": remaining,
                     "offset": payload.offset,
                 },
+                to=sid,
+            )
+
+        cached_context_metrics = await session_manager.get_context_metrics(
+            payload.subtask_id
+        )
+        if cached_context_metrics:
+            from app.api.ws.events import ServerEvents
+
+            await self.emit(
+                ServerEvents.CHAT_STATUS_UPDATED,
+                cached_context_metrics,
                 to=sid,
             )
 

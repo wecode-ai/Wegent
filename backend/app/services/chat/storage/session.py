@@ -38,6 +38,8 @@ STREAMING_KEY_PREFIX = "chat:streaming:"
 STREAMING_CHANNEL_PREFIX = "chat:stream_channel:"
 # Redis key prefix for task-level streaming status (for group chat)
 TASK_STREAMING_KEY_PREFIX = "chat:task_streaming:"
+# Redis key prefix for latest context metrics snapshot
+CONTEXT_METRICS_KEY_PREFIX = "chat:context_metrics:"
 # Redis Pub/Sub channel prefix for callback-based SSE streaming (ClaudeCode/Agno/Dify)
 CALLBACK_CHANNEL_PREFIX = "callback:channel:"
 # Unified TTL for all streaming-related data (1 hour)
@@ -352,6 +354,10 @@ class SessionManager:
         """Generate Redis key for streaming content cache."""
         return f"{STREAMING_KEY_PREFIX}{subtask_id}"
 
+    def _get_context_metrics_key(self, subtask_id: int) -> str:
+        """Generate Redis key for the latest context metrics snapshot."""
+        return f"{CONTEXT_METRICS_KEY_PREFIX}{subtask_id}"
+
     async def save_streaming_content(
         self, subtask_id: int, content: str, expire: int = None
     ) -> bool:
@@ -440,6 +446,52 @@ class SessionManager:
         except Exception as e:
             logger.error(
                 f"Error deleting streaming content for subtask {subtask_id}: {e}"
+            )
+            return False
+
+    async def save_context_metrics(
+        self,
+        subtask_id: int,
+        context_metrics: Dict[str, Any],
+        expire: int = None,
+    ) -> bool:
+        """Save the latest context metrics snapshot for refresh recovery."""
+        try:
+            key = self._get_context_metrics_key(subtask_id)
+            expire_time = expire or settings.STREAMING_REDIS_TTL
+            return await self._cache.set(key, context_metrics, expire=expire_time)
+        except Exception as e:
+            logger.error(
+                "Error saving context metrics for subtask %s: %s",
+                subtask_id,
+                e,
+            )
+            return False
+
+    async def get_context_metrics(self, subtask_id: int) -> Optional[Dict[str, Any]]:
+        """Get the latest cached context metrics snapshot."""
+        try:
+            key = self._get_context_metrics_key(subtask_id)
+            value = await self._cache.get(key)
+            return value if isinstance(value, dict) else None
+        except Exception as e:
+            logger.error(
+                "Error getting context metrics for subtask %s: %s",
+                subtask_id,
+                e,
+            )
+            return None
+
+    async def delete_context_metrics(self, subtask_id: int) -> bool:
+        """Delete cached context metrics snapshot."""
+        try:
+            key = self._get_context_metrics_key(subtask_id)
+            return await self._cache.delete(key)
+        except Exception as e:
+            logger.error(
+                "Error deleting context metrics for subtask %s: %s",
+                subtask_id,
+                e,
             )
             return False
 
