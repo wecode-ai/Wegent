@@ -81,6 +81,13 @@ export function isClaudeCodeShell(shell: UnifiedShell | null | undefined): boole
   return shell?.shellType === 'ClaudeCode'
 }
 
+type ShellIdentity = Pick<UnifiedShell, 'name'> & Partial<Pick<UnifiedShell, 'shellType'>>
+
+export function shellSupportsPreloadSkills(shell: ShellIdentity | null | undefined): boolean {
+  const shellType = shell?.shellType || shell?.name
+  return shellType === 'Chat' || shellType === 'ClaudeCode'
+}
+
 export function getCustomShells(shells: UnifiedShell[]): UnifiedShell[] {
   return shells.filter(shell => shell.type === 'user' || shell.type === 'group')
 }

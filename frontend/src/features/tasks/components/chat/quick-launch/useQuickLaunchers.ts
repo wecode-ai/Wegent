@@ -37,6 +37,7 @@ function normalizeInputPresets(
       title: preset.title,
       prompt: preset.prompt,
       options: preset.options,
+      source_attachment_ids: preset.source_attachment_ids,
     }))
   }
 

@@ -440,6 +440,46 @@ describe('Simple TeamEditDialog', () => {
     })
   })
 
+  it('saves preload skills when the simple form uses the Claude Code executor', async () => {
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[]}
+        setTeams={jest.fn()}
+        editingTeamId={0}
+        bots={[]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    await waitFor(() => expect(mockedGetUnifiedModels).toHaveBeenCalled())
+
+    fireEvent.change(await screen.findByLabelText(/^Name/), { target: { value: 'code-agent' } })
+    fireEvent.click(screen.getByTestId('simple-executor-complex-card'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Add skill' }))
+    fireEvent.click(await screen.findByTestId('simple-skill-preload-repo-reader'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedCreateBot).toHaveBeenCalledWith(
+        expect.objectContaining({
+          shell_name: 'ClaudeCode',
+          skills: ['repo-reader'],
+          preload_skills: ['repo-reader'],
+          preload_skill_refs: {
+            'repo-reader': {
+              skill_id: 5,
+              namespace: 'default',
+              is_public: false,
+            },
+          },
+        })
+      )
+    })
+  })
+
   it('opens non-solo existing agents in the advanced path', async () => {
     const team = makeTeam({ workflow: { mode: 'pipeline' } })
 

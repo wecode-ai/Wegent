@@ -59,6 +59,8 @@ export interface UnifiedRetriever {
   storageType: string // 'elasticsearch' | 'qdrant'
   namespace: string
   description?: string
+  created_at?: string | null
+  updated_at?: string | null
 }
 
 // Test Connection Types
