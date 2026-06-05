@@ -6,7 +6,91 @@ import {
   getErrorMessageFromCode,
   getWeiboChunkUploadError,
   isVideoFileName,
+  uploadVideoToWeibo,
 } from '@/apis/attachments'
+
+class MockXMLHttpRequest {
+  static instances: MockXMLHttpRequest[] = []
+  static activeCount = 0
+  static maxActiveCount = 0
+
+  upload = {
+    addEventListener: (type: string, listener: (event: ProgressEvent) => void) => {
+      this.uploadListeners[type] = listener
+    },
+  }
+
+  status = 200
+  responseText = '{}'
+  aborted = false
+  sent = false
+  requestUrl = ''
+  private listeners: Record<string, () => void> = {}
+  private uploadListeners: Record<string, (event: ProgressEvent) => void> = {}
+
+  constructor() {
+    MockXMLHttpRequest.instances.push(this)
+  }
+
+  open(_method: string, url: string) {
+    this.requestUrl = url
+  }
+
+  setRequestHeader() {}
+
+  send() {
+    this.sent = true
+    MockXMLHttpRequest.activeCount++
+    MockXMLHttpRequest.maxActiveCount = Math.max(
+      MockXMLHttpRequest.maxActiveCount,
+      MockXMLHttpRequest.activeCount
+    )
+  }
+
+  addEventListener(type: string, listener: () => void) {
+    this.listeners[type] = listener
+  }
+
+  abort() {
+    if (!this.aborted) {
+      this.aborted = true
+      if (this.sent) {
+        MockXMLHttpRequest.activeCount = Math.max(0, MockXMLHttpRequest.activeCount - 1)
+      }
+      this.listeners.abort?.()
+    }
+  }
+
+  complete(response: Record<string, unknown>, status = 200) {
+    this.status = status
+    this.responseText = JSON.stringify(response)
+    MockXMLHttpRequest.activeCount = Math.max(0, MockXMLHttpRequest.activeCount - 1)
+    this.uploadListeners.progress?.({
+      lengthComputable: true,
+      loaded: 1,
+      total: 1,
+    } as ProgressEvent)
+    this.listeners.load?.()
+  }
+
+  fail(status = 500) {
+    this.complete({ request_id: `failed-${this.chunkIndex}` }, status)
+  }
+
+  get chunkIndex() {
+    return Number(new URL(this.requestUrl).searchParams.get('chunkindex'))
+  }
+}
+
+const waitForCondition = async (condition: () => boolean) => {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    if (condition()) {
+      return
+    }
+    await new Promise(resolve => setTimeout(resolve, 0))
+  }
+  throw new Error('Condition was not met')
+}
 
 describe('getErrorMessageFromCode', () => {
   // Mock translation function
@@ -115,5 +199,176 @@ describe('getWeiboChunkUploadError', () => {
         errmsg: 'section check mismatch',
       })
     ).toBe('section check mismatch')
+  })
+})
+
+describe('uploadVideoToWeibo', () => {
+  const originalBlobArrayBuffer = Blob.prototype.arrayBuffer
+
+  beforeAll(() => {
+    Blob.prototype.arrayBuffer = function arrayBuffer() {
+      return Promise.resolve(new ArrayBuffer(this.size))
+    }
+  })
+
+  afterAll(() => {
+    Blob.prototype.arrayBuffer = originalBlobArrayBuffer
+  })
+
+  beforeEach(() => {
+    MockXMLHttpRequest.instances = []
+    MockXMLHttpRequest.activeCount = 0
+    MockXMLHttpRequest.maxActiveCount = 0
+    global.XMLHttpRequest = MockXMLHttpRequest as unknown as typeof XMLHttpRequest
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        file_token: 'file-token',
+        chunk_size: 2,
+        auth: 'auth-token',
+        request_id: 'init-request',
+      }),
+    })
+  })
+
+  afterEach(() => {
+    jest.restoreAllMocks()
+  })
+
+  it('uploads video chunks concurrently and uses the response containing fid', async () => {
+    const file = new File(['0123456789'], 'demo.mp4', { type: 'video/mp4' })
+    const onProgress = jest.fn()
+
+    const resultPromise = uploadVideoToWeibo(file, onProgress)
+
+    await waitForCondition(() => MockXMLHttpRequest.instances.filter(xhr => xhr.sent).length === 3)
+    expect(MockXMLHttpRequest.maxActiveCount).toBe(3)
+
+    MockXMLHttpRequest.instances
+      .find(xhr => xhr.chunkIndex === 1)
+      ?.complete({
+        request_id: 'req-1',
+      })
+    MockXMLHttpRequest.instances
+      .find(xhr => xhr.chunkIndex === 2)
+      ?.complete({
+        request_id: 'req-2',
+      })
+    MockXMLHttpRequest.instances
+      .find(xhr => xhr.chunkIndex === 3)
+      ?.complete({
+        request_id: 'req-3',
+      })
+
+    await waitForCondition(() => MockXMLHttpRequest.instances.filter(xhr => xhr.sent).length === 5)
+
+    MockXMLHttpRequest.instances
+      .find(xhr => xhr.chunkIndex === 5)
+      ?.complete({
+        request_id: 'req-5',
+      })
+    MockXMLHttpRequest.instances
+      .find(xhr => xhr.chunkIndex === 4)
+      ?.complete({
+        fid: '12345',
+        request_id: 'req-final',
+        url: 'https://video.example/demo.mp4',
+      })
+
+    await expect(resultPromise).resolves.toEqual({
+      fid: 12345,
+      request_id: 'req-final',
+      url: 'https://video.example/demo.mp4',
+    })
+    expect(MockXMLHttpRequest.maxActiveCount).toBeLessThanOrEqual(3)
+    expect(onProgress).toHaveBeenLastCalledWith(100)
+  })
+
+  it('fails when all chunks finish without a fid response', async () => {
+    const file = new File(['0123'], 'demo.mp4', { type: 'video/mp4' })
+    const resultPromise = uploadVideoToWeibo(file)
+
+    await waitForCondition(() => MockXMLHttpRequest.instances.filter(xhr => xhr.sent).length === 2)
+    MockXMLHttpRequest.instances.forEach((xhr, index) => {
+      xhr.complete({ request_id: `req-${index}` })
+    })
+
+    await expect(resultPromise).rejects.toThrow('Upload completed but no fid returned')
+  })
+
+  it('retries a failed chunk without failing the whole upload', async () => {
+    const setTimeoutSpy = jest
+      .spyOn(global, 'setTimeout')
+      .mockImplementation((callback: TimerHandler) => {
+        if (typeof callback === 'function') {
+          callback()
+        }
+        return 0 as unknown as ReturnType<typeof setTimeout>
+      })
+    const file = new File(['0123'], 'demo.mp4', { type: 'video/mp4' })
+
+    const resultPromise = uploadVideoToWeibo(file)
+
+    await waitForCondition(() => MockXMLHttpRequest.instances.filter(xhr => xhr.sent).length === 2)
+    MockXMLHttpRequest.instances.find(xhr => xhr.chunkIndex === 1)?.fail()
+
+    await waitForCondition(() => MockXMLHttpRequest.instances.length === 3)
+    const retriedChunk = MockXMLHttpRequest.instances[2]
+    expect(retriedChunk.chunkIndex).toBe(1)
+
+    retriedChunk.complete({ request_id: 'req-1-retry' })
+    MockXMLHttpRequest.instances
+      .find(xhr => xhr.chunkIndex === 2)
+      ?.complete({
+        fid: '67890',
+        request_id: 'req-final',
+      })
+
+    await expect(resultPromise).resolves.toEqual({
+      fid: 67890,
+      request_id: 'req-final',
+      url: '',
+    })
+    setTimeoutSpy.mockRestore()
+  })
+
+  it('cancels in-flight chunk uploads when the caller aborts', async () => {
+    const file = new File(['0123456789'], 'demo.mp4', { type: 'video/mp4' })
+    const abortController = new AbortController()
+    const resultPromise = uploadVideoToWeibo(file, undefined, abortController.signal)
+
+    await waitForCondition(() => MockXMLHttpRequest.instances.filter(xhr => xhr.sent).length === 3)
+    abortController.abort()
+
+    await expect(resultPromise).rejects.toThrow('Upload cancelled')
+    expect(MockXMLHttpRequest.instances.filter(xhr => xhr.aborted)).toHaveLength(3)
+  })
+
+  it('does not send chunk data after aborting before arrayBuffer resolves', async () => {
+    const originalArrayBuffer = Blob.prototype.arrayBuffer
+    let resolveSendBuffer: ((value: ArrayBuffer) => void) | null = null
+    let arrayBufferCallCount = 0
+    Blob.prototype.arrayBuffer = jest.fn().mockImplementation(function arrayBuffer(this: Blob) {
+      arrayBufferCallCount++
+      if (arrayBufferCallCount < 3) {
+        return Promise.resolve(new ArrayBuffer(this.size))
+      }
+      return new Promise<ArrayBuffer>(resolve => {
+        resolveSendBuffer = resolve
+      })
+    })
+
+    const file = new File(['01'], 'demo.mp4', { type: 'video/mp4' })
+    const abortController = new AbortController()
+    const resultPromise = uploadVideoToWeibo(file, undefined, abortController.signal)
+
+    await waitForCondition(() => MockXMLHttpRequest.instances.length === 1)
+    await waitForCondition(() => resolveSendBuffer !== null)
+    abortController.abort()
+    ;(resolveSendBuffer as unknown as (value: ArrayBuffer) => void)(new ArrayBuffer(2))
+
+    await expect(resultPromise).rejects.toThrow('Upload cancelled')
+    expect(MockXMLHttpRequest.instances[0].sent).toBe(false)
+    Blob.prototype.arrayBuffer = originalArrayBuffer
   })
 })
