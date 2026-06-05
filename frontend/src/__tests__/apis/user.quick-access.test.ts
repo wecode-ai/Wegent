@@ -49,12 +49,10 @@ describe('userApis.getQuickAccess', () => {
   })
 
   test('starts a fresh quick access request after the previous one settles', async () => {
-    ;(apiClient.get as jest.Mock)
-      .mockResolvedValueOnce(quickAccessResponse)
-      .mockResolvedValueOnce({
-        ...quickAccessResponse,
-        system_version: 2,
-      })
+    ;(apiClient.get as jest.Mock).mockResolvedValueOnce(quickAccessResponse).mockResolvedValueOnce({
+      ...quickAccessResponse,
+      system_version: 2,
+    })
 
     await userApis.getQuickAccess()
     await userApis.getQuickAccess()
