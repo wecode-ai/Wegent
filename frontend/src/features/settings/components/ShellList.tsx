@@ -29,6 +29,12 @@ import type { BaseRole } from '@/types/base-role'
 import type { Group } from '@/types/group'
 import type { ManagedResourceSourceFilter } from '@/features/resource-library/types'
 import {
+  buildGroupDisplayNameMap,
+  sortResourceLibraryItems,
+  type ResourceLibrarySortMode,
+  type ResourceLibrarySortSource,
+} from '@/features/resource-library/resourceSorting'
+import {
   hasResourceCreateTargets,
   ResourceCreateButton,
   type ResourceCreateTarget,
@@ -41,8 +47,10 @@ interface ShellListProps {
   groupRoleMap?: Map<string, BaseRole>
   onEditResource?: (namespace: string) => void
   sourceControls?: ReactNode
+  sortControls?: ReactNode
   sourceFilter?: ManagedResourceSourceFilter
   groups?: Group[]
+  sortMode?: ResourceLibrarySortMode
 }
 
 const ShellList: React.FC<ShellListProps> = ({
@@ -51,8 +59,10 @@ const ShellList: React.FC<ShellListProps> = ({
   groupRoleMap,
   onEditResource,
   sourceControls,
+  sortControls,
   sourceFilter = 'all',
   groups = [],
+  sortMode = 'default',
 }) => {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -98,7 +108,31 @@ const ShellList: React.FC<ShellListProps> = ({
     return shells
   }, [shells, sourceFilter])
 
-  const totalShells = sourceFilteredShells.length
+  const groupDisplayNames = React.useMemo(() => buildGroupDisplayNameMap(groups), [groups])
+
+  const getShellSource = React.useCallback((shell: UnifiedShell): ResourceLibrarySortSource => {
+    if (shell.type === 'public') return 'system'
+    if (shell.type === 'group') return 'group'
+    return 'personal'
+  }, [])
+
+  const sortedShells = React.useMemo(
+    () =>
+      sortResourceLibraryItems(sourceFilteredShells, {
+        sortMode,
+        groupDisplayNames,
+        getSource: getShellSource,
+        getName: shell => shell.name,
+        getDisplayName: shell => shell.displayName,
+        getNamespace: shell => shell.namespace || 'default',
+        getCreatedAt: shell => shell.created_at,
+        getUpdatedAt: shell => shell.updated_at,
+        getStableId: shell => `${shell.type}-${shell.namespace || 'default'}-${shell.name}`,
+      }),
+    [sourceFilteredShells, sortMode, groupDisplayNames, getShellSource]
+  )
+
+  const totalShells = sortedShells.length
 
   // Helper function to check permissions for a specific group resource
   const canEditGroupResource = (namespace: string) => {
@@ -196,13 +230,21 @@ const ShellList: React.FC<ShellListProps> = ({
     />
   ) : null
 
+  const filters =
+    sourceControls || sortControls ? (
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">{sourceControls}</div>
+        {sortControls}
+      </div>
+    ) : null
+
   return (
     <>
       <ResourceManagementLayout
         title={t('common:shells.title')}
         description={t('common:shells.description')}
         actions={createAction}
-        filters={sourceControls}
+        filters={filters}
       >
         {loading && (
           <div className="flex items-center justify-center py-12">
@@ -220,7 +262,7 @@ const ShellList: React.FC<ShellListProps> = ({
 
         {!loading && totalShells > 0 && (
           <div className="space-y-3" data-testid="shell-list-items">
-            {sourceFilteredShells.map(shell => (
+            {sortedShells.map(shell => (
               <Card
                 key={`${shell.type}-${shell.namespace || 'default'}-${shell.name}`}
                 className="overflow-hidden bg-base p-3 transition-colors hover:bg-hover sm:p-4"
