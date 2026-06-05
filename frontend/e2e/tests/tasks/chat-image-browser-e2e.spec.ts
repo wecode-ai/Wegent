@@ -102,6 +102,9 @@ async function waitForChatCompletionRequest(
 }
 
 test.describe('Chat Image Browser E2E with Mock Model Server', () => {
+  // Tests in this spec use the same shard user and mutate that user's selected team state.
+  test.describe.configure({ mode: 'default' })
+
   let apiClient: ApiClient
   let token: string
   const testImagePath = path.join(__dirname, '../../fixtures/test-image.png')
@@ -863,19 +866,18 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
 
     await sendButton.click()
 
-    // Wait for response to appear
-    await page.waitForTimeout(8000)
+    // Check if response is displayed. Use an assertion so Playwright waits for streamed text.
+    const responseText = page
+      .getByTestId('messages-container')
+      .getByText(/I can see the image you uploaded/i)
+      .first()
 
-    // Check if response is displayed
-    // The mock server returns: "I can see the image you uploaded. It appears to be a small red test image."
-    const responseText = page.locator('text=I can see the image')
-    const hasResponse = await responseText.isVisible({ timeout: 10000 }).catch(() => false)
-
-    if (hasResponse) {
+    try {
+      await expect(responseText).toBeVisible({ timeout: 30000 })
       console.log('✅ Model response displayed successfully!')
-    } else {
+    } catch (error) {
       await page.screenshot({ path: 'test-results/chat-response-not-found.png' })
+      throw error
     }
-    expect(hasResponse).toBe(true)
   })
 })
