@@ -182,15 +182,18 @@ export const userApis = {
   },
 
   async getQuickAccess(): Promise<QuickAccessResponse> {
-    if (!quickAccessRequest) {
-      quickAccessRequest = apiClient
-        .get('/users/quick-access')
-        .finally(() => {
-          quickAccessRequest = null
-        })
+    if (quickAccessRequest) {
+      return quickAccessRequest
     }
 
-    return quickAccessRequest
+    const request = apiClient.get<QuickAccessResponse>('/users/quick-access').finally(() => {
+      if (quickAccessRequest === request) {
+        quickAccessRequest = null
+      }
+    })
+    quickAccessRequest = request
+
+    return request
   },
 
   async getQuickLaunch(): Promise<QuickLaunchResponse> {
