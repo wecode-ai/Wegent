@@ -43,6 +43,7 @@ import {
   isClaudeCodeShell,
   normalizeExecutorForBindMode,
   resolveShellForExecutor,
+  shellSupportsPreloadSkills,
   type SimpleExecutorMode,
 } from './team-edit/simple-team-edit-utils'
 import { buildSimpleBotRequest, buildSimpleTeamRequest } from './team-edit/simple-team-edit-save'
@@ -275,8 +276,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     return shellType === 'ClaudeCode' || shellType === 'Agno' ? shellType : undefined
   }, [selectedSimpleShell])
   const simpleSupportsPreloadSkills = useMemo(() => {
-    const shellType = selectedSimpleShell?.shellType || selectedSimpleShell?.name
-    return shellType === 'Chat'
+    return shellSupportsPreloadSkills(selectedSimpleShell)
   }, [selectedSimpleShell])
 
   const simpleExecutorNeedsComplex = bindModeRequiresClaudeCode(bindMode)

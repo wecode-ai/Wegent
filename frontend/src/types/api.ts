@@ -729,6 +729,18 @@ export interface QuickLaunchInputPreset {
   title: string
   prompt?: string | null
   options?: QuickLaunchInputOptions | null
+  source_attachment_ids?: number[]
+}
+
+export interface QuickLaunchPreparePresetRequest {
+  function_id: string
+  preset_id: string
+}
+
+export interface QuickLaunchPreparePresetResponse {
+  function_id: string
+  preset_id: string
+  attachments: Attachment[]
 }
 
 // Welcome Config Types (Slogan & Tips)

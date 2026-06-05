@@ -18,6 +18,7 @@ import {
 } from '@heroicons/react/24/outline'
 import { Loader2 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
+import { useGroupPermissions } from '@/hooks/useGroupPermissions'
 import { useTranslation } from '@/hooks/useTranslation'
 import RetrieverEditDialog from './RetrieverEditDialog'
 import {
@@ -59,6 +60,15 @@ interface RetrieverListProps {
   sortMode?: ResourceLibrarySortMode
 }
 
+/**
+ * Displays a list of Retriever (knowledge base retriever) resources grouped by ownership.
+ * Unlike other List components, allows creation in personal/all scope if the user
+ * has Owner or Maintainer role in any group, because Retrievers must belong to a group.
+ *
+ * @param props.scope - Current scope context (personal/group/all)
+ * @param props.groupName - Current group name when scope is 'group'
+ * @param props.groupRoleMap - Map of group namespace to user's role
+ */
 const RetrieverList: React.FC<RetrieverListProps> = ({
   scope = 'personal',
   groupName,
@@ -146,18 +156,11 @@ const RetrieverList: React.FC<RetrieverListProps> = ({
 
   const totalRetrievers = sortedRetrievers.length
 
-  // Helper function to check permissions for a specific group resource
-  const canEditGroupResource = (namespace: string) => {
-    if (!groupRoleMap) return false
-    const role = groupRoleMap.get(namespace)
-    return role === 'Owner' || role === 'Maintainer' || role === 'Developer'
-  }
-
-  const canDeleteGroupResource = (namespace: string) => {
-    if (!groupRoleMap) return false
-    const role = groupRoleMap.get(namespace)
-    return role === 'Owner' || role === 'Maintainer'
-  }
+  const { canEditGroupResource, canDeleteGroupResource } = useGroupPermissions({
+    scope,
+    groupName,
+    groupRoleMap,
+  })
 
   const handleTestConnection = async (retriever: UnifiedRetriever) => {
     setTestingRetrieverName(retriever.name)

@@ -9,6 +9,8 @@
 
 import type {
   GitInfo,
+  QuickLaunchPreparePresetRequest,
+  QuickLaunchPreparePresetResponse,
   QuickAccessResponse,
   QuickLaunchResponse,
   User,
@@ -183,6 +185,12 @@ export const userApis = {
 
   async getQuickLaunch(): Promise<QuickLaunchResponse> {
     return apiClient.get('/users/quick-launch')
+  },
+
+  async prepareQuickLaunchPreset(
+    data: QuickLaunchPreparePresetRequest
+  ): Promise<QuickLaunchPreparePresetResponse> {
+    return apiClient.post('/users/quick-launch/prepare-preset', data)
   },
 
   async getWelcomeConfig(): Promise<WelcomeConfigResponse> {
