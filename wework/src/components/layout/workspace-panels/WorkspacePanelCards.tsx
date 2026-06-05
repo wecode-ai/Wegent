@@ -124,7 +124,7 @@ export function WorkspacePanelCards({
     } catch (e) {
       console.error('Failed to start project terminal:', e)
       markToolUnavailable('terminal')
-      setProjectError(getSessionStartErrorMessage(e))
+      setProjectError(getSessionStartErrorMessage())
     } finally {
       setLoadingTool(null)
     }
@@ -166,7 +166,7 @@ export function WorkspacePanelCards({
     } catch (e) {
       console.error('Failed to start project IDE:', e)
       markToolUnavailable('ide')
-      setProjectError(getSessionStartErrorMessage(e))
+      setProjectError(getSessionStartErrorMessage())
     } finally {
       setLoadingTool(null)
       if (shouldClosePanel) {

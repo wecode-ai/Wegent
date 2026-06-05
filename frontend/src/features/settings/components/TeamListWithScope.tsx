@@ -11,14 +11,17 @@ import { listGroups } from '@/apis/groups'
 import type { BaseRole } from '@/types/base-role'
 import type { Group } from '@/types/group'
 import type { ManagedResourceSourceFilter } from '@/features/resource-library/types'
+import type { ResourceLibrarySortMode } from '@/features/resource-library/resourceSorting'
 
 interface TeamListWithScopeProps {
   scope: 'personal' | 'group' | 'all'
   selectedGroup?: string | null
   onGroupChange?: (groupName: string | null) => void
   sourceControls?: ReactNode
+  sortControls?: ReactNode
   sourceFilter?: ManagedResourceSourceFilter
   groups?: Group[]
+  sortMode?: ResourceLibrarySortMode
 }
 
 export function TeamListWithScope({
@@ -26,8 +29,10 @@ export function TeamListWithScope({
   selectedGroup: externalSelectedGroup,
   onGroupChange,
   sourceControls,
+  sortControls,
   sourceFilter,
   groups: externalGroups,
+  sortMode = 'default',
 }: TeamListWithScopeProps) {
   // Use external state if provided, otherwise use internal state
   const [internalSelectedGroup, setInternalSelectedGroup] = useState<string | null>(null)
@@ -76,8 +81,10 @@ export function TeamListWithScope({
       <TeamList
         scope="personal"
         sourceControls={sourceControls}
+        sortControls={sortControls}
         sourceFilter={sourceFilter}
         groups={groups}
+        sortMode={sortMode}
       />
     )
   }
@@ -88,8 +95,10 @@ export function TeamListWithScope({
         scope="all"
         groupRoleMap={groupRoleMap}
         sourceControls={sourceControls}
+        sortControls={sortControls}
         sourceFilter={sourceFilter}
         groups={groups}
+        sortMode={sortMode}
       />
     )
   }
@@ -110,8 +119,10 @@ export function TeamListWithScope({
         groupRoleMap={groupRoleMap}
         onEditResource={handleEditResource}
         sourceControls={sourceControls}
+        sortControls={sortControls}
         sourceFilter={sourceFilter}
         groups={groups}
+        sortMode={sortMode}
       />
     </div>
   )
