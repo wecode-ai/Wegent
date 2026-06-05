@@ -3,10 +3,14 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { TaskDetail } from '@/types/api'
 
 import { ChatArea } from '@/features/tasks/components/chat'
+import { userApis } from '@/apis/user'
 
 const mockChatInputCard = jest.fn((_props: Record<string, unknown>) => (
   <div data-testid="chat-input-card" />
 ))
+const mockAddExistingAttachment = jest.fn()
+const mockHandleFileSelect = jest.fn()
+const mockHandleAttachmentRemove = jest.fn()
 
 const defaultStreamHandlers = {
   pendingTaskId: null,
@@ -91,9 +95,9 @@ jest.mock('@/features/tasks/components/chat/useChatAreaState', () => ({
     selectedContexts: [],
     resetContexts: jest.fn(),
     setSelectedContexts: jest.fn(),
-    addExistingAttachment: jest.fn(),
-    handleFileSelect: jest.fn(),
-    handleAttachmentRemove: jest.fn(),
+    addExistingAttachment: mockAddExistingAttachment,
+    handleFileSelect: mockHandleFileSelect,
+    handleAttachmentRemove: mockHandleAttachmentRemove,
     setIsDragging: jest.fn(),
     isDragging: false,
     randomTip: 'tip',
@@ -138,7 +142,10 @@ jest.mock(
     }
 )
 jest.mock('@/features/tasks/components/chat/QuickAccessCards', () => ({
-  QuickAccessCards: (props: { onPhraseSelect: (phrase: string) => void }) => (
+  QuickAccessCards: (props: {
+    onPhraseSelect: (phrase: string) => void
+    onPresetSelect?: (selection: unknown) => void
+  }) => (
     <div data-testid="quick-access-cards">
       <button
         type="button"
@@ -146,6 +153,30 @@ jest.mock('@/features/tasks/components/chat/QuickAccessCards', () => ({
         onClick={() => props.onPhraseSelect('quick phrase')}
       >
         Quick phrase
+      </button>
+      <button
+        type="button"
+        data-testid="quick-preset-trigger"
+        onClick={() =>
+          props.onPresetSelect?.({
+            launcher: {
+              key: 'system:create_ppt',
+              type: 'system_function',
+              title: 'Create PPT',
+              team: { id: 12 },
+              targetPage: 'chat',
+              inputPresets: [],
+            },
+            preset: {
+              id: 'roadmap',
+              title: 'Roadmap',
+              prompt: 'make roadmap',
+              source_attachment_ids: [300],
+            },
+          })
+        }
+      >
+        Quick preset
       </button>
     </div>
   ),
@@ -207,6 +238,11 @@ jest.mock('@/features/tasks/components/hooks/useFloatingInput', () => ({
 jest.mock('@/apis/attachments', () => ({
   getAttachment: jest.fn(),
 }))
+jest.mock('@/apis/user', () => ({
+  userApis: {
+    prepareQuickLaunchPreset: jest.fn(),
+  },
+}))
 jest.mock('@/features/tasks/components/hooks/useAttachmentUpload', () => ({
   useAttachmentUpload: () => ({
     handleDragEnter: jest.fn(),
@@ -250,6 +286,12 @@ describe('ChatArea queue message handler mounting', () => {
     mockTaskInputMessage = ''
     mockSetTaskInputMessage.mockClear()
     mockChatInputCard.mockClear()
+    mockAddExistingAttachment.mockClear()
+    mockHandleFileSelect.mockClear()
+    mockHandleAttachmentRemove.mockClear()
+    ;(
+      userApis as unknown as { prepareQuickLaunchPreset: jest.Mock }
+    ).prepareQuickLaunchPreset.mockReset()
   })
 
   it('mounts QueueMessageHandler for chat mode', () => {
@@ -374,6 +416,57 @@ describe('ChatArea queue message handler mounting', () => {
         expect.objectContaining({ focusInputAtEndSignal: 1 })
       )
     })
+  })
+
+  it('prepares and displays quick launch preset attachments', async () => {
+    ;(
+      userApis as unknown as { prepareQuickLaunchPreset: jest.Mock }
+    ).prepareQuickLaunchPreset.mockResolvedValue({
+      function_id: 'create_ppt',
+      preset_id: 'roadmap',
+      attachments: [
+        {
+          id: 901,
+          filename: 'roadmap-template.pdf',
+          file_size: 2048,
+          mime_type: 'application/pdf',
+          status: 'ready',
+          text_length: 120,
+          error_message: null,
+          error_code: null,
+          subtask_id: null,
+          file_extension: '.pdf',
+          created_at: '2026-06-04T00:00:00Z',
+        },
+      ],
+    })
+
+    render(<ChatArea teams={[]} isTeamsLoading={false} taskType="chat" showRepositorySelector />)
+
+    fireEvent.click(screen.getByTestId('quick-preset-trigger'))
+
+    await waitFor(() => {
+      expect(
+        (userApis as unknown as { prepareQuickLaunchPreset: jest.Mock }).prepareQuickLaunchPreset
+      ).toHaveBeenCalledWith({
+        function_id: 'create_ppt',
+        preset_id: 'roadmap',
+      })
+    })
+    expect(mockAddExistingAttachment).toHaveBeenCalledWith({
+      id: 901,
+      filename: 'roadmap-template.pdf',
+      file_size: 2048,
+      mime_type: 'application/pdf',
+      status: 'ready',
+      text_length: 120,
+      error_message: null,
+      error_code: null,
+      subtask_id: null,
+      file_extension: '.pdf',
+      created_at: '2026-06-04T00:00:00Z',
+    })
+    expect(mockSetTaskInputMessage).toHaveBeenCalledWith('make roadmap')
   })
 
   it('submits to the stream handler for queueing when a pending task is already streaming', async () => {

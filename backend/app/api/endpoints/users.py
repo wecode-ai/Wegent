@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.models.subtask_context import ContextStatus, ContextType
 from app.models.system_config import SystemConfig
 from app.models.user import User
 from app.schemas.admin import (
@@ -25,12 +26,16 @@ from app.schemas.quick_launch import (
     QuickLaunchFavoriteAgent,
     QuickLaunchFunctionConfig,
     QuickLaunchFunctionResponse,
+    QuickLaunchPreparePresetRequest,
+    QuickLaunchPreparePresetResponse,
     QuickLaunchResponse,
     input_presets_from_phrases,
     normalize_quick_phrases,
 )
 from app.schemas.subscription import NotificationChannelInfo
+from app.schemas.subtask_context import AttachmentDetailResponse
 from app.schemas.user import UserCreate, UserInDB, UserUpdate
+from app.services.context import context_service
 from app.services.kind import kind_service
 from app.services.subscription.notification_service import (
     subscription_notification_service,
@@ -425,6 +430,24 @@ def _load_quick_launch_function_configs(
     return function_configs
 
 
+def _find_enabled_quick_launch_function(
+    function_configs: list[QuickLaunchFunctionConfig],
+    function_id: str,
+) -> Optional[QuickLaunchFunctionConfig]:
+    for config in function_configs:
+        if config.id == function_id and config.enabled:
+            return config
+    return None
+
+
+def _is_ready_attachment_context(context: object) -> bool:
+    return bool(
+        context
+        and getattr(context, "context_type", None) == ContextType.ATTACHMENT.value
+        and getattr(context, "status", None) == ContextStatus.READY.value
+    )
+
+
 @router.get("/quick-access", response_model=QuickAccessResponse)
 async def get_user_quick_access(
     db: Session = Depends(get_db),
@@ -545,6 +568,76 @@ async def get_user_quick_launch(
     return QuickLaunchResponse(
         system_functions=system_functions,
         favorite_agents=favorite_agents,
+    )
+
+
+@router.post(
+    "/quick-launch/prepare-preset",
+    response_model=QuickLaunchPreparePresetResponse,
+)
+async def prepare_quick_launch_preset(
+    request: QuickLaunchPreparePresetRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Prepare a system quick launch preset for the current user.
+
+    Source attachments configured by admins are templates. They are copied into
+    current-user-owned, unlinked attachments before the normal send flow uses
+    them.
+    """
+    _, function_config = _get_system_config_value(db, QUICK_LAUNCH_FUNCTIONS_CONFIG_KEY)
+    function_configs = _load_quick_launch_function_configs(
+        function_config.get("functions", [])
+    )
+    config = _find_enabled_quick_launch_function(
+        function_configs,
+        request.function_id,
+    )
+    if not config:
+        raise HTTPException(status_code=404, detail="Quick launch function not found")
+
+    if not kind_service.get_team_by_id(config.team_id):
+        raise HTTPException(
+            status_code=404, detail="Quick launch target team not found"
+        )
+
+    preset = next(
+        (item for item in config.input_presets if item.id == request.preset_id),
+        None,
+    )
+    if not preset:
+        raise HTTPException(status_code=404, detail="Quick launch preset not found")
+
+    attachments: list[AttachmentDetailResponse] = []
+    for source_attachment_id in preset.source_attachment_ids:
+        source_context = context_service.get_context_optional(
+            db,
+            source_attachment_id,
+        )
+        if not _is_ready_attachment_context(source_context):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Quick launch preset attachment is unavailable",
+            )
+
+        copied_context = context_service.copy_attachment_for_user(
+            db=db,
+            source_context=source_context,
+            target_user_id=current_user.id,
+            source_metadata={
+                "source": "quick_launch_preset",
+                "quick_launch_function_id": config.id,
+                "quick_launch_preset_id": preset.id,
+            },
+        )
+        attachments.append(AttachmentDetailResponse.from_context(copied_context))
+
+    return QuickLaunchPreparePresetResponse(
+        function_id=config.id,
+        preset_id=preset.id,
+        attachments=attachments,
     )
 
 
