@@ -177,6 +177,48 @@ class TestToModelVisible:
             "[tool_output name=my_tool total_tokens=1 truncated=false]"
         )
 
+    def test_footer_pattern_rejects_malformed_value(self):
+        """A body line that looks like a footer but has a non-numeric exit_code
+        must be preserved on re-render, not dropped as a malformed footer."""
+        adapter = _make_adapter()
+        body = "log line 1\nlog line 2\n[exit_code=abc]"
+        raw = {"text": body, "tool_name": "demo"}
+        rendered = adapter.to_model_visible(
+            raw, TruncationPolicy(kind="tokens", limit=200)
+        )
+        # Re-render should NOT lose the [exit_code=abc] line
+        rerendered = adapter.to_model_visible(
+            rendered, TruncationPolicy(kind="tokens", limit=200)
+        )
+        assert "[exit_code=abc]" in rerendered
+
+    def test_footer_pattern_rejects_empty_brackets(self):
+        """A body line `[]` must not be misdetected as a footer."""
+        adapter = _make_adapter()
+        body = "before\n[]\nafter"
+        raw = {"text": body}
+        rendered = adapter.to_model_visible(
+            raw, TruncationPolicy(kind="tokens", limit=200)
+        )
+        rerendered = adapter.to_model_visible(
+            rendered, TruncationPolicy(kind="tokens", limit=200)
+        )
+        assert "[]" in rerendered
+
+    def test_footer_pattern_accepts_negative_exit_code(self):
+        """Some shells return negative exit codes; the pattern must match them."""
+        adapter = _make_adapter()
+        raw = {"text": "ok", "exit_code": -1}
+        rendered = adapter.to_model_visible(
+            raw, TruncationPolicy(kind="tokens", limit=200)
+        )
+        assert "[exit_code=-1]" in rendered
+        # And re-render preserves it
+        rerendered = adapter.to_model_visible(
+            rendered, TruncationPolicy(kind="tokens", limit=200)
+        )
+        assert "[exit_code=-1]" in rerendered
+
 
 # =============================================================================
 # applies_to / is_already_compact / extract_raw / emergency_policy

@@ -23,6 +23,8 @@ COMPACTED_FLAG = "compacted"
 HEADER_PREFIX = "[tool_output "
 HEAD_RATIO = 0.6
 
+_FOOTER_PATTERN = re.compile(r"^\[(exit_code=-?\d+)?( ?wall_time=\d+\.\d+s)?\]$")
+
 
 class RawToolOutput(TypedDict, total=False):
     text: str
@@ -63,12 +65,11 @@ def _parse_header(line: str) -> dict[str, str]:
 
 
 def _is_footer_line(line: str) -> bool:
-    """Return True if *line* matches the footer pattern."""
-    return bool(
-        line.startswith("[")
-        and line.endswith("]")
-        and ("exit_code=" in line or "wall_time=" in line)
-    )
+    """True iff `line` matches the exact format produced by `_build_footer`."""
+    if not _FOOTER_PATTERN.match(line):
+        return False
+    # Empty bracket "[]" matches the regex but isn't a real footer
+    return line != "[]"
 
 
 def _parse_footer(line: str) -> dict[str, int | float]:
@@ -125,14 +126,13 @@ def _truncate_body(
     Returns:
         ``(rendered_body, total_input_tokens, truncated_flag)``.
     """
-    total_tokens = counter.count_text(body)
-
     if policy.kind == "tokens":
+        ids = counter.encoding.encode(body)
+        total_tokens = len(ids)
         if total_tokens <= policy.limit:
             return body, total_tokens, False
         head_budget = max(1, int(policy.limit * HEAD_RATIO))
         tail_budget = max(1, policy.limit - head_budget)
-        ids = counter.encoding.encode(body)
         head = counter.encoding.decode(ids[:head_budget])
         tail = counter.encoding.decode(ids[-tail_budget:])
         dropped = total_tokens - head_budget - tail_budget
@@ -140,6 +140,7 @@ def _truncate_body(
         return f"{head}\n{marker}\n{tail}", total_tokens, True
 
     elif policy.kind == "bytes":
+        total_tokens = counter.count_text(body)
         encoded = body.encode("utf-8")
         total_bytes = len(encoded)
         if total_bytes <= policy.limit:
