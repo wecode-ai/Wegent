@@ -9,6 +9,7 @@ WORKDIR /app
 ARG VITE_APP_BASE_PATH=/wework/
 ARG VITE_SOCKET_BASE_URL=wss://wss-wegent.intra.weibo.com
 ARG VITE_SOCKET_PATH=/socket.io
+ARG VITE_CLOUD_DEVICE_SCALING_WIKI_URL=https://wiki.api.weibo.com/e/zh/weibo_rd/dev/wecode/wegent-device
 
 RUN npm config set registry http://registry.npmmirror.com
 COPY wework/package.json wework/package-lock.json ./
@@ -21,6 +22,7 @@ ENV VITE_OIDC_LOGIN_TEXT="使用 CAS 登录"
 RUN VITE_APP_BASE_PATH="${VITE_APP_BASE_PATH}" \
     VITE_SOCKET_BASE_URL="${VITE_SOCKET_BASE_URL}" \
     VITE_SOCKET_PATH="${VITE_SOCKET_PATH}" \
+    VITE_CLOUD_DEVICE_SCALING_WIKI_URL="${VITE_CLOUD_DEVICE_SCALING_WIKI_URL}" \
     npm run build
 
 # ---- Production runtime stage ----

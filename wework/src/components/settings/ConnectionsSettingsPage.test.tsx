@@ -6,8 +6,16 @@ import { createDeviceApi } from '@/api/devices'
 import { AppearanceProvider } from '@/features/appearance'
 import type { DeviceInfo } from '@/types/devices'
 
+const runtimeConfigMock = vi.hoisted(() => ({
+  value: {
+    appBasePath: '',
+    apiBaseUrl: '/api',
+    cloudDeviceScalingWikiUrl: '',
+  },
+}))
+
 vi.mock('@/config/runtime', () => ({
-  getRuntimeConfig: () => ({ appBasePath: '', apiBaseUrl: '/api' }),
+  getRuntimeConfig: () => runtimeConfigMock.value,
   stripAppBasePath: (path: string) => path,
 }))
 
@@ -67,6 +75,11 @@ describe('ConnectionsSettingsPage', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    runtimeConfigMock.value = {
+      appBasePath: '',
+      apiBaseUrl: '/api',
+      cloudDeviceScalingWikiUrl: '',
+    }
     window.history.pushState({}, '', '/')
     api.getMetrics.mockResolvedValue({
       cpu_usage: 42,
@@ -245,6 +258,26 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.queryByTestId('device-metrics')).not.toBeInTheDocument()
     expect(screen.queryByTestId('connection-scale-wiki')).not.toBeInTheDocument()
     expect(api.getMetrics).not.toHaveBeenCalled()
+  })
+
+  test('shows configured cloud device scaling wiki link in the cloud section guidance', async () => {
+    runtimeConfigMock.value = {
+      appBasePath: '',
+      apiBaseUrl: '/api',
+      cloudDeviceScalingWikiUrl: 'https://wiki.example.com/cloud-device-scaling',
+    }
+    api.getAllDevices.mockResolvedValue([cloudDevice()])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await screen.findByTestId('connection-device-device-1')
+    const link = screen.getByTestId('connection-scale-wiki-link')
+
+    expect(link).toHaveTextContent('详细见Wiki')
+    expect(link).toHaveAttribute('href', 'https://wiki.example.com/cloud-device-scaling')
+    expect(link).toHaveClass('text-text-secondary', 'hover:text-primary')
+    expect(link).toHaveClass('ml-2')
+    expect(link.closest('p')).toHaveTextContent('持续超过 80%')
   })
 
   test('allows deleting offline local device registrations', async () => {

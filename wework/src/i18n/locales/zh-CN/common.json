@@ -334,6 +334,7 @@
     "connection_resource_memory": "MEM",
     "connection_resource_disk": "磁盘",
     "connection_scale_wiki_title": "说明",
+    "connection_scale_wiki_link": "详细见Wiki",
     "connection_scale_wiki_desc": "当 CPU、MEM 或磁盘持续超过 80% 时，建议扩容云设备规格或清理工作区缓存。",
     "connection_status_online": "在线",
     "connection_status_offline": "离线",
