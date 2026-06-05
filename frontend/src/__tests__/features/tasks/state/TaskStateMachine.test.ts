@@ -187,6 +187,39 @@ describe('TaskStateMachine', () => {
     })
   })
 
+  it('checks runtime before resolving pending socket recovery on reconnect', async () => {
+    const joinTask = jest.fn().mockResolvedValue({ subtasks: [] })
+    const verifyRuntime = jest.fn().mockResolvedValue({
+      task_id: 100,
+      task_status: 'RUNNING',
+      active_stream: {
+        subtask_id: 77,
+        cursor: 12,
+      },
+    })
+    let connected = false
+
+    const machine = new TaskStateMachine(100, {
+      joinTask,
+      verifyRuntime,
+      isConnected: () => connected,
+    })
+
+    await machine.recover({ force: true, reason: 'task-selected' })
+    expect(machine.getState().phase).toBe('waiting_socket')
+
+    connected = true
+    await machine.handleSocketConnected('websocket-reconnect')
+
+    expect(verifyRuntime).toHaveBeenCalledWith(100)
+    expect(joinTask).toHaveBeenCalledWith(100, {
+      forceRefresh: true,
+      afterMessageId: undefined,
+      resumeFromCursor: 0,
+      activeStreamSubtaskId: 77,
+    })
+  })
+
   it('refreshes timestamp when the same AI message receives a new chat:error event', () => {
     const nowSpy = jest.spyOn(Date, 'now').mockReturnValueOnce(1000).mockReturnValueOnce(2000)
 

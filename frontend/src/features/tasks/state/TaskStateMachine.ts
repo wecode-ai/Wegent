@@ -568,6 +568,12 @@ export class TaskStateMachine {
 
   async handleSocketConnected(reason: TaskRecoveryReason): Promise<void> {
     if (this.state.status === 'waiting_socket') {
+      const pullRuntime = this.deps.pullRuntime ?? this.deps.verifyRuntime
+      if (pullRuntime) {
+        await this.checkHealth(reason)
+        return
+      }
+
       const recoveryReason =
         this.pendingRecoveryReason ?? this.state.runtime.recoveryReason ?? reason
       const recoveryOptions = this.pendingRecoveryOptions
