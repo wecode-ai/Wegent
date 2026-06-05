@@ -478,7 +478,7 @@ class VideoMetadataUpload(BaseModel):
 @router.post("/weibo-init", response_model=WeiboInitResponse)
 async def init_weibo_upload(
     request: WeiboInitRequest,
-    _current_user: User = Depends(security.get_current_user),
+    current_user: User = Depends(security.get_current_user),
 ) -> WeiboInitResponse:
     """
     Initialize Weibo chunked upload.
@@ -494,6 +494,7 @@ async def init_weibo_upload(
             filename=request.filename,
             file_size=request.file_size,
             file_check=request.file_check,
+            user=current_user,
         )
 
         return WeiboInitResponse(

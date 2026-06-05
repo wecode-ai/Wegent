@@ -1661,6 +1661,58 @@ class TestContextServiceCreateKnowledgeBaseContextWithResult:
 class TestVideoAttachmentProcessing:
     """Test video attachment processing functionality."""
 
+    @pytest.mark.asyncio
+    async def test_process_contexts_skips_video_without_model_capabilities(
+        self, monkeypatch
+    ) -> None:
+        """Compatibility context processing skips video when model config is absent."""
+        from importlib import import_module
+
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+
+        contexts_module = import_module("app.services.chat.preprocessing.contexts")
+
+        context = SubtaskContext(
+            subtask_id=100,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="video.mp4",
+            status=ContextStatus.READY.value,
+            type_data={
+                "file_extension": ".mp4",
+                "original_filename": "video.mp4",
+                "file_size": 1024000,
+                "mime_type": "video/mp4",
+                "fid": 12345,
+            },
+        )
+        context.id = 999
+
+        monkeypatch.setattr(
+            contexts_module.context_service,
+            "get_context_optional",
+            lambda db, context_id: context,
+        )
+        monkeypatch.setattr(
+            contexts_module.context_service,
+            "build_video_content_from_attachment",
+            lambda *args, **kwargs: pytest.fail(
+                "process_contexts should not resolve video attachments"
+            ),
+        )
+
+        result = await contexts_module.process_contexts(
+            db=Mock(),
+            context_ids=[999],
+            message="hello",
+        )
+
+        assert result == "hello"
+
     def test_is_video_context_with_video_extension(self) -> None:
         """Video context is identified by file extension."""
         from app.models.subtask_context import (
@@ -1708,9 +1760,10 @@ class TestVideoAttachmentProcessing:
         assert context_service.is_video_context(context) is False
 
     def test_build_video_content_from_attachment_resolves_url(
-        self, monkeypatch
+        self, monkeypatch, test_db
     ) -> None:
         """Video payload resolves URL and keeps fid metadata."""
+        import json
         from importlib import import_module
 
         from app.models.subtask_context import (
@@ -1718,18 +1771,33 @@ class TestVideoAttachmentProcessing:
             ContextType,
             SubtaskContext,
         )
+        from app.models.user import User
         from app.services.context import context_service
 
         context_service_module = import_module("app.services.context.context_service")
 
+        user = User(
+            user_name="video-owner",
+            password_hash="test",
+            email="video-owner@example.com",
+            is_active=True,
+            git_info=None,
+            preferences=json.dumps({"weibo_binding": {"uid": "1234567890"}}),
+        )
+        test_db.add(user)
+        test_db.commit()
+        test_db.refresh(user)
+
         class FakeMediaService:
-            def get_download_url(self, fid: int) -> str:
+            def get_download_url(self, fid: int, user: User | None = None) -> str:
                 assert fid == 12345
+                assert user is not None
+                assert user.user_name == "video-owner"
                 return "https://example.com/video.mp4"
 
         context = SubtaskContext(
             subtask_id=100,
-            user_id=1,
+            user_id=user.id,
             context_type=ContextType.ATTACHMENT.value,
             name="video.mp4",
             status=ContextStatus.READY.value,
@@ -1748,14 +1816,14 @@ class TestVideoAttachmentProcessing:
             "weibo_media_service",
             FakeMediaService(),
         )
-        payload = context_service.build_video_content_from_attachment(context)
+        payload = context_service.build_video_content_from_attachment(test_db, context)
 
         assert payload is not None
         assert payload.video_url == "https://example.com/video.mp4"
         assert "12345" in payload.metadata_text
 
     def test_build_video_content_from_attachment_raises_when_url_missing(
-        self, monkeypatch
+        self, monkeypatch, test_db
     ) -> None:
         """Video URL resolution failure raises instead of falling back to metadata."""
         from importlib import import_module
@@ -1773,7 +1841,7 @@ class TestVideoAttachmentProcessing:
         context_service_module = import_module("app.services.context.context_service")
 
         class EmptyMediaService:
-            def get_download_url(self, fid: int) -> None:
+            def get_download_url(self, fid: int, user=None) -> None:
                 assert fid == 12345
                 return None
 
@@ -1800,10 +1868,10 @@ class TestVideoAttachmentProcessing:
         )
 
         with pytest.raises(VideoAttachmentResolutionError):
-            context_service.build_video_content_from_attachment(context)
+            context_service.build_video_content_from_attachment(test_db, context)
 
     def test_build_video_content_from_attachment_raises_without_fid_when_resolving(
-        self,
+        self, test_db
     ) -> None:
         """Video URL resolution requires fid."""
         import pytest
@@ -1832,9 +1900,9 @@ class TestVideoAttachmentProcessing:
         context.id = 999
 
         with pytest.raises(VideoAttachmentResolutionError):
-            context_service.build_video_content_from_attachment(context)
+            context_service.build_video_content_from_attachment(test_db, context)
 
-    def test_build_video_content_from_non_video_returns_none(self) -> None:
+    def test_build_video_content_from_non_video_returns_none(self, test_db) -> None:
         """Non-video context returns None from video builder."""
         from app.models.subtask_context import (
             ContextStatus,
@@ -1855,7 +1923,7 @@ class TestVideoAttachmentProcessing:
             },
         )
 
-        payload = context_service.build_video_content_from_attachment(context)
+        payload = context_service.build_video_content_from_attachment(test_db, context)
 
         assert payload is None
 

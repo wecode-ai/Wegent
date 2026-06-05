@@ -144,7 +144,21 @@ async def process_contexts(
 
             # Process based on context type
             if context.context_type == ContextType.ATTACHMENT.value:
-                _process_attachment_context(context, idx, text_contents, image_contents)
+                if context_service.is_video_context(context):
+                    logger.warning(
+                        "Skipping video context %s in process_contexts because "
+                        "model capabilities are unavailable in this compatibility path",
+                        context.id,
+                    )
+                    continue
+                _process_attachment_context(
+                    db,
+                    context,
+                    idx,
+                    text_contents,
+                    image_contents,
+                    [],
+                )
             elif context.context_type == ContextType.KNOWLEDGE_BASE.value:
                 # Knowledge base contexts are handled via RAG tools, not here
                 logger.debug(
@@ -158,9 +172,10 @@ async def process_contexts(
             logger.exception(f"Unexpected error processing context {context_id}")
             continue
 
-    # Build vision structure if images present
+    # Build vision structure if images present. Video contexts require model
+    # capabilities and are handled by prepare_contexts_for_chat.
     if image_contents:
-        return _build_vision_structure(text_contents, image_contents, message)
+        return _build_vision_structure(text_contents, image_contents, [], message)
 
     # Combine text contents if present
     if text_contents:
@@ -279,6 +294,7 @@ def _combine_text_contents(
 
 
 def _process_attachment_context(
+    db: Session,
     context: SubtaskContext,
     idx: int,
     text_contents: List[str],
@@ -295,6 +311,7 @@ def _process_attachment_context(
 
     Args:
         context: The SubtaskContext record
+        db: Database session used for video attachment owner resolution
         idx: Attachment index (for labeling)
         text_contents: List to append text content to
         image_contents: List to append image content to
@@ -355,7 +372,7 @@ def _process_attachment_context(
                 f"Video attachment {context.id} requires a video-capable model"
             )
 
-        payload = context_service.build_video_content_from_attachment(context)
+        payload = context_service.build_video_content_from_attachment(db, context)
         if payload is None:
             logger.warning(f"[VIDEO DEBUG] payload is None for context id={context.id}")
             return
@@ -1074,6 +1091,7 @@ async def prepare_contexts_for_chat(
 
     # 1. Process attachment contexts - inject into message
     final_message = await _process_attachment_contexts_for_message(
+        db,
         attachment_contexts,
         message,
         task_id=task_id,
@@ -1196,6 +1214,7 @@ async def prepare_contexts_for_chat(
 
 
 async def _process_attachment_contexts_for_message(
+    db: Session,
     attachment_contexts: List[SubtaskContext],
     message: str,
     task_id: Optional[int] = None,
@@ -1227,6 +1246,7 @@ async def _process_attachment_contexts_for_message(
     for idx, context in enumerate(attachment_contexts, start=1):
         try:
             _process_attachment_context(
+                db,
                 context,
                 idx,
                 text_contents,

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useState, useRef, useMemo, useCallback, useEffect } from 'react'
+import { useState, useRef, useMemo, useCallback, useEffect, type ReactNode } from 'react'
 import type {
   Team,
   GitRepoInfo,
@@ -140,6 +140,7 @@ export interface ChatAreaState {
   resetAttachment: () => void
   isAttachmentReadyToSend: boolean
   isUploading: boolean
+  weiboBindingPrompt: ReactNode
 
   // Welcome config
   welcomeConfig: WelcomeConfigResponse | null
@@ -300,6 +301,7 @@ export function useChatAreaState({
     reset: resetAttachment,
     isReadyToSend: isAttachmentReadyToSend,
     isUploading,
+    weiboBindingPrompt,
   } = useMultiAttachment({
     maxAttachments: effectiveMaxAttachments,
   })
@@ -618,6 +620,7 @@ export function useChatAreaState({
     resetAttachment,
     isAttachmentReadyToSend,
     isUploading,
+    weiboBindingPrompt,
 
     // Welcome config
     welcomeConfig,
