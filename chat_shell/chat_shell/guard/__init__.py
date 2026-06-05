@@ -4,6 +4,8 @@
 
 """Guard context governance package (Phase 2)."""
 
+from chat_shell.guard.composition import chain_pre_model_hooks
+from chat_shell.guard.context_guard import UnifiedContextGuard
 from chat_shell.guard.tool_output import (
     COMPACTED_FLAG,
     HEAD_RATIO,
@@ -27,5 +29,7 @@ __all__ = [
     "RawToolOutput",
     "ToolOutputGuardAdapter",
     "TruncationPolicy",
+    "UnifiedContextGuard",
+    "chain_pre_model_hooks",
     "default_emergency_policy",
 ]

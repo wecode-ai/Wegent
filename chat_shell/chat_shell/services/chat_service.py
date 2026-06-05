@@ -267,6 +267,46 @@ class ChatService(ChatInterface):
                 is_cancelled=core.is_cancelled,
             )
 
+            # Build the unified context guard that runs as the LangGraph
+            # pre_model_hook. It owns budget enforcement at every model call —
+            # both pre-turn (turn start) and mid-turn (after every tool). The
+            # guidance consumer's hook is chained AFTER the guard so guidance
+            # injection observes already-budgeted state.
+            from chat_shell.compression.token_counter import TokenCounter
+            from chat_shell.guard import (
+                ToolOutputGuardAdapter,
+                TruncationPolicy,
+                UnifiedContextGuard,
+                chain_pre_model_hooks,
+            )
+
+            guard_model_id = (
+                request.model_config.get("model_id") if request.model_config else None
+            ) or "gpt-4"
+            guard_model_type = (
+                request.model_config.get("model") if request.model_config else None
+            )
+            guard_counter = TokenCounter(
+                model_name=guard_model_id, model_type=guard_model_type
+            )
+            tool_output_adapter = ToolOutputGuardAdapter(
+                token_counter=guard_counter,
+                default_policy=TruncationPolicy(
+                    kind="tokens", limit=settings.TOOL_OUTPUT_TOKEN_LIMIT
+                ),
+            )
+            context_guard = UnifiedContextGuard(
+                model_id=guard_model_id,
+                model_type=guard_model_type,
+                model_config=request.model_config,
+                sources=[tool_output_adapter],
+                compression_enabled=settings.MESSAGE_COMPRESSION_ENABLED,
+            )
+            chained_pre_model_hook = chain_pre_model_hooks(
+                context_guard,
+                guidance_consumer.create_pre_model_hook(),
+            )
+
             add_span_event("building_agent_config")
             agent_config = AgentConfig(
                 model_config=request.model_config or {"model": "gpt-4"},
@@ -277,7 +317,7 @@ class ChatService(ChatInterface):
                 enable_clarification=request.enable_clarification,
                 enable_deep_thinking=request.enable_deep_thinking,
                 skills=request.skills,
-                pre_model_hook=guidance_consumer.create_pre_model_hook(),
+                pre_model_hook=chained_pre_model_hook,
             )
 
             # Build messages for the agent
