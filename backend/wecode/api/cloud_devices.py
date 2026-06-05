@@ -16,6 +16,7 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, WebSocket, status
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.api.dependencies import get_db
 from app.core import security
@@ -31,6 +32,7 @@ from wecode.schemas.cloud_device import (
     VncConfigResponse,
 )
 from wecode.service.cloud_device_provider import cloud_device_provider
+from wecode.service.get_user_gitinfo import get_user_gitinfo
 from wecode.service.nevis_client import NevisClientError
 
 logger = logging.getLogger(__name__)
@@ -67,6 +69,20 @@ def _get_bearer_token(request: Request) -> str:
     if scheme.lower() != "bearer":
         return ""
     return token.strip()
+
+
+async def _get_current_user_git_tokens(user_name: str) -> list[dict[str, Any]]:
+    """Fetch current user's real git tokens without blocking device creation."""
+    try:
+        return await run_in_threadpool(get_user_gitinfo.get_real_git_tokens, user_name)
+    except Exception as e:
+        logger.warning(
+            "[CloudDevice] Failed to fetch git tokens for cloud device: "
+            "user_name=%s, error_type=%s",
+            user_name,
+            type(e).__name__,
+        )
+        return []
 
 
 def _resolve_target_user_id(
@@ -186,6 +202,7 @@ async def create_cloud_device(
             auth_token=auth_token,
             backend_url=backend_url,
             user_jwt_token=_get_bearer_token(request),
+            git_tokens=await _get_current_user_git_tokens(current_user.user_name),
             mail_email=body.mail_email or "",
             mail_password=body.mail_password or "",
         )
