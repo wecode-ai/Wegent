@@ -10,14 +10,27 @@ Rate limits are applied per API key for authenticated endpoints.
 """
 
 import logging
+import time
+from enum import Enum
+from hashlib import sha256
 from typing import Optional
 
 from fastapi import Request
 from slowapi import Limiter
 
 from app.core.config import settings
+from app.services.auth.task_token import extract_token_from_header
 
 logger = logging.getLogger(__name__)
+_redis_rate_limit_client = None
+
+
+class ExternalMcpRateLimitStatus(str, Enum):
+    """Result of an external MCP rate-limit check."""
+
+    ALLOWED = "allowed"
+    LIMITED = "limited"
+    UNAVAILABLE = "unavailable"
 
 
 def _get_redis_storage_uri() -> Optional[str]:
@@ -31,15 +44,158 @@ def _check_redis_available() -> bool:
     """Check if Redis is available for rate limiting."""
     if not settings.RATE_LIMIT_ENABLED:
         return False
+
     try:
         import redis
 
-        client = redis.from_url(settings.REDIS_URL, socket_connect_timeout=1)
+        client = redis.from_url(
+            settings.REDIS_URL,
+            socket_connect_timeout=1,
+            socket_timeout=1,
+        )
         client.ping()
         return True
     except Exception as e:
         logger.warning(f"Redis not available for rate limiting, disabling: {e}")
         return False
+
+
+def _get_rate_limit_redis_client(*, require_global_enabled: bool = True):
+    """Get a cached Redis client for custom rate limit checks."""
+    global _redis_rate_limit_client
+    if require_global_enabled and not settings.RATE_LIMIT_ENABLED:
+        return None
+    if _redis_rate_limit_client is not None:
+        return _redis_rate_limit_client
+    try:
+        import redis
+
+        client = redis.from_url(
+            settings.REDIS_URL,
+            socket_connect_timeout=1,
+            socket_timeout=1,
+        )
+        client.ping()
+        _redis_rate_limit_client = client
+        return client
+    except Exception as e:
+        logger.warning(f"Redis not available for custom rate limiting: {e}")
+        return None
+
+
+def hash_rate_limit_value(value: str) -> str:
+    """Hash sensitive rate limit dimensions before storing them in Redis keys."""
+    return sha256(value.encode("utf-8")).hexdigest()[:32]
+
+
+def _build_external_mcp_rate_limit_keys(request: Request) -> list[str]:
+    client_ip = request.client.host if request.client else "unknown"
+    keys = [f"ip:{hash_rate_limit_value(client_ip)}"]
+
+    auth_header = request.headers.get("authorization", "")
+    token = extract_token_from_header(auth_header)
+    if token:
+        keys.append(f"token:{hash_rate_limit_value(token)}")
+
+    return keys
+
+
+def is_external_mcp_rate_limited(
+    request: Request,
+    *,
+    namespace: str,
+    limit: int,
+    window_seconds: int,
+) -> bool:
+    """Apply Redis-backed fixed-window rate limiting to external MCP requests.
+
+    The limiter checks both IP and token dimensions. Any exceeded dimension blocks
+    the request. Raw tokens are never stored in Redis keys.
+    """
+    return (
+        check_external_mcp_rate_limit(
+            request,
+            namespace=namespace,
+            limit=limit,
+            window_seconds=window_seconds,
+        )
+        == ExternalMcpRateLimitStatus.LIMITED
+    )
+
+
+def check_external_mcp_rate_limit(
+    request: Request,
+    *,
+    namespace: str,
+    limit: int,
+    window_seconds: int,
+) -> ExternalMcpRateLimitStatus:
+    """Apply external MCP rate limiting and report limiter availability."""
+    if limit <= 0 or window_seconds <= 0:
+        return ExternalMcpRateLimitStatus.ALLOWED
+
+    return check_external_mcp_dimension_rate_limit(
+        dimensions=_build_external_mcp_rate_limit_keys(request),
+        namespace=namespace,
+        limit=limit,
+        window_seconds=window_seconds,
+    )
+
+
+def is_external_mcp_dimension_rate_limited(
+    *,
+    dimensions: list[str],
+    namespace: str,
+    limit: int,
+    window_seconds: int,
+) -> bool:
+    """Apply Redis-backed fixed-window rate limiting to explicit dimensions."""
+    return (
+        check_external_mcp_dimension_rate_limit(
+            dimensions=dimensions,
+            namespace=namespace,
+            limit=limit,
+            window_seconds=window_seconds,
+        )
+        == ExternalMcpRateLimitStatus.LIMITED
+    )
+
+
+def check_external_mcp_dimension_rate_limit(
+    *,
+    dimensions: list[str],
+    namespace: str,
+    limit: int,
+    window_seconds: int,
+) -> ExternalMcpRateLimitStatus:
+    """Apply Redis-backed fixed-window rate limiting to explicit dimensions."""
+    if not dimensions or limit <= 0 or window_seconds <= 0:
+        return ExternalMcpRateLimitStatus.ALLOWED
+
+    client = _get_rate_limit_redis_client(require_global_enabled=False)
+    if client is None:
+        return ExternalMcpRateLimitStatus.UNAVAILABLE
+
+    window = int(time.time() // window_seconds)
+    keys = [
+        f"external_kb_mcp:rate:{namespace}:{dimension}:{window}"
+        for dimension in dimensions
+    ]
+
+    try:
+        pipe = client.pipeline()
+        for key in keys:
+            pipe.incr(key)
+            pipe.expire(key, window_seconds + 1)
+        results = pipe.execute()
+    except Exception as e:
+        logger.warning(f"External MCP rate limit check failed: {e}")
+        return ExternalMcpRateLimitStatus.UNAVAILABLE
+
+    counts = results[::2]
+    if any(count > limit for count in counts):
+        return ExternalMcpRateLimitStatus.LIMITED
+    return ExternalMcpRateLimitStatus.ALLOWED
 
 
 def get_api_key_from_request(request: Request) -> str:

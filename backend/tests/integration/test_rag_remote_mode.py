@@ -49,12 +49,18 @@ EXPECTED_QUERY_RESPONSE = {
             "title": "Checklist",
             "metadata": None,
             "knowledge_base_id": 1,
+            "document_id": None,
         }
     ],
     "total": 1,
     "total_estimated_tokens": 12,
     "message": None,
 }
+
+
+def _internal_headers() -> dict[str, str]:
+    token = settings.INTERNAL_SERVICE_TOKEN
+    return {"Authorization": f"Bearer {token}"} if token else {}
 
 
 def _make_runtime_spec(
@@ -66,32 +72,30 @@ def _make_runtime_spec(
     with_remote_configs: bool = False,
 ) -> QueryRuntimeSpec:
     knowledge_base_ids = knowledge_base_ids or [1]
-    knowledge_base_configs = []
-    if with_remote_configs:
-        knowledge_base_configs = [
-            RemoteKnowledgeBaseQueryConfig(
-                knowledge_base_id=knowledge_base_ids[0],
-                index_owner_user_id=8,
-                retriever_config=RuntimeRetrieverConfig(
-                    name="retriever-a",
-                    namespace="default",
-                    storage_config={
-                        "type": "qdrant",
-                        "url": "http://qdrant:6333",
-                    },
-                ),
-                embedding_model_config=RuntimeEmbeddingModelConfig(
-                    model_name="embed-a",
-                    model_namespace="default",
-                    resolved_config={"protocol": "openai"},
-                ),
-                retrieval_config=RuntimeRetrievalConfig(
-                    top_k=20,
-                    score_threshold=0.7,
-                    retrieval_mode="vector",
-                ),
-            )
-        ]
+    knowledge_base_configs = [
+        RemoteKnowledgeBaseQueryConfig(
+            knowledge_base_id=knowledge_base_ids[0],
+            index_owner_user_id=8,
+            retriever_config=RuntimeRetrieverConfig(
+                name="retriever-a",
+                namespace="default",
+                storage_config={
+                    "type": "qdrant",
+                    "url": "http://qdrant:6333",
+                },
+            ),
+            embedding_model_config=RuntimeEmbeddingModelConfig(
+                model_name="embed-a",
+                model_namespace="default",
+                resolved_config={"protocol": "openai"},
+            ),
+            retrieval_config=RuntimeRetrievalConfig(
+                top_k=20,
+                score_threshold=0.7,
+                retrieval_mode="vector",
+            ),
+        )
+    ]
 
     return QueryRuntimeSpec(
         knowledge_base_ids=knowledge_base_ids,
@@ -163,7 +167,7 @@ def test_internal_retrieve_preserves_response_shape_in_local_and_remote_modes(
 
     with (
         patch(
-            "app.api.endpoints.internal.rag.RagRuntimeResolver.build_query_runtime_spec",
+            "app.api.endpoints.internal.rag.runtime_resolver.build_query_runtime_spec",
             return_value=_make_runtime_spec(
                 with_remote_configs=patch_target.endswith("RemoteRagGateway.query")
             ),
@@ -181,6 +185,7 @@ def test_internal_retrieve_preserves_response_shape_in_local_and_remote_modes(
                 "knowledge_base_ids": [1],
                 "route_mode": "rag_retrieval",
             },
+            headers=_internal_headers(),
         )
 
     assert response.status_code == 200
@@ -198,7 +203,7 @@ def test_internal_retrieve_falls_back_to_local_when_remote_query_fails_integrati
 
     with (
         patch(
-            "app.api.endpoints.internal.rag.RagRuntimeResolver.build_query_runtime_spec",
+            "app.api.endpoints.internal.rag.runtime_resolver.build_query_runtime_spec",
             return_value=_make_runtime_spec(with_remote_configs=True),
         ),
         patch(
@@ -224,6 +229,7 @@ def test_internal_retrieve_falls_back_to_local_when_remote_query_fails_integrati
                 "knowledge_base_ids": [1],
                 "route_mode": "rag_retrieval",
             },
+            headers=_internal_headers(),
         )
 
     assert response.status_code == 200

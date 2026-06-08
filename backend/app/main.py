@@ -19,7 +19,7 @@ import signal
 import sys
 import time
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 
 import redis
 import socketio
@@ -55,6 +55,29 @@ setup_logging()
 _logger = logging.getLogger(__name__)
 
 
+def _get_mcp_lifespan_servers():
+    from app.mcp_server.server import (
+        interactive_form_question_mcp_server,
+        knowledge_mcp_server,
+        prompt_optimization_mcp_server,
+        subscription_mcp_server,
+        system_mcp_server,
+    )
+
+    servers = [
+        ("System", system_mcp_server),
+        ("Knowledge", knowledge_mcp_server),
+        ("interactive_form_question", interactive_form_question_mcp_server),
+        ("Prompt optimization", prompt_optimization_mcp_server),
+        ("Subscription", subscription_mcp_server),
+    ]
+    if settings.EXTERNAL_KNOWLEDGE_MCP_ENABLED:
+        from app.mcp_server.server import external_knowledge_mcp_server
+
+        servers.append(("External knowledge", external_knowledge_mcp_server))
+    return tuple(servers)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -66,17 +89,6 @@ async def lifespan(app: FastAPI):
     setup_logging()
 
     logger = _logger
-
-    # ==================== MCP SERVER LIFESPAN ====================
-    # MCP servers need their session_manager.run() to be called within the lifespan
-    # This is required for the streamable HTTP transport to work properly
-    from app.mcp_server.server import (
-        interactive_form_question_mcp_server,
-        knowledge_mcp_server,
-        prompt_optimization_mcp_server,
-        subscription_mcp_server,
-        system_mcp_server,
-    )
 
     # ==================== STARTUP ====================
     # Try to get Redis client for distributed locking
@@ -313,108 +325,97 @@ async def lifespan(app: FastAPI):
     # ==================== YIELD (app is running) ====================
     # MCP servers need their session_manager.run() to be active during the app lifecycle
     # This is required for the streamable HTTP transport to work properly
-    # We use nested async context managers to ensure proper initialization and cleanup
-    async with system_mcp_server.session_manager.run():
-        logger.info("✓ System MCP server session manager started")
-        async with knowledge_mcp_server.session_manager.run():
-            logger.info("✓ Knowledge MCP server session manager started")
-            async with interactive_form_question_mcp_server.session_manager.run():
-                logger.info(
-                    "✓ interactive_form_question MCP server session manager started"
-                )
-                async with prompt_optimization_mcp_server.session_manager.run():
-                    logger.info(
-                        "✓ Prompt optimization MCP server session manager started"
-                    )
-                    async with subscription_mcp_server.session_manager.run():
-                        logger.info("✓ Subscription MCP server session manager started")
-                        yield
+    async with AsyncExitStack() as stack:
+        for server_name, mcp_server in _get_mcp_lifespan_servers():
+            await stack.enter_async_context(mcp_server.session_manager.run())
+            logger.info("✓ %s MCP server session manager started", server_name)
+        yield
 
-    # ==================== SHUTDOWN ====================
-    logger.info("=" * 60)
-    logger.info("Graceful shutdown initiated...")
-    logger.info("=" * 60)
+        # ==================== SHUTDOWN ====================
+        logger.info("=" * 60)
+        logger.info("Graceful shutdown initiated...")
+        logger.info("=" * 60)
 
-    # Step 1: Initiate graceful shutdown (mark as shutting down)
-    await shutdown_manager.initiate_shutdown()
-    logger.info(
-        "✓ Shutdown state set. Active streams: %d",
-        shutdown_manager.get_active_stream_count(),
-    )
-
-    # Step 2: Wait for active streaming requests to complete
-    shutdown_timeout = settings.GRACEFUL_SHUTDOWN_TIMEOUT
-    if shutdown_manager.get_active_stream_count() > 0:
+        # Step 1: Initiate graceful shutdown (mark as shutting down)
+        await shutdown_manager.initiate_shutdown()
         logger.info(
-            "Waiting for %d active streams to complete (timeout: %ds)...",
+            "✓ Shutdown state set. Active streams: %d",
             shutdown_manager.get_active_stream_count(),
-            shutdown_timeout,
-        )
-        streams_completed = await shutdown_manager.wait_for_streams(
-            timeout=shutdown_timeout
         )
 
-        if not streams_completed:
-            # Timeout reached, cancel remaining streams
-            remaining = shutdown_manager.get_active_stream_count()
-            logger.warning(
-                "Timeout reached. Cancelling %d remaining streams...", remaining
+        # Step 2: Wait for active streaming requests to complete
+        shutdown_timeout = settings.GRACEFUL_SHUTDOWN_TIMEOUT
+        if shutdown_manager.get_active_stream_count() > 0:
+            logger.info(
+                "Waiting for %d active streams to complete (timeout: %ds)...",
+                shutdown_manager.get_active_stream_count(),
+                shutdown_timeout,
             )
-            cancelled = await shutdown_manager.cancel_all_streams()
-            logger.info("Cancelled %d streams", cancelled)
+            streams_completed = await shutdown_manager.wait_for_streams(
+                timeout=shutdown_timeout
+            )
 
-            # Give a short grace period for cancellation to propagate
-            await asyncio.sleep(1)
-    else:
-        logger.info("No active streams, proceeding with shutdown")
+            if not streams_completed:
+                # Timeout reached, cancel remaining streams
+                remaining = shutdown_manager.get_active_stream_count()
+                logger.warning(
+                    "Timeout reached. Cancelling %d remaining streams...", remaining
+                )
+                cancelled = await shutdown_manager.cancel_all_streams()
+                logger.info("Cancelled %d streams", cancelled)
 
-    # Step 3: Stop IM Channel Manager
-    from app.services.channels import get_channel_manager
+                # Give a short grace period for cancellation to propagate
+                await asyncio.sleep(1)
+        else:
+            logger.info("No active streams, proceeding with shutdown")
 
-    channel_manager = get_channel_manager()
-    stopped_count = await channel_manager.stop_all()
-    logger.info(f"✓ IM Channel Manager stopped, {stopped_count} channels stopped")
+        # Step 3: Stop IM Channel Manager
+        from app.services.channels import get_channel_manager
 
-    # Step 4: Stop background jobs
-    stop_background_jobs(app)
-    logger.info("✓ Background jobs stopped")
+        channel_manager = get_channel_manager()
+        stopped_count = await channel_manager.stop_all()
+        logger.info(f"✓ IM Channel Manager stopped, {stopped_count} channels stopped")
 
-    # Step 5: Stop scheduler backend
-    from app.core.scheduler import get_active_scheduler, stop_scheduler
+        # Step 4: Stop background jobs
+        stop_background_jobs(app)
+        logger.info("✓ Background jobs stopped")
 
-    scheduler = get_active_scheduler()
-    if scheduler:
-        stop_scheduler()
-        logger.info(f"✓ Scheduler backend '{scheduler.backend_type}' stopped")
+        # Step 5: Stop scheduler backend
+        from app.core.scheduler import get_active_scheduler, stop_scheduler
 
-    # Step 6: Shutdown PendingRequestRegistry
-    from chat_shell.tools import (
-        shutdown_pending_request_registry,
-    )
+        scheduler = get_active_scheduler()
+        if scheduler:
+            stop_scheduler()
+            logger.info(f"✓ Scheduler backend '{scheduler.backend_type}' stopped")
 
-    await shutdown_pending_request_registry()
-    logger.info("✓ PendingRequestRegistry shutdown completed")
+        # Step 6: Shutdown PendingRequestRegistry
+        from chat_shell.tools import (
+            shutdown_pending_request_registry,
+        )
 
-    # Step 7: Stop device heartbeat monitor
-    from app.services.device_monitor import stop_device_monitor_async
+        await shutdown_pending_request_registry()
+        logger.info("✓ PendingRequestRegistry shutdown completed")
 
-    await stop_device_monitor_async()
-    logger.info("✓ Device heartbeat monitor stopped")
+        # Step 7: Stop device heartbeat monitor
+        from app.services.device_monitor import stop_device_monitor_async
 
-    # Step 7: Shutdown OpenTelemetry
-    from shared.telemetry.config import get_otel_config
-    from shared.telemetry.core import is_telemetry_enabled, shutdown_telemetry
+        await stop_device_monitor_async()
+        logger.info("✓ Device heartbeat monitor stopped")
 
-    if get_otel_config().enabled and is_telemetry_enabled():
-        shutdown_telemetry()
-        logger.info("✓ OpenTelemetry shutdown completed")
+        # Step 7: Shutdown OpenTelemetry
+        from shared.telemetry.config import get_otel_config
+        from shared.telemetry.core import is_telemetry_enabled, shutdown_telemetry
 
-    logger.info("=" * 60)
-    logger.info(
-        "Application shutdown completed. Duration: %.2fs",
-        shutdown_manager.shutdown_duration,
-    )
-    logger.info("=" * 60)
+        if get_otel_config().enabled and is_telemetry_enabled():
+            shutdown_telemetry()
+            logger.info("✓ OpenTelemetry shutdown completed")
+
+        logger.info("=" * 60)
+        logger.info(
+            "Application shutdown completed. Duration: %.2fs",
+            shutdown_manager.shutdown_duration,
+        )
+        logger.info("=" * 60)
 
 
 def create_app():

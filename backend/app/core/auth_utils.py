@@ -44,7 +44,12 @@ def is_api_key(token: str) -> bool:
     return token.startswith(API_KEY_PREFIX) if token else False
 
 
-def verify_api_key(db: Session, api_key: str) -> Optional[User]:
+def verify_api_key(
+    db: Session,
+    api_key: str,
+    *,
+    update_last_used_at: bool = True,
+) -> Optional[User]:
     """
     Verify API Key and return the associated user.
 
@@ -54,6 +59,7 @@ def verify_api_key(db: Session, api_key: str) -> Optional[User]:
     Args:
         db: Database session
         api_key: API Key string (must start with 'wg-')
+        update_last_used_at: Whether to update the key usage timestamp.
 
     Returns:
         User object if verification succeeds, None otherwise
@@ -119,9 +125,9 @@ def verify_api_key(db: Session, api_key: str) -> Optional[User]:
         )
         return None
 
-    # Update last_used_at timestamp
-    api_key_record.last_used_at = datetime.utcnow()
-    db.commit()
+    if update_last_used_at:
+        api_key_record.last_used_at = datetime.utcnow()
+        db.commit()
 
     logger.debug(
         f"[auth_utils] API key verified: name={api_key_record.name}, "

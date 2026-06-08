@@ -4,10 +4,12 @@
 
 """Wegent Backend MCP Server.
 
-This module provides a unified MCP Server for Wegent Backend with two endpoints:
+This module provides MCP servers for Wegent Backend with these endpoints:
 - /mcp/system - System-level tools (silent_exit) automatically injected into all tasks
 - /mcp/knowledge - Knowledge MCP module root
   - /mcp/knowledge/sse - Knowledge MCP streamable HTTP transport endpoint
+- /mcp/knowledge-external - Trusted external knowledge integration MCP root
+  - /mcp/knowledge-external/sse - External knowledge MCP streamable HTTP transport endpoint
 New MCP servers should follow /mcp/<name>/sse for streamable HTTP transport.
 
 The MCP Server uses FastMCP with HTTP Streamable transport and integrates
@@ -23,12 +25,14 @@ import contextvars
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
-from typing import Any, AsyncIterator, Dict, Optional
+from inspect import isawaitable, iscoroutinefunction
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Optional
 
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import FastAPI, Request
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
+from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -52,6 +56,9 @@ SYSTEM_MCP_MOUNT_PATH = "/mcp/system"
 SYSTEM_MCP_TRANSPORT_PATH = "/"
 KNOWLEDGE_MCP_MOUNT_PATH = "/mcp/knowledge"
 KNOWLEDGE_MCP_TRANSPORT_PATH = "/sse"
+EXTERNAL_KNOWLEDGE_MCP_MOUNT_PATH = "/mcp/knowledge-external"
+EXTERNAL_KNOWLEDGE_MCP_TRANSPORT_PATH = "/sse"
+EXTERNAL_KNOWLEDGE_PUBLIC_PATHS = frozenset({"", "/", "/health"})
 INTERACTIVE_FORM_MCP_MOUNT_PATH = "/mcp/interactive-form-question"
 INTERACTIVE_FORM_MCP_TRANSPORT_PATH = "/sse"
 PROMPT_OPTIMIZATION_MCP_MOUNT_PATH = "/mcp/prompt-optimization"
@@ -70,6 +77,18 @@ class McpAppSpec:
     token_context: contextvars.ContextVar[Optional[TaskTokenInfo]]
     log_prefix: str
     include_root_metadata: bool = True
+
+
+@dataclass(frozen=True)
+class ExternalKnowledgeUser:
+    id: int
+    user_name: str
+
+
+ExternalKnowledgeAuthHandler = Callable[
+    [Optional[str], Request],
+    Optional[ExternalKnowledgeUser] | Awaitable[Optional[ExternalKnowledgeUser]],
+]
 
 
 class EmptyPathToSlashMiddleware:
@@ -185,6 +204,14 @@ knowledge_mcp_server = FastMCP(
     transport_security=_build_transport_security_settings(),
 )
 
+external_knowledge_mcp_server = FastMCP(
+    "wegent-knowledge-external-mcp",
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/",
+    transport_security=_build_transport_security_settings(),
+)
+
 # Store for knowledge MCP request context (used by McpAppSpec)
 _knowledge_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
     contextvars.ContextVar("_knowledge_request_token_info", default=None)
@@ -192,6 +219,69 @@ _knowledge_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] =
 
 # Flag to track if tools have been registered
 _knowledge_tools_registered = False
+
+_external_knowledge_request_user: contextvars.ContextVar[
+    Optional[ExternalKnowledgeUser]
+] = contextvars.ContextVar("_external_knowledge_request_user", default=None)
+_external_knowledge_request_mount_path: contextvars.ContextVar[Optional[str]] = (
+    contextvars.ContextVar("_external_knowledge_request_mount_path", default=None)
+)
+_external_knowledge_tools_registered = False
+
+
+def _default_external_auth_handler(
+    token: Optional[str], request: Request
+) -> Optional[ExternalKnowledgeUser]:
+    """Resolve a user-generated personal API key to its owner.
+
+    The request is passed so deployments can replace this handler with custom
+    authentication that may use headers such as X-User-Name. The default handler
+    intentionally ignores X-User-Name and trusts only the API key owner.
+    """
+    if not token:
+        return None
+
+    from app.core.auth_utils import verify_api_key
+    from app.db.session import SessionLocal
+
+    db = SessionLocal()
+    try:
+        user = verify_api_key(db, token, update_last_used_at=False)
+        if user is None:
+            return None
+        return ExternalKnowledgeUser(id=user.id, user_name=user.user_name)
+    finally:
+        db.close()
+
+
+_external_auth_handler = _default_external_auth_handler
+
+
+def set_external_knowledge_auth_handler(
+    handler: ExternalKnowledgeAuthHandler,
+) -> None:
+    """Replace external knowledge MCP user authentication.
+
+    Deployments can provide a handler that resolves the user from enterprise
+    gateway headers, custom tokens, or any other trusted auth mechanism.
+    The handler must return None when authentication fails.
+    """
+    global _external_auth_handler
+    _external_auth_handler = handler
+
+
+async def _resolve_external_knowledge_user(
+    token: Optional[str], request: Request
+) -> Optional[ExternalKnowledgeUser]:
+    """Resolve external MCP user without blocking the ASGI event loop."""
+    if iscoroutinefunction(_external_auth_handler):
+        result = await _external_auth_handler(token, request)
+    else:
+        result = await run_in_threadpool(_external_auth_handler, token, request)
+
+    if isawaitable(result):
+        return await result
+    return result
 
 
 def _register_knowledge_tools() -> None:
@@ -225,6 +315,23 @@ def ensure_knowledge_tools_registered() -> None:
     all @mcp_tool decorated endpoints as MCP tools.
     """
     _register_knowledge_tools()
+
+
+def _register_external_knowledge_tools() -> None:
+    """Register external knowledge tools."""
+    global _external_knowledge_tools_registered
+    if _external_knowledge_tools_registered:
+        return
+
+    from app.mcp_server.tools import knowledge_external  # noqa: F401
+
+    logger.info("[MCP:KnowledgeExternal] Registered external knowledge tools")
+    _external_knowledge_tools_registered = True
+
+
+def ensure_external_knowledge_tools_registered() -> None:
+    """Ensure external knowledge MCP tools are registered."""
+    _register_external_knowledge_tools()
 
 
 # ============== interactive_form_question MCP Server ==============
@@ -606,6 +713,15 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
     return base_app
 
 
+def _build_external_knowledge_mcp_app(
+    mount_path: str = EXTERNAL_KNOWLEDGE_MCP_MOUNT_PATH,
+) -> Starlette:
+    """Create Starlette app for trusted external knowledge integrations."""
+    from app.mcp_server.external_knowledge_app import build_external_knowledge_mcp_app
+
+    return build_external_knowledge_mcp_app(mount_path)
+
+
 def _create_system_mcp_app() -> Starlette:
     """Create Starlette app for system MCP server."""
     return _build_mcp_app(_SYSTEM_MCP_SPEC)
@@ -616,37 +732,8 @@ def _create_knowledge_mcp_app() -> Starlette:
     return _build_mcp_app(_KNOWLEDGE_MCP_SPEC)
 
 
-# ============== FastAPI Router Integration ==============
-
-
-def create_mcp_router() -> APIRouter:
-    """Create FastAPI router that mounts MCP servers.
-
-    Returns:
-        APIRouter with MCP server endpoints mounted
-    """
-    router = APIRouter(tags=["MCP"])
-
-    # Mount system MCP at /mcp/system
-    system_app = _create_system_mcp_app()
-
-    # Mount knowledge MCP at /mcp/knowledge
-    knowledge_app = _create_knowledge_mcp_app()
-
-    # Create sub-applications
-    @router.get("/mcp/system/health")
-    async def system_health():
-        return {"status": "healthy", "service": "wegent-system-mcp"}
-
-    @router.get("/mcp/knowledge/health")
-    async def knowledge_health():
-        return {"status": "healthy", "service": "wegent-knowledge-mcp"}
-
-    return router, system_app, knowledge_app
-
-
 def register_mcp_apps(app: FastAPI, mount_prefix: str = "") -> None:
-    """Register all internal MCP sub-apps on the FastAPI instance."""
+    """Register all MCP sub-apps on the FastAPI instance."""
     normalized_prefix = _normalize_prefix(mount_prefix)
     for spec in MCP_APP_SPECS:
         effective_spec = _apply_mount_prefix(spec, normalized_prefix)
@@ -665,6 +752,20 @@ def register_mcp_apps(app: FastAPI, mount_prefix: str = "") -> None:
             effective_spec.name,
             effective_spec.mount_path,
             effective_spec.transport_path,
+        )
+
+    if settings.EXTERNAL_KNOWLEDGE_MCP_ENABLED:
+        external_mount_path = (
+            f"{normalized_prefix}{EXTERNAL_KNOWLEDGE_MCP_MOUNT_PATH}"
+            if normalized_prefix
+            else EXTERNAL_KNOWLEDGE_MCP_MOUNT_PATH
+        )
+        external_app = _build_external_knowledge_mcp_app(external_mount_path)
+        app.mount(external_mount_path, external_app)
+        logger.info(
+            "Mounted MCP server 'knowledge_external' at %s (transport: %s)",
+            external_mount_path,
+            EXTERNAL_KNOWLEDGE_MCP_TRANSPORT_PATH,
         )
 
 
