@@ -12,6 +12,7 @@ import {
   Laptop,
   Plus,
   Search,
+  X,
 } from 'lucide-react'
 import {
   useCallback,
@@ -22,6 +23,8 @@ import {
   useState,
 } from 'react'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
+import { BranchSelector } from '@/components/common/BranchSelector'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   getPreferredStandaloneDeviceId,
@@ -120,6 +123,12 @@ interface ProjectWorkBarProps {
   onSelectStandaloneDevice: (deviceId: string | null) => void
   onExecutionModeChange: (mode: ProjectExecutionMode) => void
   onCreateProjectMode?: (mode: ProjectCreateMode) => void
+  branchName?: string
+  branchLoading?: boolean
+  onRefreshBranch?: () => Promise<void>
+  onListBranches?: () => Promise<string[]>
+  onCheckoutBranch?: (branchName: string) => Promise<void>
+  onCreateBranch?: (branchName: string) => Promise<void>
   className?: string
   buttonClassName?: string
   menuClassName?: string
@@ -137,12 +146,19 @@ export function ProjectWorkBar({
   onSelectStandaloneDevice,
   onExecutionModeChange,
   onCreateProjectMode,
+  branchName,
+  branchLoading,
+  onRefreshBranch,
+  onListBranches,
+  onCheckoutBranch,
+  onCreateBranch,
   className,
   buttonClassName,
   menuClassName,
   emptyLabel,
 }: ProjectWorkBarProps) {
   const { t } = useTranslation('common')
+  const isMobile = useIsMobile()
   const containerRef = useRef<HTMLDivElement>(null)
   const executionModeContainerRef = useRef<HTMLDivElement>(null)
   const triggerButtonRef = useRef<HTMLButtonElement>(null)
@@ -306,9 +322,10 @@ export function ProjectWorkBar({
 
   useEffect(() => {
     if (!open) return
+    if (isMobile) return
 
     searchInputRef.current?.focus()
-  }, [open])
+  }, [isMobile, open])
 
   const getDeviceForProject = useCallback((project: ProjectWithTasks): DeviceInfo | undefined => {
     const deviceId = project.config?.execution?.deviceId ?? project.config?.device_id
@@ -404,6 +421,30 @@ export function ProjectWorkBar({
   const ExecutionModeTriggerIcon =
     executionMode === 'git_worktree' ? GitBranch : Laptop
 
+  const renderMobileSheetHeader = (title: string, subtitle: string, onClose: () => void) => (
+    <>
+      <div className="mx-auto mt-3 h-1 w-11 shrink-0 rounded-full bg-border" />
+      <div className="flex shrink-0 items-center justify-between px-5 pb-3 pt-4">
+        <div className="min-w-0">
+          <h2 className="text-lg font-semibold text-text-primary">{title}</h2>
+          <p className="mt-1 truncate text-xs text-text-muted">{subtitle}</p>
+        </div>
+        <button
+          type="button"
+          data-testid="project-work-mobile-close-button"
+          aria-label={t('workbench.close_menu', '关闭菜单')}
+          onClick={onClose}
+          className="flex h-11 w-11 items-center justify-center rounded-full bg-surface text-text-primary"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+    </>
+  )
+
+  const renderMobileBackdrop = (onClose: () => void) =>
+    <div className="fixed inset-0 z-modal bg-black/25" onClick={onClose} />
+
   const getCompactDeviceStatusLabel = (device: DeviceInfo) => {
     if (device.status === 'online') {
       return t('workbench.project_device_status_online', '在线')
@@ -423,17 +464,31 @@ export function ProjectWorkBar({
   return (
     <div className={cn('flex min-h-[56px] items-center gap-2 px-6', className)}>
       <div ref={containerRef} className="relative">
+        {open && isMobile && renderMobileBackdrop(closeMenu)}
         {open && (
           <div
             data-testid="project-work-menu"
+            data-mobile={isMobile ? 'true' : undefined}
             className={cn(
-              'absolute left-0 z-popover flex w-80 flex-col rounded-2xl border border-border bg-background p-1.5 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
-              menuLayout.placement === 'below' ? 'top-11' : 'bottom-11',
-              menuClassName,
+              isMobile
+                ? 'fixed inset-x-0 bottom-0 z-modal flex max-h-[45dvh] flex-col rounded-t-[28px] border border-border bg-background shadow-[0_-18px_48px_rgba(0,0,0,0.18)]'
+                : 'absolute left-0 z-popover flex w-80 flex-col rounded-2xl border border-border bg-background p-1.5 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+              !isMobile && (menuLayout.placement === 'below' ? 'top-11' : 'bottom-11'),
+              !isMobile && menuClassName,
             )}
-            style={{ maxHeight: menuLayout.maxHeight }}
+            style={isMobile ? undefined : { maxHeight: menuLayout.maxHeight }}
           >
-            <label className="mb-1.5 flex h-9 shrink-0 items-center gap-2 rounded-xl border border-border bg-surface px-3 text-text-secondary">
+            {isMobile &&
+              renderMobileSheetHeader(
+                t('workbench.project_sheet_title', '选择项目'),
+                currentProject?.name ?? emptyLabel ?? t('workbench.enter_project_work', '进入项目工作'),
+                closeMenu,
+              )}
+            <div className={cn(isMobile && 'flex min-h-0 flex-col px-5 pb-5')}>
+            <label className={cn(
+              'mb-1.5 flex h-9 shrink-0 items-center gap-2 rounded-xl border border-border bg-surface px-3 text-text-secondary',
+              isMobile && 'h-11 rounded-2xl text-base',
+            )}>
               <Search className="h-4 w-4 shrink-0" />
               <input
                 ref={searchInputRef}
@@ -443,7 +498,10 @@ export function ProjectWorkBar({
                 onChange={event => setProjectQuery(event.target.value)}
                 onFocus={() => setActiveSubmenu(null)}
                 placeholder={t('workbench.search_projects', '搜索项目')}
-                className="min-w-0 flex-1 bg-transparent text-[13px] leading-[18px] text-text-primary outline-none placeholder:text-text-muted"
+                className={cn(
+                  'min-w-0 flex-1 bg-transparent text-[13px] leading-[18px] text-text-primary outline-none placeholder:text-text-muted',
+                  isMobile && 'text-base leading-5',
+                )}
               />
             </label>
             {projects.length === 0 ? (
@@ -460,8 +518,11 @@ export function ProjectWorkBar({
             ) : (
               <div
                 data-testid="project-options-list"
-                className="min-h-0 flex-1 space-y-0.5 overflow-y-auto pr-1"
-                style={{ maxHeight: PROJECT_MENU_LIST_MAX_HEIGHT }}
+                className={cn(
+                  'min-h-0 flex-1 space-y-0.5 overflow-y-auto pr-1',
+                  isMobile && 'scrollbar-none max-h-[calc(45dvh-168px)] space-y-2 py-2',
+                )}
+                style={{ maxHeight: isMobile ? undefined : PROJECT_MENU_LIST_MAX_HEIGHT }}
               >
                 {filteredProjects.map(project => {
                   const device = getDeviceForProject(project)
@@ -545,7 +606,7 @@ export function ProjectWorkBar({
               </div>
             )}
             <div className="my-1.5 shrink-0 border-t border-border" />
-            <div className="shrink-0 space-y-0.5">
+            <div className={cn('shrink-0 space-y-0.5', isMobile && 'space-y-2')}>
               {onCreateProjectMode && (
                 <div
                   className="relative"
@@ -688,6 +749,7 @@ export function ProjectWorkBar({
                 )}
               </div>
             </div>
+            </div>
           </div>
         )}
         <button
@@ -719,17 +781,27 @@ export function ProjectWorkBar({
       </div>
       {supportsGitWorktree && (
         <div ref={executionModeContainerRef} className="relative">
+          {executionModeOpen && isMobile && renderMobileBackdrop(closeExecutionModeMenu)}
           {executionModeOpen && (
             <div
               data-testid="project-execution-mode-menu"
+              data-mobile={isMobile ? 'true' : undefined}
               className={cn(
-                'absolute left-0 z-popover w-56 rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
-                executionModePlacement === 'below' ? 'top-11' : 'bottom-11',
+                isMobile
+                  ? 'fixed inset-x-0 bottom-0 z-modal flex max-h-[45dvh] flex-col rounded-t-[28px] border border-border bg-background shadow-[0_-18px_48px_rgba(0,0,0,0.18)]'
+                  : 'absolute left-0 z-popover w-56 rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+                !isMobile && (executionModePlacement === 'below' ? 'top-11' : 'bottom-11'),
               )}
             >
+              {isMobile &&
+                renderMobileSheetHeader(
+                  t('workbench.execution_mode_label', '启动模式'),
+                  executionModeTriggerLabel,
+                  closeExecutionModeMenu,
+                )}
               <div
                 data-testid="project-execution-mode-menu-section"
-                className="space-y-0.5"
+                className={cn('space-y-0.5', isMobile && 'px-5 pb-5 pt-2')}
               >
                 <div className="px-2 pb-1 text-xs font-medium leading-5 text-text-muted">
                   {t('workbench.execution_mode_label', '启动模式')}
@@ -741,6 +813,7 @@ export function ProjectWorkBar({
                   onClick={() => handleExecutionModeChange('current_workspace')}
                   className={cn(
                     'flex h-9 w-full items-center gap-3 rounded-lg px-2 text-left text-[13px] font-medium leading-[18px] disabled:cursor-not-allowed disabled:opacity-60',
+                    isMobile && 'h-14 rounded-2xl bg-surface px-4 text-base leading-5',
                     executionMode === 'current_workspace'
                       ? 'text-text-primary'
                       : 'text-text-secondary hover:bg-muted',
@@ -761,6 +834,7 @@ export function ProjectWorkBar({
                   onClick={() => handleExecutionModeChange('git_worktree')}
                   className={cn(
                     'flex h-9 w-full items-center gap-3 rounded-lg px-2 text-left text-[13px] font-medium leading-[18px] disabled:cursor-not-allowed disabled:opacity-60',
+                    isMobile && 'h-14 rounded-2xl bg-surface px-4 text-base leading-5',
                     executionMode === 'git_worktree'
                       ? 'text-text-primary'
                       : 'text-text-secondary hover:bg-muted',
@@ -796,6 +870,22 @@ export function ProjectWorkBar({
           </button>
         </div>
       )}
+      {currentProject &&
+        executionMode === 'current_workspace' &&
+        !executionModeLocked &&
+        onListBranches &&
+        onCheckoutBranch && (
+          <BranchSelector
+            variant="workbar"
+            mobileSheet
+            currentBranch={branchName}
+            loading={branchLoading}
+            onRefresh={onRefreshBranch}
+            onListBranches={onListBranches}
+            onCheckoutBranch={onCheckoutBranch}
+            onCreateBranch={onCreateBranch}
+          />
+        )}
     </div>
   )
 }

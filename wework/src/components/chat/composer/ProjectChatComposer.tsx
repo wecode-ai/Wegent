@@ -126,6 +126,12 @@ export function ProjectChatComposer({
           onSelectStandaloneDevice={projectWork.onSelectStandaloneDevice}
           onExecutionModeChange={projectWork.onExecutionModeChange}
           onCreateProjectMode={projectWork.onCreateProjectMode}
+          branchName={projectWork.branchName}
+          branchLoading={projectWork.branchLoading}
+          onRefreshBranch={projectWork.onRefreshBranch}
+          onListBranches={projectWork.onListBranches}
+          onCheckoutBranch={projectWork.onCheckoutBranch}
+          onCreateBranch={projectWork.onCreateBranch}
           className="min-h-11 px-4"
         />
       )}

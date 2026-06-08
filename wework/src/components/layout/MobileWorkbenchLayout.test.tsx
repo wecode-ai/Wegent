@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState, type ReactNode } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
@@ -138,6 +138,10 @@ describe('MobileWorkbenchLayout', () => {
     expect(screen.getByTestId('mobile-empty-state-content')).toHaveClass(
       'items-center',
       'gap-6',
+    )
+    expect(screen.getByTestId('project-work-button').parentElement?.parentElement).toHaveClass(
+      'flex-col',
+      'gap-1',
     )
     expect(screen.getByTestId('mobile-empty-state-content').parentElement).toHaveClass(
       'items-center',
@@ -324,6 +328,104 @@ describe('MobileWorkbenchLayout', () => {
 
     expect(screen.getByTestId('project-work-button')).toHaveTextContent(
       'github_wegent',
+    )
+  })
+
+  test('shows and switches branches in the mobile empty project controls', async () => {
+    const currentProject = {
+      ...baseState.projects[0],
+      config: {
+        mode: 'workspace',
+        device_id: 'device-1',
+        workspace: {
+          source: 'local_path' as const,
+          localPath: '/workspace/github_wegent',
+        },
+      },
+    }
+    const onLoadEnvironmentInfo = vi.fn().mockResolvedValue({
+      additions: '+0',
+      deletions: '-0',
+      executionTarget: 'local' as const,
+      branchName: 'main',
+    })
+    const onCheckoutEnvironmentBranch = vi.fn().mockResolvedValue(undefined)
+
+    renderAtMobileWidth(
+      <MobileWorkbenchLayout
+        state={{
+          ...baseState,
+          currentProject,
+        }}
+        messages={[]}
+        projectChat={baseProjectChat}
+        projectWork={{
+          projects: [currentProject],
+          devices: [],
+          currentProjectId: currentProject.id,
+          executionMode: 'current_workspace',
+          executionModeLocked: false,
+          onSelectProject: vi.fn(),
+          onSelectStandaloneDevice: vi.fn(),
+          onExecutionModeChange: vi.fn(),
+        }}
+        onSelectProject={vi.fn()}
+        onOpenTask={vi.fn()}
+        onLoadEnvironmentInfo={onLoadEnvironmentInfo}
+        onListEnvironmentBranches={vi.fn().mockResolvedValue(['feature/mobile', 'main'])}
+        onCheckoutEnvironmentBranch={onCheckoutEnvironmentBranch}
+        onCreateEnvironmentBranch={vi.fn().mockResolvedValue(undefined)}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+      />,
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('project-branch-button')).toHaveTextContent('main'),
+    )
+    const controls = screen.getByTestId('project-work-button').parentElement?.parentElement
+    expect(controls).toHaveClass('flex-col')
+    expect(screen.getByTestId('execution-mode-button')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+    expect(screen.getByTestId('project-work-menu')).toHaveAttribute(
+      'data-mobile',
+      'true',
+    )
+    expect(screen.getByTestId('project-work-menu')).toHaveClass(
+      'fixed',
+      'max-h-[45dvh]',
+    )
+    expect(screen.getByTestId('project-search-input')).not.toHaveFocus()
+    await userEvent.click(screen.getByTestId('project-work-mobile-close-button'))
+
+    await userEvent.click(screen.getByTestId('execution-mode-button'))
+    expect(screen.getByTestId('project-execution-mode-menu')).toHaveAttribute(
+      'data-mobile',
+      'true',
+    )
+    expect(screen.getByTestId('project-execution-mode-menu')).toHaveClass(
+      'fixed',
+      'max-h-[45dvh]',
+    )
+    await userEvent.click(screen.getByTestId('project-work-mobile-close-button'))
+
+    await userEvent.click(screen.getByTestId('project-branch-button'))
+    expect(await screen.findByTestId('project-branch-menu')).toHaveAttribute(
+      'data-mobile',
+      'true',
+    )
+    expect(screen.getByTestId('project-branch-menu')).toHaveClass(
+      'fixed',
+      'max-h-[56dvh]',
+    )
+    expect(screen.getByTestId('project-branch-search-input')).not.toHaveFocus()
+    const options = await screen.findAllByTestId('project-branch-option')
+    await userEvent.click(options[0])
+
+    expect(onCheckoutEnvironmentBranch).toHaveBeenCalledWith(
+      currentProject,
+      'feature/mobile',
     )
   })
 
