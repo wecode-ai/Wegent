@@ -31,6 +31,8 @@ NODE_VERSION="${NODE_VERSION:-}"
 NODE_DIST_MIRROR="${NODE_DIST_MIRROR:-https://npmmirror.com/mirrors/node}"
 NPM_REGISTRY="${NPM_REGISTRY:-https://registry.npmmirror.com}"
 NPM_LOGLEVEL="${NPM_LOGLEVEL:-info}"
+INSTALL_CODEX_CLI="${INSTALL_CODEX_CLI:-true}"
+CODEX_CLI_PACKAGE="${CODEX_CLI_PACKAGE:-@openai/codex@0.137.0}"
 NODE_BIN="${NODE_BIN:-/usr/local/bin/node}"
 NPM_BIN="${NPM_BIN:-/usr/local/bin/npm}"
 NPX_BIN="${NPX_BIN:-/usr/local/bin/npx}"
@@ -297,6 +299,47 @@ install_nodejs_from_npmmirror() {
     hash -r
 
     success "Installed Node.js $("$NODE_BIN" --version)."
+}
+
+install_codex_cli() {
+    local node_cmd node_path_dir npm_cmd
+
+    if [ "$INSTALL_CODEX_CLI" != "true" ]; then
+        info "Skipping Codex CLI installation."
+        return
+    fi
+
+    ensure_nodejs_for_code_server
+    node_cmd="$(preferred_node_command || true)"
+    npm_cmd="$(preferred_npm_command || true)"
+    if [ -z "$node_cmd" ] || [ -z "$npm_cmd" ]; then
+        error "Node.js and npm are required to install Codex CLI."
+        exit 1
+    fi
+
+    node_path_dir="$(dirname "$node_cmd")"
+    info "Installing ${CODEX_CLI_PACKAGE} from npm registry ${NPM_REGISTRY}..."
+    if ! $SUDO env \
+        PATH="${node_path_dir}:/usr/local/bin:${PATH}" \
+        npm_config_fetch_retries=5 \
+        npm_config_fetch_retry_factor=2 \
+        npm_config_fetch_retry_maxtimeout=120000 \
+        npm_config_fetch_retry_mintimeout=10000 \
+        npm_config_loglevel="$NPM_LOGLEVEL" \
+        npm_config_registry="$NPM_REGISTRY" \
+        "$npm_cmd" install -g "$CODEX_CLI_PACKAGE" \
+            --loglevel="$NPM_LOGLEVEL" \
+            --unsafe-perm; then
+        error "Failed to install ${CODEX_CLI_PACKAGE}."
+        exit 1
+    fi
+
+    if ! env PATH="${node_path_dir}:/usr/local/bin:${PATH}" codex --version >/dev/null 2>&1; then
+        error "Codex CLI installation failed; 'codex' command is unavailable."
+        exit 1
+    fi
+
+    success "Installed Codex CLI $(env PATH="${node_path_dir}:/usr/local/bin:${PATH}" codex --version)."
 }
 
 install_ttyd() {
@@ -739,6 +782,9 @@ print_versions() {
     if command -v node >/dev/null 2>&1; then
         node --version || true
     fi
+    if command -v codex >/dev/null 2>&1; then
+        codex --version || true
+    fi
 }
 
 main() {
@@ -747,6 +793,7 @@ main() {
     apt_install_base_packages
     enable_universe_repository
     install_nodejs_if_requested
+    install_codex_cli
     install_ttyd
     install_code_server
     patch_code_server_vsda_assets

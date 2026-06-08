@@ -1147,6 +1147,56 @@ describe('ChatInput', () => {
     }
   })
 
+  test('hides unsupported Gemini models from the desktop model menu', async () => {
+    const gptModel: UnifiedModel = {
+      name: 'overseas-gpt-5.5',
+      type: 'user',
+      displayName: '海外:gpt-5.5',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.5',
+          sortOrder: 10,
+        },
+      },
+    }
+    const geminiModel: UnifiedModel = {
+      name: 'overseas-gemini-3-pro',
+      type: 'public',
+      displayName: '海外:gemini-3-pro',
+      config: {
+        ui: {
+          family: 'gemini',
+          region: 'overseas',
+          modelLabel: 'gemini-3-pro',
+          sortOrder: 10,
+        },
+      },
+    }
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [gptModel, geminiModel],
+          selectedModel: gptModel,
+          selectedModelOptions: {},
+        })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+
+    expect(screen.getByTestId('model-family-gpt')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-family-gemini')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('model-option-overseas-gemini-3-pro')).not.toBeInTheDocument()
+  })
+
   test('moves the desktop model submenu upward when the active family is near the viewport bottom', async () => {
     const originalInnerHeight = window.innerHeight
     Object.defineProperty(window, 'innerHeight', {
@@ -1226,7 +1276,7 @@ describe('ChatInput', () => {
         if (testId === 'model-selector-menu') {
           return { top: 64, left: 604, width: 576, height: 620 } as DOMRect
         }
-        if (testId === 'model-family-gemini') {
+        if (testId === 'model-family-gpt') {
           return { top: 500, left: 620, width: 520, height: 72 } as DOMRect
         }
         if (testId === 'model-selector-submenu') {
@@ -1237,14 +1287,14 @@ describe('ChatInput', () => {
     )
 
     const model: UnifiedModel = {
-      name: 'overseas-gemini-3-pro',
+      name: 'overseas-gpt-5.5',
       type: 'user',
-      displayName: '海外:Gemini3-Pro',
+      displayName: '海外:gpt-5.5',
       config: {
         ui: {
-          family: 'gemini',
+          family: 'gpt',
           region: 'overseas',
-          modelLabel: 'Gemini3-Pro',
+          modelLabel: 'gpt-5.5',
           sortOrder: 10,
         },
       },

@@ -43,6 +43,34 @@ const branches: GitBranch[] = [
 ]
 
 describe('ProjectCreateDialog', () => {
+  test('offers a settings link to create a cloud device when no project devices are available', async () => {
+    const onOpenCloudDeviceSettings = vi.fn()
+
+    render(
+      <ProjectCreateDialog
+        open
+        mode="scratch"
+        devices={[]}
+        onClose={vi.fn()}
+        onCreateProject={vi.fn()}
+        onOpenCloudDeviceSettings={onOpenCloudDeviceSettings}
+        onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
+        onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
+        onListDeviceDirectories={vi.fn().mockResolvedValue([])}
+        onCreateDeviceDirectory={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('暂无可用设备')).toBeInTheDocument()
+    const settingsLink = screen.getByTestId('open-cloud-device-settings-link')
+
+    expect(settingsLink).toHaveAttribute('href', '/settings')
+
+    await userEvent.click(settingsLink)
+
+    expect(onOpenCloudDeviceSettings).toHaveBeenCalledTimes(1)
+  })
+
   test('hides OpenClaw devices from the project device selector', () => {
     render(
       <ProjectCreateDialog
@@ -218,7 +246,9 @@ describe('ProjectCreateDialog', () => {
     await waitFor(() => expect(pathInput).toHaveValue('/home/user'))
 
     await userEvent.clear(pathInput)
-    await userEvent.type(pathInput, '/home/user/re{Enter}')
+    await userEvent.type(pathInput, '/home/user/re')
+    await waitFor(() => expect(pathInput).toHaveValue('/home/user/re'))
+    fireEvent.keyDown(pathInput, { key: 'Enter' })
 
     await waitFor(() => expect(pathInput).toHaveValue('/home/user/repo'))
     await waitFor(() =>
