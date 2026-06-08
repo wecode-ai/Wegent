@@ -1095,7 +1095,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('project-work-button'))
     await userEvent.click(screen.getByTestId('add-project-option'))
     await userEvent.click(screen.getByTestId('project-start-from-scratch-option'))
-    await userEvent.click(screen.getByTestId('open-cloud-device-settings-button'))
+    await userEvent.click(screen.getByTestId('open-cloud-device-settings-link'))
 
     expect(screen.queryByTestId('project-create-dialog')).not.toBeInTheDocument()
     expect(screen.getByTestId('wework-settings-page')).toBeInTheDocument()

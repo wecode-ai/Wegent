@@ -1,4 +1,4 @@
-import { Check, ChevronLeft, Cloud, Folder, FolderPlus, Loader2, X } from 'lucide-react'
+import { Check, ChevronLeft, Folder, FolderPlus, Loader2, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
@@ -612,23 +612,20 @@ function ProjectCreateDialogContent({
         </select>
 
         {sortedDevices.length === 0 && onOpenCloudDeviceSettings && (
-          <div className="mt-3 rounded-lg border border-[#d8d8d8] bg-[#f7f7f8] px-3 py-3">
-            <p className="text-xs leading-5 text-[#606368]">
-              {t(
-                'workbench.project_no_available_devices_hint',
-                '创建项目需要一台可用设备。你可以先创建云设备连接，设备就绪后再选择项目目录。',
-              )}
-            </p>
-            <button
-              type="button"
-              data-testid="open-cloud-device-settings-button"
-              onClick={onOpenCloudDeviceSettings}
-              className="mt-3 inline-flex h-9 items-center gap-2 rounded-md bg-[#14b8a6] px-3 text-xs font-medium text-white hover:bg-[#0f9f93]"
+          <p className="mt-2 text-xs leading-5 text-[#606368]">
+            {t('workbench.project_no_available_devices_hint', '创建项目需要一台可用设备。')}
+            <a
+              href="/settings"
+              data-testid="open-cloud-device-settings-link"
+              onClick={event => {
+                event.preventDefault()
+                onOpenCloudDeviceSettings()
+              }}
+              className="ml-1 font-medium text-[#14b8a6] underline underline-offset-2 hover:text-[#0f9f93]"
             >
-              <Cloud className="h-3.5 w-3.5" />
               {t('workbench.project_create_cloud_device_connection', '创建云设备连接')}
-            </button>
-          </div>
+            </a>
+          </p>
         )}
 
         {mode === 'scratch' ? (

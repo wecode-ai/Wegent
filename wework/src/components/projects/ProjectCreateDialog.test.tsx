@@ -43,7 +43,7 @@ const branches: GitBranch[] = [
 ]
 
 describe('ProjectCreateDialog', () => {
-  test('offers a shortcut to create a cloud device when no project devices are available', async () => {
+  test('offers a settings link to create a cloud device when no project devices are available', async () => {
     const onOpenCloudDeviceSettings = vi.fn()
 
     render(
@@ -62,8 +62,11 @@ describe('ProjectCreateDialog', () => {
     )
 
     expect(screen.getByText('暂无可用设备')).toBeInTheDocument()
+    const settingsLink = screen.getByTestId('open-cloud-device-settings-link')
 
-    await userEvent.click(screen.getByTestId('open-cloud-device-settings-button'))
+    expect(settingsLink).toHaveAttribute('href', '/settings')
+
+    await userEvent.click(settingsLink)
 
     expect(onOpenCloudDeviceSettings).toHaveBeenCalledTimes(1)
   })
@@ -243,7 +246,9 @@ describe('ProjectCreateDialog', () => {
     await waitFor(() => expect(pathInput).toHaveValue('/home/user'))
 
     await userEvent.clear(pathInput)
-    await userEvent.type(pathInput, '/home/user/re{Enter}')
+    await userEvent.type(pathInput, '/home/user/re')
+    await waitFor(() => expect(pathInput).toHaveValue('/home/user/re'))
+    fireEvent.keyDown(pathInput, { key: 'Enter' })
 
     await waitFor(() => expect(pathInput).toHaveValue('/home/user/repo'))
     await waitFor(() =>
