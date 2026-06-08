@@ -36,6 +36,10 @@ class ProjectTaskResponse(BaseModel):
     task_id: int = Field(..., description="Task ID")
     task_title: str = Field(..., description="Task title")
     task_status: str = Field(..., description="Task status")
+    device_id: Optional[str] = Field(None, description="Device ID used for execution")
+    execution_workspace_source: Optional[str] = Field(
+        None, description="Task execution workspace source"
+    )
     is_group_chat: bool = Field(
         default=False, description="Whether the task is a group chat"
     )
@@ -321,6 +325,15 @@ class ProjectWorktreeProjectRef(BaseModel):
     source_path: str = Field(..., description="Configured project source path")
 
 
+class ProjectWorktreeTaskRef(BaseModel):
+    """Matched task metadata for a scanned worktree directory."""
+
+    id: int = Field(..., description="Task ID")
+    title: str = Field(..., description="Task title")
+    status: str = Field(..., description="Task status")
+    project_id: int = Field(..., description="Project ID")
+
+
 class ProjectWorktreeItem(BaseModel):
     """One worktree directory discovered on a device."""
 
@@ -329,6 +342,9 @@ class ProjectWorktreeItem(BaseModel):
     path: str = Field(..., description="Absolute worktree path on the device")
     project: Optional[ProjectWorktreeProjectRef] = Field(
         None, description="Matched Wework project, if any"
+    )
+    task: Optional[ProjectWorktreeTaskRef] = Field(
+        None, description="Matched task using this worktree, if any"
     )
 
 

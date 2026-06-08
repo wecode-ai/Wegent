@@ -1,9 +1,10 @@
-import { Loader2, RefreshCw, Trash2 } from 'lucide-react'
+import { Loader2, MessageSquare, RefreshCw, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createHttpClient } from '@/api/http'
 import { createProjectApi } from '@/api/projects'
 import { getRuntimeConfig } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
+import { buildTaskRoute, navigateTo } from '@/lib/navigation'
 import type {
   ProjectWorktreeDeviceGroup,
   ProjectWorktreeItem,
@@ -94,6 +95,39 @@ function getUniqueGroupDevices(group: WorktreeProjectGroup): ProjectWorktreeDevi
   return [...devices.values()]
 }
 
+function WorktreeTaskEntry({ item }: { item: ProjectWorktreeItem }) {
+  const { t } = useTranslation('common')
+  const task = item.task
+
+  if (!task) {
+    return (
+      <span
+        data-testid={`worktree-task-missing-${item.worktree_id}`}
+        className="inline-flex h-8 w-44 shrink-0 items-center justify-start truncate text-xs text-text-muted"
+        title={t('workbench.worktrees_task_missing_title')}
+      >
+        {t('workbench.worktrees_task_missing')}
+      </span>
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      data-testid={`worktree-task-link-${item.worktree_id}`}
+      onClick={() =>
+        navigateTo(buildTaskRoute({ taskId: task.id, projectId: task.project_id }))
+      }
+      className="inline-flex h-8 w-44 shrink-0 items-center gap-1.5 rounded-md px-2 text-left text-xs text-text-secondary hover:bg-muted hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+      title={`${task.title} #${task.id}`}
+      aria-label={t('workbench.worktrees_open_task', { title: task.title })}
+    >
+      <MessageSquare className="h-3.5 w-3.5 shrink-0" />
+      <span className="min-w-0 truncate">{task.title}</span>
+    </button>
+  )
+}
+
 function WorktreeRow({
   row,
   deletingKey,
@@ -119,6 +153,7 @@ function WorktreeRow({
       <p className="min-w-0 flex-1 truncate font-mono text-sm text-text-secondary">
         {item.path}
       </p>
+      <WorktreeTaskEntry item={item} />
       {item.project && (
         <button
           type="button"

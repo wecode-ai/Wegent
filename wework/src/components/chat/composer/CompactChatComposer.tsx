@@ -12,6 +12,7 @@ interface CompactChatComposerProps {
   onChange: (value: string) => void
   onSubmit: () => void
   disabled: boolean
+  disabledReason?: string
   placeholder: string
   attachments?: Attachment[]
   uploadingFiles?: Map<string, { file: File; progress: number }>
@@ -28,6 +29,7 @@ export function CompactChatComposer({
   onChange,
   onSubmit,
   disabled,
+  disabledReason,
   placeholder,
   attachments = [],
   uploadingFiles = new Map(),
@@ -85,6 +87,14 @@ export function CompactChatComposer({
         errors={attachmentErrors}
         onRemoveAttachment={onRemoveAttachment}
       />
+      {disabledReason && (
+        <div
+          data-testid="composer-disabled-reason"
+          className="mb-2 rounded-2xl bg-muted px-4 py-2 text-sm text-text-secondary"
+        >
+          {disabledReason}
+        </div>
+      )}
       <input
         ref={imageInputRef}
         type="file"
@@ -132,6 +142,7 @@ export function CompactChatComposer({
             onChange={onChange}
             onSubmit={onSubmit}
             canSend={canSend}
+            disabled={disabled}
             placeholder={placeholder}
             rows={1}
             onPasteFiles={files => onFileSelect?.(files)}
@@ -147,6 +158,7 @@ export function CompactChatComposer({
               type="button"
               data-testid="expand-input-button"
               onClick={() => setFullscreenInputOpen(true)}
+              disabled={disabled}
               className="absolute right-2 top-2 z-popover flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-muted"
               aria-label={t('workbench.expand_input', '展开输入框')}
             >
@@ -157,7 +169,8 @@ export function CompactChatComposer({
             <button
               type="button"
               data-testid="voice-input-button"
-              className="absolute bottom-[6px] right-14 z-popover flex h-11 w-11 items-center justify-center rounded-full p-0 text-text-secondary hover:bg-muted"
+              disabled={disabled}
+              className="absolute bottom-[6px] right-14 z-popover flex h-11 w-11 items-center justify-center rounded-full p-0 text-text-secondary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
               aria-label={t('workbench.voice_input', '语音输入')}
             >
               <Mic className="h-5 w-5" />
@@ -238,6 +251,7 @@ export function CompactChatComposer({
               data-testid="fullscreen-message-input"
               value={value}
               onChange={event => onChange(event.target.value)}
+              disabled={disabled}
               onPaste={handlePasteFiles}
               placeholder={placeholder}
               className="h-full w-full resize-none rounded-2xl border border-border bg-surface px-4 pb-4 pt-14 text-base leading-7 text-text-primary outline-none placeholder:text-text-muted"

@@ -54,6 +54,7 @@ interface ChatInputProps {
   onChange: (value: string) => void
   onSubmit: () => void
   disabled: boolean
+  disabledReason?: string
   placeholder?: string
   variant?: 'compact' | 'desktop'
   projectChat?: ProjectChatControls
@@ -74,6 +75,7 @@ export function ChatInput({
   onChange,
   onSubmit,
   disabled,
+  disabledReason,
   placeholder,
   variant = 'compact',
   projectChat,
@@ -110,7 +112,14 @@ export function ChatInput({
       listLocalSkills: async () => [],
     }
 
-  const composerProps = { value, onChange, onSubmit, disabled, placeholder: inputPlaceholder }
+  const composerProps = {
+    value,
+    onChange,
+    onSubmit,
+    disabled,
+    disabledReason,
+    placeholder: disabledReason ? '' : inputPlaceholder,
+  }
   const queuePanel = (
     <ConversationQueuePanel
       queuedMessages={queuedMessages}

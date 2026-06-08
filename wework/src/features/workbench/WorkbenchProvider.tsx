@@ -22,6 +22,12 @@ import { createSocketClient } from '@/stream/socketClient'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { buildTaskRoute, navigateTo, parseTaskRoute } from '@/lib/navigation'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
+import {
+  findWorkbenchDevice,
+  getActiveWorkbenchDeviceId,
+  getWorkbenchDeviceDisplayName,
+  isWorkbenchDeviceOnline,
+} from '@/lib/workbench-device'
 import type {
   Attachment,
   ArchivedTaskListResponse,
@@ -66,6 +72,11 @@ import { WorkbenchContext } from './useWorkbench'
 
 const WEWORK_CLIENT_ORIGIN = 'wework'
 const LOCAL_SKILLS_CACHE_TTL_MS = 60_000
+const DEVICE_STATUS_LABELS: Record<string, string> = {
+  online: '在线',
+  busy: '忙碌',
+  offline: '离线',
+}
 
 interface QueuedWorkbenchSend extends QueuedWorkbenchMessage {
   payload: ChatSendPayload
@@ -578,6 +589,10 @@ export function WorkbenchProvider({
       null,
     [currentUser, state.currentTask]
   )
+  const modelCompatibilityConfig = useMemo(
+    () => getTaskModelSelection(state.currentTask),
+    [state.currentTask]
+  )
   const persistNewChatModelSelection = useCallback(
     (selection: ModelSelectionConfig) => {
       if (state.currentTask) return
@@ -604,6 +619,7 @@ export function WorkbenchProvider({
     api: resolvedServices.modelApi,
     locked: false,
     selectionConfig: modelSelectionConfig,
+    compatibilityConfig: modelCompatibilityConfig,
     selectionReady: !state.isBootstrapping,
     onSelectionChange: persistNewChatModelSelection,
   })
@@ -1278,11 +1294,11 @@ export function WorkbenchProvider({
     (message: string): { payload: ChatSendPayload; activeDeviceId?: string } | null => {
       if (!state.defaultTeam) return null
 
-      const activeDeviceId =
-        state.currentTask?.device_id ??
-        state.currentProject?.config?.execution?.deviceId ??
-        state.currentProject?.config?.device_id ??
-        (!state.currentProject ? state.standaloneDeviceId ?? undefined : undefined)
+      const activeDeviceId = getActiveWorkbenchDeviceId({
+        currentTask: state.currentTask,
+        currentProject: state.currentProject,
+        standaloneDeviceId: state.standaloneDeviceId,
+      })
 
       const payload: ChatSendPayload = {
         task_id: state.currentTask?.id,
@@ -1432,6 +1448,23 @@ export function WorkbenchProvider({
     const message = trimmedMessage || '请参考附件'
     const prepared = buildSendPayload(message)
     if (!prepared) return
+    if (prepared.activeDeviceId) {
+      const activeDevice = findWorkbenchDevice(state.devices, prepared.activeDeviceId)
+      if (!isWorkbenchDeviceOnline(activeDevice)) {
+        const deviceName = getWorkbenchDeviceDisplayName(
+          activeDevice,
+          prepared.activeDeviceId,
+        )
+        const status = activeDevice
+          ? DEVICE_STATUS_LABELS[activeDevice.status] ?? activeDevice.status
+          : '不可用'
+        dispatch({
+          type: 'error_set',
+          error: `${deviceName} ${status}，恢复在线后可继续对话`,
+        })
+        return
+      }
+    }
     const attachmentsSnapshot = hasAttachments
       ? [...attachmentSelection.attachments]
       : undefined
@@ -1469,6 +1502,7 @@ export function WorkbenchProvider({
     buildSendPayload,
     hasActiveTurn,
     sendPreparedMessage,
+    state.devices,
     state.currentTask?.id,
     state.input,
   ])
