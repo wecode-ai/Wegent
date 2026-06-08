@@ -107,6 +107,7 @@ class RagRuntimeResolver:
         reserved_output_tokens: int = 4096,
         context_buffer_ratio: float = 0.1,
         max_direct_chunks: int = 500,
+        knowledge_base_configs: list[QueryKnowledgeBaseRuntimeConfig] | None = None,
     ) -> QueryRuntimeSpec:
         direct_injection_budget = None
         if context_window is not None:
@@ -118,9 +119,15 @@ class RagRuntimeResolver:
                 max_direct_chunks=max_direct_chunks,
             )
 
-        knowledge_base_configs: list[QueryKnowledgeBaseRuntimeConfig] = []
-        if db is not None and route_mode == "rag_retrieval":
-            knowledge_base_configs = self.build_query_knowledge_base_configs(
+        resolved_knowledge_base_configs = (
+            [] if knowledge_base_configs is None else knowledge_base_configs
+        )
+        if (
+            db is not None
+            and route_mode == "rag_retrieval"
+            and knowledge_base_configs is None
+        ):
+            resolved_knowledge_base_configs = self.build_query_knowledge_base_configs(
                 db=db,
                 knowledge_base_ids=knowledge_base_ids,
                 current_user_id=user_id,
@@ -137,7 +144,7 @@ class RagRuntimeResolver:
             restricted_mode=restricted_mode,
             user_id=user_id,
             user_name=user_name,
-            knowledge_base_configs=knowledge_base_configs,
+            knowledge_base_configs=resolved_knowledge_base_configs,
             enabled_index_families=enabled_index_families or ["chunk_vector"],
             retrieval_policy=retrieval_policy,
             direct_injection_budget=direct_injection_budget,
@@ -419,13 +426,33 @@ class RagRuntimeResolver:
         current_user_id: int | None = None,
         user_name: str | None,
     ) -> list[QueryKnowledgeBaseRuntimeConfig]:
-        configs: list[QueryKnowledgeBaseRuntimeConfig] = []
+        knowledge_base_records = []
         for knowledge_base_id in knowledge_base_ids:
             kb = self._get_knowledge_base_record(
                 db=db, knowledge_base_id=knowledge_base_id
             )
             if kb is None:
                 raise ValueError(f"Knowledge base {knowledge_base_id} not found")
+            knowledge_base_records.append(kb)
+
+        return self.build_query_knowledge_base_configs_from_records(
+            db=db,
+            knowledge_base_records=knowledge_base_records,
+            current_user_id=current_user_id,
+            user_name=user_name,
+        )
+
+    def build_query_knowledge_base_configs_from_records(
+        self,
+        *,
+        db: Session,
+        knowledge_base_records: list[Kind],
+        current_user_id: int | None = None,
+        user_name: str | None = None,
+    ) -> list[QueryKnowledgeBaseRuntimeConfig]:
+        configs: list[QueryKnowledgeBaseRuntimeConfig] = []
+        for kb in knowledge_base_records:
+            knowledge_base_id = kb.id
 
             retrieval_config = (kb.json or {}).get("spec", {}).get(
                 "retrievalConfig"
