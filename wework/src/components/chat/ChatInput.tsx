@@ -4,6 +4,7 @@ import type {
   DeviceInfo,
   LocalDeviceSkill,
   ModelOptions,
+  ProjectExecutionMode,
   ProjectWithTasks,
   SkillRef,
   UnifiedModel,
@@ -13,6 +14,8 @@ import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/w
 import { ConversationQueuePanel } from './ConversationQueuePanel'
 import { CompactChatComposer } from './composer/CompactChatComposer'
 import { ProjectChatComposer } from './composer/ProjectChatComposer'
+
+export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
 export interface ProjectChatControls {
   models: UnifiedModel[]
@@ -38,8 +41,18 @@ export interface ProjectWorkControls {
   devices: DeviceInfo[]
   currentProjectId?: number
   currentStandaloneDeviceId?: string | null
+  executionMode: ProjectExecutionMode
+  executionModeLocked?: boolean
   onSelectProject: (projectId: number | null) => void
   onSelectStandaloneDevice: (deviceId: string | null) => void
+  onExecutionModeChange: (mode: ProjectExecutionMode) => void
+  onCreateProjectMode?: (mode: ProjectCreateMode) => void
+  branchName?: string
+  branchLoading?: boolean
+  onRefreshBranch?: () => Promise<void>
+  onListBranches?: () => Promise<string[]>
+  onCheckoutBranch?: (branchName: string) => Promise<void>
+  onCreateBranch?: (branchName: string) => Promise<void>
 }
 
 interface ChatInputProps {
@@ -47,6 +60,7 @@ interface ChatInputProps {
   onChange: (value: string) => void
   onSubmit: () => void
   disabled: boolean
+  disabledReason?: string
   placeholder?: string
   variant?: 'compact' | 'desktop'
   projectChat?: ProjectChatControls
@@ -67,6 +81,7 @@ export function ChatInput({
   onChange,
   onSubmit,
   disabled,
+  disabledReason,
   placeholder,
   variant = 'compact',
   projectChat,
@@ -103,7 +118,14 @@ export function ChatInput({
       listLocalSkills: async () => [],
     }
 
-  const composerProps = { value, onChange, onSubmit, disabled, placeholder: inputPlaceholder }
+  const composerProps = {
+    value,
+    onChange,
+    onSubmit,
+    disabled,
+    disabledReason,
+    placeholder: disabledReason ? '' : inputPlaceholder,
+  }
   const queuePanel = (
     <ConversationQueuePanel
       queuedMessages={queuedMessages}
@@ -142,8 +164,12 @@ export function ChatInput({
               devices: [],
               currentProjectId: undefined,
               currentStandaloneDeviceId: null,
+              executionMode: 'current_workspace',
+              executionModeLocked: false,
               onSelectProject: () => {},
               onSelectStandaloneDevice: () => {},
+              onExecutionModeChange: () => {},
+              onCreateProjectMode: undefined,
             }
           }
           showProjectWorkBar={showProjectWorkBar}

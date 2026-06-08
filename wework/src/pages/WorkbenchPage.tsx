@@ -14,6 +14,8 @@ export function WorkbenchPage() {
     queuedMessages,
     guidanceMessages,
     runningTaskIds,
+    projectExecutionMode,
+    setProjectExecutionMode,
     projectChat,
     selectProject,
     selectStandaloneDevice,
@@ -26,6 +28,9 @@ export function WorkbenchPage() {
     rememberExecutionDevice,
     refreshDevices,
     createProject,
+    createGitWorkspaceProject,
+    listGitRepositories,
+    listGitBranches,
     updateProjectName,
     removeProject,
     archiveAllChats,
@@ -61,8 +66,11 @@ export function WorkbenchPage() {
     devices: state.devices,
     currentProjectId: state.currentProject?.id,
     currentStandaloneDeviceId: state.standaloneDeviceId,
+    executionMode: projectExecutionMode,
+    executionModeLocked: Boolean(state.currentTask),
     onSelectProject: selectProject,
     onSelectStandaloneDevice: selectStandaloneDevice,
+    onExecutionModeChange: setProjectExecutionMode,
   }
 
   return (
@@ -85,6 +93,9 @@ export function WorkbenchPage() {
       onRememberExecutionDevice={rememberExecutionDevice}
       onRefreshDevices={refreshDevices}
       onCreateProject={createProject}
+      onCreateGitWorkspaceProject={createGitWorkspaceProject}
+      onListGitRepositories={listGitRepositories}
+      onListGitBranches={listGitBranches}
       onUpdateProjectName={updateProjectName}
       onRemoveProject={removeProject}
       onArchiveAllChats={archiveAllChats}

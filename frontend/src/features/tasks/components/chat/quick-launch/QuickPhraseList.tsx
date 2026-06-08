@@ -1,6 +1,6 @@
 'use client'
 
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Paperclip } from 'lucide-react'
 
 import type { QuickInputPreset, QuickLauncher } from './types'
 
@@ -49,6 +49,7 @@ export function QuickPhraseList({
             index * QUICK_PHRASE_STAGGER_MS,
             QUICK_PHRASE_MAX_STAGGER_MS
           )
+          const hasAttachments = (preset.source_attachment_ids?.length ?? 0) > 0
 
           return (
             <button
@@ -70,12 +71,17 @@ export function QuickPhraseList({
               }
               data-testid={`quick-phrase-${index}`}
             >
-              <span className="block text-sm font-medium text-text-primary">{preset.title}</span>
-              {preset.prompt && preset.prompt !== preset.title && (
-                <span className="mt-1 block text-xs leading-5 text-text-muted">
-                  {preset.prompt}
+              <span className="flex items-center gap-1.5">
+                <span className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary">
+                  {preset.title}
                 </span>
-              )}
+                {hasAttachments && (
+                  <Paperclip
+                    className="h-3.5 w-3.5 flex-shrink-0 text-text-muted"
+                    data-testid={`quick-phrase-attachment-icon-${index}`}
+                  />
+                )}
+              </span>
             </button>
           )
         })}

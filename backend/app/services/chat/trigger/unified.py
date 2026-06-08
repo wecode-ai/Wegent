@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from fastapi import HTTPException
 
+from app.core.constants import CLIENT_ORIGIN_FRONTEND
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask import Subtask
@@ -293,6 +294,10 @@ async def build_execution_request(
             additional_skills = getattr(payload, "additional_skills", None)
             if additional_skills:
                 preload_skills = list(preload_skills or []) + list(additional_skills)
+        web_runtime_guidance = (
+            payload is not None
+            and getattr(payload, "client_origin", None) == CLIENT_ORIGIN_FRONTEND
+        )
 
         # Extract model override from task metadata labels
         # This is where force_override_bot_model is stored when task is created
@@ -326,6 +331,7 @@ async def build_execution_request(
             override_model_name=override_model_name,
             force_override=force_override,
             previous_bot_id=previous_bot_id,
+            web_runtime_guidance=web_runtime_guidance,
         )
 
         # Merge reasoning config from API/model selection into model_config.

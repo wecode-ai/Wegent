@@ -19,6 +19,8 @@ from app.core.security import get_current_user
 from app.models.user import User
 from app.schemas.project import (
     AddTaskToProjectResponse,
+    GitWorkspaceProjectCreate,
+    GitWorkspaceProjectResponse,
     ProjectConversationCreate,
     ProjectConversationResponse,
     ProjectCreate,
@@ -28,6 +30,8 @@ from app.schemas.project import (
     ProjectTaskCreate,
     ProjectUpdate,
     ProjectWithTasksResponse,
+    ProjectWorktreeDeleteResponse,
+    ProjectWorktreeListResponse,
     RemoveTaskFromProjectResponse,
 )
 from app.schemas.task import TaskArchiveBatchResponse
@@ -89,6 +93,32 @@ def create_project_endpoint(
 
 
 @router.post(
+    "/git-workspace",
+    response_model=GitWorkspaceProjectResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_git_workspace_project_endpoint(
+    project_create: GitWorkspaceProjectCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Create a Git-backed workspace project and clone it on the selected device."""
+    try:
+        return await project_service.create_git_workspace_project(
+            db=db,
+            project_data=project_create,
+            user_id=current_user.id,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create Git workspace project: {str(e)}",
+        )
+
+
+@router.post(
     "/archive-chats",
     response_model=TaskArchiveBatchResponse,
 )
@@ -109,6 +139,59 @@ def archive_all_project_chats_endpoint(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to archive project chats: {str(e)}",
+        )
+
+
+@router.get("/worktrees", response_model=ProjectWorktreeListResponse)
+async def list_project_worktrees_endpoint(
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List Wework worktree directories by scanning each relevant online device once."""
+    try:
+        return await project_service.list_project_worktrees(
+            db=db,
+            user_id=current_user.id,
+            client_origin=client_origin,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list project worktrees: {str(e)}",
+        )
+
+
+@router.delete(
+    "/worktrees/{device_id}/{worktree_id}",
+    response_model=ProjectWorktreeDeleteResponse,
+)
+async def delete_project_worktree_endpoint(
+    device_id: str = Path(..., description="Local execution device ID"),
+    worktree_id: str = Path(..., description="Task ID worktree directory"),
+    project_id: int = Query(..., description="Project ID matched to the worktree"),
+    client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Delete a project worktree directory and its matching task."""
+    try:
+        return await project_service.delete_project_worktree(
+            db=db,
+            user_id=current_user.id,
+            client_origin=client_origin,
+            device_id=device_id,
+            worktree_id=worktree_id,
+            project_id=project_id,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete project worktree: {str(e)}",
         )
 
 

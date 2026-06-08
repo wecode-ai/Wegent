@@ -47,6 +47,7 @@ import { useToast } from '@/hooks/use-toast'
 import { useScrollManagement } from '../hooks/useScrollManagement'
 import { useFloatingInput } from '../hooks/useFloatingInput'
 import { getAttachment } from '@/apis/attachments'
+import { userApis } from '@/apis/user'
 import { useAttachmentUpload } from '../hooks/useAttachmentUpload'
 import { useSchemeMessageActions } from '@/lib/scheme'
 import { QueryParamAutoSend } from '../params'
@@ -64,7 +65,9 @@ import {
   removeQuickLaunchQueryParams,
   type QuickLaunchIntent,
 } from './quick-launch/launch-intent'
+import { shouldClearDeviceSelectionForQuickLauncher } from './quick-launch/execution-target'
 import type { QuickPresetSelection } from './quick-launch/types'
+import { useDevices } from '@/contexts/DeviceContext'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -108,6 +111,20 @@ function getPipelineNextStepContexts(contexts: unknown): SubtaskContextBrief[] |
 
   const validContexts = contexts.filter(isPipelineNextStepContext)
   return validContexts.length > 0 ? validContexts : undefined
+}
+
+function getSystemQuickLaunchFunctionId(selection: QuickPresetSelection): string | null {
+  if (selection.launcher.type !== 'system_function') {
+    return null
+  }
+
+  const [prefix, ...idParts] = selection.launcher.key.split(':')
+  if (prefix !== 'system' || idParts.length === 0) {
+    return null
+  }
+
+  const functionId = idParts.join(':').trim()
+  return functionId || null
 }
 
 interface ChatAreaProps {
@@ -175,6 +192,7 @@ function ChatAreaContent({
   const { toast } = useToast()
   const router = useRouter()
   const pathname = usePathname()
+  const { setSelectedDeviceId } = useDevices()
   const chatStreamContext = useOptionalTaskSession()
 
   // Pipeline stage info state - shared between PipelineStageIndicator and MessagesArea
@@ -546,9 +564,12 @@ function ChatAreaContent({
   // Handle team selection from QuickAccessCards
   const handleTeamSelect = useCallback(
     (team: Team) => {
+      if (taskType === 'task' && shouldClearDeviceSelectionForQuickLauncher(team)) {
+        setSelectedDeviceId(null)
+      }
       handleTeamChange(team)
     },
-    [handleTeamChange]
+    [handleTeamChange, setSelectedDeviceId, taskType]
   )
 
   // Use scroll management hook - consolidates 4 useEffect calls
@@ -798,6 +819,9 @@ function ChatAreaContent({
   const setSelectedContexts = chatState.setSelectedContexts
   const resetAttachment = chatState.resetAttachment
   const addExistingAttachment = chatState.addExistingAttachment
+  const handleFileSelect = chatState.handleFileSelect
+  const handleAttachmentRemove = chatState.handleAttachmentRemove
+  const quickPresetAttachmentIdsRef = useRef<Set<number>>(new Set())
   const selectedContextsRef = useRef(chatState.selectedContexts)
   selectedContextsRef.current = chatState.selectedContexts
 
@@ -827,8 +851,39 @@ function ChatAreaContent({
     [applyQuickPhraseToInput, chatState.taskInputMessage]
   )
 
+  const clearQuickPresetAttachments = useCallback(async () => {
+    const attachmentIds = Array.from(quickPresetAttachmentIdsRef.current)
+    if (attachmentIds.length === 0) {
+      return
+    }
+
+    quickPresetAttachmentIdsRef.current = new Set()
+    await Promise.all(attachmentIds.map(attachmentId => handleAttachmentRemove(attachmentId)))
+  }, [handleAttachmentRemove])
+
+  const handleUserFileSelect = useCallback(
+    async (files: File | File[]) => {
+      await clearQuickPresetAttachments()
+      await handleFileSelect(files)
+    },
+    [clearQuickPresetAttachments, handleFileSelect]
+  )
+
+  const handleInputAttachmentRemove = useCallback(
+    async (attachmentId: number) => {
+      await handleAttachmentRemove(attachmentId)
+      if (quickPresetAttachmentIdsRef.current.has(attachmentId)) {
+        const nextIds = new Set(quickPresetAttachmentIdsRef.current)
+        nextIds.delete(attachmentId)
+        quickPresetAttachmentIdsRef.current = nextIds
+      }
+    },
+    [handleAttachmentRemove]
+  )
+
   const handleQuickPresetSelect = useCallback(
-    ({ preset }: QuickPresetSelection) => {
+    async (selection: QuickPresetSelection) => {
+      const { preset } = selection
       const options = preset.options
       if (options?.enable_deep_thinking !== undefined && options.enable_deep_thinking !== null) {
         chatState.setEnableDeepThinking(options.enable_deep_thinking)
@@ -847,8 +902,49 @@ function ChatAreaContent({
       if (prompt) {
         handleQuickPhraseSelect(prompt)
       }
+
+      const sourceAttachmentIds = preset.source_attachment_ids ?? []
+      if (sourceAttachmentIds.length === 0) {
+        await clearQuickPresetAttachments()
+        return
+      }
+
+      const hasUserAttachment = chatState.attachmentState.attachments.some(
+        attachment => !quickPresetAttachmentIdsRef.current.has(attachment.id)
+      )
+      if (hasUserAttachment) {
+        await clearQuickPresetAttachments()
+        return
+      }
+
+      const functionId = getSystemQuickLaunchFunctionId(selection)
+      if (!functionId) {
+        return
+      }
+
+      await clearQuickPresetAttachments()
+      try {
+        const response = await userApis.prepareQuickLaunchPreset({
+          function_id: functionId,
+          preset_id: preset.id,
+        })
+        response.attachments.forEach(attachment => {
+          addExistingAttachment(attachment)
+        })
+        quickPresetAttachmentIdsRef.current = new Set(
+          response.attachments.map(attachment => attachment.id)
+        )
+      } catch (error) {
+        console.error('Failed to prepare quick launch preset attachments:', error)
+      }
     },
-    [chatState, handleQuickPhraseSelect, skillSelector]
+    [
+      addExistingAttachment,
+      chatState,
+      clearQuickPresetAttachments,
+      handleQuickPhraseSelect,
+      skillSelector,
+    ]
   )
 
   const handleConfirmQuickPhraseOverwrite = useCallback(() => {
@@ -988,7 +1084,7 @@ function ChatAreaContent({
       isSendPending: streamHandlers.hasPendingUserMessage,
       isStreaming: streamHandlers.isStreaming,
       attachmentState: chatState.attachmentState,
-      onFileSelect: chatState.handleFileSelect,
+      onFileSelect: handleUserFileSelect,
       setIsDragging: chatState.setIsDragging,
     })
 
@@ -1424,8 +1520,8 @@ function ChatAreaContent({
     selectedContexts: chatState.selectedContexts,
     setSelectedContexts: chatState.setSelectedContexts,
     attachmentState: chatState.attachmentState,
-    onFileSelect: chatState.handleFileSelect,
-    onAttachmentRemove: chatState.handleAttachmentRemove,
+    onFileSelect: handleUserFileSelect,
+    onAttachmentRemove: handleInputAttachmentRemove,
     isStreaming: streamHandlers.isStreaming,
     isStopping: streamHandlers.isStopping,
     hasMessages,

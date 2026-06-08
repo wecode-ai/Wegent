@@ -5,6 +5,7 @@ export interface RuntimeConfig {
   socketPath: string
   loginMode: 'password' | 'oidc' | 'all'
   oidcLoginText: string
+  cloudDeviceScalingWikiUrl: string
 }
 
 function trimTrailingSlash(value: string): string {
@@ -66,5 +67,6 @@ export function getRuntimeConfig(): RuntimeConfig {
     loginMode:
       (import.meta.env.VITE_LOGIN_MODE as RuntimeConfig['loginMode'] | undefined) || 'all',
     oidcLoginText: import.meta.env.VITE_OIDC_LOGIN_TEXT || '',
+    cloudDeviceScalingWikiUrl: import.meta.env.VITE_CLOUD_DEVICE_SCALING_WIKI_URL || '',
   }
 }

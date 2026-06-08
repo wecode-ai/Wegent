@@ -1,5 +1,5 @@
 import { Bot, Menu } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type {
   ProjectChatControls,
@@ -14,7 +14,10 @@ import { isSettingsRoute, navigateTo } from '@/lib/navigation'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import type {
   ArchivedTaskListResponse,
+  CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
+  GitBranch,
+  GitRepoInfo,
   ProjectWithTasks,
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
@@ -42,6 +45,11 @@ interface MobileWorkbenchLayoutProps {
   onStartNewProjectChat?: (projectId: number) => void
   onOpenTask: (taskId: number, projectId?: number) => void
   onCreateProject?: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
+  onCreateGitWorkspaceProject?: (
+    data: CreateGitWorkspaceProjectRequest,
+  ) => Promise<ProjectWithTasks>
+  onListGitRepositories?: () => Promise<GitRepoInfo[]>
+  onListGitBranches?: (repo: GitRepoInfo) => Promise<GitBranch[]>
   onUpdateProjectName?: (projectId: number, name: string) => Promise<void>
   onRemoveProject?: (projectId: number) => Promise<void>
   onArchiveAllChats?: () => Promise<void>
@@ -65,6 +73,17 @@ interface MobileWorkbenchLayoutProps {
   onCommitEnvironmentChanges?: (
     project: ProjectWithTasks | null,
     message: string,
+  ) => Promise<void>
+  onListEnvironmentBranches?: (
+    project: ProjectWithTasks | null,
+  ) => Promise<string[]>
+  onCheckoutEnvironmentBranch?: (
+    project: ProjectWithTasks | null,
+    branchName: string,
+  ) => Promise<void>
+  onCreateEnvironmentBranch?: (
+    project: ProjectWithTasks | null,
+    branchName: string,
   ) => Promise<void>
   onInputChange: (value: string) => void
   onSend: () => void
@@ -91,6 +110,10 @@ export function MobileWorkbenchLayout({
   projectWork,
   onSelectProject,
   onOpenTask,
+  onLoadEnvironmentInfo,
+  onListEnvironmentBranches,
+  onCheckoutEnvironmentBranch,
+  onCreateEnvironmentBranch,
   onInputChange,
   onSend,
   isResponseStreaming = false,
@@ -105,6 +128,11 @@ export function MobileWorkbenchLayout({
   const [settingsOpen, setSettingsOpen] = useState(() =>
     isSettingsRoute(stripAppBasePath(window.location.pathname))
   )
+  const [environmentInfo, setEnvironmentInfo] = useState<EnvironmentInfo>({
+    additions: '+0',
+    deletions: '-0',
+    executionTarget: 'local',
+  })
   const hasConversation = messages.length > 0 || state.currentTask
   const effectiveProjectChat = projectChat ?? {
     models: [],
@@ -121,13 +149,56 @@ export function MobileWorkbenchLayout({
         projectName: state.currentProject.name,
       })
     : t('workbench.empty_title', '我们该做什么？')
-  const effectiveProjectWork = projectWork ?? {
+  const refreshEnvironmentInfo = useCallback(async () => {
+    if (!onLoadEnvironmentInfo || !state.currentProject) return
+
+    setEnvironmentInfo(info => ({ ...info, loading: true }))
+    try {
+      const info = await onLoadEnvironmentInfo(state.currentProject)
+      setEnvironmentInfo({ ...info, loading: false })
+    } catch (error) {
+      setEnvironmentInfo(info => ({
+        ...info,
+        loading: false,
+        error: error instanceof Error ? error.message : 'Failed to load environment info',
+      }))
+    }
+  }, [onLoadEnvironmentInfo, state.currentProject])
+
+  const baseProjectWork = projectWork ?? {
     projects: state.projects,
     devices: state.devices,
     currentProjectId: state.currentProject?.id,
     currentStandaloneDeviceId: state.standaloneDeviceId,
+    executionMode: 'current_workspace',
+    executionModeLocked: Boolean(state.currentTask),
     onSelectProject,
     onSelectStandaloneDevice: () => {},
+    onExecutionModeChange: () => {},
+  }
+  const effectiveProjectWork: ProjectWorkControls = {
+    ...baseProjectWork,
+    branchName: environmentInfo.branchName,
+    branchLoading: environmentInfo.loading,
+    onRefreshBranch: refreshEnvironmentInfo,
+    onListBranches:
+      state.currentProject && onListEnvironmentBranches
+        ? () => onListEnvironmentBranches(state.currentProject)
+        : undefined,
+    onCheckoutBranch:
+      state.currentProject && onCheckoutEnvironmentBranch
+        ? async branchName => {
+            await onCheckoutEnvironmentBranch(state.currentProject, branchName)
+            await refreshEnvironmentInfo()
+          }
+        : undefined,
+    onCreateBranch:
+      state.currentProject && onCreateEnvironmentBranch
+        ? async branchName => {
+            await onCreateEnvironmentBranch(state.currentProject, branchName)
+            await refreshEnvironmentInfo()
+          }
+        : undefined,
   }
 
   useEffect(() => {
@@ -137,6 +208,12 @@ export function MobileWorkbenchLayout({
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
   }, [])
+
+  useEffect(() => {
+    if (state.currentProject && !state.currentTask) {
+      void refreshEnvironmentInfo()
+    }
+  }, [refreshEnvironmentInfo, state.currentProject, state.currentTask])
 
   if (settingsOpen) {
     return (
@@ -278,7 +355,7 @@ export function MobileWorkbenchLayout({
                 </h1>
                 <ProjectWorkBar
                   {...effectiveProjectWork}
-                  className="min-h-0 justify-center px-0"
+                  className="min-h-0 flex-col justify-center gap-1 px-0"
                   buttonClassName="bg-surface px-4 text-text-primary"
                   menuClassName="left-1/2 w-[min(20rem,calc(100vw-2.5rem))] -translate-x-1/2"
                   emptyLabel={t('workbench.select_project', '选择项目')}

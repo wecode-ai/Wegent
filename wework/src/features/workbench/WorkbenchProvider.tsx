@@ -8,6 +8,7 @@ import {
   listProjectBranches,
   loadProjectEnvironment,
 } from '@/api/environment'
+import { createGitApi } from '@/api/git'
 import { createHttpClient } from '@/api/http'
 import { createModelApi } from '@/api/models'
 import { createProjectApi } from '@/api/projects'
@@ -20,15 +21,27 @@ import { createChatStream } from '@/stream/chatStream'
 import { createSocketClient } from '@/stream/socketClient'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { buildTaskRoute, navigateTo, parseTaskRoute } from '@/lib/navigation'
+import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
+import {
+  findWorkbenchDevice,
+  getActiveWorkbenchDeviceId,
+  getWorkbenchDeviceDisplayName,
+  isWorkbenchDeviceOnline,
+} from '@/lib/workbench-device'
 import type {
   Attachment,
   ArchivedTaskListResponse,
   ChatSendPayload,
+  ChatBlock,
   CreateProjectRequest,
+  CreateGitWorkspaceProjectRequest,
+  GitBranch,
+  GitRepoInfo,
   DeviceInfo,
   LocalDeviceSkill,
   ModelOptions,
   ModelSelectionConfig,
+  ProjectExecutionMode,
   ProjectWithTasks,
   SkillRef,
   Subtask,
@@ -42,8 +55,8 @@ import type {
 import type { EnvironmentInfo } from '@/types/environment'
 import type {
   GuidanceWorkbenchMessage,
+  ProcessingBlock,
   QueuedWorkbenchMessage,
-  ToolBlock,
   WorkbenchMessage,
   WorkbenchState,
 } from '@/types/workbench'
@@ -59,6 +72,11 @@ import { WorkbenchContext } from './useWorkbench'
 
 const WEWORK_CLIENT_ORIGIN = 'wework'
 const LOCAL_SKILLS_CACHE_TTL_MS = 60_000
+const DEVICE_STATUS_LABELS: Record<string, string> = {
+  online: '在线',
+  busy: '忙碌',
+  offline: '离线',
+}
 
 interface QueuedWorkbenchSend extends QueuedWorkbenchMessage {
   payload: ChatSendPayload
@@ -70,7 +88,15 @@ export interface WorkbenchServices {
   teamApi: ReturnType<typeof createTeamApi>
   modelApi: ReturnType<typeof createModelApi>
   skillApi: ReturnType<typeof createSkillApi>
-  projectApi: ReturnType<typeof createProjectApi>
+  projectApi: Omit<
+    ReturnType<typeof createProjectApi>,
+    'createGitWorkspaceProject'
+  > & {
+    createGitWorkspaceProject?: ReturnType<
+      typeof createProjectApi
+    >['createGitWorkspaceProject']
+  }
+  gitApi?: ReturnType<typeof createGitApi>
   taskApi: Omit<ReturnType<typeof createTaskApi>, 'searchTasks'> & {
     searchTasks?: ReturnType<typeof createTaskApi>['searchTasks']
   }
@@ -107,6 +133,8 @@ export interface WorkbenchContextValue {
     listLocalSkills: () => Promise<LocalDeviceSkill[]>
   }
   runningTaskIds: Set<number>
+  projectExecutionMode: ProjectExecutionMode
+  setProjectExecutionMode: (mode: ProjectExecutionMode) => void
   selectProject: (projectId: number | null) => void
   selectStandaloneDevice: (deviceId: string | null) => void
   startNewChat: () => void
@@ -119,6 +147,11 @@ export interface WorkbenchContextValue {
   refreshWorkLists: () => Promise<void>
   refreshDevices: () => Promise<void>
   createProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
+  createGitWorkspaceProject: (
+    data: CreateGitWorkspaceProjectRequest,
+  ) => Promise<ProjectWithTasks>
+  listGitRepositories: () => Promise<GitRepoInfo[]>
+  listGitBranches: (repo: GitRepoInfo) => Promise<GitBranch[]>
   updateProjectName: (projectId: number, name: string) => Promise<void>
   removeProject: (projectId: number) => Promise<void>
   archiveAllChats: () => Promise<void>
@@ -174,6 +207,7 @@ function createDefaultServices(): WorkbenchServices {
     modelApi: createModelApi(client),
     skillApi: createSkillApi(client),
     projectApi: createProjectApi(client),
+    gitApi: createGitApi(client),
     taskApi: createTaskApi(client),
     deviceApi: createDeviceApi(client),
     userApi: createUserApi(client),
@@ -206,34 +240,91 @@ function getSubtaskResult(result: unknown): SubtaskResult | undefined {
   }
 }
 
-function getPersistedToolBlocks(subtask: Subtask, blocks?: unknown[]): ToolBlock[] {
-  if (!blocks) return []
+function getBlockTimestamp(value: unknown): number {
+  if (typeof value !== 'number') return Date.now()
+  return value > 1_000_000_000_000 ? value : Date.now()
+}
 
-  return blocks.flatMap((block, index) => {
-    if (!isRecord(block) || block.type !== 'tool') return []
+function normalizeProcessingBlock(
+  subtaskId: number,
+  block: unknown,
+  index: number
+): ProcessingBlock | null {
+  if (!isRecord(block)) return null
 
+  const timestamp = getBlockTimestamp(block.timestamp)
+  const status = normalizeBlockStatus(
+    typeof block.status === 'string' ? block.status : undefined
+  )
+
+  if (block.type === 'tool') {
     const id =
       typeof block.id === 'string'
         ? block.id
         : typeof block.tool_use_id === 'string'
           ? block.tool_use_id
-          : `tool-${subtask.id}-${index}`
-    const timestamp = typeof block.timestamp === 'number' ? block.timestamp : Date.now()
+          : `tool-${subtaskId}-${index}`
+    return {
+      id,
+      subtaskId,
+      type: 'tool',
+      toolName: typeof block.tool_name === 'string' ? block.tool_name : 'unknown',
+      toolInput: isRecord(block.tool_input) ? block.tool_input : undefined,
+      toolOutput: block.tool_output,
+      status,
+      createdAt: timestamp,
+    }
+  }
 
-    return [
-      {
-        id,
-        subtaskId: subtask.id,
-        toolName: typeof block.tool_name === 'string' ? block.tool_name : 'unknown',
-        toolInput: isRecord(block.tool_input) ? block.tool_input : undefined,
-        toolOutput: block.tool_output,
-        status: normalizeBlockStatus(
-          typeof block.status === 'string' ? block.status : undefined
-        ),
-        createdAt: timestamp,
-      },
-    ]
+  if (block.type === 'thinking') {
+    const id =
+      typeof block.id === 'string' ? block.id : `thinking-${subtaskId}-${index}`
+    return {
+      id,
+      subtaskId,
+      type: 'thinking',
+      content: typeof block.content === 'string' ? block.content : '',
+      status,
+      createdAt: timestamp,
+    }
+  }
+
+  return null
+}
+
+function normalizeProcessingBlocks(
+  subtaskId: number,
+  blocks?: unknown[]
+): ProcessingBlock[] {
+  if (!blocks) return []
+
+  return blocks.flatMap((block, index) => {
+    const normalized = normalizeProcessingBlock(subtaskId, block, index)
+    return normalized ? [normalized] : []
   })
+}
+
+function getResultBlocks(
+  subtaskId: number,
+  result: unknown
+): ProcessingBlock[] | undefined {
+  if (!isRecord(result) || !Array.isArray(result.blocks)) return undefined
+  const blocks = normalizeProcessingBlocks(subtaskId, result.blocks)
+  return blocks.length > 0 ? blocks : undefined
+}
+
+function getReasoningChunk(result: unknown): string | undefined {
+  if (!isRecord(result)) return undefined
+  return typeof result.reasoning_chunk === 'string'
+    ? result.reasoning_chunk
+    : undefined
+}
+
+function normalizeChatBlock(
+  subtaskId: number,
+  block: ChatBlock
+): ProcessingBlock | null {
+  return normalizeProcessingBlock(subtaskId, block, 0)
 }
 
 function normalizeAttachmentStatus(status?: string): Attachment['status'] {
@@ -274,7 +365,7 @@ function getSubtaskAttachments(subtask: Subtask): Attachment[] | undefined {
 function subtaskToMessage(subtask: Subtask): WorkbenchMessage {
   const result = getSubtaskResult(subtask.result)
   const role = subtask.role.toLowerCase() === 'user' ? 'user' : 'assistant'
-  const blocks = getPersistedToolBlocks(subtask, result?.blocks)
+  const blocks = normalizeProcessingBlocks(subtask.id, result?.blocks)
   return {
     id: `subtask-${subtask.id}`,
     taskId: subtask.task_id,
@@ -429,6 +520,8 @@ export function WorkbenchProvider({
   const [guidanceMessages, setGuidanceMessages] = useState<GuidanceWorkbenchMessage[]>([])
   const [isAwaitingAssistantStart, setIsAwaitingAssistantStart] = useState(false)
   const [routePath, setRoutePath] = useState(getCurrentAppPath)
+  const [projectExecutionMode, setProjectExecutionMode] =
+    useState<ProjectExecutionMode>('current_workspace')
   const guidanceSendInFlightRef = useRef(false)
   const localSkillsCacheRef = useRef<
     Map<string, { expiresAt: number; skills: LocalDeviceSkill[] }>
@@ -442,12 +535,63 @@ export function WorkbenchProvider({
     state.currentProject?.config?.execution?.deviceId ??
     state.currentProject?.config?.device_id ??
     (!state.currentProject ? state.standaloneDeviceId ?? undefined : undefined)
+
+  const selectProjectExecutionMode = useCallback(
+    (mode: ProjectExecutionMode) => {
+      setProjectExecutionMode(mode)
+      if (
+        state.currentTask ||
+        !state.currentProject ||
+        !supportsGitWorktreeExecution(state.currentProject)
+      ) {
+        return
+      }
+      const preferences = {
+        ...(currentUser.preferences ?? {}),
+        wework_project_execution_mode: mode,
+      }
+      dispatch({ type: 'user_preferences_updated', preferences })
+      void resolvedServices.userApi
+        ?.updateCurrentUser({ preferences })
+        .catch(() => {
+          dispatch({ type: 'error_set', error: '启动模式保存失败' })
+        })
+    },
+    [
+      currentUser.preferences,
+      resolvedServices.userApi,
+      state.currentProject,
+      state.currentTask,
+    ],
+  )
+
+  useEffect(() => {
+    if (
+      state.currentTask ||
+      !state.currentProject ||
+      !supportsGitWorktreeExecution(state.currentProject)
+    ) {
+      setProjectExecutionMode('current_workspace')
+      return
+    }
+    setProjectExecutionMode(
+      currentUser.preferences?.wework_project_execution_mode ?? 'current_workspace',
+    )
+  }, [
+    currentUser.preferences?.wework_project_execution_mode,
+    state.currentProject,
+    state.currentTask,
+  ])
   const modelSelectionConfig = useMemo(
     () =>
       getTaskModelSelection(state.currentTask) ??
       getNewChatModelSelection(currentUser) ??
       null,
     [currentUser, state.currentTask]
+  )
+  const modelCompatibilityConfig = useMemo(
+    () => getTaskModelSelection(state.currentTask),
+    [state.currentTask]
   )
   const persistNewChatModelSelection = useCallback(
     (selection: ModelSelectionConfig) => {
@@ -475,6 +619,7 @@ export function WorkbenchProvider({
     api: resolvedServices.modelApi,
     locked: false,
     selectionConfig: modelSelectionConfig,
+    compatibilityConfig: modelCompatibilityConfig,
     selectionReady: !state.isBootstrapping,
     onSelectionChange: persistNewChatModelSelection,
   })
@@ -584,6 +729,8 @@ export function WorkbenchProvider({
           type: 'assistant_chunk',
           subtaskId: payload.subtask_id,
           content: payload.content,
+          reasoningChunk: getReasoningChunk(payload.result),
+          blocks: getResultBlocks(payload.subtask_id, payload.result),
         }),
       onChatDone: payload => {
         setIsAwaitingAssistantStart(false)
@@ -602,6 +749,7 @@ export function WorkbenchProvider({
             typeof payload.result.value === 'string'
               ? payload.result.value
               : undefined,
+          blocks: getResultBlocks(payload.subtask_id, payload.result),
         })
       },
       onChatError: payload => {
@@ -621,19 +769,12 @@ export function WorkbenchProvider({
         })
       },
       onBlockCreated: payload => {
-        if (payload.block.type !== 'tool') return
+        const block = normalizeChatBlock(payload.subtask_id, payload.block)
+        if (!block) return
         dispatchMessages({
           type: 'block_created',
           subtaskId: payload.subtask_id,
-          block: {
-            id: payload.block.id,
-            subtaskId: payload.subtask_id,
-            toolName: payload.block.tool_name ?? 'unknown',
-            toolInput: payload.block.tool_input,
-            toolOutput: payload.block.tool_output,
-            status: normalizeBlockStatus(payload.block.status),
-            createdAt: payload.block.timestamp ?? Date.now(),
-          },
+          block,
         })
       },
       onBlockUpdated: payload => {
@@ -642,7 +783,8 @@ export function WorkbenchProvider({
           subtaskId: payload.subtask_id,
           blockId: payload.block_id,
           updates: {
-            ...(payload.tool_input && { toolInput: payload.tool_input }),
+            ...(payload.content !== undefined && { content: payload.content }),
+            ...(payload.tool_input !== undefined && { toolInput: payload.tool_input }),
             ...(payload.tool_output !== undefined && { toolOutput: payload.tool_output }),
             ...(payload.status && { status: normalizeBlockStatus(payload.status) }),
           },
@@ -693,7 +835,7 @@ export function WorkbenchProvider({
       void resolvedServices.userApi
         ?.updateCurrentUser({
           preferences: {
-            ...(user.preferences ?? {}),
+            ...(currentUser.preferences ?? {}),
             default_execution_target: deviceId,
           },
         })
@@ -701,7 +843,7 @@ export function WorkbenchProvider({
           // Keep the in-session selection even if preference persistence fails.
         })
     },
-    [resolvedServices.userApi, state.devices, user.preferences]
+    [currentUser.preferences, resolvedServices.userApi, state.devices]
   )
 
   const selectProject = useCallback(
@@ -853,7 +995,15 @@ export function WorkbenchProvider({
       setQueuedSends([])
       setGuidanceMessages([])
       writeTaskIdToUrl(taskId)
-      await resolvedServices.chatStream.joinTask(taskId)
+      const joinResponse = await resolvedServices.chatStream.joinTask(taskId)
+      if (joinResponse?.streaming) {
+        dispatchMessages({
+          type: 'assistant_cached',
+          taskId,
+          subtaskId: joinResponse.streaming.subtask_id,
+          content: joinResponse.streaming.cached_content,
+        })
+      }
       const routeProjectId =
         resolvedProjectId && resolvedProjectId > 0 ? resolvedProjectId : undefined
       handledTaskRouteRef.current = getTaskRouteKey(taskId, routeProjectId)
@@ -948,6 +1098,38 @@ export function WorkbenchProvider({
       return project
     },
     [refreshWorkLists, rememberExecutionDevice, resolvedServices, user.id]
+  )
+
+  const createGitWorkspaceProject = useCallback(
+    async (data: CreateGitWorkspaceProjectRequest) => {
+      if (!resolvedServices.projectApi.createGitWorkspaceProject) {
+        throw new Error('Git workspace project creation is unavailable')
+      }
+      const response = await resolvedServices.projectApi.createGitWorkspaceProject(data)
+      const project: ProjectWithTasks = {
+        ...response.project,
+        tasks: response.project.tasks ?? [],
+      }
+      rememberExecutionDevice(data.device_id)
+      await refreshWorkLists()
+      writeLastProjectId(user.id, project.id)
+      dispatch({ type: 'project_selected', project })
+      dispatchMessages({ type: 'reset', messages: [] })
+      setQueuedSends([])
+      setGuidanceMessages([])
+      return project
+    },
+    [refreshWorkLists, rememberExecutionDevice, resolvedServices, user.id]
+  )
+
+  const listGitRepositories = useCallback(
+    () => resolvedServices.gitApi?.listRepositories() ?? Promise.resolve([]),
+    [resolvedServices]
+  )
+
+  const listGitBranches = useCallback(
+    (repo: GitRepoInfo) => resolvedServices.gitApi?.listBranches(repo) ?? Promise.resolve([]),
+    [resolvedServices]
   )
 
   const updateProjectName = useCallback(
@@ -1120,11 +1302,11 @@ export function WorkbenchProvider({
     (message: string): { payload: ChatSendPayload; activeDeviceId?: string } | null => {
       if (!state.defaultTeam) return null
 
-      const activeDeviceId =
-        state.currentTask?.device_id ??
-        state.currentProject?.config?.execution?.deviceId ??
-        state.currentProject?.config?.device_id ??
-        (!state.currentProject ? state.standaloneDeviceId ?? undefined : undefined)
+      const activeDeviceId = getActiveWorkbenchDeviceId({
+        currentTask: state.currentTask,
+        currentProject: state.currentProject,
+        standaloneDeviceId: state.standaloneDeviceId,
+      })
 
       const payload: ChatSendPayload = {
         task_id: state.currentTask?.id,
@@ -1134,6 +1316,19 @@ export function WorkbenchProvider({
         device_id: activeDeviceId,
         task_type: 'code',
         message,
+      }
+
+      if (
+        !state.currentTask &&
+        state.currentProject &&
+        projectExecutionMode === 'git_worktree' &&
+        supportsGitWorktreeExecution(state.currentProject)
+      ) {
+        payload.execution = {
+          workspace: {
+            source: 'git_worktree',
+          },
+        }
       }
 
       if (modelSelection.selectedModel) {
@@ -1160,6 +1355,7 @@ export function WorkbenchProvider({
       modelSelection.selectedModel,
       modelSelection.selectedModelOptions,
       skillSelection.selectedSkills,
+      projectExecutionMode,
       state.currentProject,
       state.currentTask,
       state.defaultTeam,
@@ -1260,6 +1456,23 @@ export function WorkbenchProvider({
     const message = trimmedMessage || '请参考附件'
     const prepared = buildSendPayload(message)
     if (!prepared) return
+    if (prepared.activeDeviceId) {
+      const activeDevice = findWorkbenchDevice(state.devices, prepared.activeDeviceId)
+      if (!isWorkbenchDeviceOnline(activeDevice)) {
+        const deviceName = getWorkbenchDeviceDisplayName(
+          activeDevice,
+          prepared.activeDeviceId,
+        )
+        const status = activeDevice
+          ? DEVICE_STATUS_LABELS[activeDevice.status] ?? activeDevice.status
+          : '不可用'
+        dispatch({
+          type: 'error_set',
+          error: `${deviceName} ${status}，恢复在线后可继续对话`,
+        })
+        return
+      }
+    }
     const attachmentsSnapshot = hasAttachments
       ? [...attachmentSelection.attachments]
       : undefined
@@ -1297,6 +1510,7 @@ export function WorkbenchProvider({
     buildSendPayload,
     hasActiveTurn,
     sendPreparedMessage,
+    state.devices,
     state.currentTask?.id,
     state.input,
   ])
@@ -1548,6 +1762,8 @@ export function WorkbenchProvider({
     queuedMessages: queuedSends,
     guidanceMessages,
     runningTaskIds,
+    projectExecutionMode,
+    setProjectExecutionMode: selectProjectExecutionMode,
     projectChat: {
       models: modelSelection.models,
       skills: skillSelection.skills,
@@ -1582,6 +1798,9 @@ export function WorkbenchProvider({
     refreshWorkLists,
     refreshDevices,
     createProject,
+    createGitWorkspaceProject,
+    listGitRepositories,
+    listGitBranches,
     updateProjectName,
     removeProject,
     archiveAllChats,

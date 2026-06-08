@@ -12,7 +12,7 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { PlusIcon, TrashIcon, PencilIcon } from '@heroicons/react/24/outline'
-import { Loader2 } from 'lucide-react'
+import { Loader2, Paperclip, Upload } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -51,6 +51,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { formatFileSize, uploadAttachment } from '@/apis/attachments'
 
 // Common form data type for both slogans and tips
 type ItemFormData = {
@@ -96,22 +97,38 @@ function normalizeSkillNames(value: string[] | undefined): string[] {
   return Array.from(names)
 }
 
+function normalizeAttachmentIds(value: number[] | undefined): number[] {
+  const ids = new Set<number>()
+  for (const id of value ?? []) {
+    if (Number.isInteger(id) && id > 0) {
+      ids.add(id)
+    }
+  }
+  return Array.from(ids)
+}
+
 function normalizeQuickLaunchInputPresets(
   presets: QuickLaunchInputPreset[] | undefined
 ): QuickLaunchInputPreset[] {
   return (presets ?? [])
-    .map((preset, index) => ({
-      id: preset.id.trim() || `preset_${index + 1}`,
-      title: preset.title.trim(),
-      prompt: preset.prompt?.trim() || undefined,
-      options: {
-        enable_deep_thinking: preset.options?.enable_deep_thinking ?? undefined,
-        enable_clarification: preset.options?.enable_clarification ?? undefined,
-        force_override: preset.options?.force_override ?? undefined,
-        selected_skill_names: normalizeSkillNames(preset.options?.selected_skill_names),
-      },
-    }))
-    .filter(preset => preset.title || preset.prompt)
+    .map((preset, index) => {
+      const sourceAttachmentIds = normalizeAttachmentIds(preset.source_attachment_ids)
+      return {
+        id: preset.id.trim() || `preset_${index + 1}`,
+        title: preset.title.trim(),
+        prompt: preset.prompt?.trim() || undefined,
+        options: {
+          enable_deep_thinking: preset.options?.enable_deep_thinking ?? undefined,
+          enable_clarification: preset.options?.enable_clarification ?? undefined,
+          force_override: preset.options?.force_override ?? undefined,
+          selected_skill_names: normalizeSkillNames(preset.options?.selected_skill_names),
+        },
+        source_attachment_ids: sourceAttachmentIds,
+      }
+    })
+    .filter(
+      preset => preset.title || preset.prompt || (preset.source_attachment_ids ?? []).length > 0
+    )
     .map(preset => ({
       ...preset,
       title: preset.title || preset.prompt || preset.id,
@@ -135,6 +152,15 @@ const SystemConfigPanel: React.FC = () => {
   const [quickLaunchFunctionsVersion, setQuickLaunchFunctionsVersion] = useState(0)
   const [publicTeams, setPublicTeams] = useState<AdminPublicTeam[]>([])
   const [quickLaunchFunctions, setQuickLaunchFunctions] = useState<QuickLaunchFunctionConfig[]>([])
+  const [editingQuickLaunchFunctionIndex, setEditingQuickLaunchFunctionIndex] = useState<
+    number | null
+  >(null)
+  const [uploadingQuickLaunchPresetKey, setUploadingQuickLaunchPresetKey] = useState<string | null>(
+    null
+  )
+  const [quickLaunchAttachmentLabels, setQuickLaunchAttachmentLabels] = useState<
+    Record<number, string>
+  >({})
 
   // Slogan dialog states
   const [isSloganDialogOpen, setIsSloganDialogOpen] = useState(false)
@@ -381,8 +407,8 @@ const SystemConfigPanel: React.FC = () => {
 
   const handleAddQuickLaunchFunction = () => {
     const nextIndex = quickLaunchFunctions.length + 1
-    setQuickLaunchFunctions([
-      ...quickLaunchFunctions,
+    setQuickLaunchFunctions(prev => [
+      ...prev,
       {
         id: `system_function_${nextIndex}`,
         title: '',
@@ -394,6 +420,7 @@ const SystemConfigPanel: React.FC = () => {
         input_presets: [],
       },
     ])
+    setEditingQuickLaunchFunctionIndex(quickLaunchFunctions.length)
   }
 
   const updateQuickLaunchFunction = (index: number, patch: Partial<QuickLaunchFunctionConfig>) => {
@@ -404,6 +431,11 @@ const SystemConfigPanel: React.FC = () => {
 
   const removeQuickLaunchFunction = (index: number) => {
     setQuickLaunchFunctions(prev => prev.filter((_, currentIndex) => currentIndex !== index))
+    setEditingQuickLaunchFunctionIndex(currentIndex => {
+      if (currentIndex === null) return null
+      if (currentIndex === index) return null
+      return currentIndex > index ? currentIndex - 1 : currentIndex
+    })
   }
 
   const updateQuickLaunchPreset = (
@@ -462,7 +494,65 @@ const SystemConfigPanel: React.FC = () => {
     })
   }
 
+  const removeQuickLaunchPresetAttachment = (
+    functionIndex: number,
+    presetIndex: number,
+    attachmentId: number
+  ) => {
+    const currentFunction = quickLaunchFunctions[functionIndex]
+    if (!currentFunction) return
+
+    const preset = getEditableInputPresets(currentFunction)[presetIndex]
+    if (!preset) return
+
+    updateQuickLaunchPreset(functionIndex, presetIndex, {
+      source_attachment_ids: (preset.source_attachment_ids ?? []).filter(id => id !== attachmentId),
+    })
+  }
+
+  const handleQuickLaunchPresetUpload = async (
+    functionIndex: number,
+    presetIndex: number,
+    files: FileList | null
+  ) => {
+    const file = files?.[0]
+    if (!file) return
+
+    const uploadKey = `${functionIndex}-${presetIndex}`
+    setUploadingQuickLaunchPresetKey(uploadKey)
+    try {
+      const attachment = await uploadAttachment(file)
+      setQuickLaunchAttachmentLabels(prev => ({
+        ...prev,
+        [attachment.id]: `${attachment.filename} - ${formatFileSize(attachment.file_size)}`,
+      }))
+
+      const currentFunction = quickLaunchFunctions[functionIndex]
+      const preset = currentFunction ? getEditableInputPresets(currentFunction)[presetIndex] : null
+      if (!preset) return
+
+      updateQuickLaunchPreset(functionIndex, presetIndex, {
+        source_attachment_ids: Array.from(
+          new Set([...(preset.source_attachment_ids ?? []), attachment.id])
+        ),
+      })
+    } catch (error) {
+      console.error('Failed to upload quick launch preset attachment:', error)
+      toast({
+        title: t('system_config.errors.quick_launch_attachment_upload_failed'),
+        variant: 'destructive',
+      })
+    } finally {
+      setUploadingQuickLaunchPresetKey(null)
+    }
+  }
+
   // ==================== Render ====================
+
+  const editingQuickLaunchFunction =
+    editingQuickLaunchFunctionIndex === null
+      ? null
+      : quickLaunchFunctions[editingQuickLaunchFunctionIndex] || null
 
   if (loading) {
     return (
@@ -669,327 +759,18 @@ const SystemConfigPanel: React.FC = () => {
 
       {/* Quick Launch System Functions Configuration */}
       <Card className="p-6" data-testid="quick-launch-functions-section">
-        <div className="flex items-start justify-between gap-4 mb-4">
+        <div className="mb-4 flex items-start justify-between gap-4">
           <div>
             <h3 className="text-md font-medium text-text-primary">
               {t('system_config.quick_launch_functions_title')}
             </h3>
-            <p className="text-sm text-text-muted mt-1">
+            <p className="mt-1 text-sm text-text-muted">
               {t('system_config.quick_launch_functions_description')}
             </p>
+            <p className="mt-2 text-xs text-text-muted">
+              {t('system_config.quick_launch_functions_version')}: {quickLaunchFunctionsVersion}
+            </p>
           </div>
-          <span className="text-xs text-text-muted flex-shrink-0">
-            {t('system_config.quick_launch_functions_version')}: {quickLaunchFunctionsVersion}
-          </span>
-        </div>
-        <div className="space-y-4">
-          {quickLaunchFunctions.length === 0 ? (
-            <div className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm text-text-muted">
-              {t('system_config.quick_launch_function_empty')}
-            </div>
-          ) : (
-            quickLaunchFunctions.map((item, index) => {
-              const presets = getEditableInputPresets(item)
-              return (
-                <div
-                  key={`${item.id}-${index}`}
-                  className="space-y-4 rounded-md border border-border bg-base p-4"
-                  data-testid={`quick-launch-function-card-${index}`}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <h4 className="truncate text-sm font-medium text-text-primary">
-                        {item.title || t('system_config.quick_launch_function_untitled')}
-                      </h4>
-                      <p className="mt-0.5 text-xs text-text-muted">{item.id}</p>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-11 min-w-[44px] shrink-0 text-red-500 hover:text-red-600"
-                      onClick={() => removeQuickLaunchFunction(index)}
-                      data-testid={`remove-quick-launch-function-${index}`}
-                    >
-                      <TrashIcon className="h-4 w-4" />
-                    </Button>
-                  </div>
-
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label htmlFor={`quick-launch-function-id-${index}`}>
-                        {t('system_config.quick_launch_function_id')}
-                      </Label>
-                      <Input
-                        id={`quick-launch-function-id-${index}`}
-                        value={item.id}
-                        onChange={event =>
-                          updateQuickLaunchFunction(index, { id: event.target.value })
-                        }
-                        data-testid={`quick-launch-function-id-${index}`}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor={`quick-launch-function-title-${index}`}>
-                        {t('system_config.quick_launch_function_title')}
-                      </Label>
-                      <Input
-                        id={`quick-launch-function-title-${index}`}
-                        value={item.title}
-                        onChange={event =>
-                          updateQuickLaunchFunction(index, { title: event.target.value })
-                        }
-                        data-testid={`quick-launch-function-title-${index}`}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor={`quick-launch-function-team-${index}`}>
-                        {t('system_config.quick_launch_function_team')}
-                      </Label>
-                      <select
-                        id={`quick-launch-function-team-${index}`}
-                        value={item.team_id || ''}
-                        onChange={event =>
-                          updateQuickLaunchFunction(index, { team_id: Number(event.target.value) })
-                        }
-                        className="h-10 w-full rounded-lg border border-border bg-surface px-3 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                        data-testid={`quick-launch-function-team-${index}`}
-                      >
-                        <option value="">
-                          {t('system_config.quick_launch_function_team_placeholder')}
-                        </option>
-                        {publicTeams.map(team => (
-                          <option key={team.id} value={team.id}>
-                            {team.display_name || team.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor={`quick-launch-function-order-${index}`}>
-                        {t('system_config.quick_launch_function_order')}
-                      </Label>
-                      <Input
-                        id={`quick-launch-function-order-${index}`}
-                        type="number"
-                        value={item.order}
-                        onChange={event =>
-                          updateQuickLaunchFunction(index, { order: Number(event.target.value) })
-                        }
-                        data-testid={`quick-launch-function-order-${index}`}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor={`quick-launch-function-icon-${index}`}>
-                        {t('system_config.quick_launch_function_icon')}
-                      </Label>
-                      <Input
-                        id={`quick-launch-function-icon-${index}`}
-                        value={item.icon || ''}
-                        onChange={event =>
-                          updateQuickLaunchFunction(index, { icon: event.target.value })
-                        }
-                        data-testid={`quick-launch-function-icon-${index}`}
-                      />
-                    </div>
-                    <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
-                      <Label htmlFor={`quick-launch-function-enabled-${index}`}>
-                        {t('system_config.quick_launch_function_enabled')}
-                      </Label>
-                      <Switch
-                        id={`quick-launch-function-enabled-${index}`}
-                        checked={item.enabled}
-                        onCheckedChange={checked =>
-                          updateQuickLaunchFunction(index, { enabled: checked })
-                        }
-                        data-testid={`quick-launch-function-enabled-${index}`}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor={`quick-launch-function-description-${index}`}>
-                      {t('system_config.quick_launch_function_description')}
-                    </Label>
-                    <Textarea
-                      id={`quick-launch-function-description-${index}`}
-                      value={item.description || ''}
-                      onChange={event =>
-                        updateQuickLaunchFunction(index, { description: event.target.value })
-                      }
-                      rows={2}
-                      data-testid={`quick-launch-function-description-${index}`}
-                    />
-                  </div>
-
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <Label>{t('system_config.quick_launch_function_presets')}</Label>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-11 min-w-[44px]"
-                        onClick={() => addQuickLaunchPreset(index)}
-                        disabled={(item.input_presets ?? []).length >= 6}
-                        data-testid={`add-quick-launch-function-preset-${index}`}
-                      >
-                        <PlusIcon className="h-4 w-4" />
-                        {t('system_config.quick_launch_function_add_preset')}
-                      </Button>
-                    </div>
-                    <div className="space-y-3">
-                      {presets.map((preset, presetIndex) => (
-                        <div
-                          key={`${preset.id}-${presetIndex}`}
-                          className="space-y-3 rounded-md border border-border bg-surface p-3"
-                          data-testid={`quick-launch-function-preset-${index}-${presetIndex}`}
-                        >
-                          <div className="grid gap-3 md:grid-cols-2">
-                            <div className="space-y-2">
-                              <Label
-                                htmlFor={`quick-launch-function-preset-title-${index}-${presetIndex}`}
-                              >
-                                {t('system_config.quick_launch_function_preset_title')}
-                              </Label>
-                              <Input
-                                id={`quick-launch-function-preset-title-${index}-${presetIndex}`}
-                                value={preset.title}
-                                maxLength={120}
-                                onChange={event =>
-                                  updateQuickLaunchPreset(index, presetIndex, {
-                                    title: event.target.value,
-                                  })
-                                }
-                                placeholder={t(
-                                  'system_config.quick_launch_function_preset_title_placeholder'
-                                )}
-                                data-testid={`quick-launch-function-preset-title-${index}-${presetIndex}`}
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <Label
-                                htmlFor={`quick-launch-function-preset-skills-${index}-${presetIndex}`}
-                              >
-                                {t('system_config.quick_launch_function_preset_skills')}
-                              </Label>
-                              <Input
-                                id={`quick-launch-function-preset-skills-${index}-${presetIndex}`}
-                                value={(preset.options?.selected_skill_names ?? []).join(', ')}
-                                onChange={event =>
-                                  updateQuickLaunchPresetOptions(index, presetIndex, {
-                                    selected_skill_names: event.target.value
-                                      .split(',')
-                                      .map(name => name.trim())
-                                      .filter(Boolean),
-                                  })
-                                }
-                                placeholder={t(
-                                  'system_config.quick_launch_function_preset_skills_placeholder'
-                                )}
-                                data-testid={`quick-launch-function-preset-skills-${index}-${presetIndex}`}
-                              />
-                            </div>
-                          </div>
-
-                          <div className="space-y-2">
-                            <Label
-                              htmlFor={`quick-launch-function-preset-prompt-${index}-${presetIndex}`}
-                            >
-                              {t('system_config.quick_launch_function_preset_prompt')}
-                            </Label>
-                            <Textarea
-                              id={`quick-launch-function-preset-prompt-${index}-${presetIndex}`}
-                              value={preset.prompt || ''}
-                              maxLength={2000}
-                              rows={3}
-                              onChange={event =>
-                                updateQuickLaunchPreset(index, presetIndex, {
-                                  prompt: event.target.value,
-                                })
-                              }
-                              placeholder={t(
-                                'system_config.quick_launch_function_preset_prompt_placeholder'
-                              )}
-                              data-testid={`quick-launch-function-preset-prompt-${index}-${presetIndex}`}
-                            />
-                          </div>
-
-                          <div className="grid gap-2 md:grid-cols-3">
-                            <div className="flex items-center justify-between rounded-md border border-border bg-base px-3 py-2">
-                              <Label
-                                htmlFor={`quick-launch-function-preset-deep-thinking-${index}-${presetIndex}`}
-                              >
-                                {t('system_config.quick_launch_function_preset_deep_thinking')}
-                              </Label>
-                              <Switch
-                                id={`quick-launch-function-preset-deep-thinking-${index}-${presetIndex}`}
-                                checked={preset.options?.enable_deep_thinking ?? false}
-                                onCheckedChange={checked =>
-                                  updateQuickLaunchPresetOptions(index, presetIndex, {
-                                    enable_deep_thinking: checked,
-                                  })
-                                }
-                                data-testid={`quick-launch-function-preset-deep-thinking-${index}-${presetIndex}`}
-                              />
-                            </div>
-                            <div className="flex items-center justify-between rounded-md border border-border bg-base px-3 py-2">
-                              <Label
-                                htmlFor={`quick-launch-function-preset-clarification-${index}-${presetIndex}`}
-                              >
-                                {t('system_config.quick_launch_function_preset_clarification')}
-                              </Label>
-                              <Switch
-                                id={`quick-launch-function-preset-clarification-${index}-${presetIndex}`}
-                                checked={preset.options?.enable_clarification ?? false}
-                                onCheckedChange={checked =>
-                                  updateQuickLaunchPresetOptions(index, presetIndex, {
-                                    enable_clarification: checked,
-                                  })
-                                }
-                                data-testid={`quick-launch-function-preset-clarification-${index}-${presetIndex}`}
-                              />
-                            </div>
-                            <div className="flex items-center justify-between rounded-md border border-border bg-base px-3 py-2">
-                              <Label
-                                htmlFor={`quick-launch-function-preset-force-override-${index}-${presetIndex}`}
-                              >
-                                {t('system_config.quick_launch_function_preset_force_override')}
-                              </Label>
-                              <Switch
-                                id={`quick-launch-function-preset-force-override-${index}-${presetIndex}`}
-                                checked={preset.options?.force_override ?? false}
-                                onCheckedChange={checked =>
-                                  updateQuickLaunchPresetOptions(index, presetIndex, {
-                                    force_override: checked,
-                                  })
-                                }
-                                data-testid={`quick-launch-function-preset-force-override-${index}-${presetIndex}`}
-                              />
-                            </div>
-                          </div>
-
-                          <div className="flex justify-end">
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="h-11 min-w-[44px] shrink-0 text-text-muted hover:text-text-primary"
-                              onClick={() => removeQuickLaunchPreset(index, presetIndex)}
-                              data-testid={`remove-quick-launch-function-preset-${index}-${presetIndex}`}
-                            >
-                              <TrashIcon className="h-4 w-4" />
-                              {t('common:actions.delete')}
-                            </Button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )
-            })
-          )}
           <Button
             type="button"
             variant="outline"
@@ -1001,7 +782,521 @@ const SystemConfigPanel: React.FC = () => {
             {t('system_config.quick_launch_function_add')}
           </Button>
         </div>
+
+        <div className="space-y-2">
+          {quickLaunchFunctions.length === 0 ? (
+            <div className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm text-text-muted">
+              {t('system_config.quick_launch_function_empty')}
+            </div>
+          ) : (
+            quickLaunchFunctions.map((item, index) => {
+              const team = publicTeams.find(publicTeam => publicTeam.id === item.team_id)
+              const presetCount = item.input_presets?.length ?? 0
+              const attachmentCount = (item.input_presets ?? []).reduce(
+                (count, preset) => count + (preset.source_attachment_ids?.length ?? 0),
+                0
+              )
+
+              return (
+                <div
+                  key={`${item.id}-${index}`}
+                  className="flex flex-col gap-3 rounded-md border border-border bg-base px-4 py-3 md:flex-row md:items-center md:justify-between"
+                  data-testid={`quick-launch-function-card-${index}`}
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <h4 className="truncate text-sm font-medium text-text-primary">
+                        {item.title || t('system_config.quick_launch_function_untitled')}
+                      </h4>
+                      {!item.enabled && (
+                        <span className="rounded border border-border px-1.5 py-0.5 text-xs text-text-muted">
+                          {t('system_config.quick_launch_function_disabled')}
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1 truncate text-xs text-text-muted">
+                      {item.id} - {team?.display_name || team?.name || item.team_id} - {presetCount}{' '}
+                      {t('system_config.quick_launch_function_presets')} - {attachmentCount}{' '}
+                      {t('system_config.quick_launch_function_preset_attachments')}
+                    </p>
+                  </div>
+                  <div className="flex items-center justify-end gap-2">
+                    <Switch
+                      checked={item.enabled}
+                      onCheckedChange={checked =>
+                        updateQuickLaunchFunction(index, { enabled: checked })
+                      }
+                      data-testid={`quick-launch-function-list-enabled-${index}`}
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-11 min-w-[44px]"
+                      onClick={() => setEditingQuickLaunchFunctionIndex(index)}
+                      data-testid={`edit-quick-launch-function-${index}`}
+                    >
+                      <PencilIcon className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-11 min-w-[44px] text-red-500 hover:text-red-600"
+                      onClick={() => removeQuickLaunchFunction(index)}
+                      data-testid={`remove-quick-launch-function-${index}`}
+                    >
+                      <TrashIcon className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              )
+            })
+          )}
+        </div>
       </Card>
+
+      {editingQuickLaunchFunction && editingQuickLaunchFunctionIndex !== null && (
+        <Dialog
+          open={true}
+          onOpenChange={open => {
+            if (!open) {
+              setEditingQuickLaunchFunctionIndex(null)
+            }
+          }}
+        >
+          <DialogContent className="max-h-[85vh] max-w-4xl overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>
+                {editingQuickLaunchFunction.title ||
+                  t('system_config.quick_launch_function_untitled')}
+              </DialogTitle>
+              <DialogDescription>
+                {t('system_config.quick_launch_functions_description')}
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-5">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor={`quick-launch-function-id-${editingQuickLaunchFunctionIndex}`}>
+                    {t('system_config.quick_launch_function_id')}
+                  </Label>
+                  <Input
+                    id={`quick-launch-function-id-${editingQuickLaunchFunctionIndex}`}
+                    value={editingQuickLaunchFunction.id}
+                    onChange={event =>
+                      updateQuickLaunchFunction(editingQuickLaunchFunctionIndex, {
+                        id: event.target.value,
+                      })
+                    }
+                    data-testid={`quick-launch-function-id-${editingQuickLaunchFunctionIndex}`}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor={`quick-launch-function-title-${editingQuickLaunchFunctionIndex}`}>
+                    {t('system_config.quick_launch_function_title')}
+                  </Label>
+                  <Input
+                    id={`quick-launch-function-title-${editingQuickLaunchFunctionIndex}`}
+                    value={editingQuickLaunchFunction.title}
+                    onChange={event =>
+                      updateQuickLaunchFunction(editingQuickLaunchFunctionIndex, {
+                        title: event.target.value,
+                      })
+                    }
+                    data-testid={`quick-launch-function-title-${editingQuickLaunchFunctionIndex}`}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor={`quick-launch-function-team-${editingQuickLaunchFunctionIndex}`}>
+                    {t('system_config.quick_launch_function_team')}
+                  </Label>
+                  <select
+                    id={`quick-launch-function-team-${editingQuickLaunchFunctionIndex}`}
+                    value={editingQuickLaunchFunction.team_id || ''}
+                    onChange={event =>
+                      updateQuickLaunchFunction(editingQuickLaunchFunctionIndex, {
+                        team_id: Number(event.target.value),
+                      })
+                    }
+                    className="h-10 w-full rounded-lg border border-border bg-surface px-3 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    data-testid={`quick-launch-function-team-${editingQuickLaunchFunctionIndex}`}
+                  >
+                    <option value="">
+                      {t('system_config.quick_launch_function_team_placeholder')}
+                    </option>
+                    {publicTeams.map(team => (
+                      <option key={team.id} value={team.id}>
+                        {team.display_name || team.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor={`quick-launch-function-order-${editingQuickLaunchFunctionIndex}`}>
+                    {t('system_config.quick_launch_function_order')}
+                  </Label>
+                  <Input
+                    id={`quick-launch-function-order-${editingQuickLaunchFunctionIndex}`}
+                    type="number"
+                    value={editingQuickLaunchFunction.order}
+                    onChange={event =>
+                      updateQuickLaunchFunction(editingQuickLaunchFunctionIndex, {
+                        order: Number(event.target.value),
+                      })
+                    }
+                    data-testid={`quick-launch-function-order-${editingQuickLaunchFunctionIndex}`}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor={`quick-launch-function-icon-${editingQuickLaunchFunctionIndex}`}>
+                    {t('system_config.quick_launch_function_icon')}
+                  </Label>
+                  <Input
+                    id={`quick-launch-function-icon-${editingQuickLaunchFunctionIndex}`}
+                    value={editingQuickLaunchFunction.icon || ''}
+                    onChange={event =>
+                      updateQuickLaunchFunction(editingQuickLaunchFunctionIndex, {
+                        icon: event.target.value,
+                      })
+                    }
+                    data-testid={`quick-launch-function-icon-${editingQuickLaunchFunctionIndex}`}
+                  />
+                </div>
+                <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
+                  <Label
+                    htmlFor={`quick-launch-function-enabled-${editingQuickLaunchFunctionIndex}`}
+                  >
+                    {t('system_config.quick_launch_function_enabled')}
+                  </Label>
+                  <Switch
+                    id={`quick-launch-function-enabled-${editingQuickLaunchFunctionIndex}`}
+                    checked={editingQuickLaunchFunction.enabled}
+                    onCheckedChange={checked =>
+                      updateQuickLaunchFunction(editingQuickLaunchFunctionIndex, {
+                        enabled: checked,
+                      })
+                    }
+                    data-testid={`quick-launch-function-enabled-${editingQuickLaunchFunctionIndex}`}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label
+                  htmlFor={`quick-launch-function-description-${editingQuickLaunchFunctionIndex}`}
+                >
+                  {t('system_config.quick_launch_function_description')}
+                </Label>
+                <Textarea
+                  id={`quick-launch-function-description-${editingQuickLaunchFunctionIndex}`}
+                  value={editingQuickLaunchFunction.description || ''}
+                  onChange={event =>
+                    updateQuickLaunchFunction(editingQuickLaunchFunctionIndex, {
+                      description: event.target.value,
+                    })
+                  }
+                  rows={2}
+                  data-testid={`quick-launch-function-description-${editingQuickLaunchFunctionIndex}`}
+                />
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <Label>{t('system_config.quick_launch_function_presets')}</Label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-11 min-w-[44px]"
+                    onClick={() => addQuickLaunchPreset(editingQuickLaunchFunctionIndex)}
+                    disabled={(editingQuickLaunchFunction.input_presets ?? []).length >= 6}
+                    data-testid={`add-quick-launch-function-preset-${editingQuickLaunchFunctionIndex}`}
+                  >
+                    <PlusIcon className="h-4 w-4" />
+                    {t('system_config.quick_launch_function_add_preset')}
+                  </Button>
+                </div>
+                <div className="space-y-3">
+                  {getEditableInputPresets(editingQuickLaunchFunction).map(
+                    (preset, presetIndex) => {
+                      const uploadKey = `${editingQuickLaunchFunctionIndex}-${presetIndex}`
+                      const isUploading = uploadingQuickLaunchPresetKey === uploadKey
+
+                      return (
+                        <div
+                          key={`${preset.id}-${presetIndex}`}
+                          className="space-y-3 rounded-md border border-border bg-surface p-3"
+                          data-testid={`quick-launch-function-preset-${editingQuickLaunchFunctionIndex}-${presetIndex}`}
+                        >
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <div className="space-y-2">
+                              <Label
+                                htmlFor={`quick-launch-function-preset-title-${editingQuickLaunchFunctionIndex}-${presetIndex}`}
+                              >
+                                {t('system_config.quick_launch_function_preset_title')}
+                              </Label>
+                              <Input
+                                id={`quick-launch-function-preset-title-${editingQuickLaunchFunctionIndex}-${presetIndex}`}
+                                value={preset.title}
+                                maxLength={120}
+                                onChange={event =>
+                                  updateQuickLaunchPreset(
+                                    editingQuickLaunchFunctionIndex,
+                                    presetIndex,
+                                    {
+                                      title: event.target.value,
+                                    }
+                                  )
+                                }
+                                placeholder={t(
+                                  'system_config.quick_launch_function_preset_title_placeholder'
+                                )}
+                                data-testid={`quick-launch-function-preset-title-${editingQuickLaunchFunctionIndex}-${presetIndex}`}
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label
+                                htmlFor={`quick-launch-function-preset-skills-${editingQuickLaunchFunctionIndex}-${presetIndex}`}
+                              >
+                                {t('system_config.quick_launch_function_preset_skills')}
+                              </Label>
+                              <Input
+                                id={`quick-launch-function-preset-skills-${editingQuickLaunchFunctionIndex}-${presetIndex}`}
+                                value={(preset.options?.selected_skill_names ?? []).join(', ')}
+                                onChange={event =>
+                                  updateQuickLaunchPresetOptions(
+                                    editingQuickLaunchFunctionIndex,
+                                    presetIndex,
+                                    {
+                                      selected_skill_names: event.target.value
+                                        .split(',')
+                                        .map(name => name.trim())
+                                        .filter(Boolean),
+                                    }
+                                  )
+                                }
+                                placeholder={t(
+                                  'system_config.quick_launch_function_preset_skills_placeholder'
+                                )}
+                                data-testid={`quick-launch-function-preset-skills-${editingQuickLaunchFunctionIndex}-${presetIndex}`}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label
+                              htmlFor={`quick-launch-function-preset-prompt-${editingQuickLaunchFunctionIndex}-${presetIndex}`}
+                            >
+                              {t('system_config.quick_launch_function_preset_prompt')}
+                            </Label>
+                            <Textarea
+                              id={`quick-launch-function-preset-prompt-${editingQuickLaunchFunctionIndex}-${presetIndex}`}
+                              value={preset.prompt || ''}
+                              maxLength={2000}
+                              rows={3}
+                              onChange={event =>
+                                updateQuickLaunchPreset(
+                                  editingQuickLaunchFunctionIndex,
+                                  presetIndex,
+                                  {
+                                    prompt: event.target.value,
+                                  }
+                                )
+                              }
+                              placeholder={t(
+                                'system_config.quick_launch_function_preset_prompt_placeholder'
+                              )}
+                              data-testid={`quick-launch-function-preset-prompt-${editingQuickLaunchFunctionIndex}-${presetIndex}`}
+                            />
+                          </div>
+
+                          <div className="rounded-md border border-border bg-base p-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <Label>
+                                {t('system_config.quick_launch_function_preset_attachments')}
+                              </Label>
+                              <input
+                                id={`quick-launch-function-preset-attachment-input-${editingQuickLaunchFunctionIndex}-${presetIndex}`}
+                                type="file"
+                                className="hidden"
+                                onChange={event => {
+                                  void handleQuickLaunchPresetUpload(
+                                    editingQuickLaunchFunctionIndex,
+                                    presetIndex,
+                                    event.target.files
+                                  )
+                                  event.currentTarget.value = ''
+                                }}
+                                data-testid={`quick-launch-function-preset-attachment-input-${editingQuickLaunchFunctionIndex}-${presetIndex}`}
+                              />
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-11 min-w-[44px]"
+                                disabled={isUploading}
+                                onClick={() =>
+                                  document
+                                    .getElementById(
+                                      `quick-launch-function-preset-attachment-input-${editingQuickLaunchFunctionIndex}-${presetIndex}`
+                                    )
+                                    ?.click()
+                                }
+                                data-testid={`quick-launch-function-preset-upload-${editingQuickLaunchFunctionIndex}-${presetIndex}`}
+                              >
+                                {isUploading ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Upload className="h-4 w-4" />
+                                )}
+                                {t('system_config.quick_launch_function_preset_upload_attachment')}
+                              </Button>
+                            </div>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {(preset.source_attachment_ids ?? []).length === 0 ? (
+                                <span className="text-xs text-text-muted">
+                                  {t('system_config.quick_launch_function_preset_no_attachments')}
+                                </span>
+                              ) : (
+                                (preset.source_attachment_ids ?? []).map(attachmentId => (
+                                  <span
+                                    key={attachmentId}
+                                    className="inline-flex min-h-8 max-w-full items-center gap-2 rounded-md border border-border bg-surface px-2 py-1 text-xs text-text-primary"
+                                  >
+                                    <Paperclip className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+                                    <span className="truncate">
+                                      {quickLaunchAttachmentLabels[attachmentId] ??
+                                        `#${attachmentId}`}
+                                    </span>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-7 min-w-7 text-text-muted hover:text-red-600"
+                                      onClick={() =>
+                                        removeQuickLaunchPresetAttachment(
+                                          editingQuickLaunchFunctionIndex,
+                                          presetIndex,
+                                          attachmentId
+                                        )
+                                      }
+                                      data-testid={`remove-quick-launch-function-preset-attachment-${editingQuickLaunchFunctionIndex}-${presetIndex}-${attachmentId}`}
+                                    >
+                                      <TrashIcon className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </span>
+                                ))
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="grid gap-2 md:grid-cols-3">
+                            <div className="flex items-center justify-between rounded-md border border-border bg-base px-3 py-2">
+                              <Label
+                                htmlFor={`quick-launch-function-preset-deep-thinking-${editingQuickLaunchFunctionIndex}-${presetIndex}`}
+                              >
+                                {t('system_config.quick_launch_function_preset_deep_thinking')}
+                              </Label>
+                              <Switch
+                                id={`quick-launch-function-preset-deep-thinking-${editingQuickLaunchFunctionIndex}-${presetIndex}`}
+                                checked={preset.options?.enable_deep_thinking ?? false}
+                                onCheckedChange={checked =>
+                                  updateQuickLaunchPresetOptions(
+                                    editingQuickLaunchFunctionIndex,
+                                    presetIndex,
+                                    {
+                                      enable_deep_thinking: checked,
+                                    }
+                                  )
+                                }
+                                data-testid={`quick-launch-function-preset-deep-thinking-${editingQuickLaunchFunctionIndex}-${presetIndex}`}
+                              />
+                            </div>
+                            <div className="flex items-center justify-between rounded-md border border-border bg-base px-3 py-2">
+                              <Label
+                                htmlFor={`quick-launch-function-preset-clarification-${editingQuickLaunchFunctionIndex}-${presetIndex}`}
+                              >
+                                {t('system_config.quick_launch_function_preset_clarification')}
+                              </Label>
+                              <Switch
+                                id={`quick-launch-function-preset-clarification-${editingQuickLaunchFunctionIndex}-${presetIndex}`}
+                                checked={preset.options?.enable_clarification ?? false}
+                                onCheckedChange={checked =>
+                                  updateQuickLaunchPresetOptions(
+                                    editingQuickLaunchFunctionIndex,
+                                    presetIndex,
+                                    {
+                                      enable_clarification: checked,
+                                    }
+                                  )
+                                }
+                                data-testid={`quick-launch-function-preset-clarification-${editingQuickLaunchFunctionIndex}-${presetIndex}`}
+                              />
+                            </div>
+                            <div className="flex items-center justify-between rounded-md border border-border bg-base px-3 py-2">
+                              <Label
+                                htmlFor={`quick-launch-function-preset-force-override-${editingQuickLaunchFunctionIndex}-${presetIndex}`}
+                              >
+                                {t('system_config.quick_launch_function_preset_force_override')}
+                              </Label>
+                              <Switch
+                                id={`quick-launch-function-preset-force-override-${editingQuickLaunchFunctionIndex}-${presetIndex}`}
+                                checked={preset.options?.force_override ?? false}
+                                onCheckedChange={checked =>
+                                  updateQuickLaunchPresetOptions(
+                                    editingQuickLaunchFunctionIndex,
+                                    presetIndex,
+                                    {
+                                      force_override: checked,
+                                    }
+                                  )
+                                }
+                                data-testid={`quick-launch-function-preset-force-override-${editingQuickLaunchFunctionIndex}-${presetIndex}`}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="flex justify-end">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-11 min-w-[44px] shrink-0 text-text-muted hover:text-text-primary"
+                              onClick={() =>
+                                removeQuickLaunchPreset(
+                                  editingQuickLaunchFunctionIndex,
+                                  presetIndex
+                                )
+                              }
+                              data-testid={`remove-quick-launch-function-preset-${editingQuickLaunchFunctionIndex}-${presetIndex}`}
+                            >
+                              <TrashIcon className="h-4 w-4" />
+                              {t('common:actions.delete')}
+                            </Button>
+                          </div>
+                        </div>
+                      )
+                    }
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="primary"
+                onClick={() => setEditingQuickLaunchFunctionIndex(null)}
+                data-testid="quick-launch-function-editor-done"
+              >
+                {t('common.done')}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
 
       {/* Version Info */}
       <div className="text-xs text-text-muted text-right">

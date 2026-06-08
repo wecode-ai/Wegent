@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Skill binary storage model for Claude Code Skills ZIP packages.
+Binary storage model for Skill and plugin ZIP packages.
 """
 
 from datetime import datetime
@@ -17,7 +17,7 @@ SkillBinaryDataType = LargeBinary().with_variant(MEDIUMBLOB, "mysql")
 
 
 class SkillBinary(Base):
-    """Skill binary data storage for ZIP packages."""
+    """Binary data storage for Skill and plugin ZIP packages."""
 
     __tablename__ = "skill_binaries"
 
@@ -28,6 +28,8 @@ class SkillBinary(Base):
     binary_data = Column(SkillBinaryDataType, nullable=False)  # ZIP package binary data
     file_size = Column(Integer, nullable=False)  # File size in bytes
     file_hash = Column(String(64), nullable=False)  # SHA256 hash
+    type = Column(String(32), nullable=False, default="")  # Empty value means Skill
+    file_name = Column(String(255), nullable=False, default="")
     created_at = Column(DateTime, default=datetime.now)
 
     __table_args__ = (

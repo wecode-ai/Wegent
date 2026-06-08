@@ -1,5 +1,4 @@
-import { Bot } from 'lucide-react'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type {
   ProjectChatControls,
@@ -7,6 +6,12 @@ import type {
 } from '@/components/chat/ChatInput'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { useTranslation } from '@/hooks/useTranslation'
+import {
+  findWorkbenchDevice,
+  getActiveWorkbenchDeviceId,
+  getWorkbenchDeviceDisplayName,
+  isWorkbenchDeviceOnline,
+} from '@/lib/workbench-device'
 import type { DeviceInfo, ProjectWithTasks, Task } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import type {
@@ -14,12 +19,18 @@ import type {
   QueuedWorkbenchMessage,
   WorkbenchMessage,
 } from '@/types/workbench'
+import { cn } from '@/lib/utils'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
 import { RightWorkspacePanel } from './workspace-panels/RightWorkspacePanel'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
+import {
+  DesktopTopBar,
+  MAC_NATIVE_TOP_BAR_ACTION_INSET,
+} from './DesktopTopBar'
 
 const DESKTOP_COMPOSER_FRAME_CLASS =
-  'mx-auto w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100vw-4rem)]'
+  'mx-auto w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100vw-4rem)] -translate-y-12'
 const DESKTOP_FLOATING_COMPOSER_CLASS =
   'pointer-events-none absolute bottom-4 left-1/2 z-chrome w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100%_-_3rem)] -translate-x-1/2'
 const DESKTOP_FLOATING_COMPOSER_BACKDROP_CLASS =
@@ -28,6 +39,29 @@ const DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS =
   'bottom-36 z-popover bg-background/95 shadow-md'
 const DESKTOP_QUEUED_SCROLL_TO_BOTTOM_BUTTON_CLASS =
   'bottom-64 z-popover bg-background/95 shadow-md'
+
+function formatWorkbenchTemplate(template: string, values: Record<string, string>) {
+  return Object.entries(values).reduce(
+    (result, [key, value]) => result.replaceAll(`{{${key}}}`, value),
+    template,
+  )
+}
+
+function getWorkbenchDeviceStatusLabel(
+  t: ReturnType<typeof useTranslation>['t'],
+  status: DeviceInfo['status'] | 'unavailable',
+) {
+  if (status === 'online') {
+    return t('workbench.project_device_status_online', '在线')
+  }
+  if (status === 'busy') {
+    return t('workbench.project_device_status_busy', '忙碌')
+  }
+  if (status === 'offline') {
+    return t('workbench.project_device_status_offline', '离线')
+  }
+  return t('workbench.project_device_status_unavailable', '不可用')
+}
 
 interface DesktopWorkbenchMainProps {
   isBootstrapping: boolean
@@ -55,6 +89,7 @@ interface DesktopWorkbenchMainProps {
   onSendQueuedAsGuidance: (id: string) => void
   onEditQueuedMessage: (id: string) => void
   onCancelGuidanceMessage: (id: string) => void
+  topBarLeftActions?: ReactNode
 }
 
 export function DesktopWorkbenchMain({
@@ -83,12 +118,38 @@ export function DesktopWorkbenchMain({
   onSendQueuedAsGuidance,
   onEditQueuedMessage,
   onCancelGuidanceMessage,
+  topBarLeftActions,
 }: DesktopWorkbenchMainProps) {
   const { t } = useTranslation('common')
   const [rightPanelOpen, setRightPanelOpen] = useState(false)
   const [bottomPanelOpen, setBottomPanelOpen] = useState(false)
   const hasConversation = messages.length > 0 || currentTask
   const hasQueuedComposerRows = queuedMessages.length > 0 || guidanceMessages.length > 0
+  const reserveMacWindowControls = isTauriRuntime()
+  const activeDeviceId = getActiveWorkbenchDeviceId({
+    currentTask,
+    currentProject,
+    standaloneDeviceId: projectWork.currentStandaloneDeviceId,
+  })
+  const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
+  const activeDeviceUnavailable =
+    Boolean(activeDeviceId) && !isWorkbenchDeviceOnline(activeDevice)
+  const deviceStatus = getWorkbenchDeviceStatusLabel(
+    t,
+    activeDevice?.status ?? 'unavailable',
+  )
+  const composerDisabledReason = activeDeviceUnavailable
+    ? formatWorkbenchTemplate(
+        t(
+          'workbench.conversation_device_unavailable',
+          '{{device}} {{status}}，恢复在线后可继续对话',
+        ),
+        {
+          device: getWorkbenchDeviceDisplayName(activeDevice, activeDeviceId),
+          status: deviceStatus,
+        },
+      )
+    : undefined
   const emptyTitle = currentProject
     ? t('workbench.project_empty_title', {
         defaultValue: `我们应该在 ${currentProject.name} 中构建什么？`,
@@ -98,7 +159,41 @@ export function DesktopWorkbenchMain({
 
   return (
     <main className="relative flex min-w-0 flex-1 overflow-hidden">
-      <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+      <DesktopTopBar
+        testId="workbench-topbar"
+        className={cn(
+          'absolute inset-x-0 top-0 z-chrome bg-background/95 pr-7 backdrop-blur-xl',
+          topBarLeftActions && reserveMacWindowControls
+            ? undefined
+            : topBarLeftActions
+              ? 'pl-2'
+              : 'pl-6',
+        )}
+        style={
+          topBarLeftActions && reserveMacWindowControls
+            ? { paddingLeft: MAC_NATIVE_TOP_BAR_ACTION_INSET }
+            : undefined
+        }
+        left={topBarLeftActions}
+        right={(
+          <WorkspacePanelActions
+            environmentInfo={environmentInfo}
+            onRefreshEnvironmentInfo={onRefreshEnvironmentInfo}
+            onCommitEnvironmentChanges={onCommitEnvironmentChanges}
+            onListEnvironmentBranches={onListEnvironmentBranches}
+            onCheckoutEnvironmentBranch={onCheckoutEnvironmentBranch}
+            onCreateEnvironmentBranch={onCreateEnvironmentBranch}
+            rightPanelOpen={rightPanelOpen}
+            bottomPanelOpen={bottomPanelOpen}
+            onToggleRightPanel={() => setRightPanelOpen((open) => !open)}
+            onToggleBottomPanel={() => setBottomPanelOpen((open) => !open)}
+          />
+        )}
+      />
+      <div
+        data-testid="desktop-workbench-content"
+        className="relative flex min-w-0 flex-1 flex-col overflow-hidden pt-[52px]"
+      >
         {isBootstrapping ? (
           <div
             className="flex flex-1"
@@ -134,7 +229,8 @@ export function DesktopWorkbenchMain({
                   value={input}
                   onChange={onInputChange}
                   onSubmit={onSend}
-                  disabled={isSending}
+                  disabled={isSending || activeDeviceUnavailable}
+                  disabledReason={composerDisabledReason}
                   placeholder={t('workbench.input_placeholder', '尽管问')}
                   variant="desktop"
                   projectChat={projectChat}
@@ -158,9 +254,6 @@ export function DesktopWorkbenchMain({
               className={DESKTOP_COMPOSER_FRAME_CLASS}
               data-testid="desktop-empty-composer-frame"
             >
-              <div className="mb-7 flex justify-center">
-                <Bot className="h-7 w-7 text-text-muted" />
-              </div>
               <h1 className="mb-9 text-center text-[28px] font-medium leading-9 tracking-normal">
                 {emptyTitle}
               </h1>
@@ -168,7 +261,8 @@ export function DesktopWorkbenchMain({
                 value={input}
                 onChange={onInputChange}
                 onSubmit={onSend}
-                disabled={isSending}
+                disabled={isSending || activeDeviceUnavailable}
+                disabledReason={composerDisabledReason}
                 placeholder={t('workbench.input_placeholder', '尽管问')}
                 variant="desktop"
                 projectChat={projectChat}
@@ -193,18 +287,6 @@ export function DesktopWorkbenchMain({
           />
         )}
       </div>
-      <WorkspacePanelActions
-        environmentInfo={environmentInfo}
-        onRefreshEnvironmentInfo={onRefreshEnvironmentInfo}
-        onCommitEnvironmentChanges={onCommitEnvironmentChanges}
-        onListEnvironmentBranches={onListEnvironmentBranches}
-        onCheckoutEnvironmentBranch={onCheckoutEnvironmentBranch}
-        onCreateEnvironmentBranch={onCreateEnvironmentBranch}
-        rightPanelOpen={rightPanelOpen}
-        bottomPanelOpen={bottomPanelOpen}
-        onToggleRightPanel={() => setRightPanelOpen((open) => !open)}
-        onToggleBottomPanel={() => setBottomPanelOpen((open) => !open)}
-      />
       {rightPanelOpen && (
         <RightWorkspacePanel
           currentProject={currentProject}

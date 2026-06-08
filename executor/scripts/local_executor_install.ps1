@@ -24,6 +24,8 @@ $InstallDir = "$env:LOCALAPPDATA\Wegent\bin"
 $BinaryName = "wegent-executor.exe"
 $MinNodeVersion = 18
 $MinClaudeCodeVersion = "2.1.0"
+$MinCodexCliVersion = "0.137.0"
+$CodexCliPackage = "@openai/codex@0.137.0"
 
 # Print colored message
 function Write-ColorOutput {
@@ -85,7 +87,7 @@ function Test-NodeJS {
     }
     catch {
         Write-ColorOutput "Node.js is not installed." "ERROR"
-        Write-ColorOutput "Claude Code requires Node.js $MinNodeVersion+ to run." "ERROR"
+        Write-ColorOutput "CLI dependencies require Node.js $MinNodeVersion+ to run." "ERROR"
         Write-Host ""
         Write-ColorOutput "Please install Node.js from:" "INFO"
         Write-Host "  - https://nodejs.org/"
@@ -106,12 +108,81 @@ function Test-Npm {
     }
     catch {
         Write-ColorOutput "npm is not installed." "ERROR"
-        Write-ColorOutput "npm is required to install Claude Code." "ERROR"
+        Write-ColorOutput "npm is required to install CLI dependencies." "ERROR"
         Write-Host ""
         Write-ColorOutput "npm usually comes with Node.js. Please reinstall Node.js." "INFO"
         Write-Host ""
         exit 1
     }
+}
+
+# Install or upgrade Codex CLI
+function Install-CodexCli {
+    Write-ColorOutput "Checking Codex CLI installation..." "INFO"
+    Test-Npm
+
+    $codexInstalled = $false
+    $currentVersion = ""
+
+    try {
+        $codexOutput = & codex --version 2>$null
+        if ($codexOutput) {
+            $codexInstalled = $true
+            if ($codexOutput -match '\d+\.\d+\.\d+') {
+                $currentVersion = $Matches[0]
+            }
+        }
+    }
+    catch {
+        # Codex CLI not found
+    }
+
+    if ($codexInstalled -and $currentVersion -and (Compare-SemanticVersion $currentVersion $MinCodexCliVersion)) {
+        Write-ColorOutput "Codex CLI found: v$currentVersion" "SUCCESS"
+        return
+    }
+
+    if ($codexInstalled) {
+        Write-ColorOutput "Upgrading Codex CLI to $CodexCliPackage..." "INFO"
+    }
+    else {
+        Write-ColorOutput "Codex CLI not found, installing $CodexCliPackage..." "INFO"
+    }
+
+    try {
+        & npm install -g "$CodexCliPackage"
+        if ($LASTEXITCODE -ne 0) {
+            throw "npm install failed with exit code $LASTEXITCODE"
+        }
+    }
+    catch {
+        Write-ColorOutput "Failed to install Codex CLI via npm." "ERROR"
+        Write-Host ""
+        Write-ColorOutput "You can try installing manually:" "INFO"
+        Write-Host "  npm install -g $CodexCliPackage"
+        Write-Host ""
+        Write-ColorOutput "If you encounter permission issues, try running PowerShell as Administrator." "INFO"
+        Write-Host ""
+        exit 1
+    }
+
+    try {
+        $codexOutput = & codex --version 2>$null
+        if ($codexOutput -match '\d+\.\d+\.\d+') {
+            $currentVersion = $Matches[0]
+        }
+    }
+    catch {
+        Write-ColorOutput "Codex CLI installation failed - 'codex' command not found." "ERROR"
+        exit 1
+    }
+
+    if (-not $currentVersion -or -not (Compare-SemanticVersion $currentVersion $MinCodexCliVersion)) {
+        Write-ColorOutput "Codex CLI version $currentVersion is below required $MinCodexCliVersion" "ERROR"
+        exit 1
+    }
+
+    Write-ColorOutput "Codex CLI installed: v$currentVersion" "SUCCESS"
 }
 
 # Install or upgrade Claude Code
@@ -353,6 +424,7 @@ function Main {
 
     Test-NodeJS
     Install-ClaudeCode
+    Install-CodexCli
     Install-WegentExecutor -Platform $platform
     Add-ToPath
     Show-Usage

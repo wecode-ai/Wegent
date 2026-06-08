@@ -28,6 +28,8 @@ from app.services.device.display_name import resolve_device_display_name
 from app.services.readers.kinds import KindType, kindReader
 from app.services.readers.users import userReader
 
+from .converters import get_task_execution_workspace_source
+
 logger = logging.getLogger(__name__)
 
 
@@ -637,6 +639,7 @@ def build_lite_task_list(
         team_icon = task_related_data.get("team_icon")
         device_id = task_related_data.get("device_id")
         device_name = task_related_data.get("device_name")
+        execution_workspace_source = get_task_execution_workspace_source(task_crd)
         git_repo = workspace_data.get("git_repo")
         is_group_chat = task_related_data.get(
             "is_group_chat",
@@ -669,6 +672,7 @@ def build_lite_task_list(
                 "client_origin": task.client_origin,
                 "device_id": device_id,
                 "device_name": device_name,
+                "execution_workspace_source": execution_workspace_source,
                 "git_repo": git_repo,
                 "is_group_chat": is_group_chat,
                 "knowledge_base_id": knowledge_base_id,

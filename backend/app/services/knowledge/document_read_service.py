@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional
 from sqlalchemy.orm import Session
 
 from app.models.knowledge import KnowledgeDocument
-from app.models.subtask_context import SubtaskContext
+from app.models.subtask_context import ContextType, SubtaskContext
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,12 @@ class DocumentReadService:
             return {}
 
         contexts = (
-            db.query(SubtaskContext).filter(SubtaskContext.id.in_(attachment_ids)).all()
+            db.query(SubtaskContext)
+            .filter(
+                SubtaskContext.id.in_(attachment_ids),
+                SubtaskContext.context_type == ContextType.ATTACHMENT.value,
+            )
+            .all()
         )
         return {context.id: context for context in contexts}
 

@@ -539,6 +539,21 @@ class KnowledgeBaseTaskRef(BaseModel):
     boundAt: Optional[str] = None  # Binding timestamp in ISO format
 
 
+class TaskExecutionWorkspace(BaseModel):
+    """Task-specific execution workspace override."""
+
+    source: str = Field(..., description="Workspace source, such as git_worktree")
+    path: Optional[str] = Field(
+        None, min_length=1, description="Execution workspace path"
+    )
+
+
+class TaskExecutionSpec(BaseModel):
+    """Task execution runtime metadata."""
+
+    workspace: Optional[TaskExecutionWorkspace] = None
+
+
 class TaskSpec(BaseModel):
     """Task specification"""
 
@@ -551,6 +566,7 @@ class TaskSpec(BaseModel):
         None  # Bound knowledge bases for group chat
     )
     device_id: Optional[str] = None  # Device ID used for execution (for task history)
+    execution: Optional[TaskExecutionSpec] = None
     # Pipeline mode: current stage index (0-based)
     # Updated when user confirms to proceed to next stage
     # Used to determine which bot to use for follow-up questions

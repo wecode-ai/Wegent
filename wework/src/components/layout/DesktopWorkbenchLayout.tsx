@@ -5,10 +5,17 @@ import type {
   WorkbenchMessage,
   WorkbenchState,
 } from '@/types/workbench'
-import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
+import type {
+  ProjectChatControls,
+  ProjectCreateMode,
+  ProjectWorkControls,
+} from '@/components/chat/ChatInput'
 import type {
   ArchivedTaskListResponse,
+  CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
+  GitBranch,
+  GitRepoInfo,
   ProjectWithTasks,
   TaskDetail,
   TaskListResponse,
@@ -17,6 +24,7 @@ import type { EnvironmentInfo } from '@/types/environment'
 import { stripAppBasePath } from '@/config/runtime'
 import { isSettingsRoute, navigateTo } from '@/lib/navigation'
 import { DesktopSidebar } from './DesktopSidebar'
+import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import { DesktopWorkbenchMain } from './DesktopWorkbenchMain'
 import { DesktopWindowControls } from './DesktopWindowControls'
 import { useDesktopSidebarCollapsed } from './useDesktopSidebarCollapsed'
@@ -42,6 +50,11 @@ interface DesktopWorkbenchLayoutProps {
   onRememberExecutionDevice?: (deviceId: string) => void
   onRefreshDevices?: () => Promise<void>
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
+  onCreateGitWorkspaceProject: (
+    data: CreateGitWorkspaceProjectRequest,
+  ) => Promise<ProjectWithTasks>
+  onListGitRepositories: () => Promise<GitRepoInfo[]>
+  onListGitBranches: (repo: GitRepoInfo) => Promise<GitBranch[]>
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
   onRemoveProject: (projectId: number) => Promise<void>
   onArchiveAllChats: () => Promise<void>
@@ -102,6 +115,9 @@ export function DesktopWorkbenchLayout({
   onRememberExecutionDevice,
   onRefreshDevices,
   onCreateProject,
+  onCreateGitWorkspaceProject,
+  onListGitRepositories,
+  onListGitBranches,
   onUpdateProjectName,
   onRemoveProject,
   onArchiveAllChats,
@@ -137,6 +153,10 @@ export function DesktopWorkbenchLayout({
   const [settingsOpen, setSettingsOpen] = useState(() =>
     isSettingsRoute(stripAppBasePath(window.location.pathname))
   )
+  const [autoOpenAddCloudDeviceDialog, setAutoOpenAddCloudDeviceDialog] =
+    useState(false)
+  const [projectWorkCreateMode, setProjectWorkCreateMode] =
+    useState<ProjectCreateMode | null>(null)
   const [environmentInfo, setEnvironmentInfo] = useState<EnvironmentInfo>({
     additions: '+0',
     deletions: '-0',
@@ -183,6 +203,12 @@ export function DesktopWorkbenchLayout({
   }, [])
 
   useEffect(() => {
+    if (settingsOpen && autoOpenAddCloudDeviceDialog) {
+      setAutoOpenAddCloudDeviceDialog(false)
+    }
+  }, [autoOpenAddCloudDeviceDialog, settingsOpen])
+
+  useEffect(() => {
     const nextCompletedIds = new Set(
       messages
         .filter(message => message.role === 'assistant' && message.status === 'done')
@@ -218,6 +244,28 @@ export function DesktopWorkbenchLayout({
     await refreshEnvironmentInfo()
   }
 
+  const openProjectFromWorkMenu = useCallback((mode: ProjectCreateMode) => {
+    setProjectWorkCreateMode(mode)
+    void onRefreshDevices?.().catch(() => undefined)
+  }, [onRefreshDevices])
+
+  const projectWorkWithCreation: ProjectWorkControls = {
+    ...projectWork,
+    onCreateProjectMode: openProjectFromWorkMenu,
+    branchName: environmentInfo.branchName,
+    branchLoading: environmentInfo.loading,
+    onRefreshBranch: refreshEnvironmentInfo,
+    onListBranches: () => onListEnvironmentBranches(environmentProject),
+    onCheckoutBranch: handleCheckoutEnvironmentBranch,
+    onCreateBranch: handleCreateEnvironmentBranch,
+  }
+
+  useEffect(() => {
+    if (state.currentProject && !state.currentTask) {
+      void refreshEnvironmentInfo()
+    }
+  }, [refreshEnvironmentInfo, state.currentProject, state.currentTask])
+
   return (
     <div className="relative flex h-screen overflow-hidden bg-background text-text-primary">
       {!settingsOpen && !sidebarCollapsed && (
@@ -246,6 +294,9 @@ export function DesktopWorkbenchLayout({
           onOpenPlugins={onOpenPlugins}
           onRefreshDevices={onRefreshDevices}
           onCreateProject={onCreateProject}
+          onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
+          onListGitRepositories={onListGitRepositories}
+          onListGitBranches={onListGitBranches}
           onUpdateProjectName={onUpdateProjectName}
           onRemoveProject={onRemoveProject}
           onArchiveAllChats={onArchiveAllChats}
@@ -257,26 +308,22 @@ export function DesktopWorkbenchLayout({
           onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
           onListDeviceDirectories={onListDeviceDirectories}
           onCreateDeviceDirectory={onCreateDeviceDirectory}
-          onOpenSettings={() => {
+          onOpenSettings={options => {
+            setAutoOpenAddCloudDeviceDialog(
+              Boolean(options?.autoOpenAddCloudDeviceDialog),
+            )
             setSettingsOpen(true)
             navigateTo('/settings')
           }}
           onLogout={onLogout}
         />
       )}
-      {!settingsOpen && sidebarCollapsed && (
-        <DesktopWindowControls
-          sidebarCollapsed
-          onToggleSidebar={() => setSidebarCollapsed(false)}
-          onNewChat={onNewChat}
-          className="absolute left-4 top-2 z-chrome"
-        />
-      )}
-
       {settingsOpen ? (
         <ConnectionsSettingsPage
+          autoOpenAddCloudDeviceDialog={autoOpenAddCloudDeviceDialog}
           onBack={() => {
             setSettingsOpen(false)
+            setAutoOpenAddCloudDeviceDialog(false)
             navigateTo('/')
           }}
           onListArchivedTasks={onListArchivedTasks}
@@ -294,7 +341,7 @@ export function DesktopWorkbenchLayout({
           queuedMessages={queuedMessages}
           guidanceMessages={guidanceMessages}
           projectChat={projectChat}
-          projectWork={projectWork}
+          projectWork={projectWorkWithCreation}
           input={state.input}
           isSending={state.isSending}
           environmentInfo={environmentInfo}
@@ -311,8 +358,42 @@ export function DesktopWorkbenchLayout({
           onSendQueuedAsGuidance={onSendQueuedAsGuidance}
           onEditQueuedMessage={onEditQueuedMessage}
           onCancelGuidanceMessage={onCancelGuidanceMessage}
+          topBarLeftActions={
+            sidebarCollapsed ? (
+              <DesktopWindowControls
+                sidebarCollapsed
+                onToggleSidebar={() => setSidebarCollapsed(false)}
+                onNewChat={onNewChat}
+              />
+            ) : undefined
+          }
         />
       )}
+      <ProjectCreateDialog
+        open={projectWorkCreateMode !== null}
+        mode={projectWorkCreateMode ?? 'scratch'}
+        devices={state.devices}
+        onClose={() => setProjectWorkCreateMode(null)}
+        onOpenCloudDeviceSettings={() => {
+          setProjectWorkCreateMode(null)
+          setAutoOpenAddCloudDeviceDialog(true)
+          setSettingsOpen(true)
+          navigateTo('/settings')
+        }}
+        onCreateProject={onCreateProject}
+        onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
+        preferredDeviceId={
+          state.standaloneDeviceId ??
+          state.user?.preferences?.default_execution_target
+        }
+        onSelectDevicePreference={onRememberExecutionDevice}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+        onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
+        onListDeviceDirectories={onListDeviceDirectories}
+        onCreateDeviceDirectory={onCreateDeviceDirectory}
+        onListGitRepositories={onListGitRepositories}
+        onListGitBranches={onListGitBranches}
+      />
     </div>
   )
 }
