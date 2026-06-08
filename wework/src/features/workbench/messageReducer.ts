@@ -15,6 +15,7 @@ export type MessageAction =
   | { type: 'reset'; messages: WorkbenchMessage[] }
   | { type: 'user_added'; message: WorkbenchMessage }
   | { type: 'assistant_started'; taskId?: number; subtaskId: number; shellType?: string }
+  | { type: 'assistant_cached'; taskId?: number; subtaskId: number; content: string }
   | {
       type: 'assistant_chunk'
       subtaskId: number
@@ -63,6 +64,32 @@ export function messageReducer(
           shellType: action.shellType,
           role: 'assistant',
           content: '',
+          status: 'streaming',
+          blocks: [],
+          createdAt: new Date().toISOString(),
+        },
+      ]
+    case 'assistant_cached':
+      if (state.some(message => message.subtaskId === action.subtaskId)) {
+        return state.map(message =>
+          message.subtaskId === action.subtaskId
+            ? {
+                ...message,
+                taskId: action.taskId ?? message.taskId,
+                content: action.content,
+                status: 'streaming' as const,
+              }
+            : message
+        )
+      }
+      return [
+        ...state,
+        {
+          id: `assistant-${action.subtaskId}`,
+          taskId: action.taskId,
+          subtaskId: action.subtaskId,
+          role: 'assistant',
+          content: action.content,
           status: 'streaming',
           blocks: [],
           createdAt: new Date().toISOString(),

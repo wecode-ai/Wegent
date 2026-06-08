@@ -995,7 +995,15 @@ export function WorkbenchProvider({
       setQueuedSends([])
       setGuidanceMessages([])
       writeTaskIdToUrl(taskId)
-      await resolvedServices.chatStream.joinTask(taskId)
+      const joinResponse = await resolvedServices.chatStream.joinTask(taskId)
+      if (joinResponse?.streaming) {
+        dispatchMessages({
+          type: 'assistant_cached',
+          taskId,
+          subtaskId: joinResponse.streaming.subtask_id,
+          content: joinResponse.streaming.cached_content,
+        })
+      }
       const routeProjectId =
         resolvedProjectId && resolvedProjectId > 0 ? resolvedProjectId : undefined
       handledTaskRouteRef.current = getTaskRouteKey(taskId, routeProjectId)
