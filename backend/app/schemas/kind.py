@@ -543,7 +543,9 @@ class TaskExecutionWorkspace(BaseModel):
     """Task-specific execution workspace override."""
 
     source: str = Field(..., description="Workspace source, such as git_worktree")
-    path: str = Field(..., min_length=1, description="Execution workspace path")
+    path: Optional[str] = Field(
+        None, min_length=1, description="Execution workspace path"
+    )
 
 
 class TaskExecutionSpec(BaseModel):

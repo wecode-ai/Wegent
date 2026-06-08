@@ -427,7 +427,6 @@ async def test_delete_project_worktree_removes_directory_and_matching_task(
                 "execution": {
                     "workspace": {
                         "source": "git_worktree",
-                        "path": "/workspace/worktrees/1386/Wegent",
                     }
                 }
             }

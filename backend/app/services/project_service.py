@@ -814,28 +814,50 @@ def _find_worktree_tasks(
     if client_origin:
         query = query.filter(TaskResource.client_origin == client_origin)
     task = query.first()
-    if not task or _task_execution_workspace_path(task) != worktree_path:
+    if not task:
+        return []
+    task_workspace_path = _task_execution_workspace_path(task)
+    if task_workspace_path:
+        return [task] if task_workspace_path == worktree_path else []
+    if _task_execution_workspace_source(task) != "git_worktree":
         return []
     return [task]
 
 
+def _task_execution_workspace_source(task: TaskResource) -> Optional[str]:
+    """Return the Task execution workspace source when present."""
+
+    workspace = _task_execution_workspace(task)
+    source = workspace.get("source")
+    if not isinstance(source, str):
+        return None
+    return source.strip() or None
+
+
 def _task_execution_workspace_path(task: TaskResource) -> Optional[str]:
+    """Return the persisted Task execution workspace path when present."""
+
+    workspace = _task_execution_workspace(task)
+    path = workspace.get("path")
+    if not isinstance(path, str):
+        return None
+    return path.strip() or None
+
+
+def _task_execution_workspace(task: TaskResource) -> dict[str, Any]:
     task_json = task.json or {}
     if not isinstance(task_json, dict):
-        return None
+        return {}
     spec = task_json.get("spec")
     if not isinstance(spec, dict):
-        return None
+        return {}
     execution = spec.get("execution")
     if not isinstance(execution, dict):
-        return None
+        return {}
     workspace = execution.get("workspace")
     if not isinstance(workspace, dict):
-        return None
-    if workspace.get("source") != "git_worktree":
-        return None
-    path = str(workspace.get("path") or "").strip()
-    return path or None
+        return {}
+    return workspace
 
 
 def _build_git_clone_args(

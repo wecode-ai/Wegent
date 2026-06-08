@@ -50,10 +50,10 @@ Git 项目会克隆到执行设备的项目根目录下：
 新工作树会创建在执行设备 workspace 根目录下：
 
 ```bash
-~/.wecode/wegent-executor/workspace/worktrees/<worktreeId>/<projectName>
+~/.wecode/wegent-executor/workspace/worktrees/<taskId>/<projectName>
 ```
 
-任务只记录实际执行的绝对路径，例如 `~/.wecode/wegent-executor/workspace/worktrees/<worktreeId>/<projectName>`。分支名、base ref 和原始 checkout 路径不作为任务字段重复保存；工作树设置页会通过扫描执行设备上的 `worktrees` 目录展示已创建的工作树。删除工作树时，Wegent 会删除对应工作树目录，并软删除使用该工作树的任务。
+工作树 ID 使用任务 ID。任务只记录执行目录来源为 `git_worktree`，实际路径会在执行和管理工作树时通过任务 ID 与项目目录规则推导出来；分支名、base ref、原始 checkout 路径和绝对工作树路径不作为任务字段重复保存。工作树设置页会通过扫描执行设备上的 `worktrees` 目录展示已创建的工作树。删除工作树时，Wegent 会删除对应工作树目录，并软删除使用该工作树的任务。
 
 “新工作树”只对绑定本地执行设备和本地目录的项目新对话可选。已有任务会锁定执行目录，避免同一个任务在中途切换工作区。如果目录当前不是 Git 仓库，发送时会提示无法创建工作树；后续用户手工把该目录变成 Git 仓库后，不需要修改项目配置即可重新选择新工作树。
 

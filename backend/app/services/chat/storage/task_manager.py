@@ -10,6 +10,7 @@ for the chat functionality.
 
 import json as json_lib
 import logging
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -100,9 +101,6 @@ class TaskCreationParams:
     # Video generation parameters (user-selected at generation time)
     # Used to save video_config to user subtask.result for display
     generate_params: Optional[Dict[str, Any]] = None
-    # Reserved task ID for callers that must derive task-scoped metadata before
-    # the Task resource itself is created.
-    preallocated_task_id: Optional[int] = None
 
     def __post_init__(self) -> None:
         """Treat an explicit model_id as an override selection."""
@@ -231,36 +229,6 @@ def check_task_status(db: Session, task: TaskResource) -> None:
         raise HTTPException(status_code=400, detail="Task is still running")
 
 
-def allocate_task_id(db: Session, user_id: int) -> int:
-    """Reserve a TaskResource ID and validate that the placeholder exists."""
-    from app.services.adapters.task_kinds import task_kinds_service
-
-    task_id = task_kinds_service.create_task_id(db, user_id)
-    if not task_kinds_service.validate_task_id(db, task_id):
-        raise HTTPException(status_code=500, detail="Failed to create task ID")
-    return task_id
-
-
-def _resolve_new_task_id(db: Session, user_id: int, params: TaskCreationParams) -> int:
-    """Resolve the ID used when creating a new task."""
-
-    if params.preallocated_task_id is None:
-        return allocate_task_id(db, user_id)
-
-    placeholder = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == params.preallocated_task_id,
-            TaskResource.user_id == user_id,
-            TaskResource.kind == "Placeholder",
-        )
-        .first()
-    )
-    if not placeholder:
-        raise HTTPException(status_code=500, detail="Preallocated task ID is invalid")
-    return params.preallocated_task_id
-
-
 def create_new_task(
     db: Session,
     user: User,
@@ -279,8 +247,6 @@ def create_new_task(
     Returns:
         Created TaskResource
     """
-    new_task_id = _resolve_new_task_id(db, user.id, params)
-
     if params.project_id:
         project_exists = (
             db.query(Project.id)
@@ -294,6 +260,23 @@ def create_new_task(
         )
         if not project_exists:
             raise HTTPException(status_code=404, detail="Project not found")
+
+    task = TaskResource(
+        user_id=user.id,
+        kind="Task",
+        name=f"task-pending-{uuid.uuid4().hex}",
+        namespace="default",
+        json={"kind": "Task"},
+        is_active=True,
+        is_group_chat=params.is_group_chat,
+        client_origin=params.client_origin,
+        **({"project_id": params.project_id} if params.project_id else {}),
+    )
+    db.add(task)
+    db.flush()
+    new_task_id = task.id
+    if not new_task_id:
+        raise HTTPException(status_code=500, detail="Failed to create task ID")
 
     # Create workspace
     workspace_name = f"workspace-{new_task_id}"
@@ -414,48 +397,13 @@ def create_new_task(
         "apiVersion": "agent.wecode.io/v1",
     }
 
-    # Check if a Placeholder record exists for this task_id
-    # If so, update it instead of inserting to avoid SQLite UNIQUE constraint issues
-    existing_placeholder = (
-        db.query(TaskResource)
-        .filter(
-            TaskResource.id == new_task_id,
-            TaskResource.kind == "Placeholder",
-        )
-        .first()
-    )
-
-    if existing_placeholder:
-        # Update the existing Placeholder record to become a Task
-        existing_placeholder.user_id = user.id
-        existing_placeholder.kind = "Task"
-        existing_placeholder.name = f"task-{new_task_id}"
-        existing_placeholder.namespace = "default"
-        existing_placeholder.json = task_json
-        existing_placeholder.is_active = True
-        existing_placeholder.updated_at = datetime.now()
-        existing_placeholder.client_origin = params.client_origin
-        existing_placeholder.is_group_chat = (
-            params.is_group_chat
-        )  # Sync to physical column
-        if params.project_id:
-            existing_placeholder.project_id = params.project_id
-        task = existing_placeholder
-    else:
-        # No placeholder exists, create a new Task record
-        task = TaskResource(
-            id=new_task_id,
-            user_id=user.id,
-            kind="Task",
-            name=f"task-{new_task_id}",
-            namespace="default",
-            json=task_json,
-            is_active=True,
-            is_group_chat=params.is_group_chat,  # Sync to physical column
-            client_origin=params.client_origin,
-            **({"project_id": params.project_id} if params.project_id else {}),
-        )
-        db.add(task)
+    task.name = f"task-{new_task_id}"
+    task.json = task_json
+    task.is_active = True
+    task.is_group_chat = params.is_group_chat
+    task.client_origin = params.client_origin
+    if params.project_id:
+        task.project_id = params.project_id
 
     logger.info(
         f"[create_new_task] Created task {new_task_id} with task_json.spec.is_group_chat="
@@ -475,10 +423,56 @@ def _build_task_execution(
 
     source = str(execution_workspace.get("source") or "").strip()
     path = str(execution_workspace.get("path") or "").strip()
-    if not source or not path:
+    if not source:
         return None
 
-    return {"workspace": {"source": source, "path": path}}
+    workspace = {"source": source}
+    if path:
+        workspace["path"] = path
+    return {"workspace": workspace}
+
+
+def _requires_git_worktree_preparation(
+    task_id: Optional[int],
+    params: TaskCreationParams,
+) -> bool:
+    """Return whether a new chat task needs a task-scoped Git worktree."""
+
+    if task_id is not None:
+        return False
+    workspace = params.execution_workspace or {}
+    return str(workspace.get("source") or "").strip() == "git_worktree"
+
+
+async def _create_task_and_prepare_git_worktree(
+    db: Session,
+    user: User,
+    team: Kind,
+    params: TaskCreationParams,
+) -> TaskResource:
+    """Create the Task first, then create its deterministic Git worktree."""
+
+    if not params.project_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Git worktree execution requires a project",
+        )
+
+    task = create_new_task(db, user, team, params)
+    try:
+        from app.services import project_service
+
+        await project_service.prepare_git_worktree_for_task(
+            db=db,
+            user_id=user.id,
+            project_id=params.project_id,
+            client_origin=params.client_origin,
+            task_id=task.id,
+        )
+    except Exception:
+        db.rollback()
+        raise
+    return task
 
 
 def create_user_subtask(
@@ -800,6 +794,15 @@ async def create_task_and_subtasks(
             f"[create_task_and_subtasks] Building video_config for task {task_id}: {video_config}"
         )
 
+    prepared_task = None
+    if _requires_git_worktree_preparation(task_id, params):
+        prepared_task = await _create_task_and_prepare_git_worktree(
+            db=db,
+            user=user,
+            team=team,
+            params=params,
+        )
+
     session = prepare_execution_session(
         db=db,
         user=user,
@@ -810,6 +813,7 @@ async def create_task_and_subtasks(
         should_trigger_ai=should_trigger_ai,
         bot_ids_override=bot_ids,
         video_config=video_config,
+        prepared_task=prepared_task,
     )
     task = session.task
     task_id = session.task_id

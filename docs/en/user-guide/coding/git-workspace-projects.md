@@ -50,10 +50,10 @@ In the new-conversation input area for a local workspace project, you can choose
 New worktrees are created under the execution device workspace root:
 
 ```bash
-~/.wecode/wegent-executor/workspace/worktrees/<worktreeId>/<projectName>
+~/.wecode/wegent-executor/workspace/worktrees/<taskId>/<projectName>
 ```
 
-The task stores only the actual absolute execution path, such as `~/.wecode/wegent-executor/workspace/worktrees/<worktreeId>/<projectName>`. Branch name, base ref, and the original checkout path are not duplicated as task fields; the worktree settings page lists created worktrees by scanning the `worktrees` directory on each execution device. When a worktree is deleted, Wegent removes the corresponding worktree directory and soft-deletes the task that uses it.
+The worktree ID is the task ID. The task stores only `git_worktree` as the execution workspace source; the actual path is derived from the task ID and project directory rules when executing or managing worktrees. Branch name, base ref, the original checkout path, and the absolute worktree path are not duplicated as task fields. The worktree settings page lists created worktrees by scanning the `worktrees` directory on each execution device. When a worktree is deleted, Wegent removes the corresponding worktree directory and soft-deletes the task that uses it.
 
 “New worktree” is available only for new conversations in projects bound to a local execution device and local directory. Existing tasks lock the execution directory so a task cannot switch workspaces midway. If the directory is not currently a Git repository, sending the task shows an error; after the user manually turns that directory into a Git repository, no project configuration change is needed before selecting a new worktree again.
 

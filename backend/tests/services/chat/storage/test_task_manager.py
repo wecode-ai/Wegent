@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from sqlalchemy.orm import Session
 
+from app.models.project import Project
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
@@ -83,19 +84,9 @@ def test_create_new_task_uses_auto_delete_executor_label(
         auto_delete_executor="true",
     )
 
-    with (
-        patch(
-            "app.services.adapters.task_kinds.task_kinds_service.create_task_id",
-            return_value=1385,
-        ),
-        patch(
-            "app.services.adapters.task_kinds.task_kinds_service.validate_task_id",
-            return_value=True,
-        ),
-        patch(
-            "app.services.chat.storage.task_manager.build_initial_task_knowledge_base_refs",
-            return_value=[],
-        ),
+    with patch(
+        "app.services.chat.storage.task_manager.build_initial_task_knowledge_base_refs",
+        return_value=[],
     ):
         task = create_new_task(test_db, test_user, team, params)
 
@@ -117,84 +108,136 @@ def test_create_new_task_writes_execution_workspace(
         message="run tests",
         execution_workspace={
             "source": "git_worktree",
-            "path": "/workspace/worktrees/1386/Wegent",
         },
     )
 
-    with (
-        patch(
-            "app.services.adapters.task_kinds.task_kinds_service.create_task_id",
-            return_value=1386,
-        ),
-        patch(
-            "app.services.adapters.task_kinds.task_kinds_service.validate_task_id",
-            return_value=True,
-        ),
-        patch(
-            "app.services.chat.storage.task_manager.build_initial_task_knowledge_base_refs",
-            return_value=[],
-        ),
+    with patch(
+        "app.services.chat.storage.task_manager.build_initial_task_knowledge_base_refs",
+        return_value=[],
     ):
         task = create_new_task(test_db, test_user, team, params)
 
     assert task.json["spec"]["execution"] == {
         "workspace": {
             "source": "git_worktree",
-            "path": "/workspace/worktrees/1386/Wegent",
         }
     }
 
 
-def test_create_new_task_uses_preallocated_task_id(
+def test_create_new_task_uses_real_task_row_without_placeholder(
     test_db: Session,
     test_user: User,
 ):
-    """New tasks should be able to reuse a reserved Placeholder ID."""
+    """New chat tasks should not reserve a Placeholder row for their ID."""
     team = SimpleNamespace(
         id=1256,
         user_id=test_user.id,
         name="quickstart",
         namespace="default",
     )
-    placeholder = TaskResource(
-        id=1390,
-        user_id=test_user.id,
-        kind="Placeholder",
-        name="temp-placeholder",
-        namespace="default",
-        json={"kind": "Placeholder"},
-        is_active=False,
-    )
-    test_db.add(placeholder)
-    test_db.commit()
-
     params = TaskCreationParams(
         message="run tests",
         execution_workspace={
             "source": "git_worktree",
-            "path": "/workspace/worktrees/1390/Wegent",
         },
-        preallocated_task_id=1390,
+    )
+
+    with patch(
+        "app.services.chat.storage.task_manager.build_initial_task_knowledge_base_refs",
+        return_value=[],
+    ):
+        task = create_new_task(test_db, test_user, team, params)
+
+    placeholders = (
+        test_db.query(TaskResource)
+        .filter(
+            TaskResource.user_id == test_user.id,
+            TaskResource.kind == "Placeholder",
+        )
+        .all()
+    )
+    assert task.id is not None
+    assert task.kind == "Task"
+    assert task.name == f"task-{task.id}"
+    assert task.json["spec"]["workspaceRef"]["name"] == f"workspace-{task.id}"
+    assert placeholders == []
+
+
+@pytest.mark.asyncio
+async def test_create_task_and_subtasks_prepares_git_worktree_with_real_task_id(
+    test_db: Session,
+    test_user: User,
+):
+    """Git worktree preparation should use the created Task ID."""
+    project = Project(
+        user_id=test_user.id,
+        name="Wegent",
+        client_origin="wework",
+        config={
+            "mode": "workspace",
+            "execution": {"targetType": "local", "deviceId": "device-1"},
+            "workspace": {"source": "git", "checkoutPath": "d837/Wegent"},
+            "git": {"url": "https://github.com/wecode-ai/Wegent.git"},
+        },
+        is_active=True,
+    )
+    test_db.add(project)
+    test_db.commit()
+    test_db.refresh(project)
+    team = SimpleNamespace(
+        id=1256,
+        user_id=test_user.id,
+        name="quickstart",
+        namespace="default",
+    )
+    params = TaskCreationParams(
+        message="run tests",
+        project_id=project.id,
+        client_origin="wework",
+        execution_workspace={"source": "git_worktree"},
+    )
+    prepare_worktree_mock = AsyncMock(
+        return_value={"source": "git_worktree", "path": "/workspace/worktrees/1/Wegent"}
     )
 
     with (
         patch(
-            "app.services.adapters.task_kinds.task_kinds_service.create_task_id",
-            side_effect=AssertionError("should not allocate another task id"),
+            "app.services.chat.storage.task_manager.get_bot_ids_from_team",
+            return_value=[1255],
         ),
         patch(
             "app.services.chat.storage.task_manager.build_initial_task_knowledge_base_refs",
             return_value=[],
         ),
+        patch(
+            "app.services.project_service.prepare_git_worktree_for_task",
+            prepare_worktree_mock,
+        ),
+        patch(
+            "app.services.memory.is_memory_enabled_for_user",
+            return_value=False,
+        ),
+        patch(
+            "app.services.chat.trigger.group_chat.is_task_group_chat",
+            return_value=False,
+        ),
     ):
-        task = create_new_task(test_db, test_user, team, params)
+        result = await create_task_and_subtasks(
+            db=test_db,
+            user=test_user,
+            team=team,
+            message=params.message,
+            params=params,
+            should_trigger_ai=True,
+        )
 
-    assert task.id == 1390
-    assert task.kind == "Task"
-    assert task.name == "task-1390"
-    assert task.json["spec"]["execution"]["workspace"]["path"] == (
-        "/workspace/worktrees/1390/Wegent"
-    )
+    prepare_worktree_mock.assert_awaited_once()
+    assert prepare_worktree_mock.await_args.kwargs["task_id"] == result.task.id
+    assert result.task.json["spec"]["execution"] == {
+        "workspace": {"source": "git_worktree"}
+    }
+    assert result.user_subtask.task_id == result.task.id
+    assert result.assistant_subtask is not None
 
 
 def test_create_assistant_subtask_inherits_active_executor_state(
