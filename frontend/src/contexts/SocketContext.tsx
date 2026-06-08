@@ -550,7 +550,13 @@ export function SocketProvider({ children }: { children: ReactNode }) {
   }, [])
 
   /**
-   * Cancel a chat stream via WebSocket
+   * Cancel a chat stream via WebSocket.
+   *
+   * Ack semantics:
+   * - The server ack payload may be missing or malformed.
+   * - The returned promise resolves exactly once (guarded by `settled`).
+   * - Only an explicit `{ success: true }` ack means cancellation succeeded.
+   * - A missing, undefined, or falsy ack payload is treated as failure.
    */
   const cancelChatStream = useCallback(
     async (
@@ -580,12 +586,18 @@ export function SocketProvider({ children }: { children: ReactNode }) {
             partial_content: partialContent,
             shell_type: shellType,
           },
-          (response: { success?: boolean; error?: string }) => {
-            if (!settled) {
-              settled = true
-              clearTimeout(timer)
-              resolve({ success: response.success === true, error: response.error })
+          (response?: { success?: boolean; error?: string }) => {
+            if (settled) {
+              return
             }
+
+            settled = true
+            clearTimeout(timer)
+
+            resolve({
+              success: response?.success === true,
+              error: response?.error,
+            })
           }
         )
       })

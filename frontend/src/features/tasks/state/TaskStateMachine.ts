@@ -152,6 +152,16 @@ export interface TaskRuntimeState {
   deferredTerminalUpdatedAt?: string
   recoveryReason?: TaskRecoveryReason
   recoveryError?: string
+  /**
+   * Set when recovery confirms the server has no active stream.
+   *
+   * May be true even while cached `taskStatus` is still `RUNNING` (e.g. after
+   * cancel-then-socket-closed where the task status event has not arrived yet).
+   * Prevents stale runtime lifecycle status from keeping the chat UI in a
+   * streaming/loading state after cancel or reconnect recovery.
+   *
+   * Cleared by `SEND_ACCEPTED` (new send) and terminal lifecycle transitions.
+   */
   serverConfirmedNoStream?: boolean
 }
 
@@ -164,6 +174,7 @@ export interface TaskRuntimeDerivedState {
   canQueueMessage: boolean
   canCancelTask: boolean
   blocksQueuedDispatch: boolean
+  /** Mirrored from `runtime.serverConfirmedNoStream` for derived-state consumers. */
   serverConfirmedNoStream: boolean
 }
 
@@ -1393,11 +1404,19 @@ export class TaskStateMachine {
             staleSubtask.status === 'FAILED')
 
         if (isStaleSubtaskTerminal) {
+          // Map stale subtask terminal status to local message status:
+          //   COMPLETED  -> 'completed'
+          //   FAILED     -> 'error'
+          //   CANCELLED  -> 'error'
+          // This avoids misreporting failed/cancelled recovered streams as
+          // successful completions.
           const staleMsgId = generateMessageId('ai', staleStreamingSubtaskId)
           const staleMsg = this.state.messages.get(staleMsgId)
           if (staleMsg) {
+            const finalStatus: MessageStatus =
+              staleSubtask.status === 'COMPLETED' ? 'completed' : 'error'
             const newMessages = new Map(this.state.messages)
-            newMessages.set(staleMsgId, { ...staleMsg, status: 'completed' })
+            newMessages.set(staleMsgId, { ...staleMsg, status: finalStatus })
             this.state = { ...this.state, messages: newMessages }
           }
         }
