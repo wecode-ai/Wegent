@@ -110,6 +110,7 @@ export function ProjectChatComposer({
           currentStandaloneDeviceId={projectWork.currentStandaloneDeviceId}
           onSelectProject={projectWork.onSelectProject}
           onSelectStandaloneDevice={projectWork.onSelectStandaloneDevice}
+          onCreateProjectMode={projectWork.onCreateProjectMode}
           className="min-h-11 px-4"
         />
       )}

@@ -276,6 +276,7 @@ describe('DesktopWorkbenchLayout', () => {
       'w-[min(58vw,62rem)]',
       'min-w-[32rem]',
       'max-w-[calc(100vw-4rem)]',
+      '-translate-y-12',
     )
   })
 
@@ -987,6 +988,52 @@ describe('DesktopWorkbenchLayout', () => {
     expect(document.body).toContainElement(overlay)
     expect(document.querySelector('aside')).not.toContainElement(overlay)
     expect(overlay).toHaveClass('fixed', 'inset-0')
+  })
+
+  test('opens blank project dialog from the project work menu add option', async () => {
+    const onRefreshDevices = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onRefreshDevices={onRefreshDevices}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'device-1',
+              name: 'executor',
+              status: 'online',
+              is_default: true,
+            },
+          ],
+        }}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    const menu = screen.getByTestId('project-work-menu')
+    const addProjectOption = screen.getByTestId('add-project-option')
+    expect(
+      [...menu.querySelectorAll('button')].map(button => button.dataset.testid),
+    ).toEqual([
+      'project-option-1',
+      'add-project-option',
+      'no-project-option',
+    ])
+
+    await userEvent.click(addProjectOption)
+    expect(screen.getByTestId('create-project-submenu')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('project-start-from-scratch-option'))
+
+    expect(onRefreshDevices).toHaveBeenCalledTimes(1)
+    expect(screen.queryByTestId('project-work-menu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
+    expect(screen.getByText('新建项目')).toBeInTheDocument()
+    expect(screen.getByTestId('project-name-input')).toBeInTheDocument()
+    expect(screen.getByTestId('create-project-button')).toHaveTextContent('创建项目')
   })
 
   test('creates a project from an existing folder selected in the directory tree', async () => {
