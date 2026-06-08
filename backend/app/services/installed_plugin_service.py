@@ -4,8 +4,6 @@
 
 import hashlib
 import re
-import uuid
-from pathlib import Path
 from typing import Any, Dict, Optional
 
 from fastapi import HTTPException
@@ -13,6 +11,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
+from app.models.skill_binary import SkillBinary
 from app.schemas.installed_plugin import (
     InstalledPlugin,
     InstalledPluginListResponse,
@@ -21,8 +20,6 @@ from app.schemas.installed_plugin import (
     PluginUploadInfo,
 )
 from app.services.claude_plugin_parser import claude_plugin_parser
-
-PLUGIN_PACKAGE_ROOT = Path("data/plugin_packages")
 
 
 class InstalledPluginService:
@@ -38,13 +35,7 @@ class InstalledPluginService:
         enabled: bool = True,
     ) -> InstalledPlugin:
         parsed = claude_plugin_parser.parse_package(package_bytes)
-        checksum = "sha256:" + hashlib.sha256(package_bytes).hexdigest()
-        storage_key = self._store_package(user_id, parsed.name, package_bytes)
-        package_ref = InstalledPluginPackageRef(
-            storageKey=storage_key,
-            checksum=checksum,
-            sizeBytes=len(package_bytes),
-        )
+        file_hash = hashlib.sha256(package_bytes).hexdigest()
         existing = self._find_uploaded_plugin(
             db, user_id=user_id, plugin_key=parsed.name
         )
@@ -53,7 +44,8 @@ class InstalledPluginService:
                 db,
                 row=existing,
                 parsed=parsed,
-                package_ref=package_ref,
+                package_bytes=package_bytes,
+                file_hash=file_hash,
                 enabled=enabled,
                 filename=filename,
             )
@@ -63,16 +55,26 @@ class InstalledPluginService:
             kind="InstalledPlugin",
             name=self._safe_kind_name(parsed.name),
             namespace="default",
-            json=self._build_payload(
-                name=parsed.name,
-                parsed=parsed,
-                package_ref=package_ref,
-                enabled=enabled,
-                filename=filename,
-            ),
+            json={},
             is_active=True,
         )
         db.add(row)
+        db.flush()
+        package_ref = self._package_ref(row.id, file_hash, len(package_bytes))
+        row.json = self._build_payload(
+            name=parsed.name,
+            parsed=parsed,
+            package_ref=package_ref,
+            enabled=enabled,
+            filename=filename,
+        )
+        self._upsert_package(
+            db,
+            kind_id=row.id,
+            package_bytes=package_bytes,
+            file_hash=file_hash,
+            filename=filename,
+        )
         db.commit()
         db.refresh(row)
         return self._kind_to_installed_plugin(row)
@@ -143,20 +145,16 @@ class InstalledPluginService:
         flag_modified(row, "json")
         db.commit()
 
-    def package_path_for_download(
+    def package_data_for_download(
         self, *, db: Session, user_id: int, installed_id: int
-    ) -> Path:
+    ) -> tuple[bytes, str]:
         row = self._get_active_installed_plugin(
             db, user_id=user_id, installed_id=installed_id
         )
-        package_ref = self._get_spec(row).get("packageRef") or {}
-        storage_key = package_ref.get("storageKey")
-        if not isinstance(storage_key, str) or not storage_key:
+        package = db.query(SkillBinary).filter(SkillBinary.kind_id == row.id).first()
+        if not package or not package.binary_data:
             raise HTTPException(status_code=404, detail="Plugin package not found")
-        path = PLUGIN_PACKAGE_ROOT / storage_key
-        if not path.exists() or not path.is_file():
-            raise HTTPException(status_code=404, detail="Plugin package not found")
-        return path
+        return package.binary_data, package.file_name or self._fallback_filename(row)
 
     def _reactivate_existing(
         self,
@@ -164,10 +162,12 @@ class InstalledPluginService:
         *,
         row: Kind,
         parsed: PluginUploadInfo,
-        package_ref: InstalledPluginPackageRef,
+        package_bytes: bytes,
+        file_hash: str,
         enabled: bool,
         filename: str,
     ) -> InstalledPlugin:
+        package_ref = self._package_ref(row.id, file_hash, len(package_bytes))
         row.json = self._build_payload(
             name=parsed.name,
             parsed=parsed,
@@ -177,6 +177,13 @@ class InstalledPluginService:
         )
         row.is_active = True
         flag_modified(row, "json")
+        self._upsert_package(
+            db,
+            kind_id=row.id,
+            package_bytes=package_bytes,
+            file_hash=file_hash,
+            filename=filename,
+        )
         db.commit()
         db.refresh(row)
         return self._kind_to_installed_plugin(row)
@@ -276,15 +283,52 @@ class InstalledPluginService:
             states[f"bin:{binary.name}"] = True
         return states
 
-    def _store_package(
-        self, user_id: int, plugin_name: str, package_bytes: bytes
-    ) -> str:
-        safe_name = self._safe_kind_name(plugin_name)
-        storage_key = f"user-{user_id}/{safe_name}-{uuid.uuid4().hex}.zip"
-        path = PLUGIN_PACKAGE_ROOT / storage_key
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(package_bytes)
-        return storage_key
+    def _package_ref(
+        self, kind_id: int, file_hash: str, size_bytes: int
+    ) -> InstalledPluginPackageRef:
+        return InstalledPluginPackageRef(
+            storageKey=f"skill-binaries/{kind_id}",
+            checksum=f"sha256:{file_hash}",
+            sizeBytes=size_bytes,
+        )
+
+    def _upsert_package(
+        self,
+        db: Session,
+        *,
+        kind_id: int,
+        package_bytes: bytes,
+        file_hash: str,
+        filename: str,
+    ) -> None:
+        package = db.query(SkillBinary).filter(SkillBinary.kind_id == kind_id).first()
+        if package:
+            package.binary_data = package_bytes
+            package.file_size = len(package_bytes)
+            package.file_hash = file_hash
+            package.file_name = filename
+            package.type = "plugin"
+            return
+
+        db.add(
+            SkillBinary(
+                kind_id=kind_id,
+                binary_data=package_bytes,
+                file_size=len(package_bytes),
+                file_hash=file_hash,
+                file_name=filename,
+                type="plugin",
+            )
+        )
+
+    def _fallback_filename(self, row: Kind) -> str:
+        spec = self._get_spec(row)
+        source_payload = spec.get("sourcePayload") or {}
+        if isinstance(source_payload, dict):
+            filename = source_payload.get("filename")
+            if isinstance(filename, str) and filename:
+                return filename
+        return f"{row.name}.zip"
 
     def _safe_kind_name(self, value: str) -> str:
         cleaned = re.sub(r"[^a-zA-Z0-9_.-]+", "-", value.strip()).strip("-")

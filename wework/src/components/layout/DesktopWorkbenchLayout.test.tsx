@@ -220,50 +220,54 @@ describe('DesktopWorkbenchLayout', () => {
     onLogout: vi.fn(),
   }
 
-  const workspacePanelProject = {
-    id: 7,
-    name: 'project38',
-    tasks: [],
-    config: {
-      mode: 'workspace' as const,
-      execution: {
-        targetType: 'local' as const,
-        deviceId: 'device-1',
-      },
-      workspace: {
-        source: 'local_path' as const,
-        localPath: '/workspace/projects/project38',
-      },
-    },
-  }
-
-  const workspacePanelDevices = [
-    {
-      id: 1,
-      device_id: 'device-1',
-      name: 'Cloud Device',
+  function createCloudWorkspacePanelState() {
+    const workspaceDevice = {
+      id: 11,
+      device_id: 'workspace-cloud-device',
+      name: 'Workspace Cloud Device',
       status: 'online' as const,
       is_default: false,
       device_type: 'cloud' as const,
       bind_shell: 'claudecode',
-    },
-  ]
+    }
+    const workspaceProject = {
+      id: 12,
+      name: 'workspace-project',
+      tasks: [],
+      config: {
+        mode: 'workspace' as const,
+        execution: {
+          targetType: 'local' as const,
+          deviceId: workspaceDevice.device_id,
+        },
+        workspace: {
+          source: 'local_path' as const,
+          localPath: '/workspace/project',
+        },
+      },
+    }
+
+    return {
+      currentProject: workspaceProject,
+      projects: [workspaceProject],
+      devices: [workspaceDevice],
+    }
+  }
 
   function renderWorkspacePanelLayout() {
+    const workspacePanelState = createCloudWorkspacePanelState()
     return render(
       <DesktopWorkbenchLayout
         {...baseProps}
         state={{
           ...baseProps.state,
-          projects: [workspacePanelProject],
-          devices: workspacePanelDevices,
-          currentProject: workspacePanelProject,
+          ...workspacePanelState,
         }}
         projectWork={{
           ...baseProps.projectWork,
-          projects: [workspacePanelProject],
-          devices: workspacePanelDevices,
-          currentProjectId: workspacePanelProject.id,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject.id,
         }}
       />,
     )
@@ -1188,6 +1192,61 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByText('新建项目')).toBeInTheDocument()
     expect(screen.getByTestId('project-name-input')).toBeInTheDocument()
     expect(screen.getByTestId('create-project-button')).toHaveTextContent('创建项目')
+  })
+
+  test('opens connection settings cloud device creation from an empty sidebar project dialog', async () => {
+    const onRefreshDevices = vi.fn().mockResolvedValue(undefined)
+
+    render(<DesktopWorkbenchLayout {...baseProps} onRefreshDevices={onRefreshDevices} />)
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-start-from-scratch-button'))
+
+    expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
+    expect(screen.getByText('暂无可用设备')).toBeInTheDocument()
+
+    const settingsLink = screen.getByTestId('open-cloud-device-settings-link')
+    expect(settingsLink).toHaveAttribute('href', '/settings')
+
+    await userEvent.click(settingsLink)
+
+    expect(screen.queryByTestId('project-create-dialog')).not.toBeInTheDocument()
+    expect(screen.getByTestId('wework-settings-page')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '连接' })).toBeInTheDocument()
+    expect(screen.getByTestId('add-cloud-device-dialog')).toBeInTheDocument()
+  })
+
+  test('opens connection settings cloud device creation from an empty project dialog', async () => {
+    const onRefreshDevices = vi.fn().mockResolvedValue(undefined)
+    createDeviceApiMock.mockReturnValue({
+      getAllDevices: vi.fn().mockResolvedValue([]),
+      getMetrics: vi.fn(),
+      getMetricsHistory: vi.fn(),
+      getVncConfig: vi.fn(),
+      createCloudDevice: vi.fn(),
+      startTerminal: vi.fn(),
+      startCodeServer: vi.fn(),
+      renameDevice: vi.fn(),
+      restartCloudDevice: vi.fn(),
+      deleteCloudDevice: vi.fn(),
+      deleteDevice: vi.fn(),
+      getHomeDirectory: vi.fn().mockResolvedValue('/home/ubuntu'),
+      getProjectWorkspaceRoot: vi.fn().mockResolvedValue('/workspace/projects'),
+      listDirectories: vi.fn().mockResolvedValue([]),
+      executeCommand: vi.fn(),
+    })
+
+    render(<DesktopWorkbenchLayout {...baseProps} onRefreshDevices={onRefreshDevices} />)
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+    await userEvent.click(screen.getByTestId('add-project-option'))
+    await userEvent.click(screen.getByTestId('project-start-from-scratch-option'))
+    await userEvent.click(screen.getByTestId('open-cloud-device-settings-link'))
+
+    expect(screen.queryByTestId('project-create-dialog')).not.toBeInTheDocument()
+    expect(screen.getByTestId('wework-settings-page')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '连接' })).toBeInTheDocument()
+    expect(screen.getByTestId('add-cloud-device-dialog')).toBeInTheDocument()
   })
 
   test('creates a project from an existing folder selected in the directory tree', async () => {

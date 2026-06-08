@@ -34,6 +34,7 @@ interface ProjectCreateDialogProps {
   ) => Promise<ProjectWithTasks>
   preferredDeviceId?: string | null
   onSelectDevicePreference?: (deviceId: string) => void
+  onOpenCloudDeviceSettings?: () => void
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onGetProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
@@ -182,6 +183,7 @@ export function ProjectCreateDialog({
   onCreateGitWorkspaceProject,
   preferredDeviceId,
   onSelectDevicePreference,
+  onOpenCloudDeviceSettings,
   onGetDeviceHomeDirectory,
   onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
@@ -201,6 +203,7 @@ export function ProjectCreateDialog({
       onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
       preferredDeviceId={preferredDeviceId}
       onSelectDevicePreference={onSelectDevicePreference}
+      onOpenCloudDeviceSettings={onOpenCloudDeviceSettings}
       onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
       onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
       onListDeviceDirectories={onListDeviceDirectories}
@@ -219,6 +222,7 @@ function ProjectCreateDialogContent({
   onCreateGitWorkspaceProject,
   preferredDeviceId,
   onSelectDevicePreference,
+  onOpenCloudDeviceSettings,
   onGetDeviceHomeDirectory,
   onGetProjectWorkspaceRoot,
   onListDeviceDirectories,
@@ -648,6 +652,23 @@ function ProjectCreateDialogContent({
             </option>
           ))}
         </select>
+
+        {sortedDevices.length === 0 && onOpenCloudDeviceSettings && (
+          <p className="mt-2 text-xs leading-5 text-[#606368]">
+            {t('workbench.project_no_available_devices_hint', '创建项目需要一台可用设备。')}
+            <a
+              href="/settings"
+              data-testid="open-cloud-device-settings-link"
+              onClick={event => {
+                event.preventDefault()
+                onOpenCloudDeviceSettings()
+              }}
+              className="ml-1 font-medium text-[#14b8a6] underline underline-offset-2 hover:text-[#0f9f93]"
+            >
+              {t('workbench.project_create_cloud_device_connection', '创建云设备连接')}
+            </a>
+          </p>
+        )}
 
         {mode === 'scratch' ? (
           <>

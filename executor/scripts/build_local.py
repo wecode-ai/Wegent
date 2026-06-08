@@ -24,6 +24,7 @@ Output:
 """
 
 import argparse
+import importlib.util
 import os
 import platform
 import re
@@ -31,6 +32,10 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+OPENAI_CODEX_SDK_PACKAGE = "openai-codex"
+OPENAI_CODEX_SDK_IMPORT = "openai_codex"
+OPENAI_CODEX_SDK_VERSION = "0.1.0b3"
 
 
 def get_project_root() -> Path:
@@ -172,6 +177,57 @@ def restore_github_repo_source(original_content: str) -> None:
     )
     github_checker_py.write_text(original_content)
     print("Restored github_version_checker.py to original content")
+
+
+def ensure_linux_openai_codex_sdk(effective_platform: str) -> None:
+    """Install the Codex Python SDK for Linux PyInstaller builds.
+
+    Linux builds use the npm Codex CLI from the runtime image. The Python SDK's
+    default dependency chain includes a platform-specific CLI wheel that is not
+    available for Linux, so install the SDK without dependencies before
+    PyInstaller collects modules.
+    """
+    if effective_platform != "Linux":
+        return
+
+    if importlib.util.find_spec(OPENAI_CODEX_SDK_IMPORT) is not None:
+        print(f"Found {OPENAI_CODEX_SDK_IMPORT}; skipping SDK install")
+        return
+
+    uv_binary = shutil.which("uv")
+    if uv_binary is None:
+        raise RuntimeError(
+            "uv is required to install openai-codex for Linux executor builds"
+        )
+
+    package_spec = f"{OPENAI_CODEX_SDK_PACKAGE}=={OPENAI_CODEX_SDK_VERSION}"
+    print(f"Installing {package_spec} with --no-deps for Linux build...")
+    subprocess.run(
+        [
+            uv_binary,
+            "pip",
+            "install",
+            "--python",
+            sys.executable,
+            "--no-deps",
+            package_spec,
+        ],
+        check=True,
+    )
+
+
+def append_codex_pyinstaller_options(cmd: list[str]) -> None:
+    """Add CodeXAgent and openai_codex modules to a PyInstaller command."""
+    cmd += [
+        "--hidden-import=executor.agents.codex",
+        "--hidden-import=executor.agents.codex.codex_agent",
+        "--hidden-import=executor.agents.codex.config_builder",
+        "--hidden-import=executor.agents.codex.event_mapper",
+        "--hidden-import=executor.agents.codex.session_store",
+        "--hidden-import=openai_codex",
+        "--hidden-import=openai_codex.generated.v2_all",
+        "--collect-all=openai_codex",
+    ]
 
 
 def find_claude_agent_sdk_binary(
@@ -378,6 +434,7 @@ def build_executable(
     try:
         # Change to project root for correct imports
         os.chdir(project_root)
+        ensure_linux_openai_codex_sdk(effective_platform)
 
         # Determine output name based on platform
         if platform.system() == "Windows":
@@ -524,6 +581,7 @@ def build_executable(
             "--collect-data=tiktoken",
             "--collect-data=tiktoken_ext",
         ]
+        append_codex_pyinstaller_options(cmd)
 
         append_claude_cli_binary(
             cmd,

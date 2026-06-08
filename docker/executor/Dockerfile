@@ -11,7 +11,7 @@ WORKDIR /app
 COPY executor/pyproject.toml /app/executor/pyproject.toml
 
 RUN cd /app/executor && uv pip install --system --no-cache -r pyproject.toml
-RUN uv pip install --system --no-cache --no-deps openai-codex==0.1.0b2
+RUN uv pip install --system --no-cache --no-deps openai-codex==0.1.0b3
 
 # Install PyInstaller for building standalone binary (using uv for speed)
 RUN uv pip install --system pyinstaller
@@ -38,7 +38,7 @@ RUN dnf install -y \
     atk at-spi2-atk libXcomposite libXdamage libXfixes libXrandr libxkbcommon \
     # Skill-creator dependencies (JSON parsing and packaging)
     jq zip \
-    && npm install -g @anthropic-ai/claude-code@2.1.142 @openai/codex@0.132.0 \
+    && npm install -g @anthropic-ai/claude-code@2.1.142 @openai/codex@0.137.0 \
     && dnf clean all \
     && rm -rf /var/cache/dnf/*
 

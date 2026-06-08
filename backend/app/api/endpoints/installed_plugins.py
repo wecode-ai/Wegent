@@ -2,10 +2,12 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import io
 import logging
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -86,17 +88,20 @@ def download_installed_plugin(
     installed_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
-) -> FileResponse:
+) -> StreamingResponse:
     """Download a user's installed plugin package for local executor sync."""
-    path = installed_plugin_service.package_path_for_download(
+    package_bytes, filename = installed_plugin_service.package_data_for_download(
         db=db,
         user_id=current_user.id,
         installed_id=installed_id,
     )
-    return FileResponse(
-        path,
+    encoded_filename = quote(filename, safe="")
+    return StreamingResponse(
+        io.BytesIO(package_bytes),
         media_type="application/zip",
-        filename=path.name,
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
+        },
     )
 
 
