@@ -176,6 +176,7 @@ class RetrieveRecord(BaseModel):
     title: str
     metadata: Optional[dict] = None
     knowledge_base_id: Optional[int] = None
+    document_id: Optional[int] = None
 
 
 class InternalRetrieveResponse(BaseModel):
@@ -447,6 +448,7 @@ async def internal_retrieve(
                     title=r.get("title", "Unknown"),
                     metadata=r.get("metadata"),
                     knowledge_base_id=r.get("knowledge_base_id"),
+                    document_id=r.get("document_id"),
                 )
                 for r in records
             ],

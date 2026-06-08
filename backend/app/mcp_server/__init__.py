@@ -4,10 +4,12 @@
 
 """Backend MCP Server module.
 
-This module provides a unified MCP Server for Wegent Backend with two endpoints:
+This module provides MCP servers for Wegent Backend with these endpoints:
 - /mcp/system - System-level tools (silent_exit) automatically injected into all tasks
 - /mcp/knowledge - Knowledge MCP module root
   - /mcp/knowledge/sse - Knowledge MCP streamable HTTP transport endpoint
+- /mcp/knowledge-external - Trusted external knowledge integration MCP root
+  - /mcp/knowledge-external/sse - External knowledge MCP streamable HTTP transport endpoint
 New MCP servers should follow /mcp/<name>/sse for streamable HTTP transport.
 
 The MCP Server runs as part of the Backend FastAPI application and uses
@@ -29,10 +31,11 @@ from .context import (
     set_mcp_context,
 )
 from .server import (
-    create_mcp_router,
+    ExternalKnowledgeUser,
     ensure_knowledge_tools_registered,
     get_mcp_system_config,
     register_mcp_apps,
+    set_external_knowledge_auth_handler,
 )
 from .tools.decorator import (
     clear_tools_registry,
@@ -42,10 +45,11 @@ from .tools.decorator import (
 
 __all__ = [
     # Server functions
-    "create_mcp_router",
     "get_mcp_system_config",
     "register_mcp_apps",
     "ensure_knowledge_tools_registered",
+    "set_external_knowledge_auth_handler",
+    "ExternalKnowledgeUser",
     # Auth functions
     "verify_task_token",
     "get_user_from_task_token",
