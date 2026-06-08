@@ -152,6 +152,7 @@ export interface TaskRuntimeState {
   deferredTerminalUpdatedAt?: string
   recoveryReason?: TaskRecoveryReason
   recoveryError?: string
+  serverConfirmedNoStream?: boolean
 }
 
 export interface TaskRuntimeDerivedState {
@@ -163,6 +164,7 @@ export interface TaskRuntimeDerivedState {
   canQueueMessage: boolean
   canCancelTask: boolean
   blocksQueuedDispatch: boolean
+  serverConfirmedNoStream: boolean
 }
 
 export interface TaskRuntimeVerifyResult {
@@ -445,6 +447,8 @@ export class TaskStateMachine {
     const isWaitingForUser = isWaitingForUserTaskStatus(runtime.taskStatus)
     const isStreaming = runtime.phase === 'streaming' && Boolean(runtime.activeStreamSubtaskId)
 
+    const serverConfirmedNoStream = Boolean(runtime.serverConfirmedNoStream)
+
     return {
       isExecutionActive,
       isTerminal,
@@ -452,8 +456,9 @@ export class TaskStateMachine {
       shouldJoinRoom: isExecutionActive && !runtime.joinedRoom,
       canSendMessage: isTerminal || isWaitingForUser || runtime.phase === 'running',
       canQueueMessage: isStreaming,
-      canCancelTask: isExecutionActive && !isTerminal,
-      blocksQueuedDispatch: isExecutionActive,
+      canCancelTask: isExecutionActive && !isTerminal && !serverConfirmedNoStream,
+      blocksQueuedDispatch: isExecutionActive && !serverConfirmedNoStream,
+      serverConfirmedNoStream,
     }
   }
 
@@ -830,6 +835,7 @@ export class TaskStateMachine {
     this.state = {
       ...this.state,
       status: 'ready',
+      isStopping: false,
       runtime,
       derived: this.deriveRuntimeState(runtime),
     }
@@ -878,6 +884,7 @@ export class TaskStateMachine {
         isTerminal || isActiveExecutionTaskStatus(taskStatus)
           ? undefined
           : this.state.runtime.deferredTerminalUpdatedAt,
+      serverConfirmedNoStream: isTerminal ? false : this.state.runtime.serverConfirmedNoStream,
     }
 
     let messages = this.state.messages
@@ -1036,6 +1043,7 @@ export class TaskStateMachine {
             lastSyncedAt: Date.now(),
             messagesSyncedUpdatedAt:
               event.syncUpdatedAt ?? this.state.runtime.messagesSyncedUpdatedAt,
+            serverConfirmedNoStream: true,
           }
           this.state = {
             ...this.state,
@@ -1060,6 +1068,7 @@ export class TaskStateMachine {
             lastSyncedAt: Date.now(),
             messagesSyncedUpdatedAt:
               event.syncUpdatedAt ?? this.state.runtime.messagesSyncedUpdatedAt,
+            serverConfirmedNoStream: false,
           }
           this.state = {
             ...this.state,
@@ -1373,7 +1382,41 @@ export class TaskStateMachine {
         }
       }
 
-      // Check if any message is streaming
+      // Server-truth-first decision: determine if server confirmed no active stream
+      // by checking whether the stale streaming subtask appears in the response
+      // with a terminal status (COMPLETED/CANCELLED/FAILED).
+      // streamRecovery absent + subtask with terminal status = server confirmed stream ended.
+      // streamRecovery absent + subtask PENDING or missing = server hasn't caught up yet.
+      const serverHasNoStream = !streamRecovery?.subtask_id
+
+      let staleStreamingSubtaskId: number | null = null
+      for (const msg of this.state.messages.values()) {
+        if (msg.type === 'ai' && msg.status === 'streaming') {
+          staleStreamingSubtaskId = msg.subtaskId || null
+          break
+        }
+      }
+
+      if (serverHasNoStream && staleStreamingSubtaskId && subtasks) {
+        const staleSubtask = subtasks.find(s => s.id === staleStreamingSubtaskId)
+        const isStaleSubtaskTerminal =
+          staleSubtask &&
+          (staleSubtask.status === 'COMPLETED' ||
+            staleSubtask.status === 'CANCELLED' ||
+            staleSubtask.status === 'FAILED')
+
+        if (isStaleSubtaskTerminal) {
+          const staleMsgId = generateMessageId('ai', staleStreamingSubtaskId)
+          const staleMsg = this.state.messages.get(staleMsgId)
+          if (staleMsg) {
+            const newMessages = new Map(this.state.messages)
+            newMessages.set(staleMsgId, { ...staleMsg, status: 'completed' })
+            this.state = { ...this.state, messages: newMessages }
+          }
+        }
+      }
+
+      // Re-check: any message still streaming after finalization?
       let activeStreamSubtaskId: number | null = null
       for (const msg of this.state.messages.values()) {
         if (msg.type === 'ai' && msg.status === 'streaming') {
@@ -2200,6 +2243,7 @@ export class TaskStateMachine {
       hasTerminalStatus: false,
       deferredTerminalStatus: undefined,
       deferredTerminalUpdatedAt: undefined,
+      serverConfirmedNoStream: false,
     }
 
     this.state = {

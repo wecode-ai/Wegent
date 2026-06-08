@@ -340,10 +340,10 @@ export function useChatStreamHandlers({
   // In that window, UI should still block sending and show stop action.
   const runtimeTaskStatus = taskState?.runtime.taskStatus
   const isRunningLifecycle = runtimeTaskStatus === 'RUNNING'
+  const serverConfirmedNoStream = runtimeDerived?.serverConfirmedNoStream ?? false
 
   const isStopping = taskState?.isStopping || false
 
-  // Check for pending user messages
   const hasPendingUserMessage = useMemo(() => {
     if (!taskState?.messages) return false
     for (const msg of taskState.messages.values()) {
@@ -351,7 +351,12 @@ export function useChatStreamHandlers({
     }
     return false
   }, [taskState?.messages])
-  const isStreaming = isMachineStreaming || isRunningLifecycle || hasPendingUserMessage
+
+  // When server confirmed no active stream (e.g. cancel + reconnect recovery),
+  // isRunningLifecycle must not keep isStreaming true. The stale RUNNING
+  // taskStatus has not been updated yet via WebSocket.
+  const isStreaming =
+    isMachineStreaming || (isRunningLifecycle && !serverConfirmedNoStream) || hasPendingUserMessage
 
   // Stop stream wrapper
   // Note: subtasks parameter is no longer passed to contextStopStream

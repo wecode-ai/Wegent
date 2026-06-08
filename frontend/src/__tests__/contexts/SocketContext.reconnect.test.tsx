@@ -183,6 +183,10 @@ describe('SocketProvider reconnect notification', () => {
   })
 
   describe('cancelChatStream timeout', () => {
+    afterEach(() => {
+      jest.useRealTimers()
+    })
+
     it('resolves with timeout error when ack callback is never invoked', async () => {
       jest.useFakeTimers()
       const socket = createMockSocket()
@@ -339,6 +343,86 @@ describe('SocketProvider reconnect notification', () => {
       expect(result!.success).toBe(false)
 
       jest.useRealTimers()
+    })
+
+    it('resolves success=false when ack returns success:false', async () => {
+      const socket = createMockSocket()
+
+      socket.emit.mockImplementation(
+        (event: string, payload: unknown, ack?: (response: unknown) => void) => {
+          if (event === 'task:join' && ack) {
+            ack({ subtasks: [] })
+          } else if (event === 'chat:cancel' && ack) {
+            ack({ success: false, error: 'cancel failed' })
+          }
+        }
+      )
+
+      mockIo.mockReturnValue(socket)
+
+      let socketApi: ReturnType<typeof useSocket> | undefined
+      render(
+        <SocketProvider>
+          <SocketProbe
+            onReady={api => {
+              socketApi = api
+            }}
+          />
+        </SocketProvider>
+      )
+
+      await waitFor(() => expect(socketApi?.socket).toBe(socket))
+      await act(async () => {
+        socket.triggerSocket('connect')
+      })
+
+      let result: { success: boolean; error?: string } | undefined
+      await act(async () => {
+        result = await socketApi!.cancelChatStream(42, 'partial', 'Chat')
+      })
+
+      expect(result!.success).toBe(false)
+      expect(result!.error).toBe('cancel failed')
+    })
+
+    it('resolves success=false when ack returns error without success field', async () => {
+      const socket = createMockSocket()
+
+      socket.emit.mockImplementation(
+        (event: string, payload: unknown, ack?: (response: unknown) => void) => {
+          if (event === 'task:join' && ack) {
+            ack({ subtasks: [] })
+          } else if (event === 'chat:cancel' && ack) {
+            ack({ error: 'cancel rejected' })
+          }
+        }
+      )
+
+      mockIo.mockReturnValue(socket)
+
+      let socketApi: ReturnType<typeof useSocket> | undefined
+      render(
+        <SocketProvider>
+          <SocketProbe
+            onReady={api => {
+              socketApi = api
+            }}
+          />
+        </SocketProvider>
+      )
+
+      await waitFor(() => expect(socketApi?.socket).toBe(socket))
+      await act(async () => {
+        socket.triggerSocket('connect')
+      })
+
+      let result: { success: boolean; error?: string } | undefined
+      await act(async () => {
+        result = await socketApi!.cancelChatStream(42, 'partial', 'Chat')
+      })
+
+      expect(result!.success).toBe(false)
+      expect(result!.error).toBe('cancel rejected')
     })
   })
 })

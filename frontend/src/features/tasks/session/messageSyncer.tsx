@@ -850,7 +850,9 @@ export function useMessageSyncer({
             if (result.success) {
               cancelSucceeded = true
             } else {
-              console.error('[messageSyncer] Failed to cancel stream:', result.error)
+              console.warn(
+                '[messageSyncer] Cancel acknowledgement timed out; relying on recovery sync'
+              )
             }
           } catch (error) {
             console.error('[messageSyncer] Exception during cancelChatStream:', error)

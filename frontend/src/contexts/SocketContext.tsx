@@ -274,7 +274,6 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     newSocket.on('disconnect', (_: string) => {
       hasConnectedBefore = true
       setIsConnected(false)
-      // Don't clear joinedTasksRef here - we need it for rejoining after reconnect
     })
 
     newSocket.io.on('reconnect_attempt', (attempt: number) => {
@@ -560,7 +559,6 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       shellType?: string
     ): Promise<{ success: boolean; error?: string }> => {
       if (!socket?.connected) {
-        console.error('[Socket.IO] cancelChatStream failed - not connected')
         return { success: false, error: 'Not connected to server' }
       }
 
@@ -586,7 +584,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
             if (!settled) {
               settled = true
               clearTimeout(timer)
-              resolve({ success: response.success ?? true, error: response.error })
+              resolve({ success: response.success === true, error: response.error })
             }
           }
         )
