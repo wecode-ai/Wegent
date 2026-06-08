@@ -959,11 +959,11 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('project-clone-from-git-button'))
 
     await waitFor(() => expect(onListGitRepositories).toHaveBeenCalledTimes(1))
-    await userEvent.selectOptions(
-      screen.getByTestId('git-repository-select'),
-      'https://github.com/wecode-ai/Wegent.git',
+    await userEvent.click(screen.getByTestId('git-repository-select'))
+    await userEvent.click(screen.getByTestId('git-repository-select-option'))
+    await waitFor(() =>
+      expect(screen.getByTestId('git-branch-select')).toHaveTextContent('main（默认）'),
     )
-    await waitFor(() => expect(screen.getByTestId('git-branch-select')).toHaveValue('main'))
     await userEvent.click(screen.getByTestId('create-project-button'))
 
     await waitFor(() =>
@@ -1998,7 +1998,10 @@ describe('DesktopWorkbenchLayout', () => {
       />,
     )
 
-    expect(onLoadEnvironmentInfo).not.toHaveBeenCalled()
+    await waitFor(() => {
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(1)
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(workspaceProject)
+    })
 
     rerender(
       <DesktopWorkbenchLayout
@@ -2017,9 +2020,7 @@ describe('DesktopWorkbenchLayout', () => {
       />,
     )
 
-    await waitFor(() =>
-      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(workspaceProject),
-    )
+    await waitFor(() => expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(2))
   })
 
   test('closes the right workspace panel from the panel edge', async () => {
