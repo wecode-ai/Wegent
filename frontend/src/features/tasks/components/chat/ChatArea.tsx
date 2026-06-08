@@ -65,7 +65,9 @@ import {
   removeQuickLaunchQueryParams,
   type QuickLaunchIntent,
 } from './quick-launch/launch-intent'
+import { shouldClearDeviceSelectionForQuickLauncher } from './quick-launch/execution-target'
 import type { QuickPresetSelection } from './quick-launch/types'
+import { useDevices } from '@/contexts/DeviceContext'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -190,6 +192,7 @@ function ChatAreaContent({
   const { toast } = useToast()
   const router = useRouter()
   const pathname = usePathname()
+  const { setSelectedDeviceId } = useDevices()
   const chatStreamContext = useOptionalTaskSession()
 
   // Pipeline stage info state - shared between PipelineStageIndicator and MessagesArea
@@ -561,9 +564,12 @@ function ChatAreaContent({
   // Handle team selection from QuickAccessCards
   const handleTeamSelect = useCallback(
     (team: Team) => {
+      if (taskType === 'task' && shouldClearDeviceSelectionForQuickLauncher(team)) {
+        setSelectedDeviceId(null)
+      }
       handleTeamChange(team)
     },
-    [handleTeamChange]
+    [handleTeamChange, setSelectedDeviceId, taskType]
   )
 
   // Use scroll management hook - consolidates 4 useEffect calls

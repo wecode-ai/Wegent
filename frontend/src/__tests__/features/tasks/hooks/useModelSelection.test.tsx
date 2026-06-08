@@ -16,6 +16,7 @@ import {
   getModelNamespaceFromConfig,
   getModelTypeFromConfig,
 } from '@/features/settings/services/bots'
+import { getCompatibleProviderFromAgentType } from '@/utils/modelCompatibility'
 import { getGlobalModelPreference } from '@/utils/modelPreferences'
 
 const mockTranslate = (_key: string, fallback?: string) => fallback ?? _key
@@ -62,6 +63,15 @@ const mockAdvancedModel: Model = {
   displayName: 'Claude Opus 4 Advanced',
   provider: 'anthropic',
   modelId: 'claude-opus-4-advanced',
+  type: 'public',
+  isAdvanced: true,
+}
+
+const mockOpenAIAdvancedModel: Model = {
+  name: 'gpt-5-advanced',
+  displayName: 'GPT-5 Advanced',
+  provider: 'openai',
+  modelId: 'gpt-5-advanced',
   type: 'public',
   isAdvanced: true,
 }
@@ -373,5 +383,56 @@ describe('useModelSelection', () => {
         expect.objectContaining(mockModel),
       ])
     )
+  })
+
+  it('shows advanced models when every compatible model is advanced', async () => {
+    ;(getCompatibleProviderFromAgentType as jest.Mock).mockReturnValue(['openai'])
+    ;(modelApis.getUnifiedModels as jest.Mock).mockReset()
+    const modelLoad = mockDeferredModelsLoad([mockModel, mockOpenAIAdvancedModel])
+    const agnoTeam: TeamWithBotDetails = {
+      ...mockTeam,
+      agent_type: 'agno',
+    }
+
+    const { result } = renderHook(() =>
+      useModelSelection({
+        teamId: 1,
+        taskId: null,
+        selectedTeam: agnoTeam,
+      })
+    )
+
+    await modelLoad.resolve()
+
+    await waitFor(() => {
+      expect(result.current.filteredModels).toEqual([
+        expect.objectContaining(mockOpenAIAdvancedModel),
+      ])
+    })
+    expect(result.current.showAdvancedModels).toBe(true)
+  })
+
+  it('filters OpenAI models out for ClaudeCode-compatible teams', async () => {
+    ;(getCompatibleProviderFromAgentType as jest.Mock).mockReturnValue(['claude', 'anthropic'])
+    ;(modelApis.getUnifiedModels as jest.Mock).mockReset()
+    const modelLoad = mockDeferredModelsLoad([mockModel, mockOpenAIAdvancedModel])
+    const claudeCodeTeam: TeamWithBotDetails = {
+      ...mockTeam,
+      agent_type: 'claude',
+    }
+
+    const { result } = renderHook(() =>
+      useModelSelection({
+        teamId: 1,
+        taskId: null,
+        selectedTeam: claudeCodeTeam,
+      })
+    )
+
+    await modelLoad.resolve()
+
+    await waitFor(() => {
+      expect(result.current.filteredModels).toEqual([expect.objectContaining(mockModel)])
+    })
   })
 })
