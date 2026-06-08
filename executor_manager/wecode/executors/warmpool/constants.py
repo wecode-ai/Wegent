@@ -61,6 +61,8 @@ ANNOTATION_HEARTBEAT_BASE_URL = "aigc.weibo.com/executor-manager-heartbeat-base-
 ANNOTATION_HEARTBEAT_ID = "aigc.weibo.com/heartbeat-id"
 ANNOTATION_HEARTBEAT_ENABLED = "aigc.weibo.com/heartbeat-enabled"
 ANNOTATION_HEARTBEAT_TYPE = "aigc.weibo.com/heartbeat-type"
+ANNOTATION_SKILL_IDENTITY_TOKEN = "aigc.weibo.com/skill-identity-token"
+ANNOTATION_SKILL_USER_NAME = "aigc.weibo.com/skill-user-name"
 
 # Config file paths (DownwardAPI mount points)
 CONFIG_DIR = "/root/.wegent/.config"

@@ -95,6 +95,10 @@ spec:
         - name: EXECUTOR_ENV
           value: |-
             {{ executor_env }}
+        {% for env_name, env_value in task_identity_env.items() %}
+        - name: {{ env_name }}
+          value: "{{ env_value }}"
+        {% endfor %}
         - name: REPO_PROXY_CONFIG
           value: |-
             {{ repo_proxy_config }}
@@ -256,6 +260,14 @@ spec:
               apiVersion: v1
               fieldPath: metadata.labels['aigc.weibo.com/heartbeat-id']
             path: heartbeat_id
+          - fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.annotations['aigc.weibo.com/skill-identity-token']
+            path: wegent_skill_identity_token
+          - fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.annotations['aigc.weibo.com/skill-user-name']
+            path: wegent_skill_user_name
     {% endif %}
     {% if volumes %}
     {{ volumes | to_nice_yaml | indent(4) }}

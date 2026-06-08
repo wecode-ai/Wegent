@@ -18,6 +18,7 @@ from executor_manager.wecode.executors.k8s.binary_extractor import (
 )
 from shared.models.openai_converter import get_metadata_field
 from shared.telemetry.config import get_otel_config
+from shared.utils.task_identity import build_task_identity_env
 
 executor_manager_host = os.getenv(
     "EXECUTOR_MANAGER_URL", "http://wegent-executor-manager-web.wb-plat-ide:8080"
@@ -127,6 +128,10 @@ def build_pod_configuration(
 
     # Get OpenTelemetry configuration
     otel_config = get_otel_config()
+    task_identity_env = build_task_identity_env(
+        skill_identity_token=get_metadata_field(task, "skill_identity_token"),
+        user_name=username,
+    )
 
     # Prepare template parameters
     template_params = {
@@ -139,6 +144,7 @@ def build_pod_configuration(
         "task_type": get_metadata_field(task, "type", "online"),
         "mode": mode,
         "executor_env": EXECUTOR_ENV,
+        "task_identity_env": task_identity_env,
         "repo_proxy_config": repo_proxy_config,
         "executor_custom_config": EXECUTOR_CUSTOM_CONFIG,
         "volumes": volumes_info.get("volumes", []),

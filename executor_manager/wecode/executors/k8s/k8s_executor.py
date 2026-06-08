@@ -38,6 +38,7 @@ from shared.models.execution import ExecutionRequest
 from shared.models.openai_converter import get_metadata_field
 from shared.status import TaskStatus
 from shared.utils.http_client import traced_session, traced_sync_client
+from shared.utils.task_identity import build_task_identity_env
 
 logger = setup_logger(__name__)
 
@@ -729,6 +730,8 @@ class K8sExecutor(Executor):
             ANNOTATION_HEARTBEAT_ENABLED,
             ANNOTATION_HEARTBEAT_ID,
             ANNOTATION_HEARTBEAT_TYPE,
+            ANNOTATION_SKILL_IDENTITY_TOKEN,
+            ANNOTATION_SKILL_USER_NAME,
             ANNOTATION_TASK_API_DOMAIN,
             LABEL_EXECUTOR,
             LABEL_EXECUTOR_VALUE,
@@ -830,6 +833,16 @@ class K8sExecutor(Executor):
                 )
             if CALLBACK_URL:
                 annotations[ANNOTATION_CALLBACK_URL] = CALLBACK_URL
+            task_identity_env = build_task_identity_env(
+                skill_identity_token=get_metadata_field(task, "skill_identity_token"),
+                user_name=user_name,
+            )
+            skill_identity_token = task_identity_env.get("WEGENT_SKILL_IDENTITY_TOKEN")
+            if skill_identity_token:
+                annotations[ANNOTATION_SKILL_IDENTITY_TOKEN] = skill_identity_token
+            skill_user_name = task_identity_env.get("WEGENT_SKILL_USER_NAME")
+            if skill_user_name:
+                annotations[ANNOTATION_SKILL_USER_NAME] = skill_user_name
 
             # Patch Pod labels and annotations with task-specific data
             pod_name = sandbox_status.get("pod_name")
@@ -958,7 +971,7 @@ class K8sExecutor(Executor):
                     "error_msg": "Failed to get Kubernetes API client",
                 }
 
-            namespace = K8S_NAMESPACE or executor_namespace
+            namespace = executor_namespace or K8S_NAMESPACE
             delete_options = client.V1DeleteOptions(propagation_policy="Background")
             core_v1.delete_namespaced_pod(
                 name=pod_name, namespace=namespace, body=delete_options
