@@ -82,11 +82,6 @@ export function QuickPhraseList({
                   />
                 )}
               </span>
-              {preset.prompt && preset.prompt !== preset.title && (
-                <span className="mt-1 block text-xs leading-5 text-text-muted">
-                  {preset.prompt}
-                </span>
-              )}
             </button>
           )
         })}

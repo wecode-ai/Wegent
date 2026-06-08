@@ -1,4 +1,3 @@
-import { Bot } from 'lucide-react'
 import { useState } from 'react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type {
@@ -19,7 +18,7 @@ import { RightWorkspacePanel } from './workspace-panels/RightWorkspacePanel'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
 
 const DESKTOP_COMPOSER_FRAME_CLASS =
-  'mx-auto w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100vw-4rem)]'
+  'mx-auto w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100vw-4rem)] -translate-y-12'
 const DESKTOP_FLOATING_COMPOSER_CLASS =
   'pointer-events-none absolute bottom-4 left-1/2 z-chrome w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100%_-_3rem)] -translate-x-1/2'
 const DESKTOP_FLOATING_COMPOSER_BACKDROP_CLASS =
@@ -158,9 +157,6 @@ export function DesktopWorkbenchMain({
               className={DESKTOP_COMPOSER_FRAME_CLASS}
               data-testid="desktop-empty-composer-frame"
             >
-              <div className="mb-7 flex justify-center">
-                <Bot className="h-7 w-7 text-text-muted" />
-              </div>
               <h1 className="mb-9 text-center text-[28px] font-medium leading-9 tracking-normal">
                 {emptyTitle}
               </h1>

@@ -14,6 +14,8 @@ import { ConversationQueuePanel } from './ConversationQueuePanel'
 import { CompactChatComposer } from './composer/CompactChatComposer'
 import { ProjectChatComposer } from './composer/ProjectChatComposer'
 
+export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
+
 export interface ProjectChatControls {
   models: UnifiedModel[]
   skills: UnifiedSkill[]
@@ -40,6 +42,7 @@ export interface ProjectWorkControls {
   currentStandaloneDeviceId?: string | null
   onSelectProject: (projectId: number | null) => void
   onSelectStandaloneDevice: (deviceId: string | null) => void
+  onCreateProjectMode?: (mode: ProjectCreateMode) => void
 }
 
 interface ChatInputProps {
@@ -144,6 +147,7 @@ export function ChatInput({
               currentStandaloneDeviceId: null,
               onSelectProject: () => {},
               onSelectStandaloneDevice: () => {},
+              onCreateProjectMode: undefined,
             }
           }
           showProjectWorkBar={showProjectWorkBar}

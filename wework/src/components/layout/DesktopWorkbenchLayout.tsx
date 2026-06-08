@@ -5,7 +5,11 @@ import type {
   WorkbenchMessage,
   WorkbenchState,
 } from '@/types/workbench'
-import type { ProjectChatControls, ProjectWorkControls } from '@/components/chat/ChatInput'
+import type {
+  ProjectChatControls,
+  ProjectCreateMode,
+  ProjectWorkControls,
+} from '@/components/chat/ChatInput'
 import type {
   ArchivedTaskListResponse,
   CreateGitWorkspaceProjectRequest,
@@ -20,6 +24,7 @@ import type { EnvironmentInfo } from '@/types/environment'
 import { stripAppBasePath } from '@/config/runtime'
 import { isSettingsRoute, navigateTo } from '@/lib/navigation'
 import { DesktopSidebar } from './DesktopSidebar'
+import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import { DesktopWorkbenchMain } from './DesktopWorkbenchMain'
 import { DesktopWindowControls } from './DesktopWindowControls'
 import { useDesktopSidebarCollapsed } from './useDesktopSidebarCollapsed'
@@ -148,6 +153,8 @@ export function DesktopWorkbenchLayout({
   const [settingsOpen, setSettingsOpen] = useState(() =>
     isSettingsRoute(stripAppBasePath(window.location.pathname))
   )
+  const [projectWorkCreateMode, setProjectWorkCreateMode] =
+    useState<ProjectCreateMode | null>(null)
   const [environmentInfo, setEnvironmentInfo] = useState<EnvironmentInfo>({
     additions: '+0',
     deletions: '-0',
@@ -229,6 +236,19 @@ export function DesktopWorkbenchLayout({
     await refreshEnvironmentInfo()
   }
 
+  const openProjectFromWorkMenu = useCallback((mode: ProjectCreateMode) => {
+    setProjectWorkCreateMode(mode)
+    void onRefreshDevices?.().catch(() => undefined)
+  }, [onRefreshDevices])
+
+  const projectWorkWithCreation = useMemo<ProjectWorkControls>(
+    () => ({
+      ...projectWork,
+      onCreateProjectMode: openProjectFromWorkMenu,
+    }),
+    [openProjectFromWorkMenu, projectWork],
+  )
+
   return (
     <div className="relative flex h-screen overflow-hidden bg-background text-text-primary">
       {!settingsOpen && !sidebarCollapsed && (
@@ -308,7 +328,7 @@ export function DesktopWorkbenchLayout({
           queuedMessages={queuedMessages}
           guidanceMessages={guidanceMessages}
           projectChat={projectChat}
-          projectWork={projectWork}
+          projectWork={projectWorkWithCreation}
           input={state.input}
           isSending={state.isSending}
           environmentInfo={environmentInfo}
@@ -327,6 +347,25 @@ export function DesktopWorkbenchLayout({
           onCancelGuidanceMessage={onCancelGuidanceMessage}
         />
       )}
+      <ProjectCreateDialog
+        open={projectWorkCreateMode !== null}
+        mode={projectWorkCreateMode ?? 'scratch'}
+        devices={state.devices}
+        onClose={() => setProjectWorkCreateMode(null)}
+        onCreateProject={onCreateProject}
+        onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
+        preferredDeviceId={
+          state.standaloneDeviceId ??
+          state.user?.preferences?.default_execution_target
+        }
+        onSelectDevicePreference={onRememberExecutionDevice}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+        onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
+        onListDeviceDirectories={onListDeviceDirectories}
+        onCreateDeviceDirectory={onCreateDeviceDirectory}
+        onListGitRepositories={onListGitRepositories}
+        onListGitBranches={onListGitBranches}
+      />
     </div>
   )
 }
