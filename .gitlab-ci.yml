@@ -379,7 +379,7 @@ wework-web:
 trigger_update_wework_web:
     stage: production
     variables:
-        APP: simulation-wegent-wework-web
+        APP: wegent-wework-web;beta-wegent-wework-web;simulation-wegent-wework-web
         SERVICE: wegent-wework-web
         IMAGE_NAME: wegent-wework-web
         MASTER_BRANCH: master
