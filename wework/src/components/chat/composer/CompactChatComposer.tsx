@@ -1,4 +1,4 @@
-import { ArrowUp, Camera, Image, Maximize2, Mic, Minimize2, Plus, Square } from 'lucide-react'
+import { ArrowUp, Camera, Image, Maximize2, Minimize2, Plus, Square } from 'lucide-react'
 import type { ChangeEvent, ClipboardEventHandler } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -48,9 +48,7 @@ export function CompactChatComposer({
   const [fullscreenInputOpen, setFullscreenInputOpen] = useState(false)
   const [canExpandInput, setCanExpandInput] = useState(false)
   const canSend = (value.trim().length > 0 || attachments.length > 0) && !disabled
-  const hasText = value.trim().length > 0
   const explicitLineCount = value.split('\n').length
-  const textareaRightPaddingClass = hasText ? 'pr-16' : 'pr-[104px]'
 
   const handleImageChange = (event: ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files
@@ -148,7 +146,7 @@ export function CompactChatComposer({
             onPasteFiles={files => onFileSelect?.(files)}
             className={[
               'scrollbar-none m-0 block h-[52px] max-h-32 w-full min-w-0 flex-1 box-border resize-none overflow-y-auto bg-transparent py-[14px] pl-5 text-base leading-6 text-text-primary outline-none placeholder:text-text-muted',
-              textareaRightPaddingClass,
+              'pr-16',
             ].join(' ')}
             skillMenuClassName="left-[-1rem] right-[-3.5rem]"
             onListLocalSkills={onListLocalSkills}
@@ -163,17 +161,6 @@ export function CompactChatComposer({
               aria-label={t('workbench.expand_input', '展开输入框')}
             >
               <Maximize2 className="h-4 w-4" />
-            </button>
-          )}
-          {!hasText && (
-            <button
-              type="button"
-              data-testid="voice-input-button"
-              disabled={disabled}
-              className="absolute bottom-[6px] right-14 z-popover flex h-11 w-11 items-center justify-center rounded-full p-0 text-text-secondary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-              aria-label={t('workbench.voice_input', '语音输入')}
-            >
-              <Mic className="h-5 w-5" />
             </button>
           )}
           {isStreaming ? (

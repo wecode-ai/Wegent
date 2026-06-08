@@ -193,7 +193,7 @@ describe('ChatInput', () => {
       'box-border',
       'py-[14px]',
       'pl-5',
-      'pr-[104px]',
+      'pr-16',
       'scrollbar-none',
     )
     expect(screen.getByTestId('send-message-button')).toHaveClass(
@@ -240,10 +240,12 @@ describe('ChatInput', () => {
     expect(onPause).toHaveBeenCalledTimes(1)
   })
 
-  test('hides voice input after typing in the compact composer', async () => {
+  test('does not render voice input in the compact composer', async () => {
     render(<ControlledChatInput />)
 
-    expect(screen.getByTestId('voice-input-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('voice-input-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('chat-message-input')).toHaveClass('pr-16')
+
     await userEvent.type(screen.getByTestId('chat-message-input'), 'hello')
 
     expect(screen.queryByTestId('voice-input-button')).not.toBeInTheDocument()
