@@ -68,6 +68,56 @@ def test_resolve_source_checkout_abs_path_uses_project_workspace_root():
     )
 
 
+def test_project_task_list_includes_device_and_execution_workspace_source(
+    test_db, test_user
+):
+    project = Project(
+        user_id=test_user.id,
+        name="Wegent",
+        client_origin="wework",
+        config={"mode": "workspace"},
+        is_active=True,
+    )
+    test_db.add(project)
+    test_db.commit()
+    test_db.refresh(project)
+
+    task = TaskResource(
+        id=1386,
+        user_id=test_user.id,
+        kind="Task",
+        name="task-1386",
+        namespace="default",
+        project_id=project.id,
+        client_origin="wework",
+        is_active=TaskResource.STATE_ACTIVE,
+        json={
+            "kind": "Task",
+            "spec": {
+                "title": "Worktree chat",
+                "device_id": "device-1",
+                "execution": {
+                    "workspace": {
+                        "source": "git_worktree",
+                        "path": "/workspace/worktrees/1386/Wegent",
+                    }
+                },
+            },
+            "status": {"phase": "COMPLETED"},
+        },
+    )
+    test_db.add(task)
+    test_db.commit()
+
+    items = project_service._get_project_tasks(
+        test_db, project.id, client_origin="wework"
+    )
+
+    assert len(items) == 1
+    assert items[0].device_id == "device-1"
+    assert items[0].execution_workspace_source == "git_worktree"
+
+
 @pytest.mark.asyncio
 async def test_prepare_git_checkout_stops_when_target_path_exists():
     command_mock = AsyncMock(
@@ -337,6 +387,30 @@ async def test_list_project_worktrees_scans_each_online_project_device_once(
     test_db.add(project)
     test_db.commit()
     test_db.refresh(project)
+    task = TaskResource(
+        id=1386,
+        user_id=test_user.id,
+        kind="Task",
+        name="task-worktree",
+        namespace="default",
+        project_id=project.id,
+        client_origin="wework",
+        json={
+            "spec": {
+                "title": "Fix sidebar persistence",
+                "execution": {
+                    "workspace": {
+                        "source": "git_worktree",
+                        "path": "/workspace/worktrees/1386/Wegent",
+                    }
+                },
+            },
+            "status": {"phase": "RUNNING"},
+        },
+        is_active=TaskResource.STATE_ACTIVE,
+    )
+    test_db.add(task)
+    test_db.commit()
     command_mock = AsyncMock(
         side_effect=[
             {"success": True, "exit_code": 0, "stdout": "/workspace/projects"},
@@ -345,6 +419,7 @@ async def test_list_project_worktrees_scans_each_online_project_device_once(
                 "exit_code": 0,
                 "stdout": [
                     "/workspace/worktrees/1386/Wegent",
+                    "/workspace/worktrees/1390/Wegent",
                     "/workspace/worktrees/git/hello-git-work-tree-9b4f2ef3",
                     "/workspace/worktrees/82e3/Wegent",
                     "/workspace/worktrees/1387/Unknown",
@@ -379,7 +454,7 @@ async def test_list_project_worktrees_scans_each_online_project_device_once(
             client_origin="wework",
         )
 
-    assert result.total == 1
+    assert result.total == 2
     assert len(result.devices) == 1
     assert result.devices[0].device_name == "Crystal Mac"
     assert result.devices[0].available is True
@@ -388,6 +463,13 @@ async def test_list_project_worktrees_scans_each_online_project_device_once(
     assert result.devices[0].items[0].path == "/workspace/worktrees/1386/Wegent"
     assert result.devices[0].items[0].project is not None
     assert result.devices[0].items[0].project.id == project.id
+    assert result.devices[0].items[0].task is not None
+    assert result.devices[0].items[0].task.id == task.id
+    assert result.devices[0].items[0].task.title == "Fix sidebar persistence"
+    assert result.devices[0].items[0].task.status == "RUNNING"
+    assert result.devices[0].items[0].task.project_id == project.id
+    assert result.devices[0].items[1].worktree_id == "1390"
+    assert result.devices[0].items[1].task is None
     assert [call.kwargs["command_key"] for call in command_mock.await_args_list] == [
         "project_workspace_root",
         "find_worktree_dirs",
