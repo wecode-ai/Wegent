@@ -33,6 +33,27 @@ class TestResponsesAPIEventParserToolIds:
         assert result.type == EventType.THINKING
         assert result.content == "Reasoning chunk."
 
+    def test_block_updated_event_parses_direct_block_update(self):
+        parser = ResponsesAPIEventParser()
+
+        result = parser.parse(
+            task_id=1,
+            subtask_id=2,
+            message_id=3,
+            event_type=ResponsesAPIStreamEvents.BLOCK_UPDATED.value,
+            data={
+                "block_id": "codex-commentary-1",
+                "updates": {"content": "Working", "status": "streaming"},
+            },
+        )
+
+        assert result is not None
+        assert result.type == EventType.BLOCK_UPDATED
+        assert result.data == {
+            "block_id": "codex-commentary-1",
+            "updates": {"content": "Working", "status": "streaming"},
+        }
+
     def test_tool_start_requires_non_empty_id(self):
         parser = ResponsesAPIEventParser()
 

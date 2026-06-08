@@ -26,6 +26,9 @@ describe('MobileSettingsPage', () => {
     expect(screen.getByTestId('mobile-settings-plugins-button')).toHaveTextContent(
       '插件',
     )
+    expect(screen.getByTestId('mobile-settings-worktrees-button')).toHaveTextContent(
+      '工作树',
+    )
 
     await userEvent.click(screen.getByTestId('mobile-settings-plugins-button'))
     expect(onOpenPlugins).toHaveBeenCalledTimes(1)

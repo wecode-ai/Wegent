@@ -135,6 +135,22 @@ class GenerateParams(BaseModel):
     duration: Optional[int] = Field(None, description="Duration in seconds")
 
 
+class ChatExecutionWorkspacePayload(BaseModel):
+    """Workspace execution intent for chat:send."""
+
+    source: Literal["git_worktree"] = Field(
+        ..., description="Execution workspace source"
+    )
+
+
+class ChatExecutionPayload(BaseModel):
+    """Execution options for chat:send."""
+
+    workspace: Optional[ChatExecutionWorkspacePayload] = Field(
+        None, description="Workspace execution options"
+    )
+
+
 class InteractiveFormAnswerPayload(BaseModel):
     """Structured answer for a deferred interactive_form_question tool call."""
 
@@ -250,6 +266,10 @@ class ChatSendPayload(BaseModel):
     interactive_form_answer: Optional[InteractiveFormAnswerPayload] = Field(
         None,
         description="Answer payload for a deferred interactive_form_question tool call",
+    )
+    execution: Optional[ChatExecutionPayload] = Field(
+        None,
+        description="Execution options for new tasks",
     )
 
 

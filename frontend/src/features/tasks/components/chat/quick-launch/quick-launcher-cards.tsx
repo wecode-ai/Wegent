@@ -30,6 +30,8 @@ function LauncherCard({
   isSelected: boolean
   onClick: () => void
 }) {
+  const description = launcher.description?.trim()
+
   return (
     <button
       type="button"
@@ -54,6 +56,11 @@ function LauncherCard({
       >
         {launcher.title}
       </span>
+      {description && (
+        <span className="mt-1 line-clamp-2 text-xs leading-4 text-text-muted" title={description}>
+          {description}
+        </span>
+      )}
     </button>
   )
 }

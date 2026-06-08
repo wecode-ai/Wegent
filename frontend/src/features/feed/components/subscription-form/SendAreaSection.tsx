@@ -36,6 +36,7 @@ import { CollapsibleSection } from '@/components/common/CollapsibleSection'
 import type { SendAreaSectionProps } from './types'
 import type { DeviceInfo } from '@/apis/devices'
 import type { SubscriptionExecutionTargetType } from '@/types/subscription'
+import type { CompatibleProvider } from '@/utils/modelCompatibility'
 
 const sortDevicesForSelection = (devices: DeviceInfo[]): DeviceInfo[] =>
   [...devices].sort((left, right) => {
@@ -194,7 +195,7 @@ export function SendAreaSection({
 
   // Filter models based on search and compatibility
   const compatibleModels = compatibleProvider
-    ? models.filter(model => model.provider === compatibleProvider)
+    ? models.filter(model => compatibleProvider.includes(model.provider as CompatibleProvider))
     : models
 
   const cascadeLabels: ModelCascadeLabels = useMemo(

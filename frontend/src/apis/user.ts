@@ -151,6 +151,8 @@ function isAuthenticated(): boolean {
 import { apiClient } from './client'
 import { paths } from '@/config/paths'
 
+let quickAccessRequest: Promise<QuickAccessResponse> | null = null
+
 export const userApis = {
   async login(data: LoginRequest): Promise<User> {
     const res: LoginResponse = await apiClient.post('/auth/login', data)
@@ -180,7 +182,18 @@ export const userApis = {
   },
 
   async getQuickAccess(): Promise<QuickAccessResponse> {
-    return apiClient.get('/users/quick-access')
+    if (quickAccessRequest) {
+      return quickAccessRequest
+    }
+
+    const request = apiClient.get<QuickAccessResponse>('/users/quick-access').finally(() => {
+      if (quickAccessRequest === request) {
+        quickAccessRequest = null
+      }
+    })
+    quickAccessRequest = request
+
+    return request
   },
 
   async getQuickLaunch(): Promise<QuickLaunchResponse> {

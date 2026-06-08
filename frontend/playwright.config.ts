@@ -18,8 +18,8 @@ export default defineConfig({
   /* Fail the build on CI if you accidentally left test.only in the source code */
   forbidOnly: !!process.env.CI,
 
-  /* Retry once on CI to handle flaky tests, reduce from 2 to 1 for speed */
-  retries: process.env.CI ? 1 : 0,
+  /* Do not retry E2E tests. Flaky tests should fail so they can be fixed. */
+  retries: 0,
 
   /* Reporter to use - use blob reporter for sharded runs */
   reporter: process.env.CI
@@ -34,8 +34,8 @@ export default defineConfig({
     /* Base URL to use in actions like `await page.goto('/')` */
     baseURL: process.env.E2E_BASE_URL || 'http://localhost:3000',
 
-    /* Collect trace only on first retry to save time */
-    trace: 'on-first-retry',
+    /* Collect trace for failed CI runs without requiring retries. */
+    trace: process.env.CI ? 'retain-on-failure' : 'on-first-retry',
 
     /* Capture screenshot only on failure */
     screenshot: 'only-on-failure',

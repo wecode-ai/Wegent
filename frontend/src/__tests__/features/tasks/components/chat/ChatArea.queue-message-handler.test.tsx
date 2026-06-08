@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import type { TaskDetail } from '@/types/api'
+import type { TaskDetail, Team } from '@/types/api'
 
 import { ChatArea } from '@/features/tasks/components/chat'
 import { userApis } from '@/apis/user'
@@ -11,6 +11,8 @@ const mockChatInputCard = jest.fn((_props: Record<string, unknown>) => (
 const mockAddExistingAttachment = jest.fn()
 const mockHandleFileSelect = jest.fn()
 const mockHandleAttachmentRemove = jest.fn()
+const mockHandleTeamChange = jest.fn()
+const mockSetSelectedDeviceId = jest.fn()
 
 const defaultStreamHandlers = {
   pendingTaskId: null,
@@ -45,6 +47,13 @@ jest.mock('next/navigation', () => ({
   usePathname: () => '/chat',
 }))
 
+jest.mock('@/contexts/DeviceContext', () => ({
+  useDevices: () => ({
+    selectedDeviceId: 'device-1',
+    setSelectedDeviceId: mockSetSelectedDeviceId,
+  }),
+}))
+
 jest.mock('@/features/inbox', () => ({
   QueueMessageHandler: () => <div data-testid="queue-message-handler" />,
 }))
@@ -56,7 +65,7 @@ jest.mock('@/hooks/useTranslation', () => ({
 jest.mock('@/features/tasks/components/chat/useChatAreaState', () => ({
   useChatAreaState: () => ({
     selectedTeam: null,
-    handleTeamChange: jest.fn(),
+    handleTeamChange: mockHandleTeamChange,
     findDefaultTeamForMode: jest.fn(),
     defaultTeam: null,
     restoreDefaultTeam: jest.fn(),
@@ -143,6 +152,7 @@ jest.mock(
 )
 jest.mock('@/features/tasks/components/chat/QuickAccessCards', () => ({
   QuickAccessCards: (props: {
+    onTeamSelect: (team: Team) => void
     onPhraseSelect: (phrase: string) => void
     onPresetSelect?: (selection: unknown) => void
   }) => (
@@ -177,6 +187,38 @@ jest.mock('@/features/tasks/components/chat/QuickAccessCards', () => ({
         }
       >
         Quick preset
+      </button>
+      <button
+        type="button"
+        data-testid="quick-team-trigger"
+        onClick={() =>
+          props.onTeamSelect({
+            id: 12,
+            name: 'openai-advanced-claudecode-team',
+            displayName: 'OpenAI Advanced ClaudeCode Team',
+            description: '',
+            bots: [
+              {
+                bot_id: 1,
+                bot_prompt: '',
+                bot: {
+                  shell_type: 'ClaudeCode',
+                  agent_config: {
+                    protocol: 'openai',
+                  },
+                },
+              },
+            ],
+            workflow: {},
+            is_active: true,
+            user_id: 1,
+            created_at: '2026-01-01T00:00:00.000Z',
+            updated_at: '2026-01-01T00:00:00.000Z',
+            agent_type: 'claude',
+          })
+        }
+      >
+        Quick team
       </button>
     </div>
   ),
@@ -289,6 +331,8 @@ describe('ChatArea queue message handler mounting', () => {
     mockAddExistingAttachment.mockClear()
     mockHandleFileSelect.mockClear()
     mockHandleAttachmentRemove.mockClear()
+    mockHandleTeamChange.mockClear()
+    mockSetSelectedDeviceId.mockClear()
     ;(
       userApis as unknown as { prepareQuickLaunchPreset: jest.Mock }
     ).prepareQuickLaunchPreset.mockReset()
@@ -467,6 +511,19 @@ describe('ChatArea queue message handler mounting', () => {
       created_at: '2026-06-04T00:00:00Z',
     })
     expect(mockSetTaskInputMessage).toHaveBeenCalledWith('make roadmap')
+  })
+
+  it('leaves device mode when quick action selects a ClaudeCode team with non-Claude protocol', () => {
+    render(
+      <ChatArea teams={[]} isTeamsLoading={false} taskType="task" showRepositorySelector={false} />
+    )
+
+    fireEvent.click(screen.getByTestId('quick-team-trigger'))
+
+    expect(mockSetSelectedDeviceId).toHaveBeenCalledWith(null)
+    expect(mockHandleTeamChange).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 12, agent_type: 'claude' })
+    )
   })
 
   it('submits to the stream handler for queueing when a pending task is already streaming', async () => {

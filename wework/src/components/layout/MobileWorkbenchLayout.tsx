@@ -14,7 +14,10 @@ import { isSettingsRoute, navigateTo } from '@/lib/navigation'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import type {
   ArchivedTaskListResponse,
+  CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
+  GitBranch,
+  GitRepoInfo,
   ProjectWithTasks,
 } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
@@ -42,6 +45,11 @@ interface MobileWorkbenchLayoutProps {
   onStartNewProjectChat?: (projectId: number) => void
   onOpenTask: (taskId: number, projectId?: number) => void
   onCreateProject?: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
+  onCreateGitWorkspaceProject?: (
+    data: CreateGitWorkspaceProjectRequest,
+  ) => Promise<ProjectWithTasks>
+  onListGitRepositories?: () => Promise<GitRepoInfo[]>
+  onListGitBranches?: (repo: GitRepoInfo) => Promise<GitBranch[]>
   onUpdateProjectName?: (projectId: number, name: string) => Promise<void>
   onRemoveProject?: (projectId: number) => Promise<void>
   onArchiveAllChats?: () => Promise<void>
@@ -126,8 +134,11 @@ export function MobileWorkbenchLayout({
     devices: state.devices,
     currentProjectId: state.currentProject?.id,
     currentStandaloneDeviceId: state.standaloneDeviceId,
+    executionMode: 'current_workspace',
+    executionModeLocked: Boolean(state.currentTask),
     onSelectProject,
     onSelectStandaloneDevice: () => {},
+    onExecutionModeChange: () => {},
   }
 
   useEffect(() => {

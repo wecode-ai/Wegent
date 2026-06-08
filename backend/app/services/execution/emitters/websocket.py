@@ -131,6 +131,9 @@ class WebSocketResultEmitter(BaseResultEmitter):
         elif event.type == EventType.BLOCK_CREATED.value:
             await self._emit_direct_block_created(event, webpage_ws_emitter)
 
+        elif event.type == EventType.BLOCK_UPDATED.value:
+            await self._emit_direct_block_updated(event, webpage_ws_emitter)
+
         elif event.type == EventType.THINKING.value:
             # Emit reasoning content as a chat:chunk with reasoning_chunk in result
             # This allows the frontend to display incremental reasoning content
@@ -305,6 +308,42 @@ class WebSocketResultEmitter(BaseResultEmitter):
         import app.services.chat.storage as chat_storage
 
         await chat_storage.session_manager.add_block(event.subtask_id, block)
+
+    async def _emit_direct_block_updated(
+        self, event: ExecutionEvent, ws_emitter
+    ) -> None:
+        """Emit chat:block_updated from an ExecutionEvent block update payload."""
+        block_id = event.data.get("block_id") if event.data else None
+        updates = event.data.get("updates") if event.data else None
+        if not block_id or not isinstance(updates, dict):
+            return
+
+        update_kwargs = {
+            "task_id": event.task_id,
+            "subtask_id": event.subtask_id,
+            "block_id": str(block_id),
+        }
+        for source_key, target_key in (
+            ("content", "content"),
+            ("tool_input", "tool_input"),
+            ("tool_output", "tool_output"),
+            ("status", "status"),
+        ):
+            if source_key in updates:
+                update_kwargs[target_key] = updates[source_key]
+        await ws_emitter.emit_block_updated(**update_kwargs)
+
+        import app.services.chat.storage as chat_storage
+
+        blocks = await chat_storage.session_manager.get_blocks(event.subtask_id)
+        existing_block = next(
+            (block for block in blocks if block.get("id") == str(block_id)),
+            None,
+        )
+        if existing_block is None:
+            return
+        existing_block.update(updates)
+        await chat_storage.session_manager.add_block(event.subtask_id, existing_block)
 
     async def _emit_result_guidance_blocks(
         self, event: ExecutionEvent, ws_emitter

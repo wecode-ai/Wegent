@@ -2,7 +2,6 @@ import {
   ChevronDown,
   ChevronRight,
   Clock,
-  Folder,
   Loader2,
   Plus,
   Search,
@@ -10,6 +9,7 @@ import {
   X,
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ProjectTask, ProjectWithTasks, Task, User } from '@/types/api'
 
@@ -197,7 +197,10 @@ export function MobileDrawer({
                         : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]',
                     ].join(' ')}
                   >
-                    <Folder className="h-5 w-5 shrink-0 text-[rgb(var(--color-sidebar-text-secondary))]" />
+                    <ProjectFolderIcon
+                      project={project}
+                      className="h-5 w-5 shrink-0 text-[rgb(var(--color-sidebar-text-secondary))]"
+                    />
                     <span className="min-w-0 flex-1 truncate">{project.name}</span>
                     <ExpandIcon
                       data-testid={`mobile-project-collapse-icon-${project.id}`}

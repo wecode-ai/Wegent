@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { EnvironmentInfo } from '@/types/environment'
+import { DESKTOP_TOP_BAR_BUTTON_CLASS } from './DesktopTopBar'
 
 interface EnvironmentInfoPopoverProps {
   info: EnvironmentInfo
@@ -272,13 +273,13 @@ export function EnvironmentInfoPopover({
         data-testid="environment-info-button"
         onClick={handleToggleOpen}
         className={cn(
-          'flex h-8 w-8 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-hover hover:text-text-primary',
-          open && 'bg-popover text-text-primary shadow-sm',
+          DESKTOP_TOP_BAR_BUTTON_CLASS,
+          open && 'bg-muted text-text-primary',
         )}
         aria-expanded={open}
         aria-label={t('workbench.environment_info', '环境信息')}
       >
-        <Info className="h-[18px] w-[18px]" />
+        <Info />
       </button>
 
       {open && (
