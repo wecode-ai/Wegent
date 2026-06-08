@@ -1179,6 +1179,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(screen.getByTestId('project-chat-row-11')).toHaveClass(
       'bg-[rgb(var(--color-sidebar-active))]',
+      'pl-[34px]',
     )
     await userEvent.click(screen.getByTestId('project-chat-button'))
     expect(baseProps.onOpenTask).toHaveBeenCalledWith(11, 1)
