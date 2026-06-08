@@ -7,9 +7,14 @@ import {
   Settings,
   Sparkles,
 } from 'lucide-react'
-import type { FormEvent } from 'react'
+import type { FormEvent, ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
+import {
+  DESKTOP_TOP_BAR_BUTTON_CLASS,
+  DesktopTopBar,
+  MAC_NATIVE_TOP_BAR_ACTION_INSET,
+} from '@/components/layout/DesktopTopBar'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { createHttpClient } from '@/api/http'
 import { createMcpApi } from '@/api/mcps'
@@ -17,6 +22,7 @@ import { createPluginApi } from '@/api/plugins'
 import { createSystemSkillApi } from '@/api/systemSkills'
 import { getRuntimeConfig } from '@/config/runtime'
 import { navigateTo } from '@/lib/navigation'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 import type {
   InstalledSkill,
   InstalledPlugin,
@@ -335,13 +341,16 @@ function MarketplaceHero() {
 
 interface PluginsWorkspaceProps {
   sidebarCollapsed?: boolean
+  topBarLeftActions?: ReactNode
 }
 
 export function PluginsWorkspace({
   sidebarCollapsed = false,
+  topBarLeftActions,
 }: PluginsWorkspaceProps) {
   const { t } = useTranslation('common')
   const isMobile = useIsMobile()
+  const reserveMacWindowControls = isTauriRuntime()
   const [activeTab, setActiveTab] = useState<CatalogTab>('plugins')
   const [query, setQuery] = useState('')
   const [sectionFilter, setSectionFilter] = useState<CatalogSectionId | 'all'>(
@@ -1146,93 +1155,109 @@ export function PluginsWorkspace({
       data-testid="plugins-workspace"
       className="min-w-0 flex-1 overflow-y-auto bg-background text-text-primary"
     >
-      <div className="sticky top-0 z-40 bg-background/92 backdrop-blur-xl">
-        <div
+      <div className="sticky top-0 z-40 bg-background/95 backdrop-blur-xl">
+        <DesktopTopBar
+          testId="plugins-topbar"
           className={[
-            'mx-auto flex h-12 w-full max-w-[1420px] items-center justify-between pl-20 pr-5 md:pr-7',
-            sidebarCollapsed ? 'md:pl-28' : 'md:pl-7',
+            'mx-auto h-12 max-w-[1420px] pl-20 pr-5 md:h-[52px] md:pr-7',
+            sidebarCollapsed
+              ? reserveMacWindowControls
+                ? undefined
+                : 'md:pl-6'
+              : 'md:pl-7',
           ].join(' ')}
-        >
-          <div
-            className="inline-flex w-full rounded-lg bg-surface p-0.5 md:w-fit"
-            role="tablist"
-          >
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeTab === 'plugins'}
-              className={tabClassName(activeTab === 'plugins')}
-              onClick={() => {
-                setSelectedPluginId(null)
-                setActiveTab('plugins')
-              }}
-            >
-              {t('workbench.plugin_management_tab_plugins', '插件')}
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeTab === 'skills'}
-              className={tabClassName(activeTab === 'skills')}
-              onClick={() => {
-                setSelectedPluginId(null)
-                setActiveTab('skills')
-              }}
-            >
-              {t('workbench.skills_tab', '技能')}
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeTab === 'mcp'}
-              className={tabClassName(activeTab === 'mcp')}
-              onClick={() => {
-                setSelectedPluginId(null)
-                setActiveTab('mcp')
-              }}
-            >
-              {t('workbench.plugin_management_tab_mcp', 'MCP')}
-            </button>
-          </div>
-
-          <div className="hidden w-full items-center justify-between gap-3 overflow-visible md:flex md:w-auto md:justify-end">
-            <button
-              type="button"
-              data-testid="plugins-manage-button"
-              className="flex h-8 min-w-[44px] items-center gap-1.5 rounded-lg bg-surface px-2.5 text-[13px] font-medium leading-[18px] transition-colors hover:bg-muted"
-              onClick={() => navigateTo('/plugins/manage')}
-            >
-              <Settings className="h-4 w-4" />
-              {t('workbench.plugins_manage', '管理')}
-            </button>
-            {!isMobile && (
-              <PluginCreateMenu
-                isOpen={isCreateMenuOpen}
-                onToggle={() => setIsCreateMenuOpen((previous) => !previous)}
-                onCreateSkill={() => {
-                  setIsCreateMenuOpen(false)
-                  setShowSkillUploadDialog(true)
-                }}
-                onCreateMcp={() => {
-                  setIsCreateMenuOpen(false)
-                  setShowCustomMcpDialog(true)
-                }}
-                onCreatePlugin={() => {
-                  setIsCreateMenuOpen(false)
-                  setPluginUploadError(null)
-                  setShowPluginUploadDialog(true)
-                }}
-              />
-            )}
-            <button
-              type="button"
-              aria-label={t('workbench.plugins_more_actions', '更多操作')}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-text-primary transition-colors hover:bg-muted"
-            >
-              <MoreHorizontal className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
+          style={
+            sidebarCollapsed && reserveMacWindowControls
+              ? { paddingLeft: MAC_NATIVE_TOP_BAR_ACTION_INSET }
+              : undefined
+          }
+          left={(
+            <>
+              {topBarLeftActions}
+              <div
+                className="inline-flex w-full rounded-lg bg-surface p-0.5 md:w-fit"
+                role="tablist"
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === 'plugins'}
+                  className={tabClassName(activeTab === 'plugins')}
+                  onClick={() => {
+                    setSelectedPluginId(null)
+                    setActiveTab('plugins')
+                  }}
+                >
+                  {t('workbench.plugin_management_tab_plugins', '插件')}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === 'skills'}
+                  className={tabClassName(activeTab === 'skills')}
+                  onClick={() => {
+                    setSelectedPluginId(null)
+                    setActiveTab('skills')
+                  }}
+                >
+                  {t('workbench.skills_tab', '技能')}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === 'mcp'}
+                  className={tabClassName(activeTab === 'mcp')}
+                  onClick={() => {
+                    setSelectedPluginId(null)
+                    setActiveTab('mcp')
+                  }}
+                >
+                  {t('workbench.plugin_management_tab_mcp', 'MCP')}
+                </button>
+              </div>
+            </>
+          )}
+          dragRegionClassName="hidden md:block"
+          right={(
+            <div className="hidden items-center gap-5 overflow-visible md:flex">
+              <button
+                type="button"
+                data-testid="plugins-manage-button"
+                className="flex h-7 min-w-[44px] items-center gap-1.5 rounded-lg bg-transparent px-2 text-[13px] font-medium leading-[18px] transition-colors hover:bg-black/[0.06] active:bg-black/[0.10]"
+                onClick={() => navigateTo('/plugins/manage')}
+              >
+                <Settings className="h-[18px] w-[18px] stroke-[2]" />
+                {t('workbench.plugins_manage', '管理')}
+              </button>
+              {!isMobile && (
+                <PluginCreateMenu
+                  isOpen={isCreateMenuOpen}
+                  onToggle={() => setIsCreateMenuOpen((previous) => !previous)}
+                  onCreateSkill={() => {
+                    setIsCreateMenuOpen(false)
+                    setShowSkillUploadDialog(true)
+                  }}
+                  onCreateMcp={() => {
+                    setIsCreateMenuOpen(false)
+                    setShowCustomMcpDialog(true)
+                  }}
+                  onCreatePlugin={() => {
+                    setIsCreateMenuOpen(false)
+                    setPluginUploadError(null)
+                    setShowPluginUploadDialog(true)
+                  }}
+                />
+              )}
+              <button
+                type="button"
+                aria-label={t('workbench.plugins_more_actions', '更多操作')}
+                className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+              >
+                <MoreHorizontal />
+              </button>
+            </div>
+          )}
+        />
       </div>
 
       <div className="mx-auto flex w-full max-w-[840px] flex-col gap-5 px-5 pb-10 pt-1 md:px-8 md:pt-[3px]">

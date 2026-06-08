@@ -104,7 +104,7 @@ export function PluginsPage() {
 
   return (
     <div className="flex h-dvh overflow-hidden bg-background text-text-primary lg:h-screen">
-      {!isMobile && !sidebarCollapsed ? (
+      {!isMobile && !sidebarCollapsed && (
         <DesktopSidebar
           user={state.user}
           projects={state.projects}
@@ -140,14 +140,8 @@ export function PluginsPage() {
           onOpenSettings={() => setSettingsOpen(true)}
           onLogout={logout}
         />
-      ) : !isMobile ? (
-        <DesktopWindowControls
-          sidebarCollapsed
-          onToggleSidebar={() => setSidebarCollapsed(false)}
-          onNewChat={handleNewChat}
-          className="absolute left-4 top-2 z-chrome"
-        />
-      ) : (
+      )}
+      {isMobile && (
         <>
           <header className="pointer-events-none absolute left-5 top-[max(8px,env(safe-area-inset-top))] z-chrome flex h-11 items-center">
             <button
@@ -178,7 +172,18 @@ export function PluginsPage() {
           />
         </>
       )}
-      <PluginsWorkspace sidebarCollapsed={sidebarCollapsed && !isMobile} />
+      <PluginsWorkspace
+        sidebarCollapsed={sidebarCollapsed && !isMobile}
+        topBarLeftActions={
+          sidebarCollapsed && !isMobile ? (
+            <DesktopWindowControls
+              sidebarCollapsed
+              onToggleSidebar={() => setSidebarCollapsed(false)}
+              onNewChat={handleNewChat}
+            />
+          ) : undefined
+        }
+      />
     </div>
   )
 }

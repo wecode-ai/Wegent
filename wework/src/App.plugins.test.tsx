@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { WorkbenchContextValue } from '@/features/workbench/WorkbenchProvider'
@@ -483,6 +483,9 @@ function mockSystemSkillsFetch() {
 
 describe('App plugins route', () => {
   beforeEach(() => {
+    delete (window as typeof window & { __TAURI_INTERNALS__?: unknown })
+      .__TAURI_INTERNALS__
+    localStorage.clear()
     mockViewport.isMobile = false
     mockSystemSkillsFetch()
   })
@@ -512,6 +515,14 @@ describe('App plugins route', () => {
 
     render(<App />)
 
+    const pluginsDragRegion = within(
+      screen.getByTestId('plugins-topbar-drag-region'),
+    ).getByTestId('macos-titlebar-drag-region')
+
+    expect(pluginsDragRegion).toHaveAttribute('data-tauri-drag-region')
+    expect(screen.getByTestId('plugins-topbar-drag-region')).toContainElement(
+      pluginsDragRegion,
+    )
     expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('tab', { name: '技能' }))
     expect(await screen.findByText('wehot')).toBeInTheDocument()
@@ -532,9 +543,27 @@ describe('App plugins route', () => {
 
     expect(screen.queryByTestId('plugins-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('expand-sidebar-button')).toBeInTheDocument()
+    expect(screen.getByTestId('plugins-topbar')).toHaveClass('md:pl-6')
 
     await userEvent.click(screen.getByTestId('expand-sidebar-button'))
     expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
+  })
+
+  test('reserves native macOS traffic light space on collapsed plugin routes in Tauri', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    window.history.pushState({}, '', '/plugins')
+
+    render(<App />)
+
+    expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
+
+    expect(screen.getByTestId('plugins-topbar')).toHaveStyle({
+      paddingLeft: '89px',
+    })
   })
 
   test('collapses and expands the desktop sidebar on plugin management route', async () => {
