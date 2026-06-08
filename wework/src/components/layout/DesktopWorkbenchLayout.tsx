@@ -308,8 +308,10 @@ export function DesktopWorkbenchLayout({
           onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
           onListDeviceDirectories={onListDeviceDirectories}
           onCreateDeviceDirectory={onCreateDeviceDirectory}
-          onOpenSettings={() => {
-            setAutoOpenAddCloudDeviceDialog(false)
+          onOpenSettings={options => {
+            setAutoOpenAddCloudDeviceDialog(
+              Boolean(options?.autoOpenAddCloudDeviceDialog),
+            )
             setSettingsOpen(true)
             navigateTo('/settings')
           }}

@@ -1194,6 +1194,28 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('create-project-button')).toHaveTextContent('创建项目')
   })
 
+  test('opens connection settings cloud device creation from an empty sidebar project dialog', async () => {
+    const onRefreshDevices = vi.fn().mockResolvedValue(undefined)
+
+    render(<DesktopWorkbenchLayout {...baseProps} onRefreshDevices={onRefreshDevices} />)
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-start-from-scratch-button'))
+
+    expect(screen.getByTestId('project-create-dialog')).toBeInTheDocument()
+    expect(screen.getByText('暂无可用设备')).toBeInTheDocument()
+
+    const settingsLink = screen.getByTestId('open-cloud-device-settings-link')
+    expect(settingsLink).toHaveAttribute('href', '/settings')
+
+    await userEvent.click(settingsLink)
+
+    expect(screen.queryByTestId('project-create-dialog')).not.toBeInTheDocument()
+    expect(screen.getByTestId('wework-settings-page')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '连接' })).toBeInTheDocument()
+    expect(screen.getByTestId('add-cloud-device-dialog')).toBeInTheDocument()
+  })
+
   test('opens connection settings cloud device creation from an empty project dialog', async () => {
     const onRefreshDevices = vi.fn().mockResolvedValue(undefined)
     createDeviceApiMock.mockReturnValue({

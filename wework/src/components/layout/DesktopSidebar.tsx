@@ -84,7 +84,7 @@ interface DesktopSidebarProps {
   onGetProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
-  onOpenSettings: () => void
+  onOpenSettings: (options?: { autoOpenAddCloudDeviceDialog?: boolean }) => void
   onLogout: () => void
 }
 
@@ -1236,6 +1236,10 @@ export function DesktopSidebar({
         mode={projectCreateMode ?? 'scratch'}
         devices={devices}
         onClose={() => setProjectCreateMode(null)}
+        onOpenCloudDeviceSettings={() => {
+          setProjectCreateMode(null)
+          onOpenSettings({ autoOpenAddCloudDeviceDialog: true })
+        }}
         onCreateProject={onCreateProject}
         onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
         preferredDeviceId={preferredDeviceId}
