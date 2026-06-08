@@ -1531,7 +1531,8 @@ describe('TaskStateMachine', () => {
         hasNoTeams: false,
         shouldHideChatInput: false,
         taskInputMessage: 'hello',
-        canQueueMessage: true,
+        canQueueMessage: state.derived.canQueueMessage,
+        canCancelTask: state.derived.canCancelTask,
       }).primaryAction
     }
 
@@ -1541,6 +1542,9 @@ describe('TaskStateMachine', () => {
       preSetup: (machine: TaskStateMachine) => void
       expectedIsStopping: boolean
       expectedPhase: string
+      expectedRuntimePhase?: string
+      expectedActiveStreamSubtaskId?: number
+      expectedDerivedIsStreaming: boolean
       expectedSendState: string
     }
 
@@ -1549,7 +1553,7 @@ describe('TaskStateMachine', () => {
         name: 'SYNC_DONE clears isStopping, transitions to ready, send state is send',
         buildDeps: () =>
           createRuntimeActions({
-            verifyRuntime: jest.fn().mockResolvedValue({
+            pullRuntime: jest.fn().mockResolvedValue({
               task_id: 42,
               task_status: 'COMPLETED',
               status_updated_at: '2026-06-01T10:00:05',
@@ -1563,20 +1567,22 @@ describe('TaskStateMachine', () => {
         },
         expectedIsStopping: false,
         expectedPhase: 'ready',
+        expectedDerivedIsStreaming: false,
         expectedSendState: 'send',
       },
       {
         name: 'SYNC_DONE_STREAMING clears isStopping but keeps streaming send state as stop/queue',
         buildDeps: () =>
           createRuntimeActions({
-            verifyRuntime: jest.fn().mockResolvedValue({
+            pullRuntime: jest.fn().mockResolvedValue({
               task_id: 42,
               task_status: 'RUNNING',
               status_updated_at: '2026-06-01T10:00:05',
+              // Runtime health check shape. Cached content belongs to joinTask.streaming below.
               active_stream: {
                 subtask_id: 10,
-                cached_content: 'hello world',
-                offset: 11,
+                cursor: 11,
+                last_activity_at: '2026-06-01T10:00:05.000Z',
               },
             }),
             joinTask: jest.fn().mockResolvedValue({
@@ -1620,13 +1626,16 @@ describe('TaskStateMachine', () => {
         },
         expectedIsStopping: false,
         expectedPhase: 'streaming',
+        expectedRuntimePhase: 'streaming',
+        expectedActiveStreamSubtaskId: 10,
+        expectedDerivedIsStreaming: true,
         expectedSendState: 'stop',
       },
       {
         name: 'SYNC_DONE with isStopping=false already is a no-op for isStopping',
         buildDeps: () =>
           createRuntimeActions({
-            verifyRuntime: jest.fn().mockResolvedValue({
+            pullRuntime: jest.fn().mockResolvedValue({
               task_id: 42,
               task_status: 'COMPLETED',
               status_updated_at: '2026-06-01T10:00:05',
@@ -1639,6 +1648,7 @@ describe('TaskStateMachine', () => {
         },
         expectedIsStopping: false,
         expectedPhase: 'ready',
+        expectedDerivedIsStreaming: false,
         expectedSendState: 'send',
       },
     ]
@@ -1653,6 +1663,16 @@ describe('TaskStateMachine', () => {
       const state = machine.getState()
       expect(state.isStopping).toBe(testCase.expectedIsStopping)
       expect(state.phase).toBe(testCase.expectedPhase)
+
+      if (testCase.expectedRuntimePhase !== undefined) {
+        expect(state.runtime.phase).toBe(testCase.expectedRuntimePhase)
+      }
+      if (testCase.expectedActiveStreamSubtaskId !== undefined) {
+        expect(state.runtime.activeStreamSubtaskId).toBe(testCase.expectedActiveStreamSubtaskId)
+      } else {
+        expect(state.runtime.activeStreamSubtaskId).toBeUndefined()
+      }
+      expect(state.derived.isStreaming).toBe(testCase.expectedDerivedIsStreaming)
 
       const sendState = computeSendState(machine)
       if (testCase.expectedSendState === 'stop') {
@@ -1716,7 +1736,7 @@ describe('TaskStateMachine', () => {
       const consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
 
       const actions = createRuntimeActions({
-        verifyRuntime: jest.fn().mockResolvedValue({
+        pullRuntime: jest.fn().mockResolvedValue({
           task_id: 42,
           task_status: 'COMPLETED',
           status_updated_at: '2026-06-01T10:00:10',
