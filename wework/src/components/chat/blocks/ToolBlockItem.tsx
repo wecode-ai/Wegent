@@ -1,13 +1,17 @@
 import { useState } from 'react'
-import type { ToolBlock } from '@/types/workbench'
+import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 
 interface ToolBlockItemProps {
-  block: ToolBlock
+  block: ProcessingBlock
 }
 
 export function ToolBlockItem({ block }: ToolBlockItemProps) {
   const [expanded, setExpanded] = useState(false)
   const isRunning = block.status !== 'done' && block.status !== 'error'
+
+  if (block.type === 'thinking') {
+    return <ThinkingBlockItem block={block} isRunning={isRunning} />
+  }
 
   const { icon, label } = getBlockLabel(block)
 
@@ -40,30 +44,83 @@ export function ToolBlockItem({ block }: ToolBlockItemProps) {
   )
 }
 
+function ThinkingBlockItem({
+  block,
+  isRunning,
+}: {
+  block: Extract<ProcessingBlock, { type: 'thinking' }>
+  isRunning: boolean
+}) {
+  if (!block.content) return null
+
+  return (
+    <div className="min-w-0 overflow-x-hidden text-sm">
+      <div className="flex max-w-full items-start gap-1.5 text-text-secondary">
+        <CommentaryIcon />
+        <p className="min-w-0 whitespace-pre-wrap break-words leading-6">
+          {block.content}
+          {isRunning && <span className="animate-pulse text-xs">...</span>}
+        </p>
+      </div>
+    </div>
+  )
+}
+
 function getBlockLabel(block: ToolBlock): { icon: React.ReactNode; label: string } {
   const name = block.toolName.toLowerCase()
+  const prefix = getToolStatusPrefix(block)
 
   if (name === 'bash' || name === 'execute_command' || name === 'run_terminal_command') {
     const command = getInputField(block, 'command', 'cmd')
     const shortCmd = command ? truncate(command.split('\n')[0], 40) : block.toolName
-    return { icon: <TerminalIcon />, label: `已运行 ${shortCmd}` }
+    return { icon: <TerminalIcon />, label: `${prefix.running} ${shortCmd}` }
   }
   if (name === 'write' || name === 'create_file' || name === 'write_file') {
     const filePath = getInputField(block, 'file_path', 'path')
     const fileName = filePath ? filePath.split('/').pop() : '文件'
-    return { icon: <FileIcon />, label: `已新增 ${fileName}` }
+    return { icon: <FileIcon />, label: `${prefix.create} ${fileName}` }
   }
   if (name === 'edit' || name === 'str_replace_editor' || name === 'edit_file') {
     const filePath = getInputField(block, 'file_path', 'path')
     const fileName = filePath ? filePath.split('/').pop() : '文件'
-    return { icon: <EditIcon />, label: `已编辑 ${fileName}` }
+    return { icon: <EditIcon />, label: `${prefix.edit} ${fileName}` }
   }
   if (name === 'read' || name === 'read_file') {
     const filePath = getInputField(block, 'file_path', 'path')
     const fileName = filePath ? filePath.split('/').pop() : '文件'
-    return { icon: <FileIcon />, label: `已读取 ${fileName}` }
+    return { icon: <FileIcon />, label: `${prefix.read} ${fileName}` }
   }
-  return { icon: <ToolIcon />, label: block.toolName }
+  return { icon: <ToolIcon />, label: `${prefix.generic} ${block.toolName}` }
+}
+
+function getToolStatusPrefix(block: ToolBlock) {
+  if (block.status === 'error') {
+    return {
+      running: '运行失败',
+      create: '新增失败',
+      edit: '编辑失败',
+      read: '读取失败',
+      generic: '执行失败',
+    }
+  }
+
+  if (block.status === 'done') {
+    return {
+      running: '已运行',
+      create: '已新增',
+      edit: '已编辑',
+      read: '已读取',
+      generic: '已运行',
+    }
+  }
+
+  return {
+    running: '正在运行',
+    create: '正在新增',
+    edit: '正在编辑',
+    read: '正在读取',
+    generic: '正在运行',
+  }
 }
 
 function TerminalIcon() {
@@ -94,6 +151,14 @@ function ToolIcon() {
   return (
     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M11.42 15.17l-5.1 5.1a2.121 2.121 0 11-3-3l5.1-5.1m0 0L15.17 4.83a2.121 2.121 0 113 3l-7.75 7.34z" />
+    </svg>
+  )
+}
+
+function CommentaryIcon() {
+  return (
+    <svg className="mt-1 h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3h5.25M5.25 19.5l2.25-2.25h9A2.25 2.25 0 0018.75 15V6.75A2.25 2.25 0 0016.5 4.5h-9a2.25 2.25 0 00-2.25 2.25V19.5z" />
     </svg>
   )
 }

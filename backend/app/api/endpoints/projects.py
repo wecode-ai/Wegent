@@ -19,6 +19,8 @@ from app.core.security import get_current_user
 from app.models.user import User
 from app.schemas.project import (
     AddTaskToProjectResponse,
+    GitWorkspaceProjectCreate,
+    GitWorkspaceProjectResponse,
     ProjectConversationCreate,
     ProjectConversationResponse,
     ProjectCreate,
@@ -85,6 +87,32 @@ def create_project_endpoint(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create project: {str(e)}",
+        )
+
+
+@router.post(
+    "/git-workspace",
+    response_model=GitWorkspaceProjectResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_git_workspace_project_endpoint(
+    project_create: GitWorkspaceProjectCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Create a Git-backed workspace project and clone it on the selected device."""
+    try:
+        return await project_service.create_git_workspace_project(
+            db=db,
+            project_data=project_create,
+            user_id=current_user.id,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create Git workspace project: {str(e)}",
         )
 
 

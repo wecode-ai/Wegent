@@ -1,6 +1,8 @@
 import type {
   CreateProjectConversationRequest,
   CreateProjectConversationResponse,
+  CreateGitWorkspaceProjectRequest,
+  CreateGitWorkspaceProjectResponse,
   CreateProjectRequest,
   ProjectListResponse,
   ProjectDeviceSessionResponse,
@@ -27,6 +29,14 @@ export function createProjectApi(client: HttpClient) {
     },
     createProject(data: CreateProjectRequest): Promise<ProjectWithTasks> {
       return client.post('/projects', {
+        ...data,
+        client_origin: WEWORK_CLIENT_ORIGIN,
+      })
+    },
+    createGitWorkspaceProject(
+      data: CreateGitWorkspaceProjectRequest
+    ): Promise<CreateGitWorkspaceProjectResponse> {
+      return client.post('/projects/git-workspace', {
         ...data,
         client_origin: WEWORK_CLIENT_ORIGIN,
       })

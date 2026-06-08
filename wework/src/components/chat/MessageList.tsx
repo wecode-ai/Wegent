@@ -290,13 +290,13 @@ function AssistantMessage({ message }: { message: WorkbenchMessage }) {
   const hasBlocks = message.blocks && message.blocks.length > 0
   const hasContent = Boolean(message.content)
   const isStreaming = message.status === 'streaming'
-  const isThinking = isStreaming && !hasContent && !hasBlocks
+  const shouldShowProcessing = hasBlocks || isStreaming
 
   return (
     <div className="group min-w-0 overflow-x-hidden text-[13px] leading-6 text-text-primary">
-      {hasBlocks && (
+      {shouldShowProcessing && (
         <ToolBlocksDisplay
-          blocks={message.blocks!}
+          blocks={message.blocks ?? []}
           isStreaming={isStreaming}
         />
       )}
@@ -350,12 +350,6 @@ function AssistantMessage({ message }: { message: WorkbenchMessage }) {
             {message.content}
           </ReactMarkdown>
         </div>
-      )}
-      {isThinking && (
-        <span className="text-text-muted">正在思考</span>
-      )}
-      {isStreaming && hasContent && (
-        <span className="text-text-muted">正在思考</span>
       )}
       {message.status === 'failed' && message.error && (
         <p className="mt-2 text-xs text-red-500">{message.error}</p>

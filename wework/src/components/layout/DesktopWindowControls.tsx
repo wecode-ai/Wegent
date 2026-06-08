@@ -1,5 +1,7 @@
 import { Edit3, PanelLeft } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
+import { DESKTOP_TOP_BAR_BUTTON_CLASS } from './DesktopTopBar'
 
 interface DesktopWindowControlsProps {
   sidebarCollapsed: boolean
@@ -7,9 +9,6 @@ interface DesktopWindowControlsProps {
   onNewChat?: () => void
   className?: string
 }
-
-const controlButtonClassName =
-  'flex h-8 w-8 items-center justify-center rounded-lg text-[#85858c] transition-colors hover:bg-[#f3f3f4] hover:text-[#101014]'
 
 export function DesktopWindowControls({
   sidebarCollapsed,
@@ -23,7 +22,10 @@ export function DesktopWindowControls({
     : t('workbench.collapse_sidebar', '收起侧边栏')
 
   return (
-    <div className={`flex items-center gap-3 ${className}`}>
+    <div
+      data-testid="desktop-window-controls"
+      className={cn('flex items-center gap-3', className)}
+    >
       <button
         type="button"
         data-testid={
@@ -32,20 +34,20 @@ export function DesktopWindowControls({
             : 'collapse-sidebar-button'
         }
         onClick={onToggleSidebar}
-        className={controlButtonClassName}
+        className={DESKTOP_TOP_BAR_BUTTON_CLASS}
         aria-label={toggleLabel}
       >
-        <PanelLeft className="h-5 w-5" />
+        <PanelLeft />
       </button>
       {sidebarCollapsed && onNewChat && (
         <button
           type="button"
           data-testid="desktop-controls-new-chat-button"
           onClick={onNewChat}
-          className={controlButtonClassName}
+          className={DESKTOP_TOP_BAR_BUTTON_CLASS}
           aria-label={t('workbench.new_chat', '新对话')}
         >
-          <Edit3 className="h-5 w-5" />
+          <Edit3 />
         </button>
       )}
     </div>

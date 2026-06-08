@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
-import type { DeviceInfo } from '@/types/api'
+import type { DeviceInfo, GitBranch, GitRepoInfo, ProjectWithTasks } from '@/types/api'
 import { ProjectCreateDialog } from './ProjectCreateDialog'
 
 const devices: DeviceInfo[] = [
@@ -22,6 +22,24 @@ const devices: DeviceInfo[] = [
     is_default: false,
     device_type: 'local',
   },
+]
+
+const repositories: GitRepoInfo[] = [
+  {
+    git_repo_id: 101,
+    name: 'Wegent',
+    git_repo: 'wecode-ai/Wegent',
+    git_url: 'https://github.com/wecode-ai/Wegent.git',
+    git_domain: 'github.com',
+    namespace: 'wecode-ai',
+    private: false,
+    type: 'github',
+  },
+]
+
+const branches: GitBranch[] = [
+  { name: 'main', default: true, protected: false },
+  { name: 'develop', default: false, protected: false },
 ]
 
 describe('ProjectCreateDialog', () => {
@@ -245,5 +263,107 @@ describe('ProjectCreateDialog', () => {
     )
     expect(pathInput).toHaveValue('/home/user/new-app')
     expect(await screen.findByText('src')).toBeInTheDocument()
+  })
+
+  test('creates a Git workspace project from selected repository and branch', async () => {
+    const onCreateGitWorkspaceProject = vi.fn().mockResolvedValue({
+      id: 9,
+      name: 'Wegent',
+      tasks: [],
+    })
+    const onClose = vi.fn()
+
+    render(
+      <ProjectCreateDialog
+        open
+        mode="git"
+        devices={devices}
+        preferredDeviceId="cloud-device"
+        onClose={onClose}
+        onCreateProject={vi.fn()}
+        onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
+        onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
+        onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
+        onListDeviceDirectories={vi.fn().mockResolvedValue([])}
+        onCreateDeviceDirectory={vi.fn()}
+        onListGitRepositories={vi.fn().mockResolvedValue(repositories)}
+        onListGitBranches={vi.fn().mockResolvedValue(branches)}
+      />,
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('git-repository-select')).not.toBeDisabled(),
+    )
+    await userEvent.selectOptions(
+      screen.getByTestId('git-repository-select'),
+      'https://github.com/wecode-ai/Wegent.git',
+    )
+    await waitFor(() => expect(screen.getByTestId('git-branch-select')).toHaveValue('main'))
+    await userEvent.selectOptions(screen.getByTestId('git-branch-select'), 'develop')
+    await userEvent.click(screen.getByTestId('create-project-button'))
+
+    await waitFor(() =>
+      expect(onCreateGitWorkspaceProject).toHaveBeenCalledWith({
+        device_id: 'cloud-device',
+        name: 'Wegent',
+        git: {
+          url: 'https://github.com/wecode-ai/Wegent.git',
+          repo: 'wecode-ai/Wegent',
+          repoId: 101,
+          domain: 'github.com',
+          branch: 'develop',
+        },
+      }),
+    )
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  test('shows progress while Git workspace creation is running', async () => {
+    let resolveCreate: ((project: { id: number; name: string; tasks: [] }) => void) | undefined
+    const onCreateGitWorkspaceProject = vi.fn(
+      () =>
+        new Promise<ProjectWithTasks>(resolve => {
+          resolveCreate = resolve
+        }),
+    )
+    const onClose = vi.fn()
+
+    render(
+      <ProjectCreateDialog
+        open
+        mode="git"
+        devices={devices}
+        preferredDeviceId="cloud-device"
+        onClose={onClose}
+        onCreateProject={vi.fn()}
+        onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
+        onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
+        onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
+        onListDeviceDirectories={vi.fn().mockResolvedValue([])}
+        onCreateDeviceDirectory={vi.fn()}
+        onListGitRepositories={vi.fn().mockResolvedValue(repositories)}
+        onListGitBranches={vi.fn().mockResolvedValue(branches)}
+      />,
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('git-repository-select')).not.toBeDisabled(),
+    )
+    await userEvent.selectOptions(
+      screen.getByTestId('git-repository-select'),
+      'https://github.com/wecode-ai/Wegent.git',
+    )
+    await waitFor(() => expect(screen.getByTestId('git-branch-select')).toHaveValue('main'))
+    await userEvent.click(screen.getByTestId('create-project-button'))
+
+    expect(screen.getByTestId('create-project-button')).toHaveTextContent('克隆中...')
+    expect(screen.getByTestId('project-submit-spinner')).toBeInTheDocument()
+    expect(screen.getByTestId('project-submit-progress')).toHaveTextContent(
+      '正在克隆仓库，可能需要一点时间',
+    )
+    expect(screen.getByTestId('cancel-project-create-button')).toBeDisabled()
+
+    resolveCreate?.({ id: 9, name: 'Wegent', tasks: [] })
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
   })
 })

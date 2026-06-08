@@ -4,6 +4,7 @@ import {
   ChevronRight,
   Edit3,
   Folder,
+  FolderGit2,
   FolderPlus,
   Loader2,
   MessageSquarePlus,
@@ -14,14 +15,20 @@ import {
   X,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { KeyboardEvent, ReactNode } from 'react'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
+import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 import type {
+  CreateGitWorkspaceProjectRequest,
   CreateProjectRequest,
   DeviceInfo,
+  GitBranch,
+  GitRepoInfo,
   ProjectTask,
   ProjectWithTasks,
   Task,
@@ -32,6 +39,10 @@ import type {
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 import { DesktopSearchDialog } from './DesktopSearchDialog'
 import { DesktopWindowControls } from './DesktopWindowControls'
+import {
+  DesktopTopBar,
+  MAC_NATIVE_TOP_BAR_ACTION_INSET,
+} from './DesktopTopBar'
 import { useResizableSidebar } from './useResizableSidebar'
 
 interface DesktopSidebarProps {
@@ -56,6 +67,11 @@ interface DesktopSidebarProps {
   onOpenPlugins: () => void
   onRefreshDevices?: () => Promise<void>
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
+  onCreateGitWorkspaceProject: (
+    data: CreateGitWorkspaceProjectRequest,
+  ) => Promise<ProjectWithTasks>
+  onListGitRepositories: () => Promise<GitRepoInfo[]>
+  onListGitBranches: (repo: GitRepoInfo) => Promise<GitBranch[]>
   onUpdateProjectName: (projectId: number, name: string) => Promise<void>
   onRemoveProject: (projectId: number) => Promise<void>
   onArchiveAllChats: () => Promise<void>
@@ -71,7 +87,7 @@ interface DesktopSidebarProps {
   onLogout: () => void
 }
 
-type ProjectCreateMode = 'scratch' | 'existing'
+type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
 function SidebarButton({
   icon: Icon,
@@ -105,6 +121,16 @@ function SidebarButton({
 }
 
 const INITIAL_PROJECT_CHAT_COUNT = 5
+
+function handleSidebarRowKeyDown(
+  event: KeyboardEvent<HTMLDivElement>,
+  onOpen: () => void,
+) {
+  if (event.key !== 'Enter' && event.key !== ' ') return
+
+  event.preventDefault()
+  onOpen()
+}
 
 function SidebarSectionHeader({
   title,
@@ -208,24 +234,28 @@ function ProjectTaskRow({
 }) {
   const { t } = useTranslation('common')
   const title = getProjectTaskTitle(task)
+  const handleOpen = () => onOpenTask(task.task_id, projectId)
+
   return (
     <div
       data-testid={`project-chat-row-${task.task_id}`}
+      role="button"
+      tabIndex={0}
+      onClick={handleOpen}
+      onKeyDown={(event) => handleSidebarRowKeyDown(event, handleOpen)}
       className={[
-        'group/task flex h-8 items-center rounded-md pl-10 pr-0.5 text-[13px] leading-[18px]',
+        'group/task flex h-8 cursor-default items-center rounded-md pl-10 pr-0.5 text-[13px] leading-[18px]',
         selected
           ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
           : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]',
       ].join(' ')}
     >
-      <button
-        type="button"
+      <span
         data-testid="project-chat-button"
-        onClick={() => onOpenTask(task.task_id, projectId)}
-        className="min-w-0 flex-1 truncate text-left"
+        className="min-w-0 flex-1 truncate"
       >
         {title}
-      </button>
+      </span>
       <div className="relative ml-2 flex h-7 w-8 shrink-0 items-center justify-end">
         {running ? (
           <Loader2
@@ -319,7 +349,10 @@ function ProjectItem({
           aria-expanded={expanded}
           className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
         >
-          <Folder className="h-3.5 w-3.5 shrink-0 text-[rgb(var(--color-sidebar-text-secondary))]" />
+          <ProjectFolderIcon
+            project={project}
+            className="h-3.5 w-3.5 shrink-0 text-[rgb(var(--color-sidebar-text-secondary))]"
+          />
           <span className="truncate">{project.name}</span>
         </button>
         {!expanded && projectRunning && (
@@ -422,24 +455,28 @@ function RecentTaskRow({
   onRenameTask: (task: Task) => void
 }) {
   const { t } = useTranslation('common')
+  const handleOpen = () => onOpenTask(task.id, task.project_id ?? 0)
+
   return (
     <div
       data-testid={`history-task-row-${task.id}`}
+      role="button"
+      tabIndex={0}
+      onClick={handleOpen}
+      onKeyDown={(event) => handleSidebarRowKeyDown(event, handleOpen)}
       className={[
-        'group/task flex h-8 items-center rounded-md pl-3 pr-0.5 text-[13px] leading-[18px]',
+        'group/task flex h-8 cursor-default items-center rounded-md pl-3 pr-0.5 text-[13px] leading-[18px]',
         selected
           ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
           : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]',
       ].join(' ')}
     >
-      <button
-        type="button"
+      <span
         data-testid="history-task-button"
-        onClick={() => onOpenTask(task.id, task.project_id ?? 0)}
-        className="min-w-0 flex-1 truncate text-left"
+        className="min-w-0 flex-1 truncate"
       >
         {task.title}
-      </button>
+      </span>
       <div className="relative ml-2 flex h-7 w-8 shrink-0 items-center justify-end">
         {running ? (
           <Loader2
@@ -504,6 +541,9 @@ export function DesktopSidebar({
   onOpenPlugins,
   onRefreshDevices,
   onCreateProject,
+  onCreateGitWorkspaceProject,
+  onListGitRepositories,
+  onListGitBranches,
   onUpdateProjectName,
   onRemoveProject,
   onArchiveAllChats,
@@ -520,6 +560,7 @@ export function DesktopSidebar({
 }: DesktopSidebarProps) {
   const { t } = useTranslation('common')
   const { sidebarWidth, handleResizeStart } = useResizableSidebar()
+  const reserveMacWindowControls = isTauriRuntime()
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
   const settingsMenuRef = useRef<HTMLDivElement>(null)
   const [projectCreateMode, setProjectCreateMode] = useState<ProjectCreateMode | null>(null)
@@ -574,12 +615,9 @@ export function DesktopSidebar({
     })
   }
 
-  const openProjectCreateDialog = async (mode: ProjectCreateMode) => {
-    try {
-      await onRefreshDevices?.()
-    } finally {
-      setProjectCreateMode(mode)
-    }
+  const openProjectCreateDialog = (mode: ProjectCreateMode) => {
+    setProjectCreateMode(mode)
+    void onRefreshDevices?.().catch(() => undefined)
   }
 
   useEffect(() => {
@@ -652,15 +690,27 @@ export function DesktopSidebar({
 
   return (
     <aside
-      className="relative flex shrink-0 flex-col border-r border-border/70 bg-[rgb(var(--color-sidebar))] px-1.5 py-4 shadow-[inset_-1px_0_0_rgb(var(--color-border))] backdrop-blur-xl backdrop-saturate-150"
+      className="relative flex shrink-0 flex-col border-r border-border/70 bg-[rgb(var(--color-sidebar))] px-1.5 pb-4 shadow-[inset_-1px_0_0_rgb(var(--color-border))] backdrop-blur-xl backdrop-saturate-150"
       style={{ width: sidebarWidth }}
     >
-      <div className="-mt-2 mb-4 flex h-8 items-center">
-        <DesktopWindowControls
-          sidebarCollapsed={false}
-          onToggleSidebar={onCollapse}
-        />
-      </div>
+      <DesktopTopBar
+        testId="desktop-sidebar-topbar"
+        className={cn(
+          '-mx-1.5 mb-2 w-[calc(100%+0.75rem)] bg-transparent pr-2',
+          reserveMacWindowControls ? undefined : 'pl-2',
+        )}
+        style={
+          reserveMacWindowControls
+            ? { paddingLeft: MAC_NATIVE_TOP_BAR_ACTION_INSET }
+            : undefined
+        }
+        left={(
+          <DesktopWindowControls
+            sidebarCollapsed={false}
+            onToggleSidebar={onCollapse}
+          />
+        )}
+      />
 
       <nav className="space-y-0.5">
         <SidebarButton
@@ -716,7 +766,7 @@ export function DesktopSidebar({
               icon={FolderPlus}
               items={[
                 {
-                  label: t('workbench.start_from_scratch', '从头开始'),
+                  label: t('workbench.start_from_scratch', '新建空白项目'),
                   icon: FolderPlus,
                   testId: 'project-start-from-scratch-button',
                   onSelect: () => openProjectCreateDialog('scratch'),
@@ -726,6 +776,12 @@ export function DesktopSidebar({
                   icon: Folder,
                   testId: 'project-existing-folder-button',
                   onSelect: () => openProjectCreateDialog('existing'),
+                },
+                {
+                  label: t('workbench.clone_from_git', '从 Git 克隆'),
+                  icon: FolderGit2,
+                  testId: 'project-clone-from-git-button',
+                  onSelect: () => openProjectCreateDialog('git'),
                 },
               ]}
             />
@@ -854,12 +910,15 @@ export function DesktopSidebar({
         devices={devices}
         onClose={() => setProjectCreateMode(null)}
         onCreateProject={onCreateProject}
+        onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
         preferredDeviceId={preferredDeviceId}
         onSelectDevicePreference={onRememberExecutionDevice}
         onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
         onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
         onListDeviceDirectories={onListDeviceDirectories}
         onCreateDeviceDirectory={onCreateDeviceDirectory}
+        onListGitRepositories={onListGitRepositories}
+        onListGitBranches={onListGitBranches}
       />
       <TextInputDialog
         open={renamingProject !== null}
