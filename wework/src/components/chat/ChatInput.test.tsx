@@ -988,6 +988,86 @@ describe('ChatInput', () => {
     expect(setSelectedModel).toHaveBeenCalledWith(model)
   })
 
+  test('keeps the desktop model menu inside the viewport when it opens upward', async () => {
+    const originalInnerHeight = window.innerHeight
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: 900,
+    })
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
+      function getMockRect(this: HTMLElement) {
+        const testId = this.getAttribute('data-testid')
+        if (testId === 'model-selector-button') {
+          return {
+            top: 300,
+            bottom: 332,
+            left: 640,
+            right: 780,
+            width: 140,
+            height: 32,
+          } as DOMRect
+        }
+        if (testId === 'model-selector-menu') {
+          return { top: 0, left: 640, width: 256, height: 720 } as DOMRect
+        }
+        if (testId === 'model-family-gpt') {
+          return { top: 340, left: 660, width: 220, height: 36 } as DOMRect
+        }
+        if (testId === 'model-selector-submenu') {
+          return { top: 0, left: 0, width: 288, height: 192 } as DOMRect
+        }
+        return { top: 0, bottom: 0, left: 0, width: 0, height: 0 } as DOMRect
+      },
+    )
+
+    const model: UnifiedModel = {
+      name: 'overseas-gpt-5.5',
+      type: 'user',
+      displayName: '海外:gpt-5.5',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.5',
+          sortOrder: 10,
+        },
+      },
+    }
+
+    try {
+      render(
+        <ChatInput
+          value=""
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+          projectChat={projectChatControls({
+            models: [model],
+            selectedModel: model,
+            selectedModelOptions: {},
+          })}
+        />,
+      )
+
+      await userEvent.click(screen.getByTestId('model-selector-button'))
+
+      await waitFor(() => {
+        expect(screen.getByTestId('model-selector-menu').parentElement).toHaveStyle({
+          top: '16px',
+        })
+      })
+      expect(screen.getByTestId('model-selector-menu')).toHaveStyle({
+        maxHeight: '608px',
+      })
+    } finally {
+      Object.defineProperty(window, 'innerHeight', {
+        configurable: true,
+        value: originalInnerHeight,
+      })
+    }
+  })
+
   test('moves the desktop model submenu upward when the active family is near the viewport bottom', async () => {
     const originalInnerHeight = window.innerHeight
     Object.defineProperty(window, 'innerHeight', {

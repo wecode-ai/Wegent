@@ -37,6 +37,7 @@ from app.schemas.project import (
     ProjectWorktreeItem,
     ProjectWorktreeListResponse,
     ProjectWorktreeProjectRef,
+    ProjectWorktreeTaskRef,
 )
 from app.schemas.task import TaskCreate
 from app.services.adapters.task_kinds import task_kinds_service
@@ -245,6 +246,7 @@ async def list_project_worktrees(
         await _build_worktree_device_group(
             db=db,
             user_id=user_id,
+            client_origin=client_origin,
             device_id=device_id,
             device=devices_by_id.get(device_id, {}),
             project_index=project_index.get(device_id, {}),
@@ -354,6 +356,7 @@ async def _build_worktree_device_group(
     *,
     db: Session,
     user_id: int,
+    client_origin: Optional[str],
     device_id: str,
     device: dict[str, Any],
     project_index: dict[str, list[dict[str, Any]]],
@@ -374,6 +377,7 @@ async def _build_worktree_device_group(
         scanned_items = await _scan_device_worktree_items(
             db=db,
             user_id=user_id,
+            client_origin=client_origin,
             device_id=device_id,
             project_index=project_index,
         )
@@ -671,6 +675,7 @@ async def _scan_device_worktree_items(
     *,
     db: Session,
     user_id: int,
+    client_origin: Optional[str],
     device_id: str,
     project_index: dict[str, list[dict[str, Any]]],
 ) -> list[ProjectWorktreeItem]:
@@ -707,6 +712,12 @@ async def _scan_device_worktree_items(
         for item in [_build_worktree_item(worktree_root, path, project_index)]
         if item is not None
     ]
+    items = _attach_worktree_task_refs(
+        db=db,
+        user_id=user_id,
+        client_origin=client_origin,
+        items=items,
+    )
     return sorted(items, key=lambda item: (item.project_name.lower(), item.worktree_id))
 
 
@@ -758,6 +769,78 @@ def _match_worktree_project(
     if not candidates:
         return None
     return sorted(candidates, key=lambda ref: ref["project_id"])[0]
+
+
+def _attach_worktree_task_refs(
+    *,
+    db: Session,
+    user_id: int,
+    client_origin: Optional[str],
+    items: list[ProjectWorktreeItem],
+) -> list[ProjectWorktreeItem]:
+    tasks_by_id = _load_worktree_tasks_by_id(
+        db=db,
+        user_id=user_id,
+        client_origin=client_origin,
+        items=items,
+    )
+    if not tasks_by_id:
+        return items
+
+    result: list[ProjectWorktreeItem] = []
+    for item in items:
+        task = tasks_by_id.get(int(item.worktree_id))
+        task_ref = _build_worktree_task_ref(item, task) if task else None
+        result.append(item.model_copy(update={"task": task_ref}))
+    return result
+
+
+def _load_worktree_tasks_by_id(
+    *,
+    db: Session,
+    user_id: int,
+    client_origin: Optional[str],
+    items: list[ProjectWorktreeItem],
+) -> dict[int, TaskResource]:
+    worktree_ids = sorted({int(item.worktree_id) for item in items})
+    if not worktree_ids:
+        return {}
+
+    query = db.query(TaskResource).filter(
+        TaskResource.id.in_(worktree_ids),
+        TaskResource.user_id == user_id,
+        TaskResource.kind == "Task",
+        TaskResource.is_active.in_(
+            [TaskResource.STATE_ACTIVE, TaskResource.STATE_ARCHIVED]
+        ),
+    )
+    if client_origin:
+        query = query.filter(TaskResource.client_origin == client_origin)
+    return {task.id: task for task in query.all()}
+
+
+def _build_worktree_task_ref(
+    item: ProjectWorktreeItem,
+    task: TaskResource,
+) -> Optional[ProjectWorktreeTaskRef]:
+    if not item.project or task.project_id != item.project.id:
+        return None
+
+    task_workspace_path = _task_execution_workspace_path(task)
+    if task_workspace_path and task_workspace_path != item.path:
+        return None
+    if (
+        not task_workspace_path
+        and _task_execution_workspace_source(task) != "git_worktree"
+    ):
+        return None
+
+    return ProjectWorktreeTaskRef(
+        id=task.id,
+        title=_task_title(task),
+        status=_task_status(task),
+        project_id=task.project_id,
+    )
 
 
 async def _remove_worktree_directory(
@@ -824,16 +907,6 @@ def _find_worktree_tasks(
     return [task]
 
 
-def _task_execution_workspace_source(task: TaskResource) -> Optional[str]:
-    """Return the Task execution workspace source when present."""
-
-    workspace = _task_execution_workspace(task)
-    source = workspace.get("source")
-    if not isinstance(source, str):
-        return None
-    return source.strip() or None
-
-
 def _task_execution_workspace_path(task: TaskResource) -> Optional[str]:
     """Return the persisted Task execution workspace path when present."""
 
@@ -845,12 +918,7 @@ def _task_execution_workspace_path(task: TaskResource) -> Optional[str]:
 
 
 def _task_execution_workspace(task: TaskResource) -> dict[str, Any]:
-    task_json = task.json or {}
-    if not isinstance(task_json, dict):
-        return {}
-    spec = task_json.get("spec")
-    if not isinstance(spec, dict):
-        return {}
+    spec = _task_spec(task)
     execution = spec.get("execution")
     if not isinstance(execution, dict):
         return {}
@@ -858,6 +926,40 @@ def _task_execution_workspace(task: TaskResource) -> dict[str, Any]:
     if not isinstance(workspace, dict):
         return {}
     return workspace
+
+
+def _task_execution_workspace_source(task: TaskResource) -> Optional[str]:
+    workspace = _task_execution_workspace(task)
+    source = workspace.get("source")
+    if not isinstance(source, str):
+        return None
+    return source.strip() or None
+
+
+def _task_json(task: TaskResource) -> dict[str, Any]:
+    task_json = task.json or {}
+    if not isinstance(task_json, dict):
+        return {}
+    return task_json
+
+
+def _task_spec(task: TaskResource) -> dict[str, Any]:
+    spec = _task_json(task).get("spec")
+    if not isinstance(spec, dict):
+        return {}
+    return spec
+
+
+def _task_title(task: TaskResource) -> str:
+    spec = _task_spec(task)
+    return str(spec.get("title") or task.name or f"Task #{task.id}")
+
+
+def _task_status(task: TaskResource) -> str:
+    status = _task_json(task).get("status")
+    if not isinstance(status, dict):
+        return "PENDING"
+    return str(status.get("phase") or "PENDING")
 
 
 def _build_git_clone_args(
@@ -1237,17 +1339,15 @@ def add_task_to_project(
     db.refresh(task)
 
     # Get task details for response
-    task_json = task.json or {}
-    spec = task_json.get("spec", {})
+    spec = _task_spec(task)
     is_group_chat = spec.get("is_group_chat", False)
-    task_status = task_json.get("status", {}).get("phase", "PENDING")
-    # Task title is stored in spec.title, fallback to task.name
-    task_title = spec.get("title") or task.name or f"Task #{task_id}"
 
     return ProjectTaskResponse(
         task_id=task_id,
-        task_title=task_title,
-        task_status=task_status,
+        task_title=_task_title(task),
+        task_status=_task_status(task),
+        device_id=spec.get("device_id"),
+        execution_workspace_source=_task_execution_workspace_source(task),
         is_group_chat=is_group_chat,
         project_id=project_id,
         updated_at=task.updated_at,
@@ -1320,18 +1420,16 @@ def _get_project_tasks(
 
     result = []
     for task in tasks:
-        task_json = task.json or {}
-        spec = task_json.get("spec", {})
+        spec = _task_spec(task)
         is_group_chat = spec.get("is_group_chat", False)
-        task_status = task_json.get("status", {}).get("phase", "PENDING")
-        # Task title is stored in spec.title, fallback to task.name
-        task_title = spec.get("title") or task.name or f"Task #{task.id}"
 
         result.append(
             ProjectTaskResponse(
                 task_id=task.id,
-                task_title=task_title,
-                task_status=task_status,
+                task_title=_task_title(task),
+                task_status=_task_status(task),
+                device_id=spec.get("device_id"),
+                execution_workspace_source=_task_execution_workspace_source(task),
                 is_group_chat=is_group_chat,
                 project_id=project_id,
                 updated_at=task.updated_at,

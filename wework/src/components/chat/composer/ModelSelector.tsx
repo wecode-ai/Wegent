@@ -30,6 +30,8 @@ const MAIN_MENU_WIDTH = 256
 const SUBMENU_WIDTH = 288
 const SUBMENU_GAP = 8
 const VIEWPORT_MARGIN = 16
+const MAIN_MENU_TRIGGER_GAP = 20
+const MAIN_MENU_MAX_HEIGHT = 608
 const SUBMENU_RIGHT_OFFSET = MAIN_MENU_WIDTH + SUBMENU_GAP
 const SUBMENU_LEFT_OFFSET = -(SUBMENU_WIDTH + SUBMENU_GAP)
 const SUBMENU_MAX_HEIGHT = 448
@@ -67,6 +69,7 @@ export function ModelSelector({
   const { t } = useTranslation('common')
   const isMobile = useIsMobile()
   const containerRef = useRef<HTMLDivElement>(null)
+  const buttonRef = useRef<HTMLButtonElement>(null)
   const menuPanelRef = useRef<HTMLDivElement>(null)
   const submenuPanelRef = useRef<HTMLDivElement>(null)
   const mobileMenuRef = useRef<HTMLDivElement>(null)
@@ -75,6 +78,8 @@ export function ModelSelector({
   const controlButtonRefs = useRef(new Map<string, HTMLButtonElement>())
   const [open, setOpen] = useState(false)
   const [mobileQuery, setMobileQuery] = useState('')
+  const [desktopMenuTop, setDesktopMenuTop] = useState(0)
+  const [desktopMenuMaxHeight, setDesktopMenuMaxHeight] = useState(MAIN_MENU_MAX_HEIGHT)
   const [submenuOffset, setSubmenuOffset] = useState(0)
   const [submenuLeft, setSubmenuLeft] = useState(SUBMENU_RIGHT_OFFSET)
   const [activeDesktopSubmenu, setActiveDesktopSubmenu] =
@@ -109,6 +114,38 @@ export function ModelSelector({
     },
     [closeMenu, isMobile, onSelectModel],
   )
+  const updateDesktopMenuLayout = useCallback(() => {
+    const container = containerRef.current
+    const button = buttonRef.current
+    const menuPanel = menuPanelRef.current
+    if (!container || !button || !menuPanel) return
+
+    const viewportTop = VIEWPORT_MARGIN
+    const viewportBottom = window.innerHeight - VIEWPORT_MARGIN
+    const maxAvailableHeight = Math.max(0, viewportBottom - viewportTop)
+    const measuredHeight = menuPanel.getBoundingClientRect().height
+    const contentHeight = menuPanel.scrollHeight
+    const naturalHeight =
+      Math.max(measuredHeight, contentHeight) || MAIN_MENU_MAX_HEIGHT
+    const menuHeight = Math.min(
+      MAIN_MENU_MAX_HEIGHT,
+      maxAvailableHeight,
+      naturalHeight,
+    )
+    const buttonRect = button.getBoundingClientRect()
+    const preferredTop =
+      menuPlacement === 'below'
+        ? buttonRect.bottom + MAIN_MENU_TRIGGER_GAP
+        : buttonRect.top - MAIN_MENU_TRIGGER_GAP - menuHeight
+    const maxTop = viewportBottom - menuHeight
+    const clampedTop = Math.round(
+      Math.max(viewportTop, Math.min(preferredTop, maxTop)),
+    )
+    const containerTop = container.getBoundingClientRect().top
+
+    setDesktopMenuTop(clampedTop - containerTop)
+    setDesktopMenuMaxHeight(menuHeight)
+  }, [menuPlacement])
   const updateSubmenuLayout = useCallback((target: HTMLElement | null) => {
     if (!target || !menuPanelRef.current) {
       setSubmenuOffset(0)
@@ -212,10 +249,6 @@ export function ModelSelector({
     }
   }, [isMobile, open])
 
-  const menuPositionClass =
-    menuPlacement === 'below'
-      ? 'top-[52px] left-0'
-      : 'bottom-[52px] left-0'
   const buttonLabel =
     getSelectedModelDisplayLabel(
       selectedModel,
@@ -241,6 +274,23 @@ export function ModelSelector({
     activeDesktopSubmenu?.type === 'control'
       ? controlsBelowModels.find(control => control.id === activeDesktopSubmenu.id)
       : undefined
+
+  useLayoutEffect(() => {
+    if (!open || isMobile) return
+
+    updateDesktopMenuLayout()
+    window.addEventListener('resize', updateDesktopMenuLayout)
+    return () => window.removeEventListener('resize', updateDesktopMenuLayout)
+  }, [
+    activeGroup?.models.length,
+    controlsAboveFamilies.length,
+    controlsBelowModels.length,
+    familyGroups.length,
+    isMobile,
+    open,
+    updateDesktopMenuLayout,
+  ])
+
   const normalizedMobileQuery = mobileQuery.trim().toLowerCase()
   const resolveControlLabel = useCallback(
     (key: string, fallback: string) => t(key, fallback),
@@ -708,16 +758,17 @@ export function ModelSelector({
       {open && isMobile && renderMobileSheet()}
       {open && !isMobile && (
         <div
+          style={{ top: desktopMenuTop }}
           className={[
-            'absolute z-popover w-[min(46rem,calc(100vw-2rem))]',
-            menuPositionClass,
+            'absolute left-0 z-popover w-[min(46rem,calc(100vw-2rem))]',
             menuClassName,
           ].join(' ')}
         >
           <div
             ref={menuPanelRef}
             data-testid="model-selector-menu"
-            className="max-h-[min(38rem,calc(100vh-4rem))] w-64 shrink-0 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
+            style={{ maxHeight: desktopMenuMaxHeight }}
+            className="w-64 shrink-0 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
           >
             {(controlsAboveFamilies.length > 0 || activeGroup) && (
               <>
@@ -848,6 +899,7 @@ export function ModelSelector({
         </div>
       )}
       <button
+        ref={buttonRef}
         type="button"
         data-testid="model-selector-button"
         onClick={() => {

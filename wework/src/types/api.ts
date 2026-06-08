@@ -100,6 +100,8 @@ export interface ProjectTask {
   task_status?: string
   title?: string
   status?: string
+  device_id?: string | null
+  execution_workspace_source?: string | null
   created_at?: string
   updated_at?: string
   task_type?: string
@@ -151,11 +153,19 @@ export interface ProjectWorktreeProjectRef {
   source_path: string
 }
 
+export interface ProjectWorktreeTaskRef {
+  id: number
+  title: string
+  status: string
+  project_id: number
+}
+
 export interface ProjectWorktreeItem {
   worktree_id: string
   project_name: string
   path: string
   project?: ProjectWorktreeProjectRef | null
+  task?: ProjectWorktreeTaskRef | null
 }
 
 export interface ProjectWorktreeDeviceGroup {
@@ -200,6 +210,7 @@ export interface Task {
   project_id?: number
   client_origin?: string
   device_id?: string | null
+  execution_workspace_source?: string | null
   created_at: string
   updated_at?: string
   is_group_chat?: boolean

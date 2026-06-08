@@ -6,6 +6,7 @@ import { ModelSelector } from './ModelSelector'
 
 interface ComposerToolbarProps {
   canSend: boolean
+  disabled?: boolean
   models: UnifiedModel[]
   selectedModel: UnifiedModel | null
   selectedModelOptions: ModelOptions
@@ -19,6 +20,7 @@ interface ComposerToolbarProps {
 
 export function ComposerToolbar({
   canSend,
+  disabled = false,
   models,
   selectedModel,
   selectedModelOptions,
@@ -34,7 +36,7 @@ export function ComposerToolbar({
   return (
     <div className="mt-auto flex min-h-9 items-center justify-between gap-4">
       <div className="-ml-2 flex min-w-0 items-center gap-2">
-        <AddContextMenu disabled={false} onFileSelect={onFileSelect} />
+        <AddContextMenu disabled={disabled} onFileSelect={onFileSelect} />
       </div>
       <div className="flex shrink-0 items-center gap-2">
         {isModelSelectionReady ? (
@@ -42,7 +44,7 @@ export function ComposerToolbar({
             models={models}
             selectedModel={selectedModel}
             selectedModelOptions={selectedModelOptions}
-            disabled={false}
+            disabled={disabled}
             onSelectModel={onSelectModel}
             onSelectModelOption={onSelectModelOption}
           />
@@ -55,7 +57,8 @@ export function ComposerToolbar({
         <button
           type="button"
           data-testid="voice-input-button"
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full p-0 text-text-secondary hover:bg-muted"
+          disabled={disabled}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full p-0 text-text-secondary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
           aria-label={t('workbench.voice_input', '语音输入')}
         >
           <Mic className="h-4 w-4" />

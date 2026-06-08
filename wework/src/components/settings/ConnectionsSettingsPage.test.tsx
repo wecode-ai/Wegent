@@ -5,6 +5,7 @@ import { ConnectionsSettingsPage } from './ConnectionsSettingsPage'
 import { createDeviceApi } from '@/api/devices'
 import { createProjectApi } from '@/api/projects'
 import { AppearanceProvider } from '@/features/appearance'
+import '@/i18n'
 import type { DeviceInfo } from '@/types/devices'
 
 const runtimeConfigMock = vi.hoisted(() => ({
@@ -178,6 +179,12 @@ describe('ConnectionsSettingsPage', () => {
                 name: 'Wegent',
                 source_path: 'd837/Wegent',
               },
+              task: {
+                id: 1386,
+                title: 'Fix sidebar persistence',
+                status: 'RUNNING',
+                project_id: 7,
+              },
             },
           ],
         },
@@ -196,6 +203,7 @@ describe('ConnectionsSettingsPage', () => {
                 name: 'Wegent',
                 source_path: 'd837/Wegent',
               },
+              task: null,
             },
           ],
         },
@@ -218,6 +226,12 @@ describe('ConnectionsSettingsPage', () => {
     expect(metadata).toHaveTextContent('Linux Builder')
     expect(await screen.findByText('/workspace/worktrees/1386/Wegent')).toBeInTheDocument()
     expect(screen.getByText('/workspace/worktrees/1387/Wegent')).toBeInTheDocument()
+    expect(screen.getByTestId('worktree-task-link-1386')).toHaveTextContent(
+      'Fix sidebar persistence',
+    )
+    expect(screen.getByTestId('worktree-task-missing-1387')).toHaveTextContent(
+      '未关联会话',
+    )
     expect(screen.getByText('Crystal Mac')).toHaveClass('text-text-muted')
     expect(screen.getByText('Linux Builder')).toHaveClass('text-text-muted')
     within(projectGroup).getAllByTestId('worktree-row').forEach(row => {
@@ -228,6 +242,10 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.queryByText('1386')).not.toBeInTheDocument()
     expect(screen.queryByTestId('worktree-device-device-1')).not.toBeInTheDocument()
     expect(projectApi.listWorktrees).toHaveBeenCalledTimes(1)
+
+    await userEvent.click(screen.getByTestId('worktree-task-link-1386'))
+
+    expect(window.location.pathname).toBe('/projects/7/tasks/1386')
   })
 
   test('shows a single empty worktree state without device groups', async () => {

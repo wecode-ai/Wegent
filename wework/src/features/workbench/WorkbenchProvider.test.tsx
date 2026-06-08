@@ -50,6 +50,8 @@ function ProjectChatProbe() {
       <span data-testid="project-execution-mode">
         {workbench.projectExecutionMode}
       </span>
+      <span data-testid="workbench-input">{workbench.state.input}</span>
+      <span data-testid="workbench-error">{workbench.state.error ?? ''}</span>
       <button type="button" onClick={() => workbench.selectProject(7)}>
         select project
       </button>
@@ -77,6 +79,26 @@ function ProjectChatProbe() {
       <button type="button" onClick={() => void workbench.sendCurrentInput()}>
         send
       </button>
+    </div>
+  )
+}
+
+function ModelCompatibilityProbe() {
+  const workbench = useWorkbench()
+
+  return (
+    <div>
+      <button type="button" onClick={() => void workbench.openTask(8)}>
+        open task
+      </button>
+      <div data-testid="model-compatibility-status">
+        {workbench.projectChat.models
+          .map(
+            model =>
+              `${model.name}:${model.compatibilityDisabledReason ?? 'enabled'}`
+          )
+          .join('|')}
+      </div>
     </div>
   )
 }
@@ -392,6 +414,107 @@ describe('WorkbenchProvider', () => {
       'Restored task',
     )
     expect(joinTask).toHaveBeenCalledWith(8)
+  })
+
+  test('uses the opened task model as the runtime compatibility anchor', async () => {
+    const models: UnifiedModel[] = [
+      {
+        name: 'wecode-claude-sonnet-4-5',
+        type: 'public',
+        runtime: { family: 'claude.claude' },
+      },
+      {
+        name: 'wecode-claude-opus-4',
+        type: 'public',
+        runtime: { family: 'claude.claude' },
+      },
+      {
+        name: 'gpt-5.5-medium',
+        type: 'user',
+        runtime: { family: 'openai.openai-responses' },
+      },
+    ]
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: { listModels: vi.fn().mockResolvedValue({ data: models }) },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({ items: [] }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail: vi.fn().mockResolvedValue({
+              id: 8,
+              title: 'Existing task',
+              status: 'SUCCESS',
+              task_type: 'code',
+              project_id: 0,
+              model_id: 'wecode-claude-sonnet-4-5',
+              force_override_bot_model_type: 'public',
+              created_at: '2026-06-04T00:00:00.000Z',
+              subtasks: [],
+            }),
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
+          },
+          chatStream: {
+            joinTask: vi.fn(),
+            leaveTask: vi.fn(),
+            sendMessage: vi.fn(),
+            subscribe: vi.fn(() => vi.fn()),
+          },
+        }}
+      >
+        <ModelCompatibilityProbe />
+      </WorkbenchProvider>
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('model-compatibility-status')).toHaveTextContent(
+        'gpt-5.5-medium:enabled'
+      )
+    )
+
+    await userEvent.click(screen.getByText('open task'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('model-compatibility-status')).toHaveTextContent(
+        'gpt-5.5-medium:runtime_family_mismatch'
+      )
+    )
+    expect(screen.getByTestId('model-compatibility-status')).toHaveTextContent(
+      'wecode-claude-opus-4:enabled'
+    )
   })
 
   test('refreshes devices when a device comes online after bootstrap', async () => {
@@ -1209,6 +1332,102 @@ describe('WorkbenchProvider', () => {
     })
     expect(updateProject).not.toHaveBeenCalled()
     expect(listProjects).toHaveBeenCalledTimes(2)
+  })
+
+  test('blocks sending when the active project device is offline', async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ success: true, task_id: 99 })
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: { listModels: vi.fn().mockResolvedValue({ data: [] }) },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({
+              items: [
+                {
+                  id: 7,
+                  name: 'Wegent',
+                  tasks: [],
+                  config: {
+                    mode: 'workspace',
+                    execution: {
+                      targetType: 'local',
+                      deviceId: 'offline-device',
+                    },
+                  },
+                },
+              ],
+            }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail: vi.fn(),
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([
+              {
+                id: 1,
+                device_id: 'offline-device',
+                name: 'Offline Device',
+                status: 'offline',
+                is_default: false,
+                device_type: 'cloud',
+                bind_shell: 'claudecode',
+              },
+            ]),
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
+          },
+          userApi: { updateCurrentUser: vi.fn() },
+          chatStream: {
+            joinTask: vi.fn(),
+            leaveTask: vi.fn(),
+            sendMessage,
+            subscribe: vi.fn(() => vi.fn()),
+          },
+        }}
+      >
+        <ProjectChatProbe />
+      </WorkbenchProvider>
+    )
+
+    await waitFor(() => expect(screen.getByText('select project')).toBeInTheDocument())
+
+    await userEvent.click(screen.getByText('select project'))
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('send'))
+
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(screen.getByTestId('workbench-input')).toHaveTextContent('build it')
+    expect(screen.getByTestId('workbench-error')).toHaveTextContent(
+      'Offline Device 离线，恢复在线后可继续对话',
+    )
   })
 
   test('sends git worktree execution intent for existing local workspace conversations', async () => {

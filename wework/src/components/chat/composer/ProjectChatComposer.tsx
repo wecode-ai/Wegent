@@ -16,6 +16,7 @@ interface ProjectChatComposerProps {
   onChange: (value: string) => void
   onSubmit: () => void
   disabled: boolean
+  disabledReason?: string
   placeholder: string
   models: UnifiedModel[]
   selectedModel: UnifiedModel | null
@@ -40,6 +41,7 @@ export function ProjectChatComposer({
   onChange,
   onSubmit,
   disabled,
+  disabledReason,
   placeholder,
   models,
   selectedModel,
@@ -76,12 +78,21 @@ export function ProjectChatComposer({
           errors={attachmentErrors}
           onRemoveAttachment={onRemoveAttachment}
         />
+        {disabledReason && (
+          <div
+            data-testid="composer-disabled-reason"
+            className="mb-2 rounded-xl bg-muted px-3 py-2 text-xs text-text-secondary"
+          >
+            {disabledReason}
+          </div>
+        )}
         <ComposerTextarea
           textareaRef={textareaRef}
           value={value}
           onChange={onChange}
           onSubmit={onSubmit}
           canSend={canSend}
+          disabled={disabled}
           placeholder={placeholder}
           rows={2}
           onPasteFiles={onFileSelect}
@@ -91,6 +102,7 @@ export function ProjectChatComposer({
         />
         <ComposerToolbar
           canSend={canSend}
+          disabled={disabled}
           models={models}
           selectedModel={selectedModel}
           selectedModelOptions={selectedModelOptions}
