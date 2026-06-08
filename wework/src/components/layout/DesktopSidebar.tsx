@@ -439,7 +439,7 @@ function ProjectTaskRow({
       onClick={handleOpen}
       onKeyDown={(event) => handleSidebarRowKeyDown(event, handleOpen)}
       className={[
-        'group/task flex h-8 cursor-default items-center rounded-md pl-10 pr-0.5 text-[13px] leading-[18px]',
+        'group/task flex h-8 cursor-default items-center rounded-md pl-9 pr-1 text-[13px] leading-[18px]',
         selected
           ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
           : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]',
@@ -621,7 +621,7 @@ function ProjectItem({
       {expanded && (
         <div className="space-y-0.5">
           {tasks.length === 0 ? (
-            <div className="ml-10 rounded-md px-2 py-1.5 text-xs text-[rgb(var(--color-sidebar-text-muted))]">
+            <div className="ml-6 rounded-md px-3 py-1.5 text-xs text-[rgb(var(--color-sidebar-text-muted))]">
               {t('workbench.no_chats', '暂无会话')}
             </div>
           ) : (
@@ -643,7 +643,7 @@ function ProjectItem({
               type="button"
               data-testid={`project-task-limit-toggle-${project.id}`}
               onClick={() => onToggleTaskLimit(project.id)}
-              className="ml-10 h-8 rounded-md px-2 text-left text-xs font-medium text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
+              className="ml-6 h-8 rounded-md px-3 text-left text-xs font-medium text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
             >
               {showAllTasks
                 ? t('workbench.show_less', '收起')

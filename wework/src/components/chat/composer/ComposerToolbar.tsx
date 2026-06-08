@@ -1,4 +1,4 @@
-import { ArrowUp, Mic, Square } from 'lucide-react'
+import { ArrowUp, Square } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ModelOptions, UnifiedModel } from '@/types/api'
 import { AddContextMenu } from './AddContextMenu'
@@ -54,15 +54,6 @@ export function ComposerToolbar({
             data-testid="model-selector-loading"
           />
         )}
-        <button
-          type="button"
-          data-testid="voice-input-button"
-          disabled={disabled}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full p-0 text-text-secondary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-          aria-label={t('workbench.voice_input', '语音输入')}
-        >
-          <Mic className="h-4 w-4" />
-        </button>
         {isStreaming ? (
           <button
             type="button"
