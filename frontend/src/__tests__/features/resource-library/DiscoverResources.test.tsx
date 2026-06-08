@@ -105,37 +105,36 @@ jest.mock('@/hooks/useTranslation', () => ({
         'actions.retry': '重试',
         'actions.search': '搜索',
         'discover.card.no_tags': '暂无标签',
-        'discover.card.solution_label': '可复用方案',
-        'discover.card.best_for': '适合',
-        'discover.card.start_hint': '接受后在我的资源中使用',
-        'discover.description': '按使用场景浏览团队沉淀的可复用方案，查看用法后接受分享。',
+        'discover.card.solution_label': '共享资源',
+        'discover.card.best_for': '标签',
+        'discover.card.start_hint': '接受后出现在“我的”',
+        'discover.description': '查找团队共享的资源，接受后可在“我的”中使用。',
         'discover.assistant.action': '发现助手',
         'discover.assistant.agent_badge': 'Agent',
-        'discover.assistant.callout_description':
-          '告诉发现助手你想完成的任务，它会帮你缩小范围并推荐资源。',
-        'discover.assistant.callout_title': '不确定该找什么？',
+        'discover.assistant.callout_description': '描述你要做的事，发现助手会推荐合适资源。',
+        'discover.assistant.callout_title': '不知道用哪个资源？',
         'discover.assistant.description':
           '这是一个实际智能体，会通过聊天帮你梳理任务并选择合适资源。',
         'discover.assistant.empty_description':
-          '输入你要完成的任务、使用场景或现有问题，它会以智能体对话的方式帮你判断该接受哪个资源。',
+          '输入你要完成的任务或遇到的问题，它会帮你判断该接受哪个资源。',
         'discover.assistant.empty_title': '让发现助手帮你找资源',
         'discover.assistant.loading': '正在加载发现助手',
-        'discover.assistant.prompts.code_review': '找代码评审助手',
-        'discover.assistant.prompts.doc_summary': '找文档总结技能',
-        'discover.assistant.prompts.weekly_report': '帮我找能写周报的助手',
+        'discover.assistant.prompts.code_review': '代码评审',
+        'discover.assistant.prompts.doc_summary': '文档总结',
+        'discover.assistant.prompts.weekly_report': '写周报',
         'discover.assistant.title': '发现助手',
         'discover.assistant.unavailable_description':
           '系统还没有可用的发现助手智能体，请先初始化公开资源后再使用。',
         'discover.assistant.unavailable_title': '发现助手未初始化',
-        'discover.title': '发现可复用方案',
-        'detail.sections.solves': '它解决什么',
-        'detail.sections.get_started': '怎么开始',
-        'detail.sections.examples': '示例输入',
+        'discover.title': '发现资源',
+        'detail.sections.solves': '资源介绍',
+        'detail.sections.get_started': '使用方式',
+        'detail.sections.examples': '示例',
         'detail.sections.resource_info': '资源信息',
-        'detail.start_steps.accept': '接受这个方案',
-        'detail.start_steps.open_mine': '在我的资源中找到对应资源',
-        'detail.start_steps.use': '按你的任务场景开始使用',
-        'detail.example_prompt': '用 {{title}} 帮我处理一个实际任务',
+        'detail.start_steps.accept': '接受资源',
+        'detail.start_steps.open_mine': '在“我的”中找到它',
+        'detail.start_steps.use': '开始使用',
+        'detail.example_prompt': '帮我用 {{title}} 处理这个任务',
         'fields.install_count': '接受次数',
         'fields.publisher': '发布者',
         'fields.updated_at': '更新时间',
@@ -217,7 +216,7 @@ describe('DiscoverResources', () => {
     })
   })
 
-  it('loads discover listings as a type-agnostic solution market', async () => {
+  it('loads discover listings as a type-agnostic resource market', async () => {
     render(<DiscoverResources />)
 
     expect(await screen.findByText('Doc Summary')).toBeInTheDocument()
@@ -228,9 +227,9 @@ describe('DiscoverResources', () => {
     })
     expect(screen.getByText('Doc Summary')).toHaveClass('text-text-primary')
     expect(screen.getByTestId('resource-listing-card-1')).toBeInTheDocument()
-    expect(screen.getByText('可复用方案')).toBeInTheDocument()
-    expect(screen.getByText('适合')).toBeInTheDocument()
-    expect(screen.getByText('接受后在我的资源中使用')).toBeInTheDocument()
+    expect(screen.getByText('共享资源')).toBeInTheDocument()
+    expect(screen.getByText('接受后出现在“我的”')).toBeInTheDocument()
+    expect(screen.getByText('docs')).toBeInTheDocument()
     expect(screen.getByText('技能')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '接受分享 Doc Summary' })).toBeEnabled()
   })
@@ -255,7 +254,7 @@ describe('DiscoverResources', () => {
     expect(within(headerActions).getByTestId('open-discover-assistant-button')).toBeInTheDocument()
     expect(within(headerActions).getByTestId('discover-resources-toolbar')).toBeInTheDocument()
     expect(toolbar).toHaveClass('w-full')
-    expect(toolbar).toHaveClass('sm:min-w-[420px]')
+    expect(toolbar).toHaveClass('sm:min-w-[440px]')
     expect(toolbar).toHaveClass('sm:flex-row')
     expect(toolbar).not.toHaveClass('rounded-lg')
     expect(toolbar).not.toHaveClass('bg-surface')
@@ -307,10 +306,10 @@ describe('DiscoverResources', () => {
     render(<DiscoverResources />)
 
     expect(await screen.findByText('Doc Summary')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '找文档总结技能' }))
+    fireEvent.click(screen.getByRole('button', { name: '文档总结' }))
 
     const pendingPrompt = JSON.parse(sessionStorage.getItem('pendingTaskPrompt') ?? '{}')
-    expect(pendingPrompt.prompt).toBe('找文档总结技能')
+    expect(pendingPrompt.prompt).toBe('文档总结')
     expect(await screen.findByTestId('discover-assistant-chat-area')).toHaveAttribute(
       'data-team-name',
       'resource-discovery-assistant'
@@ -326,13 +325,13 @@ describe('DiscoverResources', () => {
     const dialog = await screen.findByRole('dialog')
     expect(mockResourceLibraryApi.getListing).toHaveBeenCalledWith(1)
     expect(within(dialog).getByText('Summarizes documents')).toBeInTheDocument()
-    expect(within(dialog).getByText('它解决什么')).toBeInTheDocument()
-    expect(within(dialog).getByText('怎么开始')).toBeInTheDocument()
-    expect(within(dialog).getByText('示例输入')).toBeInTheDocument()
+    expect(within(dialog).getByText('资源介绍')).toBeInTheDocument()
+    expect(within(dialog).getByText('使用方式')).toBeInTheDocument()
+    expect(within(dialog).getByText('示例')).toBeInTheDocument()
     expect(within(dialog).getByText('资源信息')).toBeInTheDocument()
-    expect(within(dialog).getByText('接受这个方案')).toBeInTheDocument()
-    expect(within(dialog).getByText('在我的资源中找到对应资源')).toBeInTheDocument()
-    expect(within(dialog).getByText('按你的任务场景开始使用')).toBeInTheDocument()
+    expect(within(dialog).getByText('接受资源')).toBeInTheDocument()
+    expect(within(dialog).getByText('在“我的”中找到它')).toBeInTheDocument()
+    expect(within(dialog).getByText('开始使用')).toBeInTheDocument()
 
     fireEvent.click(within(dialog).getByRole('button', { name: '接受分享 Doc Summary' }))
 

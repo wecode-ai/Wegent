@@ -7,46 +7,46 @@
     "published": "我发布的"
   },
   "discover": {
-    "title": "发现可复用方案",
-    "description": "按使用场景浏览团队沉淀的可复用方案，查看用法后接受分享。",
+    "title": "发现资源",
+    "description": "查找团队共享的资源，接受后可在“我的”中使用。",
     "assistant": {
       "action": "发现助手",
       "title": "发现助手",
       "agent_badge": "Agent",
       "description": "这是一个实际智能体，会通过聊天帮你梳理任务并选择合适资源。",
-      "callout_title": "不确定该找什么？",
-      "callout_description": "告诉发现助手你想完成的任务，它会帮你缩小范围并推荐资源。",
+      "callout_title": "不知道用哪个资源？",
+      "callout_description": "描述你要做的事，发现助手会推荐合适资源。",
       "empty_title": "让发现助手帮你找资源",
-      "empty_description": "输入你要完成的任务、使用场景或现有问题，它会以智能体对话的方式帮你判断该接受哪个资源。",
+      "empty_description": "输入你要完成的任务或遇到的问题，它会帮你判断该接受哪个资源。",
       "loading": "正在加载发现助手",
       "unavailable_title": "发现助手未初始化",
       "unavailable_description": "系统还没有可用的发现助手智能体，请先初始化公开资源后再使用。",
       "prompts": {
-        "weekly_report": "帮我找能写周报的助手",
-        "code_review": "找代码评审助手",
-        "doc_summary": "找文档总结技能"
+        "weekly_report": "写周报",
+        "code_review": "代码评审",
+        "doc_summary": "文档总结"
       }
     },
     "card": {
-      "solution_label": "可复用方案",
-      "best_for": "适合",
-      "start_hint": "接受后在我的资源中使用",
+      "solution_label": "共享资源",
+      "best_for": "标签",
+      "start_hint": "接受后出现在“我的”",
       "no_tags": "暂无标签"
     }
   },
   "detail": {
     "sections": {
-      "solves": "它解决什么",
-      "get_started": "怎么开始",
-      "examples": "示例输入",
+      "solves": "资源介绍",
+      "get_started": "使用方式",
+      "examples": "示例",
       "resource_info": "资源信息"
     },
     "start_steps": {
-      "accept": "接受这个方案",
-      "open_mine": "在我的资源中找到对应资源",
-      "use": "按你的任务场景开始使用"
+      "accept": "接受资源",
+      "open_mine": "在“我的”中找到它",
+      "use": "开始使用"
     },
-    "example_prompt": "用 {{title}} 帮我处理一个实际任务"
+    "example_prompt": "帮我用 {{title}} 处理这个任务"
   },
   "filters": {
     "all": "全部",

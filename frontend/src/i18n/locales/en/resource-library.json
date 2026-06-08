@@ -7,46 +7,46 @@
     "published": "Published by me"
   },
   "discover": {
-    "title": "Discover Reusable Solutions",
-    "description": "Browse reusable solutions by use case, review how to use them, then accept the share.",
+    "title": "Discover Resources",
+    "description": "Find shared resources from your team. Accept one to use it from My Resources.",
     "assistant": {
       "action": "Discover Assistant",
       "title": "Discover Assistant",
       "agent_badge": "Agent",
       "description": "This is a real Agent that helps you clarify a task and choose suitable resources through chat.",
-      "callout_title": "Not sure what to search for?",
-      "callout_description": "Tell the Discover Assistant what you want to accomplish and it will narrow the market down for you.",
+      "callout_title": "Not sure which resource to use?",
+      "callout_description": "Describe what you want to do and the Discover Assistant will recommend matching resources.",
       "empty_title": "Ask the Discover Assistant",
-      "empty_description": "Describe your task, use case, or current blocker. It will chat with you as an Agent and help decide which resource to accept.",
+      "empty_description": "Describe your task or blocker. It will help decide which resource to accept.",
       "loading": "Loading Discover Assistant",
       "unavailable_title": "Discover Assistant is not initialized",
       "unavailable_description": "No Discover Assistant Agent is available yet. Initialize public resources before using it.",
       "prompts": {
-        "weekly_report": "Find an assistant for weekly reports",
-        "code_review": "Find a code review assistant",
-        "doc_summary": "Find a document summary skill"
+        "weekly_report": "Weekly reports",
+        "code_review": "Code review",
+        "doc_summary": "Document summary"
       }
     },
     "card": {
-      "solution_label": "Reusable solution",
-      "best_for": "Best for",
-      "start_hint": "Accept it, then use it from My Resources",
+      "solution_label": "Shared resource",
+      "best_for": "Tags",
+      "start_hint": "Accept it to use from My Resources",
       "no_tags": "No tags"
     }
   },
   "detail": {
     "sections": {
-      "solves": "What it solves",
-      "get_started": "How to start",
-      "examples": "Example prompt",
+      "solves": "Overview",
+      "get_started": "How to use",
+      "examples": "Example",
       "resource_info": "Resource information"
     },
     "start_steps": {
-      "accept": "Accept this solution",
+      "accept": "Accept resource",
       "open_mine": "Find the resource in My Resources",
-      "use": "Start using it for your task"
+      "use": "Start using it"
     },
-    "example_prompt": "Use {{title}} to help me with a real task"
+    "example_prompt": "Help me use {{title}} for this task"
   },
   "filters": {
     "all": "All",

@@ -183,7 +183,7 @@ export function DiscoverResources() {
   }
 
   return (
-    <div className="flex flex-col gap-4" data-testid="discover-resources">
+    <div className="mx-auto flex w-full max-w-7xl flex-col gap-4" data-testid="discover-resources">
       <ResourceManagementLayout
         title={t('discover.title')}
         description={t('discover.description')}
@@ -192,7 +192,7 @@ export function DiscoverResources() {
             <Button
               type="button"
               variant="outline"
-              className="h-11 min-w-[44px] px-4 md:h-10"
+              className="h-11 min-w-[44px] shrink-0 px-4 md:h-10"
               onClick={() => openAssistant()}
               data-testid="open-discover-assistant-button"
             >
@@ -200,7 +200,7 @@ export function DiscoverResources() {
               {t('discover.assistant.action')}
             </Button>
             <form
-              className="flex w-full flex-col gap-2 sm:w-auto sm:min-w-[420px] sm:flex-row"
+              className="flex w-full flex-col gap-2 sm:w-auto sm:min-w-[440px] sm:flex-row"
               onSubmit={handleSearch}
               data-testid="discover-resources-toolbar"
             >
@@ -228,7 +228,7 @@ export function DiscoverResources() {
         data-testid="resource-market-section"
       >
         <div
-          className="rounded-lg border border-border bg-surface p-4"
+          className="flex flex-col gap-4 rounded-lg border border-border bg-surface/70 p-4 sm:flex-row sm:items-center sm:justify-between"
           data-testid="discover-assistant-callout"
         >
           <div className="flex min-w-0 items-start gap-3">
@@ -242,34 +242,34 @@ export function DiscoverResources() {
               <p className="mt-1 text-sm text-text-secondary">
                 {t('discover.assistant.callout_description')}
               </p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {[
-                  t('discover.assistant.prompts.weekly_report'),
-                  t('discover.assistant.prompts.code_review'),
-                  t('discover.assistant.prompts.doc_summary'),
-                ].map(prompt => (
-                  <Button
-                    key={prompt}
-                    type="button"
-                    variant="outline"
-                    className="h-9 px-3"
-                    onClick={() => openAssistant(prompt)}
-                  >
-                    {prompt}
-                  </Button>
-                ))}
-              </div>
             </div>
+          </div>
+          <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
+            {[
+              t('discover.assistant.prompts.weekly_report'),
+              t('discover.assistant.prompts.code_review'),
+              t('discover.assistant.prompts.doc_summary'),
+            ].map(prompt => (
+              <Button
+                key={prompt}
+                type="button"
+                variant="outline"
+                className="h-9 px-3"
+                onClick={() => openAssistant(prompt)}
+              >
+                {prompt}
+              </Button>
+            ))}
           </div>
         </div>
 
         {isLoading ? (
           <div
-            className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"
+            className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3"
             aria-label={t('states.loading')}
           >
             {Array.from({ length: 6 }).map((_, index) => (
-              <Skeleton key={index} className="h-[248px] rounded-lg" />
+              <Skeleton key={index} className="h-[300px] rounded-lg" />
             ))}
           </div>
         ) : hasError ? (
@@ -291,7 +291,7 @@ export function DiscoverResources() {
           </div>
         ) : (
           <div
-            className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"
+            className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3"
             data-testid="resource-library-list"
           >
             {listings.map(listing => (
