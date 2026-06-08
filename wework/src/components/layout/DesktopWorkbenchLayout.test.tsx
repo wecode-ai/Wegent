@@ -1324,12 +1324,25 @@ describe('DesktopWorkbenchLayout', () => {
     expect(await screen.findByText('Implement archive')).toBeInTheDocument()
     expect(screen.getByText('2h')).toBeInTheDocument()
     expect(screen.getByTestId('project-chat-time-11')).toHaveClass(
-      'group-hover/task:opacity-0',
+      'group-hover/task:invisible',
+      'group-focus-within/task:invisible',
+    )
+    expect(screen.getByTestId('project-chat-time-value-11')).toHaveClass(
+      'w-7',
+      'justify-center',
     )
     expect(screen.getByTestId('project-chat-actions-11')).toHaveClass(
       'absolute',
+      'invisible',
+      'justify-end',
       'opacity-0',
+      'group-hover/task:visible',
       'group-hover/task:opacity-100',
+      'group-focus-within/task:visible',
+    )
+    expect(screen.getByTestId('project-chat-menu-11')).not.toHaveClass(
+      'rounded-md',
+      'hover:bg-background',
     )
     expect(screen.getByTestId('project-chat-row-11')).toHaveClass(
       'bg-[rgb(var(--color-sidebar-active))]',
@@ -1405,12 +1418,25 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByText('Project session')).not.toBeInTheDocument()
     expect(screen.getByText('1h')).toBeInTheDocument()
     expect(screen.getByTestId('history-task-time-5')).toHaveClass(
-      'group-hover/task:opacity-0',
+      'group-hover/task:invisible',
+      'group-focus-within/task:invisible',
+    )
+    expect(screen.getByTestId('history-task-time-value-5')).toHaveClass(
+      'w-7',
+      'justify-center',
     )
     expect(screen.getByTestId('history-task-actions-5')).toHaveClass(
       'absolute',
+      'invisible',
+      'justify-end',
       'opacity-0',
+      'group-hover/task:visible',
       'group-hover/task:opacity-100',
+      'group-focus-within/task:visible',
+    )
+    expect(screen.getByTestId('history-task-menu-5')).not.toHaveClass(
+      'rounded-md',
+      'hover:bg-background',
     )
     await userEvent.click(rows[0])
     expect(baseProps.onOpenTask).toHaveBeenCalledWith(5, 0)
@@ -1501,6 +1527,19 @@ describe('DesktopWorkbenchLayout', () => {
     const projectDeviceStatus = within(projectRow).getByTestId('project-device-status-7')
     expect(projectDeviceStatus).toHaveTextContent('离线')
     expect(projectDeviceStatus).toHaveAttribute('title', 'Offline Device · 离线')
+    expect(projectDeviceStatus).toHaveClass(
+      'ml-auto',
+      'justify-end',
+      'text-right',
+      'group-hover/project:invisible',
+      'group-focus-within/project:invisible',
+    )
+    expect(projectRow).toHaveClass('relative')
+    expect(screen.getByTestId('project-menu-7').parentElement?.parentElement).toHaveClass(
+      'absolute',
+      'right-1',
+      'group-hover/project:visible',
+    )
 
     const projectChatButton = within(projectRow).getByTestId(
       'project-new-conversation-button',
@@ -2102,6 +2141,29 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(await screen.findByTestId('environment-info-popover')).toBeInTheDocument()
     expect(screen.queryByTestId('environment-branch-menu')).not.toBeInTheDocument()
+  })
+
+  test('hides branch switching in the environment popover without a git branch', async () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onLoadEnvironmentInfo={vi.fn().mockResolvedValue({
+          additions: '+0',
+          deletions: '-0',
+          executionTarget: 'local',
+          deviceId: 'device-1',
+          branchName: '',
+        })}
+        onListEnvironmentBranches={vi.fn().mockResolvedValue([])}
+        onCheckoutEnvironmentBranch={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('environment-branch-row')).not.toBeInTheDocument(),
+    )
   })
 
   test('closes the branch menu when Escape is pressed', async () => {

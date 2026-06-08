@@ -201,6 +201,7 @@ export function ProjectWorkBar({
   const supportsGitWorktree = Boolean(
     currentProject && supportsGitWorktreeExecution(currentProject),
   )
+  const canShowBranchSelector = Boolean(branchName?.trim())
   const executionModeOpen =
     supportsGitWorktree && executionModeOpenProjectId === currentProjectId
 
@@ -873,6 +874,7 @@ export function ProjectWorkBar({
       {currentProject &&
         executionMode === 'current_workspace' &&
         !executionModeLocked &&
+        canShowBranchSelector &&
         onListBranches &&
         onCheckoutBranch && (
           <BranchSelector

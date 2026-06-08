@@ -1056,11 +1056,88 @@ describe('ChatInput', () => {
 
       await waitFor(() => {
         expect(screen.getByTestId('model-selector-menu').parentElement).toHaveStyle({
-          top: '16px',
+          top: '64px',
         })
       })
       expect(screen.getByTestId('model-selector-menu')).toHaveStyle({
         maxHeight: '608px',
+      })
+    } finally {
+      Object.defineProperty(window, 'innerHeight', {
+        configurable: true,
+        value: originalInnerHeight,
+      })
+    }
+  })
+
+  test('keeps the desktop model submenu below the top chrome area', async () => {
+    const originalInnerHeight = window.innerHeight
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: 900,
+    })
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
+      function getMockRect(this: HTMLElement) {
+        const testId = this.getAttribute('data-testid')
+        if (testId === 'model-selector-button') {
+          return {
+            top: 300,
+            bottom: 332,
+            left: 640,
+            right: 780,
+            width: 140,
+            height: 32,
+          } as DOMRect
+        }
+        if (testId === 'model-selector-menu') {
+          return { top: 64, left: 640, width: 256, height: 608 } as DOMRect
+        }
+        if (testId === 'model-family-gpt') {
+          return { top: 32, left: 660, width: 220, height: 36 } as DOMRect
+        }
+        if (testId === 'model-selector-submenu') {
+          return { top: 0, left: 0, width: 288, height: 192 } as DOMRect
+        }
+        return { top: 0, bottom: 0, left: 0, width: 0, height: 0 } as DOMRect
+      },
+    )
+
+    const model: UnifiedModel = {
+      name: 'overseas-gpt-5.5',
+      type: 'user',
+      displayName: '海外:gpt-5.5',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.5',
+          sortOrder: 10,
+        },
+      },
+    }
+
+    try {
+      render(
+        <ChatInput
+          value=""
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+          projectChat={projectChatControls({
+            models: [model],
+            selectedModel: model,
+            selectedModelOptions: {},
+          })}
+        />,
+      )
+
+      await userEvent.click(screen.getByTestId('model-selector-button'))
+
+      await waitFor(() => {
+        expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({
+          top: '0px',
+        })
       })
     } finally {
       Object.defineProperty(window, 'innerHeight', {
@@ -1133,6 +1210,74 @@ describe('ChatInput', () => {
       Object.defineProperty(window, 'innerHeight', {
         configurable: true,
         value: originalInnerHeight,
+      })
+    }
+  })
+
+  test('uses measured desktop submenu width to avoid overlapping the main menu', async () => {
+    const originalInnerWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 1240,
+    })
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
+      function getMockRect(this: HTMLElement) {
+        const testId = this.getAttribute('data-testid')
+        if (testId === 'model-selector-menu') {
+          return { top: 64, left: 604, width: 576, height: 620 } as DOMRect
+        }
+        if (testId === 'model-family-gemini') {
+          return { top: 500, left: 620, width: 520, height: 72 } as DOMRect
+        }
+        if (testId === 'model-selector-submenu') {
+          return { top: 0, left: 0, width: 648, height: 432 } as DOMRect
+        }
+        return { top: 0, bottom: 0, left: 0, width: 0, height: 0 } as DOMRect
+      },
+    )
+
+    const model: UnifiedModel = {
+      name: 'overseas-gemini-3-pro',
+      type: 'user',
+      displayName: '海外:Gemini3-Pro',
+      config: {
+        ui: {
+          family: 'gemini',
+          region: 'overseas',
+          modelLabel: 'Gemini3-Pro',
+          sortOrder: 10,
+        },
+      },
+    }
+
+    try {
+      render(
+        <ChatInput
+          value=""
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+          projectChat={projectChatControls({
+            models: [model],
+            selectedModel: model,
+            selectedModelOptions: {},
+          })}
+        />,
+      )
+
+      await userEvent.click(screen.getByTestId('model-selector-button'))
+
+      await waitFor(() => {
+        expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({
+          left: '-588px',
+          width: '580px',
+        })
+      })
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: originalInnerWidth,
       })
     }
   })
@@ -1814,6 +1959,27 @@ describe('ChatInput', () => {
           executionModeLocked: true,
           branchName: 'main',
           onListBranches: vi.fn().mockResolvedValue(['main']),
+          onCheckoutBranch: vi.fn().mockResolvedValue(undefined),
+        })}
+      />,
+    )
+
+    expect(screen.queryByTestId('project-branch-button')).not.toBeInTheDocument()
+  })
+
+  test('hides branch switching when the current workspace is not a git repository', () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects: [{ id: 7, name: 'Plain folder', tasks: [] }],
+          currentProjectId: 7,
+          branchName: '',
+          onListBranches: vi.fn().mockResolvedValue([]),
           onCheckoutBranch: vi.fn().mockResolvedValue(undefined),
         })}
       />,

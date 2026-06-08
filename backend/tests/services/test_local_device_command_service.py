@@ -568,6 +568,42 @@ async def test_execute_command_calls_registered_device_socket(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_execute_command_reports_socket_timeout_with_actionable_detail(
+    monkeypatch,
+):
+    """Socket.IO timeout errors should not produce an empty API detail."""
+    from socketio.exceptions import TimeoutError as SocketTimeoutError
+
+    from app.services.device import command_service
+
+    mock_sio = AsyncMock()
+    mock_sio.call.side_effect = SocketTimeoutError()
+
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_online_info",
+        AsyncMock(return_value={"socket_id": "socket-123"}),
+    )
+    monkeypatch.setattr(command_service, "get_sio", lambda: mock_sio)
+
+    with pytest.raises(command_service.DeviceCommandError) as exc_info:
+        await command_service.local_device_command_service.execute_command(
+            user_id=7,
+            device_id="device-abc",
+            command="printenv HOME",
+            timeout_seconds=10,
+            max_output_bytes=4096,
+        )
+
+    message = str(exc_info.value)
+    assert "timed out after 15 seconds" in message
+    assert "device-abc" in message
+    assert "device:execute_command" in message
+    assert "Reconnect or upgrade" in message
+    assert message != "Command RPC failed: "
+
+
+@pytest.mark.asyncio
 async def test_execute_command_rejects_offline_device(monkeypatch):
     """Service should reject devices without online socket information."""
     from app.services.device import command_service
