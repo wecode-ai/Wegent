@@ -2,11 +2,17 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
 
+from executor_manager.wecode.executors.k8s.build_pod import build_pod_configuration
 from executor_manager.wecode.executors.k8s.k8s_executor import (
     K8S_NAMESPACE,
     K8sExecutor,
+)
+from executor_manager.wecode.executors.warmpool.constants import (
+    ANNOTATION_SKILL_IDENTITY_TOKEN,
+    ANNOTATION_SKILL_USER_NAME,
 )
 
 
@@ -114,3 +120,82 @@ def test_submit_executor_prepare_only_skips_initial_dispatch(mocker):
     mock_wait_ready.assert_called_once_with(result["executor_name"])
     mock_dispatch.assert_not_called()
     mock_register.assert_called_once()
+
+
+def test_build_pod_configuration_includes_skill_identity_env():
+    task = {
+        "task_id": 123,
+        "subtask_id": 456,
+        "user": {"name": "test_user"},
+        "type": "sandbox",
+        "skill_identity_token": "skill-jwt",
+        "sandbox_metadata": {"sandbox_id": "123"},
+    }
+
+    pod = build_pod_configuration(
+        "test_user",
+        "executor-1",
+        "test-ns",
+        task,
+        "test/executor:latest",
+        123,
+        "default",
+    )
+
+    env = {
+        item["name"]: item.get("value")
+        for item in pod["spec"]["containers"][0]["env"]
+        if "name" in item
+    }
+    assert env["WEGENT_SKILL_IDENTITY_TOKEN"] == "skill-jwt"
+    assert env["WEGENT_SKILL_USER_NAME"] == "test_user"
+
+
+def test_create_pod_from_warmpool_patches_skill_identity_annotations(mocker):
+    executor = object.__new__(K8sExecutor)
+    mocker.patch(
+        "executor_manager.wecode.executors.k8s.k8s_executor._get_api_client",
+        return_value=object(),
+    )
+
+    warm_pool_client = mocker.MagicMock()
+    warm_pool_client.get_sandbox_claim.return_value = None
+    mocker.patch(
+        "executor_manager.wecode.executors.warmpool.WarmPoolClient",
+        return_value=warm_pool_client,
+    )
+    mocker.patch.object(
+        executor,
+        "_wait_for_warmpool_sandbox_ready",
+        return_value={"pod_name": "pod-1"},
+    )
+    repository = mocker.MagicMock()
+    sandbox_package = ModuleType("executor_manager.services.sandbox")
+    sandbox_package.__path__ = []
+    repository_module = ModuleType("executor_manager.services.sandbox.repository")
+    repository_module.get_sandbox_repository = mocker.MagicMock(return_value=repository)
+    mocker.patch.dict(
+        sys.modules,
+        {
+            "executor_manager.services.sandbox": sandbox_package,
+            "executor_manager.services.sandbox.repository": repository_module,
+        },
+    )
+
+    result = executor._create_pod_from_warmpool(
+        task={
+            "task_id": 123,
+            "type": "sandbox",
+            "skill_identity_token": "skill-jwt",
+        },
+        executor_name="executor-1",
+        user_name="test_user",
+        task_id="123",
+        subtask_id="456",
+    )
+
+    assert result == {"status": "success"}
+    warm_pool_client.patch_pod_metadata.assert_called_once()
+    annotations = warm_pool_client.patch_pod_metadata.call_args.kwargs["annotations"]
+    assert annotations[ANNOTATION_SKILL_IDENTITY_TOKEN] == "skill-jwt"
+    assert annotations[ANNOTATION_SKILL_USER_NAME] == "test_user"
