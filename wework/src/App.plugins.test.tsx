@@ -25,7 +25,11 @@ const workbenchValue: WorkbenchContextValue = {
     error: null,
   },
   messages: [],
+  queuedMessages: [],
+  guidanceMessages: [],
   runningTaskIds: new Set(),
+  projectExecutionMode: 'current_workspace',
+  setProjectExecutionMode: vi.fn(),
   projectChat: {
     models: [],
     skills: [],

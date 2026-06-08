@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from app.services.chat.storage.task_manager import TaskCreationParams, create_new_task
@@ -208,41 +209,32 @@ def test_build_initial_task_knowledge_base_refs_skips_inaccessible_refs():
     assert [ref["id"] for ref in refs] == [11]
 
 
-def test_create_new_task_writes_initial_knowledge_base_refs_for_chat_tasks():
-    db = Mock()
-    user = _make_user()
-    team = _make_team()
-
-    placeholder_query = Mock()
-    placeholder_query.filter.return_value = placeholder_query
-    placeholder_query.first.return_value = None
-    db.query.return_value = placeholder_query
-
+def test_create_new_task_writes_initial_knowledge_base_refs_for_chat_tasks(
+    test_db, test_user
+):
+    team = SimpleNamespace(
+        id=1256,
+        user_id=test_user.id,
+        name="team-alpha",
+        namespace="default",
+    )
     params = TaskCreationParams(
         message="hello",
         task_type="chat",
     )
 
     with patch(
-        "app.services.adapters.task_kinds.task_kinds_service.create_task_id",
-        return_value=123,
+        "app.services.chat.storage.task_manager.build_initial_task_knowledge_base_refs",
+        return_value=[
+            {"id": 11, "name": "Product Docs", "boundBy": "alice"},
+            {"id": 22, "name": "Runbooks", "boundBy": "alice"},
+        ],
     ):
-        with patch(
-            "app.services.adapters.task_kinds.task_kinds_service.validate_task_id",
-            return_value=True,
-        ):
-            with patch(
-                "app.services.chat.storage.task_manager.build_initial_task_knowledge_base_refs",
-                return_value=[
-                    {"id": 11, "name": "Product Docs", "boundBy": "alice"},
-                    {"id": 22, "name": "Runbooks", "boundBy": "alice"},
-                ],
-            ):
-                task = create_new_task(
-                    db=db,
-                    user=user,
-                    team=team,
-                    params=params,
-                )
+        task = create_new_task(
+            db=test_db,
+            user=test_user,
+            team=team,
+            params=params,
+        )
 
     assert [ref["id"] for ref in task.json["spec"]["knowledgeBaseRefs"]] == [11, 22]

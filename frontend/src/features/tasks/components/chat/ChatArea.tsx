@@ -61,7 +61,10 @@ import type { ChatAreaExtension } from './types'
 import { useProjectContext } from '@/features/projects/contexts/projectContext'
 import { modelApis } from '@/apis/models'
 import { getAllowedModelsFromConfig } from '@/features/settings/services/bots'
-import { getCompatibleProviderFromAgentType } from '@/utils/modelCompatibility'
+import {
+  getCompatibleProviderFromAgentType,
+  type CompatibleProvider,
+} from '@/utils/modelCompatibility'
 import {
   buildInteractiveFormCancellation,
   findPendingInteractiveForm,
@@ -71,7 +74,9 @@ import {
   removeQuickLaunchQueryParams,
   type QuickLaunchIntent,
 } from './quick-launch/launch-intent'
+import { shouldClearDeviceSelectionForQuickLauncher } from './quick-launch/execution-target'
 import type { QuickPresetSelection } from './quick-launch/types'
+import { useDevices } from '@/contexts/DeviceContext'
 
 /**
  * Threshold in pixels for determining when to collapse selectors.
@@ -129,8 +134,10 @@ async function hasAvailableVideoInputModel(team: Team | null | undefined): Promi
   let models = (response.data || []).map(unifiedToModel)
 
   const compatibleProvider = getCompatibleProviderFromAgentType(team.agent_type)
-  if (compatibleProvider) {
-    models = models.filter(model => model.provider === compatibleProvider)
+  if (compatibleProvider && compatibleProvider.length > 0) {
+    models = models.filter(model =>
+      compatibleProvider.includes(model.provider as CompatibleProvider)
+    )
   }
 
   const firstBot = team.bots?.[0]?.bot
@@ -249,6 +256,7 @@ function ChatAreaContent({
   const { toast } = useToast()
   const router = useRouter()
   const pathname = usePathname()
+  const { setSelectedDeviceId } = useDevices()
   const chatStreamContext = useOptionalTaskSession()
 
   // Pipeline stage info state - shared between PipelineStageIndicator and MessagesArea
@@ -672,9 +680,12 @@ function ChatAreaContent({
   // Handle team selection from QuickAccessCards
   const handleTeamSelect = useCallback(
     (team: Team) => {
+      if (taskType === 'task' && shouldClearDeviceSelectionForQuickLauncher(team)) {
+        setSelectedDeviceId(null)
+      }
       handleTeamChange(team)
     },
-    [handleTeamChange]
+    [handleTeamChange, setSelectedDeviceId, taskType]
   )
 
   // Use scroll management hook - consolidates 4 useEffect calls

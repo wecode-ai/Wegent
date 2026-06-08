@@ -27,6 +27,7 @@ import {
   getAllowedModelsFromConfig,
 } from '@/features/settings/services/bots'
 import { getCompatibleProviderFromAgentType } from '@/utils/modelCompatibility'
+import type { CompatibleProvider } from '@/utils/modelCompatibility'
 import {
   saveGlobalModelPreference,
   getGlobalModelPreference,
@@ -105,7 +106,7 @@ export interface UseModelSelectionReturn {
   showDefaultOption: boolean
   isModelRequired: boolean
   isMixedTeam: boolean
-  compatibleProvider: string | null
+  compatibleProvider: CompatibleProvider[] | null
   hasAdvancedModels: boolean
   boundDefaultModel: Model | null
 
@@ -227,7 +228,7 @@ export function useModelSelection({
   }, [selectedTeam, requireVideoInput])
 
   /** Get compatible provider based on team agent_type */
-  const compatibleProvider = useMemo((): string | null => {
+  const compatibleProvider = useMemo((): CompatibleProvider[] | null => {
     return getCompatibleProviderFromAgentType(selectedTeam?.agent_type)
   }, [selectedTeam?.agent_type])
 
@@ -271,8 +272,10 @@ export function useModelSelection({
    */
   const selectableModels = useMemo(() => {
     let result = models
-    if (compatibleProvider) {
-      result = result.filter(model => model.provider === compatibleProvider)
+    if (compatibleProvider && compatibleProvider.length > 0) {
+      result = result.filter(model =>
+        compatibleProvider.includes(model.provider as CompatibleProvider)
+      )
     }
     // Apply allowed_models whitelist filter if configured
     if (allowedModels.length > 0) {
@@ -298,13 +301,19 @@ export function useModelSelection({
     return selectableModels.some(model => model.isAdvanced === true)
   }, [selectableModels])
 
+  const shouldShowOnlyAdvancedModels = useMemo(() => {
+    return selectableModels.length > 0 && selectableModels.every(model => model.isAdvanced === true)
+  }, [selectableModels])
+
+  const effectiveShowAdvancedModels = showAdvancedModels || shouldShowOnlyAdvancedModels
+
   /** Filter models by advanced visibility for dropdown display */
   const filteredModels = useMemo(() => {
-    if (showAdvancedModels) {
+    if (effectiveShowAdvancedModels) {
       return selectableModels
     }
     return selectableModels.filter(model => !model.isAdvanced)
-  }, [selectableModels, showAdvancedModels])
+  }, [selectableModels, effectiveShowAdvancedModels])
 
   /** Check if model selection is required */
   const isModelRequired = !showDefaultOption && !selectedModel
@@ -669,7 +678,7 @@ export function useModelSelection({
     selectModelByKey,
     selectDefaultModel,
     setForceOverride,
-    showAdvancedModels,
+    showAdvancedModels: effectiveShowAdvancedModels,
     setShowAdvancedModels,
     refreshModels: fetchModels,
 

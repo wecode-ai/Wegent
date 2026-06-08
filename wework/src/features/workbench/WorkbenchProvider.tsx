@@ -21,6 +21,7 @@ import { createChatStream } from '@/stream/chatStream'
 import { createSocketClient } from '@/stream/socketClient'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { buildTaskRoute, navigateTo, parseTaskRoute } from '@/lib/navigation'
+import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import type {
   Attachment,
   ArchivedTaskListResponse,
@@ -34,6 +35,7 @@ import type {
   LocalDeviceSkill,
   ModelOptions,
   ModelSelectionConfig,
+  ProjectExecutionMode,
   ProjectWithTasks,
   SkillRef,
   Subtask,
@@ -120,6 +122,8 @@ export interface WorkbenchContextValue {
     listLocalSkills: () => Promise<LocalDeviceSkill[]>
   }
   runningTaskIds: Set<number>
+  projectExecutionMode: ProjectExecutionMode
+  setProjectExecutionMode: (mode: ProjectExecutionMode) => void
   selectProject: (projectId: number | null) => void
   selectStandaloneDevice: (deviceId: string | null) => void
   startNewChat: () => void
@@ -505,6 +509,8 @@ export function WorkbenchProvider({
   const [guidanceMessages, setGuidanceMessages] = useState<GuidanceWorkbenchMessage[]>([])
   const [isAwaitingAssistantStart, setIsAwaitingAssistantStart] = useState(false)
   const [routePath, setRoutePath] = useState(getCurrentAppPath)
+  const [projectExecutionMode, setProjectExecutionMode] =
+    useState<ProjectExecutionMode>('current_workspace')
   const guidanceSendInFlightRef = useRef(false)
   const localSkillsCacheRef = useRef<
     Map<string, { expiresAt: number; skills: LocalDeviceSkill[] }>
@@ -518,6 +524,53 @@ export function WorkbenchProvider({
     state.currentProject?.config?.execution?.deviceId ??
     state.currentProject?.config?.device_id ??
     (!state.currentProject ? state.standaloneDeviceId ?? undefined : undefined)
+
+  const selectProjectExecutionMode = useCallback(
+    (mode: ProjectExecutionMode) => {
+      setProjectExecutionMode(mode)
+      if (
+        state.currentTask ||
+        !state.currentProject ||
+        !supportsGitWorktreeExecution(state.currentProject)
+      ) {
+        return
+      }
+      const preferences = {
+        ...(currentUser.preferences ?? {}),
+        wework_project_execution_mode: mode,
+      }
+      dispatch({ type: 'user_preferences_updated', preferences })
+      void resolvedServices.userApi
+        ?.updateCurrentUser({ preferences })
+        .catch(() => {
+          dispatch({ type: 'error_set', error: '启动模式保存失败' })
+        })
+    },
+    [
+      currentUser.preferences,
+      resolvedServices.userApi,
+      state.currentProject,
+      state.currentTask,
+    ],
+  )
+
+  useEffect(() => {
+    if (
+      state.currentTask ||
+      !state.currentProject ||
+      !supportsGitWorktreeExecution(state.currentProject)
+    ) {
+      setProjectExecutionMode('current_workspace')
+      return
+    }
+    setProjectExecutionMode(
+      currentUser.preferences?.wework_project_execution_mode ?? 'current_workspace',
+    )
+  }, [
+    currentUser.preferences?.wework_project_execution_mode,
+    state.currentProject,
+    state.currentTask,
+  ])
   const modelSelectionConfig = useMemo(
     () =>
       getTaskModelSelection(state.currentTask) ??
@@ -766,7 +819,7 @@ export function WorkbenchProvider({
       void resolvedServices.userApi
         ?.updateCurrentUser({
           preferences: {
-            ...(user.preferences ?? {}),
+            ...(currentUser.preferences ?? {}),
             default_execution_target: deviceId,
           },
         })
@@ -774,7 +827,7 @@ export function WorkbenchProvider({
           // Keep the in-session selection even if preference persistence fails.
         })
     },
-    [resolvedServices.userApi, state.devices, user.preferences]
+    [currentUser.preferences, resolvedServices.userApi, state.devices]
   )
 
   const selectProject = useCallback(
@@ -1241,6 +1294,19 @@ export function WorkbenchProvider({
         message,
       }
 
+      if (
+        !state.currentTask &&
+        state.currentProject &&
+        projectExecutionMode === 'git_worktree' &&
+        supportsGitWorktreeExecution(state.currentProject)
+      ) {
+        payload.execution = {
+          workspace: {
+            source: 'git_worktree',
+          },
+        }
+      }
+
       if (modelSelection.selectedModel) {
         payload.force_override_bot_model = modelSelection.selectedModel.name
         payload.force_override_bot_model_type = modelSelection.selectedModel.type
@@ -1265,6 +1331,7 @@ export function WorkbenchProvider({
       modelSelection.selectedModel,
       modelSelection.selectedModelOptions,
       skillSelection.selectedSkills,
+      projectExecutionMode,
       state.currentProject,
       state.currentTask,
       state.defaultTeam,
@@ -1653,6 +1720,8 @@ export function WorkbenchProvider({
     queuedMessages: queuedSends,
     guidanceMessages,
     runningTaskIds,
+    projectExecutionMode,
+    setProjectExecutionMode: selectProjectExecutionMode,
     projectChat: {
       models: modelSelection.models,
       skills: skillSelection.skills,

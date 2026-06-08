@@ -100,6 +100,7 @@ def prepare_execution_session(
     should_trigger_ai: bool = True,
     bot_ids_override: Optional[List[int]] = None,
     video_config: Optional[Dict[str, Any]] = None,
+    prepared_task: Optional[TaskResource] = None,
 ) -> ExecutionSessionSetup:
     """Create or reuse task/session state before building an execution request."""
     from app.services.task_status import mark_task_pending
@@ -213,6 +214,10 @@ def prepare_execution_session(
                 resolved_task_params.model_id,
                 resolved_task_params.auto_delete_executor,
             )
+
+    if not task and prepared_task is not None:
+        task = prepared_task
+        subtask_user_id = user.id
 
     if not task:
         task = create_new_task(db, user, team, resolved_task_params)

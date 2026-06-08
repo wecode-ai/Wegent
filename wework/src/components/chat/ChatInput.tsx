@@ -4,6 +4,7 @@ import type {
   DeviceInfo,
   LocalDeviceSkill,
   ModelOptions,
+  ProjectExecutionMode,
   ProjectWithTasks,
   SkillRef,
   UnifiedModel,
@@ -40,8 +41,11 @@ export interface ProjectWorkControls {
   devices: DeviceInfo[]
   currentProjectId?: number
   currentStandaloneDeviceId?: string | null
+  executionMode: ProjectExecutionMode
+  executionModeLocked?: boolean
   onSelectProject: (projectId: number | null) => void
   onSelectStandaloneDevice: (deviceId: string | null) => void
+  onExecutionModeChange: (mode: ProjectExecutionMode) => void
   onCreateProjectMode?: (mode: ProjectCreateMode) => void
 }
 
@@ -145,8 +149,11 @@ export function ChatInput({
               devices: [],
               currentProjectId: undefined,
               currentStandaloneDeviceId: null,
+              executionMode: 'current_workspace',
+              executionModeLocked: false,
               onSelectProject: () => {},
               onSelectStandaloneDevice: () => {},
+              onExecutionModeChange: () => {},
               onCreateProjectMode: undefined,
             }
           }
