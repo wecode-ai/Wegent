@@ -153,6 +153,8 @@ export function DesktopWorkbenchLayout({
   const [settingsOpen, setSettingsOpen] = useState(() =>
     isSettingsRoute(stripAppBasePath(window.location.pathname))
   )
+  const [autoOpenAddCloudDeviceDialog, setAutoOpenAddCloudDeviceDialog] =
+    useState(false)
   const [projectWorkCreateMode, setProjectWorkCreateMode] =
     useState<ProjectCreateMode | null>(null)
   const [environmentInfo, setEnvironmentInfo] = useState<EnvironmentInfo>({
@@ -199,6 +201,12 @@ export function DesktopWorkbenchLayout({
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
   }, [])
+
+  useEffect(() => {
+    if (settingsOpen && autoOpenAddCloudDeviceDialog) {
+      setAutoOpenAddCloudDeviceDialog(false)
+    }
+  }, [autoOpenAddCloudDeviceDialog, settingsOpen])
 
   useEffect(() => {
     const nextCompletedIds = new Set(
@@ -300,7 +308,10 @@ export function DesktopWorkbenchLayout({
           onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
           onListDeviceDirectories={onListDeviceDirectories}
           onCreateDeviceDirectory={onCreateDeviceDirectory}
-          onOpenSettings={() => {
+          onOpenSettings={options => {
+            setAutoOpenAddCloudDeviceDialog(
+              Boolean(options?.autoOpenAddCloudDeviceDialog),
+            )
             setSettingsOpen(true)
             navigateTo('/settings')
           }}
@@ -309,8 +320,10 @@ export function DesktopWorkbenchLayout({
       )}
       {settingsOpen ? (
         <ConnectionsSettingsPage
+          autoOpenAddCloudDeviceDialog={autoOpenAddCloudDeviceDialog}
           onBack={() => {
             setSettingsOpen(false)
+            setAutoOpenAddCloudDeviceDialog(false)
             navigateTo('/')
           }}
           onListArchivedTasks={onListArchivedTasks}
@@ -361,6 +374,12 @@ export function DesktopWorkbenchLayout({
         mode={projectWorkCreateMode ?? 'scratch'}
         devices={state.devices}
         onClose={() => setProjectWorkCreateMode(null)}
+        onOpenCloudDeviceSettings={() => {
+          setProjectWorkCreateMode(null)
+          setAutoOpenAddCloudDeviceDialog(true)
+          setSettingsOpen(true)
+          navigateTo('/settings')
+        }}
         onCreateProject={onCreateProject}
         onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
         preferredDeviceId={

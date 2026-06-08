@@ -42,6 +42,7 @@ import { WorktreesSettingsPage } from './WorktreesSettingsPage'
 
 interface ConnectionsSettingsPageProps {
   onBack: () => void
+  autoOpenAddCloudDeviceDialog?: boolean
   onListArchivedTasks?: () => Promise<{ items: ArchivedTask[]; total: number }>
   onUnarchiveTask?: (taskId: number) => Promise<void>
   onDeleteTask?: (taskId: number) => Promise<void>
@@ -682,11 +683,15 @@ function DeviceSection({
   )
 }
 
-function ConnectionsDeviceSettingsPage() {
+function ConnectionsDeviceSettingsPage({
+  autoOpenAddCloudDeviceDialog = false,
+}: {
+  autoOpenAddCloudDeviceDialog?: boolean
+}) {
   const { t } = useTranslation('common')
   const [devices, setDevices] = useState<DeviceInfo[]>([])
   const [loading, setLoading] = useState(true)
-  const [addDialogOpen, setAddDialogOpen] = useState(false)
+  const [addDialogOpen, setAddDialogOpen] = useState(autoOpenAddCloudDeviceDialog)
   const [creating, setCreating] = useState(false)
 
   const fetchDevices = useCallback(async () => {
@@ -827,7 +832,9 @@ function ArchivedChatsSettingsPage({
   onUnarchiveTask,
   onDeleteTask,
   onDeleteArchivedTasks,
-}: Required<Omit<ConnectionsSettingsPageProps, 'onBack'>>) {
+}: Required<
+  Omit<ConnectionsSettingsPageProps, 'onBack' | 'autoOpenAddCloudDeviceDialog'>
+>) {
   const { t } = useTranslation('common')
   const [items, setItems] = useState<ArchivedTask[]>([])
   const [loading, setLoading] = useState(true)
@@ -960,6 +967,7 @@ function ArchivedChatsSettingsPage({
 
 export function ConnectionsSettingsPage({
   onBack,
+  autoOpenAddCloudDeviceDialog = false,
   onListArchivedTasks = emptyArchivedTasks,
   onUnarchiveTask = noopArchivedAction,
   onDeleteTask = noopArchivedAction,
@@ -1044,7 +1052,9 @@ export function ConnectionsSettingsPage({
         ) : activeNav === 'worktrees' ? (
           <WorktreesSettingsPage />
         ) : (
-          <ConnectionsDeviceSettingsPage />
+          <ConnectionsDeviceSettingsPage
+            autoOpenAddCloudDeviceDialog={autoOpenAddCloudDeviceDialog}
+          />
         )}
       </main>
     </div>
