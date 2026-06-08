@@ -20,6 +20,7 @@ from typing import Any, Iterator
 
 from executor.platform_compat import get_permissions_manager
 from executor.services.api_client import ApiClient, SkillDownloader
+
 from shared.logger import setup_logger
 from shared.models.execution import ExecutionRequest
 
