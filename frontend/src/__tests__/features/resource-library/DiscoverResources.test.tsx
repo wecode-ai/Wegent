@@ -101,10 +101,14 @@ jest.mock('@/hooks/useTranslation', () => ({
         'actions.install': '接受分享',
         'actions.installed': '已接受',
         'actions.details': '详情',
+        'actions.view_usage': '查看用法',
         'actions.retry': '重试',
         'actions.search': '搜索',
         'discover.card.no_tags': '暂无标签',
-        'discover.description': '浏览团队发布的智能体和技能说明，接受分享后即可进入你的资源列表。',
+        'discover.card.solution_label': '可复用方案',
+        'discover.card.best_for': '适合',
+        'discover.card.start_hint': '接受后在我的资源中使用',
+        'discover.description': '按使用场景浏览团队沉淀的可复用方案，查看用法后接受分享。',
         'discover.assistant.action': '发现助手',
         'discover.assistant.agent_badge': 'Agent',
         'discover.assistant.callout_description':
@@ -123,7 +127,15 @@ jest.mock('@/hooks/useTranslation', () => ({
         'discover.assistant.unavailable_description':
           '系统还没有可用的发现助手智能体，请先初始化公开资源后再使用。',
         'discover.assistant.unavailable_title': '发现助手未初始化',
-        'discover.title': '资源市场',
+        'discover.title': '发现可复用方案',
+        'detail.sections.solves': '它解决什么',
+        'detail.sections.get_started': '怎么开始',
+        'detail.sections.examples': '示例输入',
+        'detail.sections.resource_info': '资源信息',
+        'detail.start_steps.accept': '接受这个方案',
+        'detail.start_steps.open_mine': '在我的资源中找到对应资源',
+        'detail.start_steps.use': '按你的任务场景开始使用',
+        'detail.example_prompt': '用 {{title}} 帮我处理一个实际任务',
         'fields.install_count': '接受次数',
         'fields.publisher': '发布者',
         'fields.updated_at': '更新时间',
@@ -205,42 +217,36 @@ describe('DiscoverResources', () => {
     })
   })
 
-  it('loads discover listings for the selected resource type', async () => {
-    render(<DiscoverResources resourceType="skill" />)
+  it('loads discover listings as a type-agnostic solution market', async () => {
+    render(<DiscoverResources />)
 
     expect(await screen.findByText('Doc Summary')).toBeInTheDocument()
     expect(mockResourceLibraryApi.listListings).toHaveBeenCalledWith({
-      resourceType: 'skill',
+      resourceType: 'all',
       page: 1,
       limit: 50,
     })
     expect(screen.getByText('Doc Summary')).toHaveClass('text-text-primary')
     expect(screen.getByTestId('resource-listing-card-1')).toBeInTheDocument()
+    expect(screen.getByText('可复用方案')).toBeInTheDocument()
+    expect(screen.getByText('适合')).toBeInTheDocument()
+    expect(screen.getByText('接受后在我的资源中使用')).toBeInTheDocument()
+    expect(screen.getByText('技能')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '接受分享 Doc Summary' })).toBeEnabled()
   })
 
-  it('renders resource type controls in the market filter bar', async () => {
-    render(
-      <DiscoverResources
-        resourceType="all"
-        toolbarStart={<div data-testid="resource-filter-slot">资源类型筛选</div>}
-      />
-    )
+  it('does not render resource type controls as the primary market filter', async () => {
+    render(<DiscoverResources />)
 
-    const filterBar = screen.getByTestId('resource-page-filter-bar')
     const toolbar = screen.getByTestId('discover-resources-toolbar')
-    expect(within(filterBar).getByTestId('resource-filter-slot')).toBeInTheDocument()
+    expect(screen.queryByTestId('resource-page-filter-bar')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('discover-type-filter')).not.toBeInTheDocument()
     expect(within(toolbar).getByTestId('resource-library-search-input')).toBeInTheDocument()
     expect(await screen.findByText('Doc Summary')).toBeInTheDocument()
   })
 
   it('keeps discover search in the resource section actions', async () => {
-    render(
-      <DiscoverResources
-        resourceType="all"
-        toolbarStart={<div data-testid="resource-filter-slot">资源类型筛选</div>}
-      />
-    )
+    render(<DiscoverResources />)
 
     const headerActions = screen.getByTestId('resource-page-header-actions')
     const toolbar = screen.getByTestId('discover-resources-toolbar')
@@ -279,7 +285,7 @@ describe('DiscoverResources', () => {
     })
     mockResourceLibraryApi.getListing.mockResolvedValue(docSummary)
 
-    render(<DiscoverResources resourceType="all" />)
+    render(<DiscoverResources />)
 
     expect(await screen.findByText('文档总结')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('open-discover-assistant-button'))
@@ -298,7 +304,7 @@ describe('DiscoverResources', () => {
   })
 
   it('opens discover assistant from a quick prompt and preloads the chat input', async () => {
-    render(<DiscoverResources resourceType="all" />)
+    render(<DiscoverResources />)
 
     expect(await screen.findByText('Doc Summary')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '找文档总结技能' }))
@@ -312,14 +318,21 @@ describe('DiscoverResources', () => {
   })
 
   it('opens listing details and installs from the drawer', async () => {
-    render(<DiscoverResources resourceType="all" />)
+    render(<DiscoverResources />)
 
     await screen.findByText('Doc Summary')
-    fireEvent.click(screen.getByRole('button', { name: '详情 Doc Summary' }))
+    fireEvent.click(screen.getByRole('button', { name: '查看用法 Doc Summary' }))
 
     const dialog = await screen.findByRole('dialog')
     expect(mockResourceLibraryApi.getListing).toHaveBeenCalledWith(1)
     expect(within(dialog).getByText('Summarizes documents')).toBeInTheDocument()
+    expect(within(dialog).getByText('它解决什么')).toBeInTheDocument()
+    expect(within(dialog).getByText('怎么开始')).toBeInTheDocument()
+    expect(within(dialog).getByText('示例输入')).toBeInTheDocument()
+    expect(within(dialog).getByText('资源信息')).toBeInTheDocument()
+    expect(within(dialog).getByText('接受这个方案')).toBeInTheDocument()
+    expect(within(dialog).getByText('在我的资源中找到对应资源')).toBeInTheDocument()
+    expect(within(dialog).getByText('按你的任务场景开始使用')).toBeInTheDocument()
 
     fireEvent.click(within(dialog).getByRole('button', { name: '接受分享 Doc Summary' }))
 

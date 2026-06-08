@@ -75,8 +75,8 @@ jest.mock('@/hooks/useTranslation', () => ({
           '系统还没有可用的发现助手智能体，请先初始化公开资源后再使用。',
         'discover.assistant.unavailable_title': '发现助手未初始化',
         'discover.card.no_tags': '暂无标签',
-        'discover.description': '浏览团队发布的智能体和技能说明，接受分享后即可进入你的资源列表。',
-        'discover.title': '资源市场',
+        'discover.description': '按使用场景浏览团队沉淀的可复用方案，查看用法后接受分享。',
+        'discover.title': '发现可复用方案',
         'filters.all': '全部',
         'filters.agent': '智能体',
         'filters.skill': '技能',
@@ -120,9 +120,9 @@ describe('ResourceLibraryPage', () => {
       'true'
     )
     expect(screen.getByTestId('resource-library-mine-tab')).toHaveAttribute('aria-pressed', 'false')
-    expect(screen.getByTestId('resource-type-all-filter')).toBeInTheDocument()
-    expect(screen.getByTestId('resource-type-agent-filter')).toBeInTheDocument()
-    expect(screen.getByTestId('resource-type-skill-filter')).toBeInTheDocument()
+    expect(screen.queryByTestId('resource-type-all-filter')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('resource-type-agent-filter')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('resource-type-skill-filter')).not.toBeInTheDocument()
     expect(screen.getByTestId('discover-resources')).toBeInTheDocument()
     expect(screen.queryByTestId('my-resource-management')).not.toBeInTheDocument()
 
@@ -157,7 +157,7 @@ describe('ResourceLibraryPage', () => {
     expect(mockResourceLibraryApi.listListings).not.toHaveBeenCalled()
   })
 
-  it('reloads discover listings when the resource type filter changes', async () => {
+  it('keeps discover market type-agnostic and loads all listings once', async () => {
     render(<ResourceLibraryPage />)
 
     await waitFor(() => {
@@ -167,15 +167,6 @@ describe('ResourceLibraryPage', () => {
         limit: 50,
       })
     })
-
-    fireEvent.click(screen.getByTestId('resource-type-skill-filter'))
-
-    await waitFor(() => {
-      expect(mockResourceLibraryApi.listListings).toHaveBeenLastCalledWith({
-        resourceType: 'skill',
-        page: 1,
-        limit: 50,
-      })
-    })
+    expect(screen.queryByTestId('resource-page-filter-bar')).not.toBeInTheDocument()
   })
 })

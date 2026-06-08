@@ -5,7 +5,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import type { FormEvent, ReactNode } from 'react'
+import type { FormEvent } from 'react'
 import { RefreshCw, Search, Sparkles } from 'lucide-react'
 
 import { resourceLibraryApi } from '@/apis/resourceLibrary'
@@ -16,23 +16,14 @@ import { ResourceManagementLayout } from '@/features/settings/components/resourc
 import { useTeamContext } from '@/contexts/TeamContext'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
-import type {
-  ResourceLibraryDiscoveryConfig,
-  ResourceLibraryListing,
-  ResourceLibraryTypeFilter,
-} from '../types'
+import type { ResourceLibraryDiscoveryConfig, ResourceLibraryListing } from '../types'
 import { DiscoverAssistantDrawer } from './DiscoverAssistantDrawer'
 import { ResourceDetailDrawer } from './ResourceDetailDrawer'
 import { ResourceListingCard } from './ResourceListingCard'
 
-interface DiscoverResourcesProps {
-  resourceType: ResourceLibraryTypeFilter
-  toolbarStart?: ReactNode
-}
-
 const RESOURCE_LIBRARY_PAGE_SIZE = 50
 
-export function DiscoverResources({ resourceType, toolbarStart }: DiscoverResourcesProps) {
+export function DiscoverResources() {
   const { t } = useTranslation('resource-library')
   const { toast } = useToast()
   const { teams, isTeamsLoading, refreshTeams } = useTeamContext()
@@ -55,8 +46,8 @@ export function DiscoverResources({ resourceType, toolbarStart }: DiscoverResour
     setHasError(false)
     try {
       const response = await resourceLibraryApi.listListings({
-        resourceType,
-        keyword: keyword || undefined,
+        resourceType: 'all',
+        ...(keyword ? { keyword } : {}),
         page: 1,
         limit: RESOURCE_LIBRARY_PAGE_SIZE,
       })
@@ -66,7 +57,7 @@ export function DiscoverResources({ resourceType, toolbarStart }: DiscoverResour
     } finally {
       setIsLoading(false)
     }
-  }, [keyword, resourceType])
+  }, [keyword])
 
   useEffect(() => {
     void loadListings()
@@ -233,16 +224,7 @@ export function DiscoverResources({ resourceType, toolbarStart }: DiscoverResour
             </form>
           </div>
         }
-        filters={
-          toolbarStart ? (
-            <div
-              className="flex min-w-0 flex-wrap items-center gap-2"
-              data-testid="discover-type-filter"
-            >
-              {toolbarStart}
-            </div>
-          ) : null
-        }
+        filters={null}
         data-testid="resource-market-section"
       >
         <div

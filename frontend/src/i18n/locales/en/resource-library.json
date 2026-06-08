@@ -7,8 +7,8 @@
     "published": "Published by me"
   },
   "discover": {
-    "title": "Resource Market",
-    "description": "Browse published Agent and Skill descriptions from your teams. Accept a share to add it to your resource list.",
+    "title": "Discover Reusable Solutions",
+    "description": "Browse reusable solutions by use case, review how to use them, then accept the share.",
     "assistant": {
       "action": "Discover Assistant",
       "title": "Discover Assistant",
@@ -28,8 +28,25 @@
       }
     },
     "card": {
+      "solution_label": "Reusable solution",
+      "best_for": "Best for",
+      "start_hint": "Accept it, then use it from My Resources",
       "no_tags": "No tags"
     }
+  },
+  "detail": {
+    "sections": {
+      "solves": "What it solves",
+      "get_started": "How to start",
+      "examples": "Example prompt",
+      "resource_info": "Resource information"
+    },
+    "start_steps": {
+      "accept": "Accept this solution",
+      "open_mine": "Find the resource in My Resources",
+      "use": "Start using it for your task"
+    },
+    "example_prompt": "Use {{title}} to help me with a real task"
   },
   "filters": {
     "all": "All",
@@ -69,6 +86,7 @@
     "configure": "Configure",
     "view_detail": "View Details",
     "details": "Details",
+    "view_usage": "View Usage",
     "manage_groups": "Manage...",
     "retry": "Retry",
     "create_to_personal": "Create in My Resources",

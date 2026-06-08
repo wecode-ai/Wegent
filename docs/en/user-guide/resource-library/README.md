@@ -4,7 +4,7 @@ sidebar_position: 1
 
 # Overview
 
-Resource Library is used to publish, discover, and accept reusable resources. It currently supports Agents and Skills. Teams can publish configured resources to the Discover page, and other users can accept them into their own resource list.
+Resource Library is used to publish, discover, and accept reusable resources. The Discover page is organized around reusable solutions: teams can package configured Agents or Skills as use-case-oriented descriptions, and other users can review how to use them before accepting them into their own resource list.
 
 ---
 
@@ -12,7 +12,7 @@ Resource Library is used to publish, discover, and accept reusable resources. It
 
 | Concept | Description |
 |---------|-------------|
-| Discover | Marketplace-style page for browsing and searching published resource descriptions |
+| Discover | Solution marketplace for browsing published resource descriptions by goal and use case |
 | Mine | Resources the current user can use or manage |
 | Publish | Publish one of your Agents or Skills as a resource description |
 | Accept | Accept the publisher's share so the resource appears in your resource list |
@@ -26,10 +26,10 @@ Resource Library displays resource descriptions and does not copy the publisher'
 
 1. Open **More** → **Resource Library** from the sidebar.
 2. The page opens on the **Discover** tab by default.
-3. Use resource type filters to show all resources, Agents, or Skills.
-4. Enter a goal, scenario, or keyword in the search box.
-5. Click the view button on a resource card to open details.
-6. Review the resource description, then accept or install the resource.
+3. Enter a goal, scenario, or keyword in the search box.
+4. Use the type badge on each card to see whether the solution is backed by an Agent or a Skill.
+5. Click the usage button on a resource card to open its mini usage guide.
+6. Review the solution description and getting-started steps, then accept the resource.
 
 After accepting a resource, the action button shows that it has been accepted. The resource appears under the matching type on the **Mine** tab.
 

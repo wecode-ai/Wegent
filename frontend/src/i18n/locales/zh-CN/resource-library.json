@@ -7,8 +7,8 @@
     "published": "我发布的"
   },
   "discover": {
-    "title": "资源市场",
-    "description": "浏览团队发布的智能体和技能说明，接受分享后即可进入你的资源列表。",
+    "title": "发现可复用方案",
+    "description": "按使用场景浏览团队沉淀的可复用方案，查看用法后接受分享。",
     "assistant": {
       "action": "发现助手",
       "title": "发现助手",
@@ -28,8 +28,25 @@
       }
     },
     "card": {
+      "solution_label": "可复用方案",
+      "best_for": "适合",
+      "start_hint": "接受后在我的资源中使用",
       "no_tags": "暂无标签"
     }
+  },
+  "detail": {
+    "sections": {
+      "solves": "它解决什么",
+      "get_started": "怎么开始",
+      "examples": "示例输入",
+      "resource_info": "资源信息"
+    },
+    "start_steps": {
+      "accept": "接受这个方案",
+      "open_mine": "在我的资源中找到对应资源",
+      "use": "按你的任务场景开始使用"
+    },
+    "example_prompt": "用 {{title}} 帮我处理一个实际任务"
   },
   "filters": {
     "all": "全部",
@@ -69,6 +86,7 @@
     "configure": "配置",
     "view_detail": "查看详情",
     "details": "详情",
+    "view_usage": "查看用法",
     "manage_groups": "管理...",
     "retry": "重试",
     "create_to_personal": "创建到我的资源",

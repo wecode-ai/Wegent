@@ -10,8 +10,6 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { DiscoverResources } from './components/DiscoverResources'
 import { MyResources } from './components/MyResources'
 import { ResourceLibraryTabs, type ResourceLibraryTab } from './components/ResourceLibraryTabs'
-import { ResourceTypeFilter } from './components/ResourceTypeFilter'
-import type { ResourceLibraryTypeFilter } from './types'
 
 function getInitialTab(): ResourceLibraryTab {
   if (typeof window === 'undefined') {
@@ -34,7 +32,6 @@ function updateTabQueryParam(tab: ResourceLibraryTab) {
 export function ResourceLibraryPage() {
   const { t } = useTranslation('resource-library')
   const [activeTab, setActiveTab] = useState<ResourceLibraryTab>(getInitialTab)
-  const [resourceType, setResourceType] = useState<ResourceLibraryTypeFilter>('all')
 
   const handleTabChange = useCallback((nextTab: ResourceLibraryTab) => {
     setActiveTab(nextTab)
@@ -48,16 +45,7 @@ export function ResourceLibraryPage() {
           <ResourceLibraryTabs value={activeTab} onValueChange={handleTabChange} />
 
           <div data-testid="resource-library-content">
-            {activeTab === 'discover' ? (
-              <DiscoverResources
-                resourceType={resourceType}
-                toolbarStart={
-                  <ResourceTypeFilter value={resourceType} onValueChange={setResourceType} />
-                }
-              />
-            ) : (
-              <MyResources title={t('title')} />
-            )}
+            {activeTab === 'discover' ? <DiscoverResources /> : <MyResources title={t('title')} />}
           </div>
         </section>
       </div>
