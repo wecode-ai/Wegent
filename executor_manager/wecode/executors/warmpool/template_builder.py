@@ -15,6 +15,8 @@ from typing import Any, Dict, Optional
 
 import yaml
 from jinja2 import Environment, FileSystemLoader
+from shared.logger import setup_logger
+from shared.telemetry.config import get_otel_config
 
 from executor_manager.config.config import EXECUTOR_ENV
 from executor_manager.wecode.config.config import (
@@ -33,13 +35,13 @@ from executor_manager.wecode.executors.warmpool.constants import (
     LABEL_EXECUTOR,
     LABEL_EXECUTOR_VALUE,
 )
-from shared.logger import setup_logger
-from shared.telemetry.config import get_otel_config
 
 logger = setup_logger(__name__)
 
 # Path to the shared pod template
-POD_TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "k8s")
+POD_TEMPLATE_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "k8s"
+)
 
 
 def to_nice_yaml(value, indent=2):
@@ -82,7 +84,8 @@ def build_warm_pool_pod_config(
     otel_config = get_otel_config()
 
     executor_manager_host = os.getenv(
-        "EXECUTOR_MANAGER_URL", "http://wegent-executor-manager-web.wb-plat-ide:8080"
+        "EXECUTOR_MANAGER_URL",
+        "http://wegent-executor-manager-web.wb-plat-ide:8080"
     )
     callback_url = executor_manager_host + "/executor-manager/callback"
 
@@ -111,8 +114,6 @@ def build_warm_pool_pod_config(
         "callback_url": callback_url,
         "is_sandbox": False,
         "sandbox_id": None,
-        "skill_identity_token": None,
-        "skill_user_name": None,
         "heartbeat_id": "",  # Will be set via label at bind time
         "heartbeat_type": None,
         "executor_manager_heartbeat_base_url": os.getenv(

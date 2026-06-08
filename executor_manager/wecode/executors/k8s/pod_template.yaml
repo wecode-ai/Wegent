@@ -140,14 +140,6 @@ spec:
         - name: EXECUTOR_MANAGER_HEARTBEAT_BASE_URL
           value: "{{ executor_manager_heartbeat_base_url }}"
         {% endif %}
-        {% if skill_identity_token %}
-        - name: WEGENT_SKILL_IDENTITY_TOKEN
-          value: "{{ skill_identity_token }}"
-        {% endif %}
-        {% if skill_user_name %}
-        - name: WEGENT_SKILL_USER_NAME
-          value: "{{ skill_user_name }}"
-        {% endif %}
         {% if is_sandbox and sandbox_id %}
         # Sandbox ID for e2b protocol (backward compatibility)
         - name: SANDBOX_ID
