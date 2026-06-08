@@ -59,6 +59,8 @@ class UnifiedShell(BaseModel):
     requiresWorkspace: Optional[bool] = (
         None  # Whether this shell requires a workspace. Defaults based on executionType.
     )
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 
 class ShellCreateRequest(BaseModel):
@@ -148,6 +150,8 @@ def _public_shell_to_unified(shell: Kind) -> UnifiedShell:
         executionType=labels.get("type"),
         namespace=shell.namespace,
         requiresWorkspace=shell_crd.spec.requiresWorkspace,
+        created_at=shell.created_at,
+        updated_at=shell.updated_at,
     )
 
 
@@ -170,6 +174,8 @@ def _user_shell_to_unified(kind: Kind) -> UnifiedShell:
         executionType=labels.get("type"),
         namespace=kind.namespace,
         requiresWorkspace=shell_crd.spec.requiresWorkspace,
+        created_at=kind.created_at,
+        updated_at=kind.updated_at,
     )
 
 

@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState, useEffect, useCallback, type ReactNode } from 'react'
+import { useState, useEffect, useCallback, useMemo, type ReactNode } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   fetchUnifiedSkillsList,
@@ -74,6 +74,12 @@ import type {
   ResourceLibraryPublishSource,
 } from '@/features/resource-library/types'
 import {
+  buildGroupDisplayNameMap,
+  sortResourceLibraryItems,
+  type ResourceLibrarySortMode,
+  type ResourceLibrarySortSource,
+} from '@/features/resource-library/resourceSorting'
+import {
   hasResourceCreateTargets,
   ResourceCreateButton,
   type ResourceCreateTarget,
@@ -86,8 +92,10 @@ interface SkillListWithScopeProps {
   onGroupChange?: (groupName: string | null) => void
   onPublishResource?: (source: ResourceLibraryPublishSource) => void
   sourceControls?: ReactNode
+  sortControls?: ReactNode
   sourceFilter?: ManagedResourceSourceFilter
   groups?: Group[]
+  sortMode?: ResourceLibrarySortMode
 }
 
 export function SkillListWithScope({
@@ -95,8 +103,10 @@ export function SkillListWithScope({
   selectedGroup,
   onPublishResource,
   sourceControls,
+  sortControls,
   sourceFilter = 'all',
   groups = [],
+  sortMode = 'default',
 }: SkillListWithScopeProps) {
   const { t } = useTranslation('common')
   const { t: tSettingsBase } = useTranslation('settings')
@@ -248,21 +258,64 @@ export function SkillListWithScope({
     return tSettings('skills.source.library')
   }
 
-  const isGroupSkill = (skill: UnifiedSkill) =>
-    !skill.is_public && Boolean(skill.namespace && skill.namespace !== 'default')
+  const isGroupSkill = useCallback(
+    (skill: UnifiedSkill) =>
+      !skill.is_public && Boolean(skill.namespace && skill.namespace !== 'default'),
+    []
+  )
 
-  const matchesSourceFilter = (skill: UnifiedSkill): boolean => {
-    if (sourceFilter === 'personal') {
-      return !skill.is_public && skill.namespace === 'default'
-    }
-    if (sourceFilter === 'group') {
-      return isGroupSkill(skill)
-    }
-    if (sourceFilter === 'system') {
-      return skill.is_public
-    }
-    return true
-  }
+  const matchesSourceFilter = useCallback(
+    (skill: UnifiedSkill): boolean => {
+      if (sourceFilter === 'personal') {
+        return !skill.is_public && skill.namespace === 'default'
+      }
+      if (sourceFilter === 'group') {
+        return isGroupSkill(skill)
+      }
+      if (sourceFilter === 'system') {
+        return skill.is_public
+      }
+      return true
+    },
+    [isGroupSkill, sourceFilter]
+  )
+
+  const groupDisplayNames = useMemo(() => buildGroupDisplayNameMap(groups), [groups])
+
+  const getSkillSource = useCallback(
+    (skill: UnifiedSkill): ResourceLibrarySortSource => {
+      if (skill.is_public) return 'system'
+      if (isGroupSkill(skill)) return 'group'
+      return 'personal'
+    },
+    [isGroupSkill]
+  )
+
+  const sortedLibrarySkills = useMemo(() => {
+    const visibleSkills = librarySkills.filter(skill => {
+      if (!matchesSourceFilter(skill)) {
+        return false
+      }
+
+      if (scope === 'personal') {
+        return !skill.is_public
+      }
+
+      return true
+    })
+
+    return sortResourceLibraryItems(visibleSkills, {
+      sortMode,
+      groupDisplayNames,
+      getSource: getSkillSource,
+      getName: skill => skill.name,
+      getDisplayName: skill => skill.displayName,
+      getNamespace: skill => skill.namespace,
+      getCreatedAt: skill => skill.created_at,
+      getUpdatedAt: skill => skill.updated_at,
+      getStableId: skill => skill.id,
+    })
+  }, [librarySkills, matchesSourceFilter, scope, sortMode, groupDisplayNames, getSkillSource])
 
   const updateSkillDefaultAvailability = (skillId: number, inMyDefault: boolean) => {
     const updateSkill = (item: UnifiedSkill): UnifiedSkill =>
@@ -431,7 +484,7 @@ export function SkillListWithScope({
 
   // Get git skills for update all
   const getGitSkills = () => {
-    return filteredSkills.filter(skill => !skill.is_public && skill.source?.type === 'git')
+    return sortedLibrarySkills.filter(skill => !skill.is_public && skill.source?.type === 'git')
   }
 
   // Open confirm dialog for update all
@@ -499,18 +552,6 @@ export function SkillListWithScope({
     }
   }
 
-  // Filter skills based on scope
-  const filteredSkills = librarySkills.filter(skill => {
-    if (!matchesSourceFilter(skill)) {
-      return false
-    }
-
-    if (scope === 'personal') {
-      return !skill.is_public
-    }
-    // For 'all' scope, show all skills
-    return true
-  })
   const defaultEnabledSkills = allAvailableSkills.filter(skill => skill.availability?.inMyDefault)
   const defaultEnabledCandidates = allAvailableSkills.filter(
     skill => !skill.availability?.inMyDefault
@@ -551,7 +592,7 @@ export function SkillListWithScope({
   }
 
   // Check if there are any git-imported skills
-  const hasGitSkills = filteredSkills.some(
+  const hasGitSkills = sortedLibrarySkills.some(
     skill => !skill.is_public && skill.source?.type === 'git'
   )
 
@@ -603,6 +644,18 @@ export function SkillListWithScope({
     </>
   )
 
+  const libraryFilters =
+    sourceControls || sortControls ? (
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        {sourceControls ? (
+          <div className="min-w-0" data-testid="skill-library-source-filter">
+            {sourceControls}
+          </div>
+        ) : null}
+        {sortControls}
+      </div>
+    ) : null
+
   if (autoEnabledSettingsOpen) {
     return (
       <AutoEnabledSkillSettingsView
@@ -632,15 +685,11 @@ export function SkillListWithScope({
         title={tSettings('skills.libraryTitle')}
         description={tSettings('skills.libraryDescription')}
         actions={libraryActions}
-        filters={
-          sourceControls ? (
-            <div data-testid="skill-library-source-filter">{sourceControls}</div>
-          ) : null
-        }
+        filters={libraryFilters}
         data-testid="skill-library-section"
       >
         {/* Skills list */}
-        {filteredSkills.length === 0 ? (
+        {sortedLibrarySkills.length === 0 ? (
           <div className="text-center py-12 text-text-secondary">
             <Sparkles className="w-12 h-12 mx-auto mb-4 opacity-50" />
             <p>{t('skills.no_skills')}</p>
@@ -666,7 +715,7 @@ export function SkillListWithScope({
           </div>
         ) : (
           <div className="space-y-3" data-testid="skill-library-list">
-            {filteredSkills.map(skill => (
+            {sortedLibrarySkills.map(skill => (
               <Card
                 key={skill.id}
                 className="overflow-hidden bg-base p-3 transition-colors hover:bg-hover sm:p-4"

@@ -1536,18 +1536,206 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('project-work-button'))
 
-    expect(screen.getByTestId('project-work-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('project-work-menu')).toHaveClass('top-11')
+    expect(screen.getByTestId('project-options-list')).toHaveClass(
+      'min-h-0',
+      'flex-1',
+      'overflow-y-auto',
+    )
+    expect(screen.getByTestId('project-options-list')).toHaveStyle({
+      maxHeight: '150px',
+    })
+    expect(screen.getByTestId('project-option-7')).toHaveClass('h-9')
     expect(screen.getAllByText('Wegent').length).toBeGreaterThan(0)
     expect(screen.getByText('Docs')).toBeInTheDocument()
     expect(screen.getByTestId('no-project-option')).toHaveTextContent('不使用项目')
+    expect(screen.getByTestId('no-project-option')).toHaveClass('h-8')
 
     await userEvent.click(screen.getByTestId('project-option-8'))
 
     expect(onSelectProject).toHaveBeenCalledWith(8)
   })
 
-  test('shows no-project transition from the standalone entry', async () => {
-    const onSelectStandaloneDevice = vi.fn()
+  test('opens project work menu upward when below cannot fit the four-row menu', async () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+      if ((this as HTMLElement).dataset.testid === 'project-work-button') {
+        return {
+          x: 0,
+          y: 720,
+          width: 160,
+          height: 36,
+          top: 720,
+          right: 160,
+          bottom: 756,
+          left: 0,
+          toJSON: () => ({}),
+        } as DOMRect
+      }
+
+      return {
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: 0,
+        toJSON: () => ({}),
+      } as DOMRect
+    })
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects: [
+            { id: 7, name: 'Wegent', tasks: [] },
+            { id: 8, name: 'Docs', tasks: [] },
+            { id: 9, name: 'MCPs', tasks: [] },
+            { id: 10, name: 'hello-gpt', tasks: [] },
+            { id: 11, name: 'ai-exam', tasks: [] },
+            { id: 12, name: 'weekly-report', tasks: [] },
+          ],
+          onCreateProjectMode: vi.fn(),
+        })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('project-work-menu')).toHaveClass('bottom-11')
+    })
+    expect(screen.getByTestId('project-options-list')).toHaveClass('overflow-y-auto')
+    expect(screen.getByTestId('add-project-option')).toBeInTheDocument()
+    expect(screen.getByTestId('no-project-option')).toBeInTheDocument()
+  })
+
+  test('keeps project work menu below when clipped space can fit four rows and actions', async () => {
+    const originalInnerHeight = window.innerHeight
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: 1000,
+    })
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+      const testId = (this as HTMLElement).dataset.testid
+      if (testId === 'project-work-button') {
+        return {
+          x: 0,
+          y: 500,
+          width: 160,
+          height: 40,
+          top: 500,
+          right: 160,
+          bottom: 540,
+          left: 0,
+          toJSON: () => ({}),
+        } as DOMRect
+      }
+
+      if (testId === 'project-work-clipping-shell') {
+        return {
+          x: 0,
+          y: 0,
+          width: 900,
+          height: 896,
+          top: 0,
+          right: 900,
+          bottom: 896,
+          left: 0,
+          toJSON: () => ({}),
+        } as DOMRect
+      }
+
+      return {
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: 0,
+        toJSON: () => ({}),
+      } as DOMRect
+    })
+
+    try {
+      render(
+        <div data-testid="project-work-clipping-shell" style={{ overflow: 'hidden' }}>
+          <ChatInput
+            value=""
+            onChange={vi.fn()}
+            onSubmit={vi.fn()}
+            disabled={false}
+            variant="desktop"
+            projectWork={projectWorkControls({
+              projects: [
+                { id: 7, name: 'Wegent', tasks: [] },
+                { id: 8, name: 'Docs', tasks: [] },
+                { id: 9, name: 'MCPs', tasks: [] },
+                { id: 10, name: 'hello-gpt', tasks: [] },
+                { id: 11, name: 'ai-exam', tasks: [] },
+                { id: 12, name: 'weekly-report', tasks: [] },
+              ],
+              onCreateProjectMode: vi.fn(),
+            })}
+          />
+        </div>,
+      )
+
+      await userEvent.click(screen.getByTestId('project-work-button'))
+
+      const menu = screen.getByTestId('project-work-menu')
+      expect(menu).toHaveClass('top-11')
+      expect(menu).toHaveStyle({ maxHeight: '340px' })
+      expect(screen.getByTestId('project-options-list')).toHaveStyle({
+        maxHeight: '150px',
+      })
+      expect(screen.getByTestId('add-project-option')).toBeInTheDocument()
+      expect(screen.getByTestId('no-project-option')).toBeInTheDocument()
+    } finally {
+      Object.defineProperty(window, 'innerHeight', {
+        configurable: true,
+        value: originalInnerHeight,
+      })
+    }
+  })
+
+  test('opens project creation submenu upward when it would be clipped below', async () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+      const testId = (this as HTMLElement).dataset.testid
+      if (testId === 'add-project-option') {
+        return {
+          x: 0,
+          y: 720,
+          width: 240,
+          height: 32,
+          top: 720,
+          right: 240,
+          bottom: 752,
+          left: 0,
+          toJSON: () => ({}),
+        } as DOMRect
+      }
+
+      return {
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: 0,
+        toJSON: () => ({}),
+      } as DOMRect
+    })
 
     render(
       <ChatInput
@@ -1558,6 +1746,112 @@ describe('ChatInput', () => {
         variant="desktop"
         projectWork={projectWorkControls({
           projects: [{ id: 7, name: 'Wegent', tasks: [] }],
+          onCreateProjectMode: vi.fn(),
+        })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+    await userEvent.click(screen.getByTestId('add-project-option'))
+
+    const createSubmenu = screen.getByTestId('create-project-submenu')
+    expect(createSubmenu.parentElement).toHaveClass('bottom-0')
+    expect(createSubmenu).toHaveTextContent('新建空白项目')
+  })
+
+  test('filters project work menu by project and device text', async () => {
+    const projects: ProjectWithTasks[] = [
+      {
+        id: 7,
+        name: 'Wegent',
+        config: { execution: { targetType: 'local', deviceId: 'macbook-local' } },
+        tasks: [],
+      },
+      {
+        id: 8,
+        name: 'Docs',
+        config: { execution: { targetType: 'cloud', deviceId: 'cloud-docs' } },
+        tasks: [],
+      },
+    ]
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects,
+          onCreateProjectMode: vi.fn(),
+          devices: [
+            {
+              id: 1,
+              device_id: 'macbook-local',
+              name: 'MacBook Pro',
+              status: 'online',
+              is_default: false,
+            },
+            {
+              id: 2,
+              device_id: 'cloud-docs',
+              name: 'Docs Runner',
+              status: 'online',
+              is_default: false,
+            },
+          ],
+        })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    const searchInput = screen.getByTestId('project-search-input')
+    await waitFor(() => expect(searchInput).toHaveFocus())
+    expect(searchInput).toHaveAttribute('placeholder', '搜索项目')
+
+    await userEvent.type(searchInput, 'docs')
+    expect(screen.queryByTestId('project-option-7')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-option-8')).toBeInTheDocument()
+    expect(screen.getByTestId('add-project-option')).toBeInTheDocument()
+    expect(screen.getByTestId('no-project-option')).toBeInTheDocument()
+
+    await userEvent.clear(searchInput)
+    await userEvent.type(searchInput, 'macbook')
+    expect(screen.getByTestId('project-option-7')).toBeInTheDocument()
+    expect(screen.queryByTestId('project-option-8')).not.toBeInTheDocument()
+
+    await userEvent.clear(searchInput)
+    await userEvent.type(searchInput, 'missing')
+    expect(screen.getByTestId('project-search-empty')).toHaveTextContent('没有匹配的项目')
+    expect(screen.getByTestId('add-project-option')).toBeInTheDocument()
+    expect(screen.getByTestId('no-project-option')).toBeInTheDocument()
+  })
+
+  test('shows no-project transition from the standalone entry', async () => {
+    const onSelectStandaloneDevice = vi.fn()
+    const devices: DeviceInfo[] = [
+      {
+        id: 1,
+        device_id: 'cloud-online',
+        name: 'Cloud Online',
+        status: 'online',
+        is_default: false,
+        device_type: 'cloud',
+      },
+    ]
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects: [{ id: 7, name: 'Wegent', tasks: [] }],
+          devices,
           currentProjectId: 7,
           onSelectStandaloneDevice,
         })}
@@ -1566,8 +1860,9 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('project-work-button'))
     await userEvent.click(screen.getByTestId('no-project-option'))
+    await userEvent.click(screen.getByTestId('standalone-device-option-cloud-online'))
 
-    expect(onSelectStandaloneDevice).toHaveBeenCalledWith(null)
+    expect(onSelectStandaloneDevice).toHaveBeenCalledWith('cloud-online')
   })
 
   test('shows no-project option before selecting a concrete project', async () => {
@@ -1594,7 +1889,52 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('no-project-option'))
 
-    expect(onSelectStandaloneDevice).toHaveBeenCalledWith(null)
+    expect(screen.getByTestId('standalone-device-submenu')).toBeInTheDocument()
+    expect(onSelectStandaloneDevice).not.toHaveBeenCalled()
+  })
+
+  test('shows add project option above no-project and opens the creation submenu', async () => {
+    const onCreateProjectMode = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects: [{ id: 7, name: 'Wegent', tasks: [] }],
+          onCreateProjectMode,
+        })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    const menu = screen.getByTestId('project-work-menu')
+    expect(screen.getByTestId('add-project-option')).toHaveTextContent('添加新项目')
+    expect(
+      [...menu.querySelectorAll('button')].map(button => button.dataset.testid),
+    ).toEqual([
+      'project-option-7',
+      'add-project-option',
+      'no-project-option',
+    ])
+
+    await userEvent.click(screen.getByTestId('add-project-option'))
+
+    expect(screen.getByTestId('create-project-submenu')).toBeInTheDocument()
+    expect(screen.getByTestId('project-start-from-scratch-option')).toHaveTextContent(
+      '新建空白项目',
+    )
+    expect(screen.getByTestId('project-existing-folder-option')).toHaveTextContent('使用现有目录')
+    expect(screen.getByTestId('project-clone-from-git-option')).toHaveTextContent('从 Git 克隆')
+
+    await userEvent.click(screen.getByTestId('project-start-from-scratch-option'))
+
+    expect(onCreateProjectMode).toHaveBeenCalledWith('scratch')
+    expect(screen.queryByTestId('project-work-menu')).not.toBeInTheDocument()
   })
 
   test('lists standalone devices under no-project and defaults to online cloud devices', async () => {
@@ -1653,16 +1993,20 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('project-work-button'))
 
-    expect(screen.getByTestId('standalone-device-list')).toBeInTheDocument()
+    expect(screen.queryByTestId('standalone-device-submenu')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('no-project-option'))
+
+    expect(screen.getByTestId('standalone-device-submenu')).toBeInTheDocument()
     expect(screen.getByText('Cloud Online')).toBeInTheDocument()
     expect(screen.getByText('Local Online')).toBeInTheDocument()
     expect(screen.queryByText('OpenClaw Online')).not.toBeInTheDocument()
     expect(screen.getByTestId('standalone-device-option-local-offline')).toBeDisabled()
 
-    await userEvent.click(screen.getByTestId('no-project-option'))
+    await userEvent.click(screen.getByTestId('standalone-device-option-cloud-online'))
     expect(onSelectStandaloneDevice).toHaveBeenCalledWith('cloud-online')
 
     await userEvent.click(screen.getByTestId('project-work-button'))
+    await userEvent.click(screen.getByTestId('no-project-option'))
     await userEvent.click(screen.getByTestId('standalone-device-option-local-online'))
     expect(onSelectStandaloneDevice).toHaveBeenLastCalledWith('local-online')
   })
@@ -1740,6 +2084,7 @@ describe('ChatInput', () => {
     )
 
     await userEvent.click(screen.getByTestId('project-work-button'))
+    await userEvent.click(screen.getByTestId('no-project-option'))
 
     expect(
       screen.getByTestId('standalone-device-selected-icon-local-online')
@@ -1818,6 +2163,7 @@ describe('ChatInput', () => {
     )
 
     await userEvent.click(screen.getByTestId('project-work-button'))
+    await userEvent.click(screen.getByTestId('no-project-option'))
 
     const projectDeviceLabel = screen.getAllByText('online-executor')[0]
     const offlineProjectDeviceLabel = screen.getAllByText('offline-executor')[0]

@@ -110,12 +110,17 @@
     "description": "Description",
     "tags": "Tags",
     "type": "Resource type",
+    "sort": "Sort",
     "source": "Source",
     "source_id": "Source resource ID",
     "version": "Version",
     "publisher": "Publisher",
     "install_count": "Accepts",
     "updated_at": "Updated"
+  },
+  "sort": {
+    "default": "Default",
+    "latest": "Latest"
   },
   "empty": {
     "discover": "No resources to discover",

@@ -18,6 +18,7 @@ import {
 } from '@heroicons/react/24/outline'
 import { Loader2 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
+import { useGroupPermissions } from '@/hooks/useGroupPermissions'
 import { useTranslation } from '@/hooks/useTranslation'
 import ModelEditDialog from './ModelEditDialog'
 import {
@@ -34,6 +35,12 @@ import { modelApis, ModelCRD, UnifiedModel, ModelCategoryType } from '@/apis/mod
 import type { BaseRole } from '@/types/base-role'
 import type { Group } from '@/types/group'
 import type { ManagedResourceSourceFilter } from '@/features/resource-library/types'
+import {
+  buildGroupDisplayNameMap,
+  sortResourceLibraryItems,
+  type ResourceLibrarySortMode,
+  type ResourceLibrarySortSource,
+} from '@/features/resource-library/resourceSorting'
 import {
   hasResourceCreateTargets,
   ResourceCreateButton,
@@ -76,6 +83,8 @@ interface DisplayModel {
   namespace: string // Resource namespace (group name or 'default')
   config: Record<string, unknown> // Full config from unified API
   modelCategoryType: ModelCategoryType // Model category type: llm, tts, stt, embedding, rerank
+  created_at?: string | null
+  updated_at?: string | null
 }
 
 interface ModelListProps {
@@ -84,18 +93,30 @@ interface ModelListProps {
   groupRoleMap?: Map<string, BaseRole>
   onEditResource?: (namespace: string) => void
   sourceControls?: ReactNode
+  sortControls?: ReactNode
   sourceFilter?: ManagedResourceSourceFilter
   groups?: Group[]
+  sortMode?: ResourceLibrarySortMode
 }
 
+/**
+ * Displays a list of Model resources grouped by ownership (user, group, public).
+ * Supports CRUD operations with group-role-based permission controls.
+ *
+ * @param props.scope - Current scope context (personal/group/all)
+ * @param props.groupName - Current group name when scope is 'group'
+ * @param props.groupRoleMap - Map of group namespace to user's role
+ */
 const ModelList: React.FC<ModelListProps> = ({
   scope,
   groupName,
   groupRoleMap,
   onEditResource,
   sourceControls,
+  sortControls,
   sourceFilter = 'all',
   groups = [],
+  sortMode = 'default',
 }) => {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -153,8 +174,16 @@ const ModelList: React.FC<ModelListProps> = ({
     return unifiedModels
   }, [unifiedModels, sourceFilter])
 
+  const groupDisplayNames = React.useMemo(() => buildGroupDisplayNameMap(groups), [groups])
+
+  const getModelSource = React.useCallback((model: DisplayModel): ResourceLibrarySortSource => {
+    if (model.sourceType === 'public') return 'system'
+    if (model.sourceType === 'group') return 'group'
+    return 'personal'
+  }, [])
+
   const displayModels = React.useMemo(() => {
-    return sourceFilteredModels.map(model => {
+    const mappedModels = sourceFilteredModels.map(model => {
       const config = (model.config as Record<string, unknown>) || {}
       const env = (config?.env as Record<string, unknown>) || {}
       const isPublic = model.type === 'public'
@@ -171,25 +200,31 @@ const ModelList: React.FC<ModelListProps> = ({
         namespace: model.namespace || 'default',
         config,
         modelCategoryType: (model.modelCategoryType as ModelCategoryType) || 'llm',
+        created_at: model.created_at,
+        updated_at: model.updated_at,
       }
     })
-  }, [sourceFilteredModels])
+
+    return sortResourceLibraryItems(mappedModels, {
+      sortMode,
+      groupDisplayNames,
+      getSource: getModelSource,
+      getName: model => model.name,
+      getDisplayName: model => model.displayName,
+      getNamespace: model => model.namespace,
+      getCreatedAt: model => model.created_at,
+      getUpdatedAt: model => model.updated_at,
+      getStableId: model => `${model.sourceType}-${model.namespace}-${model.name}`,
+    })
+  }, [sourceFilteredModels, sortMode, groupDisplayNames, getModelSource])
 
   const totalModels = displayModels.length
 
-  // Helper function to check permissions for a specific group resource
-  const canEditGroupResource = (namespace: string) => {
-    if (!groupRoleMap) return false
-    const role = groupRoleMap.get(namespace)
-    return role === 'Owner' || role === 'Maintainer' || role === 'Developer'
-  }
-
-  const canDeleteGroupResource = (namespace: string) => {
-    if (!groupRoleMap) return false
-    const role = groupRoleMap.get(namespace)
-    return role === 'Owner' || role === 'Maintainer'
-  }
-
+  const { canEditGroupResource, canDeleteGroupResource } = useGroupPermissions({
+    scope,
+    groupName,
+    groupRoleMap,
+  })
   // Convert DisplayModel to ModelCRD for editing
   const convertToModelCRD = (displayModel: DisplayModel): ModelCRD => {
     const env = (displayModel.config?.env as Record<string, unknown>) || {}
@@ -401,10 +436,13 @@ const ModelList: React.FC<ModelListProps> = ({
   )
 
   const filters = (
-    <>
-      {sourceControls}
-      {categoryFilterControls}
-    </>
+    <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+      <div className="flex min-w-0 flex-col gap-3">
+        {sourceControls}
+        {categoryFilterControls}
+      </div>
+      {sortControls}
+    </div>
   )
 
   return (

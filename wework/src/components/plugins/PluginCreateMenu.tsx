@@ -1,6 +1,7 @@
 import { Boxes, ChevronDown, Plus, Server, Sparkles } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
 
 export function PluginCreateMenu({
   isOpen,
@@ -48,12 +49,12 @@ export function PluginCreateMenu({
         data-testid={buttonTestId}
         aria-expanded={isOpen}
         aria-label={compact ? t('workbench.plugins_create', '创建') : undefined}
-        className={[
+        className={cn(
           'flex min-w-[44px] items-center justify-center text-text-primary transition-colors',
           compact
             ? 'h-11 w-11 gap-0 rounded-xl bg-surface px-0 text-sm font-semibold hover:bg-muted'
-            : 'h-8 gap-1.5 rounded-lg bg-surface px-2.5 text-[13px] font-medium leading-[18px] hover:bg-muted',
-        ].join(' ')}
+            : 'h-7 gap-1.5 rounded-lg bg-transparent px-2 text-[13px] font-medium leading-[18px] hover:bg-black/[0.06] active:bg-black/[0.10]',
+        )}
         onClick={onToggle}
       >
         {compact ? (
@@ -61,7 +62,7 @@ export function PluginCreateMenu({
         ) : (
           <>
             {t('workbench.plugins_create', '创建')}
-            <ChevronDown className="h-4 w-4" />
+            <ChevronDown className="h-[18px] w-[18px] stroke-[2]" />
           </>
         )}
       </button>

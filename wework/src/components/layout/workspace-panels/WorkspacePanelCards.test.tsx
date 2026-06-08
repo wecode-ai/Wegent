@@ -7,7 +7,15 @@ import { WorkspacePanelCards } from './WorkspacePanelCards'
 import type { DeviceInfo } from '@/types/api'
 
 vi.mock('@/config/runtime', () => ({
-  getRuntimeConfig: () => ({ apiBaseUrl: '/api' }),
+  getRuntimeConfig: () => ({ appBasePath: '', apiBaseUrl: '/api' }),
+  joinAppPath: (basePath: string, path: string) => {
+    const normalizedBasePath = !basePath || basePath === '/' ? '' : basePath.replace(/\/+$/, '')
+    const normalizedPath = path.startsWith('/') ? path : `/${path}`
+
+    if (!normalizedBasePath) return normalizedPath
+    if (normalizedPath === '/') return `${normalizedBasePath}/`
+    return `${normalizedBasePath}${normalizedPath}`
+  },
 }))
 
 vi.mock('@/api/http', () => ({

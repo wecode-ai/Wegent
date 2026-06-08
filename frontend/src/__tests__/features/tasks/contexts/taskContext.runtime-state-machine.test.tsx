@@ -12,6 +12,7 @@ import type { TaskStatusPayload } from '@/types/socket'
 
 let mockTaskHandlers: { onTaskStatus?: (payload: TaskStatusPayload) => void } | null = null
 let mockVisibleHandler: ((wasHiddenFor: number) => void) | null = null
+let mockReconnectHandler: (() => void) | null = null
 let mockIsConnected = true
 
 const mockJoinTask = jest.fn()
@@ -31,6 +32,10 @@ const mockSocketContext = {
   registerChatHandlers: jest.fn(() => jest.fn()),
   registerSkillHandlers: jest.fn(() => jest.fn()),
   sendSkillResponse: jest.fn(),
+  onReconnect: jest.fn((callback: () => void) => {
+    mockReconnectHandler = callback
+    return jest.fn()
+  }),
 }
 
 jest.mock('@/contexts/SocketContext', () => ({
@@ -147,6 +152,7 @@ describe('TaskSessionContext runtime state machine sync', () => {
     contextProbe.current = null
     mockTaskHandlers = null
     mockVisibleHandler = null
+    mockReconnectHandler = null
     mockIsConnected = true
     mockJoinTask.mockResolvedValue({ subtasks: [] })
 
@@ -289,6 +295,38 @@ describe('TaskSessionContext runtime state machine sync', () => {
     act(() => {
       mockIsConnected = true
       rerender(renderTree())
+    })
+
+    await waitFor(() => {
+      expect(mockedTaskApis.getTaskRuntimeCheck).toHaveBeenCalledWith(42)
+    })
+    expect(mockedTaskApis.getPersonalTasksLite).toHaveBeenCalledWith({ page: 1, limit: 50 })
+  })
+
+  it('checks runtime health when the socket reconnect callback fires', async () => {
+    render(
+      <TaskSessionProvider>
+        <ContextProbe />
+      </TaskSessionProvider>
+    )
+
+    await waitFor(() => {
+      expect(contextProbe.current).not.toBeNull()
+    })
+
+    act(() => {
+      contextProbe.current?.selectTask(createTask())
+    })
+
+    await waitFor(() => {
+      expect(mockedTaskApis.getTaskDetail).toHaveBeenCalledWith(42)
+    })
+
+    mockedTaskApis.getTaskRuntimeCheck.mockClear()
+    mockedTaskApis.getPersonalTasksLite.mockClear()
+
+    act(() => {
+      mockReconnectHandler?.()
     })
 
     await waitFor(() => {

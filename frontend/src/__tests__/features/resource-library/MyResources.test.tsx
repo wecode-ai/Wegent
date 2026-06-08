@@ -30,13 +30,22 @@ jest.mock('@/features/settings/components/TeamListWithScope', () => ({
     selectedGroup,
     onPublishResource,
     sourceControls,
+    sortControls,
+    sortMode,
   }: {
     scope: string
     selectedGroup?: string | null
     onPublishResource?: (source: ResourceLibraryPublishSource) => void
     sourceControls?: React.ReactNode
+    sortControls?: React.ReactNode
+    sortMode?: string
   }) => (
-    <div data-testid="agent-resource-manager" data-scope={scope} data-group={selectedGroup ?? ''}>
+    <div
+      data-testid="agent-resource-manager"
+      data-scope={scope}
+      data-group={selectedGroup ?? ''}
+      data-sort={sortMode ?? ''}
+    >
       {sourceControls}
       <button
         type="button"
@@ -53,6 +62,7 @@ jest.mock('@/features/settings/components/TeamListWithScope', () => ({
       >
         publish agent
       </button>
+      {sortControls}
     </div>
   ),
 }))
@@ -62,13 +72,23 @@ jest.mock('@/features/settings/components/ModelListWithScope', () => ({
     scope,
     selectedGroup,
     sourceControls,
+    sortControls,
+    sortMode,
   }: {
     scope: string
     selectedGroup?: string | null
     sourceControls?: React.ReactNode
+    sortControls?: React.ReactNode
+    sortMode?: string
   }) => (
-    <div data-testid="model-resource-manager" data-scope={scope} data-group={selectedGroup ?? ''}>
+    <div
+      data-testid="model-resource-manager"
+      data-scope={scope}
+      data-group={selectedGroup ?? ''}
+      data-sort={sortMode ?? ''}
+    >
       {sourceControls}
+      {sortControls}
     </div>
   ),
 }))
@@ -78,13 +98,23 @@ jest.mock('@/features/settings/components/ShellListWithScope', () => ({
     scope,
     selectedGroup,
     sourceControls,
+    sortControls,
+    sortMode,
   }: {
     scope: string
     selectedGroup?: string | null
     sourceControls?: React.ReactNode
+    sortControls?: React.ReactNode
+    sortMode?: string
   }) => (
-    <div data-testid="shell-resource-manager" data-scope={scope} data-group={selectedGroup ?? ''}>
+    <div
+      data-testid="shell-resource-manager"
+      data-scope={scope}
+      data-group={selectedGroup ?? ''}
+      data-sort={sortMode ?? ''}
+    >
       {sourceControls}
+      {sortControls}
     </div>
   ),
 }))
@@ -95,13 +125,22 @@ jest.mock('@/features/settings/components/SkillListWithScope', () => ({
     selectedGroup,
     onPublishResource,
     sourceControls,
+    sortControls,
+    sortMode,
   }: {
     scope: string
     selectedGroup?: string | null
     onPublishResource?: (source: ResourceLibraryPublishSource) => void
     sourceControls?: React.ReactNode
+    sortControls?: React.ReactNode
+    sortMode?: string
   }) => (
-    <div data-testid="skill-resource-manager" data-scope={scope} data-group={selectedGroup ?? ''}>
+    <div
+      data-testid="skill-resource-manager"
+      data-scope={scope}
+      data-group={selectedGroup ?? ''}
+      data-sort={sortMode ?? ''}
+    >
       {sourceControls}
       <button
         type="button"
@@ -119,6 +158,7 @@ jest.mock('@/features/settings/components/SkillListWithScope', () => ({
       >
         publish skill
       </button>
+      {sortControls}
     </div>
   ),
 }))
@@ -128,17 +168,23 @@ jest.mock('@/features/settings/components/RetrieverListWithScope', () => ({
     scope,
     selectedGroup,
     sourceControls,
+    sortControls,
+    sortMode,
   }: {
     scope: string
     selectedGroup?: string | null
     sourceControls?: React.ReactNode
+    sortControls?: React.ReactNode
+    sortMode?: string
   }) => (
     <div
       data-testid="retriever-resource-manager"
       data-scope={scope}
       data-group={selectedGroup ?? ''}
+      data-sort={sortMode ?? ''}
     >
       {sourceControls}
+      {sortControls}
     </div>
   ),
 }))
@@ -182,6 +228,9 @@ jest.mock('@/hooks/useTranslation', () => ({
         'sources.all_groups': '全部团队',
         'actions.manage_groups': '管理...',
         'fields.source': '来源',
+        'fields.sort': '排序',
+        'sort.default': '默认',
+        'sort.latest': '最新',
         'states.no_groups': '暂无组资源',
         'search.groups_placeholder': '搜索团队',
         'search.groups_empty': '没有匹配的团队',
@@ -240,6 +289,7 @@ describe('MyResources', () => {
     render(<MyResources title="资源库" />)
 
     expect(await screen.findByTestId('agent-resource-manager')).toHaveAttribute('data-scope', 'all')
+    expect(screen.getByTestId('agent-resource-manager')).toHaveAttribute('data-sort', 'default')
     const header = screen.getByTestId('managed-resource-header')
     expect(within(header).getByRole('heading', { name: '资源库' })).toBeInTheDocument()
     expect(within(header).getByTestId('managed-resource-type-tabs')).toBeInTheDocument()
@@ -264,6 +314,17 @@ describe('MyResources', () => {
     expect(within(sourceFilter).getByTestId('resource-source-group-button')).toBeInTheDocument()
     expect(within(sourceFilter).getByTestId('resource-source-system-button')).toBeInTheDocument()
     expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
+
+    const sortControl = screen.getByTestId('managed-resource-sort-control')
+    expect(within(sortControl).getByText('排序')).toBeInTheDocument()
+    expect(within(sortControl).getByTestId('resource-sort-default-button')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(within(sortControl).getByTestId('resource-sort-latest-button')).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    )
 
     await openGroupMenu()
     expect(await screen.findByRole('menuitem', { name: '全部团队' })).toBeInTheDocument()
@@ -400,7 +461,11 @@ describe('MyResources', () => {
   })
 
   it('opens the managed resource type from the URL query', async () => {
-    window.history.replaceState({}, '', '/resource-library?tab=mine&type=skill&scope=personal')
+    window.history.replaceState(
+      {},
+      '',
+      '/resource-library?tab=mine&type=skill&scope=personal&sort=latest'
+    )
 
     render(<MyResources />)
 
@@ -408,7 +473,12 @@ describe('MyResources', () => {
       'data-scope',
       'personal'
     )
+    expect(screen.getByTestId('skill-resource-manager')).toHaveAttribute('data-sort', 'latest')
     expect(screen.getByTestId('managed-resource-skill-tab')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('resource-sort-latest-button')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
   })
 
   it('updates the URL query when switching managed resource types', async () => {
@@ -421,6 +491,26 @@ describe('MyResources', () => {
       '/resource-library?tab=mine&type=skill&scope=personal',
       { scroll: false }
     )
+  })
+
+  it('updates the URL query when switching resource sort modes', async () => {
+    window.history.replaceState({}, '', '/resource-library?tab=mine&type=agent&source=all')
+    render(<MyResources />)
+
+    fireEvent.click(await screen.findByTestId('resource-sort-latest-button'))
+
+    expect(screen.getByTestId('agent-resource-manager')).toHaveAttribute('data-sort', 'latest')
+    expect(mockReplace).toHaveBeenCalledWith(
+      '/resource-library?tab=mine&type=agent&source=all&sort=latest',
+      { scroll: false }
+    )
+
+    fireEvent.click(screen.getByTestId('resource-sort-default-button'))
+
+    expect(screen.getByTestId('agent-resource-manager')).toHaveAttribute('data-sort', 'default')
+    expect(mockReplace).toHaveBeenCalledWith('/resource-library?tab=mine&type=agent&source=all', {
+      scroll: false,
+    })
   })
 
   it('filters to all groups or a selected group from the team source dropdown', async () => {

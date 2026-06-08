@@ -12,6 +12,7 @@ import type { ResourceLibraryPublishSource } from '@/features/resource-library/t
 import type { BaseRole } from '@/types/base-role'
 import type { Group } from '@/types/group'
 import type { ManagedResourceSourceFilter } from '@/features/resource-library/types'
+import type { ResourceLibrarySortMode } from '@/features/resource-library/resourceSorting'
 
 interface TeamListWithScopeProps {
   scope: 'personal' | 'group' | 'all'
@@ -19,8 +20,10 @@ interface TeamListWithScopeProps {
   onGroupChange?: (groupName: string | null) => void
   onPublishResource?: (source: ResourceLibraryPublishSource) => void
   sourceControls?: ReactNode
+  sortControls?: ReactNode
   sourceFilter?: ManagedResourceSourceFilter
   groups?: Group[]
+  sortMode?: ResourceLibrarySortMode
 }
 
 export function TeamListWithScope({
@@ -29,8 +32,10 @@ export function TeamListWithScope({
   onGroupChange,
   onPublishResource,
   sourceControls,
+  sortControls,
   sourceFilter,
   groups: externalGroups,
+  sortMode = 'default',
 }: TeamListWithScopeProps) {
   // Use external state if provided, otherwise use internal state
   const [internalSelectedGroup, setInternalSelectedGroup] = useState<string | null>(null)
@@ -80,8 +85,10 @@ export function TeamListWithScope({
         scope="personal"
         onPublishResource={onPublishResource}
         sourceControls={sourceControls}
+        sortControls={sortControls}
         sourceFilter={sourceFilter}
         groups={groups}
+        sortMode={sortMode}
       />
     )
   }
@@ -93,8 +100,10 @@ export function TeamListWithScope({
         groupRoleMap={groupRoleMap}
         onPublishResource={onPublishResource}
         sourceControls={sourceControls}
+        sortControls={sortControls}
         sourceFilter={sourceFilter}
         groups={groups}
+        sortMode={sortMode}
       />
     )
   }
@@ -116,8 +125,10 @@ export function TeamListWithScope({
         onEditResource={handleEditResource}
         onPublishResource={onPublishResource}
         sourceControls={sourceControls}
+        sortControls={sortControls}
         sourceFilter={sourceFilter}
         groups={groups}
+        sortMode={sortMode}
       />
     </div>
   )

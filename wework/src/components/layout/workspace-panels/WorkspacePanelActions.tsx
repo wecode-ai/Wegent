@@ -3,6 +3,10 @@ import { useTranslation } from '@/hooks/useTranslation'
 import {
   EnvironmentInfoPopover,
 } from '../EnvironmentInfoPopover'
+import {
+  DESKTOP_TOP_BAR_BUTTON_CLASS,
+} from '../DesktopTopBar'
+import { cn } from '@/lib/utils'
 import type { EnvironmentInfo } from '@/types/environment'
 
 interface WorkspacePanelActionsProps {
@@ -33,7 +37,7 @@ export function WorkspacePanelActions({
   const { t } = useTranslation('common')
 
   return (
-    <div className="absolute right-5 top-1 z-chrome flex items-center gap-3">
+    <>
       <EnvironmentInfoPopover
         info={environmentInfo}
         onRefresh={onRefreshEnvironmentInfo}
@@ -46,24 +50,26 @@ export function WorkspacePanelActions({
         type="button"
         data-testid="toggle-bottom-workspace-panel-button"
         onClick={onToggleBottomPanel}
-        className={`flex h-8 w-8 items-center justify-center rounded-md text-text-secondary hover:bg-muted ${
-          bottomPanelOpen ? 'bg-muted text-text-primary' : ''
-        }`}
+        className={cn(
+          DESKTOP_TOP_BAR_BUTTON_CLASS,
+          bottomPanelOpen && 'bg-black/[0.10] text-[#374151]',
+        )}
         aria-label={t('workbench.toggle_bottom_workspace_panel', '打开底部栏')}
       >
-        <PanelBottom className="h-4 w-4" />
+        <PanelBottom />
       </button>
       <button
         type="button"
         data-testid="toggle-right-workspace-panel-button"
         onClick={onToggleRightPanel}
-        className={`flex h-8 w-8 items-center justify-center rounded-md text-text-secondary hover:bg-muted ${
-          rightPanelOpen ? 'bg-muted text-text-primary' : ''
-        }`}
+        className={cn(
+          DESKTOP_TOP_BAR_BUTTON_CLASS,
+          rightPanelOpen && 'bg-black/[0.10] text-[#374151]',
+        )}
         aria-label={t('workbench.toggle_right_workspace_panel', '打开右侧栏')}
       >
-        <PanelRight className="h-4 w-4" />
+        <PanelRight />
       </button>
-    </div>
+    </>
   )
 }

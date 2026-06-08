@@ -110,12 +110,17 @@
     "description": "描述",
     "tags": "标签",
     "type": "资源类型",
+    "sort": "排序",
     "source": "来源",
     "source_id": "源资源 ID",
     "version": "版本",
     "publisher": "发布者",
     "install_count": "接受次数",
     "updated_at": "更新时间"
+  },
+  "sort": {
+    "default": "默认",
+    "latest": "最新"
   },
   "empty": {
     "discover": "暂无可发现资源",

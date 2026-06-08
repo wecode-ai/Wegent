@@ -157,7 +157,10 @@ def _get_project_path(
 ) -> tuple[str, bool]:
     workspace = config.workspace
     if workspace:
-        path = workspace.localPath or workspace.checkoutPath
+        if workspace.source == "git" and workspace.checkoutPath:
+            path = f"projects/{workspace.checkoutPath}"
+        else:
+            path = workspace.localPath or workspace.checkoutPath
         if path:
             return path, True
 

@@ -7,10 +7,13 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.schemas.subtask_context import AttachmentDetailResponse
+
 MAX_QUICK_PHRASES = 6
 MAX_QUICK_PHRASE_LENGTH = 120
 MAX_INPUT_PRESETS = 6
 MAX_INPUT_PRESET_PROMPT_LENGTH = 2000
+MAX_INPUT_PRESET_ATTACHMENTS = 10
 
 
 def normalize_quick_phrases(
@@ -108,6 +111,7 @@ class QuickLaunchInputPreset(BaseModel):
     title: str = Field(..., min_length=1)
     prompt: Optional[str] = None
     options: QuickLaunchInputOptions = Field(default_factory=QuickLaunchInputOptions)
+    source_attachment_ids: list[int] = Field(default_factory=list)
 
     @field_validator("id", "title", mode="before")
     @classmethod
@@ -130,6 +134,33 @@ class QuickLaunchInputPreset(BaseModel):
                 f"{MAX_INPUT_PRESET_PROMPT_LENGTH} characters"
             )
         return prompt or None
+
+    @field_validator("source_attachment_ids", mode="before")
+    @classmethod
+    def validate_source_attachment_ids(cls, value: object) -> list[int]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError("source_attachment_ids must be a list")
+
+        ids: list[int] = []
+        for index, item in enumerate(value):
+            if isinstance(item, bool) or not isinstance(item, int):
+                raise ValueError(
+                    f"source_attachment_ids[{index}] must be a positive integer"
+                )
+            if item <= 0:
+                raise ValueError(
+                    f"source_attachment_ids[{index}] must be a positive integer"
+                )
+            if item not in ids:
+                ids.append(item)
+            if len(ids) > MAX_INPUT_PRESET_ATTACHMENTS:
+                raise ValueError(
+                    f"source_attachment_ids supports at most "
+                    f"{MAX_INPUT_PRESET_ATTACHMENTS} items"
+                )
+        return ids
 
 
 class InputPresetMixin(BaseModel):
@@ -196,6 +227,24 @@ class QuickLaunchFavoriteAgent(QuickPhraseMixin, InputPresetMixin):
 class QuickLaunchResponse(BaseModel):
     system_functions: list[QuickLaunchFunctionResponse] = Field(default_factory=list)
     favorite_agents: list[QuickLaunchFavoriteAgent] = Field(default_factory=list)
+
+
+class QuickLaunchPreparePresetRequest(BaseModel):
+    function_id: str = Field(..., min_length=1)
+    preset_id: str = Field(..., min_length=1)
+
+    @field_validator("function_id", "preset_id", mode="before")
+    @classmethod
+    def trim_required_text(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+
+class QuickLaunchPreparePresetResponse(BaseModel):
+    function_id: str
+    preset_id: str
+    attachments: list[AttachmentDetailResponse] = Field(default_factory=list)
 
 
 class QuickLaunchFunctionsUpdate(BaseModel):

@@ -13,6 +13,13 @@ function resolveSkillByScope(
   scope?: ResourceScope,
   groupName?: string
 ): UnifiedSkill | undefined {
+  if (scope === 'public') {
+    return (
+      skillPool.find(skill => skill.name === skillName && skill.is_public) ||
+      skillPool.find(skill => skill.name === skillName)
+    )
+  }
+
   if (scope === 'group' && groupName) {
     return (
       skillPool.find(

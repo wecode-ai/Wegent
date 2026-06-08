@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import re
 import subprocess
 from urllib.parse import quote, urlparse
 
@@ -49,6 +50,21 @@ def get_repo_name_from_url(url):
 
     repo_name = parts[-1] if parts[-1] else parts[-2]
     return repo_name
+
+
+def get_safe_git_workspace_key(
+    git_url: str,
+    domain: str | None = None,
+    repo: str | None = None,
+) -> str:
+    """Return a stable directory key for a Git-backed project workspace."""
+    del domain
+    repo_name = (
+        repo or get_project_path_from_url(git_url) or get_repo_name_from_url(git_url)
+    ).strip()
+    repo_name = repo_name.rstrip("/").removesuffix(".git").split("/")[-1]
+    key = re.sub(r"[^A-Za-z0-9._-]+", "_", repo_name)
+    return key.strip("._-") or "git_repo"
 
 
 def clone_repo(project_url, branch, project_path, user_name=None, token=None):
