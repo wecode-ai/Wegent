@@ -796,6 +796,15 @@ class ToolResultTruncationStrategy(CompressionStrategy):
     This is the LAST strategy to apply as tool results are important for
     maintaining conversation context. Only truncate when other strategies
     have failed to bring tokens under the limit.
+
+    Already-compacted messages (``additional_kwargs.compacted is True``,
+    flagged by :class:`~chat_shell.guard.tool_output.ToolOutputGuardAdapter`)
+    are skipped: they hold a fixed-format compact string with a header
+    (``[tool_output name=... total_tokens=N truncated=...]``) and an optional
+    footer; chopping them at character boundaries would corrupt the format —
+    leaving a misleading ``total_tokens`` count and mixing two truncation
+    notices. Re-compaction of those messages is owned by the guard's stage 3
+    emergency pass, which re-runs ``to_model_visible`` under stricter policy.
     """
 
     # Lower weight - use as last resort
@@ -840,6 +849,9 @@ class ToolResultTruncationStrategy(CompressionStrategy):
             role = msg.get("role", "")
 
             if not isinstance(content, str):
+                continue
+
+            if self._is_already_compacted(msg):
                 continue
 
             is_tool_result = role == "tool" or self._has_tool_result_content(content)
@@ -1015,6 +1027,9 @@ class ToolResultTruncationStrategy(CompressionStrategy):
             if not isinstance(content, str):
                 continue
 
+            if self._is_already_compacted(msg):
+                continue
+
             is_tool_result = role == "tool" or self._has_tool_result_content(content)
 
             if is_tool_result:
@@ -1058,6 +1073,13 @@ class ToolResultTruncationStrategy(CompressionStrategy):
                 compressed.append(msg)
                 continue
 
+            # Already-compacted messages have a fixed format owned by the
+            # guard's tool-output adapter; the guard's stage-3 emergency pass
+            # will re-compact them under stricter policy if needed.
+            if self._is_already_compacted(msg):
+                compressed.append(msg)
+                continue
+
             # Check if this is a tool result message
             is_tool_result = role == "tool" or self._has_tool_result_content(content)
 
@@ -1091,6 +1113,20 @@ class ToolResultTruncationStrategy(CompressionStrategy):
     def _has_tool_result_content(self, content: str) -> bool:
         """Check if content contains tool result markers."""
         return any(marker in content for marker in self.TOOL_RESULT_MARKERS)
+
+    @staticmethod
+    def _is_already_compacted(msg: dict[str, Any]) -> bool:
+        """True when the guard's tool-output adapter already compacted *msg*.
+
+        The flag lives on ``additional_kwargs.compacted`` (set by
+        :class:`~chat_shell.guard.tool_output.ToolOutputGuardAdapter`).
+        Importing the constant from the guard module would create a layering
+        dependency from ``compression`` → ``guard`` that we'd rather avoid,
+        so the literal flag name is duplicated here. If it ever changes,
+        update both places.
+        """
+        kwargs = msg.get("additional_kwargs") or {}
+        return isinstance(kwargs, dict) and kwargs.get("compacted") is True
 
     def _truncate_content(self, content: str, target_length: int) -> tuple[str, int]:
         """Truncate content keeping beginning and end, removing middle.

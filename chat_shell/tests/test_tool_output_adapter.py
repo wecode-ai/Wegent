@@ -270,9 +270,110 @@ class TestRecognition:
         assert "tool_name" not in adapter.extract_raw({"content": "x"})
         assert "exit_code" not in adapter.extract_raw({"content": "x"})
 
+    def test_extract_raw_unwraps_compact_string(self):
+        """When content is already a compact string this adapter produced,
+        ``extract_raw`` peels off the header/footer so a subsequent re-render
+        operates on the original body — preventing nested headers and
+        fabricated ``total_tokens`` values when stage 3 runs after stage 1."""
+        counter = TokenCounter(model_name="gpt-4")
+        adapter = ToolOutputGuardAdapter(
+            token_counter=counter,
+            default_policy=TruncationPolicy(kind="tokens", limit=50),
+        )
+
+        original = {
+            "text": "log line\n" * 500,
+            "tool_name": "shell",
+            "exit_code": 0,
+            "wall_time": 1.5,
+        }
+        compact = adapter.to_model_visible(original, adapter.default_policy)
+
+        msg = {
+            "content": compact,
+            "name": "shell",
+            "additional_kwargs": {
+                "exit_code": 0,
+                "wall_time": 1.5,
+                "compacted": True,
+            },
+            "role": "tool",
+        }
+        raw = adapter.extract_raw(msg)
+
+        # The recovered body must NOT start with the header — the compact
+        # wrapper was stripped.
+        assert not raw["text"].startswith("[tool_output ")
+        # Metadata is recovered and consistent.
+        assert raw["tool_name"] == "shell"
+        assert raw["exit_code"] == 0
+        assert raw["wall_time"] == 1.5
+
+    def test_re_render_compact_under_emergency_does_not_nest(self):
+        """End-to-end: stage 1 compaction followed by stage 3 emergency
+        re-render produces a flat compact string (one header, one footer)."""
+        counter = TokenCounter(model_name="gpt-4")
+        adapter = ToolOutputGuardAdapter(
+            token_counter=counter,
+            default_policy=TruncationPolicy(kind="tokens", limit=50),
+            emergency_ratio=0.3,
+        )
+
+        original = {
+            "text": "log line\n" * 500,
+            "tool_name": "shell",
+            "exit_code": 0,
+            "wall_time": 1.5,
+        }
+        compact_v1 = adapter.to_model_visible(original, adapter.default_policy)
+
+        msg = {
+            "content": compact_v1,
+            "name": "shell",
+            "additional_kwargs": {
+                "exit_code": 0,
+                "wall_time": 1.5,
+                "compacted": True,
+            },
+            "role": "tool",
+        }
+        raw_again = adapter.extract_raw(msg)
+        compact_v2 = adapter.to_model_visible(
+            raw_again, adapter.emergency_policy(adapter.default_policy)
+        )
+
+        # Exactly one header and one footer in the final string.
+        assert compact_v2.count("[tool_output ") == 1
+        assert compact_v2.count("exit_code=") == 1
+        # The emergency string must be smaller than (or equal to) the stage-1
+        # output — emergency policy enforces a tighter token budget.
+        assert len(compact_v2) <= len(compact_v1)
+
     def test_emergency_policy_is_default_helper(self):
         """Emergency policy is 30 % of normal, floor 1."""
         adapter = _make_adapter()
         emergency = adapter.emergency_policy(TruncationPolicy(kind="tokens", limit=100))
         assert emergency.kind == "tokens"
         assert emergency.limit == 30
+
+    def test_emergency_policy_honors_custom_ratio(self):
+        """Custom ``emergency_ratio`` overrides the default 0.3 floor."""
+        counter = TokenCounter(model_name="gpt-4")
+        adapter = ToolOutputGuardAdapter(
+            token_counter=counter,
+            default_policy=TruncationPolicy(kind="tokens", limit=100),
+            emergency_ratio=0.1,
+        )
+        emergency = adapter.emergency_policy(TruncationPolicy(kind="tokens", limit=100))
+        assert emergency.limit == 10
+
+    def test_emergency_policy_floors_at_one(self):
+        """Tiny ratio still produces a renderable policy (limit >= 1)."""
+        counter = TokenCounter(model_name="gpt-4")
+        adapter = ToolOutputGuardAdapter(
+            token_counter=counter,
+            default_policy=TruncationPolicy(kind="tokens", limit=10),
+            emergency_ratio=0.001,
+        )
+        emergency = adapter.emergency_policy(TruncationPolicy(kind="tokens", limit=10))
+        assert emergency.limit == 1

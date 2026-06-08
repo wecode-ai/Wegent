@@ -15,8 +15,8 @@ from typing import Any, TypedDict
 
 from chat_shell.compression.token_counter import TokenCounter
 from chat_shell.guard.types import (
+    DEFAULT_EMERGENCY_RATIO,
     TruncationPolicy,
-    default_emergency_policy,
 )
 
 COMPACTED_FLAG = "compacted"
@@ -118,6 +118,36 @@ def _build_footer(exit_code: int | None, wall_time: float | None) -> str | None:
     return "[" + " ".join(parts) + "]"
 
 
+def _split_compact(content: str) -> tuple[str, str, dict[str, int | float]]:
+    """Parse a compact string produced by this adapter into its constituents.
+
+    *content* must start with :data:`HEADER_PREFIX`. Returns
+    ``(body, tool_name, footer_info)`` where:
+
+    * ``body`` — the wrapped body text, without the surrounding header/footer
+    * ``tool_name`` — the ``name=`` value from the header (``""`` if absent)
+    * ``footer_info`` — ``exit_code`` / ``wall_time`` parsed from the footer,
+      or empty when the compact string had no footer.
+
+    Used to recover the original body so a subsequent re-render under a
+    stricter (emergency) policy doesn't end up wrapping a previous compact
+    string and producing nested headers.
+    """
+    lines = content.split("\n")
+    header_info = _parse_header(lines[0])
+    tool_name = header_info.get("name", "")
+
+    body_lines = lines[1:]
+    footer_info: dict[str, int | float] = {}
+    if body_lines and _is_footer_line(body_lines[-1]):
+        footer_info = _parse_footer(body_lines[-1])
+        body = "\n".join(body_lines[:-1])
+    else:
+        body = "\n".join(body_lines)
+
+    return body, tool_name, footer_info
+
+
 def _truncate_body(
     body: str, policy: TruncationPolicy, counter: TokenCounter
 ) -> tuple[str, int, bool]:
@@ -168,10 +198,14 @@ class ToolOutputGuardAdapter:
     name = "tool_output"
 
     def __init__(
-        self, token_counter: TokenCounter, default_policy: TruncationPolicy
+        self,
+        token_counter: TokenCounter,
+        default_policy: TruncationPolicy,
+        emergency_ratio: float = DEFAULT_EMERGENCY_RATIO,
     ) -> None:
         self._counter = token_counter
         self.default_policy = default_policy
+        self._emergency_ratio = emergency_ratio
 
     # -- GuardSource Protocol surface ----------------------------------------
 
@@ -189,20 +223,9 @@ class ToolOutputGuardAdapter:
             wall_time = raw.get("wall_time")
         elif isinstance(raw, str):
             if raw.startswith(HEADER_PREFIX):
-                lines = raw.split("\n")
-                header_info = _parse_header(lines[0])
-                tool_name = header_info.get("name", "")
-
-                body_lines = lines[1:]
-                exit_code = None
-                wall_time = None
-                if body_lines and _is_footer_line(body_lines[-1]):
-                    footer_info = _parse_footer(body_lines[-1])
-                    exit_code = footer_info.get("exit_code")
-                    wall_time = footer_info.get("wall_time")
-                    body = "\n".join(body_lines[:-1])
-                else:
-                    body = "\n".join(body_lines)
+                body, tool_name, footer_info = _split_compact(raw)
+                exit_code = footer_info.get("exit_code")
+                wall_time = footer_info.get("wall_time")
             else:
                 body = raw
                 tool_name = ""
@@ -230,8 +253,16 @@ class ToolOutputGuardAdapter:
         return "\n".join(parts)
 
     def emergency_policy(self, normal: TruncationPolicy) -> TruncationPolicy:
-        """Return a reduced policy for emergency (memory-pressure) conditions."""
-        return default_emergency_policy(normal)
+        """Return a reduced policy for emergency (memory-pressure) conditions.
+
+        Uses the per-instance ``emergency_ratio`` (default
+        :data:`DEFAULT_EMERGENCY_RATIO`), with a floor of 1 unit so the policy
+        is always renderable.
+        """
+        return TruncationPolicy(
+            kind=normal.kind,
+            limit=max(1, int(normal.limit * self._emergency_ratio)),
+        )
 
     # -- Recognition helpers (used by UnifiedContextGuard / T3) --------------
 
@@ -244,12 +275,33 @@ class ToolOutputGuardAdapter:
         return message.get("additional_kwargs", {}).get(COMPACTED_FLAG) is True
 
     def extract_raw(self, message: dict[str, Any]) -> RawToolOutput:
-        """Extract a ``RawToolOutput`` dict from a tool message."""
+        """Extract a ``RawToolOutput`` dict from a tool message.
+
+        If the message content is already a compact string produced by this
+        adapter, parse the original body back out so a subsequent re-render
+        under a stricter (emergency) policy operates on the original text
+        rather than wrapping the previous compact form (which would yield
+        nested headers and a fabricated ``total_tokens`` count).
+        """
         result: dict[str, Any] = {}
-        result["text"] = str(message.get("content", ""))
+        content = str(message.get("content", ""))
+
+        if content.startswith(HEADER_PREFIX):
+            body, header_tool_name, footer_info = _split_compact(content)
+            result["text"] = body
+            if header_tool_name:
+                result["tool_name"] = header_tool_name
+            if "exit_code" in footer_info:
+                result["exit_code"] = footer_info["exit_code"]
+            if "wall_time" in footer_info:
+                result["wall_time"] = footer_info["wall_time"]
+        else:
+            result["text"] = content
 
         tool_name = message.get("name")
         if tool_name and isinstance(tool_name, str) and tool_name.strip():
+            # message.name is authoritative when set — overrides any name
+            # recovered from the compact header.
             result["tool_name"] = tool_name
 
         additional = message.get("additional_kwargs", {})

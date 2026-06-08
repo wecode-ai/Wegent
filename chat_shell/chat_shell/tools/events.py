@@ -14,7 +14,6 @@ import logging
 import time
 from typing import Any, Callable
 
-from chat_shell.compression.context_metrics import ContextMetricsTracker
 from chat_shell.services.streaming.core import should_display_tool_details
 from chat_shell.tools.deferred_input import (
     DeferredUserInputExit,
@@ -64,7 +63,6 @@ def create_tool_event_handler(
     state: Any,
     emitter: ResponsesAPIEmitter,
     agent_builder: Any,
-    context_metrics_tracker: ContextMetricsTracker | None = None,
 ) -> Callable[[str, dict], None]:
     """Create a tool event handler function.
 
@@ -90,7 +88,6 @@ def create_tool_event_handler(
                 tool_name,
                 run_id,
                 event_data,
-                context_metrics_tracker=context_metrics_tracker,
             )
         elif kind == "tool_end":
             _handle_tool_end(
@@ -100,7 +97,6 @@ def create_tool_event_handler(
                 tool_name,
                 run_id,
                 event_data,
-                context_metrics_tracker=context_metrics_tracker,
             )
         elif kind == "tool_argument_start":
             _handle_tool_argument_start(emitter, event_data)
@@ -141,7 +137,6 @@ def _handle_tool_start(
     tool_name: str,
     run_id: str,
     event_data: dict,
-    context_metrics_tracker: ContextMetricsTracker | None = None,
 ) -> None:
     """Handle tool start event."""
     logger.info(
@@ -165,13 +160,6 @@ def _handle_tool_start(
     if not hasattr(state, "_tool_use_id_map"):
         state._tool_use_id_map = {}
     state._tool_use_id_map[run_id] = tool_use_id
-
-    if context_metrics_tracker is not None:
-        context_metrics_tracker.record_tool_start(
-            tool_use_id=tool_use_id,
-            tool_name=tool_name,
-            tool_input=tool_input,
-        )
 
     # Add OpenTelemetry span event for tool start
     log_large_attribute(
@@ -272,7 +260,6 @@ def _handle_tool_end(
     tool_name: str,
     run_id: str,
     event_data: dict,
-    context_metrics_tracker: ContextMetricsTracker | None = None,
 ) -> None:
     """Handle tool end event."""
     # Extract and serialize tool output
@@ -305,15 +292,6 @@ def _handle_tool_end(
             )
 
     output_str = str(serializable_output)
-
-    if context_metrics_tracker is not None:
-        _run_async(
-            context_metrics_tracker.record_tool_end(
-                tool_use_id=tool_use_id,
-                tool_name=tool_name,
-                tool_output=serializable_output,
-            )
-        )
 
     logger.info(f"[TOOL_END] {tool_name} (run_id={run_id}, tool_use_id={tool_use_id})")
 

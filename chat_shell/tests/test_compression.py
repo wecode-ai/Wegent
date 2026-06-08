@@ -16,6 +16,7 @@ from chat_shell.compression.strategies import (
     AttachmentTruncationStrategy,
     CompressionResult,
     HistoryTruncationStrategy,
+    ToolResultTruncationStrategy,
 )
 from chat_shell.compression.token_counter import TokenCounter
 
@@ -520,6 +521,81 @@ class TestAttachmentTruncationStrategy:
         # Both attachment messages should be shorter than original
         assert len(compressed[0]["content"]) < len(messages[0]["content"])
         assert len(compressed[2]["content"]) < len(messages[2]["content"])
+
+
+class TestToolResultTruncationStrategy:
+    """Tests for the tool-result truncation strategy.
+
+    Most coverage of this strategy lives in ``TestMessageCompressor`` (which
+    runs strategies through the orchestrator). This class focuses on the
+    interaction with the guard's compaction flag — once the guard's
+    ``ToolOutputGuardAdapter`` has produced a fixed-format compact string,
+    this strategy must NOT touch it (chopping at character boundaries would
+    leave a misleading ``total_tokens`` count and mix two truncation
+    notices). Re-compaction of those messages is owned by the guard's
+    stage-3 emergency pass.
+    """
+
+    def test_skips_messages_flagged_compacted(self):
+        from chat_shell.guard.tool_output import ToolOutputGuardAdapter
+        from chat_shell.guard.types import TruncationPolicy
+
+        counter = TokenCounter(model_name="gpt-4")
+        adapter = ToolOutputGuardAdapter(
+            token_counter=counter,
+            default_policy=TruncationPolicy(kind="tokens", limit=200),
+        )
+        # Build a real compact string the way stage 1 would.
+        compact = adapter.to_model_visible(
+            {"text": "log line\n" * 800, "tool_name": "shell"},
+            adapter.default_policy,
+        )
+        msg = {
+            "role": "tool",
+            "content": compact,
+            "additional_kwargs": {"compacted": True},
+        }
+
+        strategy = ToolResultTruncationStrategy()
+        config = CompressionConfig()
+        compressed, details = strategy.compress([msg], counter, 400, config)
+
+        # Strategy left the compact string untouched.
+        assert compressed[0]["content"] == compact
+        assert details["tool_results_truncated"] == 0
+        assert details["chars_removed"] == 0
+
+    def test_estimate_potential_skips_compacted_messages(self):
+        counter = TokenCounter(model_name="gpt-4")
+        compacted = {
+            "role": "tool",
+            "content": "[tool_output ...] big body " + ("x" * 5000),
+            "additional_kwargs": {"compacted": True},
+        }
+        plain = {"role": "tool", "content": "Y" * 5000}
+
+        strategy = ToolResultTruncationStrategy()
+        config = CompressionConfig()
+
+        only_compacted = strategy.estimate_potential([compacted], counter, config)
+        with_plain = strategy.estimate_potential([compacted, plain], counter, config)
+
+        # Compacted-only: nothing to compress.
+        assert only_compacted.total_compressible_tokens == 0
+        # Adding a non-compacted tool message creates real potential.
+        assert with_plain.total_compressible_tokens > 0
+
+    def test_still_compresses_non_compacted_tool_messages(self):
+        counter = TokenCounter(model_name="gpt-4")
+        plain = {"role": "tool", "content": "A" * 5000}
+
+        strategy = ToolResultTruncationStrategy()
+        config = CompressionConfig()
+        compressed, details = strategy.compress([plain], counter, 400, config)
+
+        assert compressed[0]["content"] != plain["content"]
+        assert details["tool_results_truncated"] == 1
+        assert details["chars_removed"] > 0
 
 
 class TestHistoryTruncationStrategy:

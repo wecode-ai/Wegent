@@ -22,7 +22,11 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator
 
-from chat_shell.compression.context_metrics import ContextMetricsTracker
+from chat_shell.compression.context_metrics import (
+    PHASE_BUILD_MESSAGES,
+    PHASE_FINAL,
+    ContextMetricsTracker,
+)
 from chat_shell.core.config import settings
 from chat_shell.services.context import ChatContext
 from chat_shell.services.guidance import GuidanceConsumer, create_guidance_queue_client
@@ -294,6 +298,7 @@ class ChatService(ChatInterface):
                 default_policy=TruncationPolicy(
                     kind="tokens", limit=settings.TOOL_OUTPUT_TOKEN_LIMIT
                 ),
+                emergency_ratio=settings.EMERGENCY_TOOL_OUTPUT_RATIO,
             )
             context_guard = UnifiedContextGuard(
                 model_id=guard_model_id,
@@ -345,14 +350,18 @@ class ChatService(ChatInterface):
             context_metrics_tracker = ContextMetricsTracker(
                 task_id=request.task_id,
                 subtask_id=request.subtask_id,
-                model_id=model_id or "gpt-4",
-                model_type=(
-                    request.model_config.get("model") if request.model_config else None
-                ),
-                model_config=request.model_config,
+                metrics_fn=context_guard.metrics,
                 emitter=emitter,
             )
-            initial_snapshot = await context_metrics_tracker.initialize(messages)
+            # Wire the tracker into the guard so every pre_model_hook
+            # invocation (turn start + after each tool) emits a snapshot
+            # via the same tracker. This restores the per-tool toolbar
+            # updates from Phase 1 while sourcing accounting from the
+            # guard's authoritative state.
+            context_guard.set_tracker(context_metrics_tracker)
+            initial_snapshot = await context_metrics_tracker.capture(
+                messages, PHASE_BUILD_MESSAGES
+            )
             state.context_metrics = initial_snapshot.to_dict()
 
             # Persist the formatted user message (with system-reminder time block) to
@@ -388,7 +397,6 @@ class ChatService(ChatInterface):
                 state,
                 emitter,
                 agent_builder,
-                context_metrics_tracker=context_metrics_tracker,
             )
             logger.info(
                 "[CHAT_SERVICE_PERF] create_agent_builder: %.2fms",
@@ -455,10 +463,13 @@ class ChatService(ChatInterface):
             await guidance_consumer.expire_pending()
             if not core.is_cancelled():
                 if context_metrics_tracker is not None:
-                    final_snapshot = (
-                        await context_metrics_tracker.record_final_assistant_response(
-                            state.full_response
-                        )
+                    # The final snapshot covers everything the model saw plus
+                    # whatever it produced this turn (assistant response, tool
+                    # calls, tool results). agent_builder._last_messages_chain
+                    # holds those new messages in OpenAI dict form.
+                    final_messages = list(messages) + (messages_chain or [])
+                    final_snapshot = await context_metrics_tracker.capture(
+                        final_messages, PHASE_FINAL
                     )
                     state.context_metrics = final_snapshot.to_dict()
                 add_span_event("finalizing", {"total_tokens": token_count})

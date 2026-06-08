@@ -68,6 +68,13 @@ class GuardSource(Protocol):
 def default_emergency_policy(normal: TruncationPolicy) -> TruncationPolicy:
     """Return an emergency policy at 30 % of *normal.limit*, never below 1.
 
+    Reference implementation. Concrete :class:`GuardSource` adapters may
+    override :meth:`GuardSource.emergency_policy` to apply a source-specific
+    shrinking strategy (see :class:`ToolOutputGuardAdapter`, which exposes a
+    configurable ``emergency_ratio`` instead of hard-coding 30 %). This helper
+    is kept as a documented default so future sources have a sensible starting
+    point and a single name to point at when no custom shrinking is required.
+
     >>> p = TruncationPolicy(kind="tokens", limit=100)
     >>> default_emergency_policy(p)
     TruncationPolicy(kind='tokens', limit=30)

@@ -6,8 +6,8 @@
 
 from __future__ import annotations
 
-import json
 import logging
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Any, Optional
 
@@ -52,10 +52,20 @@ def calculate_context_metrics(
     model_id: str,
     model_type: str | None = None,
     model_config: Optional[dict[str, Any]] = None,
+    token_counter: TokenCounter | None = None,
+    context_config: ModelContextConfig | None = None,
 ) -> ContextMetricsSnapshot:
-    """Calculate context metrics for the provided messages."""
-    context_config = get_model_context_config(model_id, model_config=model_config)
-    token_counter = TokenCounter(model_name=model_id, model_type=model_type)
+    """Calculate context metrics for the provided messages.
+
+    *token_counter* and *context_config* may be supplied by callers that
+    already hold cached instances (e.g. :class:`UnifiedContextGuard`), to
+    avoid rebuilding them on every snapshot. When omitted, fresh ones are
+    constructed from *model_id* / *model_config*.
+    """
+    if context_config is None:
+        context_config = get_model_context_config(model_id, model_config=model_config)
+    if token_counter is None:
+        token_counter = TokenCounter(model_name=model_id, model_type=model_type)
     used_input_tokens = token_counter.count_messages(messages)
     available_input_tokens = max(0, context_config.available_tokens)
     remaining_input_tokens = max(0, available_input_tokens - used_input_tokens)
@@ -108,97 +118,38 @@ def should_emit_status_update(
 
 
 class ContextMetricsTracker:
-    """Track model-visible context growth during a single Chat Shell turn."""
+    """Emit-only wrapper that snapshots context usage at well-defined boundaries.
+
+    The tracker does not maintain its own copy of the message list. Callers
+    pass the messages they want measured at each :meth:`capture` call, so the
+    snapshot always reflects the actual model-visible state at that moment.
+    Snapshot calculation is delegated to *metrics_fn* (typically
+    :meth:`UnifiedContextGuard.metrics`) so accounting flows from a single
+    source of truth.
+    """
 
     def __init__(
         self,
         *,
         task_id: int,
         subtask_id: int,
-        model_id: str,
-        model_type: str | None,
-        model_config: Optional[dict[str, Any]],
+        metrics_fn: Callable[[list[dict[str, Any]]], ContextMetricsSnapshot],
         emitter: ResponsesAPIEmitter,
     ) -> None:
         self.task_id = task_id
         self.subtask_id = subtask_id
-        self.model_id = model_id
-        self.model_type = model_type
-        self.model_config = model_config
+        self._metrics_fn = metrics_fn
         self.emitter = emitter
-        self.messages: list[dict[str, Any]] = []
         self.latest_snapshot: ContextMetricsSnapshot | None = None
         self.last_emitted_snapshot: ContextMetricsSnapshot | None = None
-        self._final_assistant_recorded = False
 
-    async def initialize(
-        self, messages: list[dict[str, Any]]
-    ) -> ContextMetricsSnapshot:
-        """Seed the tracker with the post-build message list."""
-        self.messages = [self._clone_message(message) for message in messages]
-        return await self.capture(PHASE_BUILD_MESSAGES)
-
-    def record_tool_start(
+    async def capture(
         self,
-        *,
-        tool_use_id: str,
-        tool_name: str,
-        tool_input: Any,
-    ) -> None:
-        """Append a synthetic assistant tool-call message for observability."""
-        arguments = self._stringify_json(tool_input)
-        self.messages.append(
-            {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": tool_use_id,
-                        "type": "function",
-                        "function": {
-                            "name": tool_name,
-                            "arguments": arguments,
-                        },
-                    }
-                ],
-            }
-        )
-
-    async def record_tool_end(
-        self,
-        *,
-        tool_use_id: str,
-        tool_name: str,
-        tool_output: Any,
+        messages: list[dict[str, Any]],
+        phase: str,
     ) -> ContextMetricsSnapshot:
-        """Append a synthetic tool-result message and capture a snapshot."""
-        self.messages.append(
-            {
-                "role": "tool",
-                "tool_call_id": tool_use_id,
-                "name": tool_name,
-                "content": self._stringify_tool_output(tool_output),
-            }
-        )
-        return await self.capture(PHASE_AFTER_TOOL_END)
-
-    async def record_final_assistant_response(
-        self, content: str
-    ) -> ContextMetricsSnapshot:
-        """Record the final assistant response before the turn completes."""
-        if content and not self._final_assistant_recorded:
-            self.messages.append({"role": "assistant", "content": content})
-            self._final_assistant_recorded = True
-        return await self.capture(PHASE_FINAL)
-
-    async def capture(self, phase: str) -> ContextMetricsSnapshot:
         """Compute, log, and optionally emit a context metrics snapshot."""
-        snapshot = calculate_context_metrics(
-            self.messages,
-            model_id=self.model_id,
-            model_type=self.model_type,
-            model_config=self.model_config,
-        )
+        snapshot = self._metrics_fn(messages)
         self.latest_snapshot = snapshot
 
         logger.info(
@@ -226,24 +177,3 @@ class ContextMetricsTracker:
             self.last_emitted_snapshot = snapshot
 
         return snapshot
-
-    @staticmethod
-    def _clone_message(message: dict[str, Any]) -> dict[str, Any]:
-        return dict(message)
-
-    @staticmethod
-    def _stringify_tool_output(tool_output: Any) -> str:
-        if isinstance(tool_output, str):
-            return tool_output
-        return ContextMetricsTracker._stringify_json(tool_output)
-
-    @staticmethod
-    def _stringify_json(value: Any) -> str:
-        if value is None:
-            return ""
-        if isinstance(value, str):
-            return value
-        try:
-            return json.dumps(value, ensure_ascii=False, default=str)
-        except TypeError:
-            return str(value)
