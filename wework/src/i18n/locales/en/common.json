@@ -46,6 +46,8 @@
     "project_create_description": "Create a project workspace for multiple conversations under the same project",
     "project_device": "Device",
     "project_no_available_devices": "No available devices",
+    "project_no_available_devices_hint": "Creating a project requires an available device. Create a cloud device connection first, then select the project directory after the device is ready.",
+    "project_create_cloud_device_connection": "Create cloud device connection",
     "project_cloud_device": "(Cloud device)",
     "project_device_online": "(Online)",
     "project_device_busy": "(Busy)",

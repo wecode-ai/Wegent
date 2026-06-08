@@ -43,6 +43,31 @@ const branches: GitBranch[] = [
 ]
 
 describe('ProjectCreateDialog', () => {
+  test('offers a shortcut to create a cloud device when no project devices are available', async () => {
+    const onOpenCloudDeviceSettings = vi.fn()
+
+    render(
+      <ProjectCreateDialog
+        open
+        mode="scratch"
+        devices={[]}
+        onClose={vi.fn()}
+        onCreateProject={vi.fn()}
+        onOpenCloudDeviceSettings={onOpenCloudDeviceSettings}
+        onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
+        onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
+        onListDeviceDirectories={vi.fn().mockResolvedValue([])}
+        onCreateDeviceDirectory={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('暂无可用设备')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('open-cloud-device-settings-button'))
+
+    expect(onOpenCloudDeviceSettings).toHaveBeenCalledTimes(1)
+  })
+
   test('hides OpenClaw devices from the project device selector', () => {
     render(
       <ProjectCreateDialog
