@@ -237,6 +237,41 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     "mkdir_p": LocalDeviceCommandDefinition(command="mkdir -p"),
     "path_exists": LocalDeviceCommandDefinition(command="test -e"),
     "git_clone": LocalDeviceCommandDefinition(command="git clone"),
+    "git_worktree_list": LocalDeviceCommandDefinition(
+        command="sh -c 'git -C \"$1\" worktree list --porcelain' --"
+    ),
+    "find_worktree_dirs": LocalDeviceCommandDefinition(
+        command=(
+            "sh -c "
+            '\'root=$1; [ -d "$root" ] || exit 0; '
+            'find "$root" -mindepth 2 -maxdepth 2 -type d -print\' --'
+        ),
+        post_processor="file_list",
+    ),
+    "git_is_worktree": LocalDeviceCommandDefinition(
+        command="sh -c 'git -C \"$1\" rev-parse --is-inside-work-tree' --"
+    ),
+    "git_worktree_add": LocalDeviceCommandDefinition(
+        command='sh -c \'git -C "$1" worktree add --detach "$2"\' --'
+    ),
+    "git_worktree_remove": LocalDeviceCommandDefinition(
+        command='sh -c \'git -C "$1" worktree remove --force "$2"\' --'
+    ),
+    "remove_worktree_dir": LocalDeviceCommandDefinition(
+        command=(
+            "sh -c "
+            "'target=$1; "
+            'parent=$(dirname "$target"); '
+            'id=$(basename "$parent"); '
+            'root_name=$(basename "$(dirname "$parent")"); '
+            'if [ "$root_name" != "worktrees" ]; then '
+            'echo "refusing unsafe worktree path" >&2; exit 64; fi; '
+            'case "$id" in ""|*[!0-9]*) '
+            'echo "refusing unsafe worktree path" >&2; exit 64 ;; '
+            "esac; "
+            'rm -rf "$target"; rmdir "$parent" 2>/dev/null || true\' --'
+        )
+    ),
     "git_branch": LocalDeviceCommandDefinition(command="git branch --show-current"),
     "git_branch_list": LocalDeviceCommandDefinition(
         command="git branch --format=%(refname:short)"

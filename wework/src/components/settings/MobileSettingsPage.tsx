@@ -1,7 +1,8 @@
-import { ArrowLeft, ChevronRight, Palette, Sparkles } from 'lucide-react'
+import { ArrowLeft, ChevronRight, GitBranch, Palette, Sparkles } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
+import { WorktreesSettingsPage } from './WorktreesSettingsPage'
 
 interface MobileSettingsPageProps {
   onBack: () => void
@@ -13,7 +14,7 @@ export function MobileSettingsPage({
   onOpenPlugins,
 }: MobileSettingsPageProps) {
   const { t } = useTranslation('common')
-  const [activePage, setActivePage] = useState<'menu' | 'appearance'>('menu')
+  const [activePage, setActivePage] = useState<'menu' | 'appearance' | 'worktrees'>('menu')
 
   if (activePage === 'appearance') {
     return (
@@ -38,6 +39,34 @@ export function MobileSettingsPage({
         </header>
         <div className="mt-6 min-h-0 flex-1 overflow-auto">
           <AppearanceSettingsPage />
+        </div>
+      </main>
+    )
+  }
+
+  if (activePage === 'worktrees') {
+    return (
+      <main
+        data-testid="mobile-worktrees-settings-page"
+        className="flex h-dvh flex-col overflow-hidden bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
+      >
+        <header className="flex shrink-0 items-center justify-between">
+          <button
+            type="button"
+            data-testid="mobile-worktrees-back-button"
+            onClick={() => setActivePage('menu')}
+            className="flex h-11 min-w-[44px] items-center justify-center rounded-full bg-surface text-text-primary hover:bg-muted"
+            aria-label={t('workbench.settings_back_to_app', '返回')}
+          >
+            <ArrowLeft className="h-6 w-6" />
+          </button>
+          <h1 className="text-lg font-semibold">
+            {t('workbench.worktrees_title', '工作树')}
+          </h1>
+          <div className="h-11 min-w-[44px]" />
+        </header>
+        <div className="mt-6 min-h-0 flex-1 overflow-auto">
+          <WorktreesSettingsPage />
         </div>
       </main>
     )
@@ -86,6 +115,18 @@ export function MobileSettingsPage({
           <Sparkles className="h-5 w-5 shrink-0 text-text-secondary" />
           <span className="min-w-0 flex-1 truncate">
             {t('workbench.settings_nav_plugins', '插件')}
+          </span>
+          <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
+        </button>
+        <button
+          type="button"
+          data-testid="mobile-settings-worktrees-button"
+          onClick={() => setActivePage('worktrees')}
+          className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
+        >
+          <GitBranch className="h-5 w-5 shrink-0 text-text-secondary" />
+          <span className="min-w-0 flex-1 truncate">
+            {t('workbench.settings_nav_worktrees', '工作树')}
           </span>
           <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
         </button>

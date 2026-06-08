@@ -134,8 +134,11 @@ export function MobileWorkbenchLayout({
     devices: state.devices,
     currentProjectId: state.currentProject?.id,
     currentStandaloneDeviceId: state.standaloneDeviceId,
+    executionMode: 'current_workspace',
+    executionModeLocked: Boolean(state.currentTask),
     onSelectProject,
     onSelectStandaloneDevice: () => {},
+    onExecutionModeChange: () => {},
   }
 
   useEffect(() => {

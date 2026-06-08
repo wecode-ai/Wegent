@@ -2448,8 +2448,79 @@ Response template:
         """Merge project or standalone chat workspace metadata for execution."""
 
         self._merge_project_workspace(task, workspace_data)
+        if self._merge_task_spec_execution_workspace(task, workspace_data):
+            return
         if not workspace_data.get("project"):
             self._merge_standalone_chat_workspace(task, workspace_data)
+
+    def _merge_task_spec_execution_workspace(
+        self, task: TaskResource, workspace_data: dict
+    ) -> bool:
+        """Merge Task spec.execution.workspace as the highest-priority path."""
+
+        task_json = task.json if isinstance(task.json, dict) else {}
+        spec = task_json.get("spec") if isinstance(task_json.get("spec"), dict) else {}
+        execution = (
+            spec.get("execution") if isinstance(spec.get("execution"), dict) else {}
+        )
+        workspace = (
+            execution.get("workspace")
+            if isinstance(execution.get("workspace"), dict)
+            else {}
+        )
+        workspace_path = workspace.get("path")
+        workspace_source = workspace.get("source")
+        if not isinstance(workspace_source, str) or not workspace_source.strip():
+            workspace_source = "local_path"
+
+        workspace_source = workspace_source.strip()
+        existing_project = workspace_data.get("project") or {}
+        project_id = existing_project.get("project_id") or task.project_id or None
+        device_id = existing_project.get("device_id") or spec.get("device_id")
+
+        if (
+            not isinstance(workspace_path, str) or not workspace_path.strip()
+        ) and workspace_source == "git_worktree":
+            workspace_path = self._derive_git_worktree_workspace_path(
+                task=task,
+                project_workspace=existing_project,
+            )
+
+        if not isinstance(workspace_path, str) or not workspace_path.strip():
+            return False
+
+        workspace_path = workspace_path.strip()
+        workspace_data["project"] = {
+            "project_id": project_id,
+            "workspace_source": workspace_source,
+            "project_workspace_path": workspace_path,
+            "execution_target_type": existing_project.get("execution_target_type")
+            or "local",
+            "device_id": device_id,
+            "checkout_path": None,
+            "local_path": workspace_path,
+        }
+        return True
+
+    def _derive_git_worktree_workspace_path(
+        self,
+        *,
+        task: TaskResource,
+        project_workspace: dict,
+    ) -> Optional[str]:
+        """Derive the deterministic relative path for a task Git worktree."""
+
+        source_path = (
+            project_workspace.get("checkout_path")
+            or project_workspace.get("local_path")
+            or project_workspace.get("project_workspace_path")
+        )
+        if not isinstance(source_path, str) or not source_path.strip():
+            return None
+
+        from app.services import project_service
+
+        return project_service._build_git_worktree_path(source_path, str(task.id))
 
     def _merge_project_workspace(
         self, task: TaskResource, workspace_data: dict
