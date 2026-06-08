@@ -1385,6 +1385,97 @@ class TestContextServiceFormatting:
         assert "URL: /api/attachments/100/download" in prefix
         assert "truncated" in prefix.lower()
 
+    def test_build_document_text_prefix_uses_short_preview_for_large_attachment(
+        self, monkeypatch
+    ):
+        """Large attachments should not inject the full extracted text."""
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context import context_service
+        from app.services.context.context_service import settings
+
+        monkeypatch.setattr(settings, "LARGE_ATTACHMENT_PREVIEW_THRESHOLD", 100)
+        monkeypatch.setattr(settings, "LARGE_ATTACHMENT_PREVIEW_LENGTH", 20)
+
+        preview_text = "A" * 20
+        omitted_text = "B" * 200
+        context = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="large.md",
+            status=ContextStatus.READY.value,
+            extracted_text=preview_text + omitted_text,
+            text_length=220,
+            type_data={
+                "original_filename": "large.md",
+                "mime_type": "text/markdown",
+                "file_size": 220,
+            },
+        )
+        context.id = 100
+
+        prefix = context_service.build_document_text_prefix(
+            context,
+            task_id=12,
+            subtask_id=34,
+        )
+
+        assert prefix is not None
+        assert (
+            "File Path(already in sandbox): "
+            "/home/user/12:executor:attachments/34/large.md"
+        ) in prefix
+        assert "Content preview" in prefix
+        assert "read the full file from the sandbox path" in prefix
+        assert preview_text in prefix
+        assert omitted_text not in prefix
+
+    def test_build_document_text_prefix_keeps_full_text_below_large_threshold(
+        self, monkeypatch
+    ):
+        """Small attachments should keep the existing full-text injection behavior."""
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.context import context_service
+        from app.services.context.context_service import settings
+
+        monkeypatch.setattr(settings, "LARGE_ATTACHMENT_PREVIEW_THRESHOLD", 100)
+        monkeypatch.setattr(settings, "LARGE_ATTACHMENT_PREVIEW_LENGTH", 20)
+
+        context = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="small.md",
+            status=ContextStatus.READY.value,
+            extracted_text="Short complete content.",
+            text_length=23,
+            type_data={
+                "original_filename": "small.md",
+                "mime_type": "text/markdown",
+                "file_size": 23,
+            },
+        )
+        context.id = 101
+
+        prefix = context_service.build_document_text_prefix(
+            context,
+            task_id=12,
+            subtask_id=34,
+        )
+
+        assert prefix is not None
+        assert "Short complete content." in prefix
+        assert "Content preview" not in prefix
+        assert "read the full file from the sandbox path" not in prefix
+
 
 class TestContextServiceOverwrite:
     """Test attachment overwrite functionality"""
