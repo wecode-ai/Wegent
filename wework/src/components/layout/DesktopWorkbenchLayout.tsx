@@ -241,13 +241,22 @@ export function DesktopWorkbenchLayout({
     void onRefreshDevices?.().catch(() => undefined)
   }, [onRefreshDevices])
 
-  const projectWorkWithCreation = useMemo<ProjectWorkControls>(
-    () => ({
-      ...projectWork,
-      onCreateProjectMode: openProjectFromWorkMenu,
-    }),
-    [openProjectFromWorkMenu, projectWork],
-  )
+  const projectWorkWithCreation: ProjectWorkControls = {
+    ...projectWork,
+    onCreateProjectMode: openProjectFromWorkMenu,
+    branchName: environmentInfo.branchName,
+    branchLoading: environmentInfo.loading,
+    onRefreshBranch: refreshEnvironmentInfo,
+    onListBranches: () => onListEnvironmentBranches(environmentProject),
+    onCheckoutBranch: handleCheckoutEnvironmentBranch,
+    onCreateBranch: handleCreateEnvironmentBranch,
+  }
+
+  useEffect(() => {
+    if (state.currentProject && !state.currentTask) {
+      void refreshEnvironmentInfo()
+    }
+  }, [refreshEnvironmentInfo, state.currentProject, state.currentTask])
 
   return (
     <div className="relative flex h-screen overflow-hidden bg-background text-text-primary">

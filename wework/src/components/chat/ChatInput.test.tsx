@@ -1715,6 +1715,113 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('project-execution-mode-menu')).not.toBeInTheDocument()
   })
 
+  test('switches branches immediately from the new project chat work bar', async () => {
+    const onListBranches = vi.fn().mockResolvedValue(['feature/chat', 'main'])
+    const onCheckoutBranch = vi.fn().mockResolvedValue(undefined)
+    const onRefreshBranch = vi.fn().mockResolvedValue(undefined)
+    const projects: ProjectWithTasks[] = [
+      {
+        id: 7,
+        name: 'Wegent',
+        config: {
+          mode: 'workspace',
+          device_id: 'device-1',
+          workspace: {
+            source: 'local_path',
+            localPath: '/workspace/projects/Wegent',
+          },
+        },
+        tasks: [],
+      },
+    ]
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects,
+          currentProjectId: 7,
+          branchName: 'main',
+          onRefreshBranch,
+          onListBranches,
+          onCheckoutBranch,
+        })}
+      />,
+    )
+
+    expect(screen.getByTestId('project-branch-button')).toHaveTextContent('main')
+    await userEvent.click(screen.getByTestId('project-branch-button'))
+
+    await waitFor(() => {
+      expect(onRefreshBranch).toHaveBeenCalledTimes(1)
+      expect(onListBranches).toHaveBeenCalledTimes(1)
+    })
+
+    const options = await screen.findAllByTestId('project-branch-option')
+    await userEvent.click(options[0])
+
+    expect(onCheckoutBranch).toHaveBeenCalledWith('feature/chat')
+    await waitFor(() => {
+      expect(screen.queryByTestId('project-branch-menu')).not.toBeInTheDocument()
+    })
+  })
+
+  test('creates and checks out a branch from the new project chat work bar', async () => {
+    const onCreateBranch = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects: [{ id: 7, name: 'Wegent', tasks: [] }],
+          currentProjectId: 7,
+          branchName: 'main',
+          onListBranches: vi.fn().mockResolvedValue(['main']),
+          onCheckoutBranch: vi.fn().mockResolvedValue(undefined),
+          onCreateBranch,
+        })}
+      />,
+    )
+
+    await userEvent.click(screen.getByTestId('project-branch-button'))
+    await screen.findAllByTestId('project-branch-option')
+    await userEvent.click(screen.getByTestId('project-open-new-branch-button'))
+    await userEvent.type(screen.getByTestId('project-new-branch-input'), 'feature/new-chat')
+    await userEvent.click(screen.getByTestId('project-confirm-new-branch-button'))
+
+    expect(onCreateBranch).toHaveBeenCalledWith('feature/new-chat')
+  })
+
+  test('hides branch switching when the project conversation is locked', () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects: [{ id: 7, name: 'Wegent', tasks: [] }],
+          currentProjectId: 7,
+          executionModeLocked: true,
+          branchName: 'main',
+          onListBranches: vi.fn().mockResolvedValue(['main']),
+          onCheckoutBranch: vi.fn().mockResolvedValue(undefined),
+        })}
+      />,
+    )
+
+    expect(screen.queryByTestId('project-branch-button')).not.toBeInTheDocument()
+  })
+
   test('opens project work menu upward when below cannot fit the four-row menu', async () => {
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
       if ((this as HTMLElement).dataset.testid === 'project-work-button') {

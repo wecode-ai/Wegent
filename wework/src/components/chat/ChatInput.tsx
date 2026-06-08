@@ -47,6 +47,12 @@ export interface ProjectWorkControls {
   onSelectStandaloneDevice: (deviceId: string | null) => void
   onExecutionModeChange: (mode: ProjectExecutionMode) => void
   onCreateProjectMode?: (mode: ProjectCreateMode) => void
+  branchName?: string
+  branchLoading?: boolean
+  onRefreshBranch?: () => Promise<void>
+  onListBranches?: () => Promise<string[]>
+  onCheckoutBranch?: (branchName: string) => Promise<void>
+  onCreateBranch?: (branchName: string) => Promise<void>
 }
 
 interface ChatInputProps {
