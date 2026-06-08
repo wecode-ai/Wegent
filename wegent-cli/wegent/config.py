@@ -1,64 +1,90 @@
-"""Configuration management for wegent CLI."""
+"""Configuration management for the Wegent CLI."""
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import yaml
 
 CONFIG_DIR = Path.home() / ".wegent"
 CONFIG_FILE = CONFIG_DIR / "config.yaml"
 
-DEFAULT_CONFIG = {
+DEFAULT_CONFIG: dict[str, Any] = {
     "server": "http://localhost:8000",
     "namespace": "default",
     "token": None,
+    "api_key": None,
+    "mode": "chat",
+}
+
+ENV_TO_KEY = {
+    "WEGENT_SERVER": "server",
+    "WEGENT_NAMESPACE": "namespace",
+    "WEGENT_TOKEN": "token",
+    "WEGENT_API_KEY": "api_key",
+    "WEGENT_MODE": "mode",
 }
 
 
-def ensure_config_dir() -> None:
-    """Ensure config directory exists."""
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+def ensure_config_dir(config_file: Path = CONFIG_FILE) -> None:
+    """Ensure the configuration directory exists."""
+    config_file.parent.mkdir(parents=True, exist_ok=True)
 
 
-def load_config() -> dict:
-    """Load configuration from file or environment variables."""
+def load_config_file(config_file: Path = CONFIG_FILE) -> dict[str, Any]:
+    """Load only persisted config values without defaults or environment overrides."""
+    if not config_file.exists():
+        return {}
+
+    with config_file.open("r", encoding="utf-8") as file_obj:
+        try:
+            file_config = yaml.safe_load(file_obj) or {}
+        except (UnicodeDecodeError, yaml.YAMLError):
+            return {}
+
+    return file_config if isinstance(file_config, dict) else {}
+
+
+def load_config(config_file: Path = CONFIG_FILE) -> dict[str, Any]:
+    """Load configuration from defaults, file, and environment variables."""
     config = DEFAULT_CONFIG.copy()
+    config.update(load_config_file(config_file=config_file))
 
-    # Load from file if exists
-    if CONFIG_FILE.exists():
-        with open(CONFIG_FILE, "r") as f:
-            file_config = yaml.safe_load(f) or {}
-            config.update(file_config)
-
-    # Environment variables override file config
-    if os.environ.get("WEGENT_SERVER"):
-        config["server"] = os.environ["WEGENT_SERVER"]
-    if os.environ.get("WEGENT_NAMESPACE"):
-        config["namespace"] = os.environ["WEGENT_NAMESPACE"]
-    if os.environ.get("WEGENT_TOKEN"):
-        config["token"] = os.environ["WEGENT_TOKEN"]
+    for env_name, key in ENV_TO_KEY.items():
+        value = os.environ.get(env_name)
+        if value is not None and value != "":
+            config[key] = value
 
     return config
 
 
-def save_config(config: dict) -> None:
-    """Save configuration to file."""
-    ensure_config_dir()
-    with open(CONFIG_FILE, "w") as f:
-        yaml.dump(config, f, default_flow_style=False)
+def save_config(config: dict[str, Any], config_file: Path = CONFIG_FILE) -> None:
+    """Save configuration to disk."""
+    ensure_config_dir(config_file)
+    with config_file.open("w", encoding="utf-8") as file_obj:
+        yaml.safe_dump(config, file_obj, default_flow_style=False, sort_keys=True)
 
 
-def get_server() -> str:
-    """Get API server URL."""
-    return load_config()["server"]
+def get_server(config_file: Path = CONFIG_FILE) -> str:
+    """Get Backend server URL."""
+    return str(load_config(config_file=config_file)["server"])
 
 
-def get_namespace() -> str:
+def get_namespace(config_file: Path = CONFIG_FILE) -> str:
     """Get default namespace."""
-    return load_config()["namespace"]
+    return str(load_config(config_file=config_file)["namespace"])
 
 
-def get_token() -> Optional[str]:
-    """Get authentication token."""
-    return load_config().get("token")
+def get_token(config_file: Path = CONFIG_FILE) -> Optional[str]:
+    """Get Bearer token."""
+    return load_config(config_file=config_file).get("token")
+
+
+def get_api_key(config_file: Path = CONFIG_FILE) -> Optional[str]:
+    """Get API key."""
+    return load_config(config_file=config_file).get("api_key")
+
+
+def get_mode(config_file: Path = CONFIG_FILE) -> str:
+    """Get default ask mode."""
+    return str(load_config(config_file=config_file).get("mode") or "chat")

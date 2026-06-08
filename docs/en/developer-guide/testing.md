@@ -1,3 +1,7 @@
+---
+sidebar_position: 5
+---
+
 # Test Framework Documentation
 
 This document describes the unit testing framework setup for the Wegent project.
@@ -15,6 +19,7 @@ The project includes comprehensive unit testing support across all modules:
 ## Current Test Coverage
 
 ### Backend (`backend/`)
+
 - ✅ Core security: Authentication, JWT tokens, password hashing
 - ✅ Configuration management
 - ✅ Exception handling
@@ -23,21 +28,25 @@ The project includes comprehensive unit testing support across all modules:
 - ⏳ API endpoints (placeholder directory exists)
 
 ### Executor (`executor/`)
+
 - ✅ Agent factory
 - ✅ Base agent classes
 - ✅ Mocked AI client interactions (Anthropic, OpenAI)
 
 ### Executor Manager (`executor_manager/`)
+
 - ✅ Base executor classes
 - ✅ Task dispatcher
 - ✅ Docker executor and utilities
 - ✅ Docker constants and configuration
 
 ### Shared (`shared/`)
+
 - ✅ Cryptography utilities
 - ✅ Sensitive data masking (tokens, API keys, etc.)
 
 ### Frontend (`frontend/`)
+
 - ⏳ Component tests (basic setup in place)
 - ⏳ Hook tests
 - ⏳ Utility tests
@@ -191,8 +200,8 @@ shared/tests/
 
 - **Cryptography**: Encryption and decryption of sensitive data (Git tokens, API keys)
 - **Data Masking**: Automatic masking of sensitive information in logs and outputs
-  - GitHub tokens (github_pat_*)
-  - Anthropic API keys (sk-ant-api03-*)
+  - GitHub tokens (`github_pat_*`)
+  - Anthropic API keys (`sk-ant-api03-*`)
   - OpenAI API keys
   - Generic API keys and secrets
   - File path protection (no false positives)
@@ -218,11 +227,23 @@ frontend/src/__tests__/
 └── components/              # Component tests
 ```
 
+## End-To-End Tests
+
+Frontend end-to-end tests live under `frontend/e2e/`, use Playwright, and connect to real backend services. New E2E tests must not mock backend APIs, use `test.skip()`, conditionally skip, or silently pass when a required dependency is unavailable.
+
+CLI E2E coverage includes two flows:
+
+- `frontend/e2e/tests/api/cli.spec.ts`: runs `python -m wegent.cli` against the real backend to verify resource listing, creation, reading, and deletion.
+- `frontend/e2e/tests/cli/cli-page.spec.ts`: creates a resource through the CLI, verifies it appears in the browser UI, deletes it through the CLI, and verifies the page removes it.
+
+Local CLI E2E runs require frontend dependencies plus the Python packages from `wegent-cli/requirements.txt`. The GitHub Actions E2E workflow installs those CLI dependencies before Playwright runs and uses `E2E_API_URL` to point the CLI at the backend service for the current shard.
+
 ## Continuous Integration
 
 ### GitHub Actions Workflow
 
 The `.github/workflows/test.yml` workflow runs automatically on:
+
 - Push to `main`, `master`, or `develop` branches
 - Pull requests to these branches
 
@@ -456,14 +477,17 @@ npm test -- src/__tests__/utils/test_example.test.ts
 ### Common Issues
 
 **Import errors in tests:**
+
 - Ensure you're running pytest from the correct directory
 - Check that modules are installed: `uv sync`
 
 **Database errors:**
+
 - Tests use SQLite in-memory DB, no setup needed
 - Check that fixtures are imported correctly
 
 **Frontend test failures:**
+
 - Ensure Node.js 18.x is installed
 - Run `npm ci` to install exact dependency versions
 - Clear Jest cache: `npx jest --clearCache`

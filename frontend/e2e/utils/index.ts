@@ -7,6 +7,10 @@
 export { ApiClient, createApiClient } from './api-client'
 export type { ApiResponse } from './api-client'
 
+// CLI utilities
+export { buildCliTeamResource, parseCliJson, runWegentCli } from './cli'
+export type { CliJsonEnvelope, CliResult, CliTeamResource, RunWegentCliOptions } from './cli'
+
 // Performance Monitor
 export { PerformanceMonitor, createPerformanceMonitor, PerformanceThresholds } from './performance'
 export type { PerformanceMetrics, ApiTiming } from './performance'

@@ -115,6 +115,12 @@ jobs:
         working-directory: ./frontend
         run: npm ci
 
+      - name: Install wegent CLI dependencies
+        working-directory: ./wegent-cli
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
       # Cache Next.js build
       - name: Cache Next.js build
         uses: actions/cache@v4
@@ -623,6 +629,7 @@ jobs:
           MOCK_MODEL_SERVER_URL: http://localhost:9999
           E2E_LOCAL_CLAUDE_MODEL_SERVER_URL: http://localhost:9999
           E2E_DEVICE_ID: e2e-claudecode-device
+          E2E_SHARD_INDEX: ${{ matrix.shardIndex }}
           CI: true
         run: npx playwright test --project=executor-chromium
 

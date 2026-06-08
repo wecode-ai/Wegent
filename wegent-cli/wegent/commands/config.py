@@ -1,55 +1,90 @@
-"""Config command - manage wegent configuration."""
+"""Config command - manage Wegent CLI configuration."""
+
+from typing import Any
 
 import click
 
-from ..config import CONFIG_FILE, load_config, save_config
+from ..config import (
+    CONFIG_FILE,
+    DEFAULT_CONFIG,
+    load_config,
+    load_config_file,
+    save_config,
+)
+from ..output import dumps_json, success_envelope
+
+CONFIG_KEYS = ["server", "namespace", "token", "api_key", "mode"]
+SECRET_KEYS = {"token", "api_key"}
+
+
+def _mask_secret(key: str, value: Any) -> Any:
+    """Mask configured secret values for display."""
+    if key in SECRET_KEYS and value:
+        return "****"
+    return value
+
+
+def _masked_config(config: dict) -> dict:
+    """Return config merged with defaults and masked secrets."""
+    masked = DEFAULT_CONFIG.copy()
+    masked.update(config)
+    for key in SECRET_KEYS:
+        if masked.get(key):
+            masked[key] = "****"
+    return masked
 
 
 @click.group("config")
 def config_cmd():
-    """Manage wegent configuration.
-
-    \b
-    Examples:
-      wegent config view              # View current config
-      wegent config set server URL    # Set API server
-      wegent config set namespace NS  # Set default namespace
-      wegent config set token TOKEN   # Set auth token
-    """
-    pass
+    """Manage Wegent CLI configuration."""
 
 
 @config_cmd.command("view")
-def config_view():
+@click.option("--json", "as_json", is_flag=True, help="Output JSON.")
+def config_view(as_json: bool):
     """View current configuration."""
-    config = load_config()
+    config = _masked_config(load_config(config_file=CONFIG_FILE))
+
+    if as_json:
+        click.echo(dumps_json(success_envelope(config)))
+        return
+
     click.echo(f"Configuration file: {CONFIG_FILE}")
     click.echo("")
-    click.echo(f"server:    {config.get('server', 'not set')}")
-    click.echo(f"namespace: {config.get('namespace', 'not set')}")
-    click.echo(f"token:     {'****' if config.get('token') else 'not set'}")
+    for key in CONFIG_KEYS:
+        value = config.get(key)
+        click.echo(f"{key}: {value if value is not None else 'not set'}")
 
 
 @config_cmd.command("set")
-@click.argument("key", type=click.Choice(["server", "namespace", "token"]))
+@click.argument("key", type=click.Choice(CONFIG_KEYS))
 @click.argument("value")
 def config_set(key: str, value: str):
     """Set a configuration value."""
-    config = load_config()
+    config = load_config_file(config_file=CONFIG_FILE)
     config[key] = value
-    save_config(config)
-    display_value = "****" if key == "token" else value
-    click.echo(f"Set {key} = {display_value}")
+    save_config(config, config_file=CONFIG_FILE)
+
+    click.echo(f"Set {key} = {_mask_secret(key, value)}")
 
 
 @config_cmd.command("unset")
-@click.argument("key", type=click.Choice(["server", "namespace", "token"]))
-def config_unset(key: str):
+@click.argument("key", type=click.Choice(CONFIG_KEYS))
+@click.option("--json", "as_json", is_flag=True, help="Output JSON.")
+def config_unset(key: str, as_json: bool):
     """Unset a configuration value."""
-    config = load_config()
-    if key in config:
+    config = load_config_file(config_file=CONFIG_FILE)
+    existed = key in config
+    if existed:
         del config[key]
-        save_config(config)
+        save_config(config, config_file=CONFIG_FILE)
+
+    result = {"key": key, "removed": existed}
+    if as_json:
+        click.echo(dumps_json(success_envelope(result)))
+        return
+
+    if existed:
         click.echo(f"Unset {key}")
     else:
         click.echo(f"{key} is not set")

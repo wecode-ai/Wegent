@@ -1,15 +1,14 @@
-"""HTTP client for Wegent API."""
+"""HTTP client for Wegent Backend APIs."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional, cast
 
 import requests
 
-from .config import get_server, get_token
+from .config import get_api_key, get_server, get_token
+from .errors import EXIT_API_ERROR, EXIT_AUTH_ERROR, EXIT_NETWORK_ERROR, CliError
 
-# Valid resource kinds
-VALID_KINDS = ["ghost", "model", "shell", "bot", "team", "workspace", "task", "skill"]
+VALID_KINDS = ["ghost", "model", "shell", "bot", "team", "workspace", "task"]
 
-# Kind to API path mapping (plural form)
 KIND_TO_PATH = {
     "ghost": "ghosts",
     "model": "models",
@@ -18,10 +17,8 @@ KIND_TO_PATH = {
     "team": "teams",
     "workspace": "workspaces",
     "task": "tasks",
-    "skill": "skills",
 }
 
-# Short aliases
 KIND_ALIASES = {
     "gh": "ghost",
     "mo": "model",
@@ -30,137 +27,176 @@ KIND_ALIASES = {
     "te": "team",
     "ws": "workspace",
     "ta": "task",
-    "sk": "skill",
 }
 
-
-class APIError(Exception):
-    """API error with status code and message."""
-
-    def __init__(self, status_code: int, message: str):
-        self.status_code = status_code
-        self.message = message
-        super().__init__(f"API Error {status_code}: {message}")
+_OMITTED = object()
 
 
 class WegentClient:
-    """Client for Wegent API."""
+    """Authenticated client for Wegent Backend APIs."""
 
-    def __init__(self, server: Optional[str] = None, token: Optional[str] = None):
+    def __init__(
+        self,
+        server: Optional[str] = None,
+        token: Optional[str] | object = _OMITTED,
+        api_key: Optional[str] | object = _OMITTED,
+        timeout: int = 30,
+        session: Optional[requests.Session] = None,
+    ):
         self.server = (server or get_server()).rstrip("/")
-        self.token = token or get_token()
+        self.token = get_token() if token is _OMITTED else cast(Optional[str], token)
+        self.api_key = (
+            get_api_key() if api_key is _OMITTED else cast(Optional[str], api_key)
+        )
+        self.timeout = timeout
+        self.session = session or requests.Session()
 
-    def _headers(self) -> Dict[str, str]:
+    def headers(self) -> dict[str, str]:
         """Build request headers."""
         headers = {"Content-Type": "application/json"}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
+        elif self.api_key:
+            headers["X-API-Key"] = self.api_key
         return headers
 
-    def _request(
-        self, method: str, path: str, data: Optional[Dict] = None
-    ) -> Dict[str, Any]:
-        """Make HTTP request to API."""
+    def request(
+        self,
+        method: str,
+        path: str,
+        data: Optional[dict[str, Any] | list[Any]] = None,
+    ) -> Any:
+        """Make an HTTP request against `/api` and normalize failures."""
         url = f"{self.server}/api{path}"
         try:
-            response = requests.request(
-                method, url, json=data, headers=self._headers(), timeout=30
+            response = self.session.request(
+                method,
+                url,
+                json=data,
+                headers=self.headers(),
+                timeout=self.timeout,
             )
-        except requests.exceptions.ConnectionError:
-            raise APIError(0, f"Failed to connect to server: {self.server}")
-        except requests.exceptions.Timeout:
-            raise APIError(0, "Request timeout")
+        except requests.exceptions.Timeout as exc:
+            raise CliError(
+                "network_error",
+                "Request timed out",
+                {"server": self.server},
+                EXIT_NETWORK_ERROR,
+            ) from exc
+        except requests.exceptions.ConnectionError as exc:
+            raise CliError(
+                "network_error",
+                f"Failed to connect to server: {self.server}",
+                {"server": self.server},
+                EXIT_NETWORK_ERROR,
+            ) from exc
+        except requests.exceptions.RequestException as exc:
+            raise CliError(
+                "network_error",
+                f"Request failed: {exc}",
+                {"server": self.server, "error": str(exc)},
+                EXIT_NETWORK_ERROR,
+            ) from exc
 
         if response.status_code >= 400:
-            try:
-                error = response.json()
-                message = error.get("detail", str(error))
-            except Exception:
-                message = response.text or response.reason
-            raise APIError(response.status_code, message)
+            message = self._extract_error_message(response)
+            exit_code = (
+                EXIT_AUTH_ERROR
+                if response.status_code in {401, 403}
+                else EXIT_API_ERROR
+            )
+            code = "auth_error" if exit_code == EXIT_AUTH_ERROR else "api_error"
+            raise CliError(
+                code,
+                message,
+                {"status_code": response.status_code, "url": url},
+                exit_code,
+            )
 
         if response.status_code == 204:
             return {}
 
         try:
             return response.json()
-        except Exception:
+        except ValueError:
             return {}
 
     @staticmethod
+    def _extract_error_message(response: requests.Response) -> str:
+        try:
+            payload = response.json()
+        except ValueError:
+            return response.text or response.reason
+
+        if isinstance(payload, dict):
+            detail = payload.get("detail")
+            if isinstance(detail, str):
+                return detail
+            if detail is not None:
+                return str(detail)
+        return response.text or response.reason
+
+    @staticmethod
     def normalize_kind(kind: str) -> str:
-        """Normalize kind name (handle aliases and case)."""
-        kind = kind.lower()
-        # Handle aliases
-        if kind in KIND_ALIASES:
-            kind = KIND_ALIASES[kind]
-        # Handle plural forms
-        if kind.endswith("s") and kind[:-1] in VALID_KINDS:
-            kind = kind[:-1]
-        if kind not in VALID_KINDS:
-            raise ValueError(
-                f"Invalid kind: {kind}. Valid kinds: {', '.join(VALID_KINDS)}"
+        """Normalize singular, plural, alias, and case variants."""
+        normalized = kind.lower()
+        normalized = KIND_ALIASES.get(normalized, normalized)
+        if normalized.endswith("s") and normalized[:-1] in VALID_KINDS:
+            normalized = normalized[:-1]
+        if normalized not in VALID_KINDS:
+            raise CliError(
+                "invalid_kind",
+                f"Invalid kind: {kind}. Valid kinds: {', '.join(VALID_KINDS)}",
+                {"kind": kind, "valid_kinds": VALID_KINDS},
             )
-        return kind
+        return normalized
 
-    def list_resources(
-        self, kind: str, namespace: str, name_filter: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
-        """List resources of a kind in namespace."""
-        kind = self.normalize_kind(kind)
-        path = KIND_TO_PATH[kind]
-        result = self._request("GET", f"/v1/namespaces/{namespace}/{path}")
-        items = result.get("items", []) if isinstance(result, dict) else result
+    def kind_path(self, kind: str) -> str:
+        """Return Backend plural path segment for a kind."""
+        return KIND_TO_PATH[self.normalize_kind(kind)]
 
-        # Filter by name if provided
-        if name_filter and items:
-            items = [
-                item
-                for item in items
-                if name_filter.lower()
-                in item.get("metadata", {}).get("name", "").lower()
-            ]
-        return items
+    def list_kind(self, kind: str, namespace: str) -> Any:
+        return self.request("GET", f"/v1/namespaces/{namespace}/{self.kind_path(kind)}")
 
-    def get_resource(self, kind: str, namespace: str, name: str) -> Dict[str, Any]:
-        """Get a specific resource."""
-        kind = self.normalize_kind(kind)
-        path = KIND_TO_PATH[kind]
-        return self._request("GET", f"/v1/namespaces/{namespace}/{path}/{name}")
-
-    def create_resource(
-        self, namespace: str, resource: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Create a resource."""
-        kind = resource.get("kind", "").lower()
-        kind = self.normalize_kind(kind)
-        path = KIND_TO_PATH[kind]
-        return self._request("POST", f"/v1/namespaces/{namespace}/{path}", resource)
-
-    def update_resource(
-        self, kind: str, namespace: str, name: str, resource: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Update a resource."""
-        kind = self.normalize_kind(kind)
-        path = KIND_TO_PATH[kind]
-        return self._request(
-            "PUT", f"/v1/namespaces/{namespace}/{path}/{name}", resource
+    def get_kind(self, kind: str, namespace: str, name: str) -> Any:
+        return self.request(
+            "GET", f"/v1/namespaces/{namespace}/{self.kind_path(kind)}/{name}"
         )
 
-    def delete_resource(self, kind: str, namespace: str, name: str) -> Dict[str, Any]:
-        """Delete a resource."""
-        kind = self.normalize_kind(kind)
-        path = KIND_TO_PATH[kind]
-        return self._request("DELETE", f"/v1/namespaces/{namespace}/{path}/{name}")
+    def apply_kinds(self, namespace: str, resources: list[dict[str, Any]]) -> Any:
+        return self.request("POST", f"/v1/namespaces/{namespace}/apply", resources)
 
-    def apply_resources(
-        self, namespace: str, resources: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """Batch apply resources."""
-        return self._request("POST", f"/v1/namespaces/{namespace}/apply", resources)
+    def delete_kind(self, kind: str, namespace: str, name: str) -> Any:
+        return self.request(
+            "DELETE", f"/v1/namespaces/{namespace}/{self.kind_path(kind)}/{name}"
+        )
 
-    def delete_resources(
-        self, namespace: str, resources: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """Batch delete resources."""
-        return self._request("POST", f"/v1/namespaces/{namespace}/delete", resources)
+    def delete_kinds(self, namespace: str, resources: list[dict[str, Any]]) -> Any:
+        return self.request("POST", f"/v1/namespaces/{namespace}/delete", resources)
+
+    def get_default_teams(self) -> Any:
+        return self.request("GET", "/users/default-teams")
+
+    def create_task(self, payload: dict[str, Any]) -> Any:
+        return self.request("POST", "/tasks/create", payload)
+
+    def get_task(self, task_id: int) -> Any:
+        return self.request("GET", f"/tasks/{task_id}")
+
+    def get_task_runtime(self, task_id: int) -> Any:
+        return self.request("GET", f"/tasks/{task_id}/runtime-check")
+
+    def cancel_task(self, task_id: int) -> Any:
+        return self.request("POST", f"/tasks/{task_id}/cancel")
+
+    def create_response(self, payload: dict[str, Any]) -> Any:
+        return self.request("POST", "/v1/responses", payload)
+
+    def get_response(self, response_id: str) -> Any:
+        return self.request("GET", f"/v1/responses/{response_id}")
+
+    def cancel_response(self, response_id: str) -> Any:
+        return self.request("POST", f"/v1/responses/{response_id}/cancel")
+
+    def delete_response(self, response_id: str) -> Any:
+        return self.request("DELETE", f"/v1/responses/{response_id}")

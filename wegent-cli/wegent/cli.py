@@ -1,91 +1,94 @@
 """Main CLI entry point."""
 
+import sys
+from typing import Sequence
+
 import click
 
 from . import __version__
-from .client import VALID_KINDS, WegentClient
-from .commands.apply import apply_cmd
+from .client import WegentClient
+from .commands.ask import ask_cmd
 from .commands.config import config_cmd
-from .commands.create import create_cmd
-from .commands.delete import delete_cmd
-from .commands.describe import describe_cmd
-from .commands.get import get_cmd
+from .commands.kind import kind_cmd
 from .commands.login import login_cmd, logout_cmd
-from .config import get_server, get_token
+from .commands.response import response_cmd
+from .commands.task import task_cmd
+from .config import get_api_key, get_server, get_token
+from .errors import EXIT_USAGE_ERROR, CliError
+from .output import dumps_json, error_envelope
 
-CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
+CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 
-@click.group(context_settings=CONTEXT_SETTINGS)
+class JsonAwareGroup(click.Group):
+    """Render Click parser errors as JSON when requested by argv."""
+
+    def main(
+        self,
+        args: Sequence[str] | None = None,
+        prog_name: str | None = None,
+        complete_var: str | None = None,
+        standalone_mode: bool = True,
+        windows_expand_args: bool = True,
+        **extra,
+    ):
+        raw_args = list(sys.argv[1:] if args is None else args)
+        try:
+            return super().main(
+                args=args,
+                prog_name=prog_name,
+                complete_var=complete_var,
+                standalone_mode=False,
+                windows_expand_args=windows_expand_args,
+                **extra,
+            )
+        except click.ClickException as exc:
+            if "--json" not in raw_args:
+                if not standalone_mode:
+                    raise
+                exc.show()
+                raise SystemExit(exc.exit_code) from exc
+
+            error = CliError(
+                "invalid_arguments",
+                exc.format_message() or exc.message,
+                {"click_error": exc.__class__.__name__},
+                EXIT_USAGE_ERROR,
+            )
+            click.echo(dumps_json(error_envelope(error)), err=True)
+            if not standalone_mode:
+                raise error from exc
+            raise SystemExit(EXIT_USAGE_ERROR) from exc
+
+
+@click.group(cls=JsonAwareGroup, context_settings=CONTEXT_SETTINGS)
 @click.version_option(version=__version__, prog_name="wegent")
-@click.option("-s", "--server", envvar="WEGENT_SERVER", help="API server URL")
-@click.option("-t", "--token", envvar="WEGENT_TOKEN", help="Auth token")
+@click.option("-s", "--server", envvar="WEGENT_SERVER", help="Backend server URL")
+@click.option("-t", "--token", envvar="WEGENT_TOKEN", help="Bearer token")
+@click.option("--api-key", envvar="WEGENT_API_KEY", help="API key")
 @click.pass_context
-def cli(ctx: click.Context, server: str, token: str):
-    """wegent - Wegent command line tool.
-
-    \b
-    A kubectl-style CLI for managing Wegent resources.
-
-    \b
-    Resource types:
-      ghost (gh)     - AI agent persona/prompt
-      model (mo)     - LLM model configuration
-      shell (sh)     - Runtime environment
-      bot (bo)       - Combination of ghost + shell + model
-      team (te)      - Group of bots
-      workspace (ws) - Git repository configuration
-      task (ta)      - Execution task
-      skill (sk)     - Reusable AI skill
-
-    \b
-    Quick start:
-      wegent config set server http://localhost:8000
-      wegent get ghosts
-      wegent apply -f my-resources.yaml
-      wegent describe ghost my-ghost
-      wegent delete ghost my-ghost
-
-    \b
-    Environment variables:
-      WEGENT_SERVER    - API server URL
-      WEGENT_NAMESPACE - Default namespace
-      WEGENT_TOKEN     - Auth token
-    """
+def cli(
+    ctx: click.Context,
+    server: str | None,
+    token: str | None,
+    api_key: str | None,
+):
+    """Wegent command line interface."""
     ctx.ensure_object(dict)
     ctx.obj["client"] = WegentClient(
         server=server or get_server(),
-        token=token or get_token(),
+        token=token if token is not None else get_token(),
+        api_key=api_key if api_key is not None else get_api_key(),
     )
 
 
-# Register commands
-cli.add_command(get_cmd)
-cli.add_command(apply_cmd)
-cli.add_command(delete_cmd)
-cli.add_command(describe_cmd)
 cli.add_command(config_cmd)
-cli.add_command(create_cmd)
 cli.add_command(login_cmd)
 cli.add_command(logout_cmd)
-
-
-@cli.command("api-resources")
-def api_resources():
-    """List available resource types."""
-    click.echo("NAME        SHORTNAMES  KIND")
-    resources = [
-        ("ghosts", "gh", "Ghost"),
-        ("models", "mo", "Model"),
-        ("shells", "sh", "Shell"),
-        ("bots", "bo", "Bot"),
-        ("teams", "te", "Team"),
-        ("workspaces", "ws", "Workspace"),
-        ("tasks", "ta", "Task"),
-        ("skills", "sk", "Skill"),
-    ]
-    for name, short, kind in resources:
-        click.echo(f"{name:12}{short:12}{kind}")
+cli.add_command(kind_cmd)
+cli.add_command(task_cmd)
+cli.add_command(response_cmd)
+cli.add_command(ask_cmd)
 
 
 def main():
