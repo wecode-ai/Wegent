@@ -90,6 +90,11 @@ interface DesktopSidebarProps {
 
 type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
+const SIDEBAR_ROW_METADATA_CLASS =
+  'flex items-center gap-1 text-xs text-[rgb(var(--color-sidebar-text-muted))] group-hover/task:invisible group-focus-within/task:invisible'
+const SIDEBAR_ROW_ACTIONS_CLASS =
+  'absolute inset-0 invisible flex items-center justify-end opacity-0 transition-opacity group-hover/task:visible group-hover/task:opacity-100 group-focus-within/task:visible group-focus-within/task:opacity-100'
+
 function SidebarButton({
   icon: Icon,
   label,
@@ -289,7 +294,7 @@ function GitWorktreeSidebarIcon({
       data-testid={testId}
       title={title}
       aria-label={title}
-      className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] bg-[#666a70] text-[#d1d5db]"
+      className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] bg-[rgb(var(--color-sidebar-text-secondary))] text-[rgb(var(--color-sidebar))]"
     >
       <svg
         viewBox="0 0 18 18"
@@ -369,9 +374,11 @@ function formatSidebarTemplate(template: string, values: Record<string, string>)
 function SidebarDeviceStatusIndicator({
   deviceState,
   testId,
+  className,
 }: {
   deviceState: SidebarDeviceState
   testId: string
+  className?: string
 }) {
   const { t } = useTranslation('common')
   if (deviceState.status === 'online') return null
@@ -388,7 +395,10 @@ function SidebarDeviceStatusIndicator({
       data-testid={testId}
       title={title}
       aria-label={title}
-      className="inline-flex h-5 shrink-0 items-center rounded-full text-[11px] leading-4 text-[rgb(var(--color-sidebar-text-muted))]"
+      className={cn(
+        'inline-flex h-5 shrink-0 items-center rounded-full text-[11px] leading-4 text-[rgb(var(--color-sidebar-text-muted))]',
+        className,
+      )}
     >
       <span className="shrink-0">{label}</span>
     </span>
@@ -460,7 +470,7 @@ function ProjectTaskRow({
         ) : (
           <span
             data-testid={`project-chat-time-${task.task_id}`}
-            className="flex items-center gap-1 text-xs text-[rgb(var(--color-sidebar-text-muted))] transition-opacity group-hover/task:opacity-0 focus-within:opacity-0"
+            className={SIDEBAR_ROW_METADATA_CLASS}
           >
             {gitWorktreeSession && (
               <GitWorktreeSidebarIcon
@@ -468,17 +478,23 @@ function ProjectTaskRow({
                 title={gitWorktreeTitle}
               />
             )}
-            <span>{formatRelativeSidebarTime(getProjectTaskTime(task))}</span>
+            <span
+              data-testid={`project-chat-time-value-${task.task_id}`}
+              className="flex h-7 w-7 items-center justify-center"
+            >
+              {formatRelativeSidebarTime(getProjectTaskTime(task))}
+            </span>
           </span>
         )}
         <div
           data-testid={`project-chat-actions-${task.task_id}`}
-          className="absolute inset-0 opacity-0 transition-opacity group-hover/task:opacity-100 focus-within:opacity-100"
+          className={SIDEBAR_ROW_ACTIONS_CLASS}
         >
           <ActionMenu
             ariaLabel={t('workbench.chat_actions', '会话操作')}
             testId={`project-chat-menu-${task.task_id}`}
             variant="vertical"
+            triggerClassName="flex h-7 w-7 items-center justify-center text-text-secondary hover:text-text-primary"
             items={[
               {
                 label: t('workbench.archive_chat', '归档会话'),
@@ -548,7 +564,7 @@ function ProjectItem({
     <div data-testid="project-item" className="space-y-0.5">
       <div
         data-testid={`project-row-${project.id}`}
-        className="group/project flex h-8 items-center gap-1 rounded-md pl-2.5 pr-1 text-[13px] leading-[18px] text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
+        className="group/project relative flex h-8 items-center gap-1 rounded-md pl-2.5 pr-1 text-[13px] leading-[18px] text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
       >
         <button
           type="button"
@@ -566,6 +582,7 @@ function ProjectItem({
             <SidebarDeviceStatusIndicator
               deviceState={projectDeviceState}
               testId={`project-device-status-${project.id}`}
+              className="ml-auto justify-end text-right group-hover/project:invisible group-focus-within/project:invisible"
             />
           )}
         </button>
@@ -575,7 +592,7 @@ function ProjectItem({
             className="h-3.5 w-3.5 shrink-0 animate-spin text-primary"
           />
         )}
-        <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover/project:opacity-100 focus-within:opacity-100">
+        <div className="absolute right-1 invisible flex shrink-0 items-center opacity-0 transition-opacity group-hover/project:visible group-hover/project:opacity-100 focus-within:visible focus-within:opacity-100">
           <ActionMenu
             ariaLabel={t('workbench.project_actions', '项目操作')}
             testId={`project-menu-${project.id}`}
@@ -713,7 +730,7 @@ function RecentTaskRow({
         ) : (
           <span
             data-testid={`history-task-time-${task.id}`}
-            className="flex items-center gap-1 text-xs text-[rgb(var(--color-sidebar-text-muted))] transition-opacity group-hover/task:opacity-0 focus-within:opacity-0"
+            className={SIDEBAR_ROW_METADATA_CLASS}
           >
             {gitWorktreeSession && (
               <GitWorktreeSidebarIcon
@@ -727,17 +744,23 @@ function RecentTaskRow({
                 testId={`history-task-device-status-${task.id}`}
               />
             )}
-            <span>{formatRelativeSidebarTime(task.updated_at || task.created_at)}</span>
+            <span
+              data-testid={`history-task-time-value-${task.id}`}
+              className="flex h-7 w-7 items-center justify-center"
+            >
+              {formatRelativeSidebarTime(task.updated_at || task.created_at)}
+            </span>
           </span>
         )}
         <div
           data-testid={`history-task-actions-${task.id}`}
-          className="absolute inset-0 opacity-0 transition-opacity group-hover/task:opacity-100 focus-within:opacity-100"
+          className={SIDEBAR_ROW_ACTIONS_CLASS}
         >
           <ActionMenu
             ariaLabel={t('workbench.chat_actions', '会话操作')}
             testId={`history-task-menu-${task.id}`}
             variant="vertical"
+            triggerClassName="flex h-7 w-7 items-center justify-center text-text-secondary hover:text-text-primary"
             items={[
               {
                 label: t('workbench.archive_chat', '归档会话'),

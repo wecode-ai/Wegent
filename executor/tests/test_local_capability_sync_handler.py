@@ -8,7 +8,6 @@ import json
 import zipfile
 
 import pytest
-
 from executor.modes.local.capabilities import (
     CapabilitySyncHandler,
     GlobalCapabilityStore,

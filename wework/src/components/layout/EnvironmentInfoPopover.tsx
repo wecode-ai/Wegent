@@ -79,6 +79,7 @@ export function EnvironmentInfoPopover({
       : t('workbench.environment_local', '本地')
   const shortDeviceId = formatDeviceId(info.deviceId)
   const deviceTitle = info.deviceId ? `${executionLabel} · ${info.deviceId}` : executionLabel
+  const canShowBranchSelector = Boolean(info.branchName?.trim())
   function handleCreatePullRequest() {
     if (!info.createPullRequestUrl) {
       return
@@ -213,7 +214,7 @@ export function EnvironmentInfoPopover({
                 </span>
               )}
             </button>
-            {onListBranches && onCheckoutBranch && (
+            {canShowBranchSelector && onListBranches && onCheckoutBranch && (
               <BranchSelector
                 variant="environment"
                 currentBranch={info.branchName}

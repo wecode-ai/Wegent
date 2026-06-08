@@ -35,17 +35,21 @@ export function WorkspacePanelActions({
   onToggleBottomPanel,
 }: WorkspacePanelActionsProps) {
   const { t } = useTranslation('common')
+  const canShowEnvironmentInfo =
+    environmentInfo.loading !== false || Boolean(environmentInfo.branchName?.trim())
 
   return (
     <>
-      <EnvironmentInfoPopover
-        info={environmentInfo}
-        onRefresh={onRefreshEnvironmentInfo}
-        onCommitChanges={onCommitEnvironmentChanges}
-        onListBranches={onListEnvironmentBranches}
-        onCheckoutBranch={onCheckoutEnvironmentBranch}
-        onCreateBranch={onCreateEnvironmentBranch}
-      />
+      {canShowEnvironmentInfo && (
+        <EnvironmentInfoPopover
+          info={environmentInfo}
+          onRefresh={onRefreshEnvironmentInfo}
+          onCommitChanges={onCommitEnvironmentChanges}
+          onListBranches={onListEnvironmentBranches}
+          onCheckoutBranch={onCheckoutEnvironmentBranch}
+          onCreateBranch={onCreateEnvironmentBranch}
+        />
+      )}
       <button
         type="button"
         data-testid="toggle-bottom-workspace-panel-button"
