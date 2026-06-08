@@ -642,6 +642,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             from app.services.chat.config import is_deep_research_protocol
             from app.services.chat.storage import (
                 TaskCreationParams,
+                allocate_task_id,
                 create_chat_task,
             )
             from app.services.chat.trigger import should_trigger_ai_response
@@ -752,6 +753,30 @@ class ChatNamespace(socketio.AsyncNamespace):
                     "duration": payload.generate_params.duration,
                 }
 
+            preallocated_task_id = None
+            execution_workspace = None
+            if (
+                not payload.task_id
+                and payload.execution
+                and payload.execution.workspace
+                and payload.execution.workspace.source == "git_worktree"
+            ):
+                if not payload.project_id:
+                    raise ValueError("Git worktree execution requires a project")
+
+                from app.services import project_service
+
+                preallocated_task_id = allocate_task_id(db, user_id)
+                execution_workspace = (
+                    await project_service.prepare_git_worktree_for_task(
+                        db=db,
+                        user_id=user_id,
+                        project_id=payload.project_id,
+                        client_origin=payload.client_origin,
+                        task_id=preallocated_task_id,
+                    )
+                )
+
             # For pipeline confirm, get the previous stage's bot_id for session management
             previous_bot_id = None
             if pipeline_info:
@@ -781,8 +806,10 @@ class ChatNamespace(socketio.AsyncNamespace):
                 skip_status_check=payload.action == "pipeline:confirm",
                 device_id=payload.device_id,
                 project_id=payload.project_id,
+                execution_workspace=execution_workspace,
                 client_origin=payload.client_origin,
                 generate_params=generate_params_dict,
+                preallocated_task_id=preallocated_task_id,
             )
 
             result = await create_chat_task(

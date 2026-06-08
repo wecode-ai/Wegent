@@ -2448,8 +2448,49 @@ Response template:
         """Merge project or standalone chat workspace metadata for execution."""
 
         self._merge_project_workspace(task, workspace_data)
+        if self._merge_task_spec_execution_workspace(task, workspace_data):
+            return
         if not workspace_data.get("project"):
             self._merge_standalone_chat_workspace(task, workspace_data)
+
+    def _merge_task_spec_execution_workspace(
+        self, task: TaskResource, workspace_data: dict
+    ) -> bool:
+        """Merge Task spec.execution.workspace as the highest-priority path."""
+
+        task_json = task.json if isinstance(task.json, dict) else {}
+        spec = task_json.get("spec") if isinstance(task_json.get("spec"), dict) else {}
+        execution = (
+            spec.get("execution") if isinstance(spec.get("execution"), dict) else {}
+        )
+        workspace = (
+            execution.get("workspace")
+            if isinstance(execution.get("workspace"), dict)
+            else {}
+        )
+        workspace_path = workspace.get("path")
+        if not isinstance(workspace_path, str) or not workspace_path.strip():
+            return False
+
+        workspace_source = workspace.get("source")
+        if not isinstance(workspace_source, str) or not workspace_source.strip():
+            workspace_source = "local_path"
+
+        existing_project = workspace_data.get("project") or {}
+        project_id = existing_project.get("project_id") or task.project_id or None
+        device_id = existing_project.get("device_id") or spec.get("device_id")
+
+        workspace_data["project"] = {
+            "project_id": project_id,
+            "workspace_source": workspace_source.strip(),
+            "project_workspace_path": workspace_path.strip(),
+            "execution_target_type": existing_project.get("execution_target_type")
+            or "local",
+            "device_id": device_id,
+            "checkout_path": None,
+            "local_path": workspace_path.strip(),
+        }
+        return True
 
     def _merge_project_workspace(
         self, task: TaskResource, workspace_data: dict

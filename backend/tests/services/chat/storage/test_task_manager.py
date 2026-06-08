@@ -102,6 +102,101 @@ def test_create_new_task_uses_auto_delete_executor_label(
     assert task.json["metadata"]["labels"]["autoDeleteExecutor"] == "true"
 
 
+def test_create_new_task_writes_execution_workspace(
+    test_db: Session,
+    test_user: User,
+):
+    """New worktree tasks should persist their execution workspace in Task spec."""
+    team = SimpleNamespace(
+        id=1256,
+        user_id=test_user.id,
+        name="quickstart",
+        namespace="default",
+    )
+    params = TaskCreationParams(
+        message="run tests",
+        execution_workspace={
+            "source": "git_worktree",
+            "path": "/workspace/worktrees/1386/Wegent",
+        },
+    )
+
+    with (
+        patch(
+            "app.services.adapters.task_kinds.task_kinds_service.create_task_id",
+            return_value=1386,
+        ),
+        patch(
+            "app.services.adapters.task_kinds.task_kinds_service.validate_task_id",
+            return_value=True,
+        ),
+        patch(
+            "app.services.chat.storage.task_manager.build_initial_task_knowledge_base_refs",
+            return_value=[],
+        ),
+    ):
+        task = create_new_task(test_db, test_user, team, params)
+
+    assert task.json["spec"]["execution"] == {
+        "workspace": {
+            "source": "git_worktree",
+            "path": "/workspace/worktrees/1386/Wegent",
+        }
+    }
+
+
+def test_create_new_task_uses_preallocated_task_id(
+    test_db: Session,
+    test_user: User,
+):
+    """New tasks should be able to reuse a reserved Placeholder ID."""
+    team = SimpleNamespace(
+        id=1256,
+        user_id=test_user.id,
+        name="quickstart",
+        namespace="default",
+    )
+    placeholder = TaskResource(
+        id=1390,
+        user_id=test_user.id,
+        kind="Placeholder",
+        name="temp-placeholder",
+        namespace="default",
+        json={"kind": "Placeholder"},
+        is_active=False,
+    )
+    test_db.add(placeholder)
+    test_db.commit()
+
+    params = TaskCreationParams(
+        message="run tests",
+        execution_workspace={
+            "source": "git_worktree",
+            "path": "/workspace/worktrees/1390/Wegent",
+        },
+        preallocated_task_id=1390,
+    )
+
+    with (
+        patch(
+            "app.services.adapters.task_kinds.task_kinds_service.create_task_id",
+            side_effect=AssertionError("should not allocate another task id"),
+        ),
+        patch(
+            "app.services.chat.storage.task_manager.build_initial_task_knowledge_base_refs",
+            return_value=[],
+        ),
+    ):
+        task = create_new_task(test_db, test_user, team, params)
+
+    assert task.id == 1390
+    assert task.kind == "Task"
+    assert task.name == "task-1390"
+    assert task.json["spec"]["execution"]["workspace"]["path"] == (
+        "/workspace/worktrees/1390/Wegent"
+    )
+
+
 def test_create_assistant_subtask_inherits_active_executor_state(
     test_db: Session,
     test_user: User,

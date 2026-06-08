@@ -13,6 +13,7 @@ from .session import session_manager
 from .task_manager import (
     TaskCreationParams,
     TaskCreationResult,
+    allocate_task_id,
     check_task_status,
     create_assistant_subtask,
     create_chat_task,
@@ -38,6 +39,7 @@ __all__ = [
     # Task manager
     "TaskCreationParams",
     "TaskCreationResult",
+    "allocate_task_id",
     "get_bot_ids_from_team",
     "get_task_with_access_check",
     "check_task_status",

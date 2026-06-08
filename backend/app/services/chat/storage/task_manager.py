@@ -85,6 +85,8 @@ class TaskCreationParams:
     device_id: Optional[str] = None
     # Project ID to associate task with
     project_id: Optional[int] = None
+    # Task-specific execution workspace metadata.
+    execution_workspace: Optional[Dict[str, str]] = None
     # Client surface that owns the task
     client_origin: str = CLIENT_ORIGIN_FRONTEND
     # Task source label (e.g. chat_shell, responses_api)
@@ -98,6 +100,9 @@ class TaskCreationParams:
     # Video generation parameters (user-selected at generation time)
     # Used to save video_config to user subtask.result for display
     generate_params: Optional[Dict[str, Any]] = None
+    # Reserved task ID for callers that must derive task-scoped metadata before
+    # the Task resource itself is created.
+    preallocated_task_id: Optional[int] = None
 
     def __post_init__(self) -> None:
         """Treat an explicit model_id as an override selection."""
@@ -226,6 +231,36 @@ def check_task_status(db: Session, task: TaskResource) -> None:
         raise HTTPException(status_code=400, detail="Task is still running")
 
 
+def allocate_task_id(db: Session, user_id: int) -> int:
+    """Reserve a TaskResource ID and validate that the placeholder exists."""
+    from app.services.adapters.task_kinds import task_kinds_service
+
+    task_id = task_kinds_service.create_task_id(db, user_id)
+    if not task_kinds_service.validate_task_id(db, task_id):
+        raise HTTPException(status_code=500, detail="Failed to create task ID")
+    return task_id
+
+
+def _resolve_new_task_id(db: Session, user_id: int, params: TaskCreationParams) -> int:
+    """Resolve the ID used when creating a new task."""
+
+    if params.preallocated_task_id is None:
+        return allocate_task_id(db, user_id)
+
+    placeholder = (
+        db.query(TaskResource)
+        .filter(
+            TaskResource.id == params.preallocated_task_id,
+            TaskResource.user_id == user_id,
+            TaskResource.kind == "Placeholder",
+        )
+        .first()
+    )
+    if not placeholder:
+        raise HTTPException(status_code=500, detail="Preallocated task ID is invalid")
+    return params.preallocated_task_id
+
+
 def create_new_task(
     db: Session,
     user: User,
@@ -244,14 +279,7 @@ def create_new_task(
     Returns:
         Created TaskResource
     """
-    from app.services.adapters.task_kinds import task_kinds_service
-
-    # Create task ID first
-    new_task_id = task_kinds_service.create_task_id(db, user.id)
-
-    # Validate task ID
-    if not task_kinds_service.validate_task_id(db, new_task_id):
-        raise HTTPException(status_code=500, detail="Failed to create task ID")
+    new_task_id = _resolve_new_task_id(db, user.id, params)
 
     if params.project_id:
         project_exists = (
@@ -320,6 +348,7 @@ def create_new_task(
         team=team,
         knowledge_base_id=params.knowledge_base_id,
     )
+    task_execution = _build_task_execution(params.execution_workspace)
 
     task_json = {
         "kind": "Task",
@@ -339,6 +368,7 @@ def create_new_task(
                 if knowledge_base_refs
                 else {}
             ),
+            **({"execution": task_execution} if task_execution else {}),
         },
         "status": {
             "state": "Available",
@@ -433,6 +463,22 @@ def create_new_task(
     )
 
     return task
+
+
+def _build_task_execution(
+    execution_workspace: Optional[Dict[str, str]],
+) -> Optional[Dict[str, Dict[str, str]]]:
+    """Build Task spec.execution from validated creation metadata."""
+
+    if not execution_workspace:
+        return None
+
+    source = str(execution_workspace.get("source") or "").strip()
+    path = str(execution_workspace.get("path") or "").strip()
+    if not source or not path:
+        return None
+
+    return {"workspace": {"source": source, "path": path}}
 
 
 def create_user_subtask(

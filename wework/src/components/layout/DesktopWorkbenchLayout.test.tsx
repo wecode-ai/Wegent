@@ -166,7 +166,12 @@ describe('DesktopWorkbenchLayout', () => {
       projects: [{ id: 1, name: 'github_wegent', tasks: [] }],
       devices: [],
       currentProjectId: undefined,
+      currentStandaloneDeviceId: null,
+      executionMode: 'current_workspace',
+      executionModeLocked: false,
       onSelectProject: vi.fn(),
+      onSelectStandaloneDevice: vi.fn(),
+      onExecutionModeChange: vi.fn(),
     },
     onSelectProject: vi.fn(),
     onStartNewProjectChat: vi.fn(),
@@ -211,6 +216,55 @@ describe('DesktopWorkbenchLayout', () => {
     onInputChange: vi.fn(),
     onSend: vi.fn(),
     onLogout: vi.fn(),
+  }
+
+  const workspacePanelProject = {
+    id: 7,
+    name: 'project38',
+    tasks: [],
+    config: {
+      mode: 'workspace' as const,
+      execution: {
+        targetType: 'local' as const,
+        deviceId: 'device-1',
+      },
+      workspace: {
+        source: 'local_path' as const,
+        localPath: '/workspace/projects/project38',
+      },
+    },
+  }
+
+  const workspacePanelDevices = [
+    {
+      id: 1,
+      device_id: 'device-1',
+      name: 'Cloud Device',
+      status: 'online' as const,
+      is_default: false,
+      device_type: 'cloud' as const,
+      bind_shell: 'claudecode',
+    },
+  ]
+
+  function renderWorkspacePanelLayout() {
+    return render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          projects: [workspacePanelProject],
+          devices: workspacePanelDevices,
+          currentProject: workspacePanelProject,
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: [workspacePanelProject],
+          devices: workspacePanelDevices,
+          currentProjectId: workspacePanelProject.id,
+        }}
+      />,
+    )
   }
 
   test('renders projects, recent tasks, and empty prompt', () => {
@@ -1512,7 +1566,7 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('opens and resizes the right workspace panel', async () => {
-    render(<DesktopWorkbenchLayout {...baseProps} />)
+    renderWorkspacePanelLayout()
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
 
@@ -1919,7 +1973,7 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('opens and resizes the bottom workspace panel', async () => {
-    render(<DesktopWorkbenchLayout {...baseProps} />)
+    renderWorkspacePanelLayout()
 
     await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
 

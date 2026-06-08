@@ -64,6 +64,34 @@ describe('REST adapters', () => {
     })
   })
 
+  test('loads Wework project worktrees from the project adapter', async () => {
+    const client = mockClient()
+    vi.mocked(client.get).mockResolvedValueOnce({ total: 0, devices: [] })
+
+    await createProjectApi(client).listWorktrees()
+
+    expect(client.get).toHaveBeenCalledWith('/projects/worktrees?client_origin=wework')
+  })
+
+  test('deletes Wework project worktrees from the project adapter', async () => {
+    const client = mockClient()
+    vi.mocked(client.delete).mockResolvedValueOnce({
+      worktree_id: '1386',
+      path: '/workspace/worktrees/1386/Wegent',
+      deleted_task_ids: [1288],
+    })
+
+    await createProjectApi(client).deleteWorktree({
+      device_id: 'device-1',
+      worktree_id: '1386',
+      project_id: 7,
+    })
+
+    expect(client.delete).toHaveBeenCalledWith(
+      '/projects/worktrees/device-1/1386?project_id=7&client_origin=wework',
+    )
+  })
+
   test('loads recent online and offline workbench tasks', async () => {
     const client = mockClient()
     vi.mocked(client.get).mockResolvedValueOnce({ total: 0, items: [] })

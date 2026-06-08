@@ -14,6 +14,8 @@ export function WorkbenchPage() {
     queuedMessages,
     guidanceMessages,
     runningTaskIds,
+    projectExecutionMode,
+    setProjectExecutionMode,
     projectChat,
     selectProject,
     selectStandaloneDevice,
@@ -64,8 +66,11 @@ export function WorkbenchPage() {
     devices: state.devices,
     currentProjectId: state.currentProject?.id,
     currentStandaloneDeviceId: state.standaloneDeviceId,
+    executionMode: projectExecutionMode,
+    executionModeLocked: Boolean(state.currentTask),
     onSelectProject: selectProject,
     onSelectStandaloneDevice: selectStandaloneDevice,
+    onExecutionModeChange: setProjectExecutionMode,
   }
 
   return (
