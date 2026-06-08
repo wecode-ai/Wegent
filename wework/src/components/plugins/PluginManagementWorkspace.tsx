@@ -3,7 +3,7 @@ import {
   MoreHorizontal,
   Search,
 } from 'lucide-react'
-import type { FormEvent } from 'react'
+import type { FormEvent, ReactNode } from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { createHttpClient } from '@/api/http'
@@ -12,6 +12,12 @@ import { createPluginApi } from '@/api/plugins'
 import { createSystemSkillApi } from '@/api/systemSkills'
 import { getRuntimeConfig } from '@/config/runtime'
 import { navigateTo } from '@/lib/navigation'
+import { isTauriRuntime } from '@/lib/runtime-environment'
+import {
+  DESKTOP_TOP_BAR_BUTTON_CLASS,
+  DesktopTopBar,
+  MAC_NATIVE_TOP_BAR_ACTION_INSET,
+} from '@/components/layout/DesktopTopBar'
 import {
   CustomMcpDialog,
   McpProviderBlock,
@@ -203,12 +209,15 @@ function serverConfigFromCustomForm(
 
 interface PluginManagementWorkspaceProps {
   sidebarCollapsed?: boolean
+  topBarLeftActions?: ReactNode
 }
 
 export function PluginManagementWorkspace({
   sidebarCollapsed = false,
+  topBarLeftActions,
 }: PluginManagementWorkspaceProps) {
   const { t } = useTranslation('common')
+  const reserveMacWindowControls = isTauriRuntime()
   const [activeTab, setActiveTab] = useState<ManagementTab>('plugins')
   const [query, setQuery] = useState('')
   const systemSkillApi = useMemo(() => createDefaultSystemSkillApi(), [])
@@ -683,54 +692,69 @@ export function PluginManagementWorkspace({
 
   return (
     <main className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-white text-[#101014]">
-      <header
+      <DesktopTopBar
+        testId="plugin-management-topbar"
         className={[
-          'sticky top-0 z-30 flex h-12 items-center justify-between bg-white/94 pl-20 pr-4 backdrop-blur-xl md:pr-7',
-          sidebarCollapsed ? 'md:pl-28' : 'md:pl-7',
+          'sticky top-0 z-30 h-12 bg-white/94 pl-20 pr-4 backdrop-blur-xl md:h-[52px] md:pr-7',
+          sidebarCollapsed
+            ? reserveMacWindowControls
+              ? undefined
+              : 'md:pl-6'
+            : 'md:pl-7',
         ].join(' ')}
-      >
-        <nav
-          className="flex items-center gap-3 text-sm font-semibold"
-          aria-label="breadcrumb"
-        >
-          <button
-            type="button"
-            className="text-[#85858c] transition-colors hover:text-[#101014]"
-            onClick={() => navigateTo('/plugins')}
-          >
-            {t('workbench.plugins_tab', '插件')}
-          </button>
-          <ChevronRight className="h-4 w-4 text-[#85858c]" />
-          <span>{t('workbench.plugins_manage', '管理')}</span>
-        </nav>
-
-        <div className="flex items-center gap-2 overflow-visible">
-          <PluginCreateMenu
-            isOpen={isCreateMenuOpen}
-            buttonTestId="plugin-management-create-button"
-            onToggle={() => setIsCreateMenuOpen((previous) => !previous)}
-            onCreateSkill={() => {
-              setIsCreateMenuOpen(false)
-              setShowSkillUploadDialog(true)
-            }}
-            onCreateMcp={() => {
-              setIsCreateMenuOpen(false)
-              setShowCustomMcpDialog(true)
-            }}
-            onCreatePlugin={() => {
-              setIsCreateMenuOpen(false)
-              setShowPluginUploadDialog(true)
-            }}
-          />
-          <button
-            type="button"
-            aria-label={t('workbench.plugins_more_actions', '更多操作')}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-[#101014] transition-colors hover:bg-[#f3f3f4]"
-          >
-            <MoreHorizontal className="h-4 w-4" />
-          </button>
-        </div>
-      </header>
+        style={
+          sidebarCollapsed && reserveMacWindowControls
+            ? { paddingLeft: MAC_NATIVE_TOP_BAR_ACTION_INSET }
+            : undefined
+        }
+        left={(
+          <>
+            {topBarLeftActions}
+            <nav
+              className="flex items-center gap-3 text-sm font-semibold"
+              aria-label="breadcrumb"
+            >
+              <button
+                type="button"
+                className="text-[#85858c] transition-colors hover:text-[#101014]"
+                onClick={() => navigateTo('/plugins')}
+              >
+                {t('workbench.plugins_tab', '插件')}
+              </button>
+              <ChevronRight className="h-4 w-4 text-[#85858c]" />
+              <span>{t('workbench.plugins_manage', '管理')}</span>
+            </nav>
+          </>
+        )}
+        right={(
+          <>
+            <PluginCreateMenu
+              isOpen={isCreateMenuOpen}
+              buttonTestId="plugin-management-create-button"
+              onToggle={() => setIsCreateMenuOpen((previous) => !previous)}
+              onCreateSkill={() => {
+                setIsCreateMenuOpen(false)
+                setShowSkillUploadDialog(true)
+              }}
+              onCreateMcp={() => {
+                setIsCreateMenuOpen(false)
+                setShowCustomMcpDialog(true)
+              }}
+              onCreatePlugin={() => {
+                setIsCreateMenuOpen(false)
+                setShowPluginUploadDialog(true)
+              }}
+            />
+            <button
+              type="button"
+              aria-label={t('workbench.plugins_more_actions', '更多操作')}
+              className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+            >
+              <MoreHorizontal />
+            </button>
+          </>
+        )}
+      />
 
       <section className="mx-auto flex w-full max-w-[940px] flex-col gap-8 px-5 pb-12 pt-8 md:pt-16">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between md:gap-8">

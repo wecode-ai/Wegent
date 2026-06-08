@@ -298,15 +298,6 @@ export function DesktopWorkbenchLayout({
           onLogout={onLogout}
         />
       )}
-      {!settingsOpen && sidebarCollapsed && (
-        <DesktopWindowControls
-          sidebarCollapsed
-          onToggleSidebar={() => setSidebarCollapsed(false)}
-          onNewChat={onNewChat}
-          className="absolute left-4 top-2 z-chrome"
-        />
-      )}
-
       {settingsOpen ? (
         <ConnectionsSettingsPage
           onBack={() => {
@@ -345,6 +336,15 @@ export function DesktopWorkbenchLayout({
           onSendQueuedAsGuidance={onSendQueuedAsGuidance}
           onEditQueuedMessage={onEditQueuedMessage}
           onCancelGuidanceMessage={onCancelGuidanceMessage}
+          topBarLeftActions={
+            sidebarCollapsed ? (
+              <DesktopWindowControls
+                sidebarCollapsed
+                onToggleSidebar={() => setSidebarCollapsed(false)}
+                onNewChat={onNewChat}
+              />
+            ) : undefined
+          }
         />
       )}
       <ProjectCreateDialog
