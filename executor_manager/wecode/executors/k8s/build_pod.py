@@ -18,6 +18,7 @@ from executor_manager.wecode.executors.k8s.binary_extractor import (
 )
 from shared.models.openai_converter import get_metadata_field
 from shared.telemetry.config import get_otel_config
+from shared.utils.task_identity import build_task_identity_env
 
 executor_manager_host = os.getenv(
     "EXECUTOR_MANAGER_URL", "http://wegent-executor-manager-web.wb-plat-ide:8080"
@@ -128,6 +129,12 @@ def build_pod_configuration(
     # Get OpenTelemetry configuration
     otel_config = get_otel_config()
 
+    # Build skill identity env vars (same as Docker mode)
+    identity_env = build_task_identity_env(
+        skill_identity_token=get_metadata_field(task, "skill_identity_token"),
+        user_name=username,
+    )
+
     # Prepare template parameters
     template_params = {
         "username": username,
@@ -153,6 +160,9 @@ def build_pod_configuration(
         # Sandbox/Subagent support for e2b protocol
         "is_sandbox": is_sandbox,
         "sandbox_id": sandbox_id,
+        # Skill identity (mirrors Docker mode)
+        "skill_identity_token": identity_env.get("WEGENT_SKILL_IDENTITY_TOKEN"),
+        "skill_user_name": identity_env.get("WEGENT_SKILL_USER_NAME"),
         # Heartbeat monitoring for OOM detection
         "heartbeat_id": heartbeat_id,
         "heartbeat_type": heartbeat_type,
