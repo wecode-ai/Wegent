@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { ChatInput } from '@/components/chat/ChatInput'
 import type {
   ProjectChatControls,
@@ -13,9 +13,15 @@ import type {
   QueuedWorkbenchMessage,
   WorkbenchMessage,
 } from '@/types/workbench'
+import { cn } from '@/lib/utils'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
 import { RightWorkspacePanel } from './workspace-panels/RightWorkspacePanel'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
+import {
+  DesktopTopBar,
+  MAC_NATIVE_TOP_BAR_ACTION_INSET,
+} from './DesktopTopBar'
 
 const DESKTOP_COMPOSER_FRAME_CLASS =
   'mx-auto w-[min(58vw,62rem)] min-w-[32rem] max-w-[calc(100vw-4rem)] -translate-y-12'
@@ -54,6 +60,7 @@ interface DesktopWorkbenchMainProps {
   onSendQueuedAsGuidance: (id: string) => void
   onEditQueuedMessage: (id: string) => void
   onCancelGuidanceMessage: (id: string) => void
+  topBarLeftActions?: ReactNode
 }
 
 export function DesktopWorkbenchMain({
@@ -82,12 +89,14 @@ export function DesktopWorkbenchMain({
   onSendQueuedAsGuidance,
   onEditQueuedMessage,
   onCancelGuidanceMessage,
+  topBarLeftActions,
 }: DesktopWorkbenchMainProps) {
   const { t } = useTranslation('common')
   const [rightPanelOpen, setRightPanelOpen] = useState(false)
   const [bottomPanelOpen, setBottomPanelOpen] = useState(false)
   const hasConversation = messages.length > 0 || currentTask
   const hasQueuedComposerRows = queuedMessages.length > 0 || guidanceMessages.length > 0
+  const reserveMacWindowControls = isTauriRuntime()
   const emptyTitle = currentProject
     ? t('workbench.project_empty_title', {
         defaultValue: `我们应该在 ${currentProject.name} 中构建什么？`,
@@ -97,7 +106,41 @@ export function DesktopWorkbenchMain({
 
   return (
     <main className="relative flex min-w-0 flex-1 overflow-hidden">
-      <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+      <DesktopTopBar
+        testId="workbench-topbar"
+        className={cn(
+          'absolute inset-x-0 top-0 z-chrome bg-background/95 pr-7 backdrop-blur-xl',
+          topBarLeftActions && reserveMacWindowControls
+            ? undefined
+            : topBarLeftActions
+              ? 'pl-2'
+              : 'pl-6',
+        )}
+        style={
+          topBarLeftActions && reserveMacWindowControls
+            ? { paddingLeft: MAC_NATIVE_TOP_BAR_ACTION_INSET }
+            : undefined
+        }
+        left={topBarLeftActions}
+        right={(
+          <WorkspacePanelActions
+            environmentInfo={environmentInfo}
+            onRefreshEnvironmentInfo={onRefreshEnvironmentInfo}
+            onCommitEnvironmentChanges={onCommitEnvironmentChanges}
+            onListEnvironmentBranches={onListEnvironmentBranches}
+            onCheckoutEnvironmentBranch={onCheckoutEnvironmentBranch}
+            onCreateEnvironmentBranch={onCreateEnvironmentBranch}
+            rightPanelOpen={rightPanelOpen}
+            bottomPanelOpen={bottomPanelOpen}
+            onToggleRightPanel={() => setRightPanelOpen((open) => !open)}
+            onToggleBottomPanel={() => setBottomPanelOpen((open) => !open)}
+          />
+        )}
+      />
+      <div
+        data-testid="desktop-workbench-content"
+        className="relative flex min-w-0 flex-1 flex-col overflow-hidden pt-[52px]"
+      >
         {isBootstrapping ? (
           <div
             className="flex flex-1"
@@ -189,18 +232,6 @@ export function DesktopWorkbenchMain({
           />
         )}
       </div>
-      <WorkspacePanelActions
-        environmentInfo={environmentInfo}
-        onRefreshEnvironmentInfo={onRefreshEnvironmentInfo}
-        onCommitEnvironmentChanges={onCommitEnvironmentChanges}
-        onListEnvironmentBranches={onListEnvironmentBranches}
-        onCheckoutEnvironmentBranch={onCheckoutEnvironmentBranch}
-        onCreateEnvironmentBranch={onCreateEnvironmentBranch}
-        rightPanelOpen={rightPanelOpen}
-        bottomPanelOpen={bottomPanelOpen}
-        onToggleRightPanel={() => setRightPanelOpen((open) => !open)}
-        onToggleBottomPanel={() => setBottomPanelOpen((open) => !open)}
-      />
       {rightPanelOpen && (
         <RightWorkspacePanel
           currentProject={currentProject}

@@ -16,6 +16,7 @@ export interface UserPreferences {
   } | null
   default_execution_target?: string | null
   wework_new_chat_model_selection?: ModelSelectionConfig | null
+  wework_project_execution_mode?: ProjectExecutionMode | null
 }
 
 export interface Team {
@@ -114,6 +115,8 @@ export interface ProjectWithTasks {
   tasks?: ProjectTask[]
 }
 
+export type ProjectExecutionMode = 'current_workspace' | 'git_worktree'
+
 export interface ProjectListResponse {
   total?: number
   items: ProjectWithTasks[]
@@ -140,6 +143,45 @@ export interface CreateGitWorkspaceProjectResponse {
   project: ProjectWithTasks
   checkout_path: string
   reused_existing_checkout: boolean
+}
+
+export interface ProjectWorktreeProjectRef {
+  id: number
+  name: string
+  source_path: string
+}
+
+export interface ProjectWorktreeItem {
+  worktree_id: string
+  project_name: string
+  path: string
+  project?: ProjectWorktreeProjectRef | null
+}
+
+export interface ProjectWorktreeDeviceGroup {
+  device_id: string
+  device_name: string
+  device_status: 'online' | 'offline' | 'busy' | string
+  available: boolean
+  error?: string | null
+  items: ProjectWorktreeItem[]
+}
+
+export interface ProjectWorktreeListResponse {
+  devices: ProjectWorktreeDeviceGroup[]
+  total: number
+}
+
+export interface DeleteProjectWorktreeRequest {
+  device_id: string
+  worktree_id: string
+  project_id: number
+}
+
+export interface DeleteProjectWorktreeResponse {
+  worktree_id: string
+  path: string
+  deleted_task_ids: number[]
 }
 
 export interface UpdateProjectRequest {
@@ -300,6 +342,11 @@ export interface ChatSendPayload {
   model_options?: ModelOptions
   attachment_ids?: number[]
   additional_skills?: SkillRef[]
+  execution?: {
+    workspace?: {
+      source: 'git_worktree'
+    }
+  }
 }
 
 export interface ChatSendAck {

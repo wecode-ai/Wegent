@@ -63,8 +63,11 @@ function projectWorkControls(overrides: Partial<ProjectWorkControls> = {}): Proj
     devices: [],
     currentProjectId: undefined,
     currentStandaloneDeviceId: null,
+    executionMode: 'current_workspace',
+    executionModeLocked: false,
     onSelectProject: vi.fn(),
     onSelectStandaloneDevice: vi.fn(),
+    onExecutionModeChange: vi.fn(),
     ...overrides,
   }
 }
@@ -1554,6 +1557,80 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('project-option-8'))
 
     expect(onSelectProject).toHaveBeenCalledWith(8)
+  })
+
+  test('shows launch modes beside existing local workspace projects', async () => {
+    const onExecutionModeChange = vi.fn()
+    const projects: ProjectWithTasks[] = [
+      {
+        id: 7,
+        name: 'Wegent',
+        config: {
+          mode: 'workspace',
+          device_id: 'device-1',
+          workspace: {
+            source: 'local_path',
+            localPath: '/workspace/projects/Wegent',
+          },
+        },
+        tasks: [],
+      },
+    ]
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectWork={projectWorkControls({
+          projects,
+          currentProjectId: 7,
+          executionMode: 'current_workspace',
+          onExecutionModeChange,
+        })}
+      />,
+    )
+
+    expect(screen.getByTestId('project-work-button')).toHaveTextContent('Wegent')
+    expect(screen.getByTestId('project-work-button')).toHaveClass(
+      'hover:shadow-[0_10px_28px_rgba(0,0,0,0.14)]',
+    )
+    expect(screen.getByTestId('execution-mode-button')).toHaveTextContent('本地模式')
+    expect(screen.getByTestId('execution-mode-button')).toHaveClass(
+      'hover:shadow-[0_10px_28px_rgba(0,0,0,0.14)]',
+    )
+
+    await userEvent.click(screen.getByTestId('project-work-button'))
+
+    expect(screen.getByTestId('project-work-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('project-work-button')).toHaveClass(
+      'shadow-[0_10px_28px_rgba(0,0,0,0.14)]',
+    )
+    expect(screen.queryByTestId('project-execution-mode-menu-section')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('execution-mode-button'))
+
+    expect(screen.queryByTestId('project-work-menu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-execution-mode-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('execution-mode-button')).toHaveClass(
+      'shadow-[0_10px_28px_rgba(0,0,0,0.14)]',
+    )
+    expect(screen.getByTestId('project-execution-mode-menu-section')).toHaveTextContent(
+      '启动模式',
+    )
+    expect(screen.getByTestId('execution-mode-current-workspace-button')).toHaveTextContent(
+      '在本地处理',
+    )
+    expect(screen.getByTestId('execution-mode-git-worktree-button')).toHaveTextContent(
+      '新工作树',
+    )
+
+    await userEvent.click(screen.getByTestId('execution-mode-git-worktree-button'))
+
+    expect(onExecutionModeChange).toHaveBeenCalledWith('git_worktree')
+    expect(screen.queryByTestId('project-execution-mode-menu')).not.toBeInTheDocument()
   })
 
   test('opens project work menu upward when below cannot fit the four-row menu', async () => {

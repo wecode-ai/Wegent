@@ -11,6 +11,7 @@ import type { Team } from '@/types/api'
 
 const mockSendMessage = jest.fn()
 const mockToast = jest.fn()
+const mockSetSelectedDeviceId = jest.fn()
 
 const mockSelectedTeam = {
   id: 7,
@@ -55,6 +56,13 @@ jest.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams('taskId=42'),
   useRouter: () => ({ push: jest.fn() }),
   usePathname: () => '/chat',
+}))
+
+jest.mock('@/contexts/DeviceContext', () => ({
+  useDevices: () => ({
+    selectedDeviceId: null,
+    setSelectedDeviceId: mockSetSelectedDeviceId,
+  }),
 }))
 
 const mockTranslations: Record<string, Record<string, string>> = {

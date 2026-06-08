@@ -53,6 +53,8 @@ const fetchQuotaMock = vi.fn()
 describe('DesktopWorkbenchLayout', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    delete (window as typeof window & { __TAURI_INTERNALS__?: unknown })
+      .__TAURI_INTERNALS__
     localStorage.clear()
     window.history.pushState({}, '', '/')
     Object.defineProperty(navigator, 'clipboard', {
@@ -166,7 +168,12 @@ describe('DesktopWorkbenchLayout', () => {
       projects: [{ id: 1, name: 'github_wegent', tasks: [] }],
       devices: [],
       currentProjectId: undefined,
+      currentStandaloneDeviceId: null,
+      executionMode: 'current_workspace',
+      executionModeLocked: false,
       onSelectProject: vi.fn(),
+      onSelectStandaloneDevice: vi.fn(),
+      onExecutionModeChange: vi.fn(),
     },
     onSelectProject: vi.fn(),
     onStartNewProjectChat: vi.fn(),
@@ -211,6 +218,55 @@ describe('DesktopWorkbenchLayout', () => {
     onInputChange: vi.fn(),
     onSend: vi.fn(),
     onLogout: vi.fn(),
+  }
+
+  const workspacePanelProject = {
+    id: 7,
+    name: 'project38',
+    tasks: [],
+    config: {
+      mode: 'workspace' as const,
+      execution: {
+        targetType: 'local' as const,
+        deviceId: 'device-1',
+      },
+      workspace: {
+        source: 'local_path' as const,
+        localPath: '/workspace/projects/project38',
+      },
+    },
+  }
+
+  const workspacePanelDevices = [
+    {
+      id: 1,
+      device_id: 'device-1',
+      name: 'Cloud Device',
+      status: 'online' as const,
+      is_default: false,
+      device_type: 'cloud' as const,
+      bind_shell: 'claudecode',
+    },
+  ]
+
+  function renderWorkspacePanelLayout() {
+    return render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          projects: [workspacePanelProject],
+          devices: workspacePanelDevices,
+          currentProject: workspacePanelProject,
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: [workspacePanelProject],
+          devices: workspacePanelDevices,
+          currentProjectId: workspacePanelProject.id,
+        }}
+      />,
+    )
   }
 
   test('renders projects, recent tasks, and empty prompt', () => {
@@ -296,6 +352,9 @@ describe('DesktopWorkbenchLayout', () => {
       />,
     )
 
+    expect(screen.getByTestId('desktop-workbench-content')).toHaveClass(
+      'pt-[52px]',
+    )
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass(
       'h-full',
       'overflow-y-auto',
@@ -418,16 +477,66 @@ describe('DesktopWorkbenchLayout', () => {
       />,
     )
 
+    expect(
+      screen
+        .getAllByTestId('macos-titlebar-drag-region')
+        .every((region) => region.hasAttribute('data-tauri-drag-region')),
+    ).toBe(true)
+    expect(screen.getByTestId('desktop-sidebar-topbar')).toHaveClass(
+      'h-[52px]',
+      'pl-2',
+    )
+    expect(screen.getByTestId('collapse-sidebar-button')).toHaveClass(
+      'h-7',
+      'w-7',
+      'rounded-lg',
+    )
+    expect(screen.getByTestId('desktop-window-controls')).toHaveClass('gap-3')
+    expect(screen.getByTestId('workbench-topbar-right-actions')).toHaveClass(
+      'gap-5',
+    )
+
     await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
 
     expect(screen.queryByText('新对话')).not.toBeInTheDocument()
     expect(document.querySelector('aside')).not.toBeInTheDocument()
     expect(screen.getByTestId('expand-sidebar-button')).toBeInTheDocument()
+    expect(screen.getByTestId('workbench-topbar')).toHaveClass('h-[52px]')
+    expect(screen.getByTestId('workbench-topbar')).toHaveClass('pl-2')
+    expect(screen.getByTestId('workbench-topbar-left-actions')).toContainElement(
+      screen.getByTestId('desktop-window-controls'),
+    )
 
     await userEvent.click(screen.getByTestId('expand-sidebar-button'))
 
     expect(screen.getByText('新对话')).toBeInTheDocument()
     expect(document.querySelector('aside')).toBeInTheDocument()
+  })
+
+  test('reserves native macOS traffic light space in the Tauri title bar', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(screen.getByTestId('desktop-sidebar-topbar')).toHaveClass(
+      'h-[52px]',
+    )
+    expect(screen.getByTestId('desktop-sidebar-topbar')).toHaveStyle({
+      paddingLeft: '89px',
+    })
+
+    await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
+
+    expect(screen.getByTestId('workbench-topbar')).toHaveStyle({
+      paddingLeft: '89px',
+    })
+    expect(screen.getByTestId('expand-sidebar-button')).toHaveClass(
+      'h-7',
+      'w-7',
+    )
   })
 
   test('opens and filters the desktop search dialog from the sidebar', async () => {
@@ -1182,6 +1291,10 @@ describe('DesktopWorkbenchLayout', () => {
     )
     await userEvent.click(screen.getByTestId('project-chat-button'))
     expect(baseProps.onOpenTask).toHaveBeenCalledWith(11, 1)
+    baseProps.onOpenTask.mockClear()
+
+    await userEvent.click(screen.getByTestId('project-chat-time-11'))
+    expect(baseProps.onOpenTask).toHaveBeenCalledWith(11, 1)
 
     await userEvent.click(screen.getByTestId('project-chat-menu-11'))
     expect(screen.getByTestId('archive-chat-11')).toHaveTextContent('归档会话')
@@ -1242,6 +1355,10 @@ describe('DesktopWorkbenchLayout', () => {
       'group-hover/task:opacity-100',
     )
     await userEvent.click(rows[0])
+    expect(baseProps.onOpenTask).toHaveBeenCalledWith(5, 0)
+    baseProps.onOpenTask.mockClear()
+
+    await userEvent.click(screen.getByTestId('history-task-time-5'))
     expect(baseProps.onOpenTask).toHaveBeenCalledWith(5, 0)
 
     await userEvent.click(screen.getByTestId('history-task-menu-5'))
@@ -1512,7 +1629,7 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('opens and resizes the right workspace panel', async () => {
-    render(<DesktopWorkbenchLayout {...baseProps} />)
+    renderWorkspacePanelLayout()
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
 
@@ -1520,9 +1637,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(panel).toBeInTheDocument()
     expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
     expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
-    expect(screen.getByText('终端')).toBeInTheDocument()
-    expect(screen.getByText('IDE')).toBeInTheDocument()
-    expect(screen.getByText('桌面')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-tool-launcher')).toBeInTheDocument()
+    expect(screen.getByText('请选择项目后使用')).toBeInTheDocument()
 
     fireEvent.pointerDown(screen.getByTestId('right-workspace-resize-handle'), { clientX: 700 })
     fireEvent.pointerMove(document, { clientX: 640 })
@@ -1919,7 +2035,7 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('opens and resizes the bottom workspace panel', async () => {
-    render(<DesktopWorkbenchLayout {...baseProps} />)
+    renderWorkspacePanelLayout()
 
     await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
 
@@ -1927,9 +2043,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(panel).toBeInTheDocument()
     expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
     expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
-    expect(screen.getByText('终端')).toBeInTheDocument()
-    expect(screen.getByText('IDE')).toBeInTheDocument()
-    expect(screen.getByText('桌面')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-tool-launcher')).toBeInTheDocument()
+    expect(screen.getByText('请选择项目后使用')).toBeInTheDocument()
 
     fireEvent.pointerDown(screen.getByTestId('bottom-workspace-resize-handle'), { clientY: 700 })
     fireEvent.pointerMove(document, { clientY: 620 })

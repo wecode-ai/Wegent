@@ -48,6 +48,7 @@ import type {
 } from '@/types/subscription'
 import { toast } from 'sonner'
 import { getCompatibleProviderFromAgentType } from '@/utils/modelCompatibility'
+import type { CompatibleProvider } from '@/utils/modelCompatibility'
 import { useSocket } from '@/contexts/SocketContext'
 import {
   SendAreaSection,
@@ -669,7 +670,7 @@ export function SubscriptionForm({
     if (!selectedModel || !compatibleProvider) return
     const matchedModel = models.find(model => model.name === selectedModel.name)
     const resolvedProvider = matchedModel?.provider || selectedModel.provider
-    if (resolvedProvider && resolvedProvider !== compatibleProvider) {
+    if (resolvedProvider && !compatibleProvider.includes(resolvedProvider as CompatibleProvider)) {
       setSelectedModel(null)
     }
   }, [compatibleProvider, models, selectedModel])

@@ -17,8 +17,7 @@ export function createSocketClient(): Socket {
     reconnectionAttempts: Infinity,
     reconnectionDelay: 1000,
     reconnectionDelayMax: 5000,
-    transports: ['websocket'],
+    transports: ['websocket', 'polling'],
     timeout: 20000,
-    upgrade: false,
   })
 }

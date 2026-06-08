@@ -25,34 +25,34 @@ describe('getCompatibleProviderFromAgentType', () => {
   describe('agno mapping', () => {
     it('maps "agno" to "openai"', () => {
       const result = getCompatibleProviderFromAgentType('agno')
-      expect(result).toBe('openai')
+      expect(result).toEqual(['openai'])
     })
 
     it('maps "AGNO" to "openai" (case-insensitive)', () => {
       const result = getCompatibleProviderFromAgentType('AGNO')
-      expect(result).toBe('openai')
+      expect(result).toEqual(['openai'])
     })
 
     it('maps "Agno" to "openai" (mixed case)', () => {
       const result = getCompatibleProviderFromAgentType('Agno')
-      expect(result).toBe('openai')
+      expect(result).toEqual(['openai'])
     })
   })
 
   describe('claude mapping', () => {
-    it('maps "claude" to "claude"', () => {
+    it('maps "claude" to ClaudeCode-compatible providers', () => {
       const result = getCompatibleProviderFromAgentType('claude')
-      expect(result).toBe('claude')
+      expect(result).toEqual(['claude', 'anthropic'])
     })
 
-    it('maps "claudecode" to "claude"', () => {
+    it('maps "claudecode" to ClaudeCode-compatible providers', () => {
       const result = getCompatibleProviderFromAgentType('claudecode')
-      expect(result).toBe('claude')
+      expect(result).toEqual(['claude', 'anthropic'])
     })
 
-    it('maps "ClaudeCode" to "claude" (real-world casing)', () => {
+    it('maps "ClaudeCode" to ClaudeCode-compatible providers (real-world casing)', () => {
       const result = getCompatibleProviderFromAgentType('ClaudeCode')
-      expect(result).toBe('claude')
+      expect(result).toEqual(['claude', 'anthropic'])
     })
   })
 
