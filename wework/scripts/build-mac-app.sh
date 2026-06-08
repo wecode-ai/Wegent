@@ -14,6 +14,15 @@ if [ -f "$ENV_FILE" ]; then
   set +a
 fi
 
+# Load .env.production first — it has production-specific overrides
+PROD_ENV_FILE="$WEWORK_DIR/.env.production"
+if [ -f "$PROD_ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$PROD_ENV_FILE"
+  set +a
+fi
+
 get_local_ip() {
   local ip
 
