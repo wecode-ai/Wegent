@@ -565,6 +565,10 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       }
 
       return new Promise(resolve => {
+        const timeout = setTimeout(() => {
+          resolve({ success: false, error: 'Cancel ack timeout' })
+        }, 5000)
+
         socket.emit(
           'chat:cancel',
           {
@@ -572,8 +576,16 @@ export function SocketProvider({ children }: { children: ReactNode }) {
             partial_content: partialContent,
             shell_type: shellType,
           },
-          (response: { success?: boolean; error?: string }) => {
-            resolve({ success: response.success ?? true, error: response.error })
+          (response: { success?: boolean; error?: string } | undefined) => {
+            clearTimeout(timeout)
+            if (!response) {
+              resolve({ success: false, error: 'No response from server' })
+              return
+            }
+            resolve({
+              success: response.success === true,
+              error: typeof response.error === 'string' ? response.error : undefined,
+            })
           }
         )
       })
