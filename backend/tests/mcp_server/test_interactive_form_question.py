@@ -5,6 +5,7 @@
 """Tests for interactive_form_question MCP tool."""
 
 import inspect
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -191,6 +192,156 @@ class TestInteractiveFormTool:
 
         assert captured["questions"][0]["input_type"] == "choice"
         assert captured["questions"][0]["multi_select"] is True
+
+    @pytest.mark.asyncio
+    async def test_recovers_question_text_embedded_in_input_type(self) -> None:
+        """Malformed model output can put question(...) inside input_type."""
+        token = self._make_token()
+        captured: dict[str, Any] = {}
+
+        async def capture(
+            task_id: int,
+            subtask_id: int,
+            question_data: dict[str, Any],
+        ) -> None:
+            captured.update(question_data)
+
+        with patch(
+            "app.mcp_server.tools.interactive_form_question._notify_frontend",
+            side_effect=capture,
+        ):
+            result = await interactive_form_question(
+                token_info=token,
+                questions=[
+                    {
+                        "id": "confirm_logic",
+                        "input_type": "single_choice(question(确认需求逻辑是否正确?))",
+                        "multiSelect": False,
+                        "options": [
+                            {"label": "确认以上逻辑正确", "value": "yes"},
+                            {"label": "需要调整", "value": "adjust"},
+                        ],
+                    }
+                ],
+            )
+
+        assert result["__deferred_user_input__"] is True
+        assert captured["questions"][0]["question"] == "确认需求逻辑是否正确?"
+        assert captured["questions"][0]["input_type"] == "choice"
+        assert captured["questions"][0]["multi_select"] is False
+
+    @pytest.mark.asyncio
+    async def test_preserves_trailing_parentheses_in_embedded_question(self) -> None:
+        """Recovering embedded question text preserves legitimate trailing parens."""
+        token = self._make_token()
+        captured: dict[str, Any] = {}
+
+        async def capture(
+            task_id: int,
+            subtask_id: int,
+            question_data: dict[str, Any],
+        ) -> None:
+            captured.update(question_data)
+
+        with patch(
+            "app.mcp_server.tools.interactive_form_question._notify_frontend",
+            side_effect=capture,
+        ):
+            await interactive_form_question(
+                token_info=token,
+                questions=[
+                    {
+                        "id": "confirm_logic",
+                        "input_type": "single_choice(question(Use option A (recommended)))",
+                        "options": [
+                            {"label": "Confirm", "value": "confirm"},
+                            {"label": "Adjust", "value": "adjust"},
+                        ],
+                    }
+                ],
+            )
+
+        assert captured["questions"][0]["question"] == "Use option A (recommended)"
+        assert captured["questions"][0]["input_type"] == "choice"
+
+    @pytest.mark.asyncio
+    async def test_accepts_camel_case_multi_select_alias(self) -> None:
+        """Claude-style tool calls may use multiSelect instead of multi_select."""
+        token = self._make_token()
+        captured: dict[str, Any] = {}
+
+        async def capture(
+            task_id: int,
+            subtask_id: int,
+            question_data: dict[str, Any],
+        ) -> None:
+            captured.update(question_data)
+
+        with patch(
+            "app.mcp_server.tools.interactive_form_question._notify_frontend",
+            side_effect=capture,
+        ):
+            await interactive_form_question(
+                token_info=token,
+                questions=[
+                    {
+                        "id": "features",
+                        "question": "Pick features",
+                        "input_type": "choice",
+                        "multiSelect": True,
+                        "options": [
+                            {"label": "A", "value": "a"},
+                            {"label": "B", "value": "b"},
+                        ],
+                    }
+                ],
+            )
+
+        assert captured["questions"][0]["input_type"] == "choice"
+        assert captured["questions"][0]["multi_select"] is True
+
+    @pytest.mark.asyncio
+    async def test_accepts_common_aliases_and_string_options(self) -> None:
+        """Common model form aliases are normalized before rendering."""
+        token = self._make_token()
+        captured: dict[str, Any] = {}
+
+        async def capture(
+            task_id: int,
+            subtask_id: int,
+            question_data: dict[str, Any],
+        ) -> None:
+            captured.update(question_data)
+
+        with patch(
+            "app.mcp_server.tools.interactive_form_question._notify_frontend",
+            side_effect=capture,
+        ):
+            await interactive_form_question(
+                token_info=token,
+                questions=[
+                    {
+                        "id": "confirm",
+                        "question": "Confirm?",
+                        "inputType": "single_choice",
+                        "options": ["Yes", "No"],
+                    },
+                    {
+                        "id": "note",
+                        "title": "Anything else?",
+                        "input_type": "text_input",
+                        "required": False,
+                    },
+                ],
+            )
+
+        assert captured["questions"][0]["input_type"] == "choice"
+        assert captured["questions"][0]["options"] == [
+            {"label": "Yes", "value": "Yes", "recommended": False},
+            {"label": "No", "value": "No", "recommended": False},
+        ]
+        assert captured["questions"][1]["question"] == "Anything else?"
+        assert captured["questions"][1]["input_type"] == "text"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
