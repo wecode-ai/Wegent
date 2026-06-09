@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock
 
 import pytest
@@ -18,7 +19,10 @@ from langchain_core.messages import (
 )
 
 from chat_shell.compression.token_counter import TokenCounter
-from chat_shell.guard.context_guard import UnifiedContextGuard
+from chat_shell.guard.context_guard import (
+    ContextGuardFailFastError,
+    UnifiedContextGuard,
+)
 from chat_shell.guard.tool_output import COMPACTED_FLAG, ToolOutputGuardAdapter
 from chat_shell.guard.types import TruncationPolicy
 
@@ -188,6 +192,72 @@ class TestSourcePass:
         assert replacement.additional_kwargs.get("cache_control") == cache_marker
         assert replacement.additional_kwargs.get(COMPACTED_FLAG) is True
 
+    async def test_uses_tool_specific_policy_override(self, model_id):
+        """Source-level pass should pick the policy based on message.name."""
+        counter = TokenCounter(model_name=model_id)
+        adapter = ToolOutputGuardAdapter(
+            token_counter=counter,
+            default_policy=TruncationPolicy(kind="tokens", limit=50),
+            tool_policy_overrides={
+                "knowledge_base_search": TruncationPolicy(kind="tokens", limit=120)
+            },
+        )
+        guard = UnifiedContextGuard(
+            model_id=model_id,
+            sources=[adapter],
+            compression_enabled=False,
+        )
+
+        body = "knowledge line\n" * 200
+        state = {
+            "messages": [
+                HumanMessage(content="search", id="h-1"),
+                ToolMessage(
+                    content=body,
+                    tool_call_id="t-1",
+                    name="knowledge_base_search",
+                    id="tool-1",
+                ),
+            ]
+        }
+
+        updates = (await guard(state))["messages"]
+        assert len(updates) == 1
+        replacement = updates[0]
+        assert isinstance(replacement, ToolMessage)
+        assert "truncated=true" in replacement.content
+        header = replacement.content.split("\n", 1)[0]
+        assert "name=knowledge_base_search" in header
+        # Sanity check that the larger override was used: the rendered output
+        # should be materially larger than a 50-token cap would allow.
+        assert len(replacement.content) > 300
+
+    async def test_skips_direct_injection_source_compaction(self, guard):
+        """Knowledge direct-injection payloads bypass source-level truncation."""
+        direct_injection_payload = json.dumps(
+            {
+                "mode": "direct_injection",
+                "injected_content": "knowledge line\n" * 80,
+                "count": 8,
+            }
+        )
+        state = {
+            "messages": [
+                HumanMessage(content="search", id="h-1"),
+                ToolMessage(
+                    content=direct_injection_payload,
+                    tool_call_id="t-1",
+                    name="knowledge_base_search",
+                    id="tool-1",
+                ),
+            ]
+        }
+
+        result = await guard(state)
+
+        # Source pass skips this message entirely; no replacement upsert.
+        assert result == {}
+
 
 # ---------------------------------------------------------------------------
 # Stage 2: compression pass
@@ -318,6 +388,91 @@ class TestCompressionPass:
         synthesized = [u for u in updates if not isinstance(u, RemoveMessage)]
         assert len(synthesized) == 1
         assert synthesized[0].id == synthesized_id
+
+    async def test_retained_message_with_same_id_but_new_content_is_upserted(
+        self, guard, monkeypatch
+    ):
+        """Compression may mutate a kept message in place (same id, new content).
+
+        The guard must emit an upsert for that retained message rather than
+        treating every surviving id as an unchanged passthrough.
+        """
+        state = {
+            "messages": [
+                HumanMessage(content="older", id="h-1"),
+                AIMessage(content="reply", id="a-1"),
+            ]
+        }
+
+        calls = {"n": 0}
+
+        def fake_count(messages):
+            calls["n"] += 1
+            return guard.trigger_limit + 1 if calls["n"] == 1 else 0
+
+        monkeypatch.setattr(guard._counter, "count_messages", fake_count)
+
+        fake_result = MagicMock()
+        fake_result.was_compressed = True
+        fake_result.original_tokens = guard.trigger_limit + 1
+        fake_result.compressed_tokens = guard.trigger_limit - 100
+        fake_result.strategies_applied = ["history"]
+        fake_result.messages = [
+            {
+                "role": "assistant",
+                "content": "[truncated history]\n\nreply",
+                "id": "a-1",
+                "additional_kwargs": {},
+            }
+        ]
+
+        monkeypatch.setattr(
+            guard._compressor, "compress_if_needed", lambda msgs: fake_result
+        )
+
+        updates = (await guard(state))["messages"]
+
+        remove_ids = {u.id for u in updates if isinstance(u, RemoveMessage)}
+        assert remove_ids == {"h-1"}
+        replacements = [u for u in updates if not isinstance(u, RemoveMessage)]
+        assert len(replacements) == 1
+        assert replacements[0].id == "a-1"
+        assert replacements[0].content == "[truncated history]\n\nreply"
+        assert replacements[0].additional_kwargs.get(COMPACTED_FLAG) is True
+
+    async def test_fail_fast_when_bypass_protected_payload_still_over_trigger(
+        self, guard, monkeypatch
+    ):
+        """Protected direct-injection payloads must not be mutilated by
+        request-level/emergency passes; if the request still cannot fit, the
+        guard should fail fast instead of silently truncating the payload."""
+        direct_injection_payload = json.dumps(
+            {
+                "mode": "direct_injection",
+                "injected_content": "knowledge line\n" * 4000,
+                "count": 8,
+            }
+        )
+        state = {
+            "messages": [
+                HumanMessage(content="search", id="h-1"),
+                ToolMessage(
+                    content=direct_injection_payload,
+                    tool_call_id="t-1",
+                    name="knowledge_base_search",
+                    id="tool-1",
+                ),
+            ]
+        }
+
+        monkeypatch.setattr(
+            guard._counter,
+            "count_messages",
+            lambda msgs: guard.trigger_limit + 1,
+        )
+
+        with pytest.raises(ContextGuardFailFastError):
+            await guard(state)
 
 
 # ---------------------------------------------------------------------------

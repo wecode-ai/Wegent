@@ -46,6 +46,23 @@ from shared.telemetry.decorators import add_span_event, trace_async
 logger = logging.getLogger(__name__)
 
 
+def _resolve_final_context_metric_messages(
+    *,
+    initial_messages: list[dict[str, Any]],
+    messages_chain: list[dict[str, Any]] | None,
+    live_state_messages: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Resolve the best available final model-visible state for metrics.
+
+    Phase 2 guard enforcement mutates LangGraph live state mid-turn. When the
+    agent builder captured that final state, prefer it over reconstructing an
+    approximation from the turn input plus serialized turn output.
+    """
+    if live_state_messages:
+        return list(live_state_messages)
+    return list(initial_messages) + list(messages_chain or [])
+
+
 class ChatInterface(ABC):
     """Abstract interface for Chat Shell operations."""
 
@@ -281,6 +298,7 @@ class ChatService(ChatInterface):
                 ToolOutputGuardAdapter,
                 TruncationPolicy,
                 UnifiedContextGuard,
+                build_default_tool_policy_overrides,
                 chain_pre_model_hooks,
             )
 
@@ -299,6 +317,9 @@ class ChatService(ChatInterface):
                     kind="tokens", limit=settings.TOOL_OUTPUT_TOKEN_LIMIT
                 ),
                 emergency_ratio=settings.EMERGENCY_TOOL_OUTPUT_RATIO,
+                tool_policy_overrides=build_default_tool_policy_overrides(
+                    knowledge_tool_limit=settings.KNOWLEDGE_TOOL_OUTPUT_TOKEN_LIMIT
+                ),
             )
             context_guard = UnifiedContextGuard(
                 model_id=guard_model_id,
@@ -463,11 +484,13 @@ class ChatService(ChatInterface):
             await guidance_consumer.expire_pending()
             if not core.is_cancelled():
                 if context_metrics_tracker is not None:
-                    # The final snapshot covers everything the model saw plus
-                    # whatever it produced this turn (assistant response, tool
-                    # calls, tool results). agent_builder._last_messages_chain
-                    # holds those new messages in OpenAI dict form.
-                    final_messages = list(messages) + (messages_chain or [])
+                    final_messages = _resolve_final_context_metric_messages(
+                        initial_messages=messages,
+                        messages_chain=messages_chain,
+                        live_state_messages=getattr(
+                            agent_builder, "_last_live_state_messages", None
+                        ),
+                    )
                     final_snapshot = await context_metrics_tracker.capture(
                         final_messages, PHASE_FINAL
                     )

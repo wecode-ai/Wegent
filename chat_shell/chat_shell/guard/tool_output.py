@@ -10,20 +10,22 @@ messages into a compact string format with configurable truncation.
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, TypedDict
 
 from chat_shell.compression.token_counter import TokenCounter
-from chat_shell.guard.types import (
-    DEFAULT_EMERGENCY_RATIO,
-    TruncationPolicy,
-)
+from chat_shell.guard.types import DEFAULT_EMERGENCY_RATIO, TruncationPolicy
 
 COMPACTED_FLAG = "compacted"
+BYPASS_COMPACTION_FLAG = "guard_bypass_compaction"
 HEADER_PREFIX = "[tool_output "
 HEAD_RATIO = 0.6
 
 _FOOTER_PATTERN = re.compile(r"^\[(exit_code=-?\d+)?( ?wall_time=\d+\.\d+s)?\]$")
+KNOWLEDGE_TOOL_NAMES = frozenset({"knowledge_base_search", "kb_ls", "kb_head"})
+_DIRECT_INJECTION_TOOL_NAME = "knowledge_base_search"
+_DIRECT_INJECTION_MODE = "direct_injection"
 
 
 class RawToolOutput(TypedDict, total=False):
@@ -31,6 +33,22 @@ class RawToolOutput(TypedDict, total=False):
     tool_name: str
     exit_code: int
     wall_time: float
+
+
+def build_default_tool_policy_overrides(
+    *,
+    knowledge_tool_limit: int,
+) -> dict[str, TruncationPolicy]:
+    """Build the system-level per-tool output policy overrides.
+
+    The unified guard remains the sole owner of model-visible tool budgets.
+    Callers should obtain overrides from this helper instead of hard-coding
+    tool-name checks in service wiring.
+    """
+    return {
+        tool_name: TruncationPolicy(kind="tokens", limit=knowledge_tool_limit)
+        for tool_name in KNOWLEDGE_TOOL_NAMES
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +136,15 @@ def _build_footer(exit_code: int | None, wall_time: float | None) -> str | None:
     return "[" + " ".join(parts) + "]"
 
 
+def _parse_json_object(content: str) -> dict[str, Any] | None:
+    """Parse *content* as a JSON object, returning ``None`` on failure."""
+    try:
+        parsed = json.loads(content)
+    except (TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 def _split_compact(content: str) -> tuple[str, str, dict[str, int | float]]:
     """Parse a compact string produced by this adapter into its constituents.
 
@@ -202,10 +229,12 @@ class ToolOutputGuardAdapter:
         token_counter: TokenCounter,
         default_policy: TruncationPolicy,
         emergency_ratio: float = DEFAULT_EMERGENCY_RATIO,
+        tool_policy_overrides: dict[str, TruncationPolicy] | None = None,
     ) -> None:
         self._counter = token_counter
         self.default_policy = default_policy
         self._emergency_ratio = emergency_ratio
+        self._tool_policy_overrides = dict(tool_policy_overrides or {})
 
     # -- GuardSource Protocol surface ----------------------------------------
 
@@ -263,6 +292,39 @@ class ToolOutputGuardAdapter:
             kind=normal.kind,
             limit=max(1, int(normal.limit * self._emergency_ratio)),
         )
+
+    def policy_for_message(self, message: dict[str, Any]) -> TruncationPolicy:
+        """Resolve the normal truncation policy for a specific tool message."""
+        tool_name = str(message.get("name") or "").strip()
+        return self._tool_policy_overrides.get(tool_name, self.default_policy)
+
+    def should_bypass_source_compaction(self, message: dict[str, Any]) -> bool:
+        """Return True when source-level tool truncation should be skipped.
+
+        ``knowledge_base_search`` direct-injection payloads are all-or-nothing:
+        once the injected body is cut in the middle, the current system does not
+        provide a stable way for the model to recover the omitted portion. Those
+        payloads therefore bypass the per-tool truncation stage and rely on the
+        request-level guard as the remaining safety net.
+        """
+        return self.should_bypass_request_compaction(message)
+
+    def should_bypass_request_compaction(self, message: dict[str, Any]) -> bool:
+        """Return True when request-level compaction must not mutate *message*.
+
+        Today this protects knowledge-base direct-injection payloads: once the
+        injected body is cut in the middle, the current system has no stable way
+        to reconstruct the omitted portion for the model.
+        """
+        tool_name = str(message.get("name") or "").strip()
+        if tool_name != _DIRECT_INJECTION_TOOL_NAME:
+            return False
+
+        payload = _parse_json_object(str(message.get("content", "")))
+        if payload is None:
+            return False
+
+        return payload.get("mode") == _DIRECT_INJECTION_MODE
 
     # -- Recognition helpers (used by UnifiedContextGuard / T3) --------------
 

@@ -92,7 +92,8 @@ class Settings(BaseSettings):
     MESSAGE_COMPRESSION_ATTACHMENT_LENGTH: int = 50000
 
     # Phase 2 unified context guard
-    TOOL_OUTPUT_TOKEN_LIMIT: int = 12000
+    TOOL_OUTPUT_TOKEN_LIMIT: int = 15000
+    KNOWLEDGE_TOOL_OUTPUT_TOKEN_LIMIT: int = 30000
     EMERGENCY_TOOL_OUTPUT_RATIO: float = 0.3
 
     # MCP configuration for Chat Shell

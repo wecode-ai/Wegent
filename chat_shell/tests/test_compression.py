@@ -19,6 +19,7 @@ from chat_shell.compression.strategies import (
     ToolResultTruncationStrategy,
 )
 from chat_shell.compression.token_counter import TokenCounter
+from chat_shell.guard.tool_output import BYPASS_COMPACTION_FLAG
 
 
 def _assert_tool_call_groups_intact(messages):
@@ -1122,3 +1123,61 @@ class TestMessageCompressor:
         compressed, _ = compressor._force_compression_to_target(messages, 10)
 
         _assert_tool_call_groups_intact(compressed)
+
+
+class TestBypassProtectedCompaction:
+    def test_history_truncation_skips_middle_bypass_protected_message(self):
+        strategy = HistoryTruncationStrategy()
+        counter = TokenCounter(model_id="gpt-4")
+        config = CompressionConfig(first_messages_to_keep=1, last_messages_to_keep=1)
+
+        messages = [
+            {"role": "user", "content": "start"},
+            {"role": "assistant", "content": "older reply"},
+            {
+                "role": "tool",
+                "content": '{"mode":"direct_injection","injected_content":"x"}',
+                "additional_kwargs": {BYPASS_COMPACTION_FLAG: True},
+            },
+            {"role": "assistant", "content": "latest reply"},
+        ]
+
+        potential = strategy.estimate_potential(messages, counter, config)
+        assert potential.total_compressible_tokens == 0
+
+        compressed, details = strategy.compress(
+            messages,
+            counter,
+            tokens_to_reduce=100,
+            config=config,
+        )
+        assert compressed == messages
+        assert details["messages_removed"] == 0
+        assert details["bypass_protected"] is True
+
+    def test_tool_result_truncation_skips_bypass_protected_tool_message(self):
+        strategy = ToolResultTruncationStrategy()
+        counter = TokenCounter(model_id="gpt-4")
+        config = CompressionConfig()
+
+        protected_tool = {
+            "role": "tool",
+            "content": "tool output " * 500,
+            "additional_kwargs": {BYPASS_COMPACTION_FLAG: True},
+        }
+        messages = [
+            {"role": "user", "content": "search"},
+            protected_tool,
+        ]
+
+        potential = strategy.estimate_potential(messages, counter, config)
+        assert potential.total_compressible_tokens == 0
+
+        compressed, details = strategy.compress(
+            messages,
+            counter,
+            tokens_to_reduce=100,
+            config=config,
+        )
+        assert compressed == messages
+        assert details["tool_results_truncated"] == 0

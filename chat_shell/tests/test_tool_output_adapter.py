@@ -9,7 +9,9 @@ from __future__ import annotations
 from chat_shell.compression.token_counter import TokenCounter
 from chat_shell.guard.tool_output import (
     HEADER_PREFIX,
+    KNOWLEDGE_TOOL_NAMES,
     ToolOutputGuardAdapter,
+    build_default_tool_policy_overrides,
 )
 from chat_shell.guard.types import TruncationPolicy
 
@@ -377,3 +379,58 @@ class TestRecognition:
         )
         emergency = adapter.emergency_policy(TruncationPolicy(kind="tokens", limit=10))
         assert emergency.limit == 1
+
+    def test_policy_for_message_uses_tool_specific_override(self):
+        """Specific tool names can opt into a higher model-visible budget."""
+        adapter = ToolOutputGuardAdapter(
+            token_counter=TokenCounter("gpt-4"),
+            default_policy=TruncationPolicy(kind="tokens", limit=15000),
+            tool_policy_overrides={
+                "knowledge_base_search": TruncationPolicy(kind="tokens", limit=30000)
+            },
+        )
+
+        assert (
+            adapter.policy_for_message(
+                {"role": "tool", "name": "knowledge_base_search"}
+            ).limit
+            == 30000
+        )
+        assert (
+            adapter.policy_for_message({"role": "tool", "name": "shell"}).limit == 15000
+        )
+
+    def test_build_default_tool_policy_overrides_covers_knowledge_tools(self):
+        """System-level default overrides are centralized in the guard module."""
+        overrides = build_default_tool_policy_overrides(knowledge_tool_limit=30000)
+
+        assert set(overrides) == set(KNOWLEDGE_TOOL_NAMES)
+        assert all(policy.kind == "tokens" for policy in overrides.values())
+        assert all(policy.limit == 30000 for policy in overrides.values())
+
+    def test_should_bypass_source_compaction_for_direct_injection(self):
+        """Knowledge direct-injection payloads bypass per-tool truncation."""
+        adapter = _make_adapter()
+        message = {
+            "role": "tool",
+            "name": "knowledge_base_search",
+            "content": (
+                '{"mode":"direct_injection","injected_content":"full payload",'
+                '"count":8}'
+            ),
+        }
+
+        assert adapter.should_bypass_source_compaction(message) is True
+        assert adapter.should_bypass_request_compaction(message) is True
+
+    def test_should_not_bypass_source_compaction_for_rag_result(self):
+        """Only direct-injection mode is exempt; RAG results stay governed."""
+        adapter = _make_adapter()
+        message = {
+            "role": "tool",
+            "name": "knowledge_base_search",
+            "content": '{"mode":"rag_retrieval","results":[],"count":0}',
+        }
+
+        assert adapter.should_bypass_source_compaction(message) is False
+        assert adapter.should_bypass_request_compaction(message) is False

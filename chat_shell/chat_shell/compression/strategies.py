@@ -32,6 +32,17 @@ from .token_counter import TokenCounter
 
 logger = logging.getLogger(__name__)
 
+# Duplicated from ``chat_shell.guard.tool_output`` to avoid a layering cycle
+# from ``compression`` -> ``guard``. Keep the literal in sync with
+# ``ToolOutputGuardAdapter``.
+BYPASS_COMPACTION_FLAG = "guard_bypass_compaction"
+
+
+def _is_bypass_protected(msg: dict[str, Any]) -> bool:
+    """True when request-level compaction must not mutate *msg*."""
+    kwargs = msg.get("additional_kwargs") or {}
+    return isinstance(kwargs, dict) and kwargs.get(BYPASS_COMPACTION_FLAG) is True
+
 
 @dataclass
 class StrategyPotential:
@@ -145,11 +156,27 @@ class CompressionStrategy(ABC):
 class AttachmentTruncationStrategy(CompressionStrategy):
     """Strategy to truncate long attachment content in messages.
 
-    This strategy identifies messages with embedded document/attachment content
-    (typically prefixed with [Attachment N]) and truncates them to reduce tokens.
+    Legacy request-level fallback inherited from the pre-Phase-2
+    ``MessageCompressor`` path.
 
-    This is the first strategy to apply as it preserves conversation flow
-    while reducing token count from large documents.
+    This strategy identifies messages with embedded document/attachment content
+    (typically prefixed with ``[Attachment N]`` or wrapped in
+    ``<attachment>...</attachment>``) and truncates them to reduce tokens.
+
+    Important limits of this strategy:
+
+    * It runs only inside request-level compaction; it is **not** the
+      source-level attachment guard discussed in the Phase-2 design.
+    * It only operates on message ``content`` values that are plain strings.
+      Modern attachment injection often arrives as block-list content
+      (``list[dict]``), which means those payloads may bypass this strategy
+      entirely.
+    * It performs middle truncation only. There is currently no companion
+      attachment read/search paging tool that can reliably recover the omitted
+      portion for the model afterwards.
+
+    Keep this class as a defensive legacy fallback, not as the long-term
+    attachment-governance solution.
     """
 
     # Higher weight - prefer truncating attachments first
@@ -554,12 +581,20 @@ class AttachmentTruncationStrategy(CompressionStrategy):
 class HistoryTruncationStrategy(CompressionStrategy):
     """Strategy to truncate conversation history.
 
+    Legacy request-level fallback inherited from the pre-Phase-2
+    ``MessageCompressor`` path.
+
     This strategy removes messages from the middle of the conversation,
     keeping the first N messages (for context) and last M messages
     (for recent context).
 
     A notice is inserted where messages were removed to inform the model
     that some context is missing.
+
+    Important: despite the notice text mentioning "summarized", this strategy
+    does **not** call an LLM or generate a semantic summary. It is purely a
+    structural truncation strategy: delete middle messages, then bridge the gap
+    with a notice while preserving alternation/tool-call grouping invariants.
     """
 
     # Medium weight - use after attachments
@@ -573,6 +608,9 @@ class HistoryTruncationStrategy(CompressionStrategy):
     def name(self) -> str:
         return "history_truncation"
 
+    # Historical wording kept for compatibility with existing prompt behavior.
+    # This notice does NOT mean an LLM-generated summary exists; the strategy
+    # only removes middle history and inserts this marker.
     TRUNCATION_NOTICE = (
         "[SYSTEM NOTICE: Earlier messages in this conversation have been "
         "summarized to fit within context limits. The conversation continues "
@@ -615,6 +653,13 @@ class HistoryTruncationStrategy(CompressionStrategy):
         middle_start = first_count
         middle_end = len(conversation_messages) - last_count
         middle_messages = conversation_messages[middle_start:middle_end]
+
+        if any(_is_bypass_protected(msg) for msg in middle_messages):
+            logger.info(
+                "[HistoryTruncation] Skipping history compaction because the "
+                "removable middle window contains bypass-protected messages"
+            )
+            return StrategyPotential()
 
         middle_tokens = sum(token_counter.count_message(msg) for msg in middle_messages)
 
@@ -694,6 +739,13 @@ class HistoryTruncationStrategy(CompressionStrategy):
         middle_start = first_to_keep
         middle_end = len(conversation_messages) - last_to_keep
         middle_messages = conversation_messages[middle_start:middle_end]
+
+        if any(_is_bypass_protected(msg) for msg in middle_messages):
+            logger.info(
+                "[HistoryTruncation] Skipping compression because the middle "
+                "window contains bypass-protected messages"
+            )
+            return messages, {"messages_removed": 0, "bypass_protected": True}
 
         # Calculate tokens for each middle message
         middle_message_tokens = [
@@ -852,6 +904,9 @@ class ToolResultTruncationStrategy(CompressionStrategy):
                 continue
 
             if self._is_already_compacted(msg):
+                continue
+
+            if _is_bypass_protected(msg):
                 continue
 
             is_tool_result = role == "tool" or self._has_tool_result_content(content)
@@ -1030,6 +1085,9 @@ class ToolResultTruncationStrategy(CompressionStrategy):
             if self._is_already_compacted(msg):
                 continue
 
+            if _is_bypass_protected(msg):
+                continue
+
             is_tool_result = role == "tool" or self._has_tool_result_content(content)
 
             if is_tool_result:
@@ -1077,6 +1135,10 @@ class ToolResultTruncationStrategy(CompressionStrategy):
             # guard's tool-output adapter; the guard's stage-3 emergency pass
             # will re-compact them under stricter policy if needed.
             if self._is_already_compacted(msg):
+                compressed.append(msg)
+                continue
+
+            if _is_bypass_protected(msg):
                 compressed.append(msg)
                 continue
 

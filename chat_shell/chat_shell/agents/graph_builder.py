@@ -312,6 +312,52 @@ def _normalize_content_for_storage(msg: AIMessage) -> str | list:
     return msg.content
 
 
+def _serialize_compacted_additional_kwargs(msg: BaseMessage) -> dict[str, Any] | None:
+    """Persist only compact markers needed for history reconstruction."""
+    kwargs = dict(getattr(msg, "additional_kwargs", {}) or {})
+    if kwargs.get("compacted") is True:
+        return {"compacted": True}
+    return None
+
+
+def _serialize_passthrough_content(content: Any) -> Any:
+    """Serialize non-assistant content without widening semantics."""
+    if isinstance(content, (str, list)):
+        return content
+    return json.dumps(content)
+
+
+def _message_to_context_metrics_dict(msg: BaseMessage) -> dict[str, Any]:
+    """Convert a LangChain message into the dict view used by metrics counting."""
+    if isinstance(msg, SystemMessage):
+        role = "system"
+    elif isinstance(msg, HumanMessage):
+        role = "user"
+    elif isinstance(msg, AIMessage):
+        role = "assistant"
+    elif isinstance(msg, ToolMessage):
+        role = "tool"
+    else:
+        role = getattr(msg, "type", "user")
+
+    payload: dict[str, Any] = {
+        "role": role,
+        "content": msg.content,
+        "id": msg.id,
+        "additional_kwargs": dict(getattr(msg, "additional_kwargs", {}) or {}),
+    }
+    name = getattr(msg, "name", None)
+    if name:
+        payload["name"] = name
+    tool_call_id = getattr(msg, "tool_call_id", None)
+    if tool_call_id:
+        payload["tool_call_id"] = tool_call_id
+    tool_calls = getattr(msg, "tool_calls", None)
+    if tool_calls:
+        payload["tool_calls"] = tool_calls
+    return payload
+
+
 def _strip_image_data_for_storage(blocks: list) -> list:
     """Replace image content blocks with a text placeholder for storage.
 
@@ -334,12 +380,14 @@ def _serialize_messages_chain(
 ) -> list[dict[str, Any]]:
     """Serialize LangChain messages to OpenAI-compatible dicts for history persistence.
 
-    Converts AIMessage and ToolMessage objects produced during a single agent turn
+    Converts compacted user/system summaries plus AI/Tool messages produced during
+    a single agent turn
     into a list of dicts that can be:
     1. Stored in ``subtask.result.messages_chain``
     2. Loaded back via ``langchain_core.messages.utils.convert_to_messages``
 
-    Preserves tool_calls, tool results, and reasoning_content.
+    Preserves tool_calls, tool results, reasoning_content, and the compacted flag
+    used by the unified context guard.
     When ``provider`` is given, each assistant entry includes a ``model_info``
     dict so downstream consumers can identify the originating model.
     """
@@ -352,6 +400,9 @@ def _serialize_messages_chain(
             entry: dict[str, Any] = {"role": "assistant", "content": content}
             if provider:
                 entry["model_info"] = {"provider": provider, "model": model_id}
+            compacted_kwargs = _serialize_compacted_additional_kwargs(msg)
+            if compacted_kwargs is not None:
+                entry["additional_kwargs"] = compacted_kwargs
             if msg.tool_calls:
                 entry["tool_calls"] = [
                     {
@@ -393,7 +444,21 @@ def _serialize_messages_chain(
             }
             if msg.name:
                 entry["name"] = msg.name
+            compacted_kwargs = _serialize_compacted_additional_kwargs(msg)
+            if compacted_kwargs is not None:
+                entry["additional_kwargs"] = compacted_kwargs
             chain.append(entry)
+        elif isinstance(msg, (HumanMessage, SystemMessage)):
+            compacted_kwargs = _serialize_compacted_additional_kwargs(msg)
+            if compacted_kwargs is None:
+                continue
+            chain.append(
+                {
+                    "role": "user" if isinstance(msg, HumanMessage) else "system",
+                    "content": _serialize_passthrough_content(msg.content),
+                    "additional_kwargs": compacted_kwargs,
+                }
+            )
     return chain
 
 
@@ -458,6 +523,7 @@ class LangGraphAgentBuilder:
 
         # Messages chain produced by the last stream_tokens() call
         self._last_messages_chain: list[dict[str, Any]] = []
+        self._last_live_state_messages: list[dict[str, Any]] = []
 
         # Automatically detect PromptModifierTool instances from registered tools
         self._prompt_modifier_tools = self._find_prompt_modifier_tools()
@@ -1037,6 +1103,7 @@ class LangGraphAgentBuilder:
 
         # Collect the complete LangGraph state messages for history persistence
         _collected_state_messages: list[BaseMessage] = []
+        self._last_live_state_messages = []
 
         # TTFT tracking variables
         first_token_received = False
@@ -1506,6 +1573,10 @@ class LangGraphAgentBuilder:
             # Serialize collected messages chain for history persistence
             # Only keep new messages generated in this turn (skip input messages)
             if _collected_state_messages:
+                self._last_live_state_messages = [
+                    _message_to_context_metrics_dict(msg)
+                    for msg in _collected_state_messages
+                ]
                 new_msgs = _collected_state_messages[len(lc_messages) :]
                 self._last_messages_chain = _serialize_validated_messages_chain(
                     new_msgs,
@@ -1514,6 +1585,7 @@ class LangGraphAgentBuilder:
                 )
             else:
                 self._last_messages_chain = []
+                self._last_live_state_messages = []
 
             logger.debug(
                 "[stream_tokens] Streaming completed: total_events=%d, streamed=%s, messages_chain_len=%d",
@@ -1588,6 +1660,10 @@ class LangGraphAgentBuilder:
             )
             # Persist partial messages chain before re-raising
             if _collected_state_messages:
+                self._last_live_state_messages = [
+                    _message_to_context_metrics_dict(msg)
+                    for msg in _collected_state_messages
+                ]
                 new_msgs = _collected_state_messages[len(lc_messages) :]
                 self._last_messages_chain = _serialize_validated_messages_chain(
                     new_msgs,
@@ -1606,6 +1682,10 @@ class LangGraphAgentBuilder:
 
             # Persist messages chain from iterations before the limit
             if _collected_state_messages:
+                self._last_live_state_messages = [
+                    _message_to_context_metrics_dict(msg)
+                    for msg in _collected_state_messages
+                ]
                 new_msgs = _collected_state_messages[len(lc_messages) :]
                 self._last_messages_chain = _serialize_validated_messages_chain(
                     new_msgs,

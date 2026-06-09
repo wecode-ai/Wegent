@@ -482,6 +482,30 @@ class TestRetrieveForChatShell:
 
         assert result == "rag_retrieval"
 
+    def test_decide_route_mode_for_chat_shell_uses_available_budget_ratio(self):
+        from app.services.rag.retrieval_service import RetrievalService
+
+        service = RetrievalService()
+        db = MagicMock()
+
+        with patch.object(
+            RetrievalService,
+            "_estimate_total_tokens_for_knowledge_bases",
+            return_value=1000,
+        ):
+            result = service.decide_route_mode_for_chat_shell(
+                query="test",
+                knowledge_base_ids=[123],
+                db=db,
+                route_mode="auto",
+                context_window=10000,
+                used_context_tokens=0,
+                reserved_output_tokens=8000,
+                context_buffer_ratio=0.0,
+            )
+
+        assert result == "rag_retrieval"
+
     def test_decide_route_mode_for_chat_shell_forces_rag_when_metadata_filter_exists(
         self,
     ):

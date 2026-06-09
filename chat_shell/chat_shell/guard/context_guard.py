@@ -36,6 +36,7 @@ material changed.
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -61,10 +62,14 @@ from chat_shell.compression.context_metrics import (
     calculate_context_metrics,
 )
 from chat_shell.compression.token_counter import TokenCounter
-from chat_shell.guard.tool_output import COMPACTED_FLAG
+from chat_shell.guard.tool_output import BYPASS_COMPACTION_FLAG, COMPACTED_FLAG
 from chat_shell.guard.types import GuardSource
 
 logger = logging.getLogger(__name__)
+
+
+class ContextGuardFailFastError(RuntimeError):
+    """Raised when the guard cannot safely reduce context below trigger."""
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +117,24 @@ def _basemessage_to_dict(msg: BaseMessage) -> dict[str, Any]:
 
 def _state_messages_to_dicts(messages: list[BaseMessage]) -> list[dict[str, Any]]:
     return [_basemessage_to_dict(m) for m in messages]
+
+
+def _message_fingerprint(message_dict: dict[str, Any]) -> tuple[Any, ...]:
+    """Return a stable comparison tuple for state-diff decisions.
+
+    ``MessageCompressor`` may mutate dicts in place, so the compression pass
+    cannot compare by object identity or by re-reading the original dict after
+    compression. The fingerprint captures the fields that affect model-visible
+    state or later guard passes.
+    """
+    return (
+        message_dict.get("role"),
+        deepcopy(message_dict.get("content")),
+        deepcopy(message_dict.get("tool_calls")),
+        message_dict.get("name"),
+        message_dict.get("tool_call_id"),
+        deepcopy(message_dict.get("additional_kwargs") or {}),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +282,7 @@ class UnifiedContextGuard:
           applied; used to compute the post-enforcement metrics snapshot.
         """
         view = _state_messages_to_dicts(messages)
+        self._mark_bypass_protection(view)
         all_updates: list[Any] = []
 
         # Stage 1: source-level passes (always runs; cheap when nothing to do).
@@ -288,8 +312,46 @@ class UnifiedContextGuard:
                     self._counter.count_messages(view),
                     self.trigger_limit,
                 )
+                if self._has_bypass_protected_messages(view):
+                    raise ContextGuardFailFastError(
+                        "Current context still exceeds the safe input budget "
+                        "after compaction, and at least one protected payload "
+                        "cannot be truncated safely. Narrow the request or "
+                        "avoid direct injection for this turn."
+                    )
 
         return all_updates, view
+
+    def _mark_bypass_protection(self, view: list[dict[str, Any]]) -> None:
+        """Stamp bypass-protected messages so later stages can skip them.
+
+        This converts source-specific detection into a generic per-message flag
+        consumed by request-level strategies and the final fail-fast check.
+        """
+        if not self._sources:
+            return
+
+        for source in self._sources:
+            bypass_check = getattr(source, "should_bypass_request_compaction", None)
+            if bypass_check is None:
+                continue
+            for message_dict in view:
+                if not source.applies_to(message_dict):
+                    continue
+                if not bypass_check(message_dict):
+                    continue
+                kwargs = dict(message_dict.get("additional_kwargs") or {})
+                kwargs[BYPASS_COMPACTION_FLAG] = True
+                message_dict["additional_kwargs"] = kwargs
+
+    @staticmethod
+    def _has_bypass_protected_messages(view: list[dict[str, Any]]) -> bool:
+        """Return True when any post-stage message is marked bypass-protected."""
+        for message_dict in view:
+            kwargs = message_dict.get("additional_kwargs") or {}
+            if isinstance(kwargs, dict) and kwargs.get(BYPASS_COMPACTION_FLAG) is True:
+                return True
+        return False
 
     # ------------------------------------------------------------------
     # Stage 1: source-level pass
@@ -335,6 +397,10 @@ class UnifiedContextGuard:
             for i, message_dict in enumerate(view):
                 if not source.applies_to(message_dict):
                     continue
+                if hasattr(source, "should_bypass_source_compaction") and (
+                    source.should_bypass_source_compaction(message_dict)
+                ):
+                    continue
                 if not emergency and source.is_already_compact(message_dict):
                     continue
                 message_id = message_dict.get("id")
@@ -347,7 +413,11 @@ class UnifiedContextGuard:
                     continue
 
                 raw = source.extract_raw(message_dict)
-                policy = self._policy_for_source(source, emergency=emergency)
+                policy = self._policy_for_source(
+                    source,
+                    message_dict=message_dict,
+                    emergency=emergency,
+                )
                 compact_text = source.to_model_visible(raw, policy)
 
                 replacement = self._build_compact_replacement(
@@ -367,14 +437,23 @@ class UnifiedContextGuard:
 
         return _StagePass(updates=updates, view=new_view)
 
-    def _policy_for_source(self, source: GuardSource, *, emergency: bool):
+    def _policy_for_source(
+        self,
+        source: GuardSource,
+        *,
+        message_dict: dict[str, Any],
+        emergency: bool,
+    ):
         """Resolve the policy a source should use this pass.
 
         Sources expose their normal policy as a public attribute
         ``default_policy``. Emergency wraps that through
         ``source.emergency_policy()``.
         """
-        normal = getattr(source, "default_policy", None)
+        if hasattr(source, "policy_for_message"):
+            normal = source.policy_for_message(message_dict)
+        else:
+            normal = getattr(source, "default_policy", None)
         if normal is None:
             raise ValueError(
                 f"GuardSource {source.name!r} is missing 'default_policy'; "
@@ -419,6 +498,9 @@ class UnifiedContextGuard:
         """Run MessageCompressor and translate its diff into LangGraph updates."""
         assert self._compressor is not None  # Guarded by caller.
 
+        before_fingerprints = {
+            d["id"]: _message_fingerprint(d) for d in view if d.get("id")
+        }
         result = self._compressor.compress_if_needed(view)
         if not result.was_compressed:
             return _StagePass(updates=[], view=view)
@@ -432,10 +514,16 @@ class UnifiedContextGuard:
         for dropped_id in before_ids - after_ids:
             updates.append(RemoveMessage(id=dropped_id))
 
-        # Append synthesized messages (no pre-existing id, or new id assigned).
+        # Upsert changed retained messages and append synthesized messages.
         for compressed_dict in result.messages:
-            if compressed_dict.get("id") in before_ids:
-                continue  # unchanged passthrough — leave untouched
+            compressed_id = compressed_dict.get("id")
+            if compressed_id in before_ids:
+                if before_fingerprints.get(compressed_id) == _message_fingerprint(
+                    compressed_dict
+                ):
+                    continue  # unchanged passthrough — leave untouched
+                updates.append(self._dict_to_base_message(compressed_dict))
+                continue
             updates.append(self._dict_to_base_message(compressed_dict))
 
         logger.info(
@@ -523,6 +611,12 @@ class UnifiedContextGuard:
             for i, msg in enumerate(view):
                 if not source.applies_to(msg):
                     continue
+                kwargs = msg.get("additional_kwargs") or {}
+                if (
+                    isinstance(kwargs, dict)
+                    and kwargs.get(BYPASS_COMPACTION_FLAG) is True
+                ):
+                    continue
                 msg_id = msg.get("id")
                 if not msg_id or msg_id not in id_to_original:
                     continue
@@ -543,7 +637,11 @@ class UnifiedContextGuard:
         for idx, source in candidates:
             msg_dict = new_view[idx]
             raw = source.extract_raw(msg_dict)
-            policy = self._policy_for_source(source, emergency=True)
+            policy = self._policy_for_source(
+                source,
+                message_dict=msg_dict,
+                emergency=True,
+            )
             compact_text = source.to_model_visible(raw, policy)
 
             if compact_text == msg_dict.get("content"):

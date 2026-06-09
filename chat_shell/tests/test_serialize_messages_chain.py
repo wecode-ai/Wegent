@@ -7,7 +7,7 @@
 import json
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from chat_shell.agents.graph_builder import (
     InvalidToolMessageSequenceError,
@@ -164,8 +164,8 @@ class TestSerializeMessagesChain:
         assert result[2]["role"] == "assistant"
         assert result[2]["content"] == "Here is your answer."
 
-    def test_human_messages_are_skipped(self):
-        """HumanMessage and other non-AI/Tool messages are not included."""
+    def test_non_compacted_human_messages_are_skipped(self):
+        """Non-compacted HumanMessage and other non-AI/Tool messages are not included."""
         messages = [
             HumanMessage(content="User question"),
             AIMessage(content="Response"),
@@ -173,6 +173,70 @@ class TestSerializeMessagesChain:
         result = _serialize_messages_chain(messages)
         assert len(result) == 1
         assert result[0]["role"] == "assistant"
+
+    def test_compacted_human_message_is_persisted(self):
+        """Compacted HumanMessage summaries must survive into messages_chain."""
+        msg = HumanMessage(
+            content="[history summary]",
+            additional_kwargs={"compacted": True},
+        )
+        result = _serialize_messages_chain([msg])
+        assert result == [
+            {
+                "role": "user",
+                "content": "[history summary]",
+                "additional_kwargs": {"compacted": True},
+            }
+        ]
+
+    def test_compacted_system_message_is_persisted(self):
+        """Compacted SystemMessage summaries must survive into messages_chain."""
+        msg = SystemMessage(
+            content="[system summary]",
+            additional_kwargs={"compacted": True},
+        )
+        result = _serialize_messages_chain([msg])
+        assert result == [
+            {
+                "role": "system",
+                "content": "[system summary]",
+                "additional_kwargs": {"compacted": True},
+            }
+        ]
+
+    def test_compacted_assistant_message_preserves_marker(self):
+        """Assistant summaries keep the compacted marker through serialization."""
+        msg = AIMessage(
+            content="Compacted assistant summary",
+            additional_kwargs={"compacted": True},
+        )
+        result = _serialize_messages_chain([msg])
+        assert result == [
+            {
+                "role": "assistant",
+                "content": "Compacted assistant summary",
+                "additional_kwargs": {"compacted": True},
+            }
+        ]
+
+    def test_compacted_tool_message_preserves_marker(self):
+        """Tool messages keep the compacted marker through serialization."""
+        msg = ToolMessage(
+            content="Compacted tool output",
+            tool_call_id="call_abc",
+            name="search",
+            additional_kwargs={"compacted": True},
+        )
+        result = _serialize_messages_chain([msg])
+        assert result == [
+            {
+                "role": "tool",
+                "content": "Compacted tool output",
+                "tool_call_id": "call_abc",
+                "name": "search",
+                "additional_kwargs": {"compacted": True},
+            }
+        ]
 
     def test_ai_message_list_content(self):
         """AIMessage with list content (e.g. text blocks) is preserved."""
