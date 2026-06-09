@@ -42,6 +42,65 @@ describe('buildPullRequestUrl', () => {
 })
 
 describe('loadProjectEnvironment', () => {
+  test('resolves git checkout path to an absolute device workspace path', async () => {
+    const executeCommand = vi
+      .fn()
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '/workspace/projects\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'human/full-path-20260609\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: ' 1 file changed, 2 insertions(+), 1 deletion(-)',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'https://github.com/wecode-ai/Wegent.git\n',
+        stderr: '',
+      })
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      {
+        id: 1,
+        name: 'Wegent',
+        config: {
+          mode: 'workspace',
+          execution: {
+            targetType: 'local',
+            deviceId: 'device-123',
+          },
+          workspace: {
+            source: 'git',
+            checkoutPath: 'directmessage_single',
+          },
+        },
+      },
+    )
+
+    expect(info.additions).toBe('+2')
+    expect(info.deletions).toBe('-1')
+    expect(executeCommand).toHaveBeenNthCalledWith(1, 'device-123', {
+      command_key: 'project_workspace_root',
+      timeout_seconds: 10,
+      max_output_bytes: 4096,
+    })
+    expect(executeCommand).toHaveBeenCalledWith('device-123', {
+      command_key: 'git_diff_shortstat',
+      path: '/workspace/projects/directmessage_single',
+      args: ['main...', '--'],
+      timeout_seconds: 10,
+      max_output_bytes: 4096,
+    })
+  })
+
   test('loads git info through the selected project device command API', async () => {
     const executeCommand = vi
       .fn()
