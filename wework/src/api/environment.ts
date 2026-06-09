@@ -17,6 +17,14 @@ const EMPTY_ENVIRONMENT_INFO: EnvironmentInfo = {
 }
 const DEFAULT_DIFF_BASE_REFS = ['main', 'origin/main', 'master', 'origin/master']
 const INVALID_BRANCH_CHARACTERS = new Set([' ', '~', '^', ':', '?', '*', '[', '\\', ']'])
+const ENVIRONMENT_INFO_CACHE_TTL_MS = 1500
+
+type EnvironmentInfoCacheEntry = {
+  expiresAt: number
+  promise: Promise<EnvironmentInfo>
+}
+
+const environmentInfoCaches = new WeakMap<DeviceCommandApi, Map<string, EnvironmentInfoCacheEntry>>()
 
 function outputAsString(output: DeviceCommandResponse['stdout']): string {
   return Array.isArray(output) ? output.join('\n') : output
@@ -29,6 +37,36 @@ function configuredWorkspacePath(project: ProjectWithTasks): string | undefined 
 
 function isGitWorkspace(project: ProjectWithTasks): boolean {
   return project.config?.workspace?.source === 'git'
+}
+
+function environmentInfoCacheKey(project: ProjectWithTasks): string | null {
+  const deviceId = executionDeviceId(project)
+  if (!deviceId) {
+    return null
+  }
+
+  const config = project.config
+  const workspace = config?.workspace
+  return JSON.stringify({
+    projectId: project.id,
+    deviceId,
+    executionTarget: config?.execution?.targetType ?? 'local',
+    workspaceSource: workspace?.source,
+    workspacePath: configuredWorkspacePath(project),
+  })
+}
+
+function cloneEnvironmentInfo(info: EnvironmentInfo): EnvironmentInfo {
+  return { ...info }
+}
+
+function getEnvironmentInfoCache(api: DeviceCommandApi): Map<string, EnvironmentInfoCacheEntry> {
+  let cache = environmentInfoCaches.get(api)
+  if (!cache) {
+    cache = new Map<string, EnvironmentInfoCacheEntry>()
+    environmentInfoCaches.set(api, cache)
+  }
+  return cache
 }
 
 function joinDevicePath(root: string, child: string): string {
@@ -242,7 +280,7 @@ async function commandContext(
   return { deviceId, path }
 }
 
-export async function loadProjectEnvironment(
+async function loadProjectEnvironmentUncached(
   api: DeviceCommandApi,
   project: ProjectWithTasks | null,
 ): Promise<EnvironmentInfo> {
@@ -287,6 +325,40 @@ export async function loadProjectEnvironment(
       ...baseInfo,
       error: error instanceof Error ? error.message : 'Failed to load environment info',
     }
+  }
+}
+
+export async function loadProjectEnvironment(
+  api: DeviceCommandApi,
+  project: ProjectWithTasks | null,
+): Promise<EnvironmentInfo> {
+  if (!project) {
+    return cloneEnvironmentInfo(EMPTY_ENVIRONMENT_INFO)
+  }
+
+  const cacheKey = environmentInfoCacheKey(project)
+  if (!cacheKey) {
+    return loadProjectEnvironmentUncached(api, project)
+  }
+
+  const now = Date.now()
+  const environmentInfoCache = getEnvironmentInfoCache(api)
+  const cached = environmentInfoCache.get(cacheKey)
+  if (cached && cached.expiresAt > now) {
+    return cloneEnvironmentInfo(await cached.promise)
+  }
+
+  const promise = loadProjectEnvironmentUncached(api, project)
+  environmentInfoCache.set(cacheKey, {
+    expiresAt: now + ENVIRONMENT_INFO_CACHE_TTL_MS,
+    promise,
+  })
+
+  try {
+    return cloneEnvironmentInfo(await promise)
+  } catch (error) {
+    environmentInfoCache.delete(cacheKey)
+    throw error
   }
 }
 

@@ -163,6 +163,76 @@ describe('loadProjectEnvironment', () => {
     })
   })
 
+  test('deduplicates repeated environment loads for the same project briefly', async () => {
+    const executeCommand = vi
+      .fn()
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'human/narwhal-20260528-073440\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: ' 2 files changed, 8 insertions(+), 3 deletions(-)',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'https://github.com/wecode-ai/Wegent.git\n',
+        stderr: '',
+      })
+
+    const api = { executeCommand }
+    const project = {
+      id: 1001,
+      name: 'Wegent',
+      config: {
+        mode: 'workspace' as const,
+        execution: {
+          targetType: 'local' as const,
+          deviceId: 'device-123',
+        },
+        workspace: {
+          source: 'local_path' as const,
+          localPath: '/workspace/Wegent',
+        },
+      },
+    }
+
+    const [firstInfo, secondInfo] = await Promise.all([
+      loadProjectEnvironment(api, project),
+      loadProjectEnvironment(api, project),
+    ])
+
+    expect(firstInfo).toEqual(secondInfo)
+    expect(firstInfo).not.toBe(secondInfo)
+    firstInfo.branchName = 'mutated'
+
+    const cachedInfo = await loadProjectEnvironment(api, project)
+
+    expect(cachedInfo.branchName).toBe('human/narwhal-20260528-073440')
+    expect(executeCommand).toHaveBeenCalledTimes(3)
+    expect(executeCommand).toHaveBeenCalledWith('device-123', {
+      command_key: 'git_branch',
+      path: '/workspace/Wegent',
+      timeout_seconds: 10,
+      max_output_bytes: 4096,
+    })
+    expect(executeCommand).toHaveBeenCalledWith('device-123', {
+      command_key: 'git_diff_shortstat',
+      path: '/workspace/Wegent',
+      args: ['main...', '--'],
+      timeout_seconds: 10,
+      max_output_bytes: 4096,
+    })
+    expect(executeCommand).toHaveBeenCalledWith('device-123', {
+      command_key: 'git_remote_url',
+      path: '/workspace/Wegent',
+      timeout_seconds: 10,
+      max_output_bytes: 4096,
+    })
+  })
+
   test('falls back to origin main when local main is unavailable', async () => {
     const executeCommand = vi.fn((_: string, data: { command_key: string; args?: string[] }) => {
       if (data.command_key === 'git_branch') {
