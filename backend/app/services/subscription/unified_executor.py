@@ -19,8 +19,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, List, Optional
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import make_transient
 
+from app.db.session import get_db_session
 from app.models.kind import Kind
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
@@ -68,12 +69,17 @@ class SubscriptionExecutionData:
     preload_skills: List[dict] = field(default_factory=list)
 
 
+@dataclass
+class _SubscriptionExecutionObjects:
+    """ORM objects needed only while building an execution request."""
+
+    task: TaskResource
+    assistant_subtask: Subtask
+    team: Kind
+    user: User
+
+
 async def execute_subscription_unified(
-    db: Session,
-    task: TaskResource,
-    assistant_subtask: Subtask,
-    team: Kind,
-    user: User,
     execution_data: SubscriptionExecutionData,
 ) -> None:
     """Execute subscription task using unified dispatcher.
@@ -87,14 +93,8 @@ async def execute_subscription_unified(
     SubscriptionTaskCompletionHandler.
 
     Args:
-        db: Database session
-        task: Task resource
-        assistant_subtask: Assistant subtask for AI response
-        team: Team Kind object
-        user: User object
         execution_data: Subscription execution data
     """
-    from app.services.chat.trigger.unified import build_execution_request
     from app.services.execution import CommunicationMode, ExecutionRouter
     from shared.telemetry.context import get_request_id, set_request_context
 
@@ -113,31 +113,13 @@ async def execute_subscription_unified(
         f"task_id={execution_data.task_id}, request_id={request_id}"
     )
 
-    # Build execution request with preload_skills from subscription
-    request = await build_execution_request(
-        task=task,
-        assistant_subtask=assistant_subtask,
-        team=team,
-        user=user,
-        message=execution_data.prompt,
-        payload=None,
-        user_subtask_id=execution_data.user_subtask_id,
-        history_limit=(
-            execution_data.history_message_count
-            if execution_data.preserve_history
-            else None
-        ),
-        is_subscription=True,
-        enable_tools=True,
-        enable_deep_thinking=True,
-        preload_skills=(
-            execution_data.preload_skills if execution_data.preload_skills else None
-        ),
-    )
+    request = await _build_subscription_execution_request(execution_data)
+    if not request:
+        return
 
     # Determine communication mode
     router = ExecutionRouter()
-    task_device_id = task.json.get("spec", {}).get("device_id")
+    task_device_id = execution_data.device_id
     target = router.route(request, device_id=task_device_id)
 
     logger.info(
@@ -158,6 +140,98 @@ async def execute_subscription_unified(
             request=request,
             execution_data=execution_data,
         )
+
+
+async def _build_subscription_execution_request(
+    execution_data: SubscriptionExecutionData,
+) -> Optional[Any]:
+    """Build the dispatch request using a short-lived ORM session."""
+    from app.services.chat.trigger.unified import build_execution_request
+
+    with get_db_session() as db:
+        try:
+            objects = _load_subscription_execution_objects(db, execution_data)
+            if not objects:
+                return None
+            _detach_subscription_execution_objects(db, objects)
+        finally:
+            db.rollback()
+
+    return await build_execution_request(
+        task=objects.task,
+        assistant_subtask=objects.assistant_subtask,
+        team=objects.team,
+        user=objects.user,
+        message=execution_data.prompt,
+        payload=None,
+        user_subtask_id=execution_data.user_subtask_id,
+        history_limit=(
+            execution_data.history_message_count
+            if execution_data.preserve_history
+            else None
+        ),
+        is_subscription=True,
+        enable_tools=True,
+        enable_deep_thinking=True,
+        preload_skills=(
+            execution_data.preload_skills if execution_data.preload_skills else None
+        ),
+    )
+
+
+def _detach_subscription_execution_objects(
+    db: Any,
+    objects: _SubscriptionExecutionObjects,
+) -> None:
+    """Detach loaded ORM objects before closing the loader session."""
+    for obj in (objects.task, objects.assistant_subtask, objects.team, objects.user):
+        if hasattr(obj, "_sa_instance_state"):
+            db.refresh(obj)
+            make_transient(obj)
+
+
+def _load_subscription_execution_objects(
+    db: Any,
+    execution_data: SubscriptionExecutionData,
+) -> Optional[_SubscriptionExecutionObjects]:
+    """Load ORM objects required to build the subscription execution request."""
+    task = (
+        db.query(TaskResource)
+        .filter(TaskResource.id == execution_data.task_id, TaskResource.kind == "Task")
+        .first()
+    )
+    assistant_subtask = (
+        db.query(Subtask).filter(Subtask.id == execution_data.subtask_id).first()
+    )
+    team = (
+        db.query(Kind)
+        .filter(Kind.id == execution_data.team_id, Kind.kind == "Team")
+        .first()
+    )
+    user = db.query(User).filter(User.id == execution_data.user_id).first()
+
+    missing = []
+    if not task:
+        missing.append(f"task={execution_data.task_id}")
+    if not assistant_subtask:
+        missing.append(f"assistant_subtask={execution_data.subtask_id}")
+    if not team:
+        missing.append(f"team={execution_data.team_id}")
+    if not user:
+        missing.append(f"user={execution_data.user_id}")
+    if missing:
+        logger.error(
+            "[execute_subscription_unified] Missing execution objects: %s",
+            ", ".join(missing),
+        )
+        return None
+
+    return _SubscriptionExecutionObjects(
+        task=task,
+        assistant_subtask=assistant_subtask,
+        team=team,
+        user=user,
+    )
 
 
 async def _execute_sse_sync(

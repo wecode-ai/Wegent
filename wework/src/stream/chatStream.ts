@@ -16,6 +16,10 @@ import type {
   ChatStartPayload,
   TaskJoinResponse,
 } from '@/types/api'
+import type {
+  DeviceSlotUpdatePayload,
+  DeviceUpgradeStatusPayload,
+} from '@/types/device-events'
 import type { WorkbenchSocket } from './socketClient'
 
 export interface ChatStreamHandlers {
@@ -31,6 +35,8 @@ export interface ChatStreamHandlers {
   onDeviceOnline?: (payload: unknown) => void
   onDeviceOffline?: (payload: unknown) => void
   onDeviceStatus?: (payload: unknown) => void
+  onDeviceSlotUpdate?: (payload: DeviceSlotUpdatePayload) => void
+  onDeviceUpgradeStatus?: (payload: DeviceUpgradeStatusPayload) => void
 }
 
 const SEND_TIMEOUT_MS = 30_000
@@ -133,6 +139,12 @@ export function createChatStream(socket: Pick<WorkbenchSocket, 'emit' | 'on' | '
       if (handlers.onDeviceOnline) socket.on('device:online', handlers.onDeviceOnline)
       if (handlers.onDeviceOffline) socket.on('device:offline', handlers.onDeviceOffline)
       if (handlers.onDeviceStatus) socket.on('device:status', handlers.onDeviceStatus)
+      if (handlers.onDeviceSlotUpdate) {
+        socket.on('device:slot_update', handlers.onDeviceSlotUpdate)
+      }
+      if (handlers.onDeviceUpgradeStatus) {
+        socket.on('device:upgrade_status', handlers.onDeviceUpgradeStatus)
+      }
 
       return () => {
         if (handlers.onChatStart) socket.off('chat:start', handlers.onChatStart)
@@ -147,6 +159,12 @@ export function createChatStream(socket: Pick<WorkbenchSocket, 'emit' | 'on' | '
         if (handlers.onDeviceOnline) socket.off('device:online', handlers.onDeviceOnline)
         if (handlers.onDeviceOffline) socket.off('device:offline', handlers.onDeviceOffline)
         if (handlers.onDeviceStatus) socket.off('device:status', handlers.onDeviceStatus)
+        if (handlers.onDeviceSlotUpdate) {
+          socket.off('device:slot_update', handlers.onDeviceSlotUpdate)
+        }
+        if (handlers.onDeviceUpgradeStatus) {
+          socket.off('device:upgrade_status', handlers.onDeviceUpgradeStatus)
+        }
       }
     },
   }

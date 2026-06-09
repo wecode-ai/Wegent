@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ConnectionsSettingsPage } from './ConnectionsSettingsPage'
 import { createDeviceApi } from '@/api/devices'
 import { createProjectApi } from '@/api/projects'
+import { createUserApi } from '@/api/users'
 import { AppearanceProvider } from '@/features/appearance'
 import '@/i18n'
 import type { DeviceInfo } from '@/types/devices'
@@ -33,8 +34,13 @@ vi.mock('@/api/projects', () => ({
   createProjectApi: vi.fn(),
 }))
 
+vi.mock('@/api/users', () => ({
+  createUserApi: vi.fn(),
+}))
+
 const createDeviceApiMock = vi.mocked(createDeviceApi)
 const createProjectApiMock = vi.mocked(createProjectApi)
+const createUserApiMock = vi.mocked(createUserApi)
 
 function cloudDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   return {
@@ -83,6 +89,13 @@ describe('ConnectionsSettingsPage', () => {
     listWorktrees: vi.fn(),
     deleteWorktree: vi.fn(),
   }
+  const userApi = {
+    updateCurrentUser: vi.fn(),
+    getRuntimeConfig: vi.fn(),
+    updateRuntimeConfig: vi.fn(),
+    uploadRuntimeAuthJson: vi.fn(),
+    importRuntimeAuthJson: vi.fn(),
+  }
 
   beforeEach(() => {
     vi.clearAllMocks()
@@ -115,6 +128,47 @@ describe('ConnectionsSettingsPage', () => {
       deleted_task_ids: [],
     })
     createProjectApiMock.mockReturnValue(projectApi as ReturnType<typeof createProjectApi>)
+    userApi.getRuntimeConfig.mockResolvedValue({
+      runtime: 'codex',
+      display_name: 'Codex',
+      use_user_config: false,
+      configured: true,
+      target_path: '~/.codex/auth.json',
+      auth_json_sha256: 'abc1234567890',
+      auth_json_updated_at: '2026-06-09T00:00:00Z',
+      updated_at: '2026-06-09T00:00:00Z',
+    })
+    userApi.updateRuntimeConfig.mockResolvedValue({
+      runtime: 'codex',
+      display_name: 'Codex',
+      use_user_config: true,
+      configured: true,
+      target_path: '~/.codex/auth.json',
+      auth_json_sha256: 'abc1234567890',
+      auth_json_updated_at: '2026-06-09T00:00:00Z',
+      updated_at: '2026-06-09T00:00:01Z',
+    })
+    userApi.uploadRuntimeAuthJson.mockResolvedValue({
+      runtime: 'codex',
+      display_name: 'Codex',
+      use_user_config: false,
+      configured: true,
+      target_path: '~/.codex/auth.json',
+      auth_json_sha256: 'abc1234567890',
+      auth_json_updated_at: '2026-06-09T00:00:00Z',
+      updated_at: '2026-06-09T00:00:00Z',
+    })
+    userApi.importRuntimeAuthJson.mockResolvedValue({
+      runtime: 'codex',
+      display_name: 'Codex',
+      use_user_config: false,
+      configured: true,
+      target_path: '~/.codex/auth.json',
+      auth_json_sha256: 'abc1234567890',
+      auth_json_updated_at: '2026-06-09T00:00:00Z',
+      updated_at: '2026-06-09T00:00:00Z',
+    })
+    createUserApiMock.mockReturnValue(userApi as ReturnType<typeof createUserApi>)
   })
 
   test('keeps the cloud device creation notice visible after the create request resolves', async () => {
@@ -157,6 +211,50 @@ describe('ConnectionsSettingsPage', () => {
 
     expect(screen.getByTestId('appearance-settings-page')).toBeInTheDocument()
     expect(screen.getByTestId('appearance-mode-system')).toBeInTheDocument()
+  })
+
+  test('opens Codex auth settings under personal group without manual device sync', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    expect(screen.getByTestId('settings-category-personal')).toHaveTextContent('个人')
+
+    await userEvent.click(screen.getByTestId('settings-nav-codex-auth'))
+
+    expect(await screen.findByTestId('runtime-config-settings-page')).toBeInTheDocument()
+    expect(await screen.findByTestId('runtime-config-status')).toHaveTextContent('已配置')
+    expect(
+      screen.getByText(
+        '从设备导入或上传 Codex auth.json。启用后，使用 Codex 的 GPT 模型会通过该认证账户访问 Codex。',
+      ),
+    ).toBeInTheDocument()
+    expect(screen.getByText('~/.codex/auth.json')).toBeInTheDocument()
+    const runtimeConfigButtons = Array.from(
+      screen.getByTestId('runtime-config-settings-page').querySelectorAll('button'),
+    )
+    expect(
+      runtimeConfigButtons.indexOf(screen.getByTestId('runtime-config-import-button')),
+    ).toBeLessThan(
+      runtimeConfigButtons.indexOf(screen.getByTestId('runtime-config-upload-button')),
+    )
+
+    await userEvent.click(screen.getByTestId('runtime-config-toggle'))
+
+    await waitFor(() =>
+      expect(userApi.updateRuntimeConfig).toHaveBeenCalledWith('codex', {
+        use_user_config: true,
+      }),
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-config-toggle')).toHaveAttribute(
+        'aria-checked',
+        'true',
+      ),
+    )
+
+    expect(screen.queryByTestId('runtime-config-sync-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-config-sync-result')).not.toBeInTheDocument()
   })
 
   test('opens worktree settings from the coding settings navigation', async () => {

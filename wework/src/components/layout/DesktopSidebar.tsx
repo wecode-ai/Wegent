@@ -37,6 +37,7 @@ import type {
   TaskListResponse,
   User as UserProfile,
 } from '@/types/api'
+import type { DeviceUpgradeState } from '@/types/device-events'
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 import { DesktopSearchDialog } from './DesktopSearchDialog'
 import { DesktopWindowControls } from './DesktopWindowControls'
@@ -55,6 +56,7 @@ interface DesktopSidebarProps {
   currentProjectId?: number
   currentTaskId?: number
   preferredDeviceId?: string | null
+  upgradingDevices?: Record<string, DeviceUpgradeState>
   activeItem?: 'chat' | 'plugins' | 'automation'
   onCollapse: () => void
   onNewChat: () => void
@@ -67,6 +69,7 @@ interface DesktopSidebarProps {
   onRememberExecutionDevice?: (deviceId: string) => void
   onOpenPlugins: () => void
   onRefreshDevices?: () => Promise<void>
+  onUpgradeDevice?: (deviceId: string) => Promise<void>
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
   onCreateGitWorkspaceProject: (
     data: CreateGitWorkspaceProjectRequest,
@@ -791,6 +794,7 @@ export function DesktopSidebar({
   currentProjectId,
   currentTaskId,
   preferredDeviceId,
+  upgradingDevices = {},
   activeItem = 'chat',
   onCollapse,
   onNewChat,
@@ -802,6 +806,7 @@ export function DesktopSidebar({
   onRememberExecutionDevice,
   onOpenPlugins,
   onRefreshDevices,
+  onUpgradeDevice,
   onCreateProject,
   onCreateGitWorkspaceProject,
   onListGitRepositories,
@@ -1267,6 +1272,8 @@ export function DesktopSidebar({
         onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
         preferredDeviceId={preferredDeviceId}
         onSelectDevicePreference={onRememberExecutionDevice}
+        upgradingDevices={upgradingDevices}
+        onUpgradeDevice={onUpgradeDevice}
         onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
         onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
         onListDeviceDirectories={onListDeviceDirectories}

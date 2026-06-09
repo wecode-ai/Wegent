@@ -32,6 +32,7 @@ import {
   isOnlineDevice,
   sortStandaloneDevices,
 } from '@/lib/device-selection'
+import { isWeWorkExecutorVersionCompatible } from '@/lib/device-capabilities'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { cn } from '@/lib/utils'
 import type { DeviceInfo, ProjectExecutionMode, ProjectWithTasks } from '@/types/api'
@@ -447,6 +448,9 @@ export function ProjectWorkBar({
     <div className="fixed inset-0 z-modal bg-black/25" onClick={onClose} />
 
   const getCompactDeviceStatusLabel = (device: DeviceInfo) => {
+    if (!isWeWorkExecutorVersionCompatible(device.executor_version)) {
+      return t('workbench.project_device_upgrade_required_short')
+    }
     if (device.status === 'online') {
       return t('workbench.project_device_status_online', '在线')
     }
@@ -708,18 +712,22 @@ export function ProjectWorkBar({
                       ) : (
                         standaloneDevices.map(device => {
                           const online = isOnlineDevice(device)
+                          const compatible = isWeWorkExecutorVersionCompatible(
+                            device.executor_version,
+                          )
                           const selected = isStandaloneMode && device.device_id === selectedStandaloneDeviceId
                           const DeviceIcon = isCloudDevice(device) ? Cloud : HardDrive
+                          const selectable = online && compatible
                           return (
                             <button
                               key={device.device_id}
                               type="button"
                               data-testid={`standalone-device-option-${device.device_id}`}
-                              disabled={!online}
+                              disabled={!selectable}
                               onClick={() => handleSelectStandaloneDevice(device.device_id)}
                               className={[
                                 'flex min-h-10 w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs',
-                                online
+                                selectable
                                   ? 'text-text-secondary hover:bg-muted'
                                   : 'cursor-not-allowed text-text-muted opacity-60',
                                 selected ? 'bg-muted text-text-primary' : '',
@@ -732,10 +740,10 @@ export function ProjectWorkBar({
                               <span className="min-w-0 flex-1 truncate">
                                 {device.name || device.device_id}
                               </span>
-                              <span className={online ? 'text-text-secondary' : 'text-text-muted'}>
+                              <span className={selectable ? 'text-text-secondary' : 'text-text-muted'}>
                                 {getCompactDeviceStatusLabel(device)}
                               </span>
-                              {selected && online && (
+                              {selected && selectable && (
                                 <Check
                                   data-testid={`standalone-device-selected-icon-${device.device_id}`}
                                   className="h-3.5 w-3.5 shrink-0"

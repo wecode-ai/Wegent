@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
 import type { DeviceInfo, GitBranch, GitRepoInfo, ProjectWithTasks } from '@/types/api'
+import '@/i18n'
 import { ProjectCreateDialog } from './ProjectCreateDialog'
 
 const devices: DeviceInfo[] = [
@@ -13,6 +14,8 @@ const devices: DeviceInfo[] = [
     status: 'online',
     is_default: false,
     device_type: 'cloud',
+    bind_shell: 'claudecode',
+    executor_version: '1.8.5',
   },
   {
     id: 2,
@@ -21,6 +24,8 @@ const devices: DeviceInfo[] = [
     status: 'online',
     is_default: false,
     device_type: 'local',
+    bind_shell: 'claudecode',
+    executor_version: '1.8.5',
   },
 ]
 
@@ -91,7 +96,7 @@ describe('ProjectCreateDialog', () => {
         onClose={vi.fn()}
         onCreateProject={vi.fn()}
         onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
-        onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
+        onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('')}
         onListDeviceDirectories={vi.fn().mockResolvedValue([])}
         onCreateDeviceDirectory={vi.fn()}
       />,
@@ -99,6 +104,156 @@ describe('ProjectCreateDialog', () => {
 
     expect(screen.getByTestId('project-device-select')).toHaveTextContent('Cloud Device')
     expect(screen.queryByText(/OpenClaw Device/)).not.toBeInTheDocument()
+  })
+
+  test('allows selecting an online old device and shows an upgrade action', async () => {
+    const onUpgradeDevice = vi.fn().mockResolvedValue(undefined)
+    const onGetProjectWorkspaceRoot = vi.fn().mockResolvedValue('/workspace/projects')
+
+    render(
+      <ProjectCreateDialog
+        open
+        mode="scratch"
+        devices={[
+          {
+            id: 4,
+            device_id: 'old-device',
+            name: 'Old Device',
+            status: 'online',
+            is_default: false,
+            device_type: 'cloud',
+            bind_shell: 'claudecode',
+            executor_version: '1.8.4',
+            slot_used: 0,
+          },
+        ]}
+        onClose={vi.fn()}
+        onCreateProject={vi.fn()}
+        onUpgradeDevice={onUpgradeDevice}
+        onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
+        onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
+        onListDeviceDirectories={vi.fn().mockResolvedValue([])}
+        onCreateDeviceDirectory={vi.fn()}
+      />,
+    )
+
+    const deviceSelect = screen.getByTestId('project-device-select')
+    const oldDeviceOption = within(deviceSelect).getByRole('option', {
+      name: /Old Device.*需升级/,
+    })
+
+    expect(deviceSelect).toHaveValue('old-device')
+    expect(oldDeviceOption).not.toBeDisabled()
+    expect(screen.getByTestId('create-project-button')).toBeDisabled()
+    expect(onGetProjectWorkspaceRoot).not.toHaveBeenCalled()
+    expect(screen.getByTestId('project-device-unavailable-old-device')).toHaveTextContent(
+      '当前 v1.8.4，需要 1.8.5 或以上',
+    )
+
+    await userEvent.click(screen.getByTestId('upgrade-project-device-old-device'))
+
+    expect(onUpgradeDevice).toHaveBeenCalledWith('old-device')
+  })
+
+  test('shows an upgrade prompt only for the selected old device', async () => {
+    render(
+      <ProjectCreateDialog
+        open
+        mode="scratch"
+        devices={[
+          ...devices,
+          {
+            id: 4,
+            device_id: 'old-device',
+            name: 'Old Device',
+            status: 'online',
+            is_default: false,
+            device_type: 'cloud',
+            bind_shell: 'claudecode',
+            executor_version: '1.8.4',
+            slot_used: 0,
+          },
+          {
+            id: 5,
+            device_id: 'second-old-device',
+            name: 'Second Old Device',
+            status: 'online',
+            is_default: false,
+            device_type: 'local',
+            bind_shell: 'claudecode',
+            executor_version: '1.8.4',
+            slot_used: 0,
+          },
+        ]}
+        onClose={vi.fn()}
+        onCreateProject={vi.fn()}
+        onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
+        onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
+        onListDeviceDirectories={vi.fn().mockResolvedValue([])}
+        onCreateDeviceDirectory={vi.fn()}
+      />,
+    )
+
+    const deviceSelect = screen.getByTestId('project-device-select')
+    const availableOption = within(deviceSelect).getByRole('option', {
+      name: /Cloud Device.*在线/,
+    })
+    const unavailableOption = within(deviceSelect).getByRole('option', {
+      name: /^Old Device.*需升级/,
+    })
+
+    expect(deviceSelect).toHaveValue('cloud-device')
+    expect(availableOption).not.toBeDisabled()
+    expect(unavailableOption).not.toBeDisabled()
+    expect(screen.queryByTestId('project-device-unavailable-list')).not.toBeInTheDocument()
+
+    await userEvent.selectOptions(deviceSelect, 'old-device')
+
+    expect(deviceSelect).toHaveValue('old-device')
+    expect(screen.getByTestId('project-device-unavailable-old-device')).toHaveTextContent(
+      '当前 v1.8.4，需要 1.8.5 或以上',
+    )
+    expect(
+      screen.queryByTestId('project-device-unavailable-second-old-device'),
+    ).not.toBeInTheDocument()
+  })
+
+  test('does not load directories for a selected old device', () => {
+    const onGetDeviceHomeDirectory = vi.fn().mockResolvedValue('/home/user')
+    const onListDeviceDirectories = vi.fn().mockResolvedValue([])
+
+    render(
+      <ProjectCreateDialog
+        open
+        mode="existing"
+        devices={[
+          {
+            id: 4,
+            device_id: 'old-device',
+            name: 'Old Device',
+            status: 'online',
+            is_default: false,
+            device_type: 'cloud',
+            bind_shell: 'claudecode',
+            executor_version: '1.8.4',
+            slot_used: 0,
+          },
+        ]}
+        onClose={vi.fn()}
+        onCreateProject={vi.fn()}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+        onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
+        onListDeviceDirectories={onListDeviceDirectories}
+        onCreateDeviceDirectory={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByTestId('project-directory-path-input')).toBeDisabled()
+    expect(screen.getByTestId('project-directory-device-unavailable')).toHaveTextContent(
+      '升级当前设备后可选择目录',
+    )
+    expect(onGetDeviceHomeDirectory).not.toHaveBeenCalled()
+    expect(onListDeviceDirectories).not.toHaveBeenCalled()
   })
 
   test('uses the preferred device and keeps form state when device preference changes', async () => {

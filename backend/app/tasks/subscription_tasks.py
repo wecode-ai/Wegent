@@ -1452,10 +1452,6 @@ def execute_subscription_task(
                 def _run_unified_executor_in_thread():
                     """Run unified executor in a separate thread with its own event loop and DB session."""
                     from app.db.session import get_db_session
-                    from app.models.kind import Kind
-                    from app.models.subtask import Subtask
-                    from app.models.task import TaskResource
-                    from app.models.user import User
 
                     _init_subscription_request_context(
                         subscription_id=subscription_id,
@@ -1466,73 +1462,11 @@ def execute_subscription_task(
                     thread_loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(thread_loop)
                     try:
-                        # Load ORM objects in this thread with a new database session
-                        with get_db_session() as thread_db:
-                            # Load task
-                            thread_task = (
-                                thread_db.query(TaskResource)
-                                .filter(
-                                    TaskResource.id == execution_data.task_id,
-                                    TaskResource.kind == "Task",
-                                )
-                                .first()
+                        thread_loop.run_until_complete(
+                            execute_subscription_unified(
+                                execution_data=execution_data,
                             )
-                            if not thread_task:
-                                logger.error(
-                                    f"Task {execution_data.task_id} not found in thread"
-                                )
-                                return
-
-                            # Load assistant subtask
-                            thread_assistant_subtask = (
-                                thread_db.query(Subtask)
-                                .filter(Subtask.id == execution_data.subtask_id)
-                                .first()
-                            )
-                            if not thread_assistant_subtask:
-                                logger.error(
-                                    f"Assistant subtask {execution_data.subtask_id} not found in thread"
-                                )
-                                return
-
-                            # Load team
-                            thread_team = (
-                                thread_db.query(Kind)
-                                .filter(
-                                    Kind.id == execution_data.team_id,
-                                    Kind.kind == "Team",
-                                )
-                                .first()
-                            )
-                            if not thread_team:
-                                logger.error(
-                                    f"Team {execution_data.team_id} not found in thread"
-                                )
-                                return
-
-                            # Load user
-                            thread_user = (
-                                thread_db.query(User)
-                                .filter(User.id == execution_data.user_id)
-                                .first()
-                            )
-                            if not thread_user:
-                                logger.error(
-                                    f"User {execution_data.user_id} not found in thread"
-                                )
-                                return
-
-                            # Execute using unified executor
-                            thread_loop.run_until_complete(
-                                execute_subscription_unified(
-                                    db=thread_db,
-                                    task=thread_task,
-                                    assistant_subtask=thread_assistant_subtask,
-                                    team=thread_team,
-                                    user=thread_user,
-                                    execution_data=execution_data,
-                                )
-                            )
+                        )
                     except Exception as e:
                         logger.error(
                             f"[subscription_tasks] Error in unified executor thread: {e}",
@@ -1946,10 +1880,6 @@ def execute_subscription_task_sync(
                 def _run_unified_executor_in_thread_sync():
                     """Run unified executor in a separate thread with its own event loop and DB session."""
                     from app.db.session import get_db_session
-                    from app.models.kind import Kind
-                    from app.models.subtask import Subtask
-                    from app.models.task import TaskResource
-                    from app.models.user import User
 
                     _init_subscription_request_context(
                         subscription_id=subscription_id,
@@ -1960,73 +1890,11 @@ def execute_subscription_task_sync(
                     thread_loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(thread_loop)
                     try:
-                        # Load ORM objects in this thread with a new database session
-                        with get_db_session() as thread_db:
-                            # Load task
-                            thread_task = (
-                                thread_db.query(TaskResource)
-                                .filter(
-                                    TaskResource.id == execution_data.task_id,
-                                    TaskResource.kind == "Task",
-                                )
-                                .first()
+                        thread_loop.run_until_complete(
+                            execute_subscription_unified(
+                                execution_data=execution_data,
                             )
-                            if not thread_task:
-                                logger.error(
-                                    f"Task {execution_data.task_id} not found in thread (sync)"
-                                )
-                                return
-
-                            # Load assistant subtask
-                            thread_assistant_subtask = (
-                                thread_db.query(Subtask)
-                                .filter(Subtask.id == execution_data.subtask_id)
-                                .first()
-                            )
-                            if not thread_assistant_subtask:
-                                logger.error(
-                                    f"Assistant subtask {execution_data.subtask_id} not found in thread (sync)"
-                                )
-                                return
-
-                            # Load team
-                            thread_team = (
-                                thread_db.query(Kind)
-                                .filter(
-                                    Kind.id == execution_data.team_id,
-                                    Kind.kind == "Team",
-                                )
-                                .first()
-                            )
-                            if not thread_team:
-                                logger.error(
-                                    f"Team {execution_data.team_id} not found in thread (sync)"
-                                )
-                                return
-
-                            # Load user
-                            thread_user = (
-                                thread_db.query(User)
-                                .filter(User.id == execution_data.user_id)
-                                .first()
-                            )
-                            if not thread_user:
-                                logger.error(
-                                    f"User {execution_data.user_id} not found in thread (sync)"
-                                )
-                                return
-
-                            # Execute using unified executor
-                            thread_loop.run_until_complete(
-                                execute_subscription_unified(
-                                    db=thread_db,
-                                    task=thread_task,
-                                    assistant_subtask=thread_assistant_subtask,
-                                    team=thread_team,
-                                    user=thread_user,
-                                    execution_data=execution_data,
-                                )
-                            )
+                        )
                     except Exception as e:
                         logger.error(
                             f"[subscription_tasks] Error in unified executor thread (sync): {e}",

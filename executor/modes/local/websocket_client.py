@@ -55,6 +55,21 @@ logger = setup_logger("websocket_client")
 
 # Device ID cache file location
 DEVICE_ID_CACHE_FILE = Path.home() / ".wegent-executor" / "device_id"
+CODEX_AUTH_TARGET_PATH = "~/.codex/auth.json"
+
+
+def build_runtime_auth_file_report(
+    home: Optional[Path] = None,
+) -> dict[str, dict[str, Any]]:
+    """Build sanitized local runtime auth file state for heartbeat reports."""
+    home_dir = home or Path.home()
+    codex_auth_path = home_dir / ".codex" / "auth.json"
+    return {
+        "codex": {
+            "target_path": CODEX_AUTH_TARGET_PATH,
+            "exists": codex_auth_path.is_file(),
+        }
+    }
 
 
 class WebSocketClient:
@@ -540,6 +555,7 @@ class WebSocketClient:
                 "running_task_ids": running_task_ids,
                 "executor_version": get_version(),
                 "capabilities": self.capability_reporter.build_report(),
+                "runtime_auth_files": build_runtime_auth_file_report(),
             }
             logger.info(
                 f"Sending device:heartbeat to /local-executor: {heartbeat_data}"

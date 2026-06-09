@@ -26,9 +26,21 @@ describe('MobileSettingsPage', () => {
     expect(screen.getByTestId('mobile-settings-plugins-button')).toHaveTextContent(
       '插件',
     )
+    expect(screen.getByTestId('mobile-settings-personal-button')).toHaveTextContent(
+      '个人',
+    )
     expect(screen.getByTestId('mobile-settings-worktrees-button')).toHaveTextContent(
       '工作树',
     )
+
+    await userEvent.click(screen.getByTestId('mobile-settings-personal-button'))
+    expect(screen.getByTestId('mobile-personal-settings-page')).toBeInTheDocument()
+    expect(screen.getByTestId('mobile-settings-codex-auth-button')).toHaveTextContent(
+      'Codex 认证',
+    )
+
+    await userEvent.click(screen.getByTestId('mobile-personal-back-button'))
+    expect(screen.getByTestId('mobile-settings-page')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('mobile-settings-plugins-button'))
     expect(onOpenPlugins).toHaveBeenCalledTimes(1)

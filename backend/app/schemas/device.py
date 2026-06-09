@@ -306,6 +306,10 @@ class DeviceHeartbeatPayload(BaseModel):
         None,
         description="Sanitized local global capability state reported by executor",
     )
+    runtime_auth_files: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Sanitized runtime auth file existence state reported by executor",
+    )
 
 
 class DeviceStatusPayload(BaseModel):

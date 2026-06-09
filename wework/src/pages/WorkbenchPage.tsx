@@ -14,6 +14,7 @@ export function WorkbenchPage() {
     queuedMessages,
     guidanceMessages,
     runningTaskIds,
+    upgradingDevices,
     projectExecutionMode,
     setProjectExecutionMode,
     projectChat,
@@ -27,6 +28,7 @@ export function WorkbenchPage() {
     searchTaskDetail,
     rememberExecutionDevice,
     refreshDevices,
+    upgradeDevice,
     createProject,
     createGitWorkspaceProject,
     listGitRepositories,
@@ -80,6 +82,7 @@ export function WorkbenchPage() {
       queuedMessages={queuedMessages}
       guidanceMessages={guidanceMessages}
       runningTaskIds={runningTaskIds}
+      upgradingDevices={upgradingDevices}
       onNewChat={startNewChat}
       onStartStandaloneChat={startStandaloneChat}
       onOpenPlugins={() => navigateTo('/plugins')}
@@ -92,6 +95,7 @@ export function WorkbenchPage() {
       onSearchTaskDetail={searchTaskDetail}
       onRememberExecutionDevice={rememberExecutionDevice}
       onRefreshDevices={refreshDevices}
+      onUpgradeDevice={upgradeDevice}
       onCreateProject={createProject}
       onCreateGitWorkspaceProject={createGitWorkspaceProject}
       onListGitRepositories={listGitRepositories}
