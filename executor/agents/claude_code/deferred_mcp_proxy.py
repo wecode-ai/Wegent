@@ -23,6 +23,9 @@ from mcp.client.streamable_http import streamablehttp_client
 
 INTERACTIVE_FORM_TOOL_MARKER = "interactive_form_question"
 WAITING_FOR_USER_INPUT_REASON = "waiting_for_user_input"
+INTERACTIVE_FORM_FORMAT_ERROR = "模型给出的表单格式不对"
+INTERACTIVE_FORM_FORMAT_RETRYING = "模型给出的表单格式不对, 正在重新生成表单"
+INTERACTIVE_FORM_RENDER_ERROR = "交互式表单生成失败"
 INTERACTIVE_FORM_ANSWER_FIELDS = (
     "type",
     "tool_use_id",
@@ -105,6 +108,82 @@ async def create_interactive_form_answer_query(
                     "tool_use_id": tool_use_id,
                     "content": [{"type": "text", "text": payload_text}],
                     "is_error": False,
+                }
+            ],
+        },
+        "parent_tool_use_id": None,
+    }
+
+
+def build_deferred_mcp_retry_payload(
+    *,
+    tool_name: str,
+    tool_output: str,
+    retry_count: int,
+    max_retries: int,
+) -> dict[str, Any]:
+    """Build model-only instructions for retrying a malformed deferred form."""
+    return {
+        "error": "interactive_form_question arguments were invalid; the form was not rendered.",
+        "retry_instruction": (
+            "Call interactive_form_question again with valid arguments. "
+            "Do not answer the user directly."
+        ),
+        "attempt": retry_count + 1,
+        "max_attempts": max_retries,
+        "tool_name": tool_name,
+        "last_tool_output": tool_output,
+        "required_schema": {
+            "questions": [
+                {
+                    "id": "stable_snake_case_id",
+                    "question": "Question text shown to the user",
+                    "input_type": "choice or text",
+                    "options": [{"label": "Option label", "value": "option_value"}],
+                    "multi_select": False,
+                }
+            ]
+        },
+        "validation_notes": [
+            "Each question must include a non-empty question field.",
+            "input_type must be choice or text.",
+            "Do not embed question text in input_type.",
+            "Use multi_select for multiple-choice questions.",
+            "options must be objects with label and value fields.",
+        ],
+    }
+
+
+async def create_deferred_mcp_retry_query(
+    *,
+    tool_use_id: str,
+    tool_name: str,
+    tool_output: str,
+    retry_count: int,
+    max_retries: int,
+) -> AsyncGenerator[dict[str, Any], None]:
+    """Create an error tool_result that asks the model to retry the form call."""
+    payload = build_deferred_mcp_retry_payload(
+        tool_name=tool_name,
+        tool_output=tool_output,
+        retry_count=retry_count,
+        max_retries=max_retries,
+    )
+    yield {
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": tool_use_id,
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(payload, ensure_ascii=False, indent=2),
+                        }
+                    ],
+                    "is_error": True,
                 }
             ],
         },
