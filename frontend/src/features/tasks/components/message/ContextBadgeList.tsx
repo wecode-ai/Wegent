@@ -5,10 +5,11 @@
 'use client'
 
 import React, { ReactNode } from 'react'
-import { Database, Table2 } from 'lucide-react'
+import { Database, Table2, Video } from 'lucide-react'
 import AttachmentPreview from '../input/AttachmentPreview'
 import type { SubtaskContextBrief, Attachment } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
+import { parseHostname } from '@/lib/url-utils'
 import { formatDocumentCount } from '@/lib/i18n-helpers'
 
 /**
@@ -97,6 +98,9 @@ function ContextBadgeItem({
 }) {
   switch (context.context_type) {
     case 'attachment':
+      if (context.source_url && context.video_count != null) {
+        return <ExternalWebContentBadge context={context} />
+      }
       return <AttachmentContextBadge context={context} shareToken={shareToken} />
     case 'knowledge_base':
       return <KnowledgeBaseBadge context={context} />
@@ -242,6 +246,41 @@ function TableBadge({
         className={isClickable ? 'hover:shadow-md hover:border-blue-500/50 transition-all' : ''}
       />
     </div>
+  )
+}
+
+function ExternalWebContentBadge({ context }: { context: SubtaskContextBrief }) {
+  const { t } = useTranslation('chat')
+  const sourceLabel = context.site || parseHostname(context.source_url)
+  const subtitle = [
+    sourceLabel,
+    t('chat:externalWebContent.videoCount', { count: context.video_count ?? 0 }),
+  ]
+    .filter(Boolean)
+    .join(' · ')
+
+  const handleClick = () => {
+    if (context.source_url) {
+      window.open(context.source_url, '_blank', 'noopener,noreferrer')
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={context.source_url ? handleClick : undefined}
+      className="block max-w-full appearance-none rounded-lg border-0 bg-transparent p-0 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+      title={context.source_url || undefined}
+    >
+      <ContextPreviewBase
+        icon={<Video />}
+        title={context.name}
+        subtitle={subtitle}
+        className={
+          context.source_url ? 'hover:shadow-md hover:border-emerald-500/50 transition-all' : ''
+        }
+      />
+    </button>
   )
 }
 

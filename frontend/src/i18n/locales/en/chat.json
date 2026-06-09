@@ -751,5 +751,27 @@
     "wikispaceNotConfigured": "DingTalk Knowledge Base MCP is not configured",
     "wikispaceLastSynced": "Last synced: {{time}}",
     "wikispaceNeverSynced": "Never synced"
+  },
+  "externalWebContent": {
+    "trigger": "External content",
+    "title": "Add external content",
+    "description": "Currently supports crawling video content from Douyin, Bilibili, Xiaohongshu, and similar sites.",
+    "placeholder": "https://www.douyin.com/video/...",
+    "crawl": "Crawl",
+    "crawlingHint": "Crawling may take a few minutes. Keep this page open until it finishes.",
+    "added": "External video added",
+    "videoCount": "{{count}} videos",
+    "errors": {
+      "urlRequired": "Enter a web page URL",
+      "duplicate": "This URL has already been added",
+      "invalidUrl": "Enter a valid HTTP(S) web page URL",
+      "noVideo": "No addable video was found. Try again later.",
+      "tooManyVideos": "This page contains more videos than allowed",
+      "videoDownloadFailed": "Failed to download the external video. Try again later.",
+      "videoUploadFailed": "Failed to upload the external video to the video platform. Try again later.",
+      "videoTooLarge": "The external video exceeds the size limit.",
+      "serviceUnavailable": "External content crawling is temporarily unavailable. Try again later.",
+      "crawlFailed": "Failed to crawl external content"
+    }
   }
 }

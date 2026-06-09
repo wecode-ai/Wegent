@@ -148,6 +148,14 @@ function SharedTaskContent() {
         mime_type: ctx.mime_type,
         // Knowledge base fields
         document_count: ctx.document_count,
+        // Table fields
+        document_id: ctx.document_id,
+        source_config: ctx.source_config,
+        // External web content fields
+        video_count: ctx.video_count,
+        site: ctx.site,
+        source_url: ctx.source_url,
+        cover_url: ctx.cover_url,
       })) || []
 
     // For user messages, use prompt

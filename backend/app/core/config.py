@@ -105,6 +105,13 @@ class Settings(BaseSettings):
     MCP_ALLOWED_HOSTS: list[str] = []
     MCP_ALLOWED_ORIGINS: list[str] = []
 
+    # External web content crawling via spider MCP
+    WEB_CONTENT_MCP_URL: str = "http://mcp.spider.pub.sina.com.cn:8010/mcp"
+    WEB_CONTENT_CRAWL_TOOL: str = "crawl_page"
+    WEB_CONTENT_CRAWL_TIMEOUT_SECONDS: int = 180
+    WEB_CONTENT_CRAWL_POLL_INTERVAL_SECONDS: float = 2.0
+    WEB_CONTENT_MAX_VIDEOS_PER_CONTEXT: int = 10
+
     # Standalone mode configuration
     # When enabled, Backend runs in a simplified single-process mode suitable for local development
     STANDALONE_MODE: bool = False

@@ -17,7 +17,7 @@ eliminating the need to pass separate attachment_ids and knowledge_base_ids.
 
 import json
 import logging
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional
 
 from fastapi import HTTPException, status
 from langchain_core.tools import BaseTool
@@ -399,30 +399,6 @@ def _process_attachment_context(
         )
         if doc_prefix:
             text_contents.append(f"[Attachment {idx}]\n{doc_prefix}")
-
-
-async def process_attachments(
-    db: Any,
-    attachment_ids: List[int],
-    user_id: int,
-    message: str,
-) -> str | list[dict[str, Any]]:
-    """
-    Process multiple attachments and build message with all attachment contents.
-
-    This is a backward-compatible wrapper around process_contexts.
-
-    Args:
-        db: Database session (SQLAlchemy Session)
-        attachment_ids: List of attachment IDs (now context IDs)
-        user_id: User ID (unused, kept for backward compatibility with callers)
-        message: Original message
-
-    Returns:
-        Message with all attachment contents prepended, or OpenAI Responses API
-        format vision content list for images
-    """
-    return await process_contexts(db, attachment_ids, message)
 
 
 def extract_knowledge_base_ids(
@@ -826,9 +802,9 @@ def _prepare_contexts_for_creation(
     contexts: List[Any] | None,
     subtask_id: int,
     user_id: int,
-) -> Tuple[List[SubtaskContext], List[SubtaskContext], List[SubtaskContext]]:
+) -> tuple[List[SubtaskContext], List[SubtaskContext], List[SubtaskContext]]:
     """
-    Prepare knowledge base, table, and selected_documents contexts for batch creation.
+    Prepare structured contexts for batch creation.
 
     Args:
         contexts: List of ContextItem objects from payload
@@ -836,7 +812,7 @@ def _prepare_contexts_for_creation(
         user_id: User ID
 
     Returns:
-        Tuple of (kb_contexts, table_contexts, selected_docs_contexts) ready for insertion
+        Tuple of context lists ready for insertion.
     """
     kb_contexts_to_create: List[SubtaskContext] = []
     table_contexts_to_create: List[SubtaskContext] = []
@@ -1112,7 +1088,6 @@ async def prepare_contexts_for_chat(
         if c.context_type == ContextType.SELECTED_DOCUMENTS.value
         and c.status == ContextStatus.READY.value
     ]
-
     logger.info(
         f"[prepare_contexts_for_chat] subtask={user_subtask_id}: "
         f"{len(attachment_contexts)} attachments, {len(kb_contexts)} knowledge bases, "

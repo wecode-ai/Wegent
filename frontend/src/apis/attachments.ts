@@ -30,10 +30,16 @@ export interface AttachmentResponse {
   file_size: number
   mime_type: string
   status: AttachmentStatus
+  file_extension?: string
+  created_at?: string | null
   text_length?: number | null
   error_message?: string | null
   error_code?: string | null
   truncation_info?: TruncationInfo | null
+  video_count?: number | null
+  site?: string | null
+  source_url?: string | null
+  cover_url?: string | null
 }
 
 /**

@@ -9,6 +9,7 @@ import pytest
 from app.services.chat.preprocessing.contexts import (
     _build_vision_structure,
     _combine_text_contents,
+    _process_attachment_context,
 )
 
 
@@ -24,7 +25,7 @@ class TestBuildVisionStructure:
                 "image_header": "[Image: photo.jpg | JPEG | 100x100]",
             }
         ]
-        result = _build_vision_structure([], image_contents, "What is this?")
+        result = _build_vision_structure([], image_contents, [], "What is this?")
 
         # Expect: 1 attachment block + 1 image block + 1 user message block
         assert len(result) == 3
@@ -37,7 +38,7 @@ class TestBuildVisionStructure:
     def test_no_attachments_no_attachment_block(self):
         """When there are no text contents and no image headers, skip attachment block."""
         image_contents = [{"image_base64": "abc", "mime_type": "image/png"}]
-        result = _build_vision_structure([], image_contents, "Describe")
+        result = _build_vision_structure([], image_contents, [], "Describe")
 
         # Expect: 1 image block + 1 user message block (no attachment block)
         assert len(result) == 2
@@ -55,7 +56,7 @@ class TestBuildVisionStructure:
                 "image_header": "[Image: chart.png]",
             }
         ]
-        result = _build_vision_structure(text_contents, image_contents, "Summarize")
+        result = _build_vision_structure(text_contents, image_contents, [], "Summarize")
 
         # attachment block should contain both text and image header
         attachment_block = result[0]
@@ -72,7 +73,7 @@ class TestBuildVisionStructure:
             {"image_base64": "img1", "mime_type": "image/jpeg"},
             {"image_base64": "img2", "mime_type": "image/png"},
         ]
-        result = _build_vision_structure([], image_contents, "Compare these")
+        result = _build_vision_structure([], image_contents, [], "Compare these")
 
         image_blocks = [b for b in result if b["type"] == "input_image"]
         assert len(image_blocks) == 2
@@ -83,10 +84,29 @@ class TestBuildVisionStructure:
         image_contents = [
             {"image_base64": "", "mime_type": "image/png"},
         ]
-        result = _build_vision_structure([], image_contents, "Hello")
+        result = _build_vision_structure([], image_contents, [], "Hello")
 
         image_blocks = [b for b in result if b["type"] == "input_image"]
         assert len(image_blocks) == 0
+
+    def test_video_blocks_are_inserted_before_user_message(self):
+        video_contents = [
+            {
+                "video_url": "https://s3.example.com/video-1.mp4",
+                "mime_type": "video/mp4",
+            },
+            {
+                "video_url": "https://s3.example.com/video-2.mp4",
+                "mime_type": "video/mp4",
+            },
+        ]
+
+        result = _build_vision_structure([], [], video_contents, "Analyze videos")
+
+        video_blocks = [block for block in result if block["type"] == "input_video"]
+        assert len(video_blocks) == 2
+        assert video_blocks[0]["video_url"] == "https://s3.example.com/video-1.mp4"
+        assert result[-1] == {"type": "input_text", "text": "Analyze videos"}
 
 
 class TestCombineTextContents:

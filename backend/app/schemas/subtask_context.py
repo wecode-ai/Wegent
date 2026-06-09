@@ -16,6 +16,8 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.context_display import build_context_display_fields
+
 logger = logging.getLogger(__name__)
 
 
@@ -105,6 +107,11 @@ class SubtaskContextBrief(BaseModel):
     # Table fields (from type_data) - nested structure to match frontend expectation
     document_id: Optional[int] = None
     source_config: Optional[Dict[str, Any]] = None
+    # External web content fields
+    video_count: Optional[int] = None
+    site: Optional[str] = None
+    source_url: Optional[str] = None
+    cover_url: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -113,12 +120,6 @@ class SubtaskContextBrief(BaseModel):
         """Create brief from SubtaskContext model."""
         type_data = context.type_data or {}
 
-        # Build source_config for table contexts
-        source_config = None
-        knowledge_id = None
-        document_id = None
-        document_count = type_data.get("document_count")
-
         # Handle context type as string or enum
         context_type = context.context_type
         if hasattr(context_type, "value"):
@@ -126,30 +127,14 @@ class SubtaskContextBrief(BaseModel):
         else:
             context_type_str = str(context_type)
 
-        if context_type_str == ContextType.TABLE.value:
-            document_id = type_data.get("document_id")
-            url = type_data.get("url")
-            if url:
-                source_config = {"url": url}
-        elif context_type_str == ContextType.KNOWLEDGE_BASE.value:
-            knowledge_id = type_data.get("knowledge_id")
-        elif context_type_str == ContextType.SELECTED_DOCUMENTS.value:
-            # For selected_documents, count the document_ids
-            document_ids = type_data.get("document_ids", [])
-            document_count = len(document_ids) if document_ids else 0
+        display_fields = build_context_display_fields(context_type_str, type_data)
 
         return cls(
             id=context.id,
             context_type=context.context_type,
             name=context.name,
             status=context.status,
-            file_extension=type_data.get("file_extension"),
-            file_size=type_data.get("file_size"),
-            mime_type=type_data.get("mime_type"),
-            knowledge_id=knowledge_id,
-            document_count=document_count,
-            document_id=document_id,
-            source_config=source_config,
+            **display_fields,
         )
 
 
@@ -172,6 +157,10 @@ class AttachmentResponse(BaseModel):
     error_code: Optional[str] = None  # Error code for i18n mapping
     truncation_info: Optional[TruncationInfo] = None
     created_at: Optional[datetime] = None
+    video_count: Optional[int] = None
+    site: Optional[str] = None
+    source_url: Optional[str] = None
+    cover_url: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -183,6 +172,7 @@ class AttachmentResponse(BaseModel):
     ) -> "AttachmentResponse":
         """Create from SubtaskContext model."""
         type_data = context.type_data or {}
+        display_fields = build_context_display_fields(context.context_type, type_data)
         return cls(
             id=context.id,
             filename=type_data.get("original_filename", context.name),
@@ -198,6 +188,10 @@ class AttachmentResponse(BaseModel):
             error_message=context.error_message,
             truncation_info=truncation_info,
             created_at=context.created_at,
+            video_count=display_fields.get("video_count"),
+            site=display_fields.get("site"),
+            source_url=display_fields.get("source_url"),
+            cover_url=display_fields.get("cover_url"),
         )
 
 
@@ -214,6 +208,7 @@ class AttachmentDetailResponse(AttachmentResponse):
     ) -> "AttachmentDetailResponse":
         """Create from SubtaskContext model."""
         type_data = context.type_data or {}
+        display_fields = build_context_display_fields(context.context_type, type_data)
         return cls(
             id=context.id,
             filename=type_data.get("original_filename", context.name),
@@ -230,6 +225,10 @@ class AttachmentDetailResponse(AttachmentResponse):
             truncation_info=truncation_info,
             created_at=context.created_at,
             subtask_id=context.subtask_id if context.subtask_id > 0 else None,
+            video_count=display_fields.get("video_count"),
+            site=display_fields.get("site"),
+            source_url=display_fields.get("source_url"),
+            cover_url=display_fields.get("cover_url"),
         )
 
 

@@ -14,7 +14,6 @@ replacing the original attachments-only approach.
 Key functions:
 - prepare_contexts_for_chat: Unified context processing based on user_subtask_id
 - link_contexts_to_subtask: Link attachments and create KB contexts for a subtask
-- process_attachments: Legacy function for backward compatibility
 
 Table functions (multi-provider support):
 - parse_table_url: Extract baseId and sheetId from any supported table URL
@@ -29,7 +28,6 @@ from .contexts import (
     get_table_context_ids_from_subtask,
     link_contexts_to_subtask,
     prepare_contexts_for_chat,
-    process_attachments,
     process_contexts,
 )
 from .tables import (
@@ -39,7 +37,6 @@ from .tables import (
 )
 
 __all__ = [
-    "process_attachments",
     "process_contexts",
     "extract_knowledge_base_ids",
     "link_contexts_to_subtask",

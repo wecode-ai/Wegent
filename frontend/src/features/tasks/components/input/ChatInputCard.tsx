@@ -193,6 +193,7 @@ export function ChatInputCard({
   setSelectedContexts,
   attachmentState,
   onFileSelect,
+  onAttachmentAdd,
   onAttachmentRemove,
   isStreaming,
   isStopping,
@@ -628,6 +629,7 @@ export function ChatInputCard({
             setSelectedContexts={setSelectedContexts}
             attachmentState={attachmentState}
             onFileSelect={onFileSelect}
+            onAttachmentAdd={onAttachmentAdd}
             onAttachmentRemove={onAttachmentRemove}
             isStreaming={isStreaming}
             isStopping={isStopping}

@@ -4,6 +4,7 @@
 
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen } from '@testing-library/react'
+import type { ButtonHTMLAttributes } from 'react'
 import type { ChatInputControlsProps } from '@/features/tasks/components/input/ChatInputControls'
 import { ChatInputControls } from '@/features/tasks/components/input/ChatInputControls'
 import { getChatSendState } from '@/features/tasks/components/input/chatSendState'
@@ -78,8 +79,15 @@ jest.mock('@/features/tasks/components/input/SendButton', () => ({
 
 jest.mock('@/components/ui/action-button', () => ({
   __esModule: true,
-  ActionButton: ({ title, onClick }: { title?: string; onClick?: () => void }) => (
-    <button type="button" aria-label={title || 'Action'} onClick={onClick}>
+  ActionButton: ({
+    title,
+    onClick,
+    ...props
+  }: {
+    title?: string
+    onClick?: () => void
+  } & ButtonHTMLAttributes<HTMLButtonElement>) => (
+    <button type="button" aria-label={title || 'Action'} onClick={onClick} {...props}>
       {title || 'Action'}
     </button>
   ),
@@ -159,14 +167,14 @@ describe('ChatInputControls send state', () => {
   it('shows stop action while the runtime is active', () => {
     render(<ChatInputControls {...createProps()} isStreaming />)
 
-    expect(screen.getByRole('button', { name: 'Stop generating' })).toBeInTheDocument()
+    expect(screen.getByTestId('stop-generating-button')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Send' })).not.toBeInTheDocument()
   })
 
   it('labels queued send action separately from stop action', () => {
     render(<ChatInputControls {...createProps()} isStreaming canQueueMessage />)
 
-    expect(screen.getByRole('button', { name: 'Stop generating' })).toBeInTheDocument()
+    expect(screen.getByTestId('stop-generating-button')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Queue message' })).toBeInTheDocument()
   })
 
@@ -185,7 +193,7 @@ describe('ChatInputControls send state', () => {
     const queueButton = screen.getByRole('button', { name: 'Queue message' })
     fireEvent.click(queueButton)
 
-    expect(screen.getByRole('button', { name: 'Stop generating' })).toBeInTheDocument()
+    expect(screen.getByTestId('stop-generating-button')).toBeInTheDocument()
     expect(queueButton).toBeEnabled()
     expect(queueButton).toHaveAttribute('data-loading', 'false')
     expect(onSendMessage).toHaveBeenCalledTimes(1)
@@ -196,7 +204,7 @@ describe('ChatInputControls send state', () => {
 
     render(<ChatInputControls {...createProps()} canCancelTask onCancelTask={onCancelTask} />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel task' }))
+    fireEvent.click(screen.getByTestId('cancel-task-button'))
 
     expect(onCancelTask).toHaveBeenCalledTimes(1)
     expect(screen.queryByTestId('loading-dots')).not.toBeInTheDocument()
