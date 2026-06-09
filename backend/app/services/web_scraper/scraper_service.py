@@ -2,37 +2,71 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""
-Web scraper service using Crawl4AI for fetching and converting web pages to markdown.
+"""Web scraper service for fetching and converting web pages to markdown."""
 
-Uses Crawl4AI library which provides:
-- JavaScript rendering via Playwright for dynamic content (GitHub, SPAs, etc.)
-- LLM-optimized markdown output
-- Automatic content extraction
-- SSRF protection
-- Proxy support with direct and fallback modes
-- PDF file extraction support
-"""
-
-import io
+import asyncio
 import logging
 from datetime import datetime
-from typing import Optional, Tuple
+from typing import Any, Optional
 from urllib.parse import urlparse
 
-import httpx
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
-from app.services.url_metadata import _validate_url_for_ssrf
-from app.services.web_scraper.scraper_config import get_site_config
+from app.services.web_scraper.classifier import ScrapeResultClassifier
+from app.services.web_scraper.models import (
+    ERROR_AUTH_REQUIRED,
+    ERROR_CRAWL4AI_NOT_INSTALLED,
+    ERROR_EMPTY_CONTENT,
+    ERROR_FETCH_BLOCKED,
+    ERROR_FETCH_FAILED,
+    ERROR_FETCH_TIMEOUT,
+    ERROR_INVALID_URL,
+    ERROR_PARSE_FAILED,
+    ERROR_RATE_LIMITED,
+    ERROR_SSRF_BLOCKED,
+    InternalScrapeResult,
+    MarkdownQuality,
+    ScrapeDecision,
+    ScrapeStatus,
+)
+from app.services.web_scraper.pdf_extractor import PdfExtractor
+from app.services.web_scraper.policy import (
+    DEFAULT_TOTAL_TIMEOUT_SECONDS,
+    ScrapePolicy,
+    SitePolicyResolver,
+)
+from app.services.web_scraper.profiles import BrowserProfileFactory
+from app.services.web_scraper.proxy import ProxyPlan, ProxyResolver
+from app.services.web_scraper.quality import MarkdownQualityEvaluator
+from app.services.web_scraper.security import (
+    WebScraperSecurityError,
+    WebScraperUrlGuard,
+)
+from app.services.web_scraper.strategies.crawl4ai_strategy import Crawl4AIScrapeStrategy
+from app.services.web_scraper.strategies.playwright_frame_strategy import (
+    PlaywrightFrameExtractionStrategy,
+)
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
-# Request timeout (20 seconds - use domcontentloaded instead of networkidle for faster response)
-WEB_SCRAPER_TIMEOUT = 20000  # milliseconds for Crawl4AI
-# Timeout for PDF download (seconds)
-PDF_DOWNLOAD_TIMEOUT = 60
+__all__ = [
+    "ERROR_AUTH_REQUIRED",
+    "ERROR_CRAWL4AI_NOT_INSTALLED",
+    "ERROR_EMPTY_CONTENT",
+    "ERROR_FETCH_BLOCKED",
+    "ERROR_FETCH_FAILED",
+    "ERROR_FETCH_TIMEOUT",
+    "ERROR_INVALID_URL",
+    "ERROR_PARSE_FAILED",
+    "ERROR_RATE_LIMITED",
+    "ERROR_SSRF_BLOCKED",
+    "ScrapedContent",
+    "ScrapeError",
+    "WebScraperService",
+    "get_web_scraper_service",
+]
 
 
 class ScrapedContent(BaseModel):
@@ -60,85 +94,32 @@ class ScrapeError(BaseModel):
     url: str
 
 
-# Error codes
-ERROR_INVALID_URL = "INVALID_URL_FORMAT"
-ERROR_FETCH_FAILED = "FETCH_FAILED"
-ERROR_FETCH_TIMEOUT = "FETCH_TIMEOUT"
-ERROR_PARSE_FAILED = "PARSE_FAILED"
-ERROR_EMPTY_CONTENT = "EMPTY_CONTENT"
-ERROR_AUTH_REQUIRED = "AUTH_REQUIRED"
-ERROR_SSRF_BLOCKED = "SSRF_BLOCKED"
-ERROR_CRAWL4AI_NOT_INSTALLED = "CRAWL4AI_NOT_INSTALLED"
-
-
-def _is_pdf_content_type(content_type: Optional[str]) -> bool:
-    """Check if Content-Type indicates a PDF file.
-
-    Args:
-        content_type: Content-Type header value
-
-    Returns:
-        True if Content-Type indicates PDF
-    """
-    if not content_type:
-        return False
-    return "application/pdf" in content_type.lower()
-
-
-def _get_content_type_from_headers(headers: Optional[dict]) -> Optional[str]:
-    """Extract Content-Type from response headers (case-insensitive).
-
-    Args:
-        headers: Response headers dictionary
-
-    Returns:
-        Content-Type value or None
-    """
-    if not headers:
-        return None
-    # Headers may have different cases
-    for key, value in headers.items():
-        if key.lower() == "content-type":
-            return value
-    return None
-
-
 class WebScraperService:
-    """Service for scraping web pages using Crawl4AI.
+    """Service for scraping web pages."""
 
-    This service uses Crawl4AI with Playwright for JavaScript rendering,
-    making it suitable for modern web applications like GitHub, SPAs, etc.
-
-    Features:
-    - JavaScript rendering for dynamic content
-    - LLM-optimized markdown output
-    - Automatic content extraction
-    - SSRF protection
-    - PDF file extraction support
-
-    Example:
-        ```python
-        service = WebScraperService()
-        result = await service.scrape_url("https://github.com/user/repo")
-        print(result.content)  # Markdown content with README, etc.
-
-        # PDF files are also supported
-        result = await service.scrape_url("https://example.com/report.pdf")
-        print(result.content)  # Extracted text from PDF
-        ```
-    """
-
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the web scraper service."""
         self._crawler = None
+        self._crawler_lock = asyncio.Lock()
         self._crawl4ai_available = None
+        self._guard = WebScraperUrlGuard()
+        self._policy_resolver = SitePolicyResolver()
+        self._profile_factory = BrowserProfileFactory()
+        self._proxy_resolver = ProxyResolver()
+        self._classifier = ScrapeResultClassifier()
+        self._quality_evaluator = MarkdownQualityEvaluator()
+        self._pdf_extractor = PdfExtractor()
+        self._playwright_strategy = PlaywrightFrameExtractionStrategy(
+            quality_evaluator=self._quality_evaluator
+        )
+        self._crawl4ai_strategy = Crawl4AIScrapeStrategy(
+            self._get_crawler,
+            self._classifier,
+            self._quality_evaluator,
+        )
 
     def _check_crawl4ai(self) -> bool:
-        """Check if Crawl4AI is available.
-
-        Returns:
-            True if Crawl4AI is installed
-        """
+        """Check if Crawl4AI is available."""
         if self._crawl4ai_available is None:
             try:
                 import crawl4ai  # noqa: F401
@@ -153,53 +134,72 @@ class WebScraperService:
                 )
         return self._crawl4ai_available
 
-    async def _get_crawler(self):
-        """Get or create the AsyncWebCrawler instance.
+    async def _get_crawler(self) -> Any:
+        """Get or create the AsyncWebCrawler instance."""
+        if self._crawler is not None:
+            return self._crawler
 
-        Returns:
-            AsyncWebCrawler instance
-        """
-        if self._crawler is None:
+        async with self._crawler_lock:
+            if self._crawler is not None:
+                return self._crawler
+
             from crawl4ai import AsyncWebCrawler, BrowserConfig
 
-            # Use realistic browser configuration to bypass anti-bot detection
             browser_config = BrowserConfig(
                 headless=True,
                 browser_type="chromium",
-                user_agent_mode="random",  # 0.4.0+ New feature: Automatically generate authentic randomness UA
-                use_managed_browser=True,  # Hosted by crawl4ai, with more authentic fingerprints
+                user_agent_mode="random",
+                use_managed_browser=True,
                 extra_args=["--no-sandbox", "--disable-dev-shm-usage"],
             )
-            self._crawler = AsyncWebCrawler(config=browser_config)
-            await self._crawler.start()
+            crawler = AsyncWebCrawler(config=browser_config)
+            try:
+                await crawler.start()
+            except Exception:
+                close = getattr(crawler, "close", None)
+                if close is not None:
+                    close_result = close()
+                    if asyncio.iscoroutine(close_result):
+                        await close_result
+                raise
+
+            self._crawler = crawler
         return self._crawler
 
+    @trace_async(
+        span_name="web_scraper.scrape_url",
+        tracer_name="web_scraper",
+        extract_attributes=lambda self, url: {"url": url},
+    )
     async def scrape_url(self, url: str) -> ScrapedContent:
-        """Scrape a web page and convert to Markdown using Crawl4AI.
-
-        Args:
-            url: URL to scrape
-
-        Returns:
-            ScrapedContent with title, markdown content, and metadata
-        """
-        # Validate URL format
+        """Scrape a web page and convert to Markdown."""
         try:
-            parsed = urlparse(url)
-            if not parsed.scheme or not parsed.netloc:
-                return self._error_result(url, ERROR_INVALID_URL, "Invalid URL format")
-        except Exception:
-            return self._error_result(url, ERROR_INVALID_URL, "Invalid URL format")
-
-        # SSRF protection
-        if not _validate_url_for_ssrf(url):
+            return await asyncio.wait_for(
+                self._scrape_url_impl(url),
+                timeout=self._resolve_total_timeout(url),
+            )
+        except asyncio.TimeoutError:
+            return self._error_result(url, ERROR_FETCH_TIMEOUT, "Request timed out")
+        except WebScraperSecurityError as exc:
+            return self._error_result(url, exc.error_code, exc.message)
+        except Exception as exc:
+            logger.exception("Web scraping failed for %s", url)
             return self._error_result(
-                url,
-                ERROR_SSRF_BLOCKED,
-                "URL blocked by security policy (private/internal address)",
+                url, ERROR_FETCH_FAILED, f"Failed to scrape page: {str(exc)}"
             )
 
-        # Check if Crawl4AI is available
+    async def _scrape_url_impl(self, url: str) -> ScrapedContent:
+        self._guard.validate_initial_url(url)
+
+        policy = self._policy_resolver.resolve(url)
+        proxy_plan = self._proxy_resolver.resolve(
+            mode=settings.WEBSCRAPER_PROXY_MODE,
+            raw_url=settings.WEBSCRAPER_PROXY,
+        )
+
+        if self._is_direct_pdf_url(url):
+            return await self._scrape_pdf(url, policy, proxy_plan)
+
         if not self._check_crawl4ai():
             return self._error_result(
                 url,
@@ -208,304 +208,104 @@ class WebScraperService:
                 "pip install 'crawl4ai[sync]' && crawl4ai-setup",
             )
 
-        try:
-            crawler = await self._get_crawler()
+        profile = self._profile_factory.create(policy.profile)
+        primary = await self._crawl4ai_strategy.scrape(
+            url=url,
+            policy=policy,
+            profile=profile,
+            proxy_plan=proxy_plan,
+            guard=self._guard,
+        )
+        primary_quality = self._quality_evaluator.evaluate(
+            primary.markdown, policy, primary.quality_level
+        )
+        primary_decision = self._classifier.classify(primary, primary_quality)
 
-            # Crawl with proxy strategy, returns (result, effective_proxy_url)
-            result, effective_proxy = await self._crawl_with_strategy(crawler, url)
+        if primary_decision.is_pdf:
+            pdf_url = primary.final_url or url
+            return await self._scrape_pdf(pdf_url, policy, proxy_plan)
 
-            if not result.success:
-                error_msg = result.error_message or "Unknown error during scraping"
-                return self._error_result(url, ERROR_FETCH_FAILED, error_msg)
+        if primary_decision.status == ScrapeStatus.OK and primary_quality.acceptable:
+            return self._build_success(primary)
 
-            markdown = result.markdown or ""
+        if not self._classifier.should_use_playwright_fallback(
+            primary_decision, primary_quality, policy
+        ):
+            return self._build_result(primary, primary_decision, primary_quality)
 
-            # Check if content is empty and Content-Type is PDF
-            # If so, download and parse PDF using PyPDF2
-            if not markdown or len(markdown.strip()) < 50:
-                content_type = _get_content_type_from_headers(result.response_headers)
-                if _is_pdf_content_type(content_type):
-                    logger.info(
-                        f"Detected PDF content type for {url}, "
-                        "extracting text using PyPDF2"
-                    )
-                    pdf_result = await self._extract_pdf_content(url, effective_proxy)
-                    if pdf_result:
-                        markdown = pdf_result
+        fallback = await self._playwright_strategy.scrape(
+            url=url,
+            policy=policy,
+            profile=profile,
+            proxy_plan=proxy_plan,
+            guard=self._guard,
+        )
+        fallback_quality = self._quality_evaluator.evaluate(
+            fallback.markdown, policy, fallback.quality_level
+        )
+        fallback_decision = self._classifier.classify(fallback, fallback_quality)
+        return self._build_result(fallback, fallback_decision, fallback_quality)
 
-            return self._process_result(result, url, markdown)
-
-        except TimeoutError:
-            return self._error_result(url, ERROR_FETCH_TIMEOUT, "Request timed out")
-        except Exception as e:
-            logger.error(f"Crawl4AI scraping failed for {url}: {e}")
-            return self._error_result(
-                url, ERROR_FETCH_FAILED, f"Failed to scrape page: {str(e)}"
-            )
-
-    def _process_result(
-        self, result, original_url: str, markdown: str
+    async def _scrape_pdf(
+        self,
+        pdf_url: str,
+        policy: ScrapePolicy,
+        proxy_plan: ProxyPlan,
     ) -> ScrapedContent:
-        """Process crawl result and return ScrapedContent.
+        pdf_result = await self._pdf_extractor.extract(
+            pdf_url=pdf_url,
+            proxy_plan=proxy_plan,
+            guard=self._guard,
+        )
+        pdf_quality = self._quality_evaluator.evaluate(
+            pdf_result.markdown, policy, pdf_result.quality_level
+        )
+        pdf_decision = self._classifier.classify(pdf_result, pdf_quality)
+        return self._build_result(pdf_result, pdf_decision, pdf_quality)
 
-        Args:
-            result: CrawlResult from crawler
-            original_url: Original URL requested
-            markdown: Extracted markdown content
+    def _is_direct_pdf_url(self, url: str) -> bool:
+        return urlparse(url).path.lower().endswith(".pdf")
 
-        Returns:
-            ScrapedContent with processed data
-        """
-        if not result.success:
-            error_msg = result.error_message or "Unknown error during scraping"
-            return self._error_result(original_url, ERROR_FETCH_FAILED, error_msg)
-
-        title = result.metadata.get("title", "") if result.metadata else ""
-        description = result.metadata.get("description", "") if result.metadata else ""
-        final_url = str(result.url) if result.url else original_url
-
-        # SSRF check on final URL (after redirects)
-        if final_url != original_url and not _validate_url_for_ssrf(final_url):
-            return self._error_result(
-                original_url,
-                ERROR_SSRF_BLOCKED,
-                f"Redirect blocked by security policy: {final_url}",
+    def _resolve_total_timeout(self, url: str) -> int:
+        try:
+            return self._policy_resolver.resolve(url).total_timeout_seconds
+        except (AttributeError, KeyError, ValueError) as exc:
+            logger.warning(
+                "Failed to resolve scrape timeout for %s; using default: %s", url, exc
             )
+            return DEFAULT_TOTAL_TIMEOUT_SECONDS
 
-        # Check for empty content
-        if not markdown or len(markdown.strip()) < 50:
-            return self._error_result(
-                final_url,
-                ERROR_EMPTY_CONTENT,
-                "No extractable content found on the page",
-            )
-
+    def _build_success(self, result: InternalScrapeResult) -> ScrapedContent:
+        final_url = result.final_url or result.url
         return ScrapedContent(
-            title=title or None,
-            content=markdown,
+            title=result.title or None,
+            content=result.markdown,
             url=final_url,
             scraped_at=datetime.utcnow(),
-            content_length=len(markdown),
-            description=description or None,
+            content_length=len(result.markdown),
+            description=result.description or None,
             success=True,
         )
 
-    async def _crawl_with_strategy(self, crawler, url: str) -> Tuple:
-        """Crawl URL using configured proxy strategy.
-
-        Args:
-            crawler: AsyncWebCrawler instance
-            url: URL to crawl
-
-        Returns:
-            Tuple of (CrawlResult, effective_proxy_url)
-            effective_proxy_url is the proxy that was actually used (None if direct)
-        """
-        proxy_url = settings.WEBSCRAPER_PROXY
-        proxy_mode = settings.WEBSCRAPER_PROXY_MODE
-
-        if proxy_mode == "direct" and proxy_url:
-            # Direct mode: always use proxy
-            result = await self._crawl_single(crawler, url, proxy_url=proxy_url)
-            return result, proxy_url
-        elif proxy_mode == "fallback" and proxy_url:
-            # Fallback mode: try direct first, then proxy
-            return await self._crawl_with_fallback(crawler, url, proxy_url)
-        else:
-            # No proxy configured
-            result = await self._crawl_single(crawler, url)
-            return result, None
-
-    async def _crawl_single(
+    def _build_result(
         self,
-        crawler,
-        url: str,
-        proxy_url: Optional[str] = None,
-    ):
-        """Single crawl operation with specified configuration.
+        result: InternalScrapeResult,
+        decision: ScrapeDecision,
+        quality: MarkdownQuality,
+    ) -> ScrapedContent:
+        if decision.status == ScrapeStatus.OK and quality.acceptable:
+            return self._build_success(result)
 
-        Args:
-            crawler: AsyncWebCrawler instance
-            url: URL to crawl
-            proxy_url: Optional proxy URL
-
-        Returns:
-            CrawlResult from crawler
-        """
-        logger.info(f"Crawling {url} (proxy: {proxy_url or 'none'})")
-        run_config = self._build_run_config(proxy_config=proxy_url, url=url)
-        return await crawler.arun(url=url, config=run_config)
-
-    def _build_run_config(
-        self, proxy_config: Optional[str] = None, url: Optional[str] = None
-    ):
-        """Build CrawlerRunConfig with optional proxy.
-
-        Args:
-            proxy_config: Proxy URL string (e.g., "http://proxy:8080")
-            url: Target URL to determine special handling
-
-        Returns:
-            CrawlerRunConfig instance
-        """
-        from crawl4ai import CacheMode, CrawlerRunConfig
-
-        # Configure the crawl run
-        # Use domcontentloaded instead of networkidle to avoid timeout on sites
-        # with persistent network activity (GitHub, SPAs with WebSocket, etc.)
-        # Disable remove_overlay_elements for sites with navigation to avoid
-        # "Execution context was destroyed" errors
-        config_kwargs = {
-            "wait_until": "domcontentloaded",  # Faster than networkidle, avoids timeout
-            "page_timeout": WEB_SCRAPER_TIMEOUT,
-            "cache_mode": CacheMode.BYPASS,  # Force refresh, bypassing the local cache
-            "remove_overlay_elements": False,  # Disabled to avoid navigation conflicts
-        }
-
-        # Load site config at runtime (not at module import time)
-        site_configs = get_site_config()
-
-        # Apply site-specific configuration if URL matches known sites
-        matched_config = None
-        if url:
-            # Parse hostname from URL for accurate domain matching
-            hostname = (urlparse(url).hostname or "").lower()
-            if hostname:
-                for domain, site_config in site_configs.items():
-                    logger.debug(
-                        f"[WebScraper] Checking domain '{domain}' against hostname '{hostname}'"
-                    )
-                    if hostname == domain or hostname.endswith(f".{domain}"):
-                        logger.debug(
-                            f"[WebScraper] MATCHED! Applying site-specific config for {domain} (hostname: {hostname})"
-                        )
-                        config_kwargs.update(site_config)
-                        matched_config = site_config
-                        break
-                if not matched_config:
-                    logger.debug(
-                        f"[WebScraper] No site-specific config matched for hostname: {hostname}"
-                    )
-
-        if proxy_config:
-            config_kwargs["proxy_config"] = proxy_config
-            logger.debug(f"[WebScraper] Using proxy: {proxy_config}")
-
-        # Log final config
-        logger.info(
-            f"[WebScraper] Final config kwargs keys: {list(config_kwargs.keys())}"
+        return self._error_result(
+            result.final_url or result.url,
+            decision.error_code or ERROR_FETCH_FAILED,
+            decision.error_message or result.error_message or "Failed to scrape page",
         )
-
-        return CrawlerRunConfig(**config_kwargs)
-
-    async def _crawl_with_fallback(self, crawler, url: str, proxy_url: str) -> Tuple:
-        """Crawl URL with fallback strategy: try direct first, then proxy.
-
-        Args:
-            crawler: AsyncWebCrawler instance
-            url: URL to crawl
-            proxy_url: Proxy URL string for fallback
-
-        Returns:
-            Tuple of (CrawlResult, effective_proxy_url)
-        """
-        # First try direct connection
-        logger.info(f"Crawling {url} - trying direct connection first")
-        try:
-            result = await self._crawl_single(crawler, url)
-            if result.success:
-                logger.debug(f"Direct connection succeeded for {url}")
-                return result, None
-            else:
-                logger.debug(
-                    f"Direct connection failed for {url}: {result.error_message}, "
-                    "falling back to proxy"
-                )
-        except Exception as e:
-            logger.debug(
-                f"Direct connection exception for {url}: {e}, falling back to proxy"
-            )
-
-        # Fallback to proxy
-        logger.info(f"Using proxy fallback for {url}")
-        result = await self._crawl_single(crawler, url, proxy_url=proxy_url)
-        return result, proxy_url
-
-    async def _extract_pdf_content(
-        self, url: str, proxy_url: Optional[str] = None
-    ) -> Optional[str]:
-        """Download and extract text content from a PDF file.
-
-        Args:
-            url: URL of the PDF file
-            proxy_url: Optional proxy URL to use for download
-
-        Returns:
-            Extracted text content as markdown, or None if extraction failed
-        """
-        try:
-            from PyPDF2 import PdfReader
-
-            # Configure httpx client with optional proxy
-            transport = None
-            if proxy_url:
-                transport = httpx.AsyncHTTPTransport(proxy=proxy_url)
-                logger.debug(f"Using proxy for PDF download: {proxy_url}")
-
-            async with httpx.AsyncClient(
-                timeout=PDF_DOWNLOAD_TIMEOUT,
-                transport=transport,
-                follow_redirects=True,
-            ) as client:
-                logger.info(f"Downloading PDF from {url}")
-                response = await client.get(url)
-                response.raise_for_status()
-
-                # Parse PDF content
-                pdf_bytes = io.BytesIO(response.content)
-                reader = PdfReader(pdf_bytes)
-
-                # Extract text from all pages
-                text_parts = []
-                for i, page in enumerate(reader.pages):
-                    page_text = page.extract_text()
-                    if page_text:
-                        text_parts.append(f"## Page {i + 1}\n\n{page_text}")
-
-                if text_parts:
-                    markdown = "\n\n".join(text_parts)
-                    logger.info(
-                        f"Successfully extracted {len(text_parts)} pages "
-                        f"({len(markdown)} chars) from PDF"
-                    )
-                    return markdown
-                else:
-                    logger.warning(f"No text content extracted from PDF: {url}")
-                    return None
-
-        except ImportError:
-            logger.error("PyPDF2 not installed, cannot extract PDF content")
-            return None
-        except httpx.TimeoutException:
-            logger.error(f"Timeout downloading PDF from {url}")
-            return None
-        except Exception as e:
-            logger.error(f"Failed to extract PDF content from {url}: {e}")
-            return None
 
     def _error_result(
         self, url: str, error_code: str, error_message: str
     ) -> ScrapedContent:
-        """Create an error result.
-
-        Args:
-            url: Source URL
-            error_code: Error code
-            error_message: Error message
-
-        Returns:
-            ScrapedContent with error information
-        """
+        """Create an error result."""
         return ScrapedContent(
             title=None,
             content="",
@@ -517,23 +317,19 @@ class WebScraperService:
             error_message=error_message,
         )
 
-    async def close(self):
+    async def close(self) -> None:
         """Close the crawler and release resources."""
-        if self._crawler is not None:
-            await self._crawler.close()
-            self._crawler = None
+        async with self._crawler_lock:
+            if self._crawler is not None:
+                await self._crawler.close()
+                self._crawler = None
 
 
-# Global service instance
 _service: Optional[WebScraperService] = None
 
 
 def get_web_scraper_service() -> WebScraperService:
-    """Get the global web scraper service instance.
-
-    Returns:
-        WebScraperService instance
-    """
+    """Get the global web scraper service instance."""
     global _service
     if _service is None:
         _service = WebScraperService()
