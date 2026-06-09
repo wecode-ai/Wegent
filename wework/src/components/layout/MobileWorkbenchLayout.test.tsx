@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState, type ReactNode } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
@@ -509,28 +509,17 @@ describe('MobileWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
 
     const mobileDrawer = screen.getByText('Wework').closest('.fixed')
-    expect(mobileDrawer).toHaveStyle({
-      backgroundColor: 'rgb(var(--color-mobile-drawer))',
-    })
-    expect(mobileDrawer).toHaveClass(
-      'z-critical',
-      'backdrop-blur-3xl',
-      'backdrop-saturate-150',
-    )
-    expect(screen.getByText('项目')).toBeInTheDocument()
+    expect(mobileDrawer).toHaveClass('z-critical', 'bg-white')
+    expect(mobileDrawer).not.toHaveClass('rounded-r-[28px]')
+    expect(screen.getByTestId('mobile-new-project-button')).toHaveTextContent('新建项目')
+    expect(screen.queryByText('项目')).not.toBeInTheDocument()
     expect(screen.queryByText('图片')).not.toBeInTheDocument()
     expect(screen.queryByText('编码')).not.toBeInTheDocument()
     expect(screen.queryByText('更多')).not.toBeInTheDocument()
     expect(screen.queryByText('自动化')).not.toBeInTheDocument()
     expect(screen.queryByTestId('mobile-plugins-nav-button')).not.toBeInTheDocument()
-    expect(screen.getByTestId('mobile-search-input')).toHaveAttribute(
-      'placeholder',
-      '搜索',
-    )
-    expect(screen.getByTestId('mobile-search-input')).toHaveClass(
-      'text-base',
-      'leading-5',
-    )
+    expect(screen.getByTestId('mobile-search-icon-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('mobile-search-input')).not.toBeInTheDocument()
     expect(screen.getByText('github_wegent')).toBeInTheDocument()
     expect(screen.queryByText('项目任务')).not.toBeInTheDocument()
     expect(screen.getByTestId('mobile-project-item-button')).toHaveAttribute(
@@ -538,15 +527,16 @@ describe('MobileWorkbenchLayout', () => {
       'false',
     )
     expect(screen.getByTestId('mobile-project-item-button')).toHaveClass(
-      'text-[rgb(var(--color-sidebar-text-primary))]',
+      'text-[#111111]',
     )
+    expect(screen.getByText('对话')).toBeInTheDocument()
     expect(screen.getByText('远程连接 Claude Code')).toBeInTheDocument()
     expect(screen.getByTestId('mobile-recent-task-button')).toHaveClass(
-      'text-[rgb(var(--color-sidebar-text-primary))]',
+      'text-[#111111]',
     )
-    expect(screen.getByTestId('mobile-settings-button')).toHaveClass(
-      'text-[rgb(var(--color-sidebar-text-primary))]',
-    )
+    expect(screen.queryByText('4d')).not.toBeInTheDocument()
+    expect(screen.getByTestId('mobile-new-chat-button')).toHaveTextContent('聊天')
+    expect(screen.getByTestId('mobile-new-chat-button')).toHaveClass('bg-[#1F1F1F]')
     expect(screen.getByTestId('mobile-drawer-scroll')).toHaveClass('overflow-y-auto')
   })
 
@@ -639,6 +629,167 @@ describe('MobileWorkbenchLayout', () => {
     expect(screen.queryByText('项目任务 1')).not.toBeInTheDocument()
   })
 
+  test('opens project creation as a mobile bottom sheet from the drawer', async () => {
+    render(
+      <MobileWorkbenchLayout
+        state={{
+          ...baseState,
+          devices: [
+            {
+              device_id: 'mac',
+              name: 'macOS Device',
+              status: 'online',
+            },
+          ],
+        }}
+        messages={[]}
+        onCreateProject={vi.fn().mockResolvedValue(baseState.projects[0])}
+        onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/Users/test')}
+        onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/Users/test/projects')}
+        onListDeviceDirectories={vi.fn().mockResolvedValue([])}
+        onCreateDeviceDirectory={vi.fn().mockResolvedValue(undefined)}
+        onSelectProject={vi.fn()}
+        onOpenTask={vi.fn()}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
+    await userEvent.click(screen.getByTestId('mobile-new-project-button'))
+
+    expect(screen.getByTestId('mobile-project-create-menu')).toBeInTheDocument()
+    expect(screen.getByText('新建空白项目')).toBeInTheDocument()
+    expect(screen.getByText('使用现有目录')).toBeInTheDocument()
+    expect(screen.getByText('从 Git 克隆')).toBeInTheDocument()
+
+    await userEvent.click(
+      screen.getByTestId('mobile-project-create-menu-backdrop'),
+    )
+    expect(
+      screen.queryByTestId('mobile-project-create-menu'),
+    ).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('mobile-new-project-button'))
+    await userEvent.click(
+      screen.getByTestId('mobile-project-start-from-scratch-button'),
+    )
+
+    expect(screen.getByTestId('project-create-dialog')).toHaveClass(
+      'rounded-t-[28px]',
+      'max-h-[88dvh]',
+    )
+    expect(screen.getByTestId('project-create-dialog').parentElement).toHaveClass(
+      'items-end',
+    )
+  })
+
+  test('opens project actions on long press without expanding the project', async () => {
+    const onSelectProject = vi.fn()
+    const onArchiveProjectChats = vi.fn().mockResolvedValue(undefined)
+    const onUpdateProjectName = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <MobileWorkbenchLayout
+        state={baseState}
+        messages={[]}
+        onArchiveProjectChats={onArchiveProjectChats}
+        onUpdateProjectName={onUpdateProjectName}
+        onSelectProject={onSelectProject}
+        onOpenTask={vi.fn()}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
+    const projectButton = screen.getByTestId('mobile-project-item-button')
+
+    fireEvent.pointerDown(projectButton, {
+      pointerType: 'touch',
+      clientX: 80,
+      clientY: 180,
+    })
+    await new Promise(resolve => setTimeout(resolve, 550))
+    fireEvent.pointerUp(projectButton, { pointerType: 'touch' })
+
+    expect(screen.getByTestId('mobile-project-actions-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('mobile-project-actions-menu')).toHaveClass(
+      'w-[240px]',
+      'rounded-2xl',
+    )
+    expect(screen.getByTestId('mobile-rename-project-button')).toHaveTextContent(
+      '重命名项目',
+    )
+    expect(
+      screen.getByTestId('mobile-archive-project-chats-button'),
+    ).toHaveTextContent('归档会话')
+    expect(screen.getByTestId('mobile-remove-project-button')).toHaveTextContent(
+      '移除',
+    )
+    expect(onSelectProject).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('mobile-rename-project-button'))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    await userEvent.clear(screen.getByTestId('mobile-inline-project-name-input'))
+    await userEvent.type(
+      screen.getByTestId('mobile-inline-project-name-input'),
+      'renamed-project{enter}',
+    )
+    expect(onUpdateProjectName).toHaveBeenCalledWith(1, 'renamed-project')
+  })
+
+  test('opens lightweight chat actions on long press without opening the chat', async () => {
+    const onOpenTask = vi.fn()
+    const onArchiveTask = vi.fn().mockResolvedValue(undefined)
+    const onRenameTask = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <MobileWorkbenchLayout
+        state={baseState}
+        messages={[]}
+        onArchiveTask={onArchiveTask}
+        onRenameTask={onRenameTask}
+        onSelectProject={vi.fn()}
+        onOpenTask={onOpenTask}
+        onInputChange={vi.fn()}
+        onSend={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
+    const chatButton = screen.getByTestId('mobile-recent-task-button')
+
+    fireEvent.pointerDown(chatButton, {
+      pointerType: 'touch',
+      clientX: 90,
+      clientY: 420,
+    })
+    await new Promise(resolve => setTimeout(resolve, 550))
+    fireEvent.pointerUp(chatButton, { pointerType: 'touch' })
+
+    expect(screen.getByTestId('mobile-chat-actions-menu')).toHaveClass(
+      'w-[240px]',
+      'rounded-2xl',
+    )
+    expect(screen.getByTestId('mobile-rename-chat-button')).toHaveTextContent(
+      '重命名会话',
+    )
+    expect(screen.getByTestId('mobile-archive-chat-button')).toHaveTextContent(
+      '归档会话',
+    )
+    expect(onOpenTask).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('mobile-rename-chat-button'))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    await userEvent.clear(screen.getByTestId('mobile-inline-chat-name-input'))
+    await userEvent.type(
+      screen.getByTestId('mobile-inline-chat-name-input'),
+      'renamed-chat{enter}',
+    )
+    expect(onRenameTask).toHaveBeenCalledWith(3, 'renamed-chat')
+  })
+
   test('opens a mobile-specific settings page with plugins inside settings', async () => {
     const onOpenPlugins = vi.fn()
 
@@ -655,7 +806,7 @@ describe('MobileWorkbenchLayout', () => {
     )
 
     await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
-    await userEvent.click(screen.getByTestId('mobile-settings-button'))
+    await userEvent.click(screen.getByTestId('mobile-avatar-button'))
 
     expect(screen.getByTestId('mobile-settings-page')).toBeInTheDocument()
     expect(screen.queryByTestId('wework-settings-page')).not.toBeInTheDocument()

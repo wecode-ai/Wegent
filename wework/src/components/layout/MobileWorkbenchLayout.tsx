@@ -67,6 +67,7 @@ interface MobileWorkbenchLayoutProps {
     deviceId: string,
     path: string,
   ) => Promise<string[]>
+  onCreateDeviceDirectory?: (deviceId: string, path: string) => Promise<void>
   onLoadEnvironmentInfo?: (
     project: ProjectWithTasks | null,
   ) => Promise<EnvironmentInfo>
@@ -110,6 +111,19 @@ export function MobileWorkbenchLayout({
   projectWork,
   onSelectProject,
   onOpenTask,
+  onCreateProject,
+  onCreateGitWorkspaceProject,
+  onListGitRepositories,
+  onListGitBranches,
+  onUpdateProjectName,
+  onRemoveProject,
+  onArchiveProjectChats,
+  onArchiveTask,
+  onRenameTask,
+  onGetDeviceHomeDirectory,
+  onGetProjectWorkspaceRoot,
+  onListDeviceDirectories,
+  onCreateDeviceDirectory,
   onLoadEnvironmentInfo,
   onListEnvironmentBranches,
   onCheckoutEnvironmentBranch,
@@ -394,6 +408,7 @@ export function MobileWorkbenchLayout({
       <MobileDrawer
         open={drawerOpen}
         user={state.user}
+        devices={state.devices}
         projects={state.projects}
         recentTasks={state.recentTasks}
         runningTaskIds={runningTaskIds}
@@ -407,6 +422,19 @@ export function MobileWorkbenchLayout({
           setSettingsOpen(true)
           navigateTo('/settings')
         }}
+        onCreateProject={onCreateProject}
+        onCreateGitWorkspaceProject={onCreateGitWorkspaceProject}
+        onListGitRepositories={onListGitRepositories}
+        onListGitBranches={onListGitBranches}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+        onGetProjectWorkspaceRoot={onGetProjectWorkspaceRoot}
+        onListDeviceDirectories={onListDeviceDirectories}
+        onCreateDeviceDirectory={onCreateDeviceDirectory}
+        onUpdateProjectName={onUpdateProjectName}
+        onRemoveProject={onRemoveProject}
+        onArchiveProjectChats={onArchiveProjectChats}
+        onArchiveTask={onArchiveTask}
+        onRenameTask={onRenameTask}
         onSelectProject={onSelectProject}
         onOpenTask={onOpenTask}
       />

@@ -26,6 +26,7 @@ type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 interface ProjectCreateDialogProps {
   open: boolean
   mode: ProjectCreateMode
+  presentation?: 'dialog' | 'mobileSheet'
   devices: DeviceInfo[]
   onClose: () => void
   onCreateProject: (data: CreateProjectRequest) => Promise<ProjectWithTasks>
@@ -177,6 +178,7 @@ function directoryMatchesQuery(directory: string, query: string): boolean {
 export function ProjectCreateDialog({
   open,
   mode,
+  presentation = 'dialog',
   devices = [],
   onClose,
   onCreateProject,
@@ -197,6 +199,7 @@ export function ProjectCreateDialog({
     <ProjectCreateDialogContent
       key={`${mode}:${getDefaultDeviceId(devices)}`}
       mode={mode}
+      presentation={presentation}
       devices={devices}
       onClose={onClose}
       onCreateProject={onCreateProject}
@@ -216,6 +219,7 @@ export function ProjectCreateDialog({
 
 function ProjectCreateDialogContent({
   mode,
+  presentation = 'dialog',
   devices,
   onClose,
   onCreateProject,
@@ -595,12 +599,23 @@ function ProjectCreateDialogContent({
     mode === 'git'
       ? t('workbench.project_git_clone_progress', '正在克隆仓库，可能需要一点时间')
       : t('workbench.project_create_progress', '正在创建项目，请稍候')
+  const isMobileSheet = presentation === 'mobileSheet'
 
   return createPortal(
-    <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4">
+    <div
+      className={
+        isMobileSheet
+          ? 'fixed inset-0 z-[10000] flex items-end justify-center bg-black/30 px-0'
+          : 'fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4'
+      }
+    >
       <div
         data-testid="project-create-dialog"
-        className="w-full max-w-[560px] rounded-lg border border-[#d8d8d8] bg-white p-6 shadow-2xl"
+        className={
+          isMobileSheet
+            ? 'max-h-[88dvh] w-full overflow-y-auto rounded-t-[28px] border border-[#EDEDED] border-b-0 bg-white p-5 pb-[max(24px,env(safe-area-inset-bottom))] shadow-[0_-18px_48px_rgba(0,0,0,0.18)]'
+            : 'w-full max-w-[560px] rounded-lg border border-[#d8d8d8] bg-white p-6 shadow-2xl'
+        }
       >
         <div className="flex items-start justify-between gap-4">
           <div>
