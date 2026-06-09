@@ -82,6 +82,12 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     ls_skills_definition = resolve_local_device_command(
         "ls_skills", settings.LOCAL_DEVICE_COMMANDS
     )
+    sync_runtime_auth_file_definition = resolve_local_device_command(
+        "sync_runtime_auth_file", settings.LOCAL_DEVICE_COMMANDS
+    )
+    read_runtime_auth_file_definition = resolve_local_device_command(
+        "read_runtime_auth_file", settings.LOCAL_DEVICE_COMMANDS
+    )
 
     assert pwd_definition is not None
     assert pwd_definition.command == "pwd"
@@ -159,6 +165,14 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert ".codex" in ls_skills_definition.command
     assert "plugins" in ls_skills_definition.command
     assert ls_skills_definition.post_processor == "json"
+    assert sync_runtime_auth_file_definition is not None
+    assert "WEGENT_RUNTIME_CONFIG_CONTENT" in sync_runtime_auth_file_definition.command
+    assert sync_runtime_auth_file_definition.post_processor == "json"
+    assert read_runtime_auth_file_definition is not None
+    assert (
+        "WEGENT_RUNTIME_CONFIG_TARGET_PATH" in read_runtime_auth_file_definition.command
+    )
+    assert read_runtime_auth_file_definition.post_processor == "json"
 
 
 def test_local_device_command_registry_supports_inline_post_processor():
@@ -399,6 +413,99 @@ metadata:
         }
     ]
     assert "|" not in skills[0]["description"]
+
+
+def test_sync_runtime_auth_file_command_writes_json_object(tmp_path):
+    """sync_runtime_auth_file should create auth JSON with private permissions."""
+    from app.services.device.command_registry import SYNC_RUNTIME_AUTH_FILE_SCRIPT
+
+    env = {
+        **os.environ,
+        "HOME": str(tmp_path),
+        "WEGENT_RUNTIME_CONFIG_RUNTIME": "codex",
+        "WEGENT_RUNTIME_CONFIG_TARGET_PATH": "~/.codex/auth.json",
+        "WEGENT_RUNTIME_CONFIG_CONTENT": '{"token":"secret","account":{"id":"u1"}}',
+    }
+    result = subprocess.run(
+        ["python3", "-c", SYNC_RUNTIME_AUTH_FILE_SCRIPT],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    target = tmp_path / ".codex" / "auth.json"
+
+    assert payload == {
+        "status": "written",
+        "runtime": "codex",
+        "path": "~/.codex/auth.json",
+    }
+    assert json.loads(target.read_text(encoding="utf-8")) == {
+        "account": {"id": "u1"},
+        "token": "secret",
+    }
+    assert target.stat().st_mode & 0o777 == 0o600
+
+
+def test_sync_runtime_auth_file_command_does_not_overwrite_existing_file(tmp_path):
+    """sync_runtime_auth_file should skip when auth JSON already exists."""
+    from app.services.device.command_registry import SYNC_RUNTIME_AUTH_FILE_SCRIPT
+
+    target = tmp_path / ".codex" / "auth.json"
+    target.parent.mkdir(parents=True)
+    target.write_text('{"token":"existing"}\n', encoding="utf-8")
+    env = {
+        **os.environ,
+        "HOME": str(tmp_path),
+        "WEGENT_RUNTIME_CONFIG_RUNTIME": "codex",
+        "WEGENT_RUNTIME_CONFIG_TARGET_PATH": "~/.codex/auth.json",
+        "WEGENT_RUNTIME_CONFIG_CONTENT": '{"token":"new"}',
+    }
+    result = subprocess.run(
+        ["python3", "-c", SYNC_RUNTIME_AUTH_FILE_SCRIPT],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(result.stdout) == {
+        "status": "skipped_existing",
+        "runtime": "codex",
+        "path": "~/.codex/auth.json",
+    }
+    assert target.read_text(encoding="utf-8") == '{"token":"existing"}\n'
+
+
+def test_read_runtime_auth_file_command_returns_existing_json(tmp_path):
+    """read_runtime_auth_file should return the auth JSON content."""
+    from app.services.device.command_registry import READ_RUNTIME_AUTH_FILE_SCRIPT
+
+    target = tmp_path / ".codex" / "auth.json"
+    target.parent.mkdir(parents=True)
+    target.write_text('{"token":"existing"}\n', encoding="utf-8")
+    env = {
+        **os.environ,
+        "HOME": str(tmp_path),
+        "WEGENT_RUNTIME_CONFIG_RUNTIME": "codex",
+        "WEGENT_RUNTIME_CONFIG_TARGET_PATH": "~/.codex/auth.json",
+    }
+    result = subprocess.run(
+        ["python3", "-c", READ_RUNTIME_AUTH_FILE_SCRIPT],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(result.stdout) == {
+        "status": "read",
+        "runtime": "codex",
+        "path": "~/.codex/auth.json",
+        "content": '{"token":"existing"}\n',
+    }
 
 
 def test_ls_skills_command_includes_plugin_skills(tmp_path):

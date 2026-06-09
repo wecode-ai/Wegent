@@ -36,6 +36,8 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 - English version: [`docs/en/developer-guide/local-device-command-rpc.md`](docs/en/developer-guide/local-device-command-rpc.md)
 - External knowledge MCP (trusted external knowledge integrations): [`docs/zh/developer-guide/external-knowledge-mcp.md`](docs/zh/developer-guide/external-knowledge-mcp.md)
 - English version: [`docs/en/developer-guide/external-knowledge-mcp.md`](docs/en/developer-guide/external-knowledge-mcp.md)
+- User runtime config (encrypted user CLI auth storage and device sync): [`docs/zh/developer-guide/user-runtime-config.md`](docs/zh/developer-guide/user-runtime-config.md)
+- English version: [`docs/en/developer-guide/user-runtime-config.md`](docs/en/developer-guide/user-runtime-config.md)
 
 **📚 Documentation Writing Rules:**
 - All documentation files MUST include frontmatter with `sidebar_position` for ordering:

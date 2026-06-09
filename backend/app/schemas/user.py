@@ -53,6 +53,12 @@ class WeiboBindingPreferences(BaseModel):
     bound_at: Optional[str] = None
 
 
+class UserRuntimeConfigPreference(BaseModel):
+    """User-level runtime configuration preference."""
+
+    use_user_config: bool = False
+
+
 class UserPreferences(BaseModel):
     """User preferences model"""
 
@@ -69,6 +75,9 @@ class UserPreferences(BaseModel):
     )
     sina_mail: Optional[SinaMailPreferences] = None
     weibo_binding: Optional[WeiboBindingPreferences] = None
+    runtime_configs: dict[str, UserRuntimeConfigPreference] = Field(
+        default_factory=dict
+    )
 
 
 class Token(BaseModel):

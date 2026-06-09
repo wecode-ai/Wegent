@@ -6,8 +6,13 @@ export interface DeviceInfo {
   is_default: boolean
   device_type: 'local' | 'cloud'
   bind_shell: 'claudecode' | 'openclaw'
-  executor_version?: string
-  latest_version?: string
+  capabilities?: string[] | null
+  slot_used?: number
+  slot_max?: number
+  running_tasks?: DeviceRunningTask[]
+  running_task_ids?: number[]
+  executor_version?: string | null
+  latest_version?: string | null
   update_available?: boolean
   cloud_config?: {
     sandboxId?: string
@@ -18,9 +23,31 @@ export interface DeviceInfo {
   }
 }
 
+export interface DeviceRunningTask {
+  task_id?: number
+  subtask_id?: number
+  title?: string
+  status?: string
+  created_at?: string
+}
+
 export interface DeviceListResponse {
   items: DeviceInfo[]
   total: number
+}
+
+export interface UpgradeDeviceOptions {
+  force?: boolean
+  auto_confirm?: boolean
+  verbose?: boolean
+  force_stop_tasks?: boolean
+  registry?: string
+  registry_token?: string
+}
+
+export interface UpgradeDeviceResponse {
+  success: boolean
+  message: string
 }
 
 export interface DeviceSessionResponse {

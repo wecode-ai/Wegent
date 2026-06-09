@@ -88,19 +88,11 @@ curl -fL -o wegent-executor \
 chmod +x wegent-executor
 ```
 
-#### 使用设备本机 CLI 配置
+#### 使用个人 Codex CLI 配置
 
-默认情况下，executor 会使用 Wegent 下发的 Claude/Codex 模型和 provider 配置。如果某台设备已经在本机配置好了 Codex CLI 登录或 provider，可以通过环境变量让 Codex 使用本机配置：
+默认情况下，executor 会使用 Wegent 下发的 Claude/Codex 模型和 provider 配置。需要使用个人 Codex 登录信息时，在 Wework 的【设置】->【个人】中从设备导入或上传 `~/.codex/auth.json`，再启用“个人配置”。设备心跳发现本机缺少 Codex auth 文件时，会在后台同步该认证；如果设备上已存在 `~/.codex/auth.json`，不会覆盖。使用 Codex 的 GPT 模型会通过该认证账户访问 Codex。
 
-```bash
-WEGENT_LOCAL_CLI_CONFIG_RUNTIMES=codex
-```
-
-该变量为空或未设置时，所有 runtime 都继续使用系统下发配置。当前仅支持以下值：
-
-- `codex`：Codex 使用设备本机配置，不再注入 Wegent Codex provider。
-
-该配置只影响当前设备，适合不同设备分别使用系统下发配置或本机 Codex CLI 配置的场景。Claude 仍保持 Wegent 下发的配置行为。
+Wegent 会根据用户设置在执行请求中显式标记 Codex 是否使用个人配置，不再通过 `WEGENT_LOCAL_CLI_CONFIG_RUNTIMES` 环境变量判断。
 
 ### 构建设备镜像
 

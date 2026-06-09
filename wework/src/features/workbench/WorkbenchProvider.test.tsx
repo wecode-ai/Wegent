@@ -344,6 +344,84 @@ describe('WorkbenchProvider', () => {
     )
   })
 
+  test('does not automatically upgrade old online devices during bootstrap', async () => {
+    const upgradeDevice = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <WorkbenchProvider
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={{
+          teamApi: {
+            getDefaultWorkbenchTeam: vi
+              .fn()
+              .mockResolvedValue({ id: 2, name: 'coder', is_active: true }),
+          },
+          modelApi: {
+            listModels: vi.fn().mockResolvedValue({ data: [] }),
+          },
+          skillApi: {
+            listSkills: vi.fn().mockResolvedValue([]),
+            getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+          },
+          projectApi: {
+            listProjects: vi.fn().mockResolvedValue({ items: [] }),
+            getProject: vi.fn(),
+            createProject: vi.fn(),
+            updateProject: vi.fn(),
+            deleteProject: vi.fn(),
+            archiveProjectChats: vi.fn(),
+            archiveAllProjectChats: vi.fn(),
+            createConversation: vi.fn(),
+          },
+          taskApi: {
+            listRecentTasks: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+            getTaskDetail: vi.fn(),
+            renameTask: vi.fn(),
+            archiveTask: vi.fn(),
+            archiveAllChats: vi.fn(),
+            listArchivedTasks: vi.fn(),
+            unarchiveTask: vi.fn(),
+            deleteTask: vi.fn(),
+            deleteArchivedTasks: vi.fn(),
+          },
+          deviceApi: {
+            listDevices: vi.fn().mockResolvedValue([
+              {
+                id: 1,
+                device_id: 'old-device',
+                name: 'Old Device',
+                status: 'online',
+                is_default: false,
+                device_type: 'cloud',
+                bind_shell: 'claudecode',
+                executor_version: '1.8.4',
+                slot_used: 0,
+              },
+            ]),
+            upgradeDevice,
+            getHomeDirectory: vi.fn(),
+            getProjectWorkspaceRoot: vi.fn(),
+            listDirectories: vi.fn(),
+            listSkills: vi.fn().mockResolvedValue([]),
+          },
+          chatStream: {
+            joinTask: vi.fn(),
+            leaveTask: vi.fn(),
+            sendMessage: vi.fn(),
+            subscribe: vi.fn(() => vi.fn()),
+          },
+        }}
+      >
+        <DeviceListProbe />
+      </WorkbenchProvider>
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('device-list')).toHaveTextContent('Old Device')
+    )
+    expect(upgradeDevice).not.toHaveBeenCalled()
+  })
+
   test('opens task from the browser path after bootstrap', async () => {
     window.history.pushState({}, '', '/tasks/8')
     const getTaskDetail = vi.fn().mockResolvedValue({
@@ -905,6 +983,8 @@ describe('WorkbenchProvider', () => {
                 status: 'online',
                 is_default: false,
                 device_type: 'cloud',
+                bind_shell: 'claudecode',
+                executor_version: '1.8.5',
               },
               {
                 id: 2,
@@ -913,6 +993,8 @@ describe('WorkbenchProvider', () => {
                 status: 'online',
                 is_default: false,
                 device_type: 'local',
+                bind_shell: 'claudecode',
+                executor_version: '1.8.5',
               },
             ]),
             getHomeDirectory: vi.fn(),
@@ -1038,6 +1120,8 @@ describe('WorkbenchProvider', () => {
                 status: 'online',
                 is_default: false,
                 device_type: 'cloud',
+                bind_shell: 'claudecode',
+                executor_version: '1.8.5',
               },
               {
                 id: 2,
@@ -1046,6 +1130,8 @@ describe('WorkbenchProvider', () => {
                 status: 'online',
                 is_default: false,
                 device_type: 'local',
+                bind_shell: 'claudecode',
+                executor_version: '1.8.5',
               },
             ]),
             getHomeDirectory: vi.fn(),
@@ -1164,6 +1250,8 @@ describe('WorkbenchProvider', () => {
                 status: 'online',
                 is_default: false,
                 device_type: 'local',
+                bind_shell: 'claudecode',
+                executor_version: '1.8.5',
               },
             ]),
             getHomeDirectory: vi.fn(),
@@ -1260,6 +1348,8 @@ describe('WorkbenchProvider', () => {
                 status: 'online',
                 is_default: false,
                 device_type: 'local',
+                bind_shell: 'claudecode',
+                executor_version: '1.8.5',
               },
             ]),
             getHomeDirectory: vi.fn(),
@@ -1860,6 +1950,8 @@ describe('WorkbenchProvider', () => {
                 status: 'online',
                 is_default: false,
                 device_type: 'local',
+                bind_shell: 'claudecode',
+                executor_version: '1.8.5',
               },
               {
                 id: 2,
@@ -1868,6 +1960,8 @@ describe('WorkbenchProvider', () => {
                 status: 'online',
                 is_default: false,
                 device_type: 'cloud',
+                bind_shell: 'claudecode',
+                executor_version: '1.8.5',
               },
             ]),
             getHomeDirectory: vi.fn(),
@@ -2645,6 +2739,9 @@ describe('WorkbenchProvider', () => {
 
       return (
         <div>
+          <span data-testid="attachment-probe-ready">
+            {workbench.state.defaultTeam ? 'ready' : 'loading'}
+          </span>
           <button type="button" onClick={() => workbench.projectChat.addExistingAttachment(attachment)}>
             add attachment
           </button>
@@ -2691,7 +2788,18 @@ describe('WorkbenchProvider', () => {
             deleteArchivedTasks: vi.fn(),
           },
           deviceApi: {
-            listDevices: vi.fn().mockResolvedValue([]),
+            listDevices: vi.fn().mockResolvedValue([
+              {
+                id: 1,
+                device_id: 'local-online',
+                name: 'Local Online',
+                status: 'online',
+                is_default: false,
+                device_type: 'local',
+                bind_shell: 'claudecode',
+                executor_version: '1.8.5',
+              },
+            ]),
             getHomeDirectory: vi.fn(),
             getProjectWorkspaceRoot: vi.fn(),
             listDirectories: vi.fn(),
@@ -2709,7 +2817,10 @@ describe('WorkbenchProvider', () => {
       </WorkbenchProvider>
     )
 
-    await userEvent.click(await screen.findByText('add attachment'))
+    await waitFor(() =>
+      expect(screen.getByTestId('attachment-probe-ready')).toHaveTextContent('ready')
+    )
+    await userEvent.click(screen.getByText('add attachment'))
     await userEvent.click(screen.getByText('send'))
 
     await waitFor(() =>
